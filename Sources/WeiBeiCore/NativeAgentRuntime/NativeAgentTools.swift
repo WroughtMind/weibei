@@ -594,7 +594,7 @@ public enum NativeBuiltinTools {
     private static var learningMemory: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_read_learning_memory",
-            description: "只读取本课程学习记忆和上次位置，不会写入或改变任何内容。每条记忆都带 memoryID。更新已有记忆时把这个 memoryID 原样抄到 weibei_update_learning_memory；新建不要自己编 ID。其余明确要求记下、记住或更新进度时改用 weibei_update_learning_memory。返回里的 contextRevision 必须原样回传给写入类工具。",
+            description: "只读取本课程学习记忆和上次位置，不会写入或改变任何内容。每条记忆都带 memoryID。更新已有记忆时把这个 memoryID 原样抄到 weibei_update_learning_memory；新建不要自己编 ID。其余明确要求记下、记住或更新进度时改用 weibei_update_learning_memory。",
             schema: NativeJSONSchema(["type": "object", "properties": [:]]),
             execute: { _, context in
                 let learning = context.request.learningContext
@@ -627,18 +627,10 @@ public enum NativeBuiltinTools {
     private static var learningUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_update_learning_memory",
-            description: "记录或更新本课程学习记忆的唯一入口。读取请用 weibei_read_learning_memory。memoryID 只从读取结果或上次写成功回执抄写，不要自己编，不要传空字符串；新建省略该字段，魏碑会分配 id 并在回执里返回。其余明确要求记下/记住/更新进度或掌握情况时调用。contextRevision 必须原样回传。userStatement 的 evidence 必须以「[用户：本轮]」开头并带上用户原话。",
+            description: "记录或更新本课程学习记忆的唯一入口。读取请用 weibei_read_learning_memory。memoryID 只从读取结果或上次写成功回执抄写，不要自己编，不要传空字符串；新建省略该字段，魏碑会分配 id 并在回执里返回。其余明确要求记下/记住/更新进度或掌握情况时调用。每条记忆只提交 kind 标签和记住的内容；同一轮要更新或新建多条就写多条。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
-                    "contextRevision": ["type": "string"],
-                    "memoryRevision": ["type": "integer"],
-                    "sessionSummary": ["type": "string"],
-                    "suggestedPhase": [
-                        "type": "string",
-                        "enum": ["orient", "explore", "closeRead", "note", "recall", "consolidate", "plan"],
-                    ],
-                    "suggestedNext": ["type": "array", "items": ["type": "string"]],
                     "entries": [
                         "type": "array",
                         "items": [
@@ -661,13 +653,8 @@ public enum NativeBuiltinTools {
                                     ],
                                 ],
                                 "text": ["type": "string"],
-                                "evidence": ["type": "string"],
-                                "origin": [
-                                    "type": "string",
-                                    "enum": ["userStatement", "agentInference"],
-                                ],
                             ],
-                            "required": ["kind", "text", "evidence", "origin"],
+                            "required": ["kind", "text"],
                         ],
                     ],
                     "resolutions": [
@@ -680,40 +667,38 @@ public enum NativeBuiltinTools {
                                     "description": "必须是 weibei_read_learning_memory 返回的现有 memoryID，不能为空，不能自己编。",
                                 ],
                                 "text": ["type": "string"],
-                                "evidence": ["type": "string"],
                             ],
-                            "required": ["memoryID", "evidence"],
+                            "required": ["memoryID"],
                         ],
                     ],
                 ],
-                "required": ["contextRevision", "memoryRevision", "entries"],
+                "required": ["entries"],
             ]),
             execute: { arguments, context in
-                try requireMatchingRevision(
-                    arguments["contextRevision"],
-                    expected: context.request.contextRevision,
-                    message: "学习状态建议的上下文或记忆修订号不匹配；当前修订号为 \(context.request.contextRevision)，请原样回传"
-                )
-                try requireMatchingIntegerRevision(
-                    arguments["memoryRevision"],
-                    expected: context.request.learningContext.memoryRevision,
-                    message: "学习状态建议的记忆修订号不匹配；当前 memoryRevision 为 \(context.request.learningContext.memoryRevision)，请原样回传"
-                )
                 try requireNonBlankResolutionIDs(arguments["resolutions"] as? [Any] ?? [])
+                let turnEvidence = "[用户：本轮] \(context.request.question)"
+                let entries = (arguments["entries"] as? [Any] ?? []).map { raw -> Any in
+                    guard var entry = raw as? [String: Any] else { return raw }
+                    entry["evidence"] = turnEvidence
+                    entry["origin"] = LearningMemoryOrigin.userStatement.rawValue
+                    return entry
+                }
+                let resolutions = (arguments["resolutions"] as? [Any] ?? []).map { raw -> Any in
+                    guard var resolution = raw as? [String: Any] else { return raw }
+                    if resolution["text"] == nil {
+                        resolution["text"] = turnEvidence
+                    }
+                    resolution["evidence"] = turnEvidence
+                    return resolution
+                }
                 var details: [String: Any] = [
                     "kind": "learning_update",
                     "contextRevision": context.request.contextRevision,
                     "memoryRevision": NSNumber(value: context.request.learningContext.memoryRevision),
-                    "suggestedNext": arguments["suggestedNext"] as? [String] ?? [],
-                    "entries": omittingBlankIDs(in: arguments["entries"] as? [Any] ?? [], key: "memoryID"),
-                    "resolutions": arguments["resolutions"] as? [Any] ?? [],
+                    "suggestedNext": [],
+                    "entries": omittingBlankIDs(in: entries, key: "memoryID"),
+                    "resolutions": resolutions,
                 ]
-                if let summary = arguments["sessionSummary"] as? String {
-                    details["sessionSummary"] = summary
-                }
-                if let phase = arguments["suggestedPhase"] as? String {
-                    details["suggestedPhase"] = phase
-                }
                 try requireDecodableLearningUpdate(details)
                 let queued = "学习状态更新已校验并交给魏碑；魏碑只会保存当前作用域中的实际变化。"
                 guard let persist = context.liveStores.persistLearningUpdate,
@@ -730,6 +715,7 @@ public enum NativeBuiltinTools {
                 details["appliedMemoryUpdate"] = [
                     "memoryIDs": applied.memoryIDs.map { $0.uuidString.lowercased() },
                     "summary": applied.summary,
+                    "texts": applied.texts,
                 ]
                 return NativeToolExecutionResult(
                     text: learningPersistSuccessText(applied),
@@ -1032,7 +1018,7 @@ public enum NativeBuiltinTools {
         }
         guard let rawEntries = details["entries"] as? [Any] else {
             problems.append("entries 必须是数组")
-            return "学习记忆写入无法解析：\(problems.joined(separator: "；"))。每条 entries 需要 kind（goal/progress/understood/confusion/nextStep/summary/preference）、text、evidence、origin（userStatement 或 agentInference）。"
+            return "学习记忆写入无法解析：\(problems.joined(separator: "；"))。每条 entries 需要 kind（goal/progress/understood/confusion/nextStep/summary/preference）和 text。"
         }
         for (index, raw) in rawEntries.enumerated() {
             guard let entry = raw as? [String: Any] else {
@@ -1046,18 +1032,11 @@ public enum NativeBuiltinTools {
             if entry["text"] as? String == nil {
                 problems.append("entries[\(index)].text 必须是字符串")
             }
-            if entry["evidence"] as? String == nil {
-                problems.append("entries[\(index)].evidence 必须是字符串")
-            }
-            let origin = entry["origin"] as? String ?? ""
-            if LearningMemoryOrigin(rawValue: origin) == nil {
-                problems.append("entries[\(index)].origin 必须是 userStatement 或 agentInference")
-            }
         }
         if problems.isEmpty {
-            return "学习记忆写入无法解析。期望 entries 每条含 kind、text、evidence、origin；suggestedNext 为字符串数组。"
+            return "学习记忆写入无法解析。期望 entries 每条含 kind 和 text；更新已有记忆时 memoryID 从 weibei_read_learning_memory 抄写。"
         }
-        return "学习记忆写入无法解析：\(problems.joined(separator: "；"))。用户自述用 origin=userStatement，evidence 以「[用户：本轮]」开头。"
+        return "学习记忆写入无法解析：\(problems.joined(separator: "；"))。每条 entries 需要 kind 和 text。"
     }
 
     private static func courseProfileUpdateShapeError(_ details: [String: Any]) -> String {

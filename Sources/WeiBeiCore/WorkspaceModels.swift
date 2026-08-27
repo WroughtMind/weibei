@@ -1625,10 +1625,26 @@ public struct AgentReplyAction: Identifiable, Codable, Hashable, Sendable {
 public struct AgentReplyMemoryUpdate: Codable, Hashable, Sendable {
     public var memoryIDs: [UUID]
     public var summary: String
+    /// 每条已记住记忆的一句话内容，与 memoryIDs 一一对应；旧持久化数据可能缺省。
+    public var texts: [String]
 
-    public init(memoryIDs: [UUID], summary: String) {
+    public init(memoryIDs: [UUID], summary: String, texts: [String] = []) {
         self.memoryIDs = memoryIDs
         self.summary = summary
+        self.texts = texts
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case memoryIDs
+        case summary
+        case texts
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        memoryIDs = try container.decode([UUID].self, forKey: .memoryIDs)
+        summary = try container.decode(String.self, forKey: .summary)
+        texts = try container.decodeIfPresent([String].self, forKey: .texts) ?? []
     }
 
     public func revisions(

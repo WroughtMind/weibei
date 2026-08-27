@@ -638,26 +638,24 @@ private func checkContextRevisionEcho() throws {
             try await registry.execute(
                 NativeToolCallRequest(
                     name: "weibei_update_learning_memory",
-                    argumentsJSON: "{\"contextRevision\":1,\"memoryRevision\":1,\"entries\":[]}",
+                    argumentsJSON: "{\"entries\":[]}",
                     callID: "u1"
                 ),
                 context: context,
                 scope: .global
             )
         }
+    } catch {
         throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 9, userInfo: [
-            NSLocalizedDescriptionKey: "numeric contextRevision 1 should not match a namespaced revision",
+            NSLocalizedDescriptionKey: "empty entries should run without revision echo",
         ])
-    } catch let failure as NativeLLMFailure {
-        try nativeRequire(failure.code == "invalid_arguments", "numeric contextRevision is a type error")
-        try nativeRequire(failure.message.contains("contextRevision"), "type error names contextRevision")
     }
     do {
         _ = try waitFor {
             try await registry.execute(
                 NativeToolCallRequest(
                     name: "weibei_update_learning_memory",
-                    argumentsJSON: "{\"contextRevision\":\"stale\",\"memoryRevision\":0,\"entries\":[]}",
+                    argumentsJSON: "{\"entries\":[{\"kind\":\"progress\"}]}",
                     callID: "u2"
                 ),
                 context: context,
@@ -665,10 +663,11 @@ private func checkContextRevisionEcho() throws {
             )
         }
         throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 9, userInfo: [
-            NSLocalizedDescriptionKey: "stale string contextRevision should not match",
+            NSLocalizedDescriptionKey: "entry without text should fail type validation",
         ])
     } catch let failure as NativeLLMFailure {
-        try nativeRequire(failure.code == "revision_mismatch", "stale string revision is revision_mismatch")
+        try nativeRequire(failure.code == "invalid_arguments", "missing entry text is invalid_arguments")
+        try nativeRequire(failure.message.contains("text"), "type error names text")
     }
     let accepted = try waitFor {
         try await registry.execute(
@@ -815,7 +814,7 @@ private func checkNativeProductContract() throws {
     )
 
     let learningJSON = """
-    {"contextRevision":"\(revision)","memoryRevision":3,"suggestedNext":["继续读复利"],"entries":[{"kind":"progress","text":"刚搞懂复利","evidence":"[用户：本轮] \(question)","origin":"userStatement"}],"resolutions":[]}
+    {"entries":[{"kind":"progress","text":"刚搞懂复利"}],"resolutions":[]}
     """
     let learningResult = try waitFor {
         try await registry.execute(
@@ -835,15 +834,15 @@ private func checkNativeProductContract() throws {
     }
     try nativeRequire(learning.entries.count == 1, "learning_update keeps entries")
     try nativeRequire(learning.entries[0].text == "刚搞懂复利", "learning_update entry text is preserved")
-    try nativeRequire(learning.entries[0].origin == .userStatement, "learning_update origin is preserved")
-    try nativeRequire(learning.suggestedNext == ["继续读复利"], "learning_update suggestedNext is preserved")
+    try nativeRequire(learning.entries[0].origin == .userStatement, "host fills userStatement origin")
+    try nativeRequire(learning.suggestedNext.isEmpty, "host supplies suggestedNext without the model")
     try nativeRequire(
-        StudyAgentCurrentTurnEvidence.matches(learning.entries[0].evidence, question: question),
-        "Store evidence gate accepts this turn's user statement"
+        learning.entries[0].evidence == "[用户：本轮] \(question)",
+        "host fills this turn's evidence without the model"
     )
 
     let blankIDJSON = """
-    {"contextRevision":"\(revision)","memoryRevision":3,"suggestedNext":[],"entries":[{"memoryID":"","kind":"understood","text":"用户自述：刚搞懂了复利。","evidence":"[用户：本轮] \(question)","origin":"userStatement"}],"resolutions":[]}
+    {"entries":[{"memoryID":"","kind":"understood","text":"用户自述：刚搞懂了复利。"}],"resolutions":[]}
     """
     let blankIDResult = try waitFor {
         try await registry.execute(
@@ -1048,20 +1047,20 @@ private func checkNativeProductContract() throws {
                 NativeToolCallRequest(
                     name: "weibei_update_learning_memory",
                     argumentsJSON: """
-                    {"contextRevision":"\(revision)","memoryRevision":3,"suggestedNext":[],"entries":[{"kind":"progress","text":"刚搞懂复利","evidence":"[用户：本轮] \(question)"}],"resolutions":[]}
+                    {"entries":[],"resolutions":[{"memoryID":"","text":"搞懂了复利"}]}
                     """,
-                    callID: "learn-missing-origin"
+                    callID: "learn-blank-resolution-id"
                 ),
                 context: context,
                 scope: .global
             )
         }
         throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 22, userInfo: [
-            NSLocalizedDescriptionKey: "learning update missing origin should fail before success text",
+            NSLocalizedDescriptionKey: "resolution with blank memoryID should fail before success text",
         ])
     } catch let failure as NativeLLMFailure {
-        try nativeRequire(failure.code == "invalid_arguments", "missing origin is invalid_arguments")
-        try nativeRequire(failure.message.contains("origin"), "learning shape error names origin")
+        try nativeRequire(failure.code == "invalid_arguments", "blank resolution memoryID is invalid_arguments")
+        try nativeRequire(failure.message.contains("memoryID"), "learning shape error names memoryID")
     }
 
     let noteResult = try waitFor {

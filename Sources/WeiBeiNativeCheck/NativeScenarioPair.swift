@@ -67,7 +67,7 @@ enum NativeScenarioPair {
                         index: 0,
                         id: "u1",
                         name: "weibei_update_learning_memory",
-                        argumentsDelta: "{\"contextRevision\":\"pair\",\"memoryRevision\":0,\"suggestedNext\":[],\"entries\":[{\"kind\":\"progress\",\"text\":\"记下复利进度\",\"evidence\":\"[用户：本轮] 请把这条学习进度写入学习记忆：我已经理解复利。\",\"origin\":\"userStatement\"}],\"resolutions\":[]}"
+                        argumentsDelta: "{\"entries\":[{\"kind\":\"progress\",\"text\":\"记下复利进度\"}],\"resolutions\":[]}"
                     ),
                     .finish(reason: .toolCalls, replayState: nil),
                 ],

@@ -8229,15 +8229,6 @@ final class WorkspaceStore: ObservableObject {
             let text = proposal.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let evidence = proposal.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty, !evidence.isEmpty else { return nil }
-            if evidence.hasPrefix("[用户：本轮]") || evidence.hasPrefix("[会话：当前]") {
-                guard StudyAgentCurrentTurnEvidence.matches(
-                    evidence,
-                    question: expectedUserQuestion
-                ) else { return nil }
-            }
-            if proposal.origin == .userStatement {
-                guard evidence.hasPrefix("[用户：本轮]") else { return nil }
-            }
             let memoryID: UUID?
             let scope: LearningMemoryScope
             switch Self.parseOptionalRecordID(proposal.memoryID) {
@@ -8259,11 +8250,6 @@ final class WorkspaceStore: ObservableObject {
                       ) else {
                     return nil
                 }
-                if located.2.origin == .userStatement,
-                   !evidence.hasPrefix("[用户：本轮]"),
-                   !evidence.hasPrefix("[会话：当前]") {
-                    return nil
-                }
                 memoryID = parsedMemoryID
                 scope = located.0
             }
@@ -8274,7 +8260,7 @@ final class WorkspaceStore: ObservableObject {
                     scope,
                     text,
                     String(evidence.prefix(400)),
-                    proposal.origin == .observed ? .agentInference : proposal.origin
+                    proposal.origin
                 )
             )
         }
@@ -8287,17 +8273,13 @@ final class WorkspaceStore: ObservableObject {
         var resolutionTargetIDs: Set<UUID> = []
         for proposal in update.resolutions {
             let evidence = proposal.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard StudyAgentCurrentTurnEvidence.matches(
-                evidence,
-                question: expectedUserQuestion
-            ),
-            let memoryID = UUID(uuidString: proposal.memoryID),
-            resolutionTargetIDs.insert(memoryID).inserted,
-            let located = locatedMemory(memoryID),
-            located.2.status == .active,
-            located.2.kind == .goal
-                || located.2.kind == .confusion
-                || located.2.kind == .nextStep else {
+            guard let memoryID = UUID(uuidString: proposal.memoryID),
+                resolutionTargetIDs.insert(memoryID).inserted,
+                let located = locatedMemory(memoryID),
+                located.2.status == .active,
+                located.2.kind == .goal
+                    || located.2.kind == .confusion
+                    || located.2.kind == .nextStep else {
                 return nil
             }
             validatedResolutions.append(
@@ -8318,10 +8300,7 @@ final class WorkspaceStore: ObservableObject {
             var memoryEntries = entriesByScope[validated.scope] ?? []
             if let memoryID = validated.memoryID,
                let index = memoryEntries.firstIndex(where: { $0.id == memoryID }) {
-                let origin: LearningMemoryOrigin = validated.evidence
-                    .hasPrefix("[用户：本轮]")
-                    ? .userStatement
-                    : validated.origin
+                let origin: LearningMemoryOrigin = validated.origin
                 guard memoryEntries[index].kind != validated.proposal.kind
                         || memoryEntries[index].text != validated.text
                         || memoryEntries[index].evidence != validated.evidence
@@ -8459,16 +8438,18 @@ final class WorkspaceStore: ObservableObject {
             latestAgentLearningUpdateQuestion = expectedUserQuestion
         }
         guard !changedMemoryIDs.isEmpty else { return nil }
-        let summary = changedMemoryIDs.compactMap { id in
+        let appliedTexts = changedMemoryIDs.compactMap { id in
             scopes.lazy.compactMap { scope in
                 entriesByScope[scope]?.first(where: { $0.id == id })?.text
             }.first
-        }.prefix(3).joined(separator: "；")
+        }
+        let summary = appliedTexts.prefix(3).joined(separator: "；")
         return AgentReplyMemoryUpdate(
             memoryIDs: changedMemoryIDs,
             summary: summary.isEmpty
                 ? ui("学习进度已更新", "Study progress updated")
-                : String(summary.prefix(300))
+                : String(summary.prefix(300)),
+            texts: appliedTexts
         )
     }
 
@@ -8642,7 +8623,7 @@ final class WorkspaceStore: ObservableObject {
             if hasClientID {
                 return .rejected("魏碑没有保存这次学习记忆。更新只能沿用 weibei_read_learning_memory 返回的 memoryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
             }
-            return .rejected("魏碑没有保存这次学习记忆。用户自述请用 origin=userStatement，evidence 以「[用户：本轮]」开头并带上用户原话。")
+            return .rejected("魏碑没有保存这次学习记忆。每条记忆需要 kind 标签和内容；更新已有记忆时 memoryID 只能从读取结果或上次回执抄写。")
         }
         let appliedLearningStates = learningMemoryStates
         let appliedStudySession = studySessions.first {
