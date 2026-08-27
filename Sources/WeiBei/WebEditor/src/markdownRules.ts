@@ -206,11 +206,29 @@ const normalizeAgentMath = (markdown: string) => mapMarkdownOutsideCode(markdown
   .replace(/\\hat\s+(\\[A-Za-z]+|[A-Za-z])/g, '\\hat{$1}')
   .replace(/\\hat(?!\{)(\\[A-Za-z]+|[A-Za-z])/g, '\\hat{$1}'));
 
+/**
+ * CommonMark 判定强调闭合时,"delimiter 前是标点、后紧跟普通文字"的组合不是
+ * 有效闭合(`**第一优先：**已有` 的全角冒号几乎必然触发),星号会原样显示。
+ * 渲染前只对 CommonMark 必然拒绝的组合补一个空格让规则成立,本来合法的
+ * 强调形式一个都不动。
+ */
+const emphasisBoundarySegment = (text: string) => String(text || '')
+  // opener:普通文字后紧跟 delimiter 且内容以标点开头 → 开启前补空格。先修
+  // opener,closer 一侧才能在"opener 前已是空白"的形态下识别配对。
+  .replace(/([\p{L}\p{N}])(\*\*|__)(?=\p{P})/gu, '$1 $2')
+  // closer:内容以标点收尾、闭合 delimiter 后紧跟非标点文字 → 闭合后补空格。
+  // 内容不许以空白开头、opener 前排除字母数字,双保险防止把前一对的合法
+  // 闭合星号当成下一对的开头跨对误配。
+  .replace(/(^|[\s\p{P}])(\*\*|__)([^\s*_\n][^*_\n]*\p{P})\2(?=[^\s\p{P}])/gu, '$1$2$3$2 ');
+
+export const normalizeEmphasisBoundaries = (markdown: string) => mapMarkdownOutsideCode(markdown, emphasisBoundarySegment);
+
 /** The one source matrix used by document loads, paste, Agent output, and internal inserts. */
 export const normalizeMarkdownSource = (markdown: string, source: MarkdownSource) => {
   let normalized = normalizeHtmlBreaks(markdown);
   if (source === 'userPaste' || source === 'agentGenerated') normalized = normalizeCompatibleMathDelimiters(normalized);
   if (source === 'agentGenerated') normalized = normalizeAgentMath(normalized);
+  normalized = normalizeEmphasisBoundaries(normalized);
   return protectCurrencyDollars(normalized);
 };
 
