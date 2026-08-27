@@ -109,7 +109,6 @@ extension WorkspaceStore {
             }
         }
         sessionMessagePersistence.needsWorkspacePersist = false
-        unloadInactiveStudySessionMessages()
     }
 
     func sessionMessageWrites(
@@ -267,22 +266,6 @@ extension WorkspaceStore {
             return nil
         }
         return session.messages
-    }
-
-    private func unloadInactiveStudySessionMessages() {
-        let keep = Set(
-            [activeStudySessionID, activeAgentReplyChatID].compactMap { $0 }
-        )
-        for index in studySessions.indices {
-            let id = studySessions[index].id
-            guard sessionMessagePersistence.loadedIDs.contains(id),
-                  !keep.contains(id) else {
-                continue
-            }
-            studySessions[index].messageCount = studySessions[index].messages.count
-            studySessions[index].messages = []
-            sessionMessagePersistence.loadedIDs.remove(id)
-        }
     }
 
     private func interruptedGeneratingMessages(in session: StudySession) -> StudySession {
