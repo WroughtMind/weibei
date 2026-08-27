@@ -727,19 +727,14 @@ private func checkNativeProductContract() throws {
        let items = jsonObject(entries["items"]),
        let entryProperties = jsonObject(items["properties"]),
        let kind = jsonObject(entryProperties["kind"]),
-        let kindEnum = ((kind["enum"] as? [String]) ?? (kind["enum"] as? [Any])?.compactMap({ $0 as? String })),
-       let sources = jsonObject(entryProperties["sources"]),
-       let sourceItems = jsonObject(sources["items"]),
-       let sourceProperties = jsonObject(sourceItems["properties"]) {
+        let kindEnum = ((kind["enum"] as? [String]) ?? (kind["enum"] as? [Any])?.compactMap({ $0 as? String })) {
         try nativeRequire(
-            Set(kindEnum) == Set(["overview", "section", "concept", "relation"]),
-            "profile entry kind enum is the canonical set"
+            Set(kindEnum) == Set(["concept"]),
+            "profile entry kind keeps only the self-reported concept set"
         )
         try nativeRequire(entryProperties["text"] != nil, "profile entries expose text")
         try nativeRequire(entryProperties["entryID"] != nil, "profile entries expose optional entryID")
-        try nativeRequire(sourceProperties["itemID"] != nil, "profile sources expose itemID")
-        try nativeRequire(sourceProperties["role"] != nil, "profile sources expose role")
-        try nativeRequire(sourceProperties["sourceRevision"] != nil, "profile sources expose sourceRevision")
+        try nativeRequire(entryProperties["sources"] == nil, "profile entries no longer expose sources")
         try nativeRequire(
             profileTool.description.contains("用户自述：")
                 && profileTool.description.contains("kind=concept"),
@@ -801,7 +796,7 @@ private func checkNativeProductContract() throws {
         try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_course_profile_update",
-                argumentsJSON: "{\"contextRevision\":\"\(revision)\",\"profileRevision\":7,\"checkpoint\":\"userRequested\",\"entries\":[{\"kind\":\"concept\",\"text\":\"用户自述：已掌握单利，复利还不熟。\",\"sources\":[]}]}",
+                argumentsJSON: "{\"contextRevision\":\"\(revision)\",\"profileRevision\":7,\"checkpoint\":\"userRequested\",\"entries\":[{\"kind\":\"concept\",\"text\":\"用户自述：已掌握单利，复利还不熟。\"}]}",
                 callID: "profile-live"
             ),
             context: liveContext,
@@ -863,7 +858,7 @@ private func checkNativeProductContract() throws {
     try nativeRequire(blankDecoded.entries[0].memoryID == nil, "empty memoryID is omitted as a new entry")
 
     let blankEntryJSON = """
-    {"contextRevision":"\(revision)","profileRevision":2,"checkpoint":"userRequested","entries":[{"entryID":"","kind":"concept","text":"用户自述：刚搞懂了复利。","sources":[]}]}
+    {"contextRevision":"\(revision)","profileRevision":2,"checkpoint":"userRequested","entries":[{"entryID":"","kind":"concept","text":"用户自述：刚搞懂了复利。"}]}
     """
     let blankEntryResult = try waitFor {
         try await registry.execute(
@@ -1002,7 +997,7 @@ private func checkNativeProductContract() throws {
         try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_course_profile_update",
-                argumentsJSON: "{\"contextRevision\":\"\(revision)\",\"profileRevision\":2,\"checkpoint\":\"userRequested\",\"entries\":[{\"kind\":\"concept\",\"text\":\"用户自述：已掌握单利，复利还不熟。\",\"sources\":[]}]}",
+                argumentsJSON: "{\"contextRevision\":\"\(revision)\",\"profileRevision\":2,\"checkpoint\":\"userRequested\",\"entries\":[{\"kind\":\"concept\",\"text\":\"用户自述：已掌握单利，复利还不熟。\"}]}",
                 callID: "profile-1"
             ),
             context: context,
@@ -1016,8 +1011,6 @@ private func checkNativeProductContract() throws {
     }
     try nativeRequire(profile.checkpoint == "userRequested", "profile checkpoint is preserved")
     try nativeRequire(profile.entries.count == 1, "profile entries are preserved")
-    try nativeRequire(profile.entries[0].sources.isEmpty, "userRequested entries may omit sources")
-    try nativeRequire(profile.allowsEntriesWithoutSources, "Store gate allows empty sources for userRequested")
 
     do {
         _ = try waitFor {
@@ -1025,7 +1018,7 @@ private func checkNativeProductContract() throws {
                 NativeToolCallRequest(
                     name: "weibei_course_profile_update",
                     argumentsJSON: """
-                    {"contextRevision":"\(revision)","profileRevision":2,"checkpoint":"userRequested","entries":[{"kind":"userStatement","text":"用户自述：已掌握单利","sources":[]}]}
+                    {"contextRevision":"\(revision)","profileRevision":2,"checkpoint":"userRequested","entries":[{"kind":"userStatement","text":"用户自述：已掌握单利"}]}
                     """,
                     callID: "profile-bad-kind"
                 ),

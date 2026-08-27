@@ -6917,14 +6917,8 @@ final class WorkspaceStore: ObservableObject {
 
     private func sanitizedCourseKnowledgeProfiles() -> [CourseKnowledgeProfile] {
         let courseIDs = Set(courses.map(\.id))
-        return courseKnowledgeProfiles.compactMap { profile in
-            guard courseIDs.contains(profile.courseID) else { return nil }
-            let items = courseItems(in: profile.courseID)
-            let noteItemIDs = Set(items.lazy.filter(\.isNotebookNote).map(\.id))
-            return profile.retainingAvailableSources(
-                materialItemIDs: Set(items.map(\.id)).subtracting(noteItemIDs),
-                noteItemIDs: noteItemIDs
-            )
+        return courseKnowledgeProfiles.filter { profile in
+            courseIDs.contains(profile.courseID)
         }
     }
 
@@ -8120,46 +8114,20 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func makeCourseProfileContext(
-        courseID: UUID?,
-        access: AgentProjectAccessSnapshot
+        courseID: UUID?
     ) -> StudyAgentCourseProfileContext {
         guard let courseID,
               let profileIndex = courseKnowledgeProfiles.firstIndex(where: {
                   $0.courseID == courseID
               }) else { return .empty }
-        let sourcesByID = Dictionary(
-            uniqueKeysWithValues: access.sources.map { ($0.item.id, $0) }
-        )
         let profile = courseKnowledgeProfiles[profileIndex]
-        let retained = profile.entries.filter { entry in
-            entry.sources.allSatisfy { reference in
-                guard let source = sourcesByID[reference.itemID],
-                      (source.item.isNotebookNote ? "note" : "material")
-                        == reference.role.rawValue else { return false }
-                let revision = source.memoryText.map(
-                    CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
-                ) ?? CourseDocumentSearchIndex.sourceRevision(for: source.item)
-                return revision == reference.sourceRevision
-            }
-        }
         return StudyAgentCourseProfileContext(
             revision: profile.revision,
-            overview: retained
-                .filter { $0.kind == .overview }
-                .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? "",
-            entries: retained.map { entry in
+            entries: profile.entries.map { entry in
                 StudyAgentCourseProfileEntry(
                     id: entry.id.uuidString.lowercased(),
                     kind: entry.kind.rawValue,
-                    text: entry.text,
-                    sources: entry.sources.map { source in
-                        StudyAgentCourseProfileSource(
-                            itemID: source.itemID,
-                            role: source.role.rawValue,
-                            location: source.location,
-                            sourceRevision: source.sourceRevision
-                        )
-                    }
+                    text: entry.text
                 )
             }
         )
@@ -8168,10 +8136,7 @@ final class WorkspaceStore: ObservableObject {
     func refreshCourseProfileContext(
         target: AgentConversationTarget
     ) -> StudyAgentCourseProfileContext {
-        makeCourseProfileContext(
-            courseID: target.courseID,
-            access: makeAgentProjectAccessSnapshot(target: target)
-        )
+        makeCourseProfileContext(courseID: target.courseID)
     }
 
     private func lastStudyLocation(in courseID: UUID?) -> StudyLocation? {
@@ -8497,9 +8462,6 @@ final class WorkspaceStore: ObservableObject {
         let removedIDs = Set(update.removedEntryIDs.compactMap(UUID.init(uuidString:)))
         guard removedIDs.count == update.removedEntryIDs.count,
               removedIDs.isSubset(of: existingIDs) else { return nil }
-        let itemsByID = Dictionary(
-            uniqueKeysWithValues: courseItems(in: courseID).map { ($0.id, $0) }
-        )
 
         var targetIDs = Set<UUID>()
         var replacements: [(UUID?, CourseKnowledgeProfileEntry)] = []
@@ -8516,28 +8478,6 @@ final class WorkspaceStore: ObservableObject {
             }
             guard entryID.map(existingIDs.contains) ?? true,
                   entryID.map({ targetIDs.insert($0).inserted }) ?? true else { return nil }
-            var sources: [CourseKnowledgeProfileSource] = []
-            for source in proposal.sources {
-                guard let item = itemsByID[source.itemID],
-                (item.isNotebookNote ? "note" : "material") == source.role else { return nil }
-                let revision = item.isNotebookNote
-                    ? loadedAgentNoteText(for: item).map(
-                        CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
-                    )
-                    : CourseDocumentSearchIndex.sourceRevision(for: item)
-                guard revision == source.sourceRevision else { return nil }
-                sources.append(
-                    CourseKnowledgeProfileSource(
-                        itemID: source.itemID,
-                        role: item.isNotebookNote ? .note : .material,
-                        location: source.location,
-                        sourceRevision: source.sourceRevision
-                    )
-                )
-            }
-            let allowsEmptySources = update.checkpoint == "userRequested"
-                || proposal.text.hasPrefix("用户自述：")
-            guard !sources.isEmpty || allowsEmptySources else { return nil }
             let existing = entryID.flatMap { id in
                 profile.entries.first(where: { $0.id == id })
             }
@@ -8548,7 +8488,6 @@ final class WorkspaceStore: ObservableObject {
                         id: entryID ?? UUID(),
                         kind: proposal.kind,
                         text: proposal.text,
-                        sources: sources,
                         createdAt: existing?.createdAt ?? now,
                         updatedAt: now
                     )
@@ -8566,9 +8505,6 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         guard profile.entries != courseKnowledgeProfiles[profileIndex].entries else { return nil }
-        profile.overview = profile.entries
-            .filter { $0.kind == .overview }
-            .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
         profile.revision &+= 1
         profile.updatedAt = now
         courseKnowledgeProfiles[profileIndex] = profile
@@ -8761,7 +8697,7 @@ final class WorkspaceStore: ObservableObject {
             if hasClientID {
                 return .rejected("魏碑没有保存这次课程档案。更新只能沿用当前档案已有条目的 entryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
             }
-            return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头、checkpoint=userRequested。")
+            return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头，checkpoint 用 userRequested。")
         }
         let appliedProfiles = courseKnowledgeProfiles
         let persisted = await persistWorkspaceNow()
@@ -8827,10 +8763,6 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                 }
-                courseKnowledgeProfiles[currentIndex].overview =
-                    courseKnowledgeProfiles[currentIndex].entries
-                    .filter { $0.kind == .overview }
-                    .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
             }
             dirtyPortableCourseIDs.insert(courseID)
         }
@@ -9652,10 +9584,7 @@ final class WorkspaceStore: ObservableObject {
             )
         )
         let sentLearningContext = makeLearningContext(target: target)
-        let sentCourseProfile = makeCourseProfileContext(
-            courseID: target.courseID,
-            access: projectAccess
-        )
+        let sentCourseProfile = makeCourseProfileContext(courseID: target.courseID)
         let sentVisualAssets = await currentVisualAssetsForAgent(access: projectAccess)
         defer { Self.removeAgentVisualSnapshots(sentVisualAssets) }
         let sentLanguage = interfaceLanguage

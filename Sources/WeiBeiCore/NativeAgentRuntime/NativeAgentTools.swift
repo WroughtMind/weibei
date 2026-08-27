@@ -728,7 +728,7 @@ public enum NativeBuiltinTools {
     private static var courseProfileUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_course_profile_update",
-            description: "把课程认识或用户自述掌握状态写入课程知识档案。用户明确要求提交时调用；其余时机自行判断。entryID 只从当前档案已有条目的 id 抄写；新建省略，不要传空字符串，不要自己编。自述掌握用 kind=concept、text 以「用户自述：」开头、sources 可空，checkpoint 用 userRequested。不要把学习记忆的 origin userStatement 当成档案 kind。材料认识仍须带来源。contextRevision 必须原样回传本轮字符串。",
+            description: "把用户自述掌握状态写入课程知识档案，供后续出题和复习使用。用户明确要求提交时调用；其余时机自行判断。entryID 只从当前档案已有条目的 id 抄写；新建省略，不要传空字符串，不要自己编。kind=concept，text 以「用户自述：」开头写清对哪个概念掌握到什么程度，checkpoint 用 userRequested。不要把学习记忆的 origin userStatement 当成档案 kind。contextRevision 必须原样回传本轮字符串。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
@@ -755,25 +755,9 @@ public enum NativeBuiltinTools {
                                 ],
                                 "kind": [
                                     "type": "string",
-                                    "enum": ["overview", "section", "concept", "relation"],
+                                    "enum": ["concept"],
                                 ],
                                 "text": ["type": "string"],
-                                "sources": [
-                                    "type": "array",
-                                    "items": [
-                                        "type": "object",
-                                        "properties": [
-                                            "itemID": ["type": "string"],
-                                            "role": [
-                                                "type": "string",
-                                                "enum": ["material", "note"],
-                                            ],
-                                            "location": ["type": "string"],
-                                            "sourceRevision": ["type": "string"],
-                                        ],
-                                        "required": ["itemID", "role", "sourceRevision"],
-                                    ],
-                                ],
                             ],
                             "required": ["kind", "text"],
                         ],
@@ -1057,35 +1041,16 @@ public enum NativeBuiltinTools {
             }
             let kind = entry["kind"] as? String ?? ""
             if CourseKnowledgeProfileEntryKind(rawValue: kind) == nil {
-                problems.append("entries[\(index)].kind 必须是 overview/section/concept/relation，不要用 userStatement")
+                problems.append("entries[\(index)].kind 必须是 concept，不要用 userStatement")
             }
             if entry["text"] as? String == nil {
                 problems.append("entries[\(index)].text 必须是字符串")
             }
-            if let sources = entry["sources"] {
-                let list = sources as? [[String: Any]]
-                    ?? (sources as? [Any])?.compactMap { $0 as? [String: Any] }
-                if list == nil {
-                    problems.append("entries[\(index)].sources 必须是对象数组")
-                } else {
-                    for (sourceIndex, source) in (list ?? []).enumerated() {
-                        if source["itemID"] as? String == nil {
-                            problems.append("entries[\(index)].sources[\(sourceIndex)].itemID 必须是字符串")
-                        }
-                        if source["role"] as? String == nil {
-                            problems.append("entries[\(index)].sources[\(sourceIndex)].role 必须是 material 或 note")
-                        }
-                        if source["sourceRevision"] as? String == nil {
-                            problems.append("entries[\(index)].sources[\(sourceIndex)].sourceRevision 必须是字符串")
-                        }
-                    }
-                }
-            }
         }
         if problems.isEmpty {
-            return "课程知识档案写入无法解析。期望 entries 每条含 kind（overview/section/concept/relation）和 text；sources 每项含 itemID、role、sourceRevision。"
+            return "课程知识档案写入无法解析。期望 entries 每条含 kind=concept 和 text（以「用户自述：」开头）。"
         }
-        return "课程知识档案写入无法解析：\(problems.joined(separator: "；"))。自述掌握用 kind=concept、text 以「用户自述：」开头、sources 可空。"
+        return "课程知识档案写入无法解析：\(problems.joined(separator: "；"))。自述掌握用 kind=concept、text 以「用户自述：」开头。"
     }
 
     fileprivate static func requireMatchingRevision(_ raw: Any?, expected: String, message: String) throws {

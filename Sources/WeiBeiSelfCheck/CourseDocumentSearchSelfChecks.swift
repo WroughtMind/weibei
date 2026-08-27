@@ -229,19 +229,10 @@ func checkCourseDocumentSearchReadiness() throws {
     let profile = CourseKnowledgeProfile(
         courseID: courseID,
         revision: 2,
-        overview: "这门课讨论货币政策如何传导。",
         entries: [
             CourseKnowledgeProfileEntry(
                 kind: .concept,
-                text: "政策利率通过资金价格影响总需求。",
-                sources: [
-                    CourseKnowledgeProfileSource(
-                        itemID: "material-1",
-                        role: .material,
-                        location: "利率渠道",
-                        sourceRevision: "revision-1"
-                    ),
-                ],
+                text: "用户自述：已掌握单利，复利还不熟。",
                 createdAt: now,
                 updatedAt: now
             ),
@@ -287,15 +278,44 @@ func checkCourseDocumentSearchReadiness() throws {
         roundTripped.courseKnowledgeProfile == profile,
         "课程知识档案没有随课程状态完整往返"
     )
-    let sourceRemoved = profile.retainingAvailableSources(
-        materialItemIDs: [],
-        noteItemIDs: []
+    struct LegacyProfileShape: Codable {
+        var courseID: UUID
+        var revision: UInt64
+        var overview: String
+        var entries: [LegacyEntryShape]
+        var updatedAt: Date?
+    }
+    struct LegacyEntryShape: Codable {
+        var id: UUID
+        var kind: String
+        var text: String
+        var createdAt: Date
+        var updatedAt: Date
+    }
+    let legacyProfileJSON = try JSONEncoder().encode(
+        LegacyProfileShape(
+            courseID: courseID,
+            revision: 2,
+            overview: "这门课讨论货币政策如何传导。",
+            entries: [
+                LegacyEntryShape(
+                    id: UUID(),
+                    kind: "overview",
+                    text: "这门课讨论货币政策如何传导。",
+                    createdAt: now,
+                    updatedAt: now
+                ),
+            ],
+            updatedAt: now
+        )
+    )
+    let legacyDecoded = try JSONDecoder().decode(
+        CourseKnowledgeProfile.self,
+        from: legacyProfileJSON
     )
     try requireSearchCheck(
-        sourceRemoved.entries.isEmpty
-            && sourceRemoved.overview.isEmpty
-            && sourceRemoved.revision == profile.revision + 1,
-        "课程来源移除后仍保留了失效的知识档案条目"
+        legacyDecoded.entries.isEmpty && legacyDecoded.revision == 2,
+        "旧档案里的材料认识条目解不出新的 kind 时应兜底回空档案"
     )
     try checkCourseDocumentSearchConnectionReuse()
 }

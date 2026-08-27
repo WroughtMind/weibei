@@ -464,56 +464,31 @@ public struct StudyAgentLearningContext: Codable, Equatable, Sendable {
     public static let empty = StudyAgentLearningContext()
 }
 
-public struct StudyAgentCourseProfileSource: Codable, Equatable, Sendable {
-    public var itemID: String
-    public var role: String
-    public var location: String?
-    public var sourceRevision: String
-
-    public init(
-        itemID: String,
-        role: String,
-        location: String? = nil,
-        sourceRevision: String
-    ) {
-        self.itemID = itemID
-        self.role = role
-        self.location = location
-        self.sourceRevision = sourceRevision
-    }
-}
-
 public struct StudyAgentCourseProfileEntry: Codable, Equatable, Sendable {
     public var id: String
     public var kind: String
     public var text: String
-    public var sources: [StudyAgentCourseProfileSource]
 
     public init(
         id: String,
         kind: String,
-        text: String,
-        sources: [StudyAgentCourseProfileSource]
+        text: String
     ) {
         self.id = id
         self.kind = kind
         self.text = text
-        self.sources = sources
     }
 }
 
 public struct StudyAgentCourseProfileContext: Codable, Equatable, Sendable {
     public var revision: UInt64
-    public var overview: String
     public var entries: [StudyAgentCourseProfileEntry]
 
     public init(
         revision: UInt64 = 0,
-        overview: String = "",
         entries: [StudyAgentCourseProfileEntry] = []
     ) {
         self.revision = revision
-        self.overview = overview
         self.entries = entries
     }
 
@@ -694,18 +669,15 @@ public struct StudyAgentCourseProfileUpdateEntry: Codable, Equatable, Sendable {
     public var entryID: String?
     public var kind: CourseKnowledgeProfileEntryKind
     public var text: String
-    public var sources: [StudyAgentCourseProfileSource]
 
     public init(
         entryID: String? = nil,
         kind: CourseKnowledgeProfileEntryKind,
-        text: String,
-        sources: [StudyAgentCourseProfileSource]
+        text: String
     ) {
         self.entryID = entryID
         self.kind = kind
         self.text = text
-        self.sources = sources
     }
 }
 
@@ -728,10 +700,6 @@ public struct StudyAgentCourseProfileUpdate: Codable, Equatable, Sendable {
         self.checkpoint = checkpoint
         self.entries = entries
         self.removedEntryIDs = removedEntryIDs
-    }
-
-    public var allowsEntriesWithoutSources: Bool {
-        checkpoint == "userRequested" || entries.contains { $0.text.hasPrefix("用户自述：") }
     }
 }
 

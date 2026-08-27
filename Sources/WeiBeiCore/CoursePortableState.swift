@@ -134,41 +134,13 @@ public struct CoursePortableNoteDraft: Codable, Equatable, Sendable {
 }
 
 public enum CourseKnowledgeProfileEntryKind: String, Codable, Equatable, Sendable {
-    case overview
-    case section
     case concept
-    case relation
-}
-
-public enum CourseKnowledgeProfileSourceRole: String, Codable, Equatable, Sendable {
-    case material
-    case note
-}
-
-public struct CourseKnowledgeProfileSource: Codable, Equatable, Sendable {
-    public var itemID: String
-    public var role: CourseKnowledgeProfileSourceRole
-    public var location: String?
-    public var sourceRevision: String
-
-    public init(
-        itemID: String,
-        role: CourseKnowledgeProfileSourceRole,
-        location: String? = nil,
-        sourceRevision: String
-    ) {
-        self.itemID = itemID
-        self.role = role
-        self.location = location
-        self.sourceRevision = sourceRevision
-    }
 }
 
 public struct CourseKnowledgeProfileEntry: Codable, Equatable, Sendable {
     public var id: UUID
     public var kind: CourseKnowledgeProfileEntryKind
     public var text: String
-    public var sources: [CourseKnowledgeProfileSource]
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -176,14 +148,12 @@ public struct CourseKnowledgeProfileEntry: Codable, Equatable, Sendable {
         id: UUID = UUID(),
         kind: CourseKnowledgeProfileEntryKind,
         text: String,
-        sources: [CourseKnowledgeProfileSource],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
         self.id = id
         self.kind = kind
         self.text = text
-        self.sources = sources
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -192,43 +162,39 @@ public struct CourseKnowledgeProfileEntry: Codable, Equatable, Sendable {
 public struct CourseKnowledgeProfile: Codable, Equatable, Sendable {
     public var courseID: UUID
     public var revision: UInt64
-    public var overview: String
     public var entries: [CourseKnowledgeProfileEntry]
     public var updatedAt: Date?
 
     public init(
         courseID: UUID,
         revision: UInt64 = 0,
-        overview: String = "",
         entries: [CourseKnowledgeProfileEntry] = [],
         updatedAt: Date? = nil
     ) {
         self.courseID = courseID
         self.revision = revision
-        self.overview = overview
         self.entries = entries
         self.updatedAt = updatedAt
     }
 
-    public func retainingAvailableSources(
-        materialItemIDs: Set<String>,
-        noteItemIDs: Set<String>
-    ) -> CourseKnowledgeProfile {
-        var retained = self
-        retained.entries = entries.filter { entry in
-            entry.sources.allSatisfy { source in
-                source.role == .note
-                    ? noteItemIDs.contains(source.itemID)
-                    : materialItemIDs.contains(source.itemID)
-            }
-        }
-        guard retained.entries != entries else { return self }
-        retained.overview = retained.entries
-            .filter { $0.kind == .overview }
-            .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
-        retained.revision &+= 1
-        retained.updatedAt = retained.entries.map(\.updatedAt).max()
-        return retained
+    private enum CodingKeys: String, CodingKey {
+        case courseID
+        case revision
+        case entries
+        case updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        courseID = try container.decode(UUID.self, forKey: .courseID)
+        revision = try container.decode(UInt64.self, forKey: .revision)
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
+        // 档案只保留用户自述掌握状态。旧数据里的材料认识条目（overview/section/relation）
+        // 解不出新的 kind，整份档案按约定兜底回空档案，不做迁移。
+        entries = (try? container.decodeIfPresent(
+            [CourseKnowledgeProfileEntry].self,
+            forKey: .entries
+        )) ?? []
     }
 }
 
@@ -453,17 +419,6 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                   entryIDs.count == courseKnowledgeProfile.entries.count,
                   courseKnowledgeProfile.entries.allSatisfy({ entry in
                       !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          && (!entry.sources.isEmpty || entry.text.hasPrefix("用户自述："))
-                          && entry.sources.count <= 8
-                          && entry.sources.allSatisfy { source in
-                              itemIDs.contains(source.itemID)
-                                  && source.sourceRevision.count <= 500
-                                  && !source.sourceRevision.isEmpty
-                                  && (source.location?.count ?? 0) <= 500
-                                  && (source.role == .note
-                                      ? noteItemIDs.contains(source.itemID)
-                                      : materialItemIDs.contains(source.itemID))
-                          }
                   }) else {
                 throw CoursePortableStateError.invalidCourseKnowledgeProfile
             }

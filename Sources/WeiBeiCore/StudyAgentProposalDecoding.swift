@@ -145,38 +145,11 @@ public enum StudyAgentProposalDecoding {
                   let text = rawEntry["text"] as? String else {
                 return nil
             }
-            let rawSources = rawEntry["sources"] as? [[String: Any]]
-                ?? (rawEntry["sources"] as? [Any])?.compactMap { $0 as? [String: Any] }
-                ?? []
-            var sources: [StudyAgentCourseProfileSource] = []
-            for rawSource in rawSources {
-                guard let itemID = rawSource["itemID"] as? String,
-                      let role = rawSource["role"] as? String,
-                      let sourceRevision = rawSource["sourceRevision"] as? String else {
-                    return nil
-                }
-                let location: String?
-                if let rawLocation = rawSource["location"] {
-                    guard let value = rawLocation as? String else { return nil }
-                    location = value
-                } else {
-                    location = nil
-                }
-                sources.append(
-                    StudyAgentCourseProfileSource(
-                        itemID: itemID,
-                        role: role,
-                        location: location,
-                        sourceRevision: sourceRevision
-                    )
-                )
-            }
             entries.append(
                 StudyAgentCourseProfileUpdateEntry(
                     entryID: rawEntry["entryID"] as? String,
                     kind: kind,
-                    text: text,
-                    sources: sources
+                    text: text
                 )
             )
         }
