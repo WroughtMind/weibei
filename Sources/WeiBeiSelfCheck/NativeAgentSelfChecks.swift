@@ -20,6 +20,7 @@ func runNativeAgentSelfChecks() throws {
     try checkSkillCatalogAndLoad()
     try checkLoadSkillIdempotent()
     try checkCreateDocumentSandbox()
+    try checkCreateDocumentUserConfirmation()
     try checkDelegateCapabilities()
     try checkEvalSetLunaLow()
     try checkRetrievalPrompt()
@@ -523,6 +524,74 @@ private func checkCreateDocumentSandbox() throws {
     try nativeRequire(html.contains("Content-Security-Policy"), "viewer has CSP")
     try nativeRequire(html.contains("script-src 'none'"), "viewer denies script")
     try nativeRequire(FileManager.default.fileExists(atPath: created.fileURL.path), "source file exists")
+}
+
+private func checkCreateDocumentUserConfirmation() throws {
+    let revision = "12:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    let registry = NativeToolRegistry()
+    _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "帮我把这段整理成文稿",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        contextRevision: revision
+    )
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-doc-confirm-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let argumentsJSON = "{\"title\":\"复利笔记\",\"format\":\"markdown\",\"content\":\"# 复利\\n\\n利率是资金使用价格。\"}"
+
+    let deniedContext = NativeToolExecutionContext(
+        request: request,
+        mode: .tutor,
+        liveStores: NativeLiveStores(
+            documentsRoot: root,
+            confirmDocumentCreation: { _, _ in false }
+        )
+    )
+    let denied = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(name: "create_document", argumentsJSON: argumentsJSON, callID: "doc-deny"),
+            context: deniedContext,
+            scope: .global
+        )
+    }
+    try nativeRequire(
+        denied.details["cancelled"] as? Bool == true,
+        "denied creation reports cancelled in details"
+    )
+    try nativeRequire(denied.text.contains("没有写入任何文件"), "denied creation tells the Agent nothing was written")
+    var files = [URL]()
+    if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) {
+        files = (enumerator.allObjects as? [URL]) ?? []
+    }
+    try nativeRequire(files.isEmpty, "denied creation writes nothing to disk")
+
+    let approvedContext = NativeToolExecutionContext(
+        request: request,
+        mode: .tutor,
+        liveStores: NativeLiveStores(
+            documentsRoot: root,
+            confirmDocumentCreation: { title, summary in
+                title == "复利笔记"
+                    && summary.contains("利率是资金使用价格")
+            }
+        )
+    )
+    let approved = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(name: "create_document", argumentsJSON: argumentsJSON, callID: "doc-approve"),
+            context: approvedContext,
+            scope: .global
+        )
+    }
+    try nativeRequire(
+        approved.details["cancelled"] as? Bool == false,
+        "approved creation is not marked cancelled"
+    )
+    try nativeRequire(approved.text.contains("已写入文稿"), "approved creation reports the written document")
 }
 
 private func checkDelegateCapabilities() throws {

@@ -321,6 +321,19 @@ public enum NativeBuiltinTools {
                     throw NativeLLMFailure(code: "invalid_document", message: "format 必须是 html、markdown 或 svg")
                 }
                 let content = arguments["content"] as? String ?? ""
+                if let confirm = context.liveStores.confirmDocumentCreation {
+                    let approved = await confirm(title, Self.documentCreationSummary(content))
+                    guard approved else {
+                        return NativeToolExecutionResult(
+                            text: "用户没有确认创建文稿「\(title)」，已取消；没有写入任何文件。请询问用户要怎么调整，或换个时机再试。",
+                            details: [
+                                "kind": "weibei_document",
+                                "title": title,
+                                "cancelled": true,
+                            ]
+                        )
+                    }
+                }
                 let created = try NativeDocumentSandbox.write(
                     title: title,
                     format: format,
@@ -336,10 +349,28 @@ public enum NativeBuiltinTools {
                         "path": created.fileURL.path,
                         "viewer": created.viewerURL.path,
                         "byteCount": created.byteCount,
+                        "cancelled": false,
                     ]
                 )
             }
         )
+    }
+
+    fileprivate static func documentCreationSummary(_ content: String) -> String {
+        let flattened = content
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let text = flattened.replacingOccurrences(
+            of: "<[^>]+>",
+            with: "",
+            options: .regularExpression
+        )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return "(空白内容)" }
+        return String(text.prefix(200))
     }
 
     private static var delegate: NativeToolDefinition {

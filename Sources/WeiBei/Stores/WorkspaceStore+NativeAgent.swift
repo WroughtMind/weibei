@@ -223,7 +223,13 @@ extension WorkspaceStore {
                 )
             },
             documentsRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Documents", isDirectory: true),
-            skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL)
+            skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL),
+            confirmDocumentCreation: { title, summary in
+                await AgentDocumentConfirmationCenter.shared.requestConfirmation(
+                    title: title,
+                    summary: summary
+                )
+            }
         )
         let runtime = NativeStudyAgentRuntime(
             model: model,
