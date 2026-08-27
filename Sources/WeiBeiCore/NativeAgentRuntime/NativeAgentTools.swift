@@ -525,7 +525,7 @@ public enum NativeBuiltinTools {
     private static var workspaceSearch: NativeToolDefinition {
         hostTool(
             name: "weibei_search_workspace",
-            description: "在工作区检索当前课程材料与笔记，必要时再检索其他课程的笔记。默认只搜当前课程，不要跨库。只有用户明确要求查全部笔记或问题明显跨课时，才把 crossLibrary 设为 true。结果带来源课程、标题和摘录；没有命中就如实报告空结果，不要编。不含网页。",
+            description: "在工作区检索材料与笔记。默认只搜当前课程；只有用户明确要求查全部资料或问题明显跨课时，才把 crossLibrary 设为 true，跨库时其他课程的材料与笔记同样可搜，当前课程的命中排最前。结果带来源课程、标题和摘录；没有命中就如实报告空结果，不要编。不含网页。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [

@@ -6800,7 +6800,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func learningMemoryContextScopes(courseID: UUID?) -> [LearningMemoryScope] {
-        courseID.map { [.course($0)] } ?? []
+        // 记忆读入口对所有 Chat 一致：全局记忆每条 Chat 都能读到；
+        // 课程 Chat 额外叠加本课程记忆。写入口见 learningMemoryScope(courseID:)。
+        courseID.map { [.course($0), .global] } ?? [.global]
     }
 
     private func learningMemoryContextRevision(courseID: UUID?) -> UInt64 {
@@ -7956,7 +7958,15 @@ final class WorkspaceStore: ObservableObject {
         access: AgentProjectAccessSnapshot
     ) -> StudyAgentHostToolHandler {
         let preferredCourseID = target.courseID?.uuidString.lowercased()
+        // 相关性排序（不是权限门槛）：正在读的资料/文稿排最前，本课程资料
+        // 次之，其余已导入资料照样可搜，按标题稳定跟随。
+        let focusItemIDs = Set(
+            [selectedMaterialItem?.id, activeNoteItem?.id].compactMap { $0 }
+        )
         let sources = access.sources.sorted { left, right in
+            let leftFocus = focusItemIDs.contains(left.item.id)
+            let rightFocus = focusItemIDs.contains(right.item.id)
+            if leftFocus != rightFocus { return leftFocus }
             let leftPreferred = preferredCourseID.map(left.courseIDs.contains) ?? false
             let rightPreferred = preferredCourseID.map(right.courseIDs.contains) ?? false
             if leftPreferred != rightPreferred { return leftPreferred }
