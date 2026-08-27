@@ -1188,8 +1188,8 @@ struct AgentPaneView: View {
     /// above the newest message, revealing the jump-to-latest pill.
     @State private var showsJumpToLatest = false
     /// Fold long history on open: only the newest page mounts KaTeX WKWebViews.
-    /// The limit only grows in-session — never unmount a mounted row, or scrolling
-    /// back re-enters the LazyVStack remount storm this pane was cured of.
+    /// The limit only grows in-session. Offscreen unload (flag off by default)
+    /// may swap far rows for height placeholders — never switch this to LazyVStack.
     @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
     @State private var isRevealingEarlierAgentHistory = false
     @State private var isAgentHistoryRevealButtonHovered = false
@@ -1197,6 +1197,9 @@ struct AgentPaneView: View {
     /// reference type on purpose: per-event dictionary writes must not publish
     /// SwiftUI state; only the derived activeAgentRailID write renders.
     @State private var turnReadingPositions = AgentTurnReadingPositionModel()
+    /// Far-row IDs whose WKWebViews are height placeholders. Empty unless the
+    /// unload flag is on; published only when the set changes, not per scroll pixel.
+    @State private var offscreenPlaceholderIDs: Set<UUID> = []
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
@@ -1283,8 +1286,8 @@ struct AgentPaneView: View {
                             // Eager VStack (not LazyVStack): each finalized turn may host
                             // Milkdown/KaTeX WKWebView. Lazy recycle remounted PlatformViews
                             // while dragging the chat scroller and froze the UI (build 664).
-                            // Long histories fold behind a reveal button instead — unrendered
-                            // rows cost nothing; keep full Markdown rendering for visible ones.
+                            // Long histories fold behind a reveal button. Offscreen unload
+                            // (flag off by default) only swaps far rows for height placeholders.
                             VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
                                 // 显隐条件在 AgentUnconfiguredHint 自身判断——它观察 AgentAccountService,
                                 // 配置完成后能即时消失;这里只看消息是否为空。
@@ -1296,11 +1299,20 @@ struct AgentPaneView: View {
                                         .transition(WeiBeiTransition.message)
                                 }
                                 ForEach(visibleAgentMessages) { message in
-                                    agentMessageRow(
-                                        message: message,
-                                        contentWidth: contentWidth,
-                                        wide: wide
-                                    )
+                                    AgentMessageViewportGatedRow(
+                                        isPlaceholder: offscreenPlaceholderIDs.contains(message.id),
+                                        placeholderHeight: AgentMessageViewportWindow.cachedHeight(
+                                            message: message,
+                                            layoutWidth: markdownContentWidth,
+                                            wideTypography: comfy
+                                        )
+                                    ) {
+                                        agentMessageRow(
+                                            message: message,
+                                            contentWidth: contentWidth,
+                                            wide: wide
+                                        )
+                                    }
                                     .background {
                                         if railTurnStartMessageIDs.contains(message.id) {
                                             AgentTurnReadingPositionProbe(messageID: message.id) {
@@ -1760,6 +1772,10 @@ struct AgentPaneView: View {
     }
 
     private func handleScrollMetrics(_ metrics: AgentScrollMetrics, proxy: ScrollViewProxy) {
+        refreshOffscreenPlaceholders(
+            viewportMinY: metrics.distanceFromTop,
+            viewportHeight: metrics.visibleHeight
+        )
         // Hysteresis: reveal well above the bottom, hide near it — a boolean
         // flip at 8pt deadband keeps SwiftUI updates off the scroll hot path.
         let shouldShow = metrics.distanceFromBottom > 160
@@ -1809,6 +1825,22 @@ struct AgentPaneView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(store.ui("回到最新消息", "Jump to latest"))
+    }
+
+    private func refreshOffscreenPlaceholders(viewportMinY: CGFloat, viewportHeight: CGFloat) {
+        let next = AgentMessageViewportWindow.placeholderIDs(
+            enabled: AgentChatOffscreenUnloadFlag.isEnabled,
+            messages: Array(visibleAgentMessages),
+            layoutWidth: agentPaneWidth,
+            wideTypography: usesWideChatLayout
+                || agentPaneWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth,
+            viewportMinY: viewportMinY,
+            viewportHeight: viewportHeight,
+            spacing: usesWideChatLayout ? 22 : 12
+        )
+        if next != offscreenPlaceholderIDs {
+            offscreenPlaceholderIDs = next
+        }
     }
 
     private func revealAgentHistory(throughMessageID messageID: UUID) {
@@ -4574,6 +4606,7 @@ private extension EnvironmentValues {
 private struct AgentScrollMetrics: Equatable {
     let distanceFromTop: CGFloat
     let distanceFromBottom: CGFloat
+    let visibleHeight: CGFloat
     let isUserScrolling: Bool
     let isScrollingTowardTop: Bool
 }
@@ -4760,12 +4793,14 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
             let metrics = AgentScrollMetrics(
                 distanceFromTop: distanceFromTop,
                 distanceFromBottom: distanceFromBottom,
+                visibleHeight: visible.height,
                 isUserScrolling: isUserScrolling,
                 isScrollingTowardTop: isScrollingTowardTop
             )
             if !force, let lastReported,
                abs(metrics.distanceFromTop - lastReported.distanceFromTop) <= 8,
                abs(metrics.distanceFromBottom - lastReported.distanceFromBottom) <= 8,
+               abs(metrics.visibleHeight - lastReported.visibleHeight) <= 8,
                metrics.isUserScrolling == lastReported.isUserScrolling,
                metrics.isScrollingTowardTop == lastReported.isScrollingTowardTop {
                 return
