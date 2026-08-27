@@ -98,13 +98,6 @@ enum CourseProjectRebindError: LocalizedError {
     }
 }
 
-private struct AgentReplySourceFileSnapshot: Sendable {
-    let source: AgentReplySource
-    let itemID: String
-    let url: URL
-    let expectedIdentity: ImportedFileIdentity?
-}
-
 enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
     case hub
     case relations
@@ -727,7 +720,6 @@ final class WorkspaceStore: ObservableObject {
     var oversizedPortableCourseIDs = Set<UUID>()
     var persistedWorkspaceCourseIDs = Set<UUID>()
     var needsPortableCourseStateBootstrap = false
-    @Published private var validatedAgentReplySourceIDs = Set<UUID>()
     private var lastAgentReplyContextRevision: UInt64?
     private var latestAgentLearningUpdateQuestion: String?
     private var isRestoringNavigation = false
@@ -5028,67 +5020,6 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    func canOpenAgentReplySource(_ source: AgentReplySource) -> Bool {
-        guard let item = agentReplySourceItem(source) else { return false }
-        return item.isSample
-            || item.isNotebookNote
-            || validatedAgentReplySourceIDs.contains(source.id)
-    }
-
-    func validateAgentReplySources(_ sources: [AgentReplySource]) async {
-        guard !sources.isEmpty else { return }
-        var immediatelyAvailable = Set<UUID>()
-        var snapshots = [AgentReplySourceFileSnapshot]()
-
-        for source in sources {
-            guard let item = agentReplySourceItem(source) else { continue }
-            if item.isSample || item.isNotebookNote {
-                immediatelyAvailable.insert(source.id)
-            } else if let url = item.url {
-                snapshots.append(
-                    AgentReplySourceFileSnapshot(
-                        source: source,
-                        itemID: item.id,
-                        url: url.standardizedFileURL,
-                        expectedIdentity: item.importedFileIdentity
-                    )
-                )
-            }
-        }
-
-        let validationTask = Task.detached(priority: .utility) {
-            Set(snapshots.compactMap { snapshot -> UUID? in
-                guard !Task.isCancelled,
-                      FileManager.default.isReadableFile(atPath: snapshot.url.path),
-                      let identity = Self.resolveImportedFileIdentity(at: snapshot.url),
-                      snapshot.expectedIdentity.map({ $0 == identity }) ?? true else {
-                    return nil
-                }
-                return snapshot.source.id
-            })
-        }
-        let availableIDs = await withTaskCancellationHandler {
-            await validationTask.value
-        } onCancel: {
-            validationTask.cancel()
-        }
-        guard !Task.isCancelled else { return }
-
-        var nextAvailableIDs = immediatelyAvailable
-        for snapshot in snapshots where availableIDs.contains(snapshot.source.id) {
-            guard let current = agentReplySourceItem(snapshot.source),
-                  current.id == snapshot.itemID,
-                  current.url?.standardizedFileURL == snapshot.url,
-                  current.importedFileIdentity == snapshot.expectedIdentity else {
-                continue
-            }
-            nextAvailableIDs.insert(snapshot.source.id)
-        }
-        if validatedAgentReplySourceIDs != nextAvailableIDs {
-            validatedAgentReplySourceIDs = nextAvailableIDs
-        }
-    }
-
     @discardableResult
     func openAgentReplySource(_ source: AgentReplySource) -> Bool {
         guard let item = agentReplySourceItem(source) else { return false }
@@ -5114,7 +5045,9 @@ final class WorkspaceStore: ObservableObject {
             opened = openCourseMaterial(item.id)
         }
         guard opened else {
-            validatedAgentReplySourceIDs.remove(source.id)
+            showTransientNoteStatus(
+                ui("资料不存在或无法打开。", "Source not found or unavailable.")
+            )
             return false
         }
 

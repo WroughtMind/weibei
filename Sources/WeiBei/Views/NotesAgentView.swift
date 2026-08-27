@@ -1222,10 +1222,6 @@ struct AgentPaneView: View {
         AgentChatLayoutMetrics.isWide(layout: store.layout)
     }
 
-    private var replySources: [AgentReplySource] {
-        store.messages.flatMap(\.sources)
-    }
-
     /// Semantic renderer width; the GeometryReader proposal owns visible layout.
     /// Hidden resident hosts retain their last readable width for the next open.
     private var agentPaneWidth: CGFloat {
@@ -1509,9 +1505,6 @@ struct AgentPaneView: View {
             if usesWideChatLayout, measuredPaneWidth < 700 {
                 measuredPaneWidth = max(measuredPaneWidth, 1100)
             }
-        }
-        .task(id: replySources) {
-            await store.validateAgentReplySources(replySources)
         }
         .alert(
             store.ui("重命名会话", "Rename Chat"),
@@ -3389,9 +3382,8 @@ private struct AgentBubble: View {
     private var regularMessageContent: some View {
         let answerText = liveStreamingText ?? store.agentDisplayText(for: message)
         let citationParse = AgentCitationParser.parse(answerText)
-        let availableSources = message.sources.filter {
-            store.canOpenAgentReplySource($0)
-        }
+        // 来源标签只承载资料编号+定位信息;点击时走正常打开逻辑,打不开有提示,无需预验证。
+        let availableSources = message.sources
         let legacyCitations = citationParse.citations.filter { citation in
             switch citation.kind {
             case .material, .note, .selection:
