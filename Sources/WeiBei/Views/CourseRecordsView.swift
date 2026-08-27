@@ -74,10 +74,16 @@ struct CourseRecordsView: View {
             chatsContent
         }
         .background(WeiBeiTheme.paper)
-        .onAppear(perform: normalizeSelectedSession)
+        .onAppear {
+            loadVisibleSessionMessages()
+            normalizeSelectedSession()
+        }
         .onChange(of: store.courseWorkspaceCourseID) { _, _ in
             selectedSessionID = nil
-            normalizeSelectedSession()
+            loadVisibleSessionMessages()
+        }
+        .onChange(of: search) { _, _ in
+            loadVisibleSessionMessages()
         }
         .onChange(of: courseSessions.map(\.id)) { _, _ in
             normalizeSelectedSession()
@@ -158,8 +164,8 @@ struct CourseRecordsView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let preview = summary.isEmpty ? lastMessage : summary
         let metadata = store.ui(
-            "\(session.messages.count) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
-            "\(session.messages.count) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
+            "\(session.displayedMessageCount) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
+            "\(session.displayedMessageCount) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
         )
         guard !preview.isEmpty else { return metadata }
         return "\(preview.replacingOccurrences(of: "\n", with: " ")) · \(metadata)"
@@ -170,6 +176,11 @@ struct CourseRecordsView: View {
         if selectedSessionID.map({ sessionIDs.contains($0) }) != true {
             selectedSessionID = courseSessions.first?.id
         }
+    }
+
+    private func loadVisibleSessionMessages() {
+        guard let courseID = store.courseWorkspaceCourseID else { return }
+        store.ensureStudySessionMessagesLoaded(touchingCourse: courseID)
     }
 }
 

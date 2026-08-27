@@ -46,6 +46,7 @@ extension WorkspaceStore {
                     : nil
             )
         }
+        ensureStudySessionMessagesLoaded(touchingCourse: courseID)
         let sessions = sessionsTouchingCourse(courseID)
         let search = await runCourseSearchKernel(
             itemInputs: itemInputs,
@@ -267,7 +268,7 @@ extension WorkspaceStore {
                         sessionID: session.id,
                         title: session.title,
                         detail: summary.isEmpty
-                            ? String(format: chatDetail, session.messages.count)
+                            ? String(format: chatDetail, session.displayedMessageCount)
                             : String(summary.prefix(150)),
                         matchedText: snippet(matchingMessage)
                     )

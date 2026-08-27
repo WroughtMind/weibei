@@ -93,6 +93,12 @@ extension WorkspaceStore {
         }
     }
 
+    func ensureStudySessionMessagesLoaded(touchingCourse courseID: UUID) {
+        for session in sessionsTouchingCourse(courseID) {
+            ensureStudySessionMessagesLoaded(session.id)
+        }
+    }
+
     func noteSuccessfulSessionMessagePersist(
         writes: [StudySessionMessageWrite],
         deletions: [URL]

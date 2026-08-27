@@ -15,9 +15,9 @@ final class AgentMessageViewportWindowTests: XCTestCase {
         super.tearDown()
     }
 
-    func testOffscreenUnloadFlagDefaultsOff() {
+    func testOffscreenUnloadFlagDefaultsOn() {
         AgentChatOffscreenUnloadFlag.resetForTesting()
-        XCTAssertFalse(AgentChatOffscreenUnloadFlag.isEnabled)
+        XCTAssertTrue(AgentChatOffscreenUnloadFlag.isEnabled)
         AgentChatOffscreenUnloadFlag.setEnabledForTesting(true)
         XCTAssertTrue(AgentChatOffscreenUnloadFlag.isEnabled)
         AgentChatOffscreenUnloadFlag.setEnabledForTesting(false)

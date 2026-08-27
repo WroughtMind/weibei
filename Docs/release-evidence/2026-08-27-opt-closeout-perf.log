@@ -1,0 +1,13 @@
+[PERF-weibei-2] scenario=opt-closeout sample=caa746b1-f93f-4ea4-a975-3d3cdb469204 name=workspace.save_snapshot ms=0.896 main=1 outcome=completed generation=2
+[PERF-weibei-2] scenario=opt-closeout sample=f29ad7ec-53db-47fb-b8ce-952fceaab336 name=workspace.save_encode ms=0.422 main=0 outcome=completed generation=2 offMain=1
+[PERF-weibei-2] scenario=opt-closeout sample=85c63b57-5941-4e94-a179-dce0ed6ce04f name=workspace.save_disk_commit_and_verify ms=0.905 main=0 outcome=completed generation=2 offMain=1
+[PERF-weibei-2] scenario=opt-closeout sample=969f6ce9-2379-4d82-b381-9084ba7c6940 name=workspace.save_transaction_to_ui_publish ms=2.905 main=1 outcome=completed generation=2
+[PERF-weibei-2] scenario=opt-closeout sample=b1758fea-b4da-4b16-a427-4f708bf19e62 name=workspace.save_snapshot ms=0.063 main=1 outcome=completed generation=3
+[PERF-weibei-2] scenario=opt-closeout sample=387e0695-8238-4a1b-b91c-03ae44cdaa78 name=workspace.save_encode ms=0.147 main=0 outcome=completed generation=3 offMain=1
+[PERF-weibei-2] scenario=opt-closeout sample=b2e50d9b-a516-4eae-b568-c2102080bb28 name=workspace.save_disk_commit_and_verify ms=0.434 main=0 outcome=completed generation=3 offMain=1
+[PERF-weibei-2] scenario=opt-closeout sample=fa54fd2f-8b33-4159-b49e-a7f3c94d8019 name=workspace.save_transaction_to_ui_publish ms=0.889 main=1 outcome=completed generation=3
+[PERF-weibei-2] scenario=opt-closeout sample=130d3b84-6a00-4624-bbdd-692fceefbccc name=app.restore_to_next_main_queue_proxy ms=834.396 main=1 outcome=completed endpoint=next_main_queue_proxy
+[PERF-weibei-2] scenario=opt-closeout sample=8020588a-60f4-4df3-8d62-fdab90fdbffa name=workspace.save_snapshot ms=0.084 main=1 outcome=completed generation=4
+[PERF-weibei-2] scenario=opt-closeout sample=1217d9ba-dab3-4ddd-8152-40d838c98196 name=workspace.save_encode ms=0.103 main=0 outcome=completed generation=4 offMain=1
+[PERF-weibei-2] scenario=opt-closeout sample=313055ce-42e9-4c84-a77a-7e0f2e008ead name=workspace.save_disk_commit_and_verify ms=0.718 main=0 outcome=completed generation=4 offMain=1
+[PERF-weibei-2] scenario=opt-closeout sample=941514e5-bc5b-4023-9071-1ea7645e52ed name=workspace.save_transaction_to_ui_publish ms=1.426 main=1 outcome=completed generation=4

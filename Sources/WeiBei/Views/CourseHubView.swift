@@ -131,8 +131,8 @@ struct CourseHubView: View {
                 kind: .chat(session),
                 title: session.title,
                 detail: store.ui(
-                    "\(session.messages.count) 条消息 · \(courseRelativeDate(session.updatedAt, language: store.interfaceLanguage))",
-                    "\(session.messages.count) messages · \(courseRelativeDate(session.updatedAt, language: store.interfaceLanguage))"
+                    "\(session.displayedMessageCount) 条消息 · \(courseRelativeDate(session.updatedAt, language: store.interfaceLanguage))",
+                    "\(session.displayedMessageCount) messages · \(courseRelativeDate(session.updatedAt, language: store.interfaceLanguage))"
                 ),
                 date: session.updatedAt
             )
@@ -377,8 +377,8 @@ struct CourseHubView: View {
                     icon: "bubble.left.and.text.bubble.right",
                     title: conversation.title,
                     detail: store.ui(
-                        "\(conversation.messages.count) 条消息 · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))",
-                        "\(conversation.messages.count) messages · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))"
+                        "\(conversation.displayedMessageCount) 条消息 · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))",
+                        "\(conversation.displayedMessageCount) messages · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))"
                     ),
                     actionTitle: store.ui("继续对话", "Continue Chat")
                 ) {

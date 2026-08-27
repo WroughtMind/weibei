@@ -266,6 +266,53 @@ final class SessionMessageExternalizationTests: XCTestCase {
         )
     }
 
+    /// 重开后未点开的会话仍显示原来的条数；载入后能按正文搜到。
+    func testReopenedInactiveSessionKeepsDisplayedCountAndSearchableBody() throws {
+        let root = try makeTempWorkspace()
+        let sessionA = makeSession(title: "当前", texts: ["正在看"])
+        let sessionB = makeSession(
+            title: "旁路课对话",
+            texts: ["魏碑是北朝刻石", "第二句"]
+        )
+        try writeLegacyWorkspace(
+            at: root,
+            sessions: [sessionA, sessionB],
+            activeID: sessionA.id
+        )
+        let first = WorkspaceStore(
+            workspaceDirectory: root,
+            startsCourseFileMaintenance: false
+        )
+        XCTAssertTrue(first.flushPendingWorkspaceSave())
+
+        let reopened = WorkspaceStore(
+            workspaceDirectory: root,
+            startsCourseFileMaintenance: false
+        )
+        let inactive = try XCTUnwrap(
+            reopened.studySessions.first { $0.id == sessionB.id }
+        )
+        XCTAssertTrue(inactive.messages.isEmpty)
+        XCTAssertEqual(inactive.displayedMessageCount, sessionB.messages.count)
+        XCTAssertFalse(
+            inactive.messages.contains {
+                $0.text.localizedCaseInsensitiveContains("北朝刻石")
+            }
+        )
+
+        reopened.ensureStudySessionMessagesLoaded(inactive.id)
+        let loaded = try XCTUnwrap(
+            reopened.studySessions.first { $0.id == sessionB.id }
+        )
+        XCTAssertEqual(loaded.displayedMessageCount, sessionB.messages.count)
+        XCTAssertEqual(loaded.messages.map(\.text), sessionB.messages.map(\.text))
+        XCTAssertTrue(
+            loaded.messages.contains {
+                $0.text.localizedCaseInsensitiveContains("北朝刻石")
+            }
+        )
+    }
+
     private func makeTempWorkspace() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(

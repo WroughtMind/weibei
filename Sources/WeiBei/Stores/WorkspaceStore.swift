@@ -1242,7 +1242,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let activeChatID: UUID? = activeStudySession.flatMap { session in
             guard session.relatedCourseIDs.contains(courseID),
-                  !session.messages.isEmpty else {
+                  session.hasChatHistory else {
                 return nil
             }
             return session.id
@@ -1815,7 +1815,7 @@ final class WorkspaceStore: ObservableObject {
         restoreAgentReplyState(from: session)
         lastAgentReplyContextRevision = nil
         invalidateAgentContext()
-        for courseID in session.relatedCourseIDs where !session.messages.isEmpty {
+        for courseID in session.relatedCourseIDs where session.hasChatHistory {
             _ = captureCourseResumePoint(courseID: courseID, chatID: id)
         }
         save()
@@ -8105,7 +8105,7 @@ final class WorkspaceStore: ObservableObject {
                 focusItemIDs: session.focusItemIDs.filter {
                     itemID($0, belongsTo: session)
                 },
-                turnCount: session.messages.count
+                turnCount: session.displayedMessageCount
             )
         }
         let memories = learningMemoryContextScopes(courseID: target.courseID)
