@@ -89,12 +89,10 @@ struct ContentView: View {
                     .zIndex(100)
                 }
 
-                // Single top-level status surface: important errors first, then
-                // persistent save failures, otherwise the transient note status.
-                // Sits above the course space so it stays visible wherever the
-                // user is; the old notes-pane-local copy is gone.
+                // Single top-level status surface: important errors first,
+                // otherwise editor / selection / transient note status.
+                // Workspace save failures live on the title-bar persist dot.
                 if store.importantOperationError != nil
-                    || store.workspaceSaveError != nil
                     || store.noteEditorCommandFailureMessage != nil
                     || store.noteSelectionStatusMessage != nil
                     || store.transientNoteStatus != nil {
@@ -115,7 +113,7 @@ struct ContentView: View {
                 }
             }
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
-            .animation(WeiBeiMotion.panel, value: store.workspaceSaveError)
+            .animation(WeiBeiMotion.panel, value: store.lastPersistState)
             .animation(WeiBeiMotion.panel, value: store.noteEditorCommandFailureMessage)
             .animation(WeiBeiMotion.panel, value: store.noteSelectionStatusMessage)
             .animation(WeiBeiMotion.panel, value: store.transientNoteStatus)
@@ -395,27 +393,21 @@ private struct WorkspaceStatusBanner: View {
         store.importantOperationError != nil
     }
 
-    // 持续保存失败（连续 3 次置位）与角落标记同源，这里让它在全 App 可见。
-    private var isSaveFailure: Bool {
-        !isImportant && store.workspaceSaveError != nil
-    }
-
     private var isNoteSelectionFailure: Bool {
-        !isImportant && !isSaveFailure && !isEditorCommandFailure
+        !isImportant && !isEditorCommandFailure
             && store.canRetryPendingNoteSelection
     }
 
     private var isEditorCommandFailure: Bool {
-        !isImportant && !isSaveFailure && store.noteEditorCommandFailureMessage != nil
+        !isImportant && store.noteEditorCommandFailureMessage != nil
     }
 
     private var isAlert: Bool {
-        isImportant || isSaveFailure || isEditorCommandFailure || isNoteSelectionFailure
+        isImportant || isEditorCommandFailure || isNoteSelectionFailure
     }
 
     private var message: String {
         store.importantOperationError
-            ?? store.workspaceSaveError
             ?? store.noteEditorCommandFailureMessage
             ?? store.noteSelectionStatusMessage
             ?? store.transientNoteStatus
@@ -433,18 +425,7 @@ private struct WorkspaceStatusBanner: View {
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-            if isSaveFailure {
-                Button {
-                    _ = store.retryWorkspaceSave()
-                } label: {
-                    Text(store.ui("重试", "Retry"))
-                        .weiBeiText(12, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(store.ui("重试保存", "Retry save")))
-            } else if isEditorCommandFailure && store.canRetryRejectedNoteEditorCommand {
+            if isEditorCommandFailure && store.canRetryRejectedNoteEditorCommand {
                 Button {
                     store.retryRejectedNoteEditorCommand()
                 } label: {
@@ -622,6 +603,8 @@ private struct UnifiedTopBarView: View {
                 store.appearancePreference = store.appearanceMode.isDark ? .light : .dark
             }
             .animation(WeiBeiMotion.micro, value: store.appearanceMode.isDark)
+
+            WorkspacePersistStatusDot()
 
             // Full Settings window (agent keys, appearance, data) — not the old mini menu.
             topIconButton("gearshape", help: store.ui("打开设置", "Open Settings")) {

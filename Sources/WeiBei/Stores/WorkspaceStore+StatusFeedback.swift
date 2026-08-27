@@ -69,4 +69,15 @@ extension WorkspaceStore {
         importantOperationNotice = nil
         importantOperationError = nil
     }
+
+    /// 工作区快照失败为 failed；笔记 debounce 未落盘为 pending；其余为 saved。
+    var lastPersistState: WorkspacePersistState {
+        if workspaceSaveFailure != nil {
+            return .failed
+        }
+        if !pendingNotePersistenceByItemID.isEmpty {
+            return .pending
+        }
+        return .saved
+    }
 }
