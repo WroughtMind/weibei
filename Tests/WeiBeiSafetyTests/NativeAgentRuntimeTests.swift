@@ -146,7 +146,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
             NativeToolDefinition(
                 name: "test_tool",
                 description: "test",
-                permission: .read,
                 schema: NativeJSONSchema(["type": "object"]),
                 execute: { _, _ in
                     return NativeToolExecutionResult(text: "ok")
@@ -187,7 +186,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
             NativeToolDefinition(
                 name: "failing_tool",
                 description: "test",
-                permission: .read,
                 schema: NativeJSONSchema(["type": "object"]),
                 execute: { _, _ in
                     throw NativeLLMFailure(code: "tool_failed", message: "主动失败")

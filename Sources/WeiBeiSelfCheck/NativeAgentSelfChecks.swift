@@ -191,7 +191,6 @@ private func checkResponsesWebSearchPayload() throws {
         NativeToolDefinition(
             name: "weibei_course_map",
             description: "map",
-            permission: .read,
             schema: NativeJSONSchema(["type": "object"]),
             execute: { _, _ in NativeToolExecutionResult(text: "") }
         ),
