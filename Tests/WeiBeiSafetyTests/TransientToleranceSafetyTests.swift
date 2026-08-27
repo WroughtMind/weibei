@@ -200,6 +200,167 @@ final class TransientToleranceSafetyTests: XCTestCase {
             "条内错误状态必须保留，可见性不回退"
         )
     }
+
+    func testWatcherRegistersExternallyAddedCourseFile() throws {
+        let base = makeTempRoot("weibei-watch-add")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(base: base, library: library)
+        defer { store.stopCourseFileMaintenance() }
+        let courseID = try store.createCourseInLibrary(title: "监视新增课")
+        let root = try XCTUnwrap(store.courseRootURL(for: courseID))
+        store.startCourseFileMaintenance()
+        try waitUntil {
+            store.courseFileWatchDirectoryCountForSelfCheck() > 0
+                && !store.courseReconciliationInFlight
+        }
+
+        let materials = root.appendingPathComponent(
+            CourseLibraryLayout.courseMaterialsDirectoryName,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: materials,
+            withIntermediateDirectories: true
+        )
+        let added = materials.appendingPathComponent("外部新增.txt")
+        try "Finder 丢进来的讲义".write(to: added, atomically: true, encoding: .utf8)
+
+        try waitUntil {
+            store.importedItems.contains { $0.urlPath == added.path }
+        }
+        XCTAssertTrue(
+            store.importedItems.contains { $0.urlPath == added.path },
+            "外部新增文件必须被监视对账登记"
+        )
+    }
+
+    func testWatcherAdoptsExternalCourseFileEdit() throws {
+        let base = makeTempRoot("weibei-watch-edit")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(base: base, library: library)
+        defer { store.stopCourseFileMaintenance() }
+        let courseID = try store.createCourseInLibrary(title: "监视改动课")
+        let source = base.appendingPathComponent("讲义.txt")
+        try "原始讲义".write(to: source, atomically: true, encoding: .utf8)
+        let imported = try store.importFileIntoCourseForSelfCheck(
+            source,
+            courseID: courseID,
+            role: .material
+        )
+        let item = imported.item
+        XCTAssertFalse(item.isNotebookNote, "前提：必须走资料路径")
+        let originalDigest = try XCTUnwrap(item.contentDigest)
+        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
+        store.startCourseFileMaintenance()
+        try waitUntil {
+            store.courseFileWatchDirectoryCountForSelfCheck() > 0
+                && !store.courseReconciliationInFlight
+        }
+
+        try "外部改过的讲义，监视应采用".write(
+            to: backingURL,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try waitUntil {
+            store.importedItems.first { $0.id == item.id }?.contentDigest
+                != originalDigest
+        }
+        let refreshed = try XCTUnwrap(store.importedItems.first { $0.id == item.id })
+        let adopted = try CourseProjectFileWorker.snapshotFile(at: backingURL)
+        XCTAssertEqual(refreshed.contentDigest, adopted.sha256)
+        XCTAssertNotNil(refreshed.urlPath)
+    }
+
+    func testWatcherKeepsICloudPlaceholderFromDeletion() throws {
+        let base = makeTempRoot("weibei-watch-icloud")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(base: base, library: library)
+        defer { store.stopCourseFileMaintenance() }
+        let courseID = try store.createCourseInLibrary(title: "监视占位课")
+        let realSource = base.appendingPathComponent("讲义.md")
+        try "讲义正文".write(to: realSource, atomically: true, encoding: .utf8)
+        let imported = try store.importFileIntoCourseForSelfCheck(
+            realSource,
+            courseID: courseID,
+            role: .material
+        )
+        let item = imported.item
+        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
+        store.startCourseFileMaintenance()
+        try waitUntil {
+            store.courseFileWatchDirectoryCountForSelfCheck() > 0
+                && !store.courseReconciliationInFlight
+        }
+
+        try FileManager.default.removeItem(at: backingURL)
+        try "占位".write(
+            to: backingURL.deletingLastPathComponent()
+                .appendingPathComponent("." + backingURL.lastPathComponent + ".icloud"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try waitUntil {
+            store.importedItems.contains(where: { $0.id == item.id })
+                && store.fileMissingSinceByItemID[item.id] == nil
+        }
+        XCTAssertNil(store.fileMissingSinceByItemID[item.id])
+        XCTAssertNotNil(store.importedItems.first { $0.id == item.id })
+    }
+
+    func testWatcherMarksMissingCourseFileAsGrayWithoutWaitingFallback() throws {
+        let base = makeTempRoot("weibei-watch-delete")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(base: base, library: library)
+        defer { store.stopCourseFileMaintenance() }
+        let courseID = try store.createCourseInLibrary(title: "监视删除课")
+        let source = base.appendingPathComponent("讲义.txt")
+        try "将被删的讲义".write(to: source, atomically: true, encoding: .utf8)
+        let imported = try store.importFileIntoCourseForSelfCheck(
+            source,
+            courseID: courseID,
+            role: .material
+        )
+        let item = imported.item
+        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
+        store.startCourseFileMaintenance()
+        try waitUntil {
+            store.courseFileWatchDirectoryCountForSelfCheck() > 0
+                && !store.courseReconciliationInFlight
+        }
+
+        try FileManager.default.removeItem(at: backingURL)
+
+        try waitUntil {
+            store.fileMissingSinceByItemID[item.id] != nil
+        }
+        XCTAssertNotNil(store.importedItems.first { $0.id == item.id })
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        _ condition: () -> Bool
+    ) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.02)
+            )
+        }
+        XCTFail("监视对账未在时限内完成", file: file, line: line)
+        struct Timeout: Error {}
+        throw Timeout()
+    }
 }
 
 
