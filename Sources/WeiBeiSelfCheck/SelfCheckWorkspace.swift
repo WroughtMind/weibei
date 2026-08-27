@@ -8,6 +8,12 @@ func checkWorkspaceSafetyScenes() throws {
     let targetCourseID = UUID()
     let otherCourseID = UUID()
     let sessionID = UUID()
+    let nextStepMemory = LearningMemoryEntry(
+        id: UUID(),
+        kind: .nextStep,
+        text: "Review the linked note",
+        origin: .userStatement
+    )
     let session = StudySession(
         id: sessionID,
         title: "Shared course discussion",
@@ -21,18 +27,27 @@ func checkWorkspaceSafetyScenes() throws {
         relatedCourseIDs: [targetCourseID, otherCourseID],
         flow: StudyFlowState(
             phase: .plan,
-            suggestedNext: ["Review the linked note"]
+            suggestedNext: ["legacy flow suggestion no longer feeds next step"]
         )
     )
     let highlights = CourseHomeLearningHighlights(
+        courseID: targetCourseID,
+        learningMemoryEntries: [nextStepMemory],
+        studySessions: [session]
+    )
+    expect(
+        highlights.nextStepText == "Review the linked note"
+            && highlights.nextStepSessionID == nil,
+        "course-home next step comes from the nextStep memory entry of any related chat"
+    )
+    let legacyOnlyHighlights = CourseHomeLearningHighlights(
         courseID: targetCourseID,
         learningMemoryEntries: [],
         studySessions: [session]
     )
     expect(
-        highlights.nextStepText == "Review the linked note"
-            && highlights.nextStepSessionID == sessionID,
-        "a Chat associated with multiple courses still supplies the course-home next step"
+        legacyOnlyHighlights.nextStepText == nil,
+        "legacy flow.suggestedNext values no longer surface as the course-home next step"
     )
 
     let material = StudyItem(
