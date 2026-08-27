@@ -20,7 +20,8 @@ public enum StudyAgentProposalDecoding {
         return StudyAgentNoteProposal(
             markdown: markdown,
             evidence: evidence,
-            contextRevision: revision
+            contextRevision: revision,
+            userRequested: details["userRequested"] as? Bool == true
         )
     }
 

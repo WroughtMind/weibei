@@ -853,13 +853,14 @@ public enum NativeBuiltinTools {
     private static var noteProposal: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_note_proposal",
-            description: "返回一份待用户确认的 Markdown 笔记建议，不会写入笔记。contextRevision 必须原样回传本轮字符串。evidence 是字符串数组，每条须以当前材料、笔记或选区的真实来源标签开头。",
+            description: "整理笔记内容并交给魏碑执行。contextRevision 必须原样回传本轮字符串。evidence 是字符串数组，每条须以当前材料、笔记或选区的真实来源标签开头。userRequested 只有两种取值：用户明确要求把内容写进笔记（如“写进笔记”“整理成笔记”“补充进去”）时传 true，魏碑会直接写入并告知写到了哪里；用户没有明确要求时传 false，魏碑把内容作为建议卡交给用户自行采用或忽略。不确定用户是否明确要求时一律传 false，不要根据内容自行猜测。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
                     "markdown": ["type": "string"],
                     "evidence": ["type": "array", "items": ["type": "string"]],
                     "contextRevision": ["type": "string"],
+                    "userRequested": ["type": "boolean"],
                 ],
                 "required": ["markdown", "evidence", "contextRevision"],
             ]),
@@ -871,16 +872,20 @@ public enum NativeBuiltinTools {
                 )
                 let markdown = arguments["markdown"] as? String ?? ""
                 let evidence = stringList(arguments["evidence"])
+                let userRequested = arguments["userRequested"] as? Bool == true
                 guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !evidence.isEmpty else {
                     throw NativeLLMFailure(code: "empty_proposal", message: "笔记建议必须包含非空 Markdown 和至少一条证据")
                 }
                 return NativeToolExecutionResult(
-                    text: "笔记建议格式与上下文修订号已校验；这仍是待确认建议，尚未写回任何笔记。",
+                    text: userRequested
+                        ? "写入请求已登记，魏碑会直接写入目标笔记并在完成后告知位置；用户之后可以撤销。"
+                        : "笔记建议格式与上下文修订号已校验；这仍是待确认建议，尚未写回任何笔记。",
                     details: [
                         "kind": "note_proposal",
                         "markdown": markdown,
                         "evidence": evidence,
                         "contextRevision": context.request.contextRevision,
+                        "userRequested": userRequested,
                     ]
                 )
             }

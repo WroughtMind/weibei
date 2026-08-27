@@ -335,7 +335,6 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var lastFailedAgentQuestion: String?
     @Published private(set) var lastAgentFailureKind: AgentFailureKind?
     @Published private(set) var agentAuthenticationStatus = AgentAuthenticationStatus()
-    @Published private(set) var latestAgentNoteProposal: StudyAgentNoteProposal?
     @Published private(set) var latestAgentLearningUpdate: StudyAgentLearningUpdate?
     @Published var noteSourceLinks: [NoteSourceLink] = [] {
         didSet {
@@ -2014,15 +2013,11 @@ final class WorkspaceStore: ObservableObject {
 
     func restoreAgentReplyState(from session: StudySession) {
         guard let reply = session.messages.last(where: { $0.role == .assistant }) else {
-            latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
             lastFailedAgentQuestion = nil
             lastAgentFailureKind = nil
             return
         }
-        latestAgentNoteProposal = reply.actions
-            .last(where: { $0.kind == .writeNote && $0.state == .pending })
-            .flatMap(Self.noteProposal)
         latestAgentLearningUpdate = nil
         lastFailedAgentQuestion = reply.retryQuestion
         lastAgentFailureKind = reply.failureKind
@@ -2035,17 +2030,6 @@ final class WorkspaceStore: ObservableObject {
 
     func restoreAgentDraft(for sessionID: UUID) {
         agentDraft = agentDraftsBySessionID[sessionID] ?? ""; pendingComposerDraft = agentDraft.isEmpty ? nil : agentDraft
-    }
-
-    private static func noteProposal(from action: AgentReplyAction) -> StudyAgentNoteProposal? {
-        guard action.kind == .writeNote,
-              let markdown = action.proposedMarkdown,
-              let contextRevision = action.contextRevision else { return nil }
-        return StudyAgentNoteProposal(
-            markdown: markdown,
-            evidence: action.evidence,
-            contextRevision: contextRevision
-        )
     }
 
     var agentReplyActionIDsInFlight = Set<UUID>()
@@ -3689,7 +3673,6 @@ final class WorkspaceStore: ObservableObject {
             blankNoteDraftMaterialID = nil
             activeNotebookItemID = item.id
             noteText = noteText(for: item)
-            latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
             refreshActiveNoteFromBackingFile()
             if !isRestoringCourseResumePoint {
@@ -3741,7 +3724,6 @@ final class WorkspaceStore: ObservableObject {
         }
         clearReaderSearchIfNeeded()
         noteText = noteText(for: activeNoteItem)
-        latestAgentNoteProposal = nil
         latestAgentLearningUpdate = nil
         if !isRestoringCourseResumePoint {
             syncActiveStudySession()
@@ -4632,7 +4614,6 @@ final class WorkspaceStore: ObservableObject {
                 notebookCreationDraft = nil
                 notebookRenameDraft = nil
                 linkedSourcesPresented = false
-                latestAgentNoteProposal = nil
                 latestAgentLearningUpdate = nil
                 syncActiveStudySession()
                 openDocumentPane(.notes)
@@ -5395,7 +5376,6 @@ final class WorkspaceStore: ObservableObject {
             id: selectedMaterialItem?.kind == .html ? snapshot.readerLocationID : nil,
             title: selectedMaterialItem?.kind == .html ? snapshot.readerLocationTitle : nil
         )
-        latestAgentNoteProposal = nil
         latestAgentLearningUpdate = nil
         syncActiveStudySession()
         recordCurrentStudyLocation(incrementVisit: false)
@@ -9622,7 +9602,6 @@ final class WorkspaceStore: ObservableObject {
             }
             lastFailedAgentQuestion = nil
             lastAgentFailureKind = nil
-            latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
             if !sentSelectionIDs.isEmpty {
                 // No withAnimation here: animating attachment chrome while chat
@@ -9717,9 +9696,6 @@ final class WorkspaceStore: ObservableObject {
                 authMethod: requestAuthMethod
             )
             try validateAgentConversationTarget(target, mustBeActive: false)
-            if activeStudySessionID == target.sessionID {
-                latestAgentNoteProposal = reply.noteProposal
-            }
             let memoryUpdate = reply.appliedMemoryUpdate ?? applyLearningUpdate(
                 reply.learningUpdate,
                 expectedContextRevision: request.contextRevision,
@@ -9815,6 +9791,16 @@ final class WorkspaceStore: ObservableObject {
                     targetCourseID: target.courseID
                 )
             )
+            // 用户明确要求写笔记：直接执行写入，不再等确认卡。防覆盖 digest
+            // 对比与撤销都走同一条动作管线，这里只是替用户按下"写入"。
+            if let proposal = reply.noteProposal,
+               proposal.userRequested,
+               let writeAction = actions.last(where: { $0.kind == .writeNote }) {
+                await confirmAgentReplyAction(
+                    messageID: assistantMessage.id,
+                    actionID: writeAction.id
+                )
+            }
             // Durable reply before request finish; save errors must not hide it.
             _ = await flushPendingWorkspaceSaveAsync()
         } catch is CancellationError {
@@ -10897,7 +10883,6 @@ final class WorkspaceStore: ObservableObject {
 
     func invalidateAgentContext(restoreAgentDraft _: Bool = true) {
         agentContextRevision &+= 1
-        latestAgentNoteProposal = nil
         lastAgentReplyContextRevision = nil
     }
 

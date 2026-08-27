@@ -581,11 +581,19 @@ public struct StudyAgentNoteProposal: Codable, Equatable, Sendable {
     public var markdown: String
     public var evidence: [String]
     public var contextRevision: String
+    /// 用户明确要求写笔记时为 true：魏碑直接执行写入，不再弹确认卡。
+    public var userRequested: Bool
 
-    public init(markdown: String, evidence: [String], contextRevision: String) {
+    public init(
+        markdown: String,
+        evidence: [String],
+        contextRevision: String,
+        userRequested: Bool = false
+    ) {
         self.markdown = markdown
         self.evidence = evidence
         self.contextRevision = contextRevision
+        self.userRequested = userRequested
     }
 }
 

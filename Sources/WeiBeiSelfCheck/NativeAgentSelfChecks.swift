@@ -1143,6 +1143,26 @@ private func checkNativeProductContract() throws {
     }
     try nativeRequire(note.markdown.contains("利率是资金使用价格"), "note markdown is preserved")
     try nativeRequire(note.evidence.count == 1, "note evidence is preserved as an array")
+    try nativeRequire(!note.userRequested, "note proposal without userRequested stays a suggestion")
+
+    let directWriteResult = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_note_proposal",
+                argumentsJSON: "{\"markdown\":\"## 复利\\n复利是利息再计息。\",\"evidence\":[\"[材料：利率课程] 复利定义。\"],\"contextRevision\":\"\(revision)\",\"userRequested\":true}",
+                callID: "note-2"
+            ),
+            context: context,
+            scope: .global
+        )
+    }
+    guard let directWrite = StudyAgentProposalDecoding.noteProposal(from: directWriteResult.details) else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 16, userInfo: [
+            NSLocalizedDescriptionKey: "direct write note_proposal details did not decode",
+        ])
+    }
+    try nativeRequire(directWrite.userRequested, "userRequested=true marks a direct note write")
+    try nativeRequire(directWriteResult.text.contains("直接写入"), "direct write result tells the model WeiBei writes immediately")
 
     let relationResult = try waitFor {
         try await registry.execute(
