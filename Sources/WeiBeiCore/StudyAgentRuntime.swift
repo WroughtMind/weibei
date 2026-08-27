@@ -321,6 +321,7 @@ public struct StudyAgentFocus: Codable, Equatable, Sendable {
 public enum StudyAgentHostToolRequest: Equatable, Sendable {
     case courseMap(itemID: String?, offset: Int, limit: Int)
     case courseSearch(query: String, limit: Int)
+    case workspaceSearch(query: String, limit: Int, crossLibrary: Bool)
     case courseRead(
         itemID: String,
         query: String,

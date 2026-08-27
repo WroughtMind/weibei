@@ -357,6 +357,20 @@ private func checkSkillCatalogAndLoad() throws {
     try nativeRequire(search?.description.contains("weibei_course_read") == true, "course_search description continues into course_read")
     try nativeRequire(search?.description.contains("网页搜索") == true, "course_search description still allows web search after a miss")
     try nativeRequire(search?.description.contains("闲聊") == true, "course_search description skips unrelated chat")
+    let workspace = tools.first { $0.name == "weibei_search_workspace" }
+    try nativeRequire(workspace != nil, "workspace search tool is registered")
+    if let schema = jsonObject(workspace?.schema.object),
+       let properties = jsonObject(schema["properties"]) {
+        try nativeRequire(properties["query"] != nil, "workspace search requires query")
+        try nativeRequire(properties["crossLibrary"] != nil, "workspace search exposes crossLibrary")
+        let required = schema["required"] as? [String] ?? []
+        try nativeRequire(required.contains("query"), "workspace search query is required")
+        try nativeRequire(!required.contains("crossLibrary"), "workspace search defaults to current course")
+    } else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 21, userInfo: [
+            NSLocalizedDescriptionKey: "workspace search schema is incomplete",
+        ])
+    }
     let read = tools.first { $0.name == "weibei_course_read" }
     try nativeRequire(read?.description.contains("不要停下来反问") == true, "course_read description forbids interrupting to ask")
 }
@@ -460,8 +474,12 @@ private func checkRetrievalPrompt() throws {
     try nativeRequire(prompt.contains("检索策略"), "native system prompt includes retrieval strategy")
     try nativeRequire(prompt.contains("不要用反问打断心流"), "retrieval strategy forbids interrupting with a clarifying question")
     try nativeRequire(prompt.contains("weibei_course_search"), "retrieval strategy names course_search")
+    try nativeRequire(prompt.contains("weibei_search_workspace"), "retrieval strategy names workspace search")
+    try nativeRequire(
+        !prompt.contains("本轮还没有工作区文件检索工具"),
+        "retired skip-workspace-search instruction stays gone"
+    )
     try nativeRequire(prompt.contains("闲聊"), "retrieval strategy skips unrelated chat")
-    try nativeRequire(prompt.contains("工作区文件检索"), "retrieval strategy notes missing workspace search")
 }
 
 private func checkBackendSelection() throws {
@@ -600,6 +618,7 @@ private func checkNativeProductContract() throws {
         "weibei_note_proposal",
         "weibei_relation_proposal",
         "weibei_course_search",
+        "weibei_search_workspace",
         "weibei_course_read",
     ] {
         guard let tool = tools.first(where: { $0.name == name }) else {

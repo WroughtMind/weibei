@@ -460,6 +460,81 @@ final class NativeAgentRuntimeTests: XCTestCase {
             [.azureOpenAI, .googleVertex, .amazonBedrock, .cloudflareAIGateway, .cloudflareWorkersAI]
         )
     }
+
+    func testWorkspaceSearchToolDefaultsToCurrentCourseAndReportsEmptyHits() async throws {
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let recorder = WorkspaceSearchRecorder()
+        let result = try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_search_workspace",
+                argumentsJSON: "{\"query\":\"利率\"}",
+                callID: "w1"
+            ),
+            context: NativeToolExecutionContext(
+                request: StudyAgentRequest(
+                    purpose: .conversation,
+                    question: "我笔记里写过利率吗",
+                    materialTitle: "",
+                    materialText: "",
+                    noteTitle: "",
+                    noteText: "",
+                    contextRevision: "ws-default"
+                ),
+                hostToolHandler: { request in
+                    await recorder.record(request)
+                    return StudyAgentHostToolResult(query: "利率", items: [])
+                }
+            ),
+            scope: .global
+        )
+        let decoded = try JSONDecoder().decode(
+            StudyAgentHostToolResult.self,
+            from: Data(result.text.utf8)
+        )
+        XCTAssertTrue(decoded.items.isEmpty)
+        XCTAssertEqual(decoded.webPages.count, 0)
+        let captured = await recorder.request
+        guard case let .workspaceSearch(query, _, crossLibrary) = captured else {
+            return XCTFail("expected workspaceSearch")
+        }
+        XCTAssertEqual(query, "利率")
+        XCTAssertFalse(crossLibrary)
+    }
+
+    func testWorkspaceSearchToolCrossLibraryParameter() async throws {
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let recorder = WorkspaceSearchRecorder()
+        _ = try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_search_workspace",
+                argumentsJSON: "{\"query\":\"利率\",\"crossLibrary\":true}",
+                callID: "w2"
+            ),
+            context: NativeToolExecutionContext(
+                request: StudyAgentRequest(
+                    purpose: .conversation,
+                    question: "我所有笔记里写过利率吗",
+                    materialTitle: "",
+                    materialText: "",
+                    noteTitle: "",
+                    noteText: "",
+                    contextRevision: "ws-cross"
+                ),
+                hostToolHandler: { request in
+                    await recorder.record(request)
+                    return StudyAgentHostToolResult(query: "利率", items: [])
+                }
+            ),
+            scope: .global
+        )
+        let captured = await recorder.request
+        guard case let .workspaceSearch(_, _, crossLibrary) = captured else {
+            return XCTFail("expected workspaceSearch")
+        }
+        XCTAssertTrue(crossLibrary)
+    }
 }
 
 private struct MockLLMAdapter: NativeLLMAdapter {
@@ -597,6 +672,14 @@ private actor WebOpenRecorder {
 
     func record(_ url: String) {
         urls.append(url)
+    }
+}
+
+private actor WorkspaceSearchRecorder {
+    private(set) var request: StudyAgentHostToolRequest?
+
+    func record(_ request: StudyAgentHostToolRequest) {
+        self.request = request
     }
 }
 
