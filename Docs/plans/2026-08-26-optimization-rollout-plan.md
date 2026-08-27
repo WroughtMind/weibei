@@ -163,11 +163,12 @@
 
 **目标**：21761 行单文件（届时已因前序各刀变小）把课程文件/对账域机械剥离，恢复增量编译速度与可 review 性。
 **步骤**：
-- [x] 按符号（勿按行号）圈定第一块：课程文件维护/对账（`resolveCourseOwnedItems` … `startCourseFileMaintenance`）。第二块：课程库 CRUD / 导入 / 移动 / 共享 / 删除课 / 事务目录。
+- [x] 按符号（勿按行号）圈定第一块：课程文件维护/对账（`resolveCourseOwnedItems` … `startCourseFileMaintenance`）。第二块：课程库 CRUD / 导入 / 移动 / 共享 / 删除课 / 事务目录。第三块：课程可携带状态 / 课程笔记读写 / 可携带导出。
 - [x] 第一块拆入 `WorkspaceStore+CourseMaintenance.swift`，**只搬不改**。搬后 `WorkspaceStore.swift` 20895 行（基线 21744）。
 - [x] 第二块课程文件导入/资料管理拆入 `WorkspaceStore+CourseLibrary.swift`，只搬不改。搬后 `WorkspaceStore.swift` 14466 行（上一块 20895，−6429）。
-- [x] 本 PR 记录 WorkspaceStore.swift 行数：14466（基线 21744，累计 −7278）。冻结守卫净增 ≤ 0。
-- [x] 第一块 SelfCheck 墓碑改为同时读新扩展文件（`?? activeCourseID ?? sourceItem` 仍为「不得出现」）。第二块同样让墓碑同时读 `WorkspaceStore+CourseLibrary.swift`。
+- [x] 第三块课程可携带状态/课程笔记读写/可携带导出拆入 `WorkspaceStore+CoursePortable.swift`，只搬不改。搬后 `WorkspaceStore.swift` 12681 行（上一块 14466，−1785）。3.1 至此结束。
+- [x] 本 PR 记录 WorkspaceStore.swift 行数：12681（基线 21744，累计 −9063）。冻结守卫净增 ≤ 0。
+- [x] 第一块 SelfCheck 墓碑改为同时读新扩展文件（`?? activeCourseID ?? sourceItem` 仍为「不得出现」）。第二块同样让墓碑同时读 `WorkspaceStore+CourseLibrary.swift`。第三块同样让墓碑同时读 `WorkspaceStore+CoursePortable.swift`。
 - **风险**：搬家丢代码——用逐符号对照 diff review，严禁顺手重构。
 - **终验口径**：（不直接感知）此后每刀的交付节奏明显变快。
 
