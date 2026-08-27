@@ -772,7 +772,7 @@ final class WorkspaceStore: ObservableObject {
     private var lastWorkspacePersistenceRanOnMainThread: Bool?
     private var courseHomePerformanceNavigationSpan: WeiBeiPerf.Span?
     private let workspaceSaveDebounceNanoseconds: UInt64 = 280_000_000
-    private var noteSourceLinksMigrationVersion = 0
+    var noteSourceLinksMigrationVersion = 0
     private var studySessionScopeMigrationVersion = 0
     private var learningMemoryScopeMigrationVersion = 0
     private var isRestoringCourseResumePoint = true
@@ -1038,19 +1038,9 @@ final class WorkspaceStore: ObservableObject {
         rebuildCourseMembershipsFromStorage()
         loadLegacySelectionAskThreadsIfWorkspaceFieldMissing()
         let restoredCourseProjectRoots = restoreCourseProjectRoots()
-        refreshRuntimeItemURLs()
         let restoredPortableCourseStates = restorePortableCourseStates()
         rebuildCourseMembershipsFromStorage()
         refreshRuntimeItemURLs()
-        // S3：不再从 journal 恢复未完成操作；仅静默清理残留事务目录。
-        let recoveredCourseTrash =
-            silentlyCleanupOrphanCourseTransactions()
-        try? FileManager.default.removeItem(
-            at: folder.appendingPathComponent("pending-notebook-rename.json")
-        )
-        try? FileManager.default.removeItem(
-            at: folder.appendingPathComponent("pending-course-removal.json")
-        )
         WeiBeiThemeRuntime.mode = appearanceMode
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
         let migratedImportedItemIdentities = migrateLegacyImportedItemIdentities()
@@ -1061,45 +1051,38 @@ final class WorkspaceStore: ObservableObject {
            resolvedImportedFileBookmarks || migratedImportedItemIdentities {
             noteText = noteText(for: activeNoteItem)
         }
-        let migratedStudyLocationTitles = refreshStudyLocationReferenceTitles()
-        let sanitizedNoteSourceLinks = sanitizeNoteSourceLinks()
-        let sanitizedCourseLibrary = sanitizeCourseLibrary()
-        let migratedStudySessionScopes = migrateLegacyStudySessionScopes()
-        let migratedLearningMemoryScopes = migrateLegacyLearningMemoryScopes()
-        let sanitizedCourseResumePoints = sanitizeCourseResumePoints()
-        let initializedCourseKnowledgeProfiles = ensureCourseKnowledgeProfiles()
-        courseDocumentSearchIndex.synchronize(allItems)
         if startsAtBlankEntries {
             resetPrimaryEntriesForLaunch()
         }
         ensureActiveStudySession(preferFresh: startsAtBlankEntries)
-        if noteSourceLinksMigrationVersion < 1 {
-            migrateNoteSourceLinksFromMarkdown()
-            noteSourceLinksMigrationVersion = 1
-            save()
-        } else if resolvedImportedFileBookmarks
-                    || migratedImportedItemIdentities
-                    || migratedStudyLocationTitles
-                    || sanitizedNoteSourceLinks
-                    || sanitizedCourseLibrary
-                    || migratedStudySessionScopes
-                    || migratedLearningMemoryScopes
-                    || sanitizedCourseResumePoints
-                    || restoredCourseProjectRoots
-                    || restoredPortableCourseStates
-                    || recoveredCourseTrash
-                    || initializedCourseKnowledgeProfiles
-                    || needsPortableCourseStateBootstrap
-                    || recoveredInterruptedAgentReply
-                    || needsSelectionAskThreadsWorkspaceMigration {
-            save()
-        }
         floatingSelectionPrompt = ui("当前选区", "Current selection")
         if selectedItemID != nil {
             restoreCurrentStudyLocation()
             recordCurrentStudyLocation(incrementVisit: false)
         }
         isRestoringCourseResumePoint = false
+        let portableBootstrap = needsPortableCourseStateBootstrap
+        let interruptedReply = recoveredInterruptedAgentReply
+        let selectionAskMigration = needsSelectionAskThreadsWorkspaceMigration
+        let runDeferredHousekeeping = { [weak self] in
+            self?.completeDeferredLaunchHousekeeping(
+                restoredCourseProjectRoots: restoredCourseProjectRoots,
+                restoredPortableCourseStates: restoredPortableCourseStates,
+                resolvedImportedFileBookmarks: resolvedImportedFileBookmarks,
+                migratedImportedItemIdentities: migratedImportedItemIdentities,
+                needsPortableCourseStateBootstrap: portableBootstrap,
+                recoveredInterruptedAgentReply: interruptedReply,
+                needsSelectionAskThreadsWorkspaceMigration: selectionAskMigration
+            )
+        }
+        if WeiBeiSafetyTestMode.isEnabled {
+            runDeferredHousekeeping()
+        } else {
+            Task { @MainActor in
+                await Task.yield()
+                runDeferredHousekeeping()
+            }
+        }
         // Phase 4：课程文件维护延后到首帧之后，缩短冷启动到可交互。
         if !WeiBeiSafetyTestMode.isEnabled {
             bootstrapDefaultLibraryIfNeeded()
@@ -1209,7 +1192,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func sanitizeCourseResumePoints() -> Bool {
+    func sanitizeCourseResumePoints() -> Bool {
         let sanitized = sanitizedCourseResumePoints()
         guard sanitized != courseResumePoints else { return false }
         courseResumePoints = sanitized
@@ -5473,7 +5456,7 @@ final class WorkspaceStore: ObservableObject {
     /// H1：含 `replaced-target` / `replacement-rollback` 等用户内容崩溃备份的目录绝不误删；
     /// 其余仅当条目全部属于已知 staging/废件白名单时才清。
     @discardableResult
-    private func silentlyCleanupOrphanCourseTransactions() -> Bool {
+    func silentlyCleanupOrphanCourseTransactions() -> Bool {
         let fileManager = FileManager.default
         // 运行时各 safelyRemove* 白名单并集 + 无 journal 时代的 staging 名。
         let safeOrphanNames: Set<String> = [
@@ -13537,7 +13520,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func migrateNoteSourceLinksFromMarkdown() {
+    func migrateNoteSourceLinksFromMarkdown() {
         let previousCount = noteSourceLinks.count
         for note in allItems where note.isNotebookNote {
             let markdown = noteMarkdownText(for: note)
@@ -13566,7 +13549,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func sanitizeCourseLibrary() -> Bool {
+    func sanitizeCourseLibrary() -> Bool {
         let previousCourses = courses
         let previousMemberships = courseItemMemberships
         let previousActiveCourseID = activeCourseID
@@ -13661,7 +13644,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func migrateLegacyStudySessionScopes() -> Bool {
+    func migrateLegacyStudySessionScopes() -> Bool {
         var changed = sanitizeStudySessionScopes()
         guard studySessionScopeMigrationVersion < 2 else { return changed }
         let validCourseIDs = Set(courses.map(\.id))
@@ -13713,7 +13696,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func migrateLegacyLearningMemoryScopes() -> Bool {
+    func migrateLegacyLearningMemoryScopes() -> Bool {
         guard learningMemoryScopeMigrationVersion < 1 else {
             legacyLearningMemoryEntries = []
             legacyLearningMemoryRevision = 0
@@ -13902,7 +13885,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func ensureCourseKnowledgeProfiles() -> Bool {
+    func ensureCourseKnowledgeProfiles() -> Bool {
         let courseIDs = Set(courses.map(\.id))
         var seen = Set<UUID>()
         var next = sanitizedCourseKnowledgeProfiles().filter {
@@ -13923,7 +13906,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func refreshStudyLocationReferenceTitles() -> Bool {
+    func refreshStudyLocationReferenceTitles() -> Bool {
         var changed = false
         for itemID in Array(studyLocationsByItemID.keys) {
             guard let item = allItems.first(where: { $0.id == itemID }),
