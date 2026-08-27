@@ -117,6 +117,10 @@ func checkLibraryRelativeStorage() throws {
         contentsOfFile: "Sources/WeiBei/Stores/WorkspaceStore+CourseLibrary.swift",
         encoding: .utf8
     )
+    let coursePortableSource = try String(
+        contentsOfFile: "Sources/WeiBei/Stores/WorkspaceStore+CoursePortable.swift",
+        encoding: .utf8
+    )
     let modelsSource = try String(
         contentsOfFile: "Sources/WeiBeiCore/WorkspaceModels.swift",
         encoding: .utf8
@@ -141,6 +145,7 @@ func checkLibraryRelativeStorage() throws {
     )
     let flattenedStoreSource = (
         storeSource + "\n" + courseMaintenanceSource + "\n" + courseLibrarySource
+            + "\n" + coursePortableSource
     )
         .components(separatedBy: .whitespacesAndNewlines)
         .filter { !$0.isEmpty }
