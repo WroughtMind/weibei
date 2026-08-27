@@ -90,7 +90,7 @@ struct CourseHubView: View {
         return sessions.first { session in
             session.id == chatID
                 && session.relatedCourseIDs.contains(courseID)
-                && !session.messages.isEmpty
+                && session.hasChatHistory
         }
     }
 

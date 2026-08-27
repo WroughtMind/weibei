@@ -36,7 +36,7 @@ public struct CourseWorkspaceSummary: Equatable, Sendable {
         readingPositionCount = materialIDs.lazy.filter { studyLocationsByItemID[$0] != nil }.count
         unlinkedMaterialCount = materialIDs.subtracting(linkedMaterialIDs).count
         unlinkedNoteCount = noteIDs.subtracting(linkedNoteIDs).count
-        studySessionCount = studySessions.lazy.filter { !$0.messages.isEmpty }.count
+        studySessionCount = studySessions.lazy.filter(\.hasChatHistory).count
         unresolvedConfusionCount = learningMemoryEntries.lazy.filter {
             $0.kind == .confusion && $0.status == .active
         }.count
@@ -71,7 +71,7 @@ public struct CourseHomeLearningHighlights: Equatable, Sendable {
             .filter {
                 $0.relatedCourseIDs.contains(courseID)
                     && $0.scopeNeedsReview == false
-                    && !$0.messages.isEmpty
+                    && $0.hasChatHistory
             }
             .sorted {
                 if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }

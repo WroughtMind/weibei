@@ -228,6 +228,8 @@ struct WorkspacePersistenceRequest: Sendable {
     var blockedPortableCourseIDs: Set<UUID>
     var oversizedPortableCourseIDs: Set<UUID>
     var needsPortableBootstrap: Bool
+    var sessionMessageWrites: [StudySessionMessageWrite]
+    var sessionMessageDeletions: [URL]
 }
 
 enum WorkspacePersistenceFailure: Sendable {
@@ -668,9 +670,29 @@ actor CourseProjectFileWorker {
         workspace.dirtyPortableCourseIDs = dirty.sorted {
             $0.uuidString < $1.uuidString
         }
+        let committedSessionWrites: [SessionMessageWorkspaceWrite]
+        do {
+            committedSessionWrites = try commitSessionMessageWrites(request)
+        } catch {
+            let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
+            return persistenceResult(
+                request: request,
+                failure: rollbackFailed
+                    ? .rollbackConflict
+                    : .workspace(error.localizedDescription),
+                revisions: previousRevisions,
+                digests: previousDigests,
+                dirty: previousDirty,
+                blocked: previousBlocked,
+                oversized: previousOversized,
+                needsBootstrap: previousNeedsBootstrap,
+                ranOnMainThread: ranOnMainThread
+            )
+        }
 #if DEBUG
         if selfCheckFailingWorkspaceGeneration == request.generation {
             selfCheckFailingWorkspaceGeneration = nil
+            Self.rollbackSessionMessageWrites(committedSessionWrites)
             let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
             return persistenceResult(
                 request: request,
@@ -692,14 +714,15 @@ actor CourseProjectFileWorker {
                 "workspace.save_encode"
             )
             let data: Data
+            let snapshot = workspace.strippingEmbeddedStudySessionMessages()
             do {
                 // Phase 2：编码必须离开主线程。actor 通常已离主；若误入主线程则强制 hop。
                 if pthread_main_np() != 0 {
                     data = try await Task.detached(priority: .utility) {
-                        try JSONEncoder().encode(workspace)
+                        try JSONEncoder().encode(snapshot)
                     }.value
                 } else {
-                    data = try JSONEncoder().encode(workspace)
+                    data = try JSONEncoder().encode(snapshot)
                 }
                 WeiBeiPerf.end(
                     encodeSpan,
@@ -750,6 +773,7 @@ actor CourseProjectFileWorker {
                 throw error
             }
         } catch {
+            Self.rollbackSessionMessageWrites(committedSessionWrites)
             let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
             return persistenceResult(
                 request: request,
@@ -804,6 +828,71 @@ actor CourseProjectFileWorker {
         var previousData: Data?
         var committedData: Data
         var expectedDirectoryIdentity: ImportedFileIdentity
+    }
+
+    private struct SessionMessageWorkspaceWrite {
+        var url: URL
+        var previousData: Data?
+    }
+
+    private func commitSessionMessageWrites(
+        _ request: WorkspacePersistenceRequest
+    ) throws -> [SessionMessageWorkspaceWrite] {
+        var committed: [SessionMessageWorkspaceWrite] = []
+        do {
+            if !request.sessionMessageWrites.isEmpty
+                || !request.sessionMessageDeletions.isEmpty {
+                try fileManager.createDirectory(
+                    at: StudySessionMessageFile.directory(
+                        in: request.storageURL.deletingLastPathComponent()
+                    ),
+                    withIntermediateDirectories: true
+                )
+            }
+            for write in request.sessionMessageWrites {
+                let previous = try? Data(contentsOf: write.url)
+                try write.data.write(to: write.url, options: .atomic)
+                let verified = try Data(contentsOf: write.url)
+                guard verified == write.data else {
+                    throw CourseProjectFileWorkerError.verificationFailed
+                }
+                committed.append(
+                    SessionMessageWorkspaceWrite(
+                        url: write.url,
+                        previousData: previous
+                    )
+                )
+            }
+            for url in request.sessionMessageDeletions {
+                let previous = try? Data(contentsOf: url)
+                if fileManager.fileExists(atPath: url.path) {
+                    try fileManager.removeItem(at: url)
+                }
+                committed.append(
+                    SessionMessageWorkspaceWrite(
+                        url: url,
+                        previousData: previous
+                    )
+                )
+            }
+            return committed
+        } catch {
+            Self.rollbackSessionMessageWrites(committed)
+            throw error
+        }
+    }
+
+    nonisolated private static func rollbackSessionMessageWrites(
+        _ writes: [SessionMessageWorkspaceWrite]
+    ) {
+        let fileManager = FileManager.default
+        for write in writes.reversed() {
+            if let previousData = write.previousData {
+                try? previousData.write(to: write.url, options: .atomic)
+            } else if fileManager.fileExists(atPath: write.url.path) {
+                try? fileManager.removeItem(at: write.url)
+            }
+        }
     }
 
     private func persistenceResult(
@@ -1110,6 +1199,9 @@ actor CourseProjectFileWorker {
             }
             guard let messageID else {
                 return (sessionID, nil)
+            }
+            if liveMessageIDs.isEmpty {
+                return (sessionID, messageID)
             }
             return liveMessageIDs.contains(messageID)
                 ? (sessionID, messageID)
