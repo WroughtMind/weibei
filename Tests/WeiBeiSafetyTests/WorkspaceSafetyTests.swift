@@ -52,7 +52,68 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertFalse(store.flushPendingWorkspaceSave())
         XCTAssertEqual(store.noteText, "尚未写入的正文")
         XCTAssertEqual(store.workspaceSaveFailure?.kind, .workspaceChangesUnwritten)
+        XCTAssertEqual(store.lastPersistState, .failed)
         XCTAssertFalse(store.workspaceSaveError?.contains("/private/secret") == true)
+    }
+
+    @MainActor
+    func testPersistStateTracksPendingFailedAndRetryRecovery() throws {
+        struct InjectedFailure: Error {}
+        final class SaveSwitch: @unchecked Sendable {
+            private let lock = NSLock()
+            private var shouldFail = true
+
+            func allowWrites() {
+                lock.withLock { shouldFail = false }
+            }
+
+            func write(_ data: Data, to url: URL) throws {
+                if lock.withLock({ shouldFail }) { throw InjectedFailure() }
+                WorkspaceSnapshotRecovery.rotateBackups(primary: url)
+                try data.write(to: url, options: .atomic)
+            }
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiPersistState-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let saveSwitch = SaveSwitch()
+        let store = WorkspaceStore(
+            workspaceDirectory: root,
+            workspaceSnapshotWriter: { data, url in
+                try saveSwitch.write(data, to: url)
+            },
+            startsAtBlankEntries: true
+        )
+
+        let pendingItem = StudyItem(
+            id: "pending-note",
+            title: "草稿",
+            subtitle: "draft.md",
+            kind: .markdown,
+            urlPath: nil,
+            isSample: false,
+            isNotebookNote: true
+        )
+        store.pendingNotePersistenceByItemID[pendingItem.id] = WorkspaceStore.PendingNotePersistence(
+            item: pendingItem,
+            markdown: "debounce"
+        )
+        XCTAssertEqual(store.lastPersistState, .pending)
+        store.pendingNotePersistenceByItemID.removeAll()
+        XCTAssertEqual(store.lastPersistState, .saved)
+
+        store.noteText = "尚未写入的正文"
+        XCTAssertFalse(store.flushPendingWorkspaceSave())
+        XCTAssertEqual(store.noteText, "尚未写入的正文")
+        XCTAssertEqual(store.lastPersistState, .failed)
+        XCTAssertEqual(store.workspaceSaveFailure?.kind, .workspaceChangesUnwritten)
+
+        saveSwitch.allowWrites()
+        XCTAssertTrue(store.retryWorkspaceSave())
+        XCTAssertEqual(store.noteText, "尚未写入的正文")
+        XCTAssertEqual(store.lastPersistState, .saved)
+        XCTAssertNil(store.workspaceSaveFailure)
     }
 
     @MainActor

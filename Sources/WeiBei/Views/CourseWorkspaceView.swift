@@ -446,15 +446,7 @@ struct CourseWorkspaceHeader: View {
 
             Spacer(minLength: 12)
 
-            if let saveError = store.workspaceSaveError {
-                Button(action: { _ = store.retryWorkspaceSave() }) {
-                    Label(store.ui("保存失败，点此重试", "Save failed, retry"), systemImage: "exclamationmark.triangle")
-                        .weiBeiText(10.5, weight: .medium)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                }
-                .buttonStyle(.plain)
-                .help(saveError)
-            }
+            WorkspacePersistStatusDot()
 
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")

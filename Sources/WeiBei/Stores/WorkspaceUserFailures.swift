@@ -1,5 +1,12 @@
 import Foundation
 
+/// 保存链路对外状态：界面只在 failed 点亮，saved 常灭。
+enum WorkspacePersistState: Equatable {
+    case saved
+    case pending
+    case failed
+}
+
 /// 保存失败的身份:kind 供测试与逻辑判断,message 是失败现场生成的展示文案。
 /// 测试断言 kind,不断言 message 字眼(2026-08-25 测试审计定案)。
 struct WorkspaceSaveFailure: Equatable {
