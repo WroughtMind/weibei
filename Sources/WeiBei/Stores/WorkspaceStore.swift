@@ -8304,13 +8304,6 @@ final class WorkspaceStore: ObservableObject {
                 studySessions[index].flow.phase = phase
                 sessionChanged = true
             }
-            let next = update.suggestedNext
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            if !next.isEmpty, studySessions[index].flow.suggestedNext != next {
-                studySessions[index].flow.suggestedNext = next
-                sessionChanged = true
-            }
             if sessionChanged {
                 studySessions[index].updatedAt = now
             }
@@ -8570,13 +8563,6 @@ final class WorkspaceStore: ObservableObject {
             if appliedStudySession.flow.phase != previous.flow.phase,
                studySessions[currentIndex].flow.phase == appliedStudySession.flow.phase {
                 studySessions[currentIndex].flow.phase = previous.flow.phase
-            }
-            if appliedStudySession.flow.suggestedNext
-                != previous.flow.suggestedNext,
-               studySessions[currentIndex].flow.suggestedNext
-                == appliedStudySession.flow.suggestedNext {
-                studySessions[currentIndex].flow.suggestedNext =
-                    previous.flow.suggestedNext
             }
             if appliedStudySession.updatedAt != previous.updatedAt,
                studySessions[currentIndex].updatedAt == appliedStudySession.updatedAt {
