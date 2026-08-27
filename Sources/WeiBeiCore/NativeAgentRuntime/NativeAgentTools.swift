@@ -214,10 +214,10 @@ enum NativeToolGuard {
                 throw NativeLLMFailure(code: "guard_denied", message: "该网页地址不在本轮可访问来源中")
             }
         }
-        if ["weibei_read_learning_memory", "weibei_update_learning_memory", "weibei_course_profile_update", "weibei_relation_proposal"].contains(name) {
+        if ["weibei_course_profile_update", "weibei_relation_proposal"].contains(name) {
             let courseID = context.request.projectScope.courseID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if courseID.isEmpty {
-                throw NativeLLMFailure(code: "guard_denied", message: "该工具只在课程 Chat 中使用")
+                throw NativeLLMFailure(code: "guard_denied", message: "当前没有打开的课程，课程档案没有保存位置；向用户说明后跳过即可")
             }
         }
     }
