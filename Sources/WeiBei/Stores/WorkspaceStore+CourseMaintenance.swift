@@ -122,6 +122,7 @@ extension WorkspaceStore {
                 }
             }
         }
+        refreshCourseFileWatchers()
         return succeeded
     }
 
@@ -831,18 +832,30 @@ extension WorkspaceStore {
     }
 
     func startCourseFileMaintenance() {
-        courseReconciliationTask?.cancel()
+        stopCourseFileMaintenance()
+        let storeID = ObjectIdentifier(self)
+        let session = CourseFileWatchSession { [weak self] in
+            Task { @MainActor in
+                await self?.handleCourseFileWatchEvent()
+            }
+        }
+        CourseFileWatchRegistry.attach(storeID, session: session)
+        refreshCourseFileWatchers()
         // Detached + 每次 weak self：避免强引用拉长 store 生命周期，
         // 也避免 XCTest 把析构 cancel 记成用例失败。
         courseReconciliationTask = Task.detached(priority: .utility) {
             [weak self] in
+            defer {
+                CourseFileWatchRegistry.removeIfCurrent(storeID, session: session)
+            }
             guard !Task.isCancelled else { return }
             await self?.reconcileCourseFilesNow()
             guard !Task.isCancelled else { return }
             await self?.retryRestoredPendingNoteWrites()
+            await self?.refreshCourseFileWatchers()
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(nanoseconds: 3_000_000_000)
+                    try await Task.sleep(nanoseconds: 60_000_000_000)
                 } catch is CancellationError {
                     return
                 } catch {
@@ -850,7 +863,94 @@ extension WorkspaceStore {
                 }
                 guard !Task.isCancelled else { return }
                 await self?.reconcileCourseFilesNow()
+                await self?.refreshCourseFileWatchers()
             }
         }
+    }
+
+    func pauseCourseFileWatchingForMutation() {
+        CourseFileWatchRegistry.session(for: ObjectIdentifier(self))?.pause()
+    }
+
+    func resumeCourseFileWatchingForMutation() {
+        CourseFileWatchRegistry.session(for: ObjectIdentifier(self))?
+            .resume(watching: directoriesToWatch())
+    }
+
+    func stopCourseFileMaintenance() {
+        courseReconciliationTask?.cancel()
+        courseReconciliationTask = nil
+        CourseFileWatchRegistry.remove(ObjectIdentifier(self))
+    }
+
+    func courseFileWatchDirectoryCountForSelfCheck() -> Int {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        return CourseFileWatchRegistry.session(for: ObjectIdentifier(self))?
+            .watchedDirectoryCount ?? 0
+    }
+
+    private func handleCourseFileWatchEvent() async {
+        guard let session = CourseFileWatchRegistry.session(
+            for: ObjectIdentifier(self)
+        ), !session.isPaused else { return }
+        guard activeCourseFileMutationCounts.isEmpty,
+              activeItemFileMutationIDs.isEmpty else { return }
+        if courseReconciliationInFlight {
+            session.poke()
+            return
+        }
+        _ = await reconcileCourseFilesNow()
+    }
+
+    private func refreshCourseFileWatchers() {
+        guard let session = CourseFileWatchRegistry.session(
+            for: ObjectIdentifier(self)
+        ), !session.isPaused else { return }
+        session.replaceDirectories(directoriesToWatch())
+    }
+
+    private func directoriesToWatch() -> [URL] {
+        var roots: [URL] = []
+        if let libraryRoot = courseLibraryRootURL {
+            roots.append(libraryRoot)
+        }
+        for course in courses {
+            if let root = courseRootURL(for: course.id) {
+                roots.append(root)
+            }
+        }
+        var directories: [URL] = []
+        var seen = Set<String>()
+        for root in roots {
+            for directory in Self.enumerableWatchDirectories(from: root) {
+                let path = directory.standardizedFileURL.path
+                if seen.insert(path).inserted {
+                    directories.append(directory.standardizedFileURL)
+                }
+            }
+        }
+        return directories
+    }
+
+    private static func enumerableWatchDirectories(from root: URL) -> [URL] {
+        let rootURL = root.standardizedFileURL
+        var result = [rootURL]
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { _, _ in false }
+        ) else {
+            return result
+        }
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: keys)
+            guard values?.isDirectory == true, values?.isSymbolicLink != true else {
+                continue
+            }
+            result.append(url.standardizedFileURL)
+        }
+        return result
     }
 }
