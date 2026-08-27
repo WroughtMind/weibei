@@ -3,6 +3,12 @@ import XCTest
 import WeiBeiCore
 
 final class AgentMessageViewportWindowTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        AgentChatOffscreenUnloadFlag.resetForTesting()
+        AgentFinalizedMarkdownHeightCache.resetForTesting()
+    }
+
     override func tearDown() {
         AgentChatOffscreenUnloadFlag.resetForTesting()
         AgentFinalizedMarkdownHeightCache.resetForTesting()
@@ -129,6 +135,128 @@ final class AgentMessageViewportWindowTests: XCTestCase {
                 wideTypography: true
             )
         )
+    }
+
+    func testExplicitUserDefaultsFalseStaysOffAndTrueTurnsOn() {
+        AgentChatOffscreenUnloadFlag.resetForTesting()
+        UserDefaults.standard.set(false, forKey: AgentChatOffscreenUnloadFlag.defaultsKey)
+        XCTAssertFalse(AgentChatOffscreenUnloadFlag.isEnabled)
+        UserDefaults.standard.set(true, forKey: AgentChatOffscreenUnloadFlag.defaultsKey)
+        XCTAssertTrue(AgentChatOffscreenUnloadFlag.isEnabled)
+    }
+
+    func testLongConversationFlagOnPlaceholdersOnlyOffscreenCachedRows() {
+        let messages = seededLongConversation(count: 120, prefix: "long")
+        let ids = placeholderIDs(enabled: true, messages: messages, viewportMinY: 0)
+        XCTAssertGreaterThanOrEqual(messages.count, 100)
+        XCTAssertFalse(ids.contains(messages[0].id), "viewport row must stay mounted")
+        XCTAssertFalse(ids.contains(messages[3].id), "row still inside the 3-screen keep band")
+        XCTAssertTrue(ids.contains(messages[4].id), "first row past the keep band becomes a placeholder")
+        XCTAssertTrue(ids.contains(messages[119].id))
+        XCTAssertEqual(ids.count, 116)
+        XCTAssertTrue(ids.isDisjoint(with: Set(messages.prefix(4).map(\.id))))
+    }
+
+    func testLongConversationUnknownHeightsNeverPlaceholder() {
+        var messages = seededLongConversation(count: 120, prefix: "nil-height")
+        let uncachedFar = [
+            AgentMessage(role: .assistant, text: "uncached-far-50", source: nil),
+            AgentMessage(role: .assistant, text: "uncached-far-119", source: nil)
+        ]
+        messages[50] = uncachedFar[0]
+        messages[119] = uncachedFar[1]
+        let ids = placeholderIDs(enabled: true, messages: messages, viewportMinY: 0)
+        XCTAssertTrue(ids.contains(messages[4].id))
+        XCTAssertFalse(ids.contains(uncachedFar[0].id), "nil height must never placeholder, even 50 rows down")
+        XCTAssertFalse(ids.contains(uncachedFar[1].id), "nil height must never placeholder, even at the far end")
+        XCTAssertFalse(ids.contains(messages[0].id))
+    }
+
+    func testLongConversationFlagOffYieldsEmptyPlaceholders() {
+        let messages = seededLongConversation(count: 120, prefix: "flag-off")
+        let ids = placeholderIDs(enabled: false, messages: messages, viewportMinY: 0)
+        XCTAssertTrue(ids.isEmpty)
+    }
+
+    func testScrollingLongConversationRemountsRowsEnteringKeepBand() {
+        let messages = seededLongConversation(count: 120, prefix: "scroll")
+        let top = placeholderIDs(enabled: true, messages: messages, viewportMinY: 0)
+        // Row 60 on screen: 400pt rows, viewportMinY = 24000. Keep band [22800, 25600].
+        let mid = placeholderIDs(enabled: true, messages: messages, viewportMinY: 24_000)
+        XCTAssertTrue(top.contains(messages[60].id), "a far row is a placeholder before the viewport arrives")
+        XCTAssertFalse(mid.contains(messages[60].id), "the on-screen row remounts")
+        XCTAssertFalse(mid.contains(messages[57].id), "rows that just entered the keep band remount")
+        XCTAssertFalse(mid.contains(messages[63].id), "rows still inside the lower keep band stay mounted")
+        XCTAssertTrue(mid.contains(messages[56].id), "rows that left the keep band become placeholders")
+        XCTAssertTrue(mid.contains(messages[64].id))
+        XCTAssertTrue(mid.contains(messages[0].id))
+        XCTAssertTrue(mid.contains(messages[119].id))
+    }
+
+    func testSwitchingLongSessionsDoesNotLeakPlaceholderIDs() {
+        let sessionA = seededLongConversation(count: 120, prefix: "session-A")
+        let sessionB = seededLongConversation(count: 120, prefix: "session-B")
+        XCTAssertNil(
+            AgentHistoryRevealPolicy.appendedMessageCount(
+                previousMessageIDs: sessionA.map(\.id),
+                currentMessageIDs: sessionB.map(\.id)
+            ),
+            "replacing a long session must not look like an append"
+        )
+
+        let idsA = placeholderIDs(enabled: true, messages: sessionA, viewportMinY: 0)
+        // After a session switch the pane refolds to the newest page; placeholders
+        // are computed only from those visible rows, at the latest-message viewport.
+        let visibleB = Array(sessionB.suffix(AgentHistoryRevealPolicy.pageSize))
+        let newestPageHeight = CGFloat(visibleB.count - 1) * 400
+        let idsB = placeholderIDs(
+            enabled: true,
+            messages: visibleB,
+            viewportMinY: newestPageHeight
+        )
+
+        XCTAssertFalse(idsA.isEmpty)
+        XCTAssertTrue(idsA.isDisjoint(with: Set(sessionB.map(\.id))))
+        XCTAssertTrue(idsB.isDisjoint(with: Set(sessionA.map(\.id))))
+        XCTAssertFalse(idsB.contains(visibleB.last!.id), "the on-screen latest row stays mounted")
+        XCTAssertTrue(idsB.contains(visibleB[0].id), "the far end of the newest page still unloads")
+    }
+
+    func testStreamingTailInLongConversationNeverPlaceholders() {
+        var messages = seededLongConversation(count: 119, prefix: "typing")
+        let streaming = AgentMessage(
+            role: .assistant,
+            text: "still-generating",
+            source: nil,
+            completionState: .generating
+        )
+        messages.append(streaming)
+        let ids = placeholderIDs(enabled: true, messages: messages, viewportMinY: 0)
+        XCTAssertFalse(ids.contains(streaming.id), "a generating tail must stay mounted even when far from the viewport")
+        XCTAssertTrue(ids.contains(messages[4].id))
+        XCTAssertGreaterThanOrEqual(messages.count, 100)
+    }
+
+    private func placeholderIDs(
+        enabled: Bool,
+        messages: [AgentMessage],
+        viewportMinY: CGFloat
+    ) -> Set<UUID> {
+        AgentMessageViewportWindow.placeholderIDs(
+            enabled: enabled,
+            messages: messages,
+            layoutWidth: 720,
+            wideTypography: true,
+            viewportMinY: viewportMinY,
+            viewportHeight: 400,
+            spacing: 0
+        )
+    }
+
+    private func seededLongConversation(count: Int, prefix: String) -> [AgentMessage] {
+        (0..<count).map { index in
+            seededAssistantMessage(text: "\(prefix)-\(index)", height: 400)
+        }
     }
 
     private func seededAssistantMessage(text: String, height: CGFloat) -> AgentMessage {
