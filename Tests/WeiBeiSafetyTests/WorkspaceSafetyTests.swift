@@ -459,11 +459,17 @@ final class WorkspaceSafetyTests: XCTestCase {
                 contextRevision: "session-summary-full-text",
                 memoryRevision: memoryRevision,
                 sessionSummary: summary,
-                suggestedNext: next,
+                suggestedNext: [],
                 entries: [
                     StudyAgentMemoryUpdateEntry(
                         kind: .progress,
                         text: "用户要求记录当前进度",
+                        evidence: "[用户：本轮] 请记录当前进度",
+                        origin: .userStatement
+                    ),
+                    StudyAgentMemoryUpdateEntry(
+                        kind: .nextStep,
+                        text: next[0],
                         evidence: "[用户：本轮] 请记录当前进度",
                         origin: .userStatement
                     ),
@@ -478,7 +484,11 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertTrue(receipt.accepted, receipt.message)
         let updated = store.studySessions.first { $0.id == sessionID }
         XCTAssertEqual(updated?.summary, summary)
-        XCTAssertEqual(updated?.flow.suggestedNext, next)
+        // 下一步通过 nextStep 记忆条目完整持久化；flow.suggestedNext 死链已删。
+        let nextStepEntry = store
+            .learningMemoryEntries(in: .course(courseID))
+            .first { $0.kind == .nextStep }
+        XCTAssertEqual(nextStepEntry?.text, next[0])
     }
 
     @MainActor

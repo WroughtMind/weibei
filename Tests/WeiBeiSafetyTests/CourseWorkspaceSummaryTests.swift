@@ -30,7 +30,25 @@ final class CourseWorkspaceSummaryTests: XCTestCase {
             studySessions: [session]
         )
 
-        XCTAssertEqual(highlights.nextStepText, "Review the linked note")
-        XCTAssertEqual(highlights.nextStepSessionID, sessionID)
+        // 下一步建议只来自记忆 nextStep 条目；旧 flow.suggestedNext 不再浮出。
+        XCTAssertNil(highlights.nextStepText)
+        XCTAssertNil(highlights.nextStepSessionID)
+
+        let memoryHighlights = CourseHomeLearningHighlights(
+            courseID: targetCourseID,
+            learningMemoryEntries: [
+                LearningMemoryEntry(
+                    kind: .nextStep,
+                    text: "Review the linked note",
+                    evidence: "Test",
+                    origin: .userStatement,
+                    sessionID: sessionID
+                ),
+            ],
+            studySessions: [session]
+        )
+
+        XCTAssertEqual(memoryHighlights.nextStepText, "Review the linked note")
+        XCTAssertEqual(memoryHighlights.nextStepSessionID, sessionID)
     }
 }
