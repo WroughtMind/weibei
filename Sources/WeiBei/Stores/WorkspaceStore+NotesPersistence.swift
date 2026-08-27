@@ -693,7 +693,74 @@ extension WorkspaceStore {
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
         setNoteFileError(nil, for: itemID)
         noteEditorDidPersist(markdown, documentID: itemID)
+        scheduleOrphanAttachmentGC(afterPersistingNoteAt: url, markdown: markdown)
         return true
+    }
+
+    /// 笔记成功写盘后，按全库 markdown 引用回收附件目录里的孤儿图。
+    /// 只扫 `.weibei-assets` 与 `Files/Attachments`，不扫课程资料/用户文件。
+    func scheduleOrphanAttachmentGC(afterPersistingNoteAt noteURL: URL, markdown: String) {
+        let noteAssets = noteURL.deletingLastPathComponent()
+            .appendingPathComponent(
+                MarkdownAttachmentGC.notebookAssetsDirectoryName,
+                isDirectory: true
+            )
+        let appOwned = workspaceDirectory
+            .appendingPathComponent("Files", isDirectory: true)
+            .appendingPathComponent(
+                MarkdownAttachmentGC.appOwnedAttachmentsDirectoryName,
+                isDirectory: true
+            )
+        let noteAssetsExist = FileManager.default.fileExists(atPath: noteAssets.path)
+        let appOwnedExist = FileManager.default.fileExists(atPath: appOwned.path)
+        guard noteAssetsExist || appOwnedExist else { return }
+
+        var bodies: [String] = [markdown]
+        bodies.append(contentsOf: notesByItemID.values)
+        bodies.append(contentsOf: loadedCourseNoteTextByItemID.values)
+        bodies.append(contentsOf: pendingNotePersistenceByItemID.values.map(\.markdown))
+        bodies.append(noteText)
+
+        let justWrittenPath = noteURL.standardizedFileURL.path
+        var urlsToRead: [URL] = []
+        for item in allItems where item.isNotebookNote {
+            if notesByItemID[item.id] != nil { continue }
+            if loadedCourseNoteTextByItemID[item.id] != nil { continue }
+            if item.id == activeNoteItem?.id { continue }
+            guard let url = item.url else { continue }
+            if url.standardizedFileURL.path == justWrittenPath { continue }
+            urlsToRead.append(url)
+        }
+
+        var roots: [MarkdownAttachmentGCRoot] = []
+        if noteAssetsExist {
+            roots.append(
+                MarkdownAttachmentGCRoot(
+                    directory: noteAssets,
+                    relativeDirectoryName: MarkdownAttachmentGC.notebookAssetsDirectoryName,
+                    skipIfAnyUnread: false
+                )
+            )
+        }
+        if appOwnedExist {
+            roots.append(
+                MarkdownAttachmentGCRoot(
+                    directory: appOwned,
+                    relativeDirectoryName: MarkdownAttachmentGC.appOwnedAttachmentsDirectoryName,
+                    skipIfAnyUnread: true
+                )
+            )
+        }
+
+        let snapshot = MarkdownAttachmentGCSnapshot(
+            markdownBodies: bodies,
+            notebookURLsToRead: urlsToRead,
+            roots: roots,
+            now: Date()
+        )
+        Task.detached(priority: .utility) {
+            sweepOrphanMarkdownAttachments(snapshot)
+        }
     }
 
     /// 磁盘内容被外部修改时保留待写正文，并交给现有冲突条显式选择。
@@ -884,5 +951,109 @@ extension WorkspaceStore {
             return
         }
         setNoteDraft(markdown, for: noteItemID)
+    }
+}
+
+private struct MarkdownAttachmentGCRoot: Sendable {
+    var directory: URL
+    var relativeDirectoryName: String
+    var skipIfAnyUnread: Bool
+}
+
+private struct MarkdownAttachmentGCSnapshot: Sendable {
+    var markdownBodies: [String]
+    var notebookURLsToRead: [URL]
+    var roots: [MarkdownAttachmentGCRoot]
+    var now: Date
+}
+
+private func sweepOrphanMarkdownAttachments(_ snapshot: MarkdownAttachmentGCSnapshot) {
+    var bodies = snapshot.markdownBodies
+    var unreadParents = Set<String>()
+    var anyUnread = false
+    for url in snapshot.notebookURLsToRead {
+        switch CourseProjectFileWorker.entryPresence(at: url) {
+        case .presentUnmaterialized, .inaccessible:
+            anyUnread = true
+            unreadParents.insert(url.deletingLastPathComponent().standardizedFileURL.path)
+        case .absent:
+            continue
+        case .present:
+            if let text = try? String(contentsOf: url, encoding: .utf8) {
+                bodies.append(text)
+            } else {
+                anyUnread = true
+                unreadParents.insert(url.deletingLastPathComponent().standardizedFileURL.path)
+            }
+        }
+    }
+    let refs = MarkdownAttachmentGC.referencedRelativePaths(inMarkdownBodies: bodies)
+    var files: [MarkdownAttachmentFile] = []
+    for root in snapshot.roots {
+        if root.skipIfAnyUnread, anyUnread { continue }
+        let parent = root.directory.deletingLastPathComponent().standardizedFileURL.path
+        if unreadParents.contains(parent) { continue }
+        files.append(contentsOf: listMarkdownAttachmentFiles(
+            in: root.directory,
+            relativeDirectoryName: root.relativeDirectoryName
+        ))
+    }
+    let doomed = MarkdownAttachmentGC.urlsEligibleForDeletion(
+        files: files,
+        referencedRelativePaths: refs,
+        now: snapshot.now
+    )
+    for url in doomed {
+        try? FileManager.default.removeItem(at: url)
+    }
+    if !doomed.isEmpty {
+        WeiBeiLog.workspace.notice(
+            "code=attachment_orphan_collected count=\(doomed.count, privacy: .public)"
+        )
+    }
+}
+
+private func listMarkdownAttachmentFiles(
+    in directory: URL,
+    relativeDirectoryName: String
+) -> [MarkdownAttachmentFile] {
+    let keys: Set<URLResourceKey> = [
+        .isDirectoryKey,
+        .isRegularFileKey,
+        .isSymbolicLinkKey,
+        .contentModificationDateKey,
+        .creationDateKey
+    ]
+    guard let dirValues = try? directory.resourceValues(forKeys: keys),
+          dirValues.isDirectory == true,
+          dirValues.isSymbolicLink != true else {
+        return []
+    }
+    guard let urls = try? FileManager.default.contentsOfDirectory(
+        at: directory,
+        includingPropertiesForKeys: Array(keys),
+        options: []
+    ) else {
+        return []
+    }
+    return urls.compactMap { url in
+        let name = url.lastPathComponent
+        guard !name.hasPrefix(".") else { return nil }
+        guard MarkdownAttachmentStore.isSupportedImageExtension(url.pathExtension) else {
+            return nil
+        }
+        guard let values = try? url.resourceValues(forKeys: keys),
+              values.isRegularFile == true,
+              values.isSymbolicLink != true else {
+            return nil
+        }
+        let timestamp = [values.creationDate, values.contentModificationDate]
+            .compactMap { $0 }
+            .max() ?? .distantPast
+        return MarkdownAttachmentFile(
+            url: url,
+            relativePath: "\(relativeDirectoryName)/\(name)",
+            timestamp: timestamp
+        )
     }
 }

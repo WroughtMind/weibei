@@ -221,7 +221,7 @@
 | ⑭ | StreamFinalizeProbe 清理 | **D3 随 1.3** | 已删 |
 | ⑮ | 高度缓存 LRU | **D3 随 1.3** | 上限 256 |
 | ⑯ | SystemAppearanceObserver 对称移除 | **D3 随 1.3** | 补 onDisappear 注销 |
-| ⑰ | 图片孤儿回收 | **D27 上午** | 按 markdown 引用安全 GC（`MarkdownAttachmentStore.swift:19-82`）：只删「全库无引用且超过宽限期」的附件；换图/删段落触发；必须有防误删测试（在用图片不收） |
+| ⑰ | 图片孤儿回收 | **D27 上午** | [x] 按 markdown 引用安全 GC（`MarkdownAttachmentGC.swift`）：只删「全库无引用且超过宽限期」的附件；换图/删段落写盘成功后触发；[x] 防误删测试（在用图片不收） |
 
 ---
 
