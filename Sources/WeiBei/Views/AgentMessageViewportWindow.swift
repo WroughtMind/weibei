@@ -8,7 +8,8 @@ enum AgentChatOffscreenUnloadFlag {
     static let defaultsKey = "weibei.chat.unloadOffscreenWebViews"
     private static var testingOverride: Bool?
 
-    /// UserDefaults bool; missing key is false.
+    /// UserDefaults bool; missing key is false (Phase B keeps this until a real
+    /// 100+ message scroll / type / session-switch smoke can run).
     static var isEnabled: Bool {
         if let testingOverride { return testingOverride }
         return UserDefaults.standard.bool(forKey: defaultsKey)
