@@ -219,7 +219,11 @@ const emphasisBoundarySegment = (text: string) => String(text || '')
   // closer:内容以标点收尾、闭合 delimiter 后紧跟非标点文字 → 闭合后补空格。
   // 内容不许以空白开头、opener 前排除字母数字,双保险防止把前一对的合法
   // 闭合星号当成下一对的开头跨对误配。
-  .replace(/(^|[\s\p{P}])(\*\*|__)([^\s*_\n][^*_\n]*\p{P})\2(?=[^\s\p{P}])/gu, '$1$2$3$2 ');
+  .replace(/(^|[\s\p{P}])(\*\*|__)([^\s*_\n][^*_\n]*\p{P})\2(?=[^\s\p{P}])/gu, '$1$2$3$2 ')
+  // 内容以空白收尾时 CommonMark 拒绝闭合(`**更广 **，`),去掉尾随空白。
+  // 起点前必须是行首/空白/标点(像一个真正的开启),内容以非空白结尾,
+  // 防止把相邻两对强调的"闭合+空格+开启"误接成一对。
+  .replace(/(^|[\s\p{P}])(\*\*|__)([^*_\n]*?\S)[ \t]+\2(?=\S)/gu, '$1$2$3$2');
 
 export const normalizeEmphasisBoundaries = (markdown: string) => mapMarkdownOutsideCode(markdown, emphasisBoundarySegment);
 

@@ -195,3 +195,10 @@ test('emphasis boundary punctuation gets a space so CommonMark accepts the close
   const code = normalizeMarkdownSource('```\n**保留：**原样\n```以及 `**行内：**` 结束', 'userDocument');
   assert.equal(code, '```\n**保留：**原样\n```以及 `**行内：**` 结束');
 });
+
+test('trailing whitespace before a closing delimiter is stripped so the pair closes', () => {
+  const agentCase = normalizeMarkdownSource('**但具身智能的范围更广 **，还包括工业移动机器人', 'agentGenerated');
+  assert.equal(agentCase, '**但具身智能的范围更广**，还包括工业移动机器人');
+  const plainBold = normalizeMarkdownSource('**A** 和 **B** 互不相扰', 'userDocument');
+  assert.equal(plainBold, '**A** 和 **B** 互不相扰');
+});
