@@ -250,6 +250,7 @@ public enum NativeBuiltinTools {
         await registry.register(visualAsset)
         await registry.register(courseMap)
         await registry.register(courseSearch)
+        await registry.register(workspaceSearch)
         await registry.register(courseRead)
         await registry.register(retryFailedPDFPages)
         await registry.register(webOpen)
@@ -507,6 +508,30 @@ public enum NativeBuiltinTools {
                 .courseSearch(
                     query: string(arguments["query"]) ?? "",
                     limit: int(arguments["limit"], default: 8, range: 1...8)
+                )
+            }
+        )
+    }
+
+    private static var workspaceSearch: NativeToolDefinition {
+        hostTool(
+            name: "weibei_search_workspace",
+            description: "在工作区检索当前课程材料与笔记，必要时再检索其他课程的笔记。默认只搜当前课程，不要跨库。只有用户明确要求查全部笔记或问题明显跨课时，才把 crossLibrary 设为 true。结果带来源课程、标题和摘录；没有命中就如实报告空结果，不要编。不含网页。",
+            permission: .read,
+            schema: NativeJSONSchema([
+                "type": "object",
+                "properties": [
+                    "query": ["type": "string"],
+                    "limit": ["type": "integer"],
+                    "crossLibrary": ["type": "boolean"],
+                ],
+                "required": ["query"],
+            ]),
+            makeRequest: { arguments, _ in
+                .workspaceSearch(
+                    query: string(arguments["query"]) ?? "",
+                    limit: int(arguments["limit"], default: 8, range: 1...8),
+                    crossLibrary: bool(arguments["crossLibrary"], default: false)
                 )
             }
         )
@@ -1137,6 +1162,15 @@ public enum NativeBuiltinTools {
         guard value == expected else {
             throw NativeLLMFailure(code: "revision_mismatch", message: message)
         }
+    }
+
+    private static func bool(_ raw: Any?, default defaultValue: Bool) -> Bool {
+        if let value = raw as? Bool { return value }
+        if let text = string(raw)?.lowercased() {
+            if text == "true" || text == "1" { return true }
+            if text == "false" || text == "0" { return false }
+        }
+        return defaultValue
     }
 
     private static func int(_ raw: Any?, default defaultValue: Int, range: ClosedRange<Int>? = nil) -> Int {

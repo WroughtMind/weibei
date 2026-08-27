@@ -306,7 +306,9 @@ public actor NativeAgentLoop {
     ) {
         if result.isError { return }
         let details = result.details
-        if name == "weibei_course_search" || name == "weibei_course_read" {
+        if name == "weibei_course_search"
+            || name == "weibei_course_read"
+            || name == "weibei_search_workspace" {
             if let items = (try? JSONDecoder().decode(StudyAgentHostToolResult.self, from: Data(result.text.utf8)))?.items {
                 for item in items {
                     if !context.searchedItemIDs.contains(item.item.id) {

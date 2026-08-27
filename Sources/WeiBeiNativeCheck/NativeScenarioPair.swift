@@ -26,6 +26,25 @@ enum NativeScenarioPair {
             ],
             [.textDelta(index: 0, text: "利率是资金使用价格。"), .finish(reason: .stop, replayState: nil)],
         ], host: courseHost))
+        rows.append(try await row(
+            id: "15-workspace-search",
+            tools: ["weibei_search_workspace"],
+            textMustContain: "资金",
+            expectSources: true,
+            chunks: [
+                [
+                    .toolCallDelta(
+                        index: 0,
+                        id: "w1",
+                        name: "weibei_search_workspace",
+                        argumentsDelta: "{\"query\":\"利率\",\"crossLibrary\":true}"
+                    ),
+                    .finish(reason: .toolCalls, replayState: nil),
+                ],
+                [.textDelta(index: 0, text: "笔记写过：利率是资金使用价格。"), .finish(reason: .stop, replayState: nil)],
+            ],
+            host: workspaceHost
+        ))
         rows.append(try await row(id: "03-course-read", tools: ["weibei_course_read"], textMustContain: "资金", expectSources: true, chunks: [
             [
                 .toolCallDelta(index: 0, id: "c1", name: "weibei_course_read", argumentsDelta: "{\"itemID\":\"material-rates\",\"query\":\"利率\"}"),
@@ -159,6 +178,31 @@ enum NativeScenarioPair {
         return StudyAgentHostToolResult(
             query: "利率",
             items: [StudyAgentHostToolItem(item: item, sourceRevision: "rev-1")]
+        )
+    }
+
+    private static func workspaceHost(_ request: StudyAgentHostToolRequest) async throws -> StudyAgentHostToolResult {
+        guard case let .workspaceSearch(query, _, crossLibrary) = request, crossLibrary else {
+            return StudyAgentHostToolResult(query: "", items: [])
+        }
+        let item = StudyAgentCourseItem(
+            id: "note-rates",
+            title: "利率笔记",
+            subtitle: "",
+            kind: "markdown",
+            role: "note",
+            searchText: "利率是资金使用价格的表达。"
+        )
+        return StudyAgentHostToolResult(
+            query: query,
+            items: [
+                StudyAgentHostToolItem(
+                    item: item,
+                    courseIDs: ["course-macro"],
+                    courseTitles: ["宏观课"],
+                    sourceRevision: "rev-note"
+                ),
+            ]
         )
     }
 
