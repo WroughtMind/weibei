@@ -1719,9 +1719,9 @@ let courseHomeFallbackHighlights = CourseHomeLearningHighlights(
     studySessions: [courseHomeHighlightSession]
 )
 expect(courseHomeFallbackHighlights.summary == nil
-    && courseHomeFallbackHighlights.nextStepText == "复习第二章"
-    && courseHomeFallbackHighlights.nextStepSessionID == courseHomeHighlightSessionID,
-    "course home falls back to a real same-course session suggestion without treating progress as a summary")
+    && courseHomeFallbackHighlights.nextStepText == nil
+    && courseHomeFallbackHighlights.nextStepSessionID == nil,
+    "course home no longer surfaces legacy session flow suggestions once nextStep memories are gone")
 let emptyCourseHomeHighlights = CourseHomeLearningHighlights(
     courseID: courseHomeHighlightCourseID,
     learningMemoryEntries: [],

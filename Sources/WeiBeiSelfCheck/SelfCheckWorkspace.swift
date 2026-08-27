@@ -12,6 +12,7 @@ func checkWorkspaceSafetyScenes() throws {
         id: UUID(),
         kind: .nextStep,
         text: "Review the linked note",
+        evidence: "SelfCheck",
         origin: .userStatement
     )
     let session = StudySession(
