@@ -297,6 +297,88 @@ func checkCourseDocumentSearchReadiness() throws {
             && sourceRemoved.revision == profile.revision + 1,
         "课程来源移除后仍保留了失效的知识档案条目"
     )
+    try checkCourseDocumentSearchConnectionReuse()
+}
+
+func checkCourseDocumentSearchConnectionReuse() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("weibei-search-connection-reuse-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let databaseURL = root.appendingPathComponent("CourseIndex/search.sqlite3")
+    let item = try makeSearchItem(
+        "shared",
+        body: "公开市场操作与政策利率",
+        root: root
+    )
+
+    do {
+        let first = CourseDocumentSearchIndex(databaseURL: databaseURL)
+        first.schedule([item])
+        let firstHit = waitForSearchResult(until: Date().addingTimeInterval(8)) {
+            first.lookup(items: [item], query: "公开市场操作")[item.id]
+        } where: {
+            $0.availability == .ready && $0.text?.contains("公开市场操作") == true
+        }
+        try requireSearchCheck(firstHit != nil, "第一个搜索器没有编进刚加入的资料")
+
+        let second = CourseDocumentSearchIndex(databaseURL: databaseURL)
+        let secondHit = second.lookup(items: [item], query: "公开市场操作")[item.id]
+        try requireSearchCheck(
+            secondHit?.availability == .ready
+                && secondHit?.text?.contains("公开市场操作") == true,
+            "同一课程库上另一个搜索器读不到已编进的资料"
+        )
+
+        let group = DispatchGroup()
+        let firstBox = LockedSearchResult()
+        let secondBox = LockedSearchResult()
+        group.enter()
+        DispatchQueue.global().async {
+            firstBox.value = first.lookup(items: [item], query: "政策利率")[item.id]
+            group.leave()
+        }
+        group.enter()
+        DispatchQueue.global().async {
+            secondBox.value = second.lookup(items: [item], query: "政策利率")[item.id]
+            group.leave()
+        }
+        try requireSearchCheck(
+            group.wait(timeout: .now() + 8) == .success,
+            "两个搜索器同时查询没有在时限内返回"
+        )
+        try requireSearchCheck(
+            firstBox.value?.text?.contains("政策利率") == true
+                && secondBox.value?.text?.contains("政策利率") == true,
+            "两个搜索器同时查询没有都找到资料"
+        )
+    }
+
+    let reopened = CourseDocumentSearchIndex(databaseURL: databaseURL)
+    let reopenedHit = reopened.lookup(items: [item], query: "公开市场操作")[item.id]
+    try requireSearchCheck(
+        reopenedHit?.availability == .ready
+            && reopenedHit?.text?.contains("公开市场操作") == true,
+        "关掉搜索器后再打开，课程库里已编过的资料找不到了"
+    )
+}
+
+private final class LockedSearchResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: CourseDocumentIndexResult?
+
+    var value: CourseDocumentIndexResult? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return stored
+        }
+        set {
+            lock.lock()
+            stored = newValue
+            lock.unlock()
+        }
+    }
 }
 
 private func makeSearchRetryPDF(at url: URL, pageCount: Int) throws {

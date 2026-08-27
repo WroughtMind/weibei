@@ -140,8 +140,8 @@
 ### 2.3 SQLite 连接复用｜D5
 
 **步骤**：
-- [ ] `Sources/WeiBei/CourseDocumentSearchIndex.swift:1713-1743`（路径以实际为准）：每次 lookup/index 开关一次库 → 长连接 + 忙超时；确认 WAL 模式。
-- [ ] 测试：并发 lookup/index 稳定性；多 store 共库不回退 #390 修过的竞态（`startsCourseFileMaintenance:false` 前提保持）。
+- [x] `Sources/WeiBeiCore/CourseDocumentSearchIndex.swift`：每次 lookup/index 开关一次库 → 长连接 + 忙超时；确认 WAL 模式。
+- [x] 测试：并发 lookup/index 稳定性；多 store 共库不回退 #390 修过的竞态（`startsCourseFileMaintenance:false` 前提保持）。
 - **占用**：无核心面。
 - **终验口径**：课程搜索/查资料响应更快更稳，不再忽快忽慢。
 

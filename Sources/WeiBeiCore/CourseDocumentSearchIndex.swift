@@ -205,6 +205,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     )
     private let schedulingLock = NSLock()
     private let databaseWriteLock = NSLock()
+    private let databaseCondition = NSCondition()
+    private var persistentDatabase: OpaquePointer?
+    private var databaseLeaseCount = 0
+    private var isDatabaseInvalidated = false
     private let itemIndexLockRegistryLock = NSLock()
     private var scheduledSignatures: Set<String> = []
     private var initialIndexCompletions: [String: DispatchGroup] = [:]
@@ -239,8 +243,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             [.posixPermissions: 0o700],
             ofItemAtPath: databaseURL.deletingLastPathComponent().path
         )
-        guard let database = openDatabase() else { return }
-        defer { sqlite3_close(database) }
+        guard let database = borrowDatabase() else { return }
+        defer { returnDatabase() }
         _ = execute("PRAGMA page_size=4096", in: database)
         _ = execute(
             "PRAGMA max_page_count=\(Self.maximumSQLiteBytes / Self.sqlitePageBytes)",
@@ -323,6 +327,19 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         )
     }
 
+    deinit {
+        databaseCondition.lock()
+        isDatabaseInvalidated = true
+        while databaseLeaseCount > 0 {
+            databaseCondition.wait()
+        }
+        if let database = persistentDatabase {
+            sqlite3_close_v2(database)
+            persistentDatabase = nil
+        }
+        databaseCondition.unlock()
+    }
+
     public func schedule(_ items: [StudyItem]) {
         metadataQueue.async { [weak self] in
             guard let self else { return }
@@ -344,8 +361,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         defer { itemLock.unlock() }
         guard isExpected(signature: scheduled.signature, for: scheduled.storageID),
               Self.fileSignature(for: item) == scheduled.signature,
-              let database = openDatabase() else { return false }
-        defer { sqlite3_close(database) }
+              let database = borrowDatabase() else { return false }
+        defer { returnDatabase() }
         let reset = withWriteTransaction(in: database) {
             resetFailedPDFPages(
                 itemID: scheduled.storageID,
@@ -395,8 +412,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         refreshChangedItemsForLookup(items)
         waitForInitialIndexing(scheduledItems)
         guard !Task.isCancelled else { return [:] }
-        guard let database = openDatabase() else { return [:] }
-        defer { sqlite3_close(database) }
+        guard let database = borrowDatabase() else { return [:] }
+        defer { returnDatabase() }
         let cancellationProbe = CourseIndexCancellationProbe()
         let cancellationContext = Unmanaged.passRetained(cancellationProbe).toOpaque()
         sqlite3_progress_handler(
@@ -592,14 +609,14 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         refreshChangedItemsForLookup([item])
         waitForInitialIndexing([scheduled])
         guard !Task.isCancelled,
-              let database = openDatabase() else {
+              let database = borrowDatabase() else {
             return CourseDocumentIndexResult(
                 text: nil,
                 isTruncated: false,
                 availability: .unavailable
             )
         }
-        defer { sqlite3_close(database) }
+        defer { returnDatabase() }
         schedulingLock.lock()
         let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
         let isScheduled = scheduledSignatures.contains(
@@ -751,8 +768,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         refreshChangedItemsForLookup([item])
         waitForInitialIndexing([scheduled])
         guard !Task.isCancelled,
-              let database = openDatabase() else { return [] }
-        defer { sqlite3_close(database) }
+              let database = borrowDatabase() else { return [] }
+        defer { returnDatabase() }
         schedulingLock.lock()
         let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
         schedulingLock.unlock()
@@ -919,13 +936,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             }
         }
 
-        let persistedStates: [String: FileState]
-        if let database = openDatabase() {
-            persistedStates = fileStates(in: database)
-            sqlite3_close(database)
-        } else {
-            persistedStates = [:]
-        }
+        let persistedStates = withDatabase { fileStates(in: $0) } ?? [:]
         var immediateRefreshCount = 0
         let immediateRefreshDeadline = Date().addingTimeInterval(Self.maximumImmediateRefreshSeconds)
         for scheduled in scheduledItems {
@@ -972,8 +983,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         guard let itemLock = acquireItemIndexLock(for: storageID) else { return false }
         defer { itemLock.unlock() }
         guard isExpected(signature: signature, for: storageID),
-              let database = openDatabase() else { return false }
-        defer { sqlite3_close(database) }
+              let database = borrowDatabase() else { return false }
+        defer { returnDatabase() }
         if let state = fileState(for: storageID, in: database),
            state.signature == signature,
            state.isComplete {
@@ -1202,8 +1213,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 == signature,
               let snapshotURL = temporarySnapshot(of: file) else { return }
         defer { try? FileManager.default.removeItem(at: snapshotURL) }
-        guard let database = openDatabase() else { return }
-        defer { sqlite3_close(database) }
+        guard let database = borrowDatabase() else { return }
+        defer { returnDatabase() }
         guard let document = PDFDocument(url: snapshotURL),
               fileState(for: storageID, in: database)?.signature == signature else { return }
         let pageCount = max(document.pageCount, 0)
@@ -1258,8 +1269,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         guard isExpected(signature: signature, for: storageID),
               Self.fileSignature(for: item) == signature,
               hasDatabaseCapacity(),
-              let database = openDatabase() else { return false }
-        defer { sqlite3_close(database) }
+              let database = borrowDatabase() else { return false }
+        defer { returnDatabase() }
         guard let state = fileState(for: storageID, in: database),
               state.signature == signature else { return false }
         guard !state.isComplete,
@@ -1465,8 +1476,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     }
 
     private func pruneMissingItems(validStorageIDs: Set<String>) {
-        guard let database = openDatabase() else { return }
-        defer { sqlite3_close(database) }
+        guard let database = borrowDatabase() else { return }
+        defer { returnDatabase() }
         let staleIDs = persistedItemIDs(in: database).subtracting(validStorageIDs)
         guard !staleIDs.isEmpty else { return }
         let pruned = withWriteTransaction(in: database) {
@@ -1708,6 +1719,33 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             sqlite3_finalize(statement)
         }
         return itemIDs
+    }
+
+    private func withDatabase<T>(_ body: (OpaquePointer) -> T) -> T? {
+        guard let database = borrowDatabase() else { return nil }
+        defer { returnDatabase() }
+        return body(database)
+    }
+
+    private func borrowDatabase() -> OpaquePointer? {
+        databaseCondition.lock()
+        defer { databaseCondition.unlock() }
+        guard !isDatabaseInvalidated else { return nil }
+        if persistentDatabase == nil {
+            persistentDatabase = openDatabase()
+        }
+        guard let database = persistentDatabase else { return nil }
+        databaseLeaseCount += 1
+        return database
+    }
+
+    private func returnDatabase() {
+        databaseCondition.lock()
+        databaseLeaseCount -= 1
+        if databaseLeaseCount == 0 {
+            databaseCondition.broadcast()
+        }
+        databaseCondition.unlock()
     }
 
     private func openDatabase() -> OpaquePointer? {
