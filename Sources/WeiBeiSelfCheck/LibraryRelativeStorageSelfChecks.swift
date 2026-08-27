@@ -109,6 +109,10 @@ func checkLibraryRelativeStorage() throws {
         contentsOfFile: "Sources/WeiBei/Stores/WorkspaceStore.swift",
         encoding: .utf8
     )
+    let courseMaintenanceSource = try String(
+        contentsOfFile: "Sources/WeiBei/Stores/WorkspaceStore+CourseMaintenance.swift",
+        encoding: .utf8
+    )
     let modelsSource = try String(
         contentsOfFile: "Sources/WeiBeiCore/WorkspaceModels.swift",
         encoding: .utf8
@@ -131,7 +135,7 @@ func checkLibraryRelativeStorage() throws {
             && !goneSource.contains("legacyFileURL"),
         "SAFETY:library-relative-gone gone-item handling stays off the old recovery and legacy-file paths"
     )
-    let flattenedStoreSource = storeSource
+    let flattenedStoreSource = (storeSource + "\n" + courseMaintenanceSource)
         .components(separatedBy: .whitespacesAndNewlines)
         .filter { !$0.isEmpty }
         .joined(separator: " ")
