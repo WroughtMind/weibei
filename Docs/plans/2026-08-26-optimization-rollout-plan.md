@@ -163,10 +163,11 @@
 
 **目标**：21761 行单文件（届时已因前序各刀变小）把课程文件/对账域机械剥离，恢复增量编译速度与可 review 性。
 **步骤**：
-- [ ] 按符号（勿按行号）圈定课程域：课程文件导入/资料管理（原约 L1000-8000）与课程文件维护/对账（原约 L17800-20700）两块。
-- [ ] 每块拆成独立扩展文件（如 `WorkspaceStore+CourseLibrary.swift`、`WorkspaceStore+CourseMaintenance.swift`），**只搬不改**；每 PR 搬一块，搬完 `swift build` + `make check` 全绿再合。
-- [ ] 每 PR 后记录 WorkspaceStore.swift 行数（应显著下降），联动冻结名单更新。
-- [ ] 搬完更新 SelfCheck 合同检查里的文件清单引用。
+- [x] 按符号（勿按行号）圈定第一块：课程文件维护/对账（`resolveCourseOwnedItems` … `startCourseFileMaintenance`）。第二块课程文件导入/资料管理仍待后续 PR。
+- [x] 第一块拆入 `WorkspaceStore+CourseMaintenance.swift`，**只搬不改**。搬后 `WorkspaceStore.swift` 20895 行（基线 21744）。
+- [ ] 第二块课程文件导入/资料管理拆入独立扩展文件（如 `WorkspaceStore+CourseLibrary.swift`），只搬不改；搬完 `swift build` + 定向检查绿再合。
+- [x] 本 PR 记录 WorkspaceStore.swift 行数：20895（基线 21744，−849）。冻结守卫净增 ≤ 0。
+- [x] 第一块 SelfCheck 墓碑改为同时读新扩展文件（`?? activeCourseID ?? sourceItem` 仍为「不得出现」）。后续块搬完再补文件清单。
 - **风险**：搬家丢代码——用逐符号对照 diff review，严禁顺手重构。
 - **终验口径**：（不直接感知）此后每刀的交付节奏明显变快。
 
