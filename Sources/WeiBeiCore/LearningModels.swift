@@ -254,6 +254,9 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
     public var flow: StudyFlowState
     public var createdAt: Date
     public var updatedAt: Date
+    /// Count of chat messages when the body lives in the per-session file.
+    /// The main snapshot stores this instead of embedding `messages`.
+    public var messageCount: Int
 
     public init(
         id: UUID = UUID(),
@@ -268,7 +271,8 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         materialItemID: String? = nil,
         flow: StudyFlowState = StudyFlowState(),
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        messageCount: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -283,6 +287,13 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         self.flow = flow
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.messageCount = messageCount ?? messages.count
+    }
+
+    /// True when this chat has history, including sessions whose messages
+    /// are not loaded yet and only have a persisted count.
+    public var hasChatHistory: Bool {
+        !messages.isEmpty || messageCount > 0
     }
 
     public var groupingMaterialItemID: String? {
@@ -314,6 +325,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         case flow
         case createdAt
         case updatedAt
+        case messageCount
     }
 
     public init(from decoder: Decoder) throws {
@@ -331,6 +343,8 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         flow = try values.decodeIfPresent(StudyFlowState.self, forKey: .flow) ?? StudyFlowState()
         createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        messageCount = try values.decodeIfPresent(Int.self, forKey: .messageCount)
+            ?? messages.count
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -346,6 +360,10 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         try values.encode(flow, forKey: .flow)
         try values.encode(createdAt, forKey: .createdAt)
         try values.encode(updatedAt, forKey: .updatedAt)
+        try values.encode(
+            messages.isEmpty ? messageCount : messages.count,
+            forKey: .messageCount
+        )
     }
 
     private static func normalizedCourseIDs(_ courseIDs: [UUID]) -> [UUID] {

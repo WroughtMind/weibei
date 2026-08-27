@@ -47,7 +47,8 @@ extension WorkspaceStore {
                     || initializedCourseKnowledgeProfiles
                     || needsPortableCourseStateBootstrap
                     || recoveredInterruptedAgentReply
-                    || needsSelectionAskThreadsWorkspaceMigration {
+                    || needsSelectionAskThreadsWorkspaceMigration
+                    || sessionMessagePersistence.needsWorkspacePersist {
             save()
         }
     }

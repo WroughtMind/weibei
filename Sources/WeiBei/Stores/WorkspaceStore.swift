@@ -359,6 +359,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var learningMemoryStates: [ScopedLearningMemoryState] = []
     var courseKnowledgeProfiles: [CourseKnowledgeProfile] = []
     @Published var studySessions: [StudySession] = []
+    let sessionMessagePersistence = StudySessionMessagePersistence()
     @Published var activeStudySessionID: UUID? {
         didSet {
             if let chatID = agentStreaming.displayingChatID,
@@ -736,7 +737,7 @@ final class WorkspaceStore: ObservableObject {
     private var needsSelectionAskThreadsWorkspaceMigration = false
     private var shouldRemoveLegacySelectionAskThreadsAfterSave = false
     private var loadedSelectionAskThreadsFromWorkspaceSnapshot = false
-    private var recoveredInterruptedAgentReply = false
+    var recoveredInterruptedAgentReply = false
     private let selectionAttachmentMergeWindow: TimeInterval = 1.8
     private let selectionAttachmentDebounceDelay: UInt64 = 520_000_000
     private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
@@ -1401,13 +1402,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var recentCourseSessions: [StudySession] {
-        orderedStudySessions.filter { !$0.messages.isEmpty }
+        orderedStudySessions.filter(\.hasChatHistory)
     }
 
     /// Non-empty Chats that have actually used this course.
     func sessionsTouchingCourse(_ courseID: UUID) -> [StudySession] {
         orderedStudySessions.filter {
-            !$0.messages.isEmpty
+            $0.hasChatHistory
                 && $0.relatedCourseIDs.contains(courseID)
         }
     }
@@ -1415,7 +1416,7 @@ final class WorkspaceStore: ObservableObject {
     /// Sessions that reference a specific material (and optionally other focus items).
     func sessionsTouchingMaterial(_ materialID: String, in courseID: UUID? = nil) -> [StudySession] {
         return orderedStudySessions.filter { session in
-            guard !session.messages.isEmpty else { return false }
+            guard session.hasChatHistory else { return false }
             if let courseID {
                 guard session.relatedCourseIDs.contains(courseID) else { return false }
             }
@@ -1696,7 +1697,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var historicalStudySessions: [StudySession] {
-        orderedStudySessions.filter { !$0.messages.isEmpty }
+        orderedStudySessions.filter(\.hasChatHistory)
     }
 
     var globalStudySessions: [StudySession] {
@@ -1773,6 +1774,7 @@ final class WorkspaceStore: ObservableObject {
             title: ui("新对话", "New Chat")
         )
         studySessions.append(session)
+        markStudySessionMessagesLoaded(session.id)
         activeStudySessionID = session.id
         freshlyCreatedEmptyStudySessionID = session.id
         messages = []
@@ -1790,10 +1792,13 @@ final class WorkspaceStore: ObservableObject {
         expectedCourseID: UUID?,
         expectedScopeNeedsReview: Bool
     ) -> Bool {
-        guard let session = studySessions.first(where: { $0.id == id }) else {
+        guard let session = loadStudySessionForActivation(id) else {
             return false
         }
-        guard id != activeStudySessionID else { return true }
+        if id == activeStudySessionID {
+            messages = session.messages
+            return true
+        }
         dismissAgentSwitchConfirmation()
         saveActiveAgentDraft()
         syncActiveStudySession()
@@ -1881,11 +1886,12 @@ final class WorkspaceStore: ObservableObject {
             freshlyCreatedEmptyStudySessionID = nil
         }
         agentDraftsBySessionID.removeValue(forKey: id)
+        forgetStudySessionMessages(id)
         studySessions.remove(at: index)
         if deletingActiveSession {
             activeStudySessionID = nil
             messages = []
-            if let replacement = orderedStudySessions.first {
+            if let replacement = loadStudySessionForActivation(orderedStudySessions.first?.id) {
                 activeStudySessionID = replacement.id
                 messages = replacement.messages
                 restoreAgentDraft(for: replacement.id)
@@ -1919,13 +1925,12 @@ final class WorkspaceStore: ObservableObject {
 
     func ensureActiveStudySession(preferFresh: Bool = false) {
         if !preferFresh,
-           let activeStudySessionID,
-           let session = studySessions.first(where: { $0.id == activeStudySessionID }) {
+           let session = loadStudySessionForActivation(activeStudySessionID) {
             messages = session.messages
             restoreAgentReplyState(from: session)
             return
         }
-        if !preferFresh, let session = orderedStudySessions.first {
+        if !preferFresh, let session = loadStudySessionForActivation(orderedStudySessions.first?.id) {
             activeStudySessionID = session.id
             messages = session.messages
             restoreAgentReplyState(from: session)
@@ -1933,6 +1938,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let session = StudySession(title: ui("新学习会话", "New Study Session"))
         studySessions.append(session)
+        markStudySessionMessagesLoaded(session.id)
         activeStudySessionID = session.id
         freshlyCreatedEmptyStudySessionID = session.id
         messages = []
@@ -4145,7 +4151,7 @@ final class WorkspaceStore: ObservableObject {
         expectedScopeNeedsReview: Bool
     ) {
         guard studySessions.contains(where: {
-            $0.id == sessionID && !$0.messages.isEmpty
+            $0.id == sessionID && $0.hasChatHistory
         }),
         activateStudySession(
             sessionID,
@@ -4216,7 +4222,7 @@ final class WorkspaceStore: ObservableObject {
         guard let chatID = courseResumePoint(for: courseID)?.chatID,
               let session = studySessions.first(where: {
                   $0.id == chatID
-                      && !$0.messages.isEmpty
+                      && $0.hasChatHistory
                       && $0.relatedCourseIDs.contains(courseID)
               }) else {
             return false
@@ -6683,6 +6689,7 @@ final class WorkspaceStore: ObservableObject {
     func migrateLegacyStudySessionScopes() -> Bool {
         var changed = sanitizeStudySessionScopes()
         guard studySessionScopeMigrationVersion < 2 else { return changed }
+        ensureAllStudySessionMessagesLoaded()
         let validCourseIDs = Set(courses.map(\.id))
         for index in studySessions.indices
         where !studySessions[index].messages.isEmpty {
@@ -11484,21 +11491,7 @@ final class WorkspaceStore: ObservableObject {
         learningMemoryScopeMigrationVersion = snapshot.learningMemoryScopeMigrationVersion ?? 0
         legacyLearningMemoryEntries = snapshot.learningMemoryEntries ?? []
         legacyLearningMemoryRevision = snapshot.learningMemoryRevision ?? 0
-        studySessions = (snapshot.studySessions ?? []).map { session in
-            var bounded = session
-            for index in bounded.messages.indices
-            where bounded.messages[index].completionState == .generating {
-                recoveredInterruptedAgentReply = true
-                bounded.messages[index].completionState = .interrupted
-                bounded.messages[index].failureKind = .cancelled
-                if bounded.messages[index].retryQuestion == nil {
-                    bounded.messages[index].retryQuestion = bounded.messages[..<index]
-                        .last(where: { $0.role == .user })?
-                        .text
-                }
-            }
-            return bounded
-        }
+        applyStudySessionsFromSnapshot(snapshot)
         studySessionScopeMigrationVersion = snapshot.studySessionScopeMigrationVersion ?? 0
         activeStudySessionID = snapshot.activeStudySessionID
         if let persistedSelectionAskThreads = snapshot.selectionAskThreads {
@@ -11612,7 +11605,7 @@ final class WorkspaceStore: ObservableObject {
     private var persistedStudySessions: [StudySession] {
         studySessions.filter {
             $0.id != freshlyCreatedEmptyStudySessionID || !$0.messages.isEmpty
-        }
+        }.map(sessionMessagePersistence.annotatingMessageCount)
     }
 
     private var persistedActiveStudySessionID: UUID? {
@@ -11865,6 +11858,9 @@ final class WorkspaceStore: ObservableObject {
         }
         let removingCourseIDs = workspacePersistenceRemovingCourseID
             .map { Set([$0]) } ?? []
+        let sessionPayloads = try sessionMessageWrites(
+            for: persisted.snapshot.studySessions ?? []
+        )
         return (
             WorkspacePersistenceRequest(
                 generation: generation,
@@ -11883,7 +11879,9 @@ final class WorkspaceStore: ObservableObject {
                     oversizedPortableCourseIDs.subtracting(
                         removingCourseIDs
                     ),
-                needsPortableBootstrap: needsPortableCourseStateBootstrap
+                needsPortableBootstrap: needsPortableCourseStateBootstrap,
+                sessionMessageWrites: sessionPayloads.writes,
+                sessionMessageDeletions: sessionPayloads.deletions
             ),
             persisted.resumePoints
         )
@@ -12227,6 +12225,7 @@ final class WorkspaceStore: ObservableObject {
             return true
         }
         courseResumePoints = prepared.resumePoints
+        noteSuccessfulSessionMessagePersist(writes: prepared.request.sessionMessageWrites, deletions: prepared.request.sessionMessageDeletions)
         if !oversizedPortableCourseIDs.isEmpty {
             reportWorkspaceSaveFailure(.coursePortableStateOversized, ui(
                 "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",

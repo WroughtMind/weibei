@@ -73,6 +73,7 @@ extension WorkspaceStore {
         guard !query.isEmpty else {
             return GlobalSearchOutcome(hits: [], availability: .ready)
         }
+        ensureAllStudySessionMessagesLoaded()
         let courseTitleByID = Dictionary(
             uniqueKeysWithValues: courses.map { ($0.id, $0.title) }
         )
@@ -98,7 +99,7 @@ extension WorkspaceStore {
         let sessionByID = Dictionary(
             uniqueKeysWithValues: orderedStudySessions.map { ($0.id, $0) }
         )
-        let sessions = orderedStudySessions.filter { !$0.messages.isEmpty }
+        let sessions = orderedStudySessions.filter(\.hasChatHistory)
         let search = await runCourseSearchKernel(
             itemInputs: itemInputs,
             sessions: sessions,

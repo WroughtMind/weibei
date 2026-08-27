@@ -25,6 +25,8 @@ struct WorkspaceSaveFailure: Equatable {
         case coursePortableStateOversized
         /// 课程文件夹中的课程状态无法安全更新,原状态已保留。
         case coursePortableStateBlocked
+        /// 聊天记录外置搬家失败,已用原来的工作区继续。
+        case sessionMessageExternalizationFailed
     }
 
     let kind: Kind

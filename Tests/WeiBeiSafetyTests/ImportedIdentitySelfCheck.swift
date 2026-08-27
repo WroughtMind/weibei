@@ -1538,6 +1538,9 @@ enum ImportedIdentitySelfCheck {
             workspaceDirectory: fixture.workspaceDirectory,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
+        // 外置后重开只预载当前会话；对齐后再比，避免把懒加载误判成二次迁移。
+        reopened.ensureAllStudySessionMessagesLoaded()
+        store.ensureAllStudySessionMessagesLoaded()
         try check(
             reopened.studySessions == store.studySessions,
             "重开工作区后旧 Chat 迁移结果发生二次漂移"

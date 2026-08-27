@@ -1392,11 +1392,19 @@ extension WorkspaceStore {
                     studySessions[index].relatedCourseIDs = related.sorted {
                         $0.uuidString < $1.uuidString
                     }
+                    if studySessions[index].messages.isEmpty,
+                       !legacySession.messages.isEmpty {
+                        studySessions[index].messages = legacySession.messages
+                        studySessions[index].messageCount =
+                            legacySession.messages.count
+                    }
+                    markStudySessionMessagesLoaded(legacySession.id)
                 } else {
                     legacySession.relatedCourseIDs = Set(
                         legacySession.relatedCourseIDs + [courseID]
                     ).sorted { $0.uuidString < $1.uuidString }
                     studySessions.append(legacySession)
+                    markStudySessionMessagesLoaded(legacySession.id)
                 }
             }
         }
