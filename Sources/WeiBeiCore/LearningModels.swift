@@ -296,6 +296,11 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         !messages.isEmpty || messageCount > 0
     }
 
+    /// List/hub count: loaded body wins, otherwise the persisted count.
+    public var displayedMessageCount: Int {
+        messages.isEmpty ? messageCount : messages.count
+    }
+
     public var groupingMaterialItemID: String? {
         materialItemID ?? focusItemIDs.first
     }

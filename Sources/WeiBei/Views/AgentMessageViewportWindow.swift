@@ -2,16 +2,18 @@ import CoreGraphics
 import Foundation
 import WeiBeiCore
 
-/// Offscreen chat WebView unload. Default **off**: Eager VStack still keeps every
-/// revealed row mounted until this flag is enabled. Never a LazyVStack recycle.
+/// Offscreen chat WebView unload. Default **on**: missing UserDefaults key
+/// enables it; an explicit false keeps the old Eager VStack.
 enum AgentChatOffscreenUnloadFlag {
     static let defaultsKey = "weibei.chat.unloadOffscreenWebViews"
     private static var testingOverride: Bool?
 
-    /// UserDefaults bool; missing key is false (Phase B keeps this until a real
-    /// 100+ message scroll / type / session-switch smoke can run).
+    /// Missing key is on. Users who turned it off stay off.
     static var isEnabled: Bool {
         if let testingOverride { return testingOverride }
+        if UserDefaults.standard.object(forKey: defaultsKey) == nil {
+            return true
+        }
         return UserDefaults.standard.bool(forKey: defaultsKey)
     }
 
