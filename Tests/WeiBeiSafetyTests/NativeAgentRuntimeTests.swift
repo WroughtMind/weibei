@@ -536,6 +536,100 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
         XCTAssertTrue(crossLibrary)
     }
+
+    func testSessionTitleNormalizationRejectsGenericAndStripsDecorations() {
+        XCTAssertEqual(NativeSessionTitle.normalizedTitle("  利率变化机制。"), "利率变化机制")
+        XCTAssertEqual(NativeSessionTitle.normalizedTitle("# 标题：利率变化机制"), "利率变化机制")
+        XCTAssertNil(NativeSessionTitle.normalizedTitle("新对话"))
+        XCTAssertNil(NativeSessionTitle.normalizedTitle("New Chat"))
+        XCTAssertTrue(NativeSessionTitle.shouldPropose(completedTurnCount: 1))
+        XCTAssertFalse(NativeSessionTitle.shouldPropose(completedTurnCount: 0))
+        XCTAssertFalse(NativeSessionTitle.shouldPropose(completedTurnCount: 2))
+    }
+
+    func testSessionTitleGenerateUsesFirstTurnWithoutTools() async {
+        let capture = RequestCapture()
+        let title = await NativeSessionTitle.generate(
+            adapter: MockLLMAdapter(
+                chunks: [
+                    .textDelta(index: 0, text: "利率变化机制"),
+                    .finish(reason: .stop, replayState: nil),
+                ],
+                inspect: { capture.request = $0 }
+            ),
+            model: "mock",
+            question: "请帮我解释利率为什么变化",
+            answer: "利率是资金的价格。"
+        )
+        XCTAssertEqual(title, "利率变化机制")
+        XCTAssertEqual(capture.request?.maxTokens, NativeSessionTitle.maxTokens)
+        XCTAssertTrue(capture.request?.tools.isEmpty == true)
+        XCTAssertEqual(capture.request?.messages.first?.content, NativeSessionTitle.systemPrompt)
+        XCTAssertTrue(capture.request?.messages.last?.content.contains("请帮我解释利率为什么变化") == true)
+    }
+
+    func testSessionTitleGenerateTimesOutWithoutThrowing() async {
+        let started = Date()
+        let title = await NativeSessionTitle.generate(
+            adapter: HangingLLMAdapter(),
+            model: "mock",
+            question: "问",
+            answer: "答",
+            timeoutNanoseconds: 40_000_000
+        )
+        XCTAssertNil(title)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+    }
+
+    func testNativeRuntimeDeliversSemanticTitleOnceOnFirstCompletedTurn() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("native-title-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let box = TitleCapture()
+        let adapter = FirstTurnTitleAdapter()
+        let chatID = UUID().uuidString.lowercased()
+        let runtime = NativeStudyAgentRuntime(
+            model: "mock",
+            adapter: adapter,
+            ledgerRoot: root,
+            systemPromptText: "you are webi",
+            sessionTitleHandler: { title in
+                box.add(title)
+            }
+        )
+        let first = try await runtime.respond(
+            to: StudyAgentRequest(
+                purpose: .conversation,
+                question: "请帮我解释利率为什么变化",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                projectScope: StudyAgentProjectScope(kind: .global, chatID: chatID),
+                contextRevision: "r1"
+            )
+        )
+        XCTAssertEqual(first.text, "第一答")
+        let title = await box.wait(timeout: 2)
+        XCTAssertEqual(title, "利率变化机制")
+        XCTAssertEqual(adapter.titleRequestCount, 1)
+
+        _ = try await runtime.respond(
+            to: StudyAgentRequest(
+                purpose: .conversation,
+                question: "再举个例子",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                projectScope: StudyAgentProjectScope(kind: .global, chatID: chatID),
+                contextRevision: "r2"
+            )
+        )
+        try await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(box.count, 1)
+        XCTAssertEqual(adapter.titleRequestCount, 1)
+    }
 }
 
 private struct MockLLMAdapter: NativeLLMAdapter {
@@ -694,4 +788,82 @@ private func testRequest() -> StudyAgentRequest {
         noteText: "",
         contextRevision: "r1"
     )
+}
+
+private final class RequestCapture: @unchecked Sendable {
+    var request: NativeLLMRequest?
+}
+
+private final class TitleCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var titles: [String] = []
+
+    var count: Int {
+        lock.lock(); defer { lock.unlock() }
+        return titles.count
+    }
+
+    func add(_ title: String) {
+        lock.lock()
+        titles.append(title)
+        lock.unlock()
+    }
+
+    func snapshot() -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return titles.last
+    }
+
+    func wait(timeout: TimeInterval) async -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let last = snapshot() { return last }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return nil
+    }
+}
+
+private struct HangingLLMAdapter: NativeLLMAdapter {
+    var family: String { "mock" }
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
+private final class FirstTurnTitleAdapter: NativeLLMAdapter, @unchecked Sendable {
+    let family = "mock"
+    private let lock = NSLock()
+    private(set) var titleRequestCount = 0
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        let isTitle = request.messages.contains {
+            $0.role == .system && $0.content == NativeSessionTitle.systemPrompt
+        }
+        if isTitle {
+            lock.lock()
+            titleRequestCount += 1
+            lock.unlock()
+        }
+        let text: String
+        if isTitle {
+            text = "利率变化机制"
+        } else if request.messages.contains(where: { $0.role == .user && $0.content.contains("再举个例子") }) {
+            text = "第二答"
+        } else {
+            text = "第一答"
+        }
+        return AsyncThrowingStream { continuation in
+            continuation.yield(.textDelta(index: 0, text: text))
+            continuation.yield(.finish(reason: .stop, replayState: nil))
+            continuation.finish()
+        }
+    }
 }

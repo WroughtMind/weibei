@@ -91,6 +91,9 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         if let effort = request.reasoningEffort, !effort.isEmpty {
             payload["reasoning"] = ["effort": effort]
         }
+        if let maxTokens = request.maxTokens {
+            payload["max_output_tokens"] = maxTokens
+        }
         return payload
     }
 

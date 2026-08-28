@@ -237,7 +237,10 @@ extension WorkspaceStore {
             ledgerRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Ledgers", isDirectory: true),
             systemPromptText: resources.systemPrompt,
             hostToolHandler: hostToolHandler,
-            liveStores: liveStores
+            liveStores: liveStores,
+            sessionTitleHandler: { [weak self] title in
+                await self?.applySemanticSessionTitleAndSave(title, to: target.sessionID)
+            }
         )
         NativeAgentRuntimeBox.runtime = runtime
         defer { NativeAgentRuntimeBox.runtime = nil }

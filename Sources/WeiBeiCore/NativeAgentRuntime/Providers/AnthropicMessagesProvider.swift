@@ -92,7 +92,7 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
         }
         var payload: [String: Any] = [
             "model": request.model,
-            "max_tokens": 16_384,
+            "max_tokens": request.maxTokens ?? 16_384,
             "stream": true,
             "messages": messages,
         ]

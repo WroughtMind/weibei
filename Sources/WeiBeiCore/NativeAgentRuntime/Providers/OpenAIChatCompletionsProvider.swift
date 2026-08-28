@@ -177,6 +177,7 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         }
         if !allTools.isEmpty { payload["tools"] = allTools }
         if let temperature = request.temperature { payload["temperature"] = temperature }
+        if let maxTokens = request.maxTokens { payload["max_tokens"] = maxTokens }
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: payload)
         return urlRequest
     }

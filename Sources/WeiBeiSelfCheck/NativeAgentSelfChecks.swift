@@ -27,6 +27,7 @@ func runNativeAgentSelfChecks() throws {
     try checkBackendSelection()
     try checkContextRevisionEcho()
     try checkNativeProductContract()
+    try checkSessionTitleGeneration()
 }
 
 private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -1281,6 +1282,70 @@ private func containsSyncWorkspaceFlushCall(_ body: String) -> Bool {
         }
     }
     return false
+}
+
+private func checkSessionTitleGeneration() throws {
+    try nativeRequire(
+        NativeSessionTitle.normalizedTitle("  利率变化机制。") == "利率变化机制",
+        "session title strips trailing punctuation"
+    )
+    try nativeRequire(
+        NativeSessionTitle.normalizedTitle("# 标题：利率变化机制") == "利率变化机制",
+        "session title strips markdown and 标题 prefix"
+    )
+    try nativeRequire(
+        NativeSessionTitle.normalizedTitle("新对话") == nil,
+        "generic session titles are rejected"
+    )
+    try nativeRequire(
+        NativeSessionTitle.shouldPropose(completedTurnCount: 1)
+            && !NativeSessionTitle.shouldPropose(completedTurnCount: 2),
+        "semantic titles only run after the first completed turn"
+    )
+
+    let request = NativeLLMRequest(
+        model: "mock",
+        messages: [NativeModelMessage(role: .user, content: "q")],
+        maxTokens: NativeSessionTitle.maxTokens
+    )
+    let anthropic = AnthropicMessagesProvider.payload(for: request)
+    try nativeRequire(
+        anthropic["max_tokens"] as? Int == NativeSessionTitle.maxTokens,
+        "title request caps Anthropic max_tokens"
+    )
+    let responses = OpenAIResponsesProvider.payload(for: request, webSearchSupported: false)
+    try nativeRequire(
+        responses["max_output_tokens"] as? Int == NativeSessionTitle.maxTokens,
+        "title request caps Responses max_output_tokens"
+    )
+    let gemini = GoogleGenerativeAIProvider.payload(for: request)
+    let config = gemini["generationConfig"] as? [String: Any]
+    try nativeRequire(
+        config?["maxOutputTokens"] as? Int == NativeSessionTitle.maxTokens,
+        "title request caps Gemini maxOutputTokens"
+    )
+
+    let generated = try waitFor {
+        await NativeSessionTitle.generate(
+            adapter: SessionTitleMockAdapter(),
+            model: "mock",
+            question: "请帮我解释利率为什么变化",
+            answer: "利率是资金的价格。"
+        )
+    }
+    try nativeRequire(generated == "利率变化机制", "session title generate returns the model title")
+}
+
+private struct SessionTitleMockAdapter: NativeLLMAdapter {
+    var family: String { "mock" }
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.textDelta(index: 0, text: "利率变化机制"))
+            continuation.yield(.finish(reason: .stop, replayState: nil))
+            continuation.finish()
+        }
+    }
 }
 
 private func waitFor<T>(_ body: @escaping () async throws -> T) throws -> T {

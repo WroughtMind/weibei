@@ -2837,7 +2837,7 @@ final class WorkspaceStore: ObservableObject {
         allItems.contains { $0.id == itemID }
     }
 
-    private static func sessionTitle(from text: String) -> String {
+    static func sessionTitle(from text: String) -> String {
         let title = text
             .replacingOccurrences(of: #"[`*_>#\[\]()]"#, with: "", options: .regularExpression)
             .split(whereSeparator: { $0.isWhitespace })

@@ -105,6 +105,9 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
         if !tools.isEmpty {
             payload["tools"] = tools
         }
+        if let maxTokens = request.maxTokens {
+            payload["generationConfig"] = ["maxOutputTokens": maxTokens]
+        }
         return payload
     }
 

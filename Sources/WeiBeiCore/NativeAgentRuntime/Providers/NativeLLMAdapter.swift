@@ -8,6 +8,7 @@ public struct NativeLLMRequest: Sendable {
     public var reasoningEffort: String?
     public var enableNativeWebSearch: Bool
     public var replayState: Data?
+    public var maxTokens: Int?
 
     public init(
         model: String,
@@ -16,7 +17,8 @@ public struct NativeLLMRequest: Sendable {
         temperature: Double? = nil,
         reasoningEffort: String? = nil,
         enableNativeWebSearch: Bool = false,
-        replayState: Data? = nil
+        replayState: Data? = nil,
+        maxTokens: Int? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -25,6 +27,7 @@ public struct NativeLLMRequest: Sendable {
         self.reasoningEffort = reasoningEffort
         self.enableNativeWebSearch = enableNativeWebSearch
         self.replayState = replayState
+        self.maxTokens = maxTokens
     }
 }
 
