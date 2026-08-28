@@ -9,6 +9,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     public var systemPromptText: String
     public var mode: NativeAgentMode
     public var delegateDepth: Int
+    public var sessionTitleHandler: StudyAgentSessionTitleHandler?
 
     private let registry = NativeToolRegistry()
     private let loop = NativeAgentLoop()
@@ -22,7 +23,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         hostToolHandler: StudyAgentHostToolHandler? = nil,
         liveStores: NativeLiveStores = .empty,
         mode: NativeAgentMode = .assistant,
-        delegateDepth: Int = 0
+        delegateDepth: Int = 0,
+        sessionTitleHandler: StudyAgentSessionTitleHandler? = nil
     ) {
         self.model = model
         self.adapter = adapter
@@ -32,6 +34,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         self.liveStores = liveStores
         self.mode = mode
         self.delegateDepth = delegateDepth
+        self.sessionTitleHandler = sessionTitleHandler
     }
 
     public func respond(
@@ -100,6 +103,11 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
                 mode: mode,
                 progress: progress
             )
+            await scheduleSessionTitleIfNeeded(
+                question: request.question,
+                answer: result.text,
+                ledger: ledger
+            )
             return StudyAgentReply(
                 text: result.text,
                 contentBlocks: result.contentBlocks,
@@ -126,6 +134,31 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
 
     public func reset() async {
         await loop.reset()
+    }
+
+    private func scheduleSessionTitleIfNeeded(
+        question: String,
+        answer: String,
+        ledger: NativeAgentLedger
+    ) async {
+        guard mode == .assistant, let handler = sessionTitleHandler else { return }
+        let completedTurnCount = (await ledger.allEvents()).filter {
+            $0.type == .turnEnd && $0.finishReason == .completed
+        }.count
+        guard NativeSessionTitle.shouldPropose(completedTurnCount: completedTurnCount) else { return }
+        let trimmedAnswer = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAnswer.isEmpty else { return }
+        let adapter = self.adapter
+        let model = self.model
+        Task.detached(priority: .utility) {
+            guard let title = await NativeSessionTitle.generate(
+                adapter: adapter,
+                model: model,
+                question: question,
+                answer: trimmedAnswer
+            ) else { return }
+            await handler(title)
+        }
     }
 
     private func ensureTools() async throws {
