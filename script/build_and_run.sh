@@ -87,17 +87,21 @@ elif [[ "$PACKAGE_ONLY" == true ]]; then
 else
   # 只退出本构建目录跑起来的实例,不碰 /Applications 等正式版;
   # SIGTERM 由 App 的信号处理同步落盘后退出。
+  # staged 实例的特征是路径含专用目录名;/var 是 /private/var 的符号链接,
+  # ps 返回归一化路径,不能用字面前缀比较,用子串匹配。
+  staged_marker="weibei-run-$UID"
   for pid in $(pgrep -x "$PRODUCT_NAME"); do
     exe_path=$(ps -o comm= -p "$pid" 2>/dev/null)
-    if [[ "$exe_path" == "$DIST_DIR/"* ]]; then
+    if [[ "$exe_path" == *"$staged_marker"* ]]; then
       kill -TERM "$pid" >/dev/null 2>&1 || true
     fi
   done
-  for _ in {1..50}; do
+  # SIGTERM 后 App 同步落盘最长约 60 秒,等它退净再开新实例,避免新旧并存双写数据。
+  for _ in {1..650}; do
     found=false
     for pid in $(pgrep -x "$PRODUCT_NAME"); do
       exe_path=$(ps -o comm= -p "$pid" 2>/dev/null)
-      if [[ "$exe_path" == "$DIST_DIR/"* ]]; then
+      if [[ "$exe_path" == *"$staged_marker"* ]]; then
         found=true
         break
       fi
