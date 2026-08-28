@@ -28,7 +28,22 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
     }
 
     public func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
-        NativeHTTPByteStream.start(session: session, request: makeURLRequest(request), translate: Self.translate)
+        NativeHTTPByteStream.start(
+            session: session,
+            request: makeURLRequest(request),
+            fallbackRequest: webSearchSupported ? makeURLOrURLRequestWithoutSearch(request) : nil,
+            translate: Self.translate
+        )
+    }
+
+    private func makeURLOrURLRequestWithoutSearch(_ request: NativeLLMRequest) -> URLRequest {
+        var urlRequest = makeURLRequest(request)
+        if let body = try? JSONSerialization.data(
+            withJSONObject: Self.payload(for: request, webSearchSupported: false)
+        ) {
+            urlRequest.httpBody = body
+        }
+        return urlRequest
     }
 
     func makeURLRequest(_ request: NativeLLMRequest) -> URLRequest {

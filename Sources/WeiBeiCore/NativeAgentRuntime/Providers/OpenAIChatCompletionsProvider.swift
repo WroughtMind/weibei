@@ -41,8 +41,8 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
     public func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                do {
-                    let urlRequest = try makeURLRequest(request)
+                func run(_ style: ChatWebSearchStyle) async throws {
+                    let urlRequest = try makeURLRequest(request, webSearchStyle: style)
                     let (bytes, response) = try await session.bytes(for: urlRequest)
                     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                         var body = ""
@@ -75,7 +75,17 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
                             continuation.yield(chunk)
                         }
                     }
-                    continuation.finish()
+                }
+                do {
+                    do {
+                        try await run(webSearchStyle)
+                        continuation.finish()
+                    } catch let failure as NativeLLMFailure
+                        where failure.status == 400 && webSearchStyle != .none {
+                        // 端点不认服务端搜索注入:去掉注入重试一次,本轮退化为不联网。
+                        try await run(.none)
+                        continuation.finish()
+                    }
                 } catch is CancellationError {
                     continuation.finish(throwing: NativeLLMFailure(code: "cancelled", message: "cancelled"))
                 } catch {
@@ -87,6 +97,10 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
     }
 
     private func makeURLRequest(_ request: NativeLLMRequest) throws -> URLRequest {
+        try makeURLRequest(request, webSearchStyle: webSearchStyle)
+    }
+
+    private func makeURLRequest(_ request: NativeLLMRequest, webSearchStyle style: ChatWebSearchStyle) throws -> URLRequest {
         var urlRequest = URLRequest(url: baseURL.appendingPathComponent("chat/completions"))
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -101,11 +115,15 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
                 body["tool_call_id"] = toolCallID
             }
             if let toolCalls = message.toolCalls {
-                body["tool_calls"] = toolCalls.map {
-                    [
-                        "id": $0.id,
-                        "type": "function",
-                        "function": ["name": $0.name, "arguments": $0.arguments],
+                body["tool_calls"] = toolCalls.map { call in
+                    // Kimi builtin 工具($web_search 等)回传须保留 builtin_function 类型,
+                    // 否则服务端校验失败。
+                    let type = call.name.hasPrefix("$") ? "builtin_function" : "function"
+                    let id = call.id.isEmpty ? "call_\(call.name)" : call.id
+                    return [
+                        "id": id,
+                        "type": type,
+                        "function": ["name": call.name, "arguments": call.arguments],
                     ]
                 }
             }
@@ -130,7 +148,7 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         let enableSearch = request.enableNativeWebSearch
             || request.tools.contains(where: { $0.name == "weibei_course_map" })
         if enableSearch {
-            switch webSearchStyle {
+            switch style {
             case .none:
                 break
             case .zai:
@@ -218,7 +236,10 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         for annotated in [choice["delta"] as? [String: Any], choice["message"] as? [String: Any]] {
             guard let annotated, let annotations = annotated["annotations"] as? [[String: Any]] else { continue }
             for annotation in annotations {
-                if let url = annotation["url"] as? String, !url.isEmpty {
+                // 小米为顶层 url;OpenRouter 为嵌套 url_citation.url。
+                let flat = annotation["url"] as? String
+                let nested = (annotation["url_citation"] as? [String: Any])?["url"] as? String
+                if let url = flat ?? nested, !url.isEmpty {
                     chunks.append(.webSearchSource(url: url))
                 }
             }

@@ -31,9 +31,9 @@ FINAL_APP_BINARY="$FINAL_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
 # onto the bundle; codesign then fails with "resource fork, Finder information,
 # or similar detritus not allowed".
 if [[ "$PACKAGE_ONLY" == true ]]; then
-  DIST_DIR="${TMPDIR:-/tmp}/weibei-package-$UID"
+  DIST_DIR="${TMPDIR%/}/weibei-package-$UID"
 else
-  DIST_DIR="${TMPDIR:-/tmp}/weibei-run-$UID"
+  DIST_DIR="${TMPDIR%/}/weibei-run-$UID"
 fi
 APP_BUNDLE="$DIST_DIR/$APP_DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"

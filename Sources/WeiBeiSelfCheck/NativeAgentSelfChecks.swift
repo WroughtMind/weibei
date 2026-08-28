@@ -352,6 +352,13 @@ private func checkWebSearchPayloadInjection() throws {
         annotationChunks.contains { if case .webSearchSource(let url) = $0 { return url == "https://example.com/cite" } else { return false } },
         "chat completions translate reads url_citation annotations"
     )
+    let openRouterSSE = #"{"choices":[{"delta":{"content":"hi","annotations":[{"type":"url_citation","url_citation":{"url":"https://example.com/nested"}}]}}]}"#
+    textIndex = 0
+    let openRouterChunks = try OpenAIChatCompletionsProvider.translate(payload: openRouterSSE, textIndex: &textIndex)
+    try nativeRequire(
+        openRouterChunks.contains { if case .webSearchSource(let url) = $0 { return url == "https://example.com/nested" } else { return false } },
+        "chat completions translate reads nested url_citation annotations"
+    )
     let anthropicResultSSE = #"{"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","content":[{"url":"https://example.com/anthropic"}]}}"#
     let anthropicChunks = try AnthropicMessagesProvider.translate(anthropicResultSSE)
     try nativeRequire(
