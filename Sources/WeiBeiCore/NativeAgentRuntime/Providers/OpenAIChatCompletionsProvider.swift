@@ -1,5 +1,20 @@
 import Foundation
 
+/// 聊天补全协议下各家的服务端联网搜索注入形态。
+public enum ChatWebSearchStyle: String, Sendable {
+    case none
+    /// 智谱系:tools 追加 {"type":"web_search","web_search":{"enable":true}}。
+    case zai
+    /// 小米系:tools 追加 {"type":"web_search"}。
+    case xiaomi
+    /// 通义:请求体追加 enable_search=true。
+    case qwen
+    /// OpenRouter:请求体追加 plugins=[{"id":"web"}]。
+    case openrouter
+    /// Kimi:tools 追加 builtin_function $web_search,模型发起后由客户端原样回传。
+    case kimi
+}
+
 public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
     public var family: String { "openai-chat-completions" }
 
@@ -7,15 +22,18 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
     public var apiKey: String
     public var session: URLSession
     public var idleTimeoutNanoseconds: UInt64
+    public var webSearchStyle: ChatWebSearchStyle
 
     public init(
         baseURL: URL = URL(string: "https://api.deepseek.com/v1")!,
         apiKey: String,
+        webSearchStyle: ChatWebSearchStyle = .none,
         session: URLSession = .shared,
         idleTimeoutNanoseconds: UInt64 = 45_000_000_000
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
+        self.webSearchStyle = webSearchStyle
         self.session = session
         self.idleTimeoutNanoseconds = idleTimeoutNanoseconds
     }
@@ -108,7 +126,38 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
             "stream": true,
             "messages": messages,
         ]
-        if !tools.isEmpty { payload["tools"] = tools }
+        var allTools = tools
+        let enableSearch = request.enableNativeWebSearch
+            || request.tools.contains(where: { $0.name == "weibei_course_map" })
+        if enableSearch {
+            switch webSearchStyle {
+            case .none:
+                break
+            case .zai:
+                if !allTools.contains(where: { $0["type"] as? String == "web_search" }) {
+                    allTools.append([
+                        "type": "web_search",
+                        "web_search": ["enable": true],
+                    ])
+                }
+            case .xiaomi:
+                if !allTools.contains(where: { $0["type"] as? String == "web_search" }) {
+                    allTools.append(["type": "web_search"])
+                }
+            case .qwen:
+                payload["enable_search"] = true
+            case .openrouter:
+                payload["plugins"] = [["id": "web"]]
+            case .kimi:
+                if !allTools.contains(where: { ($0["type"] as? String) == "builtin_function" }) {
+                    allTools.append([
+                        "type": "builtin_function",
+                        "function": ["name": "$web_search"],
+                    ])
+                }
+            }
+        }
+        if !allTools.isEmpty { payload["tools"] = allTools }
         if let temperature = request.temperature { payload["temperature"] = temperature }
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: payload)
         return urlRequest
@@ -147,6 +196,32 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
                     )
                 )
             )
+        }
+        // 智谱系:顶层 web_search 数组,每条 link 为来源。
+        if let searchResults = object["web_search"] as? [[String: Any]] {
+            for result in searchResults {
+                if let link = result["link"] as? String, !link.isEmpty {
+                    chunks.append(.webSearchSource(url: link))
+                }
+            }
+        }
+        // 通义:顶层 search_info.search_results[].url。
+        if let searchInfo = object["search_info"] as? [String: Any],
+           let results = searchInfo["search_results"] as? [[String: Any]] {
+            for result in results {
+                if let url = result["url"] as? String, !url.isEmpty {
+                    chunks.append(.webSearchSource(url: url))
+                }
+            }
+        }
+        // 小米/OpenRouter:消息 annotations 里的 url_citation(delta 或整条 message)。
+        for annotated in [choice["delta"] as? [String: Any], choice["message"] as? [String: Any]] {
+            guard let annotated, let annotations = annotated["annotations"] as? [[String: Any]] else { continue }
+            for annotation in annotations {
+                if let url = annotation["url"] as? String, !url.isEmpty {
+                    chunks.append(.webSearchSource(url: url))
+                }
+            }
         }
         if let finish = choice["finish_reason"] as? String, finish != "null" {
             let reason: NativeFinishReason

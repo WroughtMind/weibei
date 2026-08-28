@@ -8,18 +8,22 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
     public var accountID: String?
     public var chatgptBackend: Bool
     public var session: URLSession
+    /// 供应商是否支持服务端 web_search 工具(OpenAI/ChatGPT 订阅/xAI/DeepSeek 等)。
+    public var webSearchSupported: Bool
 
     public init(
         baseURL: URL,
         accessToken: String,
         accountID: String? = nil,
         chatgptBackend: Bool = false,
+        webSearchSupported: Bool = true,
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
         self.accessToken = accessToken
         self.accountID = accountID
         self.chatgptBackend = chatgptBackend
+        self.webSearchSupported = webSearchSupported
         self.session = session
     }
 
@@ -37,11 +41,11 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         if let accountID, !accountID.isEmpty {
             urlRequest.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
         }
-        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request))
+        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request, webSearchSupported: webSearchSupported))
         return urlRequest
     }
 
-    public static func payload(for request: NativeLLMRequest) -> [String: Any] {
+    public static func payload(for request: NativeLLMRequest, webSearchSupported: Bool = true) -> [String: Any] {
         var tools: [[String: Any]] = request.tools.map { tool in
             [
                 "type": "function",
@@ -53,7 +57,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         var include = ["reasoning.encrypted_content"]
         let enableSearch = request.enableNativeWebSearch
             || request.tools.contains(where: { $0.name == "weibei_course_map" })
-        if enableSearch, nativeWebSearchSupported(model: request.model) {
+        if enableSearch, webSearchSupported {
             if !tools.contains(where: { $0["type"] as? String == "web_search" }) {
                 tools.append(["type": "web_search"])
             }
@@ -73,10 +77,6 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             payload["reasoning"] = ["effort": effort]
         }
         return payload
-    }
-
-    static func nativeWebSearchSupported(model: String) -> Bool {
-        model.hasPrefix("gpt-5") || ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3", "o3-pro", "o4-mini"].contains(model)
     }
 
     static func assembleInput(_ messages: [NativeModelMessage]) -> (instructions: String?, input: [[String: Any]]) {

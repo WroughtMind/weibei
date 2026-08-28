@@ -52,6 +52,17 @@ extension SettingsView {
                 }
             }
 
+            // 联网搜索 — 只读能力标注,切换服务时一眼看清是否静默失去搜索。
+            let searchSupported = NativeProviderRouting.route(store.agentProviderID).webSearch != .none
+            settingsRow(title: store.ui("联网搜索", "Web Search"), detail: "") {
+                Text(
+                    searchSupported
+                        ? store.ui("支持，模型需要时自动联网", "Supported; runs when the model needs it")
+                        : store.ui("该服务不提供", "Not offered by this service")
+                )
+                .foregroundStyle(searchSupported ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+            }
+
             // 认证 — branch on provider kind.
             agentAuthRow
 

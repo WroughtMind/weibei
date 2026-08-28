@@ -12,12 +12,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var resignFlushTask: Task<Void, Never>?
     private var terminationSaveInFlight = false
     private var terminationApproved = false
+    private var sigtermSource: DispatchSourceSignal?
     var reopenMainWindow: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         WeiBeiTypography.registerBundledFonts()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        installTerminationSignalSaves()
+    }
+
+    /// `pkill`/SIGTERM 不走 applicationShouldTerminate,正在使用的会话会被直接带走。
+    /// 接管 SIGTERM:同步落盘(含打开会话的消息外置文件)后再退出。
+    private func installTerminationSignalSaves() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    _ = sharedWorkspaceStore.flushPendingWorkspaceSave()
+                }
+            }
+            exit(0)
+        }
+        source.resume()
+        sigtermSource = source
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

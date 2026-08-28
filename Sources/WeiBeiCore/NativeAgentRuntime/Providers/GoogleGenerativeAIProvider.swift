@@ -5,14 +5,18 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
     public var apiKey: String
     public var session: URLSession
     public var rootURL: URL
+    /// 是否附加 google_search 接地(服务端联网搜索)。
+    public var groundingSearch: Bool
 
     public init(
         apiKey: String,
         rootURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta")!,
+        groundingSearch: Bool = false,
         session: URLSession = .shared
     ) {
         self.apiKey = apiKey
         self.rootURL = rootURL
+        self.groundingSearch = groundingSearch
         self.session = session
     }
 
@@ -28,11 +32,11 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request))
+        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request, groundingSearch: groundingSearch))
         return urlRequest
     }
 
-    static func payload(for request: NativeLLMRequest) -> [String: Any] {
+    public static func payload(for request: NativeLLMRequest, groundingSearch: Bool = false) -> [String: Any] {
         var contents: [[String: Any]] = []
         var system: String?
         for message in request.messages {
@@ -67,8 +71,9 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
         if let system {
             payload["systemInstruction"] = ["parts": [["text": system]]]
         }
+        var tools: [[String: Any]] = []
         if !request.tools.isEmpty {
-            payload["tools"] = [[
+            tools.append([
                 "functionDeclarations": request.tools.map { tool in
                     [
                         "name": tool.name,
@@ -76,7 +81,14 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
                         "parameters": tool.schema.object,
                     ]
                 },
-            ]]
+            ])
+        }
+        if groundingSearch, request.enableNativeWebSearch
+            || request.tools.contains(where: { $0.name == "weibei_course_map" }) {
+            tools.append(["google_search": [:] as [String: Any]])
+        }
+        if !tools.isEmpty {
+            payload["tools"] = tools
         }
         return payload
     }
@@ -90,12 +102,23 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
             throw NativeLLMFailure(code: "server_error", message: error["message"] as? String ?? "Gemini error")
         }
         let candidates = object["candidates"] as? [[String: Any]] ?? []
-        guard let candidate = candidates.first,
-              let content = candidate["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]] else {
+        guard let candidate = candidates.first else {
             return []
         }
         var chunks: [NativeStreamChunk] = []
+        // 接地来源:groundingMetadata.groundingChunks[].web.uri(可能单独出现,不带 content)
+        if let grounding = candidate["groundingMetadata"] as? [String: Any],
+           let groundChunks = grounding["groundingChunks"] as? [[String: Any]] {
+            for ground in groundChunks {
+                if let web = ground["web"] as? [String: Any], let uri = web["uri"] as? String, !uri.isEmpty {
+                    chunks.append(.webSearchSource(url: uri))
+                }
+            }
+        }
+        guard let content = candidate["content"] as? [String: Any],
+              let parts = content["parts"] as? [[String: Any]] else {
+            return chunks
+        }
         for (index, part) in parts.enumerated() {
             if let thought = part["thought"] as? Bool, thought, let text = part["text"] as? String, !text.isEmpty {
                 chunks.append(.reasoningDelta(index: index, text: text))

@@ -5,14 +5,18 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
     public var apiKey: String
     public var session: URLSession
     public var apiURL: URL
+    /// 供应商是否支持 Anthropic 服务端 web_search 工具(官方/Vercel 网关/MiniMax 兼容端点)。
+    public var webSearchTool: Bool
 
     public init(
         apiKey: String,
         apiURL: URL = URL(string: "https://api.anthropic.com/v1/messages")!,
+        webSearchTool: Bool = false,
         session: URLSession = .shared
     ) {
         self.apiKey = apiKey
         self.apiURL = apiURL
+        self.webSearchTool = webSearchTool
         self.session = session
     }
 
@@ -26,11 +30,11 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request))
+        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request, webSearchTool: webSearchTool))
         return urlRequest
     }
 
-    static func payload(for request: NativeLLMRequest) -> [String: Any] {
+    public static func payload(for request: NativeLLMRequest, webSearchTool: Bool = false) -> [String: Any] {
         var system: String?
         var messages: [[String: Any]] = []
         for message in request.messages {
@@ -78,14 +82,24 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
             "messages": messages,
         ]
         if let system { payload["system"] = system }
-        if !request.tools.isEmpty {
-            payload["tools"] = request.tools.map { tool in
-                [
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": tool.schema.object,
-                ]
+        var tools: [[String: Any]] = request.tools.map { tool in
+            [
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.schema.object,
+            ]
+        }
+        if webSearchTool, request.enableNativeWebSearch
+            || request.tools.contains(where: { $0.name == "weibei_course_map" }) {
+            if !tools.contains(where: { $0["type"] as? String == "web_search_20250305" }) {
+                tools.append([
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                ])
             }
+        }
+        if !tools.isEmpty {
+            payload["tools"] = tools
         }
         return payload
     }
@@ -117,6 +131,13 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
                 let id = block["id"] as? String ?? ""
                 let name = block["name"] as? String
                 return [.toolCallDelta(index: index, id: id, name: name, argumentsDelta: "")]
+            }
+            // 服务端 web_search 结果块:content 里每条 web_search_result 带来源 url。
+            if block["type"] as? String == "web_search_tool_result",
+               let results = block["content"] as? [[String: Any]] {
+                return results.compactMap { result in
+                    (result["url"] as? String).map(NativeStreamChunk.webSearchSource(url:))
+                }
             }
             return []
         case "content_block_stop":

@@ -85,9 +85,24 @@ elif [[ "$PACKAGE_ONLY" == true ]]; then
     exit 6
   fi
 else
-  pkill -x "$PRODUCT_NAME" >/dev/null 2>&1 || true
+  # 只退出本构建目录跑起来的实例,不碰 /Applications 等正式版;
+  # SIGTERM 由 App 的信号处理同步落盘后退出。
+  for pid in $(pgrep -x "$PRODUCT_NAME"); do
+    exe_path=$(ps -o comm= -p "$pid" 2>/dev/null)
+    if [[ "$exe_path" == "$DIST_DIR/"* ]]; then
+      kill -TERM "$pid" >/dev/null 2>&1 || true
+    fi
+  done
   for _ in {1..50}; do
-    pgrep -x "$PRODUCT_NAME" >/dev/null || break
+    found=false
+    for pid in $(pgrep -x "$PRODUCT_NAME"); do
+      exe_path=$(ps -o comm= -p "$pid" 2>/dev/null)
+      if [[ "$exe_path" == "$DIST_DIR/"* ]]; then
+        found=true
+        break
+      fi
+    done
+    [[ "$found" == false ]] && break
     sleep 0.1
   done
 fi
