@@ -137,10 +137,38 @@ public enum CourseKnowledgeProfileEntryKind: String, Codable, Equatable, Sendabl
     case concept
 }
 
+/// 以下两个类型与 Entry.sources、Profile.overview 是**纯持久化兼容字段**:
+/// 业务已不再读它们,但旧版本把它们当作必填,缺字段会把整份 workspace 判成
+/// 损坏并回退空备份。因此保留类型并始终写出空值,解码时容忍缺失。
+public enum CourseKnowledgeProfileSourceRole: String, Codable, Equatable, Sendable {
+    case material
+    case note
+}
+
+public struct CourseKnowledgeProfileSource: Codable, Equatable, Sendable {
+    public var itemID: String
+    public var role: CourseKnowledgeProfileSourceRole
+    public var location: String?
+    public var sourceRevision: String
+
+    public init(
+        itemID: String,
+        role: CourseKnowledgeProfileSourceRole,
+        location: String? = nil,
+        sourceRevision: String
+    ) {
+        self.itemID = itemID
+        self.role = role
+        self.location = location
+        self.sourceRevision = sourceRevision
+    }
+}
+
 public struct CourseKnowledgeProfileEntry: Codable, Equatable, Sendable {
     public var id: UUID
     public var kind: CourseKnowledgeProfileEntryKind
     public var text: String
+    public var sources: [CourseKnowledgeProfileSource]
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -148,14 +176,35 @@ public struct CourseKnowledgeProfileEntry: Codable, Equatable, Sendable {
         id: UUID = UUID(),
         kind: CourseKnowledgeProfileEntryKind,
         text: String,
+        sources: [CourseKnowledgeProfileSource] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
         self.id = id
         self.kind = kind
         self.text = text
+        self.sources = sources
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case text
+        case sources
+        case createdAt
+        case updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        kind = try container.decode(CourseKnowledgeProfileEntryKind.self, forKey: .kind)
+        text = try container.decode(String.self, forKey: .text)
+        sources = (try? container.decodeIfPresent([CourseKnowledgeProfileSource].self, forKey: .sources)) ?? []
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 }
 
@@ -163,17 +212,21 @@ public struct CourseKnowledgeProfile: Codable, Equatable, Sendable {
     public var courseID: UUID
     public var revision: UInt64
     public var entries: [CourseKnowledgeProfileEntry]
+    /// 持久化兼容字段:业务已不读,但旧版本必填,始终写出。
+    public var overview: String
     public var updatedAt: Date?
 
     public init(
         courseID: UUID,
         revision: UInt64 = 0,
         entries: [CourseKnowledgeProfileEntry] = [],
+        overview: String = "",
         updatedAt: Date? = nil
     ) {
         self.courseID = courseID
         self.revision = revision
         self.entries = entries
+        self.overview = overview
         self.updatedAt = updatedAt
     }
 
@@ -181,6 +234,7 @@ public struct CourseKnowledgeProfile: Codable, Equatable, Sendable {
         case courseID
         case revision
         case entries
+        case overview
         case updatedAt
     }
 
@@ -188,6 +242,7 @@ public struct CourseKnowledgeProfile: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         courseID = try container.decode(UUID.self, forKey: .courseID)
         revision = try container.decode(UInt64.self, forKey: .revision)
+        overview = (try? container.decodeIfPresent(String.self, forKey: .overview)) ?? ""
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
         // 档案只保留用户自述掌握状态。旧数据里的材料认识条目（overview/section/relation）
         // 解不出新的 kind，整份档案按约定兜底回空档案，不做迁移。
