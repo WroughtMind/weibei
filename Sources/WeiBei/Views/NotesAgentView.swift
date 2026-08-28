@@ -5002,7 +5002,12 @@ private struct AgentMessageMarkdownText: View {
                 // The outer row always accepts the live parent proposal. Visible
                 // renderers use it directly; held offscreen renderers are clipped.
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .allowsHitTesting(finalizedRendererReady && !isStreaming)
+                // Match opacity: the live WebView is the answer, including
+                // mid-stream. Already-rendered source/http links must open
+                // without waiting for the whole reply. Cold 0.01-opacity
+                // boots stay inert so they cannot steal scroll.
+                .allowsHitTesting(isStreaming || finalizedRendererReady
+                    || awaitsFinalizedRendererReady)
                 .accessibilityHidden(!(isStreaming || finalizedRendererReady || awaitsFinalizedRendererReady))
                 // Handoff (awaitsFinalizedRendererReady) keeps the live WebView
                 // fully visible: it already shows the streamed answer, and

@@ -3182,6 +3182,13 @@ private func verifyAgentChatMarkdownSourceContract() {
         chat.contains("freezeHeightAfterMeasure: !isStreaming\n                        && (!paneStructureTransitionActive || isInScrollViewport == false)\n                        && isInScrollViewport == false"),
         "visible finalized Markdown must remain live while delayed layout can still grow"
     )
+    // Tombstone: streaming used to set allowsHitTesting(ready && !isStreaming),
+    // so already-blue source/http links could not be clicked until the reply
+    // finished. Keep hit-testing aligned with the visible WebView surface.
+    expect(
+        !chat.contains(".allowsHitTesting(finalizedRendererReady && !isStreaming)"),
+        "streaming Agent Markdown must keep already-rendered source links clickable"
+    )
     expect(
         chat.contains(".environment(\\.agentChatLayoutWidth, max(panelWidth - 28, 1))"),
         "selection-float Agent Markdown must receive its real panel width"
