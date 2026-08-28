@@ -4,11 +4,12 @@ enum NativeHTTPByteStream {
     static func start(
         session: URLSession,
         request: URLRequest,
+        fallbackRequest: URLRequest? = nil,
         translate: @escaping (String) throws -> [NativeStreamChunk]
     ) -> AsyncThrowingStream<NativeStreamChunk, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                do {
+                func pump(_ request: URLRequest) async throws {
                     let (bytes, response) = try await session.bytes(for: request)
                     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                         var body = ""
@@ -33,7 +34,18 @@ enum NativeHTTPByteStream {
                             continuation.yield(chunk)
                         }
                     }
-                    continuation.finish()
+                }
+                do {
+                    do {
+                        try await pump(request)
+                        continuation.finish()
+                    } catch let failure as NativeLLMFailure
+                        where failure.status == 400 && fallbackRequest != nil {
+                        // 端点不认服务端搜索工具(如网关未透传):去掉搜索重试一次,
+                        // 本次回答退化为不联网,不让整轮对话失败。
+                        try await pump(fallbackRequest!)
+                        continuation.finish()
+                    }
                 } catch is CancellationError {
                     continuation.finish(throwing: NativeLLMFailure(code: "cancelled", message: "cancelled"))
                 } catch {

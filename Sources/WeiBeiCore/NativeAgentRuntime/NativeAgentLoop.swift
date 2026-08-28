@@ -93,8 +93,9 @@ public actor NativeAgentLoop {
                     assertionFailure(invariant)
                 }
                 var llmRequest = NativeLLMRequest(model: model, messages: messages, tools: tools)
+                // 搜索开关对全协议族生效;推理档仅 Responses 家族支持。
+                llmRequest.enableNativeWebSearch = tools.contains { $0.name == "weibei_course_map" }
                 if adapter.family.contains("responses") {
-                    llmRequest.enableNativeWebSearch = tools.contains { $0.name == "weibei_course_map" }
                     llmRequest.reasoningEffort = "low"
                 }
                 var assembler = NativeToolCallAssembler()
@@ -183,6 +184,9 @@ public actor NativeAgentLoop {
                     let result: NativeToolExecutionResult
                     if let failure = callResult.failure {
                         result = NativeToolExecutionResult(text: failure.localizedDescription, isError: true)
+                    } else if call.name == "$web_search" {
+                        // Kimi 内置搜索:把模型给出的搜索参数原样回传,服务端执行检索。
+                        result = NativeToolExecutionResult(text: call.arguments)
                     } else {
                         do {
                             result = try await registry.execute(

@@ -17,25 +17,49 @@ public enum NativeProviderAuth: String, Sendable {
     case unsupported
 }
 
+/// 各供应商服务端联网搜索的接入形态,决定请求注入与来源解析方式。
+public enum NativeWebSearchSupport: String, Sendable {
+    case none
+    /// Responses 协议内置工具:tools 追加 {"type":"web_search"}。
+    case responsesTool
+    /// Anthropic Messages 服务端工具:tools 追加 web_search_20250305。
+    case anthropicTool
+    /// Gemini google_search 接地:tools 追加 {"google_search":{}}。
+    case googleGrounding
+    /// 智谱系聊天补全 web_search 工具,结果在顶层 web_search 数组。
+    case zaiChatTool
+    /// 小米系聊天补全 web_search 工具,结果在 annotations。
+    case xiaomiChatTool
+    /// 通义聊天补全 enable_search 开关,结果在 search_info。
+    case qwenEnableSearch
+    /// OpenRouter web 插件,结果在 annotations。
+    case openrouterPlugin
+    /// Kimi 内置 $web_search:模型发起、客户端原样回传参数由服务端执行。
+    case kimiBuiltin
+}
+
 public struct NativeProviderRoute: Equatable, Sendable {
     public var family: NativeProtocolFamily
     public var auth: NativeProviderAuth
     public var baseURL: URL?
     public var defaultModel: String
     public var note: String
+    public var webSearch: NativeWebSearchSupport
 
     public init(
         family: NativeProtocolFamily,
         auth: NativeProviderAuth,
         baseURL: URL? = nil,
         defaultModel: String = "",
-        note: String = ""
+        note: String = "",
+        webSearch: NativeWebSearchSupport = .none
     ) {
         self.family = family
         self.auth = auth
         self.baseURL = baseURL
         self.defaultModel = defaultModel
         self.note = note
+        self.webSearch = webSearch
     }
 
     public var messagesURL: URL? {
@@ -54,7 +78,8 @@ public enum NativeProviderRouting {
                 auth: .oauth,
                 baseURL: URL(string: "https://chatgpt.com/backend-api/codex"),
                 defaultModel: "gpt-5.6-luna",
-                note: "ChatGPT 订阅 OAuth + Responses"
+                note: "ChatGPT 订阅 OAuth + Responses",
+                webSearch: .responsesTool
             )
         case .anthropic:
             return NativeProviderRoute(
@@ -62,7 +87,8 @@ public enum NativeProviderRouting {
                 auth: .apiKey,
                 baseURL: URL(string: "https://api.anthropic.com"),
                 defaultModel: "claude-sonnet-4-5",
-                note: "原生 Messages 协议 + API Key"
+                note: "原生 Messages 协议 + API Key",
+                webSearch: .anthropicTool
             )
         case .githubCopilot:
             return NativeProviderRoute(
@@ -84,45 +110,57 @@ public enum NativeProviderRouting {
                 family: .openaiResponses,
                 auth: .apiKey,
                 baseURL: URL(string: "https://api.openai.com/v1"),
-                defaultModel: "gpt-4.1"
+                defaultModel: "gpt-4.1",
+                webSearch: .responsesTool
             )
         case .xai:
             return NativeProviderRoute(
                 family: .openaiResponses,
                 auth: .apiKey,
                 baseURL: URL(string: "https://api.x.ai/v1"),
-                defaultModel: "grok-4"
+                defaultModel: "grok-4",
+                webSearch: .responsesTool
             )
         case .google:
             return NativeProviderRoute(
                 family: .googleGenerativeAI,
                 auth: .apiKey,
                 baseURL: URL(string: "https://generativelanguage.googleapis.com/v1beta"),
-                defaultModel: "gemini-2.5-flash"
+                defaultModel: "gemini-2.5-flash",
+                webSearch: .googleGrounding
             )
         case .minimax:
             return NativeProviderRoute(
                 family: .anthropicMessages,
                 auth: .apiKey,
                 baseURL: URL(string: "https://api.minimax.io/anthropic"),
-                defaultModel: "MiniMax-M2.5"
+                defaultModel: "MiniMax-M2.5",
+                webSearch: .anthropicTool
             )
         case .minimaxCN:
             return NativeProviderRoute(
                 family: .anthropicMessages,
                 auth: .apiKey,
                 baseURL: URL(string: "https://api.minimaxi.com/anthropic"),
-                defaultModel: "MiniMax-M2.5"
+                defaultModel: "MiniMax-M2.5",
+                webSearch: .anthropicTool
             )
         case .vercelAIGateway:
             return NativeProviderRoute(
                 family: .anthropicMessages,
                 auth: .apiKey,
                 baseURL: URL(string: "https://ai-gateway.vercel.sh"),
-                defaultModel: "anthropic/claude-sonnet-4"
+                defaultModel: "anthropic/claude-sonnet-4",
+                webSearch: .anthropicTool
             )
         case .deepseek:
-            return completions("https://api.deepseek.com/v1", model: "deepseek-chat")
+            return NativeProviderRoute(
+                family: .openaiResponses,
+                auth: .apiKey,
+                baseURL: URL(string: "https://api.deepseek.com"),
+                defaultModel: "deepseek-chat",
+                webSearch: .responsesTool
+            )
         case .antLing:
             return completions("https://api.ant-ling.com/v1")
         case .nvidia:
@@ -140,15 +178,40 @@ public enum NativeProviderRouting {
         case .cerebras:
             return completions("https://api.cerebras.ai/v1")
         case .openrouter:
-            return completions("https://openrouter.ai/api/v1")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://openrouter.ai/api/v1"),
+                webSearch: .openrouterPlugin
+            )
         case .qwenTokenPlan:
-            return completions("https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"),
+                webSearch: .qwenEnableSearch
+            )
         case .qwenTokenPlanCN:
-            return completions("https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"),
+                webSearch: .qwenEnableSearch
+            )
         case .zai:
-            return completions("https://api.z.ai/api/coding/paas/v4")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://api.z.ai/api/coding/paas/v4"),
+                webSearch: .zaiChatTool
+            )
         case .zaiCodingCN:
-            return completions("https://open.bigmodel.cn/api/coding/paas/v4")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://open.bigmodel.cn/api/coding/paas/v4"),
+                webSearch: .zaiChatTool
+            )
         case .opencode:
             return completions("https://opencode.ai/zen/v1")
         case .opencodeGo:
@@ -160,19 +223,54 @@ public enum NativeProviderRouting {
         case .together:
             return completions("https://api.together.ai/v1")
         case .kimiCoding:
-            return completions("https://api.kimi.com/coding")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://api.kimi.com/coding"),
+                webSearch: .kimiBuiltin
+            )
         case .moonshotai:
-            return completions("https://api.moonshot.ai/v1")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://api.moonshot.ai/v1"),
+                webSearch: .kimiBuiltin
+            )
         case .moonshotaiCN:
-            return completions("https://api.moonshot.cn/v1")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://api.moonshot.cn/v1"),
+                webSearch: .kimiBuiltin
+            )
         case .xiaomi:
-            return completions("https://api.xiaomimimo.com/v1")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://api.xiaomimimo.com/v1"),
+                webSearch: .xiaomiChatTool
+            )
         case .xiaomiTokenPlanCN:
-            return completions("https://token-plan-cn.xiaomimimo.com/v1")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://token-plan-cn.xiaomimimo.com/v1"),
+                webSearch: .xiaomiChatTool
+            )
         case .xiaomiTokenPlanAMS:
-            return completions("https://token-plan-ams.xiaomimimo.com/v1")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://token-plan-ams.xiaomimimo.com/v1"),
+                webSearch: .xiaomiChatTool
+            )
         case .xiaomiTokenPlanSGP:
-            return completions("https://token-plan-sgp.xiaomimimo.com/v1")
+            return NativeProviderRoute(
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://token-plan-sgp.xiaomimimo.com/v1"),
+                webSearch: .xiaomiChatTool
+            )
         case .llamaCpp, .custom:
             return NativeProviderRoute(
                 family: .openaiChatCompletions,

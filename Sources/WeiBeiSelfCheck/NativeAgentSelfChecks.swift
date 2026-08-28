@@ -15,6 +15,7 @@ func runNativeAgentSelfChecks() throws {
     try checkAnthropicTranslation()
     try checkGeminiTranslation()
     try checkOAuthLogoutLeavesNoCredential()
+    try checkWebSearchPayloadInjection()
     try checkProviderRouting()
     try checkSkillCatalogAndLoad()
     try checkLoadSkillIdempotent()
@@ -290,8 +291,101 @@ private func checkOAuthLogoutLeavesNoCredential() throws {
     try nativeRequire(!FileManager.default.fileExists(atPath: backup.path), "logout scrubs bak leftover")
 }
 
+private func checkWebSearchPayloadInjection() throws {
+    let courseMap = NativeToolDefinition(
+        name: "weibei_course_map",
+        description: "map",
+        permission: .read,
+        schema: NativeJSONSchema(["type": "object"]),
+        execute: { _, _ in NativeToolExecutionResult(text: "") }
+    )
+    let request = NativeLLMRequest(model: "test", messages: [], tools: [courseMap])
+
+    let responsesOn = OpenAIResponsesProvider.payload(for: request, webSearchSupported: true)
+    try nativeRequire(
+        (responsesOn["tools"] as? [[String: Any]])?.contains { $0["type"] as? String == "web_search" } == true,
+        "responses payload appends web_search when supported"
+    )
+    let responsesOff = OpenAIResponsesProvider.payload(for: request, webSearchSupported: false)
+    try nativeRequire(
+        (responsesOff["tools"] as? [[String: Any]])?.contains { $0["type"] as? String == "web_search" } != true,
+        "responses payload omits web_search when unsupported"
+    )
+
+    let anthropicOn = AnthropicMessagesProvider.payload(for: request, webSearchTool: true)
+    try nativeRequire(
+        (anthropicOn["tools"] as? [[String: Any]])?.contains { $0["type"] as? String == "web_search_20250305" } == true,
+        "anthropic payload appends web_search_20250305"
+    )
+    let anthropicOff = AnthropicMessagesProvider.payload(for: request, webSearchTool: false)
+    try nativeRequire(
+        (anthropicOff["tools"] as? [[String: Any]])?.contains { $0["type"] as? String == "web_search_20250305" } != true,
+        "anthropic payload omits web search for gateways without it"
+    )
+
+    let googleOn = GoogleGenerativeAIProvider.payload(for: request, groundingSearch: true)
+    try nativeRequire(
+        (googleOn["tools"] as? [[String: Any]])?.contains { $0["google_search"] != nil } == true,
+        "google payload appends google_search grounding"
+    )
+
+    // ChatCompletions:构造 provider 才带 style,payload 组装在实例方法内;用工厂构造的
+    // 形态由路由断言覆盖,这里直接验证 translate 的通用来源解析。
+    let zaiSSE = #"{"web_search":[{"link":"https://example.com/a"},{"link":"https://example.com/b"}],"choices":[{"delta":{"content":"hi"}}]}"#
+    var textIndex = 0
+    let zaiChunks = try OpenAIChatCompletionsProvider.translate(payload: zaiSSE, textIndex: &textIndex)
+    try nativeRequire(
+        zaiChunks.contains { if case .webSearchSource(let url) = $0 { return url == "https://example.com/a" } else { return false } },
+        "chat completions translate reads zai web_search links"
+    )
+    let qwenSSE = #"{"search_info":{"search_results":[{"url":"https://example.com/q"}]},"choices":[{"delta":{"content":"hi"}}]}"#
+    textIndex = 0
+    let qwenChunks = try OpenAIChatCompletionsProvider.translate(payload: qwenSSE, textIndex: &textIndex)
+    try nativeRequire(
+        qwenChunks.contains { if case .webSearchSource(let url) = $0 { return url == "https://example.com/q" } else { return false } },
+        "chat completions translate reads qwen search_info urls"
+    )
+    let annotationSSE = #"{"choices":[{"delta":{"content":"hi","annotations":[{"type":"url_citation","url":"https://example.com/cite"}]}}]}"#
+    textIndex = 0
+    let annotationChunks = try OpenAIChatCompletionsProvider.translate(payload: annotationSSE, textIndex: &textIndex)
+    try nativeRequire(
+        annotationChunks.contains { if case .webSearchSource(let url) = $0 { return url == "https://example.com/cite" } else { return false } },
+        "chat completions translate reads url_citation annotations"
+    )
+    let openRouterSSE = #"{"choices":[{"delta":{"content":"hi","annotations":[{"type":"url_citation","url_citation":{"url":"https://example.com/nested"}}]}}]}"#
+    textIndex = 0
+    let openRouterChunks = try OpenAIChatCompletionsProvider.translate(payload: openRouterSSE, textIndex: &textIndex)
+    try nativeRequire(
+        openRouterChunks.contains { if case .webSearchSource(let url) = $0 { return url == "https://example.com/nested" } else { return false } },
+        "chat completions translate reads nested url_citation annotations"
+    )
+    let anthropicResultSSE = #"{"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","content":[{"url":"https://example.com/anthropic"}]}}"#
+    let anthropicChunks = try AnthropicMessagesProvider.translate(anthropicResultSSE)
+    try nativeRequire(
+        anthropicChunks.contains { if case .webSearchSource(let url) = $0 { return url == "https://example.com/anthropic" } else { return false } },
+        "anthropic translate reads web_search_tool_result urls"
+    )
+    let googleSSE = #"{"candidates":[{"content":{"parts":[{"text":"hi"}]},"groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://example.com/gemini"}}]}}]}"#
+    let googleChunks = try GoogleGenerativeAIProvider.translate(googleSSE)
+    try nativeRequire(
+        googleChunks.contains { if case .webSearchSource(let url) = $0 { return url == "https://example.com/gemini" } else { return false } },
+        "google translate reads grounding chunk uris"
+    )
+}
+
 private func checkProviderRouting() throws {
-    try nativeRequire(NativeProviderRouting.route(.deepseek).family == .openaiChatCompletions, "deepseek is chat completions")
+    try nativeRequire(NativeProviderRouting.route(.deepseek).family == .openaiResponses, "deepseek moved to Responses for web search")
+    try nativeRequire(NativeProviderRouting.route(.deepseek).webSearch == .responsesTool, "deepseek carries server web search")
+    try nativeRequire(NativeProviderRouting.route(.xai).webSearch == .responsesTool, "xai carries server web search")
+    try nativeRequire(NativeProviderRouting.route(.anthropic).webSearch == .anthropicTool, "anthropic carries server web search")
+    try nativeRequire(NativeProviderRouting.route(.google).webSearch == .googleGrounding, "google carries grounding search")
+    try nativeRequire(NativeProviderRouting.route(.zaiCodingCN).webSearch == .zaiChatTool, "zai CN carries chat web search")
+    try nativeRequire(NativeProviderRouting.route(.xiaomi).webSearch == .xiaomiChatTool, "xiaomi carries chat web search")
+    try nativeRequire(NativeProviderRouting.route(.qwenTokenPlanCN).webSearch == .qwenEnableSearch, "qwen CN carries enable_search")
+    try nativeRequire(NativeProviderRouting.route(.openrouter).webSearch == .openrouterPlugin, "openrouter carries web plugin")
+    try nativeRequire(NativeProviderRouting.route(.moonshotaiCN).webSearch == .kimiBuiltin, "moonshot CN carries builtin web search")
+    try nativeRequire(NativeProviderRouting.route(.nvidia).webSearch == .none, "nvidia has no web search")
+    try nativeRequire(NativeProviderRouting.route(.amazonBedrock).webSearch == .none, "bedrock has no web search")
     try nativeRequire(NativeProviderRouting.route(.openai).family == .openaiResponses, "openai API is Responses")
     try nativeRequire(NativeProviderRouting.route(.xai).family == .openaiResponses, "xAI is Responses")
     try nativeRequire(NativeProviderRouting.route(.anthropic).family == .anthropicMessages, "anthropic is Messages")

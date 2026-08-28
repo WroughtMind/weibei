@@ -31,9 +31,9 @@ FINAL_APP_BINARY="$FINAL_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
 # onto the bundle; codesign then fails with "resource fork, Finder information,
 # or similar detritus not allowed".
 if [[ "$PACKAGE_ONLY" == true ]]; then
-  DIST_DIR="${TMPDIR:-/tmp}/weibei-package-$UID"
+  DIST_DIR="${TMPDIR%/}/weibei-package-$UID"
 else
-  DIST_DIR="${TMPDIR:-/tmp}/weibei-run-$UID"
+  DIST_DIR="${TMPDIR%/}/weibei-run-$UID"
 fi
 APP_BUNDLE="$DIST_DIR/$APP_DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
@@ -85,9 +85,28 @@ elif [[ "$PACKAGE_ONLY" == true ]]; then
     exit 6
   fi
 else
-  pkill -x "$PRODUCT_NAME" >/dev/null 2>&1 || true
-  for _ in {1..50}; do
-    pgrep -x "$PRODUCT_NAME" >/dev/null || break
+  # 只退出本构建目录跑起来的实例,不碰 /Applications 等正式版;
+  # SIGTERM 由 App 的信号处理同步落盘后退出。
+  # staged 实例的特征是路径含专用目录名;/var 是 /private/var 的符号链接,
+  # ps 返回归一化路径,不能用字面前缀比较,用子串匹配。
+  staged_marker="weibei-run-$UID"
+  for pid in $(pgrep -x "$PRODUCT_NAME"); do
+    exe_path=$(ps -o comm= -p "$pid" 2>/dev/null)
+    if [[ "$exe_path" == *"$staged_marker"* ]]; then
+      kill -TERM "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+  # SIGTERM 后 App 同步落盘最长约 60 秒,等它退净再开新实例,避免新旧并存双写数据。
+  for _ in {1..650}; do
+    found=false
+    for pid in $(pgrep -x "$PRODUCT_NAME"); do
+      exe_path=$(ps -o comm= -p "$pid" 2>/dev/null)
+      if [[ "$exe_path" == *"$staged_marker"* ]]; then
+        found=true
+        break
+      fi
+    done
+    [[ "$found" == false ]] && break
     sleep 0.1
   done
 fi
