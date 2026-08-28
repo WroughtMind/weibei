@@ -89,16 +89,6 @@ public struct CourseHomeLearningHighlights: Equatable, Sendable {
             return
         }
 
-        for session in sessions {
-            if let suggestion = session.flow.suggestedNext
-                .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
-                .first(where: { !$0.isEmpty }) {
-                nextStepText = suggestion
-                nextStepSessionID = session.id
-                return
-            }
-        }
-
         nextStepText = nil
         nextStepSessionID = nil
     }

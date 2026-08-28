@@ -1222,10 +1222,6 @@ struct AgentPaneView: View {
         AgentChatLayoutMetrics.isWide(layout: store.layout)
     }
 
-    private var replySources: [AgentReplySource] {
-        store.messages.flatMap(\.sources)
-    }
-
     /// Semantic renderer width; the GeometryReader proposal owns visible layout.
     /// Hidden resident hosts retain their last readable width for the next open.
     private var agentPaneWidth: CGFloat {
@@ -1509,9 +1505,6 @@ struct AgentPaneView: View {
             if usesWideChatLayout, measuredPaneWidth < 700 {
                 measuredPaneWidth = max(measuredPaneWidth, 1100)
             }
-        }
-        .task(id: replySources) {
-            await store.validateAgentReplySources(replySources)
         }
         .alert(
             store.ui("重命名会话", "Rename Chat"),
@@ -3389,9 +3382,8 @@ private struct AgentBubble: View {
     private var regularMessageContent: some View {
         let answerText = liveStreamingText ?? store.agentDisplayText(for: message)
         let citationParse = AgentCitationParser.parse(answerText)
-        let availableSources = message.sources.filter {
-            store.canOpenAgentReplySource($0)
-        }
+        // 来源标签只承载资料编号+定位信息;点击时走正常打开逻辑,打不开有提示,无需预验证。
+        let availableSources = message.sources
         let legacyCitations = citationParse.citations.filter { citation in
             switch citation.kind {
             case .material, .note, .selection:
@@ -3656,113 +3648,6 @@ private struct AgentBubble: View {
     }
 
 }
-
-private struct AgentReplyMemoryUpdateTag: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.weibeiReduceMotion) private var reduceMotion
-    let message: AgentMessage
-    let update: AgentReplyMemoryUpdate
-    @State private var expanded = false
-    private var scope: LearningMemoryScope? {
-        message.origin?.courseID.map(LearningMemoryScope.course)
-    }
-
-    private var revisions: [LearningMemoryRevisionRecord]? {
-        guard let scope else { return nil }
-        return update.revisions(
-            for: message.id,
-            in: store.learningMemoryEntries(in: scope)
-        )
-    }
-
-    private var courseID: UUID? {
-        guard let courseID = message.origin?.courseID,
-              store.course(withID: courseID) != nil else {
-            return nil
-        }
-        return courseID
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(reduceMotion ? nil : WeiBeiMotion.micro) {
-                    expanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "brain.head.profile")
-                        .accessibilityHidden(true)
-                    Text(store.ui(
-                        "已更新学习记忆 · \(update.memoryIDs.count) 项",
-                        "Learning memory updated · \(update.memoryIDs.count)"
-                    ))
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .weiBeiText(9.5, weight: .bold)
-                        .accessibilityHidden(true)
-                }
-                .weiBeiText(10.5, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
-                .padding(.horizontal, 9)
-                .frame(height: 25)
-                .background {
-                    Capsule()
-                        .fill(WeiBeiTheme.cinnabarSoft.opacity(0.34))
-                }
-                .overlay {
-                    Capsule()
-                        .strokeBorder(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityValue(Text(store.ui(
-                expanded ? "已展开" : "已收起",
-                expanded ? "Expanded" : "Collapsed"
-            )))
-            .accessibilityIdentifier("agent-memory-update-tag")
-
-            if expanded {
-                VStack(alignment: .leading, spacing: 7) {
-                    if let revisions {
-                        ForEach(revisions) { revision in
-                            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                                Text(store.learningMemoryKindLabel(revision.kind))
-                                    .weiBeiText(10.5, weight: .semibold)
-                                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                                    .fixedSize()
-                                Text(revision.text)
-                                    .weiBeiText(10.5)
-                                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                                    .lineLimit(2)
-                            }
-                        }
-                    } else {
-                        Text(update.summary)
-                            .weiBeiText(10.5)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    if let courseID {
-                        Button(store.ui("查看课程记忆", "View Course Memory")) {
-                            store.presentCourseWorkspace(.memory, courseID: courseID)
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                        .accessibilityIdentifier("agent-memory-update-view-all")
-                    }
-                }
-                .padding(.leading, 9)
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(WeiBeiTheme.cinnabar.opacity(0.28))
-                        .frame(width: 1)
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-}
-
 
 // MARK: - Agent citation tags (materials / learning / selection)
 
@@ -5117,7 +5002,12 @@ private struct AgentMessageMarkdownText: View {
                 // The outer row always accepts the live parent proposal. Visible
                 // renderers use it directly; held offscreen renderers are clipped.
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .allowsHitTesting(finalizedRendererReady && !isStreaming)
+                // Match opacity: the live WebView is the answer, including
+                // mid-stream. Already-rendered source/http links must open
+                // without waiting for the whole reply. Cold 0.01-opacity
+                // boots stay inert so they cannot steal scroll.
+                .allowsHitTesting(isStreaming || finalizedRendererReady
+                    || awaitsFinalizedRendererReady)
                 .accessibilityHidden(!(isStreaming || finalizedRendererReady || awaitsFinalizedRendererReady))
                 // Handoff (awaitsFinalizedRendererReady) keeps the live WebView
                 // fully visible: it already shows the streamed answer, and

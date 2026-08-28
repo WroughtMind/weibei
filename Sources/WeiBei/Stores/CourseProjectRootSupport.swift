@@ -1060,10 +1060,7 @@ actor CourseProjectFileWorker {
         }
         let courseKnowledgeProfile = workspace.courseKnowledgeProfiles?.first {
             $0.courseID == courseID
-        }?.retainingAvailableSources(
-            materialItemIDs: materialItemIDs,
-            noteItemIDs: noteItemIDs
-        )
+        }
         let memoryIDs = Set(rawMemoryState?.entries.map(\.id) ?? [])
         let relations = (workspace.noteSourceLinks ?? []).filter {
             noteItemIDs.contains($0.noteItemID)

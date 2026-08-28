@@ -174,3 +174,31 @@ test('paste probe flags Markdown clipboard text and leaves plain prose alone', (
   const normalizedPlainPaste = normalizeMarkdownSource('报价 $100 起,不加粗', 'userPaste');
   assert.equal(looksLikeMarkdownSyntax(normalizedPlainPaste), false);
 });
+
+test('emphasis boundary punctuation gets a space so CommonMark accepts the closer', () => {
+  // 全角冒号收尾的粗体,闭合 delimiter 后紧跟汉字,CommonMark 会原样显示星号。
+  const agentReport = normalizeMarkdownSource('**第一优先：**已有制造基础和客户验证的核心零部件；', 'agentGenerated');
+  assert.equal(agentReport, '**第一优先：** 已有制造基础和客户验证的核心零部件；');
+
+  const userDoc = normalizeMarkdownSource('**报告定位：**行业研究框架。', 'userDocument');
+  assert.equal(userDoc, '**报告定位：** 行业研究框架。');
+
+  // opener 侧:普通文字后紧跟以标点开头的强调,CommonMark 拒绝开启。
+  const opener = normalizeMarkdownSource('已有**“引号强调”**内容', 'userDocument');
+  assert.equal(opener, '已有 **“引号强调”** 内容');
+
+  // 合法强调一个字符都不动。
+  const legal = normalizeMarkdownSource('**粗体**正常、**结尾。** 后有空格', 'userDocument');
+  assert.equal(legal, '**粗体**正常、**结尾。** 后有空格');
+
+  // 代码块与行内代码不参与修正。
+  const code = normalizeMarkdownSource('```\n**保留：**原样\n```以及 `**行内：**` 结束', 'userDocument');
+  assert.equal(code, '```\n**保留：**原样\n```以及 `**行内：**` 结束');
+});
+
+test('trailing whitespace before a closing delimiter is stripped so the pair closes', () => {
+  const agentCase = normalizeMarkdownSource('**但具身智能的范围更广 **，还包括工业移动机器人', 'agentGenerated');
+  assert.equal(agentCase, '**但具身智能的范围更广**，还包括工业移动机器人');
+  const plainBold = normalizeMarkdownSource('**A** 和 **B** 互不相扰', 'userDocument');
+  assert.equal(plainBold, '**A** 和 **B** 互不相扰');
+});

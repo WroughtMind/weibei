@@ -196,8 +196,7 @@ final class WorkspaceSafetyTests: XCTestCase {
                     checkpoint: "userRequested",
                     entries: [StudyAgentCourseProfileUpdateEntry(
                         kind: .concept,
-                        text: "用户自述：还没有掌握费雪方程",
-                        sources: []
+                        text: "用户自述：还没有掌握费雪方程"
                     )]
                 ),
                 expectedContextRevision: "test-context",
@@ -398,8 +397,7 @@ final class WorkspaceSafetyTests: XCTestCase {
                 entries: (0..<200).map { index in
                     StudyAgentCourseProfileUpdateEntry(
                         kind: .concept,
-                        text: "用户自述：已有认识 \(index)",
-                        sources: []
+                        text: "用户自述：已有认识 \(index)"
                     )
                 }
             ),
@@ -418,8 +416,7 @@ final class WorkspaceSafetyTests: XCTestCase {
                 entries: [
                     StudyAgentCourseProfileUpdateEntry(
                         kind: .concept,
-                        text: fullText,
-                        sources: []
+                        text: fullText
                     ),
                 ]
             ),
@@ -462,11 +459,17 @@ final class WorkspaceSafetyTests: XCTestCase {
                 contextRevision: "session-summary-full-text",
                 memoryRevision: memoryRevision,
                 sessionSummary: summary,
-                suggestedNext: next,
+                suggestedNext: [],
                 entries: [
                     StudyAgentMemoryUpdateEntry(
                         kind: .progress,
                         text: "用户要求记录当前进度",
+                        evidence: "[用户：本轮] 请记录当前进度",
+                        origin: .userStatement
+                    ),
+                    StudyAgentMemoryUpdateEntry(
+                        kind: .nextStep,
+                        text: next[0],
                         evidence: "[用户：本轮] 请记录当前进度",
                         origin: .userStatement
                     ),
@@ -481,7 +484,11 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertTrue(receipt.accepted, receipt.message)
         let updated = store.studySessions.first { $0.id == sessionID }
         XCTAssertEqual(updated?.summary, summary)
-        XCTAssertEqual(updated?.flow.suggestedNext, next)
+        // 下一步通过 nextStep 记忆条目完整持久化；flow.suggestedNext 死链已删。
+        let nextStepEntry = store
+            .learningMemoryEntries(in: .course(courseID))
+            .first { $0.kind == .nextStep }
+        XCTAssertEqual(nextStepEntry?.text, next[0])
     }
 
     @MainActor

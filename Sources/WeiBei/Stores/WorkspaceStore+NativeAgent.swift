@@ -223,7 +223,13 @@ extension WorkspaceStore {
                 )
             },
             documentsRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Documents", isDirectory: true),
-            skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL)
+            skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL),
+            confirmDocumentCreation: { title, summary in
+                await AgentDocumentConfirmationCenter.shared.requestConfirmation(
+                    title: title,
+                    summary: summary
+                )
+            }
         )
         let runtime = NativeStudyAgentRuntime(
             model: model,
@@ -264,11 +270,10 @@ extension WorkspaceStore {
                 currentCourseID: currentCourseID,
                 query: query
             )
+            // 检索能力对所有 Chat 一致：跨库时其他课程的材料与笔记一样可搜，
+            // 当前课程命中已由 searchAllCourses 排在最前，这里只按类型过滤。
             let hits = outcome.hits.filter { hit in
-                if hit.isCurrentCourse {
-                    return hit.result.kind == .material || hit.result.kind == .note
-                }
-                return hit.result.kind == .note
+                hit.result.kind == .material || hit.result.kind == .note
             }
             return StudyAgentHostToolResult(
                 query: query,

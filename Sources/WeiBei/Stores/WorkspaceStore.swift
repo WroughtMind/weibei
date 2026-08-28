@@ -98,13 +98,6 @@ enum CourseProjectRebindError: LocalizedError {
     }
 }
 
-private struct AgentReplySourceFileSnapshot: Sendable {
-    let source: AgentReplySource
-    let itemID: String
-    let url: URL
-    let expectedIdentity: ImportedFileIdentity?
-}
-
 enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
     case hub
     case relations
@@ -342,7 +335,6 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var lastFailedAgentQuestion: String?
     @Published private(set) var lastAgentFailureKind: AgentFailureKind?
     @Published private(set) var agentAuthenticationStatus = AgentAuthenticationStatus()
-    @Published private(set) var latestAgentNoteProposal: StudyAgentNoteProposal?
     @Published private(set) var latestAgentLearningUpdate: StudyAgentLearningUpdate?
     @Published var noteSourceLinks: [NoteSourceLink] = [] {
         didSet {
@@ -727,7 +719,6 @@ final class WorkspaceStore: ObservableObject {
     var oversizedPortableCourseIDs = Set<UUID>()
     var persistedWorkspaceCourseIDs = Set<UUID>()
     var needsPortableCourseStateBootstrap = false
-    @Published private var validatedAgentReplySourceIDs = Set<UUID>()
     private var lastAgentReplyContextRevision: UInt64?
     private var latestAgentLearningUpdateQuestion: String?
     private var isRestoringNavigation = false
@@ -2022,15 +2013,11 @@ final class WorkspaceStore: ObservableObject {
 
     func restoreAgentReplyState(from session: StudySession) {
         guard let reply = session.messages.last(where: { $0.role == .assistant }) else {
-            latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
             lastFailedAgentQuestion = nil
             lastAgentFailureKind = nil
             return
         }
-        latestAgentNoteProposal = reply.actions
-            .last(where: { $0.kind == .writeNote && $0.state == .pending })
-            .flatMap(Self.noteProposal)
         latestAgentLearningUpdate = nil
         lastFailedAgentQuestion = reply.retryQuestion
         lastAgentFailureKind = reply.failureKind
@@ -2043,17 +2030,6 @@ final class WorkspaceStore: ObservableObject {
 
     func restoreAgentDraft(for sessionID: UUID) {
         agentDraft = agentDraftsBySessionID[sessionID] ?? ""; pendingComposerDraft = agentDraft.isEmpty ? nil : agentDraft
-    }
-
-    private static func noteProposal(from action: AgentReplyAction) -> StudyAgentNoteProposal? {
-        guard action.kind == .writeNote,
-              let markdown = action.proposedMarkdown,
-              let contextRevision = action.contextRevision else { return nil }
-        return StudyAgentNoteProposal(
-            markdown: markdown,
-            evidence: action.evidence,
-            contextRevision: contextRevision
-        )
     }
 
     var agentReplyActionIDsInFlight = Set<UUID>()
@@ -3697,7 +3673,6 @@ final class WorkspaceStore: ObservableObject {
             blankNoteDraftMaterialID = nil
             activeNotebookItemID = item.id
             noteText = noteText(for: item)
-            latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
             refreshActiveNoteFromBackingFile()
             if !isRestoringCourseResumePoint {
@@ -3749,7 +3724,6 @@ final class WorkspaceStore: ObservableObject {
         }
         clearReaderSearchIfNeeded()
         noteText = noteText(for: activeNoteItem)
-        latestAgentNoteProposal = nil
         latestAgentLearningUpdate = nil
         if !isRestoringCourseResumePoint {
             syncActiveStudySession()
@@ -4640,7 +4614,6 @@ final class WorkspaceStore: ObservableObject {
                 notebookCreationDraft = nil
                 notebookRenameDraft = nil
                 linkedSourcesPresented = false
-                latestAgentNoteProposal = nil
                 latestAgentLearningUpdate = nil
                 syncActiveStudySession()
                 openDocumentPane(.notes)
@@ -5028,67 +5001,6 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    func canOpenAgentReplySource(_ source: AgentReplySource) -> Bool {
-        guard let item = agentReplySourceItem(source) else { return false }
-        return item.isSample
-            || item.isNotebookNote
-            || validatedAgentReplySourceIDs.contains(source.id)
-    }
-
-    func validateAgentReplySources(_ sources: [AgentReplySource]) async {
-        guard !sources.isEmpty else { return }
-        var immediatelyAvailable = Set<UUID>()
-        var snapshots = [AgentReplySourceFileSnapshot]()
-
-        for source in sources {
-            guard let item = agentReplySourceItem(source) else { continue }
-            if item.isSample || item.isNotebookNote {
-                immediatelyAvailable.insert(source.id)
-            } else if let url = item.url {
-                snapshots.append(
-                    AgentReplySourceFileSnapshot(
-                        source: source,
-                        itemID: item.id,
-                        url: url.standardizedFileURL,
-                        expectedIdentity: item.importedFileIdentity
-                    )
-                )
-            }
-        }
-
-        let validationTask = Task.detached(priority: .utility) {
-            Set(snapshots.compactMap { snapshot -> UUID? in
-                guard !Task.isCancelled,
-                      FileManager.default.isReadableFile(atPath: snapshot.url.path),
-                      let identity = Self.resolveImportedFileIdentity(at: snapshot.url),
-                      snapshot.expectedIdentity.map({ $0 == identity }) ?? true else {
-                    return nil
-                }
-                return snapshot.source.id
-            })
-        }
-        let availableIDs = await withTaskCancellationHandler {
-            await validationTask.value
-        } onCancel: {
-            validationTask.cancel()
-        }
-        guard !Task.isCancelled else { return }
-
-        var nextAvailableIDs = immediatelyAvailable
-        for snapshot in snapshots where availableIDs.contains(snapshot.source.id) {
-            guard let current = agentReplySourceItem(snapshot.source),
-                  current.id == snapshot.itemID,
-                  current.url?.standardizedFileURL == snapshot.url,
-                  current.importedFileIdentity == snapshot.expectedIdentity else {
-                continue
-            }
-            nextAvailableIDs.insert(snapshot.source.id)
-        }
-        if validatedAgentReplySourceIDs != nextAvailableIDs {
-            validatedAgentReplySourceIDs = nextAvailableIDs
-        }
-    }
-
     @discardableResult
     func openAgentReplySource(_ source: AgentReplySource) -> Bool {
         guard let item = agentReplySourceItem(source) else { return false }
@@ -5114,7 +5026,9 @@ final class WorkspaceStore: ObservableObject {
             opened = openCourseMaterial(item.id)
         }
         guard opened else {
-            validatedAgentReplySourceIDs.remove(source.id)
+            showTransientNoteStatus(
+                ui("资料不存在或无法打开。", "Source not found or unavailable.")
+            )
             return false
         }
 
@@ -5462,7 +5376,6 @@ final class WorkspaceStore: ObservableObject {
             id: selectedMaterialItem?.kind == .html ? snapshot.readerLocationID : nil,
             title: selectedMaterialItem?.kind == .html ? snapshot.readerLocationTitle : nil
         )
-        latestAgentNoteProposal = nil
         latestAgentLearningUpdate = nil
         syncActiveStudySession()
         recordCurrentStudyLocation(incrementVisit: false)
@@ -6887,7 +6800,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func learningMemoryContextScopes(courseID: UUID?) -> [LearningMemoryScope] {
-        courseID.map { [.course($0)] } ?? []
+        // 记忆读入口对所有 Chat 一致：全局记忆每条 Chat 都能读到；
+        // 课程 Chat 额外叠加本课程记忆。写入口见 learningMemoryScope(courseID:)。
+        courseID.map { [.course($0), .global] } ?? [.global]
     }
 
     private func learningMemoryContextRevision(courseID: UUID?) -> UInt64 {
@@ -6917,14 +6832,8 @@ final class WorkspaceStore: ObservableObject {
 
     private func sanitizedCourseKnowledgeProfiles() -> [CourseKnowledgeProfile] {
         let courseIDs = Set(courses.map(\.id))
-        return courseKnowledgeProfiles.compactMap { profile in
-            guard courseIDs.contains(profile.courseID) else { return nil }
-            let items = courseItems(in: profile.courseID)
-            let noteItemIDs = Set(items.lazy.filter(\.isNotebookNote).map(\.id))
-            return profile.retainingAvailableSources(
-                materialItemIDs: Set(items.map(\.id)).subtracting(noteItemIDs),
-                noteItemIDs: noteItemIDs
-            )
+        return courseKnowledgeProfiles.filter { profile in
+            courseIDs.contains(profile.courseID)
         }
     }
 
@@ -8049,7 +7958,15 @@ final class WorkspaceStore: ObservableObject {
         access: AgentProjectAccessSnapshot
     ) -> StudyAgentHostToolHandler {
         let preferredCourseID = target.courseID?.uuidString.lowercased()
+        // 相关性排序（不是权限门槛）：正在读的资料/文稿排最前，本课程资料
+        // 次之，其余已导入资料照样可搜，按标题稳定跟随。
+        let focusItemIDs = Set(
+            [selectedMaterialItem?.id, activeNoteItem?.id].compactMap { $0 }
+        )
         let sources = access.sources.sorted { left, right in
+            let leftFocus = focusItemIDs.contains(left.item.id)
+            let rightFocus = focusItemIDs.contains(right.item.id)
+            if leftFocus != rightFocus { return leftFocus }
             let leftPreferred = preferredCourseID.map(left.courseIDs.contains) ?? false
             let rightPreferred = preferredCourseID.map(right.courseIDs.contains) ?? false
             if leftPreferred != rightPreferred { return leftPreferred }
@@ -8120,46 +8037,20 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func makeCourseProfileContext(
-        courseID: UUID?,
-        access: AgentProjectAccessSnapshot
+        courseID: UUID?
     ) -> StudyAgentCourseProfileContext {
         guard let courseID,
               let profileIndex = courseKnowledgeProfiles.firstIndex(where: {
                   $0.courseID == courseID
               }) else { return .empty }
-        let sourcesByID = Dictionary(
-            uniqueKeysWithValues: access.sources.map { ($0.item.id, $0) }
-        )
         let profile = courseKnowledgeProfiles[profileIndex]
-        let retained = profile.entries.filter { entry in
-            entry.sources.allSatisfy { reference in
-                guard let source = sourcesByID[reference.itemID],
-                      (source.item.isNotebookNote ? "note" : "material")
-                        == reference.role.rawValue else { return false }
-                let revision = source.memoryText.map(
-                    CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
-                ) ?? CourseDocumentSearchIndex.sourceRevision(for: source.item)
-                return revision == reference.sourceRevision
-            }
-        }
         return StudyAgentCourseProfileContext(
             revision: profile.revision,
-            overview: retained
-                .filter { $0.kind == .overview }
-                .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? "",
-            entries: retained.map { entry in
+            entries: profile.entries.map { entry in
                 StudyAgentCourseProfileEntry(
                     id: entry.id.uuidString.lowercased(),
                     kind: entry.kind.rawValue,
-                    text: entry.text,
-                    sources: entry.sources.map { source in
-                        StudyAgentCourseProfileSource(
-                            itemID: source.itemID,
-                            role: source.role.rawValue,
-                            location: source.location,
-                            sourceRevision: source.sourceRevision
-                        )
-                    }
+                    text: entry.text
                 )
             }
         )
@@ -8168,10 +8059,7 @@ final class WorkspaceStore: ObservableObject {
     func refreshCourseProfileContext(
         target: AgentConversationTarget
     ) -> StudyAgentCourseProfileContext {
-        makeCourseProfileContext(
-            courseID: target.courseID,
-            access: makeAgentProjectAccessSnapshot(target: target)
-        )
+        makeCourseProfileContext(courseID: target.courseID)
     }
 
     private func lastStudyLocation(in courseID: UUID?) -> StudyLocation? {
@@ -8229,15 +8117,6 @@ final class WorkspaceStore: ObservableObject {
             let text = proposal.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let evidence = proposal.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty, !evidence.isEmpty else { return nil }
-            if evidence.hasPrefix("[用户：本轮]") || evidence.hasPrefix("[会话：当前]") {
-                guard StudyAgentCurrentTurnEvidence.matches(
-                    evidence,
-                    question: expectedUserQuestion
-                ) else { return nil }
-            }
-            if proposal.origin == .userStatement {
-                guard evidence.hasPrefix("[用户：本轮]") else { return nil }
-            }
             let memoryID: UUID?
             let scope: LearningMemoryScope
             switch Self.parseOptionalRecordID(proposal.memoryID) {
@@ -8259,11 +8138,6 @@ final class WorkspaceStore: ObservableObject {
                       ) else {
                     return nil
                 }
-                if located.2.origin == .userStatement,
-                   !evidence.hasPrefix("[用户：本轮]"),
-                   !evidence.hasPrefix("[会话：当前]") {
-                    return nil
-                }
                 memoryID = parsedMemoryID
                 scope = located.0
             }
@@ -8274,7 +8148,7 @@ final class WorkspaceStore: ObservableObject {
                     scope,
                     text,
                     String(evidence.prefix(400)),
-                    proposal.origin == .observed ? .agentInference : proposal.origin
+                    proposal.origin
                 )
             )
         }
@@ -8287,17 +8161,13 @@ final class WorkspaceStore: ObservableObject {
         var resolutionTargetIDs: Set<UUID> = []
         for proposal in update.resolutions {
             let evidence = proposal.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard StudyAgentCurrentTurnEvidence.matches(
-                evidence,
-                question: expectedUserQuestion
-            ),
-            let memoryID = UUID(uuidString: proposal.memoryID),
-            resolutionTargetIDs.insert(memoryID).inserted,
-            let located = locatedMemory(memoryID),
-            located.2.status == .active,
-            located.2.kind == .goal
-                || located.2.kind == .confusion
-                || located.2.kind == .nextStep else {
+            guard let memoryID = UUID(uuidString: proposal.memoryID),
+                resolutionTargetIDs.insert(memoryID).inserted,
+                let located = locatedMemory(memoryID),
+                located.2.status == .active,
+                located.2.kind == .goal
+                    || located.2.kind == .confusion
+                    || located.2.kind == .nextStep else {
                 return nil
             }
             validatedResolutions.append(
@@ -8318,10 +8188,7 @@ final class WorkspaceStore: ObservableObject {
             var memoryEntries = entriesByScope[validated.scope] ?? []
             if let memoryID = validated.memoryID,
                let index = memoryEntries.firstIndex(where: { $0.id == memoryID }) {
-                let origin: LearningMemoryOrigin = validated.evidence
-                    .hasPrefix("[用户：本轮]")
-                    ? .userStatement
-                    : validated.origin
+                let origin: LearningMemoryOrigin = validated.origin
                 guard memoryEntries[index].kind != validated.proposal.kind
                         || memoryEntries[index].text != validated.text
                         || memoryEntries[index].evidence != validated.evidence
@@ -8437,13 +8304,6 @@ final class WorkspaceStore: ObservableObject {
                 studySessions[index].flow.phase = phase
                 sessionChanged = true
             }
-            let next = update.suggestedNext
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            if !next.isEmpty, studySessions[index].flow.suggestedNext != next {
-                studySessions[index].flow.suggestedNext = next
-                sessionChanged = true
-            }
             if sessionChanged {
                 studySessions[index].updatedAt = now
             }
@@ -8459,16 +8319,18 @@ final class WorkspaceStore: ObservableObject {
             latestAgentLearningUpdateQuestion = expectedUserQuestion
         }
         guard !changedMemoryIDs.isEmpty else { return nil }
-        let summary = changedMemoryIDs.compactMap { id in
+        let appliedTexts = changedMemoryIDs.compactMap { id in
             scopes.lazy.compactMap { scope in
                 entriesByScope[scope]?.first(where: { $0.id == id })?.text
             }.first
-        }.prefix(3).joined(separator: "；")
+        }
+        let summary = appliedTexts.prefix(3).joined(separator: "；")
         return AgentReplyMemoryUpdate(
             memoryIDs: changedMemoryIDs,
             summary: summary.isEmpty
                 ? ui("学习进度已更新", "Study progress updated")
-                : String(summary.prefix(300))
+                : String(summary.prefix(300)),
+            texts: appliedTexts
         )
     }
 
@@ -8516,9 +8378,6 @@ final class WorkspaceStore: ObservableObject {
         let removedIDs = Set(update.removedEntryIDs.compactMap(UUID.init(uuidString:)))
         guard removedIDs.count == update.removedEntryIDs.count,
               removedIDs.isSubset(of: existingIDs) else { return nil }
-        let itemsByID = Dictionary(
-            uniqueKeysWithValues: courseItems(in: courseID).map { ($0.id, $0) }
-        )
 
         var targetIDs = Set<UUID>()
         var replacements: [(UUID?, CourseKnowledgeProfileEntry)] = []
@@ -8535,28 +8394,6 @@ final class WorkspaceStore: ObservableObject {
             }
             guard entryID.map(existingIDs.contains) ?? true,
                   entryID.map({ targetIDs.insert($0).inserted }) ?? true else { return nil }
-            var sources: [CourseKnowledgeProfileSource] = []
-            for source in proposal.sources {
-                guard let item = itemsByID[source.itemID],
-                (item.isNotebookNote ? "note" : "material") == source.role else { return nil }
-                let revision = item.isNotebookNote
-                    ? loadedAgentNoteText(for: item).map(
-                        CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
-                    )
-                    : CourseDocumentSearchIndex.sourceRevision(for: item)
-                guard revision == source.sourceRevision else { return nil }
-                sources.append(
-                    CourseKnowledgeProfileSource(
-                        itemID: source.itemID,
-                        role: item.isNotebookNote ? .note : .material,
-                        location: source.location,
-                        sourceRevision: source.sourceRevision
-                    )
-                )
-            }
-            let allowsEmptySources = update.checkpoint == "userRequested"
-                || proposal.text.hasPrefix("用户自述：")
-            guard !sources.isEmpty || allowsEmptySources else { return nil }
             let existing = entryID.flatMap { id in
                 profile.entries.first(where: { $0.id == id })
             }
@@ -8567,7 +8404,6 @@ final class WorkspaceStore: ObservableObject {
                         id: entryID ?? UUID(),
                         kind: proposal.kind,
                         text: proposal.text,
-                        sources: sources,
                         createdAt: existing?.createdAt ?? now,
                         updatedAt: now
                     )
@@ -8585,9 +8421,6 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         guard profile.entries != courseKnowledgeProfiles[profileIndex].entries else { return nil }
-        profile.overview = profile.entries
-            .filter { $0.kind == .overview }
-            .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
         profile.revision &+= 1
         profile.updatedAt = now
         courseKnowledgeProfiles[profileIndex] = profile
@@ -8642,7 +8475,7 @@ final class WorkspaceStore: ObservableObject {
             if hasClientID {
                 return .rejected("魏碑没有保存这次学习记忆。更新只能沿用 weibei_read_learning_memory 返回的 memoryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
             }
-            return .rejected("魏碑没有保存这次学习记忆。用户自述请用 origin=userStatement，evidence 以「[用户：本轮]」开头并带上用户原话。")
+            return .rejected("魏碑没有保存这次学习记忆。每条记忆需要 kind 标签和内容；更新已有记忆时 memoryID 只能从读取结果或上次回执抄写。")
         }
         let appliedLearningStates = learningMemoryStates
         let appliedStudySession = studySessions.first {
@@ -8731,13 +8564,6 @@ final class WorkspaceStore: ObservableObject {
                studySessions[currentIndex].flow.phase == appliedStudySession.flow.phase {
                 studySessions[currentIndex].flow.phase = previous.flow.phase
             }
-            if appliedStudySession.flow.suggestedNext
-                != previous.flow.suggestedNext,
-               studySessions[currentIndex].flow.suggestedNext
-                == appliedStudySession.flow.suggestedNext {
-                studySessions[currentIndex].flow.suggestedNext =
-                    previous.flow.suggestedNext
-            }
             if appliedStudySession.updatedAt != previous.updatedAt,
                studySessions[currentIndex].updatedAt == appliedStudySession.updatedAt {
                 studySessions[currentIndex].updatedAt = previous.updatedAt
@@ -8780,7 +8606,7 @@ final class WorkspaceStore: ObservableObject {
             if hasClientID {
                 return .rejected("魏碑没有保存这次课程档案。更新只能沿用当前档案已有条目的 entryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
             }
-            return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头、checkpoint=userRequested。")
+            return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头，checkpoint 用 userRequested。")
         }
         let appliedProfiles = courseKnowledgeProfiles
         let persisted = await persistWorkspaceNow()
@@ -8846,10 +8672,6 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                 }
-                courseKnowledgeProfiles[currentIndex].overview =
-                    courseKnowledgeProfiles[currentIndex].entries
-                    .filter { $0.kind == .overview }
-                    .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
             }
             dirtyPortableCourseIDs.insert(courseID)
         }
@@ -9671,10 +9493,7 @@ final class WorkspaceStore: ObservableObject {
             )
         )
         let sentLearningContext = makeLearningContext(target: target)
-        let sentCourseProfile = makeCourseProfileContext(
-            courseID: target.courseID,
-            access: projectAccess
-        )
+        let sentCourseProfile = makeCourseProfileContext(courseID: target.courseID)
         let sentVisualAssets = await currentVisualAssetsForAgent(access: projectAccess)
         defer { Self.removeAgentVisualSnapshots(sentVisualAssets) }
         let sentLanguage = interfaceLanguage
@@ -9779,7 +9598,6 @@ final class WorkspaceStore: ObservableObject {
             }
             lastFailedAgentQuestion = nil
             lastAgentFailureKind = nil
-            latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
             if !sentSelectionIDs.isEmpty {
                 // No withAnimation here: animating attachment chrome while chat
@@ -9874,9 +9692,6 @@ final class WorkspaceStore: ObservableObject {
                 authMethod: requestAuthMethod
             )
             try validateAgentConversationTarget(target, mustBeActive: false)
-            if activeStudySessionID == target.sessionID {
-                latestAgentNoteProposal = reply.noteProposal
-            }
             let memoryUpdate = reply.appliedMemoryUpdate ?? applyLearningUpdate(
                 reply.learningUpdate,
                 expectedContextRevision: request.contextRevision,
@@ -9972,6 +9787,16 @@ final class WorkspaceStore: ObservableObject {
                     targetCourseID: target.courseID
                 )
             )
+            // 用户明确要求写笔记：直接执行写入，不再等确认卡。防覆盖 digest
+            // 对比与撤销都走同一条动作管线，这里只是替用户按下"写入"。
+            if let proposal = reply.noteProposal,
+               proposal.userRequested,
+               let writeAction = actions.last(where: { $0.kind == .writeNote }) {
+                await confirmAgentReplyAction(
+                    messageID: assistantMessage.id,
+                    actionID: writeAction.id
+                )
+            }
             // Durable reply before request finish; save errors must not hide it.
             _ = await flushPendingWorkspaceSaveAsync()
         } catch is CancellationError {
@@ -11054,7 +10879,6 @@ final class WorkspaceStore: ObservableObject {
 
     func invalidateAgentContext(restoreAgentDraft _: Bool = true) {
         agentContextRevision &+= 1
-        latestAgentNoteProposal = nil
         lastAgentReplyContextRevision = nil
     }
 

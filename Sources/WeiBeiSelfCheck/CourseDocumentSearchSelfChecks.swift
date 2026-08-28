@@ -229,19 +229,10 @@ func checkCourseDocumentSearchReadiness() throws {
     let profile = CourseKnowledgeProfile(
         courseID: courseID,
         revision: 2,
-        overview: "这门课讨论货币政策如何传导。",
         entries: [
             CourseKnowledgeProfileEntry(
                 kind: .concept,
-                text: "政策利率通过资金价格影响总需求。",
-                sources: [
-                    CourseKnowledgeProfileSource(
-                        itemID: "material-1",
-                        role: .material,
-                        location: "利率渠道",
-                        sourceRevision: "revision-1"
-                    ),
-                ],
+                text: "用户自述：已掌握单利，复利还不熟。",
                 createdAt: now,
                 updatedAt: now
             ),
@@ -287,15 +278,84 @@ func checkCourseDocumentSearchReadiness() throws {
         roundTripped.courseKnowledgeProfile == profile,
         "课程知识档案没有随课程状态完整往返"
     )
-    let sourceRemoved = profile.retainingAvailableSources(
-        materialItemIDs: [],
-        noteItemIDs: []
+    struct LegacyProfileShape: Codable {
+        var courseID: UUID
+        var revision: UInt64
+        var overview: String
+        var entries: [LegacyEntryShape]
+        var updatedAt: Date?
+    }
+    struct LegacyEntryShape: Codable {
+        var id: UUID
+        var kind: String
+        var text: String
+        var createdAt: Date
+        var updatedAt: Date
+    }
+    let legacyProfileJSON = try JSONEncoder().encode(
+        LegacyProfileShape(
+            courseID: courseID,
+            revision: 2,
+            overview: "这门课讨论货币政策如何传导。",
+            entries: [
+                LegacyEntryShape(
+                    id: UUID(),
+                    kind: "overview",
+                    text: "这门课讨论货币政策如何传导。",
+                    createdAt: now,
+                    updatedAt: now
+                ),
+            ],
+            updatedAt: now
+        )
+    )
+    let legacyDecoded = try JSONDecoder().decode(
+        CourseKnowledgeProfile.self,
+        from: legacyProfileJSON
     )
     try requireSearchCheck(
-        sourceRemoved.entries.isEmpty
-            && sourceRemoved.overview.isEmpty
-            && sourceRemoved.revision == profile.revision + 1,
-        "课程来源移除后仍保留了失效的知识档案条目"
+        legacyDecoded.entries.isEmpty && legacyDecoded.revision == 2,
+        "旧档案里的材料认识条目解不出新的 kind 时应兜底回空档案"
+    )
+
+    // 兼容保证:写侧永远输出旧版本必填的 sources/overview 字段,否则旧版本 App
+    // 会把新数据判成损坏并回退空备份;读侧则要能完整吃下 main 格式的历史数据。
+    let compatibilityEncoded = try JSONSerialization.jsonObject(
+        with: JSONEncoder().encode(profile)
+    ) as? [String: Any] ?? [:]
+    let compatibilityEntries = compatibilityEncoded["entries"] as? [[String: Any]] ?? []
+    try requireSearchCheck(
+        (compatibilityEncoded["overview"] as? String) != nil
+            && compatibilityEntries.allSatisfy { ($0["sources"] as? [Any]) != nil },
+        "档案编码必须带 overview 与 sources 兼容字段,防止旧版本把数据判损坏"
+    )
+    let mainShaped: [String: Any] = [
+        "courseID": courseID.uuidString,
+        "revision": 3,
+        "overview": "旧版本写下的概览",
+        "entries": [[
+            "id": UUID().uuidString,
+            "kind": "concept",
+            "text": "用户自述：已理解货币政策传导",
+            "sources": [[
+                "itemID": "imported:material",
+                "role": "material",
+                "sourceRevision": "rev-1",
+            ]],
+            "createdAt": now.timeIntervalSince1970,
+            "updatedAt": now.timeIntervalSince1970,
+        ]],
+        "updatedAt": NSNull(),
+    ]
+    let mainDecoded = try JSONDecoder().decode(
+        CourseKnowledgeProfile.self,
+        from: JSONSerialization.data(withJSONObject: mainShaped)
+    )
+    try requireSearchCheck(
+        mainDecoded.overview == "旧版本写下的概览"
+            && mainDecoded.entries.count == 1
+            && mainDecoded.entries.first?.sources.first?.itemID == "imported:material",
+        "main 格式的历史档案数据应被完整读入,兼容字段保留不丢"
     )
     try checkCourseDocumentSearchConnectionReuse()
 }

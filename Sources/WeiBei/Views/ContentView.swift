@@ -111,6 +111,9 @@ struct ContentView: View {
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
                 }
+
+                // Agent 创建文稿的写盘确认浮层：覆盖课程空间等全部层级。
+                AgentDocumentConfirmationOverlay()
             }
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
             .animation(WeiBeiMotion.panel, value: store.lastPersistState)

@@ -830,10 +830,7 @@ extension WorkspaceStore {
             learningMemoryState: memoryState,
             courseKnowledgeProfile: courseKnowledgeProfiles.first {
                 $0.courseID == courseID
-            }?.retainingAvailableSources(
-                materialItemIDs: materialItemIDs,
-                noteItemIDs: noteItemIDs
-            ),
+            },
             noteSourceLinks: relations,
             studyLocationsByItemID: locations,
             resumePoint: courseResumePoint(for: courseID),

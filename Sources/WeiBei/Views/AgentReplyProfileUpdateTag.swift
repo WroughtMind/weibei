@@ -7,6 +7,14 @@ struct AgentReplyProfileUpdateTag: View {
     let update: AgentReplyProfileUpdate
     @State private var expanded = false
 
+    /// 收起态直接展示已记录内容的概括，与学习记忆标签一致，不显示计数。
+    private var summaryText: String {
+        let text = update.texts.prefix(3).joined(separator: "；")
+        return text.isEmpty
+            ? store.ui("已记录掌握状态", "Mastery noted")
+            : text
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
@@ -17,10 +25,7 @@ struct AgentReplyProfileUpdateTag: View {
                 HStack(spacing: 6) {
                     Image(systemName: "text.book.closed")
                         .accessibilityHidden(true)
-                    Text(store.ui(
-                        "已更新课程知识档案 · \(update.entryIDs.count) 项",
-                        "Course profile updated · \(update.entryIDs.count)"
-                    ))
+                    Text(summaryText)
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
                         .weiBeiText(9.5, weight: .bold)
                         .accessibilityHidden(true)
