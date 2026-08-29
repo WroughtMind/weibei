@@ -75,13 +75,12 @@ test.describe("packaged WeiBei Windows UI", () => {
 
   test("creates an isolated course and renders all three panes", async ({}, testInfo) => {
     await withPackagedApp(testInfo, async ({ page }) => {
-      let promptType: string | undefined;
-      page.once("dialog", (dialog) => {
-        promptType = dialog.type();
-        void dialog.accept("E2E visual course");
-      });
       await page.locator(".empty-actions .entry-button").nth(1).click();
-      await expect.poll(() => promptType).toBe("prompt");
+      const namePrompt = page.getByRole("dialog", { name: "新建课程" });
+      await expect(namePrompt).toBeVisible();
+      await expect(namePrompt.locator("input")).toHaveValue("新课程");
+      await namePrompt.locator("input").fill("E2E visual course");
+      await namePrompt.getByRole("button", { name: "确定" }).click();
 
       const workspace = page.locator(".three-pane-workspace");
       await expect(workspace).toBeVisible();

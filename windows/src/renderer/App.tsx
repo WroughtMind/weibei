@@ -13,6 +13,7 @@ import type {
 import { CourseSpace } from "./components/CourseSpace";
 import { EmptyLauncher } from "./components/EmptyLauncher";
 import { LibraryDrawer } from "./components/LibraryDrawer";
+import { NamePromptSheet } from "./components/NamePromptSheet";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { SearchPalette } from "./components/SearchPalette";
 import { TopBar } from "./components/TopBar";
@@ -21,6 +22,9 @@ import { AgentStreamDisplayPump } from "./stream-display-pump";
 
 type Overlay = "course" | "search" | "settings" | null;
 type ItemOpenTarget = "reader" | "notes" | "auto";
+type NamePrompt =
+  | { kind: "course"; closeLibrary: boolean }
+  | { kind: "note"; closeLibrary: boolean; courseId: string };
 
 const defaultPreferences: Preferences = {
   theme: "paper",
@@ -60,6 +64,7 @@ export function App() {
   const [selection, setSelection] = useState<SelectionContext | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [overlay, setOverlay] = useState<Overlay>(null);
+  const [namePrompt, setNamePrompt] = useState<NamePrompt | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const streamPumps = useRef(new Map<string, AgentStreamDisplayPump>());
@@ -270,6 +275,22 @@ export function App() {
     setFailure(null);
   }, []);
 
+  const confirmNamePrompt = useCallback(async (value: string) => {
+    if (!api || !namePrompt) return;
+    const request = namePrompt;
+    setNamePrompt(null);
+    try {
+      if (request.kind === "course") {
+        replaceSnapshot(await api.createCourse(value));
+      } else {
+        replaceSnapshot(await api.createNote(request.courseId, value));
+      }
+      if (request.closeLibrary) setLibraryOpen(false);
+    } catch (error) {
+      setFailure(messageFor(error));
+    }
+  }, [api, namePrompt, replaceSnapshot]);
+
   const updatePreferences = useCallback(
     async (patch: Partial<Preferences>) => {
       if (!snapshot) return;
@@ -405,11 +426,7 @@ export function App() {
             language={preferences.language}
             hasCourses={snapshot.courses.length > 0}
             onLibrary={() => setLibraryOpen(true)}
-            onCreateCourse={async () => {
-              const title = window.prompt("课程名称", "新课程")?.trim();
-              if (!title || !api) return;
-              replaceSnapshot(await api.createCourse(title));
-            }}
+            onCreateCourse={() => setNamePrompt({ kind: "course", closeLibrary: false })}
             onAdopt={async () => replaceSnapshot(api ? await api.adoptCourseFolder() : null)}
           />
         ) : (
@@ -447,21 +464,15 @@ export function App() {
           setLibraryOpen(false);
           setDocument(null);
         }}
-        onCreateCourse={async () => {
-          const title = window.prompt("课程名称", "新课程")?.trim();
-          if (!title || !api) return;
-          replaceSnapshot(await api.createCourse(title));
-          setLibraryOpen(false);
-        }}
+        onCreateCourse={() => setNamePrompt({ kind: "course", closeLibrary: true })}
         onImport={async () => {
           if (!api || !snapshot.activeCourse) return;
           replaceSnapshot(await api.importItems(snapshot.activeCourse.id));
         }}
-        onCreateNote={async () => {
-          if (!api || !snapshot.activeCourse) return;
-          const title = window.prompt("笔记名称", "无题笔记")?.trim();
-          if (!title) return;
-          replaceSnapshot(await api.createNote(snapshot.activeCourse.id, title));
+        onCreateNote={() => {
+          if (api && snapshot.activeCourse) {
+            setNamePrompt({ kind: "note", closeLibrary: false, courseId: snapshot.activeCourse.id });
+          }
         }}
       />
 
@@ -491,6 +502,15 @@ export function App() {
           snapshot={snapshot}
           onClose={() => setOverlay(null)}
           onOpenItem={(itemId) => { void openItem(snapshot.activeCourse!.id, itemId, "auto"); }}
+        />
+      )}
+
+      {namePrompt && (
+        <NamePromptSheet
+          title={namePrompt.kind === "course" ? "新建课程" : "新建笔记"}
+          initialValue={namePrompt.kind === "course" ? "新课程" : "无题笔记"}
+          onCancel={() => setNamePrompt(null)}
+          onConfirm={confirmNamePrompt}
         />
       )}
 
