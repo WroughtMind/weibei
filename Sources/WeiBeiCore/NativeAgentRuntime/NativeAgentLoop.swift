@@ -110,31 +110,33 @@ public actor NativeAgentLoop {
                 let effectiveContextWindow = contextWindow
                 #endif
                 if let effectiveContextWindow {
+                    let candidate: NativeContextCompactionCandidate?
                     do {
-                        if let candidate = try await NativeContextCompaction.prepareCandidate(
+                        candidate = try await NativeContextCompaction.prepareCandidate(
                             request: llmRequest,
                             projection: projection,
                             adapter: adapter,
                             contextWindow: effectiveContextWindow
-                        ) {
-                            try checkCancelled()
-                            _ = try await ledger.append { seq, time in
-                                NativeSessionEvent(
-                                    type: .contextCompaction,
-                                    seq: seq,
-                                    timeMS: time,
-                                    summary: candidate.summary,
-                                    firstKeptSeq: candidate.firstKeptSeq
-                                )
-                            }
-                            llmRequest = candidate.request
-                        }
+                        )
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch let failure as NativeLLMFailure where failure.code == "cancelled" {
                         throw failure
                     } catch {
-                        // A failed candidate never changes the ledger; the existing request/error path continues.
+                        candidate = nil
+                    }
+                    if let candidate {
+                        try checkCancelled()
+                        _ = try await ledger.append { seq, time in
+                            NativeSessionEvent(
+                                type: .contextCompaction,
+                                seq: seq,
+                                timeMS: time,
+                                summary: candidate.summary,
+                                firstKeptSeq: candidate.firstKeptSeq
+                            )
+                        }
+                        llmRequest = candidate.request
                     }
                 }
                 _ = try await ledger.append { seq, time in

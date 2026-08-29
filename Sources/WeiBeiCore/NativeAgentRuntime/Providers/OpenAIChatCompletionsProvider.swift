@@ -24,12 +24,14 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
     public var idleTimeoutNanoseconds: UInt64
     public var extraHeaders: [String: String]
     public var webSearchStyle: ChatWebSearchStyle
+    public var includesStreamUsage: Bool
 
     public init(
         baseURL: URL = URL(string: "https://api.deepseek.com/v1")!,
         apiKey: String,
         extraHeaders: [String: String] = [:],
         webSearchStyle: ChatWebSearchStyle = .none,
+        includesStreamUsage: Bool = false,
         session: URLSession = .shared,
         idleTimeoutNanoseconds: UInt64 = 45_000_000_000
     ) {
@@ -37,6 +39,7 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         self.apiKey = apiKey
         self.extraHeaders = extraHeaders
         self.webSearchStyle = webSearchStyle
+        self.includesStreamUsage = includesStreamUsage
         self.session = session
         self.idleTimeoutNanoseconds = idleTimeoutNanoseconds
     }
@@ -158,9 +161,11 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         var payload: [String: Any] = [
             "model": request.model,
             "stream": true,
-            "stream_options": ["include_usage": true],
             "messages": messages,
         ]
+        if includesStreamUsage {
+            payload["stream_options"] = ["include_usage": true]
+        }
         var allTools = tools
         let enableSearch = request.enableNativeWebSearch
             || request.tools.contains(where: { $0.name == "weibei_course_map" })
