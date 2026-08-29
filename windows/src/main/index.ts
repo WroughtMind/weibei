@@ -86,12 +86,20 @@ app.whenReady().then(async () => {
   });
   window.once("ready-to-show", () => window.show());
 
+  let libraryRootPath = path.join(userDataPath, "魏碑资料库");
+  try {
+    libraryRootPath = path.join(app.getPath("documents"), "魏碑资料库");
+  } catch {
+    console.warn(
+      `Windows Documents folder is unavailable; using the app-owned WeiBei library at ${libraryRootPath}.`,
+    );
+  }
   controller = await WeiBeiController.open({
     window,
     appVersion: app.getVersion(),
     userDataPath,
     localDataPath,
-    defaultLibraryRootPath: path.join(app.getPath("documents"), "魏碑资料库"),
+    defaultLibraryRootPath: libraryRootPath,
     rendererScope,
     grants,
     vault,
