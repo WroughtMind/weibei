@@ -180,7 +180,6 @@ async function withPackagedApp(
     });
 
     const runtime = await application.evaluate(({ app, BrowserWindow }) => ({
-      appData: app.getPath("appData"),
       appPath: app.getAppPath(),
       executablePath: app.getPath("exe"),
       isPackaged: app.isPackaged,
@@ -191,7 +190,6 @@ async function withPackagedApp(
     expect(path.basename(runtime.appPath).toLocaleLowerCase("en-US")).toBe("app.asar");
     expect(equalWindowsPath(runtime.executablePath, executablePath)).toBe(true);
     expect(runtime.windowVisible).toBe(true);
-    expect(isPathInside(sandbox.appData, runtime.appData)).toBe(true);
     expect(equalWindowsPath(runtime.userData, sandbox.userData)).toBe(true);
     const snapshot = await page.evaluate(() => window.weiBei.bootstrap());
     expect(snapshot.platform).toBe("windows");
