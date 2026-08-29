@@ -241,12 +241,11 @@ $productVersion = [string](Get-Item -LiteralPath $appExecutable).VersionInfo.Pro
 Assert-Condition (-not [string]::IsNullOrWhiteSpace($productVersion)) "app executable has no ProductVersion"
 Assert-Condition ($productVersion.StartsWith($version, [StringComparison]::Ordinal)) "app ProductVersion $productVersion does not match $version"
 
-$nativeSqliteModules = @(Get-ChildItem -LiteralPath $resourcesRoot -Recurse -File -Filter "better_sqlite3.node" -ErrorAction SilentlyContinue)
-Assert-Condition ($nativeSqliteModules.Count -eq 1) "expected one unpacked better_sqlite3.node, found $($nativeSqliteModules.Count)"
-$nativeSqlite = $nativeSqliteModules[0]
-Assert-Condition ($nativeSqlite.FullName -match "(?i)app[.]asar[.]unpacked") "better_sqlite3.node was not placed under app.asar.unpacked"
-Assert-Condition ((Get-PeMachine -Path $nativeSqlite.FullName) -eq "x64") "better_sqlite3.node was not rebuilt for Windows x64"
-$betterSqliteRoot = $nativeSqlite.Directory.Parent.Parent.FullName
+$nativeSqlitePath = Join-Path $resourcesRoot "app.asar.unpacked/node_modules/better-sqlite3/prebuilds/win32-x64.node"
+Assert-Condition (Test-Path -LiteralPath $nativeSqlitePath -PathType Leaf) "missing unpacked better-sqlite3 Windows x64 prebuild"
+$nativeSqlite = Get-Item -LiteralPath $nativeSqlitePath
+Assert-Condition ((Get-PeMachine -Path $nativeSqlite.FullName) -eq "x64") "better-sqlite3 Windows prebuild is not x64"
+$betterSqliteRoot = $nativeSqlite.Directory.Parent.FullName
 Assert-Condition (Test-Path -LiteralPath (Join-Path $betterSqliteRoot "package.json") -PathType Leaf) "could not resolve packaged better-sqlite3 module root"
 Invoke-NativeSqliteFtsProbe -ElectronExecutable $appExecutable -ModuleRoot $betterSqliteRoot
 Invoke-PackagedSidecarChecks -ResourcesRoot $resourcesRoot
