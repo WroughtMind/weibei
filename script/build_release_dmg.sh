@@ -157,13 +157,29 @@ if [[ ! -s "$BACKGROUND" || ! -s "$BACKGROUND_2X" ]]; then
 fi
 
 "$ROOT_DIR/script/build_and_run.sh" check
+mkdir -p "$RELEASE_DIR"
 "$ROOT_DIR/script/build_and_run.sh" package
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$BASE_APP")
 
-mkdir -p "$RELEASE_DIR"
 rm -rf "$RELEASE_APP"
 /usr/bin/ditto --norsrc --noextattr "$BASE_APP" "$RELEASE_APP"
 /usr/bin/xattr -cr "$RELEASE_APP"
+
+BASE_BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$BASE_APP/Contents/Info.plist")"
+BASE_GIT_COMMIT="$(/usr/libexec/PlistBuddy -c 'Print :WeiBeiGitCommit' "$BASE_APP/Contents/Info.plist")"
+BASE_DSYM_PATH="$ROOT_DIR/dist/WeiBei-$APP_VERSION-build-$BASE_BUILD_NUMBER-$BASE_GIT_COMMIT.dSYM"
+DSYM_PATH="$RELEASE_DIR/$(basename "$BASE_DSYM_PATH")"
+if [[ ! -d "$BASE_DSYM_PATH" || ! -s "$BASE_DSYM_PATH/Contents/Resources/DWARF/WeiBei" ]]; then
+  echo "release failed: matching dSYM is missing from $BASE_DSYM_PATH" >&2
+  exit 17
+fi
+/usr/bin/ditto --norsrc --noextattr "$BASE_DSYM_PATH" "$DSYM_PATH"
+RELEASE_UUID="$(/usr/bin/dwarfdump --uuid "$RELEASE_APP/Contents/MacOS/WeiBei" | /usr/bin/awk 'NR == 1 {print $2}')"
+DSYM_UUID="$(/usr/bin/dwarfdump --uuid "$DSYM_PATH" | /usr/bin/awk 'NR == 1 {print $2}')"
+if [[ -z "$RELEASE_UUID" || "$DSYM_UUID" != "$RELEASE_UUID" ]]; then
+  echo "release failed: dSYM UUID does not match the release app binary" >&2
+  exit 30
+fi
 
 if [[ ! -x "$PDF_HELPER" || ! -d "$SPARKLE_FRAMEWORK" ]]; then
   echo "release failed: packaged helper or Sparkle framework is missing" >&2
