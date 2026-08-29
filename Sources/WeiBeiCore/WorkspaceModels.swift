@@ -623,7 +623,7 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
 
     public var kind: AgentProviderKind {
         switch self {
-        case .openaiCodex, .githubCopilot, .radius:
+        case .openaiCodex:
             return .subscription
         case .llamaCpp, .custom:
             return .localOrCustom
@@ -635,7 +635,18 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
     /// Show Base URL field (Azure resource endpoint, local llama.cpp, custom OpenAI-compatible).
     public var showsBaseURLField: Bool {
         switch self {
-        case .custom, .llamaCpp, .azureOpenAI:
+        case .custom, .llamaCpp, .azureOpenAI, .cloudflareAIGateway, .cloudflareWorkersAI,
+             .googleVertex, .amazonBedrock:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// These providers cannot fall back to a catalog default; an empty address is refused.
+    public var requiresUserBaseURL: Bool {
+        switch self {
+        case .custom, .llamaCpp, .azureOpenAI, .cloudflareAIGateway, .cloudflareWorkersAI, .googleVertex:
             return true
         default:
             return false

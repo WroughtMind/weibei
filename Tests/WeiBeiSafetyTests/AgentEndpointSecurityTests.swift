@@ -39,6 +39,37 @@ final class AgentEndpointSecurityTests: XCTestCase {
         }
     }
 
+    func testCloudflareRequiresServiceAddress() {
+        XCTAssertThrowsError(
+            try AgentProviderEndpoint(provider: .cloudflareAIGateway, baseURL: "")
+        ) { error in
+            XCTAssertEqual(error as? AgentProviderEndpointError, .missing)
+        }
+        XCTAssertThrowsError(
+            try AgentProviderEndpoint(provider: .cloudflareWorkersAI, baseURL: "")
+        ) { error in
+            XCTAssertEqual(error as? AgentProviderEndpointError, .missing)
+        }
+        XCTAssertThrowsError(
+            try AgentProviderEndpoint(provider: .googleVertex, baseURL: "")
+        ) { error in
+            XCTAssertEqual(error as? AgentProviderEndpointError, .missing)
+        }
+    }
+
+    func testBedrockKeepsDefaultRegionWhenAddressIsEmpty() throws {
+        let endpoint = try AgentProviderEndpoint(provider: .amazonBedrock, baseURL: "")
+        XCTAssertNil(endpoint.baseURL)
+        XCTAssertEqual(
+            NativeProviderRouting.resolvedBaseURL(provider: .amazonBedrock, endpoint: endpoint)?.host,
+            "bedrock-runtime.us-east-1.amazonaws.com"
+        )
+        XCTAssertTrue(
+            NativeProviderRouting.resolvedBaseURL(provider: .amazonBedrock, endpoint: endpoint)?
+                .path.contains("/openai/v1") == true
+        )
+    }
+
     func testEndpointTransportAllowsLocalHTTPButRejectsPublicHTTP() throws {
         XCTAssertEqual(
             try AgentProviderEndpoint(

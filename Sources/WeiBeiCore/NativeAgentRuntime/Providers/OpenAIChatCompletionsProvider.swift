@@ -22,17 +22,20 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
     public var apiKey: String
     public var session: URLSession
     public var idleTimeoutNanoseconds: UInt64
+    public var extraHeaders: [String: String]
     public var webSearchStyle: ChatWebSearchStyle
 
     public init(
         baseURL: URL = URL(string: "https://api.deepseek.com/v1")!,
         apiKey: String,
+        extraHeaders: [String: String] = [:],
         webSearchStyle: ChatWebSearchStyle = .none,
         session: URLSession = .shared,
         idleTimeoutNanoseconds: UInt64 = 45_000_000_000
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
+        self.extraHeaders = extraHeaders
         self.webSearchStyle = webSearchStyle
         self.session = session
         self.idleTimeoutNanoseconds = idleTimeoutNanoseconds
@@ -96,16 +99,19 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         }
     }
 
-    private func makeURLRequest(_ request: NativeLLMRequest) throws -> URLRequest {
+    func makeURLRequest(_ request: NativeLLMRequest) throws -> URLRequest {
         try makeURLRequest(request, webSearchStyle: webSearchStyle)
     }
 
-    private func makeURLRequest(_ request: NativeLLMRequest, webSearchStyle style: ChatWebSearchStyle) throws -> URLRequest {
+    func makeURLRequest(_ request: NativeLLMRequest, webSearchStyle style: ChatWebSearchStyle) throws -> URLRequest {
         var urlRequest = URLRequest(url: baseURL.appendingPathComponent("chat/completions"))
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        for (name, value) in extraHeaders where name.caseInsensitiveCompare("Authorization") != .orderedSame {
+            urlRequest.setValue(value, forHTTPHeaderField: name)
+        }
         let messages: [[String: Any]] = {
             var encoded: [[String: Any]] = []
             for message in request.messages {

@@ -10,12 +10,15 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
     public var session: URLSession
     /// 供应商是否支持服务端 web_search 工具(OpenAI/ChatGPT 订阅/xAI/DeepSeek 等)。
     public var webSearchSupported: Bool
+    /// Azure OpenAI uses `api-key` instead of Bearer.
+    public var usesAzureAPIKey: Bool
 
     public init(
         baseURL: URL,
         accessToken: String,
         accountID: String? = nil,
         chatgptBackend: Bool = false,
+        usesAzureAPIKey: Bool = false,
         webSearchSupported: Bool = true,
         session: URLSession = .shared
     ) {
@@ -23,6 +26,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         self.accessToken = accessToken
         self.accountID = accountID
         self.chatgptBackend = chatgptBackend
+        self.usesAzureAPIKey = usesAzureAPIKey
         self.webSearchSupported = webSearchSupported
         self.session = session
     }
@@ -50,9 +54,13 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         var urlRequest = URLRequest(url: baseURL.appendingPathComponent("responses"))
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        if usesAzureAPIKey {
+            urlRequest.setValue(accessToken, forHTTPHeaderField: "api-key")
+        } else {
+            urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            urlRequest.setValue(NativeOpenAIOAuth.originator, forHTTPHeaderField: "originator")
+        }
         urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        urlRequest.setValue(NativeOpenAIOAuth.originator, forHTTPHeaderField: "originator")
         if let accountID, !accountID.isEmpty {
             urlRequest.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
         }

@@ -16,6 +16,10 @@ public enum ModelListStrategy: Equatable, Sendable {
     case openRouterPublic
     /// Azure OpenAI data plane: `GET {base}/openai/models?api-version=` with `api-key` header.
     case azureOpenAI(base: String)
+    /// GitHub Copilot: `GET {individual or proxy}/models` with Bearer + Copilot editor headers.
+    case githubCopilot
+    /// Vertex publisher models: `GET {publisher root}/models` with `x-goog-api-key`.
+    case googlePublisherModels(base: String)
     /// ChatGPT/Codex subscription: `GET chatgpt.com/backend-api/codex/models` with the
     /// OAuth bearer token + `ChatGPT-Account-ID`. Listing is best-effort.
     case codexSubscription(token: String, accountID: String)
@@ -58,6 +62,10 @@ public struct AgentModelListService: Sendable {
             return try await fetchOpenRouter()
         case let .azureOpenAI(base):
             return try await fetchAzureOpenAI(base: base, apiKey: apiKey)
+        case .githubCopilot:
+            return try await fetchGithubCopilot(apiKey: apiKey)
+        case let .googlePublisherModels(base):
+            return try await fetchGooglePublisherModels(base: base, apiKey: apiKey)
         case let .codexSubscription(token, accountID):
             return try await fetchCodexSubscription(token: token, accountID: accountID)
         }
@@ -113,6 +121,36 @@ public struct AgentModelListService: Sendable {
         request.timeoutInterval = 8
         request.setValue(apiKey, forHTTPHeaderField: "api-key")
         return try await extractModelIDs(request: request, dataKey: "data")
+    }
+
+    private func fetchGithubCopilot(apiKey: String) async throws -> [String] {
+        guard !apiKey.isEmpty else { throw ModelListError.missingCredential }
+        let session = await NativeCopilotSession.resolve(githubToken: apiKey)
+        let url = session.baseURL.appendingPathComponent("models")
+        var request = Self.bearerRequest(url: url, apiKey: session.token)
+        NativeCopilotSession.applyRequestHeaders(to: &request)
+        return try await extractModelIDs(request: request, dataKey: "data")
+    }
+
+    private func fetchGooglePublisherModels(base: String, apiKey: String) async throws -> [String] {
+        let trimmedBase = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBase.isEmpty else { throw ModelListError.missingBaseURL }
+        guard !apiKey.isEmpty else { throw ModelListError.missingCredential }
+        let root = trimmedBase.hasSuffix("/") ? String(trimmedBase.dropLast()) : trimmedBase
+        guard let url = URL(string: root + "/models?pageSize=200") else {
+            throw ModelListError.missingBaseURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 8
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        let data = try await perform(request: request)
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ModelListError.decoding("missing models array")
+        }
+        let ids = Self.publisherModelIDs(object["publisherModels"] ?? object["models"])
+        guard !ids.isEmpty else { throw ModelListError.decoding("missing models array") }
+        return ids
     }
 
     /// ChatGPT/Codex subscription catalog. Mirrors the Codex backend's own model
@@ -229,6 +267,28 @@ public struct AgentModelListService: Sendable {
             return ids.map { $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : $0 }
         }
         return ids
+    }
+
+    static func publisherModelIDs(_ raw: Any?) -> [String] {
+        let strings: [String]
+        if let array = raw as? [Any] {
+            strings = array.compactMap { entry in
+                guard let dict = entry as? [String: Any] else { return nil }
+                return (dict["id"] as? String) ?? (dict["name"] as? String)
+            }
+        } else if let list = raw as? [String] {
+            strings = list
+        } else {
+            return []
+        }
+        return strings.compactMap { id in
+            let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            if let slash = trimmed.lastIndex(of: "/") {
+                return String(trimmed[trimmed.index(after: slash)...])
+            }
+            return trimmed
+        }
     }
 
     public static func resolvedModelsURL(base: String) throws -> URL {

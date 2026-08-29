@@ -471,9 +471,20 @@ extension SettingsView {
     // Profile lives at the top. Nothing to disclose.
 
     private var baseURLPlaceholder: String {
-        store.agentProviderID == .azureOpenAI
-            ? "https://YOUR.openai.azure.com"
-            : "https://api.example.com/v1"
+        switch store.agentProviderID {
+        case .azureOpenAI:
+            return "https://YOUR.openai.azure.com"
+        case .cloudflareAIGateway:
+            return "https://gateway.ai.cloudflare.com/v1/ACCOUNT/GATEWAY/compat"
+        case .cloudflareWorkersAI:
+            return "https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1"
+        case .googleVertex:
+            return "https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/LOCATION/publishers/google"
+        case .amazonBedrock:
+            return "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"
+        default:
+            return "https://api.example.com/v1"
+        }
     }
 
     // MARK: Manual model entry sheet
