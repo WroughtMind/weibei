@@ -320,6 +320,34 @@ public enum NativeProviderRouting {
         return route(provider).baseURL
     }
 
+    public static func modelListStrategy(
+        provider: AgentProviderID,
+        baseURL: URL?,
+        accessToken: String? = nil,
+        accountID: String? = nil
+    ) -> ModelListStrategy? {
+        switch provider {
+        case .openaiCodex:
+            guard let token = accessToken, !token.isEmpty else { return nil }
+            return .codexSubscription(token: token, accountID: accountID ?? "")
+        case .anthropic:
+            return .anthropic
+        case .google:
+            return .gemini
+        case .openrouter:
+            return .openRouterPublic
+        case .azureOpenAI:
+            guard let base = baseURL?.absoluteString, !base.isEmpty else { return nil }
+            return .azureOpenAI(base: base)
+        case .githubCopilot, .radius, .googleVertex, .amazonBedrock,
+             .cloudflareAIGateway, .cloudflareWorkersAI:
+            return nil
+        default:
+            guard let base = baseURL?.absoluteString, !base.isEmpty else { return nil }
+            return .openAICompatible(base: base)
+        }
+    }
+
     public static var uncoveredProviders: [AgentProviderID] {
         AgentProviderID.allCases.filter { route($0).family == .unsupported }
     }

@@ -28,6 +28,8 @@ func runNativeAgentSelfChecks() throws {
     try checkContextRevisionEcho()
     try checkNativeProductContract()
     try checkSessionTitleGeneration()
+    try checkVisualAssetAndTurnLocation()
+    try checkLiveModelListHelpers()
 }
 
 private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -1334,6 +1336,76 @@ private func checkSessionTitleGeneration() throws {
         )
     }
     try nativeRequire(generated == "利率变化机制", "session title generate returns the model title")
+}
+
+private func checkVisualAssetAndTurnLocation() throws {
+    let png = Data([137, 80, 78, 71, 13, 10, 26, 10])
+    try nativeRequire(NativeVisualAssetMagic.matches(png, mediaType: "image/png"), "png magic matches")
+    try nativeRequire(!NativeVisualAssetMagic.matches(png, mediaType: "image/jpeg"), "png is not jpeg")
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这段什么意思",
+        materialTitle: "利率讲义",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        focus: StudyAgentFocus(
+            chatID: "chat",
+            courseID: nil,
+            materialItemID: "material-rates",
+            materialTitle: "利率讲义",
+            pageIndex: 11,
+            sectionTitle: nil,
+            sectionLocationID: nil,
+            sectionOrdinal: nil,
+            selectionText: nil,
+            actionSource: "reader"
+        ),
+        contextRevision: "r1"
+    )
+    try nativeRequire(
+        NativeTurnLocation.displayPage(11) == 12,
+        "zero-based page index becomes the facing page"
+    )
+    try nativeRequire(
+        NativeTurnLocation.block(for: request)?.contains("12") == true,
+        "turn location includes the facing page"
+    )
+    try nativeRequire(
+        NativeTurnLocation.block(for: request)?.contains("利率讲义") == true,
+        "turn location names the open material"
+    )
+    var messages = [NativeModelMessage(role: .user, content: "这段什么意思")]
+    NativeTurnLocation.applying(to: &messages, request: request)
+    try nativeRequire(messages[0].content.contains("12"), "outgoing user message receives the facing page")
+    try nativeRequire(messages[0].content.contains("这段什么意思"), "outgoing user message keeps the question")
+}
+
+private func checkLiveModelListHelpers() throws {
+    try nativeRequire(
+        try AgentModelListService.resolvedModelsURL(base: "https://api.deepseek.com").absoluteString
+            == "https://api.deepseek.com/v1/models",
+        "openai-compatible list URL appends /v1/models"
+    )
+    try nativeRequire(
+        try AgentModelListService.resolvedModelsURL(base: "https://api.groq.com/openai/v1").absoluteString
+            == "https://api.groq.com/openai/v1/models",
+        "bases that already end in /v1 only append /models"
+    )
+    try nativeRequire(
+        NativeProviderRouting.modelListStrategy(
+            provider: .deepseek,
+            baseURL: NativeProviderRouting.route(.deepseek).baseURL
+        ) == .openAICompatible(base: "https://api.deepseek.com"),
+        "deepseek lists models from the live OpenAI-compatible catalog"
+    )
+    try nativeRequire(
+        NativeProviderRouting.modelListStrategy(
+            provider: .githubCopilot,
+            baseURL: NativeProviderRouting.route(.githubCopilot).baseURL
+        ) == nil,
+        "unwired providers do not pretend to have a live catalog"
+    )
 }
 
 private struct SessionTitleMockAdapter: NativeLLMAdapter {

@@ -129,6 +129,8 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
     public var chunk: NativeStreamChunk?
     public var replaceStart: Int?
     public var replaceEnd: Int?
+    public var imageMediaType: String?
+    public var imageBase64: String?
 
     public init(
         type: NativeSessionEventType,
@@ -144,7 +146,9 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         finishReason: NativeTurnEndReason? = nil,
         chunk: NativeStreamChunk? = nil,
         replaceStart: Int? = nil,
-        replaceEnd: Int? = nil
+        replaceEnd: Int? = nil,
+        imageMediaType: String? = nil,
+        imageBase64: String? = nil
     ) {
         self.type = type
         self.seq = seq
@@ -160,7 +164,31 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         self.chunk = chunk
         self.replaceStart = replaceStart
         self.replaceEnd = replaceEnd
+        self.imageMediaType = imageMediaType
+        self.imageBase64 = imageBase64
     }
+
+    public var imagePart: NativeImagePart? {
+        guard let imageMediaType,
+              let imageBase64,
+              let data = Data(base64Encoded: imageBase64),
+              !data.isEmpty else { return nil }
+        return NativeImagePart(mediaType: imageMediaType, data: data)
+    }
+}
+
+public struct NativeImagePart: Equatable, Sendable {
+    public var mediaType: String
+    public var data: Data
+
+    public init(mediaType: String, data: Data) {
+        self.mediaType = mediaType
+        self.data = data
+    }
+
+    public var base64: String { data.base64EncodedString() }
+
+    public var dataURL: String { "data:\(mediaType);base64,\(base64)" }
 }
 
 public struct NativeModelMessage: Equatable, Sendable {
@@ -175,17 +203,20 @@ public struct NativeModelMessage: Equatable, Sendable {
     public var content: String
     public var toolCallID: String?
     public var toolCalls: [NativeToolCall]?
+    public var images: [NativeImagePart]
 
     public init(
         role: Role,
         content: String,
         toolCallID: String? = nil,
-        toolCalls: [NativeToolCall]? = nil
+        toolCalls: [NativeToolCall]? = nil,
+        images: [NativeImagePart] = []
     ) {
         self.role = role
         self.content = content
         self.toolCallID = toolCallID
         self.toolCalls = toolCalls
+        self.images = images
     }
 }
 

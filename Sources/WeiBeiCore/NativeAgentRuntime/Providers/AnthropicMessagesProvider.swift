@@ -57,7 +57,7 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
             case .system:
                 system = message.content
             case .user:
-                messages.append(["role": "user", "content": message.content])
+                messages.append(["role": "user", "content": Self.userContent(message)])
             case .assistant:
                 var content: [Any] = []
                 if !message.content.isEmpty {
@@ -85,7 +85,7 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
                     "content": [[
                         "type": "tool_result",
                         "tool_use_id": message.toolCallID ?? "",
-                        "content": message.content,
+                        "content": Self.toolResultContent(message),
                     ]],
                 ])
             }
@@ -117,6 +117,39 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
             payload["tools"] = tools
         }
         return payload
+    }
+
+    static func userContent(_ message: NativeModelMessage) -> Any {
+        if message.images.isEmpty { return message.content }
+        var parts: [[String: Any]] = []
+        if !message.content.isEmpty {
+            parts.append(["type": "text", "text": message.content])
+        }
+        parts.append(contentsOf: imageBlocks(message.images))
+        return parts
+    }
+
+    static func toolResultContent(_ message: NativeModelMessage) -> Any {
+        if message.images.isEmpty { return message.content }
+        var parts: [[String: Any]] = []
+        if !message.content.isEmpty {
+            parts.append(["type": "text", "text": message.content])
+        }
+        parts.append(contentsOf: imageBlocks(message.images))
+        return parts
+    }
+
+    private static func imageBlocks(_ images: [NativeImagePart]) -> [[String: Any]] {
+        images.map { image in
+            [
+                "type": "image",
+                "source": [
+                    "type": "base64",
+                    "media_type": image.mediaType,
+                    "data": image.base64,
+                ],
+            ]
+        }
     }
 
     public static func translate(_ payload: String) throws -> [NativeStreamChunk] {

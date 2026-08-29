@@ -1,6 +1,27 @@
 import CryptoKit
 import Foundation
 
+public enum NativeVisualAssetMagic {
+    public static func matches(_ data: Data, mediaType: String) -> Bool {
+        let bytes = [UInt8](data.prefix(12))
+        switch mediaType {
+        case "image/jpeg":
+            return bytes.count >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF
+        case "image/png":
+            return bytes.count >= 8
+                && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47
+                && bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A
+        case "image/webp":
+            guard bytes.count >= 12 else { return false }
+            let riff = String(bytes: bytes[0..<4], encoding: .ascii)
+            let webp = String(bytes: bytes[8..<12], encoding: .ascii)
+            return riff == "RIFF" && webp == "WEBP"
+        default:
+            return false
+        }
+    }
+}
+
 public enum NativeToolScope: Hashable, Sendable {
     case global
     case session(String)
@@ -37,11 +58,18 @@ public struct NativeToolExecutionResult: @unchecked Sendable {
     public var text: String
     public var details: [String: Any]
     public var isError: Bool
+    public var image: NativeImagePart?
 
-    public init(text: String, details: [String: Any] = [:], isError: Bool = false) {
+    public init(
+        text: String,
+        details: [String: Any] = [:],
+        isError: Bool = false,
+        image: NativeImagePart? = nil
+    ) {
         self.text = text
         self.details = details
         self.isError = isError
+        self.image = image
     }
 }
 
@@ -462,16 +490,20 @@ public enum NativeBuiltinTools {
                 if data.isEmpty || data.count > 6_000_000 {
                     throw NativeLLMFailure(code: "asset_size", message: "当前材料图像必须是 1 到 6000000 字节的普通文件")
                 }
+                guard NativeVisualAssetMagic.matches(data, mediaType: asset.mediaType) else {
+                    throw NativeLLMFailure(code: "asset_format", message: "当前材料图像的真实格式与声明不一致")
+                }
                 let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
                 return NativeToolExecutionResult(
-                    text: "已读取当前材料图像 \(asset.id)；请只依据可见像素和本轮来源判断。",
+                    text: "已读取当前材料图像 \(asset.id)；请只依据可见像素和本轮来源判断，不能把近似观察说成精确测量。",
                     details: [
                         "kind": "visual_asset_read",
                         "assetID": asset.id,
                         "mediaType": asset.mediaType,
                         "sha256": sha,
                         "byteCount": data.count,
-                    ]
+                    ],
+                    image: NativeImagePart(mediaType: asset.mediaType, data: data)
                 )
             }
         )

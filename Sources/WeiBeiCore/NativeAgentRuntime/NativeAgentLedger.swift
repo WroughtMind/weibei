@@ -127,7 +127,8 @@ public actor NativeAgentLedger {
                     NativeModelMessage(
                         role: .tool,
                         content: event.text ?? "",
-                        toolCallID: event.toolCallID
+                        toolCallID: event.toolCallID,
+                        images: event.imagePart.map { [$0] } ?? []
                     )
                 )
             case .surfaceReplace:
