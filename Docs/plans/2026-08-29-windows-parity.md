@@ -1,6 +1,6 @@
 # 魏碑 Windows 等价版本实施方案
 
-> 状态：实施中  
+> 状态：Windows 实现已落地，本地构建通过；候选包与真实 Windows 截图待 CI  
 > 分支：`codex/windows-parity-v2`  
 > 基线：`main@5cdcdd4ee2627506356d424dbcc26d16a7ec8571`
 
@@ -13,6 +13,17 @@ Windows 版不是宣传页复刻，也不是只把三栏画出来。完成标准
 ```
 
 视觉、交互、数据语义、安全边界、快捷键和安装更新都进入同一份等价性验收。平台本身不同的地方采用 Windows 原生约定，但不能改变产品角色、信息层级和用户数据含义。
+
+## 当前实现
+
+- Electron Windows 壳、八套主题、资料库 / 课程空间、三栏重排与显隐、设置和全局课程搜索；
+- PDF.js 阅读、文本层选区、页码、缩放、连续 / 单页模式和文内搜索；HTML 安全渲染，Markdown / 笔记复用同一份 canonical Milkdown 运行时；
+- Swift portable course / workspace / session JSON 兼容，课程文件外部变更自动刷新，SQLite FTS5 搜索独立进程；
+- Agent 流式网络独立进程、停止与崩溃恢复、真实课程检索上下文、来源回跳和会话持久化；
+- Windows DPAPI 凭据、唯一笔记写闸、覆盖前备份、草稿恢复、外部修改冲突选择；
+- NSIS 与 Portable x64 打包、安装 / 卸载脚本，以及 3 条真实打包后 Electron 冒烟路径。
+
+仍不提前宣称视觉验收完成：当前 Linux 工作区不能启动真实 Windows 窗口，1240 × 760 打包后截图和安装包结果以 `windows-2025` CI 为准，PR 在此之前保持 Draft。
 
 ## 架构决定
 
@@ -48,7 +59,7 @@ Windows 客户端采用固定 Chromium 运行时的 Electron 壳层，界面和�
 - PingFang / Songti 不作为 Windows 依赖，随包携带 OFL 授权的 CJK Sans / Serif，并继续携带 `WeiBeiStele` 品牌字体；
 - Windows 11 使用系统背景材料；Windows 10 和关闭透明效果时回退为完全匹配 token 的实色表面；
 - Keychain 对应 Windows DPAPI（由 Electron `safeStorage` 封装）；Sparkle 对应签名后的 Windows 更新通道；
-- Vision OCR 对应 Windows OCR 可用时的本机能力，缺失时明确显示扫描页未建立文本，不伪造完整索引。
+- 扫描 PDF 在没有文本层时明确保持“未建立文本”的事实，不把空结果伪装成已完成 OCR。
 
 ## 进程与信任边界
 
@@ -60,15 +71,18 @@ Sandboxed Renderer
            │ typed IPC only
            ▼
 Electron Main
-  ├─ course filesystem + watcher
-  ├─ atomic write gate + backup ring
-  ├─ SQLite FTS5 index
-  ├─ provider streaming runtime
+  ├─ capability roots + atomic write coordinator
   ├─ DPAPI credential vault
-  └─ dialogs / window / updater
+  ├─ dialogs / window / updater
+  ├─ Agent utility process
+  │    └─ provider streaming + tools + ledger
+  └─ Index / document utility process
+       ├─ SQLite FTS5 + file watcher
+       ├─ PDF text extraction
+       └─ bounded OCR sidecar
 ```
 
-渲染进程不开启 `nodeIntegration`；启用 `contextIsolation` 和 Chromium sandbox。所有 IPC 都按命令逐项暴露并校验参数，不把 `ipcRenderer`、任意路径读写或任意网络请求直接交给页面。导入 HTML、网页和模型返回内容一律当数据处理。
+渲染进程不开启 `nodeIntegration`；启用 `contextIsolation` 和 Chromium sandbox。所有 IPC 都按命令逐项暴露并校验参数，不把 `ipcRenderer`、任意路径读写或任意网络请求直接交给页面。重索引、文档提取和 Agent 网络循环不占 Electron 主线程；OCR 使用随包可重复的中文识别 sidecar，系统 OCR 只作可选加速。导入 HTML、网页和模型返回内容一律当数据处理。
 
 ## 实施顺序
 
@@ -85,10 +99,9 @@ Electron Main
 
 - `npm` 锁文件可重复安装，TypeScript、单元测试和现有编辑器测试通过；
 - Windows x64 候选包在干净 runner 上安装、冷启动、导入、重启恢复和卸载通过；
-- 核心闭环有一条真实 provider 流式冒烟，CI 中用确定性本地 SSE fixture 验证协议；
-- 关键窗口矩阵覆盖纸面 / 墨石、三栏 / 两栏 / 沉浸、中文 / 英文、100% / 125% / 160%；
-- 截图比较锁定 token、尺寸、溢出、重排和主题，不把跨 OS 字体栅格差异误判为产品差异；
-- 用户数据测试覆盖外部改写、写入冲突、写中崩溃、备份恢复、路径越界、符号链接和临时缺席；
+- 只保留关键自动检查：编辑器协议、课程 / 会话兼容、搜索、Agent 流式、凭据和笔记防丢；
+- 打包后 Electron 冒烟覆盖启动、空态、课程抽屉、三栏工作台、设置与八套主题；
+- 1240 × 760 Windows 截图与现有参考图同状态对照，不建立无意义的跨系统字体像素矩阵；
 - PR 明确区分代码实现、本地通过、Windows CI 通过、候选包、真实 App 验收，未经过的阶段不提前宣称完成。
 
 ## 共享核心文件占用声明

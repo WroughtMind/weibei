@@ -1922,7 +1922,7 @@ const createMathNodeView = (initialNode: any, view: any, getPos: any) => {
       return;
     }
     if (!editing) return;
-    if (keyEvent.key === 'Escape' || (keyEvent.key === 'Enter' && (!isBlock || keyEvent.metaKey))) {
+    if (keyEvent.key === 'Escape' || (keyEvent.key === 'Enter' && (!isBlock || keyEvent.metaKey || keyEvent.ctrlKey))) {
       event.preventDefault();
       commit();
     }
