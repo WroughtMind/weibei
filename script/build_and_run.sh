@@ -134,6 +134,8 @@ if [[ "$CHECK_ONLY" != true ]]; then
   fi
   GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)"
   BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count "$GIT_COMMIT")"
+  DSYM_NAME="$PRODUCT_NAME-$APP_VERSION-build-$BUILD_NUMBER-$GIT_COMMIT.dSYM"
+  DSYM_PATH="$FINAL_DIST_DIR/$DSYM_NAME"
   SOURCE_DIRTY=false
   if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]]; then
     SOURCE_DIRTY=true
@@ -179,6 +181,33 @@ if [[ "$CHECK_ONLY" != true ]]; then
     exit 10
   fi
   chmod +x "$APP_BINARY"
+  BUILD_UUID="$(/usr/bin/dwarfdump --uuid "$BUILD_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
+  if [[ "$PACKAGE_ONLY" == true ]]; then
+    mkdir -p "$FINAL_DIST_DIR"
+    rm -rf "$DSYM_PATH"
+    /usr/bin/dsymutil "$BUILD_BINARY" -o "$DSYM_PATH"
+    if [[ ! -d "$DSYM_PATH" || ! -s "$DSYM_PATH/Contents/Resources/DWARF/$PRODUCT_NAME" ]]; then
+      echo "package failed: dSYM is missing usable DWARF data at $DSYM_PATH" >&2
+      exit 28
+    fi
+    DSYM_UUID="$(/usr/bin/dwarfdump --uuid "$DSYM_PATH" | /usr/bin/awk 'NR == 1 {print $2}')"
+    if [[ -z "$BUILD_UUID" || "$DSYM_UUID" != "$BUILD_UUID" ]]; then
+      echo "package failed: dSYM UUID does not match the unstripped build binary" >&2
+      exit 29
+    fi
+    PRE_STRIP_BYTES="$(/usr/bin/stat -f '%z' "$APP_BINARY")"
+    /usr/bin/strip -x "$APP_BINARY"
+    POST_STRIP_BYTES="$(/usr/bin/stat -f '%z' "$APP_BINARY")"
+    if (( POST_STRIP_BYTES >= PRE_STRIP_BYTES )); then
+      echo "package failed: strip -x did not reduce the app binary" >&2
+      exit 30
+    fi
+    STRIPPED_UUID="$(/usr/bin/dwarfdump --uuid "$APP_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
+    if [[ "$STRIPPED_UUID" != "$BUILD_UUID" ]]; then
+      echo "package failed: strip -x changed the app binary UUID" >&2
+      exit 31
+    fi
+  fi
   SPARKLE_FRAMEWORK="$BUILD_DIR/Sparkle.framework"
   if [[ ! -d "$SPARKLE_FRAMEWORK" ]]; then
     echo "package failed: missing Sparkle.framework" >&2
@@ -280,7 +309,6 @@ PLIST
     /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" 2>&1 | tail -20 >&2 || true
     exit 19
   fi
-  BUILD_UUID="$(/usr/bin/dwarfdump --uuid "$BUILD_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
   PACKAGED_UUID="$(/usr/bin/dwarfdump --uuid "$APP_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
   if [[ -z "$BUILD_UUID" || "$PACKAGED_UUID" != "$BUILD_UUID" ]]; then
     echo "package failed: signed app binary UUID does not match the current Swift build" >&2
