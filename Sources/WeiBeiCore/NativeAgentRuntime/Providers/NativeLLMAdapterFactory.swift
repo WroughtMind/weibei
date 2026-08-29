@@ -114,7 +114,10 @@ public enum NativeLLMAdapterFactory {
                 baseURL: chatBase,
                 apiKey: chatKey,
                 extraHeaders: extraHeaders,
-                webSearchStyle: chatStyle
+                webSearchStyle: chatStyle,
+                includesStreamUsage: provider == .amazonBedrock
+                    && model.caseInsensitiveCompare("amazon.nova-lite-v1:0") == .orderedSame
+                    && NativeProviderRouting.contextWindow(provider: provider, model: model) != nil
             )
         case .unsupported:
             throw NativeLLMFailure(

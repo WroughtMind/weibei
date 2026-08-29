@@ -188,6 +188,15 @@ final class NativeAgentRuntimeTests: XCTestCase {
     func testContextCompactionCompletesSummaryCheckpointAndAnswerLoop() async throws {
         XCTAssertNil(NativeProviderRouting.contextWindow(provider: .custom, model: "gpt-4.1"))
         XCTAssertNil(NativeProviderRouting.contextWindow(provider: .githubCopilot, model: "gpt-4.1"))
+        let strictBody = try XCTUnwrap(
+            OpenAIChatCompletionsProvider(apiKey: "test")
+                .makeURLRequest(NativeLLMRequest(model: "gpt-4.1", messages: []))
+                .httpBody
+        )
+        let strictPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: strictBody) as? [String: Any]
+        )
+        XCTAssertNil(strictPayload["stream_options"])
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("native-compaction-loop-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
