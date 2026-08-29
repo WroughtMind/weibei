@@ -394,11 +394,29 @@ private func checkProviderRouting() throws {
     try nativeRequire(NativeProviderRouting.route(.google).family == .googleGenerativeAI, "google is Gemini")
     try nativeRequire(NativeProviderRouting.route(.minimax).family == .anthropicMessages, "minimax uses the Anthropic-compatible route")
     try nativeRequire(NativeProviderRouting.route(.moonshotaiCN).baseURL?.host == "api.moonshot.cn", "moonshot CN host")
-    let uncovered = Set(NativeProviderRouting.uncoveredProviders)
     try nativeRequire(
-        uncovered == [.googleVertex, .amazonBedrock],
-        "uncovered families stay Vertex/Bedrock"
+        NativeProviderRouting.uncoveredProviders.isEmpty,
+        "all catalog providers are on a native family"
     )
+    try nativeRequire(
+        NativeProviderRouting.route(.githubCopilot).family == .openaiChatCompletions,
+        "copilot is chat completions"
+    )
+    try nativeRequire(
+        NativeProviderRouting.route(.githubCopilot).auth == .apiKey,
+        "copilot uses a pasted token"
+    )
+    try nativeRequire(NativeProviderRouting.route(.radius).auth == .apiKey, "radius uses a pasted key")
+    try nativeRequire(
+        NativeProviderRouting.route(.googleVertex).family == .googleGenerativeAI,
+        "vertex reuses the Gemini generate surface"
+    )
+    try nativeRequire(
+        NativeProviderRouting.route(.amazonBedrock).family == .openaiChatCompletions,
+        "bedrock uses the OpenAI-compatible chat completions surface"
+    )
+    try nativeRequire(AgentProviderID.githubCopilot.kind == .apiKey, "copilot is not a fake OAuth subscription")
+    try nativeRequire(AgentProviderID.radius.kind == .apiKey, "radius is not a fake OAuth subscription")
     try nativeRequire(
         NativeProviderRouting.route(.azureOpenAI).family == .openaiResponses,
         "azure OpenAI is Responses"
@@ -1411,8 +1429,17 @@ private func checkLiveModelListHelpers() throws {
         NativeProviderRouting.modelListStrategy(
             provider: .githubCopilot,
             baseURL: NativeProviderRouting.route(.githubCopilot).baseURL
-        ) == nil,
-        "unwired providers do not pretend to have a live catalog"
+        ) == .githubCopilot,
+        "copilot lists models from the Copilot catalog"
+    )
+    try nativeRequire(
+        NativeProviderRouting.modelListStrategy(
+            provider: .googleVertex,
+            baseURL: URL(string: "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/publishers/google")
+        ) == .googlePublisherModels(
+            base: "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/publishers/google"
+        ),
+        "vertex lists publisher models from the user-supplied root"
     )
 }
 

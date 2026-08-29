@@ -127,8 +127,7 @@ public struct AgentProviderEndpoint: Equatable, Sendable {
             return
         }
         guard !trimmed.isEmpty else {
-            if provider == .custom || provider == .llamaCpp || provider == .azureOpenAI
-                || provider == .cloudflareAIGateway || provider == .cloudflareWorkersAI {
+            if provider.requiresUserBaseURL {
                 throw AgentProviderEndpointError.missing
             }
             credentialProviderID = provider.credentialProviderID

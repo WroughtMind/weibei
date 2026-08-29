@@ -478,6 +478,10 @@ extension SettingsView {
             return "https://gateway.ai.cloudflare.com/v1/ACCOUNT/GATEWAY/compat"
         case .cloudflareWorkersAI:
             return "https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1"
+        case .googleVertex:
+            return "https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/LOCATION/publishers/google"
+        case .amazonBedrock:
+            return "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"
         default:
             return "https://api.example.com/v1"
         }

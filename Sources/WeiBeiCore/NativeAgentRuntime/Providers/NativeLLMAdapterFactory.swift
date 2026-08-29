@@ -61,9 +61,17 @@ public enum NativeLLMAdapterFactory {
             guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: credentialProviderID) else {
                 throw NativeLLMFailure(code: "unauthorized", status: 401, message: "missing API key")
             }
+            guard let rootURL = baseURL else {
+                throw NativeLLMFailure(
+                    code: "unsupported_provider",
+                    message: route.auth == .userBaseURL
+                        ? "provider \(provider.rawValue) needs a Base URL"
+                        : "missing Gemini base URL for \(provider.rawValue)"
+                )
+            }
             return GoogleGenerativeAIProvider(
                 apiKey: key,
-                rootURL: baseURL ?? URL(string: "https://generativelanguage.googleapis.com/v1beta")!,
+                rootURL: rootURL,
                 groundingSearch: route.webSearch == .googleGrounding
             )
         case .openaiChatCompletions:
@@ -93,7 +101,21 @@ public enum NativeLLMAdapterFactory {
             case .kimiBuiltin: chatStyle = .kimi
             default: chatStyle = .none
             }
-            return OpenAIChatCompletionsProvider(baseURL: baseURL, apiKey: key, webSearchStyle: chatStyle)
+            var chatBase = baseURL
+            var chatKey = key
+            var extraHeaders: [String: String] = [:]
+            if provider == .githubCopilot {
+                let session = await NativeCopilotSession.resolve(githubToken: key)
+                chatBase = session.baseURL
+                chatKey = session.token
+                extraHeaders = NativeCopilotSession.requestHeaders
+            }
+            return OpenAIChatCompletionsProvider(
+                baseURL: chatBase,
+                apiKey: chatKey,
+                extraHeaders: extraHeaders,
+                webSearchStyle: chatStyle
+            )
         case .unsupported:
             throw NativeLLMFailure(
                 code: "unsupported_provider",

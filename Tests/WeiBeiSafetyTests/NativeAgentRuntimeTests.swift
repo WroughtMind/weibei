@@ -455,14 +455,18 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(NativeProviderRouting.route(.google).webSearch, .googleGrounding)
         XCTAssertEqual(NativeProviderRouting.route(.xai).family, .openaiResponses)
         XCTAssertEqual(NativeProviderRouting.route(.google).family, .googleGenerativeAI)
-        XCTAssertEqual(NativeProviderRouting.route(.amazonBedrock).family, .unsupported)
+        XCTAssertEqual(NativeProviderRouting.route(.amazonBedrock).family, .openaiChatCompletions)
+        XCTAssertEqual(NativeProviderRouting.route(.googleVertex).family, .googleGenerativeAI)
+        XCTAssertEqual(NativeProviderRouting.route(.githubCopilot).family, .openaiChatCompletions)
+        XCTAssertEqual(NativeProviderRouting.route(.githubCopilot).auth, .apiKey)
+        XCTAssertEqual(NativeProviderRouting.route(.radius).auth, .apiKey)
         XCTAssertEqual(NativeProviderRouting.route(.azureOpenAI).family, .openaiResponses)
         XCTAssertEqual(NativeProviderRouting.route(.cloudflareAIGateway).family, .openaiChatCompletions)
         XCTAssertEqual(NativeProviderRouting.route(.cloudflareWorkersAI).family, .openaiChatCompletions)
-        XCTAssertEqual(
-            Set(NativeProviderRouting.uncoveredProviders),
-            [.googleVertex, .amazonBedrock]
-        )
+        XCTAssertTrue(NativeProviderRouting.uncoveredProviders.isEmpty)
+        XCTAssertEqual(AgentProviderID.githubCopilot.kind, .apiKey)
+        XCTAssertEqual(AgentProviderID.radius.kind, .apiKey)
+        XCTAssertEqual(AgentProviderID.subscriptionProviders, [.openaiCodex])
         let azureRoot = NativeProviderRouting.azureResponsesRoot(
             URL(string: "https://example.openai.azure.com")!
         )
@@ -792,11 +796,78 @@ final class NativeAgentRuntimeTests: XCTestCase {
             ),
             .openAICompatible(base: "https://api.deepseek.com")
         )
-        XCTAssertNil(
+        XCTAssertEqual(
             NativeProviderRouting.modelListStrategy(
                 provider: .githubCopilot,
                 baseURL: NativeProviderRouting.route(.githubCopilot).baseURL
-            )
+            ),
+            .githubCopilot
+        )
+        XCTAssertEqual(
+            NativeProviderRouting.modelListStrategy(
+                provider: .radius,
+                baseURL: NativeProviderRouting.route(.radius).baseURL
+            ),
+            .openAICompatible(base: "https://radius.pi.dev")
+        )
+        XCTAssertEqual(
+            NativeProviderRouting.modelListStrategy(
+                provider: .amazonBedrock,
+                baseURL: NativeProviderRouting.route(.amazonBedrock).baseURL
+            ),
+            .openAICompatible(base: "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1")
+        )
+        XCTAssertEqual(
+            AgentModelListService.publisherModelIDs(
+                [["name": "publishers/google/models/gemini-2.5-flash"]]
+            ),
+            ["gemini-2.5-flash"]
+        )
+    }
+
+    func testCopilotSessionUsesProxyHostAndRequiredHeaders() throws {
+        let fallback = NativeCopilotSession.resolved(githubToken: "gho_user", exchangeJSON: nil)
+        XCTAssertEqual(fallback.token, "gho_user")
+        XCTAssertEqual(fallback.baseURL, NativeCopilotSession.individualBaseURL)
+
+        let viaProxy = NativeCopilotSession.resolved(
+            githubToken: "gho_user",
+            exchangeJSON: ["token": "tid=session", "proxy-ep": "copilot.example.internal"]
+        )
+        XCTAssertEqual(viaProxy.token, "tid=session")
+        XCTAssertEqual(viaProxy.baseURL.host, "copilot.example.internal")
+
+        let viaEndpoints = NativeCopilotSession.resolved(
+            githubToken: "gho_user",
+            exchangeJSON: [
+                "token": "tid=session",
+                "endpoints": ["api": "https://api.githubcopilot.com"],
+            ]
+        )
+        XCTAssertEqual(viaEndpoints.baseURL.host, "api.githubcopilot.com")
+
+        let request = try OpenAIChatCompletionsProvider(
+            baseURL: NativeCopilotSession.individualBaseURL,
+            apiKey: "gho_user",
+            extraHeaders: NativeCopilotSession.requestHeaders
+        ).makeURLRequest(NativeLLMRequest(model: "gpt-4.1", messages: []))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer gho_user")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Copilot-Integration-Id"), "vscode-chat")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Editor-Version"), "vscode/1.107.0")
+        XCTAssertEqual(request.url?.host, "api.individual.githubcopilot.com")
+        XCTAssertEqual(request.url?.lastPathComponent, "completions")
+
+        let vertexRoot = URL(
+            string: "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/publishers/google"
+        )!
+        let vertex = GoogleGenerativeAIProvider(
+            apiKey: "vertex-key",
+            rootURL: vertexRoot
+        ).makeURLRequest(NativeLLMRequest(model: "gemini-2.5-flash", messages: []))
+        XCTAssertEqual(vertex.value(forHTTPHeaderField: "x-goog-api-key"), "vertex-key")
+        XCTAssertEqual(
+            vertex.url?.path.contains("/publishers/google/models/gemini-2.5-flash:streamGenerateContent"),
+            true
         )
     }
 }

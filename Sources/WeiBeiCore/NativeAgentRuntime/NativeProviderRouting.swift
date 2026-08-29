@@ -92,18 +92,18 @@ public enum NativeProviderRouting {
             )
         case .githubCopilot:
             return NativeProviderRoute(
-                family: .anthropicMessages,
-                auth: .oauth,
-                baseURL: URL(string: "https://api.individual.githubcopilot.com"),
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: NativeCopilotSession.individualBaseURL,
                 defaultModel: "gpt-4.1",
-                note: "Copilot OAuth 尚未接入"
+                note: "GitHub token 或 Copilot token，走 Chat Completions"
             )
         case .radius:
             return NativeProviderRoute(
                 family: .openaiChatCompletions,
-                auth: .oauth,
+                auth: .apiKey,
                 baseURL: URL(string: "https://radius.pi.dev"),
-                note: "Radius 网关 OAuth 尚未接入"
+                note: "Radius 网关，API Key"
             )
         case .openai:
             return NativeProviderRoute(
@@ -285,15 +285,19 @@ public enum NativeProviderRouting {
             )
         case .googleVertex:
             return NativeProviderRoute(
-                family: .unsupported,
-                auth: .unsupported,
-                note: "Google Vertex 协议尚未接入"
+                family: .googleGenerativeAI,
+                auth: .userBaseURL,
+                defaultModel: "gemini-2.5-flash",
+                note: "需填写含项目和区域的 Vertex 发布者地址",
+                webSearch: .googleGrounding
             )
         case .amazonBedrock:
             return NativeProviderRoute(
-                family: .unsupported,
-                auth: .unsupported,
-                note: "Bedrock Converse Stream 协议尚未接入"
+                family: .openaiChatCompletions,
+                auth: .apiKey,
+                baseURL: URL(string: "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"),
+                defaultModel: "amazon.nova-lite-v1:0",
+                note: "Bedrock API Key，默认 us-east-1 OpenAI 兼容端点"
             )
         case .cloudflareAIGateway:
             return NativeProviderRoute(
@@ -349,8 +353,11 @@ public enum NativeProviderRouting {
         case .azureOpenAI:
             guard let base = baseURL?.absoluteString, !base.isEmpty else { return nil }
             return .azureOpenAI(base: base)
-        case .githubCopilot, .radius, .googleVertex, .amazonBedrock:
-            return nil
+        case .githubCopilot:
+            return .githubCopilot
+        case .googleVertex:
+            guard let base = baseURL?.absoluteString, !base.isEmpty else { return nil }
+            return .googlePublisherModels(base: base)
         default:
             guard let base = baseURL?.absoluteString, !base.isEmpty else { return nil }
             return .openAICompatible(base: base)
