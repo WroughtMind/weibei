@@ -60,7 +60,7 @@
 
 四种协议只解析压缩判断所需的公共字段：
 
-- OpenAI Chat Completions：`prompt_tokens`、`completion_tokens`、`total_tokens`、缓存读取；流式请求开启 `include_usage`；
+- OpenAI Chat Completions：仍解析服务端主动返回的 `prompt_tokens`、`completion_tokens`、`total_tokens` 和缓存读取；只有已验证支持且确有生产 `contextWindow` 的 Amazon Bedrock 精确 `amazon.nova-lite-v1:0` 主动发送 `stream_options.include_usage`，其余兼容或自定义端点默认不发，避免回归；
 - OpenAI Responses：完成事件内的 `input_tokens`、`output_tokens`、`total_tokens`、缓存读取；
 - Anthropic Messages：`message_start` 与 `message_delta` 内的输入、输出、缓存读取、缓存写入；
 - Gemini：`usageMetadata` 内的输入、输出、总量、缓存读取。
