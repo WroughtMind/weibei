@@ -59,7 +59,7 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
             case .system:
                 system = message.content
             case .user:
-                contents.append(["role": "user", "parts": [["text": message.content]]])
+                contents.append(["role": "user", "parts": Self.userParts(message)])
             case .assistant:
                 var parts: [[String: Any]] = []
                 if !message.content.isEmpty { parts.append(["text": message.content]) }
@@ -71,15 +71,14 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
                 }
                 contents.append(["role": "model", "parts": parts])
             case .tool:
-                contents.append([
-                    "role": "user",
-                    "parts": [[
-                        "functionResponse": [
-                            "name": message.toolCallID ?? "tool",
-                            "response": ["output": message.content],
-                        ],
-                    ]],
-                ])
+                var parts: [[String: Any]] = [[
+                    "functionResponse": [
+                        "name": message.toolCallID ?? "tool",
+                        "response": ["output": message.content],
+                    ],
+                ]]
+                parts.append(contentsOf: Self.inlineImageParts(message.images))
+                contents.append(["role": "user", "parts": parts])
             }
         }
         var payload: [String: Any] = ["contents": contents]
@@ -109,6 +108,29 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
             payload["generationConfig"] = ["maxOutputTokens": maxTokens]
         }
         return payload
+    }
+
+    static func userParts(_ message: NativeModelMessage) -> [[String: Any]] {
+        var parts: [[String: Any]] = []
+        if !message.content.isEmpty {
+            parts.append(["text": message.content])
+        }
+        parts.append(contentsOf: inlineImageParts(message.images))
+        if parts.isEmpty {
+            parts.append(["text": ""])
+        }
+        return parts
+    }
+
+    static func inlineImageParts(_ images: [NativeImagePart]) -> [[String: Any]] {
+        images.map { image in
+            [
+                "inline_data": [
+                    "mime_type": image.mediaType,
+                    "data": image.base64,
+                ],
+            ]
+        }
     }
 
     public static func translate(_ payload: String) throws -> [NativeStreamChunk] {

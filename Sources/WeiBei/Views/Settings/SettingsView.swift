@@ -119,6 +119,7 @@ struct SettingsView: View {
             // Always land on Chat: highest-frequency durable settings (provider / key / model).
             selectedSection = .agent
             oauthService.refreshCatalog()
+            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { note in
             guard let raw = note.userInfo?["provider"] as? String,
@@ -134,6 +135,7 @@ struct SettingsView: View {
                 store.updateModelName(firstModel)
             }
             oauthService.refreshCatalog()
+            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { note in
             store.shutdownAgentRuntime()
@@ -144,15 +146,26 @@ struct SettingsView: View {
                 apiKeyDraft = ""
             }
             oauthService.refreshCatalog()
+            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
         .onChange(of: oauthService.catalog) { _, _ in
-            let models = oauthService.models(provider: store.agentProviderID)
-            let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let firstModel = models.first,
-               !models.contains(current),
-               current.isEmpty {
-                store.updateModelName(firstModel)
-            }
+            fillModelIfEmpty()
+        }
+        .onChange(of: oauthService.liveModelIDs) { _, _ in
+            fillModelIfEmpty()
+        }
+        .onChange(of: store.agentBaseURL) { _, _ in
+            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        }
+    }
+
+    private func fillModelIfEmpty() {
+        let models = oauthService.models(provider: store.agentProviderID)
+        let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let firstModel = models.first,
+           !models.contains(current),
+           current.isEmpty {
+            store.updateModelName(firstModel)
         }
     }
 

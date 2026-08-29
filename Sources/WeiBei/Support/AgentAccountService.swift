@@ -3,7 +3,7 @@ import WeiBeiCore
 import os
 
 /// Agent 账号与模型目录服务。
-/// 目录为内置静态表(模型选择器永远允许手输任意 ID);凭据走 NativeAgentCredentialStore;
+/// 目录为服务商实时名单（失败时回退默认 ID；选择器永远允许手输任意 ID）；凭据走 NativeAgentCredentialStore；
 /// OpenAI 订阅登录走 NativeOpenAIOAuth 浏览器流程。
 @MainActor
 final class AgentAccountService: ObservableObject {
@@ -29,7 +29,10 @@ final class AgentAccountService: ObservableObject {
     @Published private(set) var isLoggingIn = false
     @Published private(set) var statusMessage: LocalizedMessage?
     @Published private(set) var lastError: LocalizedMessage?
+    @Published private(set) var liveModelIDs: [String] = []
+    private var liveModelsProvider: AgentProviderID?
     private var loginTask: Task<Void, Never>?
+    private var modelListTask: Task<Void, Never>?
 
     private init() {
         reloadCredentialSnapshot()
@@ -39,10 +42,28 @@ final class AgentAccountService: ObservableObject {
         reloadCredentialSnapshot()
     }
 
-    /// 模型建议列表来自 native 路由表的默认模型;完整列表靠选择器的手动输入。
+    /// 打开设置或更换服务/密钥后，向服务商拉取可用模型；失败时保留默认 ID。
+    func refreshModels(provider: AgentProviderID, baseURL: String) {
+        modelListTask?.cancel()
+        modelListTask = Task { [weak self] in
+            await self?.fetchLiveModels(provider: provider, baseURL: baseURL)
+        }
+    }
+
+    /// 已拉取的名单优先；没有名单时至少给出路由表默认模型。手输任意 ID 仍然有效。
     func models(provider: AgentProviderID) -> [String] {
-        let model = NativeProviderRouting.route(provider).defaultModel
-        return model.isEmpty ? [] : [model]
+        var ids: [String] = []
+        if liveModelsProvider == provider {
+            ids = liveModelIDs
+        }
+        let fallback = NativeProviderRouting.route(provider).defaultModel
+        if provider == .openaiCodex, ids.isEmpty {
+            ids = AgentModelListService.codexSubscriptionModels
+        }
+        if !fallback.isEmpty, !ids.contains(fallback) {
+            ids.insert(fallback, at: 0)
+        }
+        return ids
     }
 
     func isAvailable(_ provider: AgentProviderID) -> Bool {
@@ -197,6 +218,47 @@ final class AgentAccountService: ObservableObject {
             )
         }
         .sorted { $0.providerId < $1.providerId })
+    }
+
+    private func fetchLiveModels(provider: AgentProviderID, baseURL: String) async {
+        let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL)
+        let resolved = endpoint.flatMap {
+            NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: $0)
+        } ?? NativeProviderRouting.route(provider).baseURL
+        let records = (try? NativeAgentCredentialStore.defaultStore().load()) ?? [:]
+        let record = records[provider.credentialProviderID]
+        let apiKey = record?.apiKey ?? record?.accessToken ?? ""
+        let strategy = NativeProviderRouting.modelListStrategy(
+            provider: provider,
+            baseURL: resolved,
+            accessToken: record?.accessToken,
+            accountID: record?.accountID
+        )
+        guard let strategy else {
+            await MainActor.run {
+                liveModelIDs = []
+                liveModelsProvider = provider
+            }
+            return
+        }
+        do {
+            let ids = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                liveModelIDs = ids
+                liveModelsProvider = provider
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                if provider == .openaiCodex {
+                    liveModelIDs = AgentModelListService.codexSubscriptionModels
+                } else if liveModelsProvider != provider {
+                    liveModelIDs = []
+                }
+                liveModelsProvider = provider
+            }
+        }
     }
 
     private func credentialAvailability(providerID: String, type: AgentCredentialType? = nil) -> Bool? {

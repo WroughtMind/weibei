@@ -630,6 +630,158 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(box.count, 1)
         XCTAssertEqual(adapter.titleRequestCount, 1)
     }
+
+    func testVisualAssetMagicRejectsMismatchedBytes() {
+        let png = Data([137, 80, 78, 71, 13, 10, 26, 10])
+        XCTAssertTrue(NativeVisualAssetMagic.matches(png, mediaType: "image/png"))
+        XCTAssertFalse(NativeVisualAssetMagic.matches(png, mediaType: "image/jpeg"))
+        XCTAssertTrue(NativeVisualAssetMagic.matches(Data([0xFF, 0xD8, 0xFF, 0x01]), mediaType: "image/jpeg"))
+        var webp = Data("RIFF".utf8)
+        webp.append(contentsOf: [0, 0, 0, 0])
+        webp.append(contentsOf: Data("WEBP".utf8))
+        XCTAssertTrue(NativeVisualAssetMagic.matches(webp, mediaType: "image/webp"))
+    }
+
+    func testTurnLocationStaysOffTheLedger() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-location-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        let capture = RequestCapture()
+        _ = try await NativeAgentLoop().run(
+            request: StudyAgentRequest(
+                purpose: .conversation,
+                question: "这段什么意思",
+                materialTitle: "利率讲义",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                focus: StudyAgentFocus(
+                    chatID: "chat",
+                    courseID: nil,
+                    materialItemID: "material-rates",
+                    materialTitle: "利率讲义",
+                    pageIndex: 11,
+                    sectionTitle: "单利",
+                    sectionLocationID: nil,
+                    sectionOrdinal: nil,
+                    selectionText: nil,
+                    actionSource: "reader"
+                ),
+                contextRevision: "r1"
+            ),
+            ledger: ledger,
+            registry: NativeToolRegistry(),
+            adapter: MockLLMAdapter(
+                chunks: [
+                    .textDelta(index: 0, text: "在讲单利。"),
+                    .finish(reason: .stop, replayState: nil),
+                ],
+                inspect: { capture.request = $0 }
+            ),
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: nil
+        )
+        let outgoing = capture.request?.messages.last { $0.role == .user }?.content ?? ""
+        XCTAssertTrue(outgoing.contains("利率讲义"))
+        XCTAssertTrue(outgoing.contains("页码：12"))
+        XCTAssertTrue(outgoing.contains("这段什么意思"))
+        let logged = await ledger.deriveMessages().last { $0.role == .user }?.content ?? ""
+        XCTAssertEqual(logged, "这段什么意思")
+        XCTAssertFalse(logged.contains("页码：12"))
+    }
+
+    func testVisualAssetPutsPixelsOnToolResult() async throws {
+        let png = Data([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3])
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-asset-\(UUID().uuidString).png")
+        try png.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-visual-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let adapter = VisualAssetLoopAdapter()
+        _ = try await NativeAgentLoop().run(
+            request: StudyAgentRequest(
+                purpose: .conversation,
+                question: "图里有什么",
+                materialTitle: "示意图",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                visualAssets: [
+                    StudyAgentVisualAsset(id: "asset-1", filePath: file.path, mediaType: "image/png"),
+                ],
+                contextRevision: "r1"
+            ),
+            ledger: ledger,
+            registry: registry,
+            adapter: adapter,
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: nil
+        )
+        let toolMessage = adapter.followUp?.messages.first { $0.role == .tool }
+        XCTAssertEqual(toolMessage?.images.count, 1)
+        XCTAssertEqual(toolMessage?.images.first?.mediaType, "image/png")
+        XCTAssertEqual(toolMessage?.images.first?.data.prefix(8), png.prefix(8))
+        let events = await ledger.allEvents()
+        XCTAssertEqual(events.first { $0.type == .toolResult }?.imageMediaType, "image/png")
+        XCTAssertFalse(events.first { $0.type == .toolResult }?.imageBase64?.isEmpty ?? true)
+
+        let followUp = adapter.followUp ?? NativeLLMRequest(model: "mock", messages: [])
+        let anthropic = AnthropicMessagesProvider.payload(for: followUp)
+        let anthropicMessages = anthropic["messages"] as? [[String: Any]] ?? []
+        let toolResult = (anthropicMessages.last?["content"] as? [[String: Any]])?.first
+        let toolContent = toolResult?["content"] as? [[String: Any]]
+        XCTAssertTrue(toolContent?.contains { $0["type"] as? String == "image" } == true)
+
+        let output = OpenAIResponsesProvider.assembleInput(followUp.messages).input
+        let toolOutput = output.last?["output"] as? [[String: Any]]
+        XCTAssertTrue(toolOutput?.contains { $0["type"] as? String == "input_image" } == true)
+
+        let gemini = GoogleGenerativeAIProvider.payload(for: followUp)
+        let contents = gemini["contents"] as? [[String: Any]] ?? []
+        let lastParts = contents.last?["parts"] as? [[String: Any]] ?? []
+        XCTAssertTrue(lastParts.contains { $0["inline_data"] != nil })
+
+        let chatParts = OpenAIChatCompletionsProvider.imageParts(toolMessage?.images ?? [], caption: "")
+        XCTAssertEqual(chatParts.first?["type"] as? String, "image_url")
+    }
+
+    func testLiveModelListURLAndIDParsing() throws {
+        XCTAssertEqual(
+            try AgentModelListService.resolvedModelsURL(base: "https://api.deepseek.com").absoluteString,
+            "https://api.deepseek.com/v1/models"
+        )
+        XCTAssertEqual(
+            try AgentModelListService.resolvedModelsURL(base: "https://api.groq.com/openai/v1").absoluteString,
+            "https://api.groq.com/openai/v1/models"
+        )
+        XCTAssertEqual(
+            AgentModelListService.coerceModelIDsForTests(
+                [["id": "models/gemini-2.5-flash"]],
+                stripPrefix: "models/"
+            ),
+            ["gemini-2.5-flash"]
+        )
+        XCTAssertEqual(
+            NativeProviderRouting.modelListStrategy(
+                provider: .deepseek,
+                baseURL: NativeProviderRouting.route(.deepseek).baseURL
+            ),
+            .openAICompatible(base: "https://api.deepseek.com")
+        )
+        XCTAssertNil(
+            NativeProviderRouting.modelListStrategy(
+                provider: .githubCopilot,
+                baseURL: NativeProviderRouting.route(.githubCopilot).baseURL
+            )
+        )
+    }
 }
 
 private struct MockLLMAdapter: NativeLLMAdapter {
@@ -642,6 +794,36 @@ private struct MockLLMAdapter: NativeLLMAdapter {
         return AsyncThrowingStream { continuation in
             for chunk in chunks {
                 continuation.yield(chunk)
+            }
+            continuation.finish()
+        }
+    }
+}
+
+private final class VisualAssetLoopAdapter: NativeLLMAdapter, @unchecked Sendable {
+    var family: String { "mock" }
+    private let lock = NSLock()
+    private(set) var followUp: NativeLLMRequest?
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        let hasTool = request.messages.contains { $0.role == .tool }
+        if hasTool {
+            lock.lock()
+            followUp = request
+            lock.unlock()
+        }
+        return AsyncThrowingStream { continuation in
+            if hasTool {
+                continuation.yield(.textDelta(index: 0, text: "图里没有可读文字。"))
+                continuation.yield(.finish(reason: .stop, replayState: nil))
+            } else {
+                continuation.yield(.toolCallDelta(
+                    index: 0,
+                    id: "a1",
+                    name: "weibei_visual_asset",
+                    argumentsDelta: "{\"assetID\":\"asset-1\"}"
+                ))
+                continuation.yield(.finish(reason: .toolCalls, replayState: nil))
             }
             continuation.finish()
         }

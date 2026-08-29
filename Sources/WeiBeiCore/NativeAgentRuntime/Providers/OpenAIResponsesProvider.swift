@@ -105,7 +105,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             case .system:
                 instructions = message.content
             case .user:
-                input.append(["role": "user", "content": message.content])
+                input.append(["role": "user", "content": Self.userContent(message)])
             case .assistant:
                 if let calls = message.toolCalls, !calls.isEmpty {
                     for call in calls {
@@ -126,11 +126,41 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
                 input.append([
                     "type": "function_call_output",
                     "call_id": message.toolCallID ?? "",
-                    "output": message.content,
+                    "output": Self.toolOutput(message),
                 ])
             }
         }
         return (instructions, input)
+    }
+
+    static func userContent(_ message: NativeModelMessage) -> Any {
+        if message.images.isEmpty { return message.content }
+        var parts: [[String: Any]] = []
+        if !message.content.isEmpty {
+            parts.append(["type": "input_text", "text": message.content])
+        }
+        for image in message.images {
+            parts.append([
+                "type": "input_image",
+                "image_url": image.dataURL,
+            ])
+        }
+        return parts
+    }
+
+    static func toolOutput(_ message: NativeModelMessage) -> Any {
+        if message.images.isEmpty { return message.content }
+        var parts: [[String: Any]] = []
+        if !message.content.isEmpty {
+            parts.append(["type": "input_text", "text": message.content])
+        }
+        for image in message.images {
+            parts.append([
+                "type": "input_image",
+                "image_url": image.dataURL,
+            ])
+        }
+        return parts
     }
 
     public static func translate(_ payload: String) throws -> [NativeStreamChunk] {

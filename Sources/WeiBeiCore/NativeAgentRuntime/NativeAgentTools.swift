@@ -37,11 +37,18 @@ public struct NativeToolExecutionResult: @unchecked Sendable {
     public var text: String
     public var details: [String: Any]
     public var isError: Bool
+    public var image: NativeImagePart?
 
-    public init(text: String, details: [String: Any] = [:], isError: Bool = false) {
+    public init(
+        text: String,
+        details: [String: Any] = [:],
+        isError: Bool = false,
+        image: NativeImagePart? = nil
+    ) {
         self.text = text
         self.details = details
         self.isError = isError
+        self.image = image
     }
 }
 
@@ -462,16 +469,20 @@ public enum NativeBuiltinTools {
                 if data.isEmpty || data.count > 6_000_000 {
                     throw NativeLLMFailure(code: "asset_size", message: "当前材料图像必须是 1 到 6000000 字节的普通文件")
                 }
+                guard NativeVisualAssetMagic.matches(data, mediaType: asset.mediaType) else {
+                    throw NativeLLMFailure(code: "asset_format", message: "当前材料图像的真实格式与声明不一致")
+                }
                 let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
                 return NativeToolExecutionResult(
-                    text: "已读取当前材料图像 \(asset.id)；请只依据可见像素和本轮来源判断。",
+                    text: "已读取当前材料图像 \(asset.id)；请只依据可见像素和本轮来源判断，不能把近似观察说成精确测量。",
                     details: [
                         "kind": "visual_asset_read",
                         "assetID": asset.id,
                         "mediaType": asset.mediaType,
                         "sha256": sha,
                         "byteCount": data.count,
-                    ]
+                    ],
+                    image: NativeImagePart(mediaType: asset.mediaType, data: data)
                 )
             }
         )

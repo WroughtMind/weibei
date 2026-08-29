@@ -106,29 +106,37 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        let messages: [[String: Any]] = request.messages.map { message in
-            var body: [String: Any] = [
-                "role": message.role.rawValue,
-                "content": message.content,
-            ]
-            if let toolCallID = message.toolCallID {
-                body["tool_call_id"] = toolCallID
-            }
-            if let toolCalls = message.toolCalls {
-                body["tool_calls"] = toolCalls.map { call in
-                    // Kimi builtin 工具($web_search 等)回传须保留 builtin_function 类型,
-                    // 否则服务端校验失败。
-                    let type = call.name.hasPrefix("$") ? "builtin_function" : "function"
-                    let id = call.id.isEmpty ? "call_\(call.name)" : call.id
-                    return [
-                        "id": id,
-                        "type": type,
-                        "function": ["name": call.name, "arguments": call.arguments],
-                    ]
+        let messages: [[String: Any]] = {
+            var encoded: [[String: Any]] = []
+            for message in request.messages {
+                var body: [String: Any] = [
+                    "role": message.role.rawValue,
+                    "content": Self.contentValue(message),
+                ]
+                if let toolCallID = message.toolCallID {
+                    body["tool_call_id"] = toolCallID
+                }
+                if let toolCalls = message.toolCalls {
+                    body["tool_calls"] = toolCalls.map { call in
+                        let type = call.name.hasPrefix("$") ? "builtin_function" : "function"
+                        let id = call.id.isEmpty ? "call_\(call.name)" : call.id
+                        return [
+                            "id": id,
+                            "type": type,
+                            "function": ["name": call.name, "arguments": call.arguments],
+                        ]
+                    }
+                }
+                encoded.append(body)
+                if message.role == .tool, !message.images.isEmpty {
+                    encoded.append([
+                        "role": "user",
+                        "content": Self.imageParts(message.images, caption: ""),
+                    ])
                 }
             }
-            return body
-        }
+            return encoded
+        }()
         let tools: [[String: Any]] = request.tools.map { tool in
             [
                 "type": "function",
@@ -180,6 +188,27 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         if let maxTokens = request.maxTokens { payload["max_tokens"] = maxTokens }
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: payload)
         return urlRequest
+    }
+
+    private static func contentValue(_ message: NativeModelMessage) -> Any {
+        if message.role == .tool || message.images.isEmpty {
+            return message.content
+        }
+        return imageParts(message.images, caption: message.content)
+    }
+
+    static func imageParts(_ images: [NativeImagePart], caption: String) -> [[String: Any]] {
+        var parts: [[String: Any]] = []
+        if !caption.isEmpty {
+            parts.append(["type": "text", "text": caption])
+        }
+        for image in images {
+            parts.append([
+                "type": "image_url",
+                "image_url": ["url": image.dataURL],
+            ])
+        }
+        return parts
     }
 
     private static func httpFailure(_ status: Int, body: String) -> NativeLLMFailure {

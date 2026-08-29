@@ -92,6 +92,7 @@ public actor NativeAgentLoop {
                 if let invariant = NativeAgentInvariant.mismatch(logged: await ledger.deriveMessages(), outgoing: Array(messages.dropFirst())) {
                     assertionFailure(invariant)
                 }
+                NativeTurnLocation.applying(to: &messages, request: request)
                 var llmRequest = NativeLLMRequest(model: model, messages: messages, tools: tools)
                 // 搜索开关对全协议族生效;推理档仅 Responses 家族支持。
                 llmRequest.enableNativeWebSearch = tools.contains { $0.name == "weibei_course_map" }
@@ -224,7 +225,9 @@ public actor NativeAgentLoop {
                             text: result.text,
                             toolCallID: call.id,
                             toolName: call.name,
-                            isError: result.isError
+                            isError: result.isError,
+                            imageMediaType: result.image?.mediaType,
+                            imageBase64: result.image?.base64
                         )
                     }
                 }
@@ -446,7 +449,7 @@ enum NativeAgentInvariant {
             return "model-visible ⟺ logged failed: count \(logged.count) vs \(outgoing.count)"
         }
         for (left, right) in zip(logged, outgoing) {
-            if left.role != right.role || left.content != right.content {
+            if left.role != right.role || left.content != right.content || left.images != right.images {
                 return "model-visible ⟺ logged failed: role/content drift"
             }
         }

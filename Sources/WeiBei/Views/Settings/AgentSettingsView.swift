@@ -188,6 +188,7 @@ extension SettingsView {
     private func applyProvider(_ provider: AgentProviderID) {
         apiKeyDraft = ""
         store.setAgentProviderID(provider)
+        oauthService.refreshModels(provider: provider, baseURL: store.agentBaseURL)
         if let firstModel = oauthService.models(provider: provider).first {
             store.updateModelName(firstModel)
         }
