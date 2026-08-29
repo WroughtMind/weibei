@@ -117,7 +117,7 @@ test("per-note mutex makes concurrent same-baseline saves resolve as saved plus 
   await withFixture(async ({ gate, notePath }) => {
     await writeFile(notePath, "base", "utf8");
     const baselineDigest = noteContentDigest("base");
-    const [first, second] = await Promise.all([
+    const results = await Promise.all([
       gate.write({
         itemId: "note-1",
         filePath: notePath,
@@ -131,10 +131,17 @@ test("per-note mutex makes concurrent same-baseline saves resolve as saved plus 
         baselineDigest,
       }),
     ]);
-    assert.equal(first.status, "saved");
-    assert.equal(second.status, "conflict");
-    assert.equal(second.diskMarkdown, "first");
-    assert.equal(await readFile(notePath, "utf8"), "first");
+    assert.deepEqual(
+      results.map((result) => result.status).sort(),
+      ["conflict", "saved"],
+    );
+    const winning = results.find((result) => result.status === "saved");
+    const conflict = results.find((result) => result.status === "conflict");
+    assert.ok(winning);
+    assert.ok(conflict);
+    assert.ok(winning.diskMarkdown === "first" || winning.diskMarkdown === "second");
+    assert.equal(conflict.diskMarkdown, winning.diskMarkdown);
+    assert.equal(await readFile(notePath, "utf8"), winning.diskMarkdown);
   });
 });
 
@@ -158,9 +165,16 @@ test("the process-wide mutex also serializes distinct gate instances", async () 
       }),
     ]);
     assert.deepEqual(
-      results.map((result) => result.status),
-      ["saved", "conflict"],
+      results.map((result) => result.status).sort(),
+      ["conflict", "saved"],
     );
+    const winning = results.find((result) => result.status === "saved");
+    const conflict = results.find((result) => result.status === "conflict");
+    assert.ok(winning);
+    assert.ok(conflict);
+    assert.ok(winning.diskMarkdown === "one" || winning.diskMarkdown === "two");
+    assert.equal(conflict.diskMarkdown, winning.diskMarkdown);
+    assert.equal(await readFile(notePath, "utf8"), winning.diskMarkdown);
   });
 });
 

@@ -67,7 +67,13 @@ test("credential vault persists only ciphertext and round-trips secrets", async 
   assert.match(raw, /"ciphertextBase64"/u);
   assert.equal(await vault.getSecret("provider-profile"), secret);
   assert.deepEqual(await vault.listCredentialIDs(), ["provider-profile"]);
-  assert.equal((await stat(vaultPath)).mode & 0o777, 0o600);
+  // Windows does not expose the POSIX mode requested by open() as ACLs in
+  // stat(). Keep the mode assertion where those bits have their documented
+  // permission meaning; ciphertext and round-trip assertions cover the
+  // platform-independent vault contract above and below.
+  if (process.platform !== "win32") {
+    assert.equal((await stat(vaultPath)).mode & 0o777, 0o600);
+  }
 
   const reopened = await CredentialVault.open({ vaultPath, safeStorage });
   assert.equal(await reopened.getSecret("provider-profile"), secret);
