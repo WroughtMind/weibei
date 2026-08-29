@@ -3,9 +3,8 @@ import Foundation
 /// How WeiBei should enumerate available models for a given provider.
 ///
 /// Most providers speak the OpenAI-compatible `GET {base}/v1/models` surface; a handful
-/// (Anthropic, Gemini, Azure, Bedrock, GitHub Models) need their own adapter. The Codex
-/// (ChatGPT subscription) case queries the Codex backend's own `/models` endpoint with
-/// the OAuth token + account id; on failure it falls back to a built-in catalog.
+/// (Anthropic, Gemini, Azure) need their own adapter. The Codex (ChatGPT subscription)
+/// case queries the Codex backend's own `/models` endpoint with the OAuth token + account id.
 public enum ModelListStrategy: Equatable, Sendable {
     /// Standard OpenAI-compatible surface: `GET {base}/v1/models` with `Authorization: Bearer`.
     case openAICompatible(base: String)
@@ -17,21 +16,14 @@ public enum ModelListStrategy: Equatable, Sendable {
     case openRouterPublic
     /// Azure OpenAI data plane: `GET {base}/openai/models?api-version=` with `api-key` header.
     case azureOpenAI(base: String)
-    /// Amazon Bedrock: `GET bedrock.{region}.amazonaws.com/foundation-models` with `Authorization: Bearer`.
-    case bedrock(region: String)
-    /// GitHub Models catalog: `GET api.github.com/models` with `Authorization: Bearer`.
-    case gitHubModels
     /// ChatGPT/Codex subscription: `GET chatgpt.com/backend-api/codex/models` with the
-    /// OAuth bearer token + `ChatGPT-Account-ID`. The listing is best-effort (upstream
-    /// can omit models the subscription can still run), so callers fall back to the
-    /// built-in catalog on failure.
+    /// OAuth bearer token + `ChatGPT-Account-ID`. Listing is best-effort.
     case codexSubscription(token: String, accountID: String)
 }
 
 public enum ModelListError: Error, Equatable, Sendable {
     case missingCredential
     case missingBaseURL
-    case missingRegion
     case http(status: Int, message: String)
     case transport(String)
     case decoding(String)
@@ -40,7 +32,6 @@ public enum ModelListError: Error, Equatable, Sendable {
         switch self {
         case .missingCredential: return "Missing API key for model listing."
         case .missingBaseURL: return "Missing base URL for model listing."
-        case .missingRegion: return "Missing region for model listing."
         case let .http(status, message): return "HTTP \(status): \(message)"
         case let .transport(message): return "Network error: \(message)"
         case let .decoding(message): return "Decoding error: \(message)"
@@ -67,10 +58,6 @@ public struct AgentModelListService: Sendable {
             return try await fetchOpenRouter()
         case let .azureOpenAI(base):
             return try await fetchAzureOpenAI(base: base, apiKey: apiKey)
-        case let .bedrock(region):
-            return try await fetchBedrock(region: region, apiKey: apiKey)
-        case .gitHubModels:
-            return try await fetchGitHubModels(apiKey: apiKey)
         case let .codexSubscription(token, accountID):
             return try await fetchCodexSubscription(token: token, accountID: accountID)
         }
@@ -128,31 +115,10 @@ public struct AgentModelListService: Sendable {
         return try await extractModelIDs(request: request, dataKey: "data")
     }
 
-    private func fetchBedrock(region: String, apiKey: String) async throws -> [String] {
-        let trimmedRegion = region.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedRegion.isEmpty else { throw ModelListError.missingRegion }
-        guard !apiKey.isEmpty else { throw ModelListError.missingCredential }
-        guard let url = URL(string: "https://bedrock.\(trimmedRegion).amazonaws.com/foundation-models") else {
-            throw ModelListError.missingRegion
-        }
-        let request = Self.bearerRequest(url: url, apiKey: apiKey)
-        // Bedrock returns a top-level array of {modelId, ...}.
-        return try await extractArrayIDs(request: request, key: "modelId")
-    }
-
-    private func fetchGitHubModels(apiKey: String) async throws -> [String] {
-        guard !apiKey.isEmpty else { throw ModelListError.missingCredential }
-        let url = URL(string: "https://api.github.com/models?per_page=100")!
-        let request = Self.bearerRequest(url: url, apiKey: apiKey)
-        // GitHub Models returns top-level array of {id, ...}.
-        return try await extractArrayIDs(request: request, key: "id")
-    }
-
     /// ChatGPT/Codex subscription catalog. Mirrors the Codex backend's own model
     /// listing (`chatgpt.com/backend-api/codex/models`), authenticated with the OAuth
     /// token + ChatGPT-Account-ID. Verified against the openai-api-server-via-codex
-    /// reference implementation. Listing is best-effort: callers fall back to the
-    /// built-in catalog on any failure.
+    /// reference implementation. Listing is best-effort.
     private func fetchCodexSubscription(token: String, accountID: String) async throws -> [String] {
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAccount = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -203,16 +169,6 @@ public struct AgentModelListService: Sendable {
         return Self.coerceModelIDs(raw, stripPrefix: stripPrefix)
     }
 
-    private func extractArrayIDs(request: URLRequest, key: String) async throws -> [String] {
-        let data = try await perform(request: request)
-        guard let array = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
-            throw ModelListError.decoding("missing array root")
-        }
-        return array.compactMap { item in
-            (item as? [String: Any])?[key] as? String
-        }
-    }
-
     private func perform(request: URLRequest) async throws -> Data {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -260,7 +216,7 @@ public struct AgentModelListService: Sendable {
         value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
     }
 
-    private static func coerceModelIDs(_ raw: Any?, stripPrefix: String?) -> [String] {
+    static func coerceModelIDs(_ raw: Any?, stripPrefix: String?) -> [String] {
         let ids: [String]
         if let array = raw as? [Any] {
             ids = array.compactMap { ($0 as? [String: Any])?["id"] as? String }
@@ -275,35 +231,7 @@ public struct AgentModelListService: Sendable {
         return ids
     }
 
-    // MARK: - Built-in fallback catalog (Codex subscription)
-
-    /// Fallback only — used when the Codex `/models` endpoint is unreachable or returns
-    /// nothing. The live endpoint (`codexSubscription` strategy) is the primary source.
-    ///
-    /// Aligned with the openai-api-server-via-codex reference DEFAULT_MODELS (a known-good
-    /// cross-version baseline). This WILL go stale as OpenAI ships families; the live
-    /// listing is what keeps the picker accurate.
-    public static let codexSubscriptionModels: [String] = [
-        "gpt-5.1",
-        "gpt-5.1-codex-max",
-        "gpt-5.1-codex-mini",
-        "gpt-5.2",
-        "gpt-5.2-codex",
-        "gpt-5.3-codex",
-        "gpt-5.3-codex-spark",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.5",
-    ]
-
-    /// Recommended default for a fresh Codex subscription. Matches the reference default.
-    public static let codexDefaultModel = "gpt-5.4"
-
     public static func resolvedModelsURL(base: String) throws -> URL {
         try modelsURL(base: base, path: "/v1/models")
-    }
-
-    public static func coerceModelIDsForTests(_ raw: Any?, stripPrefix: String? = nil) -> [String] {
-        coerceModelIDs(raw, stripPrefix: stripPrefix)
     }
 }

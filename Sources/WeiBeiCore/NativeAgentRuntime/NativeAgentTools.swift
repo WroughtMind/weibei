@@ -1,6 +1,27 @@
 import CryptoKit
 import Foundation
 
+public enum NativeVisualAssetMagic {
+    public static func matches(_ data: Data, mediaType: String) -> Bool {
+        let bytes = [UInt8](data.prefix(12))
+        switch mediaType {
+        case "image/jpeg":
+            return bytes.count >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF
+        case "image/png":
+            return bytes.count >= 8
+                && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47
+                && bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A
+        case "image/webp":
+            guard bytes.count >= 12 else { return false }
+            let riff = String(bytes: bytes[0..<4], encoding: .ascii)
+            let webp = String(bytes: bytes[8..<12], encoding: .ascii)
+            return riff == "RIFF" && webp == "WEBP"
+        default:
+            return false
+        }
+    }
+}
+
 public enum NativeToolScope: Hashable, Sendable {
     case global
     case session(String)

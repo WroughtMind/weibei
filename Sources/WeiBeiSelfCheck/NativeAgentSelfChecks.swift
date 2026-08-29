@@ -1364,12 +1364,21 @@ private func checkVisualAssetAndTurnLocation() throws {
         contextRevision: "r1"
     )
     try nativeRequire(
-        NativeTurnLocation.block(for: request)?.contains("页码：12") == true,
-        "turn location names the current page"
+        NativeTurnLocation.displayPage(11) == 12,
+        "zero-based page index becomes the facing page"
+    )
+    try nativeRequire(
+        NativeTurnLocation.block(for: request)?.contains("12") == true,
+        "turn location includes the facing page"
+    )
+    try nativeRequire(
+        NativeTurnLocation.block(for: request)?.contains("利率讲义") == true,
+        "turn location names the open material"
     )
     var messages = [NativeModelMessage(role: .user, content: "这段什么意思")]
     NativeTurnLocation.applying(to: &messages, request: request)
-    try nativeRequire(messages[0].content.contains("页码：12"), "outgoing user message receives location")
+    try nativeRequire(messages[0].content.contains("12"), "outgoing user message receives the facing page")
+    try nativeRequire(messages[0].content.contains("这段什么意思"), "outgoing user message keeps the question")
 }
 
 private func checkLiveModelListHelpers() throws {

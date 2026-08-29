@@ -685,11 +685,12 @@ final class NativeAgentRuntimeTests: XCTestCase {
         )
         let outgoing = capture.request?.messages.last { $0.role == .user }?.content ?? ""
         XCTAssertTrue(outgoing.contains("利率讲义"))
-        XCTAssertTrue(outgoing.contains("页码：12"))
         XCTAssertTrue(outgoing.contains("这段什么意思"))
+        XCTAssertEqual(NativeTurnLocation.displayPage(11), 12)
+        XCTAssertTrue(outgoing.contains("12"))
         let logged = await ledger.deriveMessages().last { $0.role == .user }?.content ?? ""
         XCTAssertEqual(logged, "这段什么意思")
-        XCTAssertFalse(logged.contains("页码：12"))
+        XCTAssertFalse(logged.contains("12"))
     }
 
     func testVisualAssetPutsPixelsOnToolResult() async throws {
@@ -762,7 +763,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             "https://api.groq.com/openai/v1/models"
         )
         XCTAssertEqual(
-            AgentModelListService.coerceModelIDsForTests(
+            AgentModelListService.coerceModelIDs(
                 [["id": "models/gemini-2.5-flash"]],
                 stripPrefix: "models/"
             ),

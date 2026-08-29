@@ -157,6 +157,12 @@ struct SettingsView: View {
         .onChange(of: store.agentBaseURL) { _, _ in
             oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
+        .onChange(of: store.agentProviderID) { _, _ in
+            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        }
+        .onChange(of: store.activeAgentProfileID) { _, _ in
+            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        }
     }
 
     private func fillModelIfEmpty() {

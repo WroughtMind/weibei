@@ -57,9 +57,6 @@ final class AgentAccountService: ObservableObject {
             ids = liveModelIDs
         }
         let fallback = NativeProviderRouting.route(provider).defaultModel
-        if provider == .openaiCodex, ids.isEmpty {
-            ids = AgentModelListService.codexSubscriptionModels
-        }
         if !fallback.isEmpty, !ids.contains(fallback) {
             ids.insert(fallback, at: 0)
         }
@@ -251,9 +248,7 @@ final class AgentAccountService: ObservableObject {
         } catch {
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                if provider == .openaiCodex {
-                    liveModelIDs = AgentModelListService.codexSubscriptionModels
-                } else if liveModelsProvider != provider {
+                if liveModelsProvider != provider {
                     liveModelIDs = []
                 }
                 liveModelsProvider = provider

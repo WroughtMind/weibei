@@ -11,8 +11,8 @@ public enum NativeTurnLocation {
                 lines.append(request.language.text("材料 ID：\(id)", "Material ID: \(id)"))
             }
             if let page = focus.pageIndex {
-                let displayPage = page + 1 // StudyAgentFocus.pageIndex 是 0 起；给模型看第几页。
-                lines.append(request.language.text("页码：\(displayPage)", "Page: \(displayPage)"))
+                let facing = displayPage(page)
+                lines.append(request.language.text("页码：\(facing)", "Page: \(facing)"))
             }
             if let section = trimmed(focus.sectionTitle) {
                 lines.append(request.language.text("章节：\(section)", "Section: \(section)"))
@@ -45,30 +45,14 @@ public enum NativeTurnLocation {
         messages[index].content = existing.isEmpty ? block : existing + "\n\n" + block
     }
 
+    /// `StudyAgentFocus.pageIndex` is 0-based; the model sees the facing page.
+    public static func displayPage(_ pageIndex: Int) -> Int {
+        pageIndex + 1
+    }
+
     private static func trimmed(_ value: String?) -> String? {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
-    }
-}
-
-public enum NativeVisualAssetMagic {
-    public static func matches(_ data: Data, mediaType: String) -> Bool {
-        let bytes = [UInt8](data.prefix(12))
-        switch mediaType {
-        case "image/jpeg":
-            return bytes.count >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF
-        case "image/png":
-            return bytes.count >= 8
-                && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47
-                && bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A
-        case "image/webp":
-            guard bytes.count >= 12 else { return false }
-            let riff = String(bytes: bytes[0..<4], encoding: .ascii)
-            let webp = String(bytes: bytes[8..<12], encoding: .ascii)
-            return riff == "RIFF" && webp == "WEBP"
-        default:
-            return false
-        }
     }
 }
