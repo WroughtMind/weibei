@@ -234,6 +234,10 @@ extension WorkspaceStore {
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
+            contextWindow: NativeProviderRouting.contextWindow(
+                provider: selectedProvider,
+                model: model
+            ),
             ledgerRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Ledgers", isDirectory: true),
             systemPromptText: resources.systemPrompt,
             hostToolHandler: hostToolHandler,

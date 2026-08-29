@@ -160,6 +160,19 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
         let type = object["type"] as? String ?? ""
         let index = object["index"] as? Int ?? 0
         switch type {
+        case "message_start":
+            guard let usage = (object["message"] as? [String: Any])?["usage"] as? [String: Any] else {
+                return []
+            }
+            return [
+                .usage(
+                    NativeTokenUsage(
+                        inputTokens: usage["input_tokens"] as? Int ?? 0,
+                        cacheReadTokens: usage["cache_read_input_tokens"] as? Int,
+                        cacheWriteTokens: usage["cache_creation_input_tokens"] as? Int
+                    )
+                ),
+            ]
         case "content_block_delta":
             let delta = object["delta"] as? [String: Any] ?? [:]
             let deltaType = delta["type"] as? String ?? ""
@@ -192,18 +205,35 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
             return []
         case "message_delta":
             let delta = object["delta"] as? [String: Any] ?? [:]
+            var chunks: [NativeStreamChunk] = []
+            if let usage = object["usage"] as? [String: Any] {
+                chunks.append(
+                    .usage(
+                        NativeTokenUsage(
+                            inputTokens: usage["input_tokens"] as? Int ?? 0,
+                            outputTokens: usage["output_tokens"] as? Int ?? 0,
+                            cacheReadTokens: usage["cache_read_input_tokens"] as? Int,
+                            cacheWriteTokens: usage["cache_creation_input_tokens"] as? Int
+                        )
+                    )
+                )
+            }
             if delta["stop_reason"] as? String == "tool_use" {
-                return [.finish(reason: .toolCalls, replayState: replayState(from: object))]
+                chunks.append(.finish(reason: .toolCalls, replayState: replayState(from: object)))
+                return chunks
             }
             if delta["stop_reason"] != nil {
-                return [.finish(reason: .stop, replayState: replayState(from: object))]
+                chunks.append(.finish(reason: .stop, replayState: replayState(from: object)))
             }
-            return []
+            return chunks
         case "message_stop":
             return [.finish(reason: .stop, replayState: nil)]
         case "error":
             let error = object["error"] as? [String: Any]
-            throw NativeLLMFailure(code: "server_error", message: error?["message"] as? String ?? "Anthropic error")
+            throw NativeLLMFailure(
+                code: error?["type"] as? String ?? "server_error",
+                message: error?["message"] as? String ?? "Anthropic error"
+            )
         default:
             return []
         }

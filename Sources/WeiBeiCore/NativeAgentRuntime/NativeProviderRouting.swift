@@ -70,6 +70,22 @@ public struct NativeProviderRoute: Equatable, Sendable {
 }
 
 public enum NativeProviderRouting {
+    /// Only bundled model IDs with a verified, stable input limit belong here.
+    public static func contextWindow(provider: AgentProviderID, model: String) -> Int? {
+        switch (provider, model.lowercased()) {
+        case (.openai, "gpt-4.1"):
+            return 1_047_576
+        case (.google, "gemini-2.5-flash"), (.googleVertex, "gemini-2.5-flash"):
+            return 1_048_576
+        case (.minimax, "minimax-m2.5"), (.minimaxCN, "minimax-m2.5"):
+            return 204_800
+        case (.amazonBedrock, "amazon.nova-lite-v1:0"):
+            return 300_000
+        default:
+            return nil
+        }
+    }
+
     public static func route(_ provider: AgentProviderID) -> NativeProviderRoute {
         switch provider {
         case .openaiCodex:
