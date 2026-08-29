@@ -3,6 +3,7 @@ import Foundation
 public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     public var model: String
     public var adapter: NativeLLMAdapter
+    public var contextWindow: Int?
     public var hostToolHandler: StudyAgentHostToolHandler?
     public var liveStores: NativeLiveStores
     public var ledgerRoot: URL
@@ -18,6 +19,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     public init(
         model: String,
         adapter: NativeLLMAdapter,
+        contextWindow: Int? = nil,
         ledgerRoot: URL,
         systemPromptText: String,
         hostToolHandler: StudyAgentHostToolHandler? = nil,
@@ -28,6 +30,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     ) {
         self.model = model
         self.adapter = adapter
+        self.contextWindow = contextWindow
         self.ledgerRoot = ledgerRoot
         self.systemPromptText = systemPromptText
         self.hostToolHandler = hostToolHandler
@@ -70,6 +73,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         if stores.startSubagent == nil {
             let adapter = self.adapter
             let model = self.model
+            let contextWindow = self.contextWindow
             let systemPromptText = self.systemPromptText
             let ledgerRoot = self.ledgerRoot
             let hostToolHandler = self.hostToolHandler
@@ -82,6 +86,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
                     next,
                     adapter: adapter,
                     model: model,
+                    contextWindow: contextWindow,
                     systemPrompt: systemPromptText,
                     ledgerRoot: ledgerRoot,
                     hostToolHandler: hostToolHandler,
@@ -97,6 +102,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
                 registry: registry,
                 adapter: adapter,
                 model: model,
+                contextWindow: contextWindow,
                 hostToolHandler: hostToolHandler,
                 systemPrompt: prompt,
                 liveStores: stores,

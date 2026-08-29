@@ -61,6 +61,7 @@ public enum NativeSubagentRunner {
         _ request: NativeSubagentRequest,
         adapter: NativeLLMAdapter,
         model: String,
+        contextWindow: Int? = nil,
         systemPrompt: String,
         ledgerRoot: URL,
         hostToolHandler: StudyAgentHostToolHandler?,
@@ -86,6 +87,7 @@ public enum NativeSubagentRunner {
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
+            contextWindow: contextWindow,
             ledgerRoot: childRoot,
             systemPromptText: systemPrompt,
             hostToolHandler: request.capabilities.contains(.hostTools) ? hostToolHandler : nil,

@@ -1,6 +1,6 @@
 import Foundation
 
-/// 本轮最小定位：正在看哪份、哪一页。只附加在发给模型的当前用户消息上，不写入账本。
+/// 本轮最小定位：正在看哪份、哪一页。调用方把它随用户消息一并写入账本。
 public enum NativeTurnLocation {
     public static func block(for request: StudyAgentRequest) -> String? {
         var lines: [String] = []
@@ -35,14 +35,6 @@ public enum NativeTurnLocation {
             "Current reading location (position only, not the body; read when needed):"
         )
         return ([header] + lines).joined(separator: "\n")
-    }
-
-    public static func applying(to messages: inout [NativeModelMessage], request: StudyAgentRequest) {
-        guard let block = block(for: request),
-              let index = messages.lastIndex(where: { $0.role == .user }) else { return }
-        let existing = messages[index].content
-        if existing.contains(block) { return }
-        messages[index].content = existing.isEmpty ? block : existing + "\n\n" + block
     }
 
     /// `StudyAgentFocus.pageIndex` is 0-based; the model sees the facing page.

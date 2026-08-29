@@ -19,6 +19,7 @@ public actor NativeAgentLoop {
         registry: NativeToolRegistry,
         adapter: NativeLLMAdapter,
         model: String,
+        contextWindow: Int? = nil,
         hostToolHandler: StudyAgentHostToolHandler?,
         systemPrompt: String,
         liveStores: NativeLiveStores = .empty,
@@ -30,7 +31,7 @@ public actor NativeAgentLoop {
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: turn)
         }
-        let userMessage: String
+        var userMessage: String
         if let selection = request.selectionText,
            !selection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let title = request.selectionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -42,6 +43,9 @@ public actor NativeAgentLoop {
             )
         } else {
             userMessage = request.question
+        }
+        if let location = NativeTurnLocation.block(for: request) {
+            userMessage += "\n\n\(location)"
         }
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(
@@ -84,57 +88,143 @@ public actor NativeAgentLoop {
             while true {
                 step += 1
                 try checkCancelled()
-                _ = try await ledger.append { seq, time in
-                    NativeSessionEvent(type: .stepStart, seq: seq, timeMS: time, turn: turn, step: step)
-                }
+                let projection = await ledger.deriveProjection()
                 var messages = [NativeModelMessage(role: .system, content: systemPrompt)]
-                messages.append(contentsOf: await ledger.deriveMessages())
-                if let invariant = NativeAgentInvariant.mismatch(logged: await ledger.deriveMessages(), outgoing: Array(messages.dropFirst())) {
+                messages.append(contentsOf: projection.messages)
+                if let invariant = NativeAgentInvariant.mismatch(
+                    logged: projection.messages,
+                    outgoing: Array(messages.dropFirst())
+                ) {
                     assertionFailure(invariant)
                 }
-                NativeTurnLocation.applying(to: &messages, request: request)
                 var llmRequest = NativeLLMRequest(model: model, messages: messages, tools: tools)
                 // 搜索开关对全协议族生效;推理档仅 Responses 家族支持。
                 llmRequest.enableNativeWebSearch = tools.contains { $0.name == "weibei_course_map" }
                 if adapter.family.contains("responses") {
                     llmRequest.reasoningEffort = "low"
                 }
+                #if DEBUG
+                let effectiveContextWindow = (adapter as? NativeContextWindowTestingAdapter)?.contextWindowForTesting
+                    ?? contextWindow
+                #else
+                let effectiveContextWindow = contextWindow
+                #endif
+                if let effectiveContextWindow {
+                    do {
+                        if let candidate = try await NativeContextCompaction.prepareCandidate(
+                            request: llmRequest,
+                            projection: projection,
+                            adapter: adapter,
+                            contextWindow: effectiveContextWindow
+                        ) {
+                            try checkCancelled()
+                            _ = try await ledger.append { seq, time in
+                                NativeSessionEvent(
+                                    type: .contextCompaction,
+                                    seq: seq,
+                                    timeMS: time,
+                                    summary: candidate.summary,
+                                    firstKeptSeq: candidate.firstKeptSeq
+                                )
+                            }
+                            llmRequest = candidate.request
+                        }
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch let failure as NativeLLMFailure where failure.code == "cancelled" {
+                        throw failure
+                    } catch {
+                        // A failed candidate never changes the ledger; the existing request/error path continues.
+                    }
+                }
+                _ = try await ledger.append { seq, time in
+                    NativeSessionEvent(type: .stepStart, seq: seq, timeMS: time, turn: turn, step: step)
+                }
                 var assembler = NativeToolCallAssembler()
                 var finish: NativeFinishReason?
                 var stepText = ""
-                for try await chunk in adapter.stream(llmRequest) {
-                    try checkCancelled()
-                    assembler.apply(chunk)
-                    _ = try await ledger.append { seq, time in
-                        NativeSessionEvent(
-                            type: .assistantChunk,
-                            seq: seq,
-                            timeMS: time,
-                            turn: turn,
-                            step: step,
-                            chunk: chunk
-                        )
-                    }
-                    switch chunk {
-                    case let .textDelta(_, text):
-                        stepText += text
-                        collectedText += text
-                        await progress?(.text(collectedText, []))
-                    case let .webSearchSource(url):
-                        if !context.currentRunSourceURLs.contains(url) {
-                            context.currentRunSourceURLs.append(url)
+                var stepUsage: NativeTokenUsage?
+                var receivedChunk = false
+                var recoveredOverflow = false
+                streamAttempt: while true {
+                    do {
+                        for try await chunk in adapter.stream(llmRequest) {
+                            try checkCancelled()
+                            receivedChunk = true
+                            assembler.apply(chunk)
+                            _ = try await ledger.append { seq, time in
+                                NativeSessionEvent(
+                                    type: .assistantChunk,
+                                    seq: seq,
+                                    timeMS: time,
+                                    turn: turn,
+                                    step: step,
+                                    chunk: chunk
+                                )
+                            }
+                            switch chunk {
+                            case let .textDelta(_, text):
+                                stepText += text
+                                collectedText += text
+                                await progress?(.text(collectedText, []))
+                            case let .webSearchSource(url):
+                                if !context.currentRunSourceURLs.contains(url) {
+                                    context.currentRunSourceURLs.append(url)
+                                }
+                            case let .toolCallDelta(_, _, name, _):
+                                if let name {
+                                    await progress?(.usingTool(name, nil))
+                                }
+                            case let .usage(usage):
+                                stepUsage = stepUsage?.merging(usage) ?? usage
+                            case let .finish(reason, _):
+                                finish = reason
+                            default:
+                                break
+                            }
                         }
-                    case let .toolCallDelta(_, _, name, _):
-                        if let name {
-                            await progress?(.usingTool(name, nil))
+                        break streamAttempt
+                    } catch let failure as NativeLLMFailure
+                        where failure.isContextOverflow
+                            && !recoveredOverflow
+                            && !receivedChunk {
+                        let candidate: NativeContextCompactionCandidate?
+                        do {
+                            let recoveryProjection = await ledger.deriveProjection()
+                            candidate = try await NativeContextCompaction.prepareOverflowCandidate(
+                                request: llmRequest,
+                                projection: recoveryProjection,
+                                adapter: adapter,
+                                contextWindow: effectiveContextWindow
+                            )
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch let cancellation as NativeLLMFailure where cancellation.code == "cancelled" {
+                            throw cancellation
+                        } catch {
+                            throw failure
                         }
-                    case let .finish(reason, _):
-                        finish = reason
-                    default:
-                        break
+                        guard let candidate else { throw failure }
+                        try checkCancelled()
+                        _ = try await ledger.append { seq, time in
+                            NativeSessionEvent(
+                                type: .contextCompaction,
+                                seq: seq,
+                                timeMS: time,
+                                summary: candidate.summary,
+                                firstKeptSeq: candidate.firstKeptSeq
+                            )
+                        }
+                        llmRequest = candidate.request
+                        recoveredOverflow = true
                     }
                 }
-                if !stepText.isEmpty {
+                let completedUsage: NativeTokenUsage? = if finish == .stop || finish == .toolCalls || finish == .length {
+                    stepUsage
+                } else {
+                    nil
+                }
+                if !stepText.isEmpty || completedUsage != nil {
                     _ = try await ledger.append { seq, time in
                         NativeSessionEvent(
                             type: .assistantMessage,
@@ -142,7 +232,8 @@ public actor NativeAgentLoop {
                             timeMS: time,
                             turn: turn,
                             step: step,
-                            text: stepText
+                            text: stepText,
+                            usage: completedUsage
                         )
                     }
                 }
