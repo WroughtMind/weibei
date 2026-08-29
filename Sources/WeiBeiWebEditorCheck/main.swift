@@ -1169,9 +1169,79 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("rich clipboard paste did not parse Markdown source: \(String(describing: value))")
                 return
             }
+            self.validateTSVTablePaste()
+        }
+    }
+
+    private func validateTSVTablePaste() {
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          const paste = (text) => {
+            const data = new DataTransfer();
+            data.setData('text/plain', text);
+            return document.querySelector('.ProseMirror')?.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+          };
+
+          editor.setDocumentID('table-tsv');
+          editor.setMarkdown('替换我');
+          const outsideBefore = editor.getMarkdown();
+          editor.selectFirstTextForCheck('替换我');
+          paste('A\\tB\\n1\\t2');
+          const outsideMarkdown = editor.getMarkdown();
+          const outsideRows = document.querySelectorAll('.ProseMirror table tr').length;
+          editor.undoForCheck();
+          const outsideUndo = editor.getMarkdown() === outsideBefore;
+          editor.setMarkdown(outsideMarkdown);
+          const outsideReload = document.querySelectorAll('.ProseMirror table tr').length === 2;
+
+          editor.setMarkdown('| H1 | H2 |\\n| --- | --- |\\n| a | b |');
+          const insideBefore = editor.getMarkdown();
+          editor.selectFirstTextForCheck('a');
+          paste('甲\\t乙\\t丙\\n丁\\t戊\\t己');
+          const insideMarkdown = editor.getMarkdown();
+          const rows = Array.from(document.querySelectorAll('.ProseMirror table tr')).map((row) => Array.from(row.querySelectorAll('th,td')).map((cell) => cell.textContent));
+          editor.undoForCheck();
+          const insideUndo = editor.getMarkdown() === insideBefore;
+          editor.setMarkdown(insideMarkdown);
+          editor.selectFirstTextForCheck('甲');
+          const reloadRows = document.querySelectorAll('.ProseMirror table tr').length;
+          const reloadColumns = document.querySelector('.ProseMirror table tr')?.querySelectorAll('th,td').length || 0;
+          document.querySelector('.weibei-table-toolbar button[data-action="deleteTable"]')?.click();
+          return {
+            outsideRows,
+            outsideUndo,
+            outsideReload,
+            insideRows: rows.length,
+            insideColumns: rows[0]?.length || 0,
+            values: rows.slice(1).flat().join(','),
+            insideUndo,
+            reloadRows,
+            reloadColumns,
+            deleted: !document.querySelector('.ProseMirror table')
+          };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let result = value as? [String: Any],
+                  result["outsideRows"] as? Int == 2,
+                  result["outsideUndo"] as? Bool == true,
+                  result["outsideReload"] as? Bool == true,
+                  result["insideRows"] as? Int == 3,
+                  result["insideColumns"] as? Int == 3,
+                  result["values"] as? String == "甲,乙,丙,丁,戊,己",
+                  result["insideUndo"] as? Bool == true,
+                  result["reloadRows"] as? Int == 3,
+                  result["reloadColumns"] as? Int == 3,
+                  result["deleted"] as? Bool == true else {
+                self.fail("TSV table paste, undo, reload, or delete check failed: \(String(describing: error)); \(String(describing: value))")
+                return
+            }
             self.webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown(\(json(sampleMarkdown)))") { _, error in
                 if let error {
-                    self.fail("rich clipboard paste could not restore fixture: \(error.localizedDescription)")
+                    self.fail("table paste check could not restore fixture: \(error.localizedDescription)")
                     return
                 }
                 self.validateSelectionReplacement()
@@ -1448,10 +1518,12 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           input = block.querySelector('.weibei-math-source');
           input.value = 'y^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter', { metaKey: true });
           if (!editor.getMarkdown().includes('y^3') || block.classList.contains('weibei-math-editing')) fail('block Command-Enter did not save the formula');
-          block.querySelector('.weibei-math-preview').click(); input = block.querySelector('.weibei-math-source'); input.value = 'y^4'; input.dispatchEvent(new Event('input', { bubbles: true })); input.blur();
+          block.querySelector('.weibei-math-preview').click(); input = block.querySelector('.weibei-math-source'); input.value = 'y^4'; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('blur'));
           if (!editor.getMarkdown().includes('y^4')) fail('block blur did not save the formula');
           inline.querySelector('.weibei-math-preview').click(); input = inline.querySelector('.weibei-math-source'); input.value = 'x^4'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Escape');
           if (!editor.getMarkdown().includes('$x^4$')) fail('Escape did not save the formula');
+          const savedFormulas = editor.getMarkdown(); editor.setMarkdown(savedFormulas);
+          if (!editor.getMarkdown().includes('$x^4$') || !editor.getMarkdown().includes('y^4') || !document.querySelector('.weibei-math-inline[data-value="x^4"]') || !document.querySelector('.weibei-math-block[data-value="y^4"]')) fail('formula edits did not survive serialization and reload');
 
           editor.setDocumentID('math-render-scope');
           editor.setMarkdown('first $a^2$ and second $b^2$');
@@ -1561,6 +1633,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
 
           editor.setDocumentID('work-package-e-mermaid');
           editor.setMarkdown(\(json(mermaidMarkdown)));
+          document.querySelector('.ProseMirror')?.dispatchEvent(new FocusEvent('focus'));
           if (!editor.selectFirstCodeBlockEndForCheck()) throw new Error('Mermaid selection helper unavailable');
           window.WeiBeiMermaidPreviewForE = document.querySelector('.weibei-mermaid-render');
           window.WeiBeiMermaidHTMLForE = window.WeiBeiMermaidPreviewForE?.innerHTML || '';
@@ -2351,8 +2424,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           window.WeiBeiEditor.typeTextForCheck('\\n'); const secondEnterHeight = defaultMermaidCode.getBoundingClientRect().height; if (defaultMermaidCode.textContent !== mermaidSource + '\\n\\n' || secondEnterHeight <= firstEnterHeight) throw new Error('second Mermaid Enter did not add exactly the next source line'); window.WeiBeiEditor.pressKeyForCheck('Tab'); const tabbedMermaidHeight = defaultMermaidCode.getBoundingClientRect().height; const tabbedMermaidMarkdown = window.WeiBeiEditor.getMarkdown(); if (defaultMermaidCode.textContent !== mermaidSource + '\\n\\n\\t' || tabbedMermaidHeight !== secondEnterHeight || tabbedMermaidMarkdown !== '```mermaid\\n' + mermaidSource + '\\n\\n\\t\\n```\\n' || document.querySelector('.weibei-mermaid-render') !== defaultMermaidPreview) throw new Error('Mermaid Tab revealed deferred blank lines: ' + JSON.stringify({ source: defaultMermaidCode.textContent, tabbedMermaidMarkdown, firstEnterHeight, secondEnterHeight, tabbedMermaidHeight }));
           window.WeiBeiEditor.setMarkdown('```mermaid\\ngraph TD\\n```\\n\\nafter'); window.WeiBeiEditor.selectFirstCodeBlockEndForCheck(); const previewBeforeTyping = document.querySelector('.weibei-mermaid-render'); if (!window.WeiBeiEditor.typeTextForCheck('x') || !window.WeiBeiEditor.getMarkdown().includes('graph TDx')) throw new Error('Mermaid NodeView did not accept text');
           const previewDuringTyping = document.querySelector('.weibei-mermaid-render'); if (!previewBeforeTyping || previewDuringTyping !== previewBeforeTyping) throw new Error('Mermaid preview rerendered while source retained focus');
-          document.querySelector('.weibei-code-language-input')?.focus(); const previewAfterBlur = document.querySelector('.weibei-mermaid-render'); if (!previewAfterBlur || previewAfterBlur === previewDuringTyping) throw new Error('Mermaid preview did not rerender after source focus left');
-          if (!window.WeiBeiEditor.typeTextForCheck('y')) throw new Error('Mermaid source could not regain focus'); const previewDuringSecondEdit = document.querySelector('.weibei-mermaid-render'); if (previewDuringSecondEdit !== previewAfterBlur) throw new Error('Mermaid preview rerendered during the second edit');
+          document.querySelector('.ProseMirror')?.dispatchEvent(new FocusEvent('blur')); document.querySelector('.weibei-code-language-input')?.focus(); const previewAfterBlur = document.querySelector('.weibei-mermaid-render'); if (!previewAfterBlur || previewAfterBlur === previewDuringTyping) throw new Error('Mermaid preview did not rerender after source focus left');
+          document.querySelector('.ProseMirror')?.dispatchEvent(new FocusEvent('focus')); if (!window.WeiBeiEditor.typeTextForCheck('y')) throw new Error('Mermaid source could not regain focus'); const previewDuringSecondEdit = document.querySelector('.weibei-mermaid-render'); if (previewDuringSecondEdit !== previewAfterBlur) throw new Error('Mermaid preview rerendered during the second edit');
           window.WeiBeiEditor.selectDocumentEndForCheck(); const previewAfterBlockExit = document.querySelector('.weibei-mermaid-render'); const selectionAfterBlockExit = window.WeiBeiEditor.selectionForCheck(); if (!previewAfterBlockExit || previewAfterBlockExit === previewDuringSecondEdit || selectionAfterBlockExit.parent === 'code_block') throw new Error('Mermaid preview did not rerender after selection left its source block: ' + JSON.stringify({ hasPreview: !!previewAfterBlockExit, samePreview: previewAfterBlockExit === previewDuringSecondEdit, selectionAfterBlockExit }));
           return true;
         })();
@@ -3247,7 +3320,14 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
     private let webView: WKWebView
     private var isDone = false
     private var failure: String?
-    private var expectedNavigation: WKNavigation?
+    private var expectedLoadStarted = false
+    private let expectedHTML = Data("""
+    <!doctype html>
+    <link rel="stylesheet" href="reader.css">
+    <h1>利率基础</h1>
+    <p>名义利率与实际利率。</p>
+    <img id="relative-image" src="marker.svg" alt="同目录图片">
+    """.utf8)
 
     override init() {
         let resourceSchemeHandler = UTF8HTMLFixtureSchemeHandler()
@@ -3282,21 +3362,6 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
 
         let staleHTML = Data(("<h1>旧文稿</h1>" + String(repeating: "旧", count: 100_000)).utf8)
         webView.load(staleHTML, mimeType: "text/html", characterEncodingName: "utf-8", baseURL: fixtureRoot)
-        webView.stopLoading()
-
-        let html = Data("""
-        <!doctype html>
-        <link rel="stylesheet" href="reader.css">
-        <h1>利率基础</h1>
-        <p>名义利率与实际利率。</p>
-        <img id="relative-image" src="marker.svg" alt="同目录图片">
-        """.utf8)
-        expectedNavigation = webView.load(
-            html,
-            mimeType: "text/html",
-            characterEncodingName: "utf-8",
-            baseURL: URL(string: "weibeihtmlfixture://fixture/")!
-        )
 
         let timeout = Date().addingTimeInterval(5)
         while !isDone && Date() < timeout {
@@ -3306,8 +3371,24 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
         expect(isDone, "UTF-8 HTML reader fixture did not finish")
     }
 
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard !expectedLoadStarted else { return }
+        expectedLoadStarted = true
+        webView.stopLoading()
+        guard webView.load(
+            expectedHTML,
+            mimeType: "text/html",
+            characterEncodingName: "utf-8",
+            baseURL: URL(string: "weibeihtmlfixture://fixture/")!
+        ) != nil else {
+            failure = "UTF-8 HTML reader fixture could not start"
+            isDone = true
+            return
+        }
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard navigation === expectedNavigation else { return }
+        guard expectedLoadStarted else { return }
         validateLoadedHTML(until: Date().addingTimeInterval(3))
     }
 
@@ -3324,17 +3405,28 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
         """) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, let result = value as? [String: Any] else {
-                failure = "UTF-8 HTML reader JavaScript failed: \(String(describing: error))"
-                isDone = true
+                if Date() >= deadline {
+                    failure = "UTF-8 HTML reader JavaScript failed: \(String(describing: error))"
+                    isDone = true
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.validateLoadedHTML(until: deadline)
+                    }
+                }
                 return
             }
-            guard
-                  let text = result["text"] as? String,
+            guard let text = result["text"] as? String,
                   text.contains("利率基础"),
                   text.contains("名义利率与实际利率"),
                   !text.contains("旧文稿") else {
-                failure = "UTF-8 HTML or stale-navigation cancellation failed: \(String(describing: value)); error=\(String(describing: error))"
-                isDone = true
+                if Date() >= deadline {
+                    failure = "UTF-8 HTML or stale-navigation cancellation failed: \(String(describing: value)); error=\(String(describing: error))"
+                    isDone = true
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.validateLoadedHTML(until: deadline)
+                    }
+                }
                 return
             }
             if result["color"] as? String == "rgb(12, 34, 56)",
@@ -3354,7 +3446,8 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        guard navigation === expectedNavigation else { return }
+        let navigationError = error as NSError
+        if navigationError.domain == NSURLErrorDomain, navigationError.code == NSURLErrorCancelled { return }
         failure = error.localizedDescription
         isDone = true
     }
@@ -3364,7 +3457,8 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
-        guard navigation === expectedNavigation else { return }
+        let navigationError = error as NSError
+        if navigationError.domain == NSURLErrorDomain, navigationError.code == NSURLErrorCancelled { return }
         failure = error.localizedDescription
         isDone = true
     }
@@ -3386,15 +3480,18 @@ private struct BenchmarkMetrics: Codable {
     let fullBridgeMessages: Int
 }
 
-private struct BenchmarkActionState: Codable {
+private struct BenchmarkPreparationState: Codable {
     let readyMetrics: BenchmarkMetrics
+}
+
+private struct BenchmarkActionState: Codable {
     let inputMetrics: BenchmarkMetrics
     let documentGeneration: Int
     let revision: Int
     let loadedRuntimes: [String]
 }
 
-private struct BenchmarkSnapshotTimings: Codable {
+private struct BenchmarkTimings: Codable {
     let samplesMilliseconds: [Double]
     let minimumMilliseconds: Double
     let medianMilliseconds: Double
@@ -3418,7 +3515,8 @@ private struct BenchmarkFixtureResult: Codable {
     let readyMilliseconds: Double
     let snapshotBytes: Int
     let snapshotCharacters: Int
-    let snapshotTimings: BenchmarkSnapshotTimings
+    let snapshotTimings: BenchmarkTimings
+    let inputToNextFrameTimings: BenchmarkTimings
     let readyMetrics: BenchmarkMetrics
     let metrics: BenchmarkMetrics
 }
@@ -3447,16 +3545,18 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
     private let fixture: String
     private let markdown: String
     private let webView: WKWebView
+    private let panel: NSPanel
     private var loadStarted = 0.0
     private var readyMilliseconds = 0.0
     private var readyMetrics: BenchmarkMetrics?
     private var inputRevision = 0
     private var documentGeneration = 0
     private var snapshotSamples: [Double] = []
+    private var inputToNextFrameSamples: [Double] = []
     private var snapshotMarkdown: String?
     private var pendingSnapshotRequestID: String?
     private var pendingSnapshotStarted = 0.0
-    private var result: Result<BenchmarkFixtureResult, Error>?
+    private var completion: ((Result<BenchmarkFixtureResult, Error>) -> Void)?
 
     init(fixture: String, markdown: String) {
         self.fixture = fixture
@@ -3474,39 +3574,38 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
+        panel = NSPanel(
+            contentRect: NSRect(x: 16, y: 16, width: 120, height: 90),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
         super.init()
+        panel.level = .floating
+        panel.contentView?.addSubview(webView)
         for name in [
             "editorReady", "dirtyChanged", "snapshotReady", "selectionChanged", "askAgentWithSelection",
             "wikiLinkActivated", "sourceReferenceActivated", "editorFailure",
             "imageAttachmentRequested", "imagePickerRequested", "contentHeightChanged",
-            "activeHeadingChanged", "compactPreviewWheel", "appShortcut", "selectionAskMark"
+            "activeHeadingChanged", "compactPreviewWheel", "appShortcut", "selectionAskMark",
+            "benchmarkFrame"
         ] {
             controller.add(self, name: name)
         }
         webView.navigationDelegate = self
     }
 
-    func run() throws -> BenchmarkFixtureResult {
-        defer {
-            webView.stopLoading()
-            webView.navigationDelegate = nil
-            let controller = webView.configuration.userContentController
-            controller.removeScriptMessageHandler(forName: "editorReady")
-            controller.removeScriptMessageHandler(forName: "editorFailure")
-        }
+    func run(completion: @escaping (Result<BenchmarkFixtureResult, Error>) -> Void) {
+        self.completion = completion
+        panel.orderFrontRegardless()
         let indexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
         loadStarted = ProcessInfo.processInfo.systemUptime
         webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
-
-        let timeout = Date().addingTimeInterval(60)
-        while result == nil && Date() < timeout {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+            guard let self, self.completion != nil else { return }
+            self.finish(.failure(BenchmarkError.failed("\(self.fixture): editor benchmark timed out")))
         }
-        guard let result else {
-            throw BenchmarkError.failed("\(fixture): editor benchmark timed out")
-        }
-        return try result.get()
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -3532,6 +3631,8 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
             }
         case "snapshotReady":
             receiveSnapshot(message.body)
+        case "benchmarkFrame":
+            receiveInputFrame(message.body)
         default:
             break
         }
@@ -3552,31 +3653,93 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
     private func beginActions() {
         let script = """
         (() => {
-          const editor = window.WeiBeiEditor;
-          if (typeof editor?.getCheckMetrics !== 'function' || typeof editor?.resetCheckMetrics !== 'function') {
-            throw new Error('editor check metrics API is unavailable');
-          }
-          const readyMetrics = editor.getCheckMetrics();
-          editor.resetCheckMetrics();
-          if (!editor.selectDocumentEndForCheck() || !editor.typeTextForCheck(\(json(Self.input)))) {
-            throw new Error('benchmark input helpers are unavailable');
-          }
-          for (let index = 0; index < 10; index += 1) {
-            if (!editor.selectFirstTextForCheck('基基') || !editor.selectDocumentEndForCheck()) {
-              throw new Error('benchmark selection helpers are unavailable');
+        const editor = window.WeiBeiEditor;
+        if (typeof editor?.getCheckMetrics !== 'function' || typeof editor?.resetCheckMetrics !== 'function') {
+          throw new Error('editor check metrics API is unavailable');
+        }
+        const readyMetrics = editor.getCheckMetrics();
+        editor.resetCheckMetrics();
+        if (!editor.selectDocumentEndForCheck()) throw new Error('benchmark selection helper is unavailable');
+        return JSON.stringify({ readyMetrics });
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let raw = value as? String,
+                  let data = raw.data(using: .utf8),
+                  let state = try? JSONDecoder().decode(BenchmarkPreparationState.self, from: data) else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): benchmark setup failed: \(String(describing: error))")))
+                return
             }
+            self.readyMetrics = state.readyMetrics
+            self.webView.evaluateJavaScript("requestAnimationFrame(() => window.webkit.messageHandlers.benchmarkFrame.postMessage(-1)); true") { [weak self] value, error in
+                guard let self else { return }
+                guard error == nil, value as? Bool == true else {
+                    self.finish(.failure(BenchmarkError.failed("\(self.fixture): benchmark frame warmup failed")))
+                    return
+                }
+            }
+        }
+    }
+
+    private func measureInputCharacter(at index: Int) {
+        guard index < Self.input.count else {
+            finishActions()
+            return
+        }
+        let script = """
+        (() => {
+          const started = performance.now();
+          if (!window.WeiBeiEditor.typeTextForCheck(\(json(String(Self.input[Self.input.startIndex]))))) return false;
+          requestAnimationFrame(() => window.webkit.messageHandlers.benchmarkFrame.postMessage(performance.now() - started));
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): benchmark input failed: \(String(describing: error))")))
+                return
+            }
+        }
+    }
+
+    private func receiveInputFrame(_ value: Any) {
+        if (value as? NSNumber)?.doubleValue == -1 {
+            measureInputCharacter(at: 0)
+            return
+        }
+        guard inputToNextFrameSamples.count < Self.input.count,
+              let milliseconds = (value as? NSNumber)?.doubleValue,
+              milliseconds.isFinite,
+              milliseconds > 0 else {
+            finish(.failure(BenchmarkError.failed("\(fixture): input-to-next-frame sample was invalid")))
+            return
+        }
+        inputToNextFrameSamples.append(milliseconds)
+        measureInputCharacter(at: inputToNextFrameSamples.count)
+    }
+
+    private func finishActions() {
+        let script = """
+        (() => {
+        const editor = window.WeiBeiEditor;
+        for (let index = 0; index < 10; index += 1) {
+          if (!editor.selectFirstTextForCheck('基基') || !editor.selectDocumentEndForCheck()) {
+            throw new Error('benchmark selection helpers are unavailable');
           }
-          const inputMetrics = editor.getCheckMetrics();
-          const session = editor.getBridgeSessionForCheck();
-          return JSON.stringify({
-            readyMetrics,
-            inputMetrics,
-            documentGeneration: session.documentGeneration,
-            revision: session.revision,
-            loadedRuntimes: Array.from(document.scripts)
-              .map((script) => script.src.split('/').pop())
-              .filter((name) => name?.endsWith('-runtime.js')),
-          });
+        }
+        const inputMetrics = editor.getCheckMetrics();
+        const session = editor.getBridgeSessionForCheck();
+        return JSON.stringify({
+          inputMetrics,
+          documentGeneration: session.documentGeneration,
+          revision: session.revision,
+          loadedRuntimes: Array.from(document.scripts)
+            .map((script) => script.src.split('/').pop())
+            .filter((name) => name?.endsWith('-runtime.js')),
+        });
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
@@ -3588,6 +3751,10 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
                 self.finish(.failure(BenchmarkError.failed("\(self.fixture): benchmark actions failed: \(String(describing: error))")))
                 return
             }
+            guard self.inputToNextFrameSamples.count == Self.input.count else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): input-to-next-frame samples were incomplete")))
+                return
+            }
             guard state.inputMetrics.fullSerializations == 0,
                   state.inputMetrics.fullBridgeMessages == 0 else {
                 self.finish(.failure(BenchmarkError.failed(
@@ -3595,20 +3762,20 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
                 )))
                 return
             }
-            let expectedRuntime: String? = [
-                "plain-5k.md": "",
-                "math-dense.md": "katex-runtime.js",
-                "mermaid-dense.md": "mermaid-runtime.js",
-                "code-dense.md": "prism-runtime.js",
-            ][self.fixture]
-            if let expectedRuntime,
-               state.loadedRuntimes != (expectedRuntime.isEmpty ? [] : [expectedRuntime]) {
+            guard state.inputMetrics.imageScans == 0,
+                  state.inputMetrics.imageNodeUpdates == 0,
+                  state.inputMetrics.codeTokenizations == 0,
+                  state.inputMetrics.katexRenders == 0,
+                  state.inputMetrics.mermaidRenders == 0 else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): ordinary input rerendered unrelated content")))
+                return
+            }
+            if !state.loadedRuntimes.isEmpty {
                 self.finish(.failure(BenchmarkError.failed(
                     "\(self.fixture): loaded unrelated runtimes: \(state.loadedRuntimes)"
                 )))
                 return
             }
-            self.readyMetrics = state.readyMetrics
             self.inputRevision = state.revision
             self.documentGeneration = state.documentGeneration
             self.measureSnapshot()
@@ -3696,7 +3863,8 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
                 readyMilliseconds: self.readyMilliseconds,
                 snapshotBytes: snapshotMarkdown.utf8.count,
                 snapshotCharacters: snapshotMarkdown.count,
-                snapshotTimings: BenchmarkSnapshotTimings(samples: self.snapshotSamples),
+                snapshotTimings: BenchmarkTimings(samples: self.snapshotSamples),
+                inputToNextFrameTimings: BenchmarkTimings(samples: self.inputToNextFrameSamples),
                 readyMetrics: readyMetrics,
                 metrics: metrics
             )))
@@ -3704,55 +3872,85 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
     }
 
     private func finish(_ result: Result<BenchmarkFixtureResult, Error>) {
-        guard self.result == nil else { return }
-        self.result = result
+        guard let completion else { return }
+        self.completion = nil
+        panel.orderOut(nil)
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.configuration.userContentController.removeAllScriptMessageHandlers()
+        completion(result)
     }
 }
 
-private func runBenchmarks() throws {
+private func runBenchmarks(completion: @escaping (Result<String, Error>) -> Void) {
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let fixtureRoot = root.appendingPathComponent("Tests/Fixtures/Writing", isDirectory: true)
-    guard let enumerator = FileManager.default.enumerator(
-        at: fixtureRoot,
-        includingPropertiesForKeys: [.isRegularFileKey],
-        options: [.skipsHiddenFiles]
-    ) else {
-        throw BenchmarkError.failed("Writing benchmark fixtures are missing at \(fixtureRoot.path)")
-    }
-    let fixtureURLs = enumerator.compactMap { $0 as? URL }
-        .filter { $0.pathExtension.lowercased() == "md" }
-        .sorted { $0.path < $1.path }
-    guard !fixtureURLs.isEmpty else {
-        throw BenchmarkError.failed("Writing benchmark fixtures contain no Markdown files")
-    }
+    let fixtureNames = ["chinese-long.md", "plain-100k.md", "table-30x20.md"]
 
     var results: [BenchmarkFixtureResult] = []
-    for fixtureURL in fixtureURLs {
-        let markdown = try String(contentsOf: fixtureURL, encoding: .utf8)
-        let relativePath = String(fixtureURL.path.dropFirst(fixtureRoot.path.count + 1))
-        results.append(try EditorBenchmarkHarness(fixture: relativePath, markdown: markdown).run())
+    var activeHarness: EditorBenchmarkHarness?
+    func runFixture(at index: Int) {
+        guard index < fixtureNames.count else {
+            do {
+                let report = BenchmarkReport(
+                    inputCharacters: EditorBenchmarkHarness.input.count,
+                    selectionChanges: 20,
+                    snapshots: EditorBenchmarkHarness.snapshotCount,
+                    fixtures: results
+                )
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                completion(.success(String(decoding: try encoder.encode(report), as: UTF8.self)))
+            } catch {
+                completion(.failure(error))
+            }
+            return
+        }
+        let relativePath = fixtureNames[index]
+        do {
+            let markdown = try String(
+                contentsOf: fixtureRoot.appendingPathComponent(relativePath),
+                encoding: .utf8
+            )
+            activeHarness = EditorBenchmarkHarness(fixture: relativePath, markdown: markdown)
+            activeHarness?.run { result in
+                activeHarness = nil
+                switch result {
+                case let .success(value):
+                    results.append(value)
+                    runFixture(at: index + 1)
+                case let .failure(error):
+                    completion(.failure(error))
+                }
+            }
+        } catch {
+            completion(.failure(error))
+        }
     }
-    let report = BenchmarkReport(
-        inputCharacters: EditorBenchmarkHarness.input.count,
-        selectionChanges: 20,
-        snapshots: EditorBenchmarkHarness.snapshotCount,
-        fixtures: results
-    )
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    print(String(decoding: try encoder.encode(report), as: UTF8.self))
+    runFixture(at: 0)
 }
 
-NSApplication.shared.setActivationPolicy(.prohibited)
-if CommandLine.arguments.dropFirst().contains("--benchmark") {
-    do {
-        try runBenchmarks()
-        exit(0)
-    } catch {
-        fputs("web-editor-benchmark failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
+let benchmarkMode = CommandLine.arguments.dropFirst().contains("--benchmark")
+if benchmarkMode {
+    NSApplication.shared.setActivationPolicy(.accessory)
+    DispatchQueue.main.async {
+        runBenchmarks { result in
+            switch result {
+            case let .success(report):
+                print(report)
+                fflush(stdout)
+                exit(0)
+            case let .failure(error):
+                fputs("web-editor-benchmark failed: \(error.localizedDescription)\n", stderr)
+                fflush(stderr)
+                exit(1)
+            }
+        }
     }
+    NSApplication.shared.run()
+    exit(1)
 }
+NSApplication.shared.setActivationPolicy(.prohibited)
 if ProcessInfo.processInfo.environment["WEIBEI_HTML_READER_SELF_CHECK_ONLY"] == "1" {
     UTF8HTMLReaderHarness().run()
     print("WeiBei HTML reader check passed")
