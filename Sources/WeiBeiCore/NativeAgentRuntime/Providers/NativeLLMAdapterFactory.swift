@@ -30,10 +30,14 @@ public enum NativeLLMAdapterFactory {
             guard let baseURL else {
                 throw NativeLLMFailure(code: "unsupported_provider", message: "missing Responses base URL for \(provider.rawValue)")
             }
+            let responsesRoot = provider == .azureOpenAI
+                ? NativeProviderRouting.azureResponsesRoot(baseURL)
+                : baseURL
             return OpenAIResponsesProvider(
-                baseURL: baseURL,
+                baseURL: responsesRoot,
                 accessToken: key,
-                webSearchSupported: route.webSearch == .responsesTool
+                usesAzureAPIKey: provider == .azureOpenAI,
+                webSearchSupported: provider != .azureOpenAI && route.webSearch == .responsesTool
             )
         case .anthropicMessages:
             guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: credentialProviderID) else {

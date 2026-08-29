@@ -279,9 +279,9 @@ public enum NativeProviderRouting {
             )
         case .azureOpenAI:
             return NativeProviderRoute(
-                family: .unsupported,
-                auth: .unsupported,
-                note: "Azure OpenAI Responses 协议尚未接入"
+                family: .openaiResponses,
+                auth: .userBaseURL,
+                note: "Azure OpenAI Responses，需资源地址和 API Key"
             )
         case .googleVertex:
             return NativeProviderRoute(
@@ -297,15 +297,15 @@ public enum NativeProviderRouting {
             )
         case .cloudflareAIGateway:
             return NativeProviderRoute(
-                family: .unsupported,
-                auth: .unsupported,
-                note: "URL 需要账号和网关参数，尚未接入"
+                family: .openaiChatCompletions,
+                auth: .userBaseURL,
+                note: "需填写含账号和网关 ID 的地址"
             )
         case .cloudflareWorkersAI:
             return NativeProviderRoute(
-                family: .unsupported,
-                auth: .unsupported,
-                note: "URL 需要账号参数，尚未接入"
+                family: .openaiChatCompletions,
+                auth: .userBaseURL,
+                note: "需填写含账号 ID 的 Workers AI 地址"
             )
         }
     }
@@ -318,6 +318,16 @@ public enum NativeProviderRouting {
             return url
         }
         return route(provider).baseURL
+    }
+
+    /// Azure Responses lives at `{resource}/openai/v1/responses`. The stored
+    /// endpoint is the resource host; listing still uses that host.
+    public static func azureResponsesRoot(_ resourceURL: URL) -> URL {
+        let path = resourceURL.path
+        if path.contains("/openai") { return resourceURL }
+        return resourceURL
+            .appendingPathComponent("openai")
+            .appendingPathComponent("v1")
     }
 
     public static func modelListStrategy(
@@ -339,8 +349,7 @@ public enum NativeProviderRouting {
         case .azureOpenAI:
             guard let base = baseURL?.absoluteString, !base.isEmpty else { return nil }
             return .azureOpenAI(base: base)
-        case .githubCopilot, .radius, .googleVertex, .amazonBedrock,
-             .cloudflareAIGateway, .cloudflareWorkersAI:
+        case .githubCopilot, .radius, .googleVertex, .amazonBedrock:
             return nil
         default:
             guard let base = baseURL?.absoluteString, !base.isEmpty else { return nil }

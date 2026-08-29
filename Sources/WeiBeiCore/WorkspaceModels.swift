@@ -635,7 +635,7 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
     /// Show Base URL field (Azure resource endpoint, local llama.cpp, custom OpenAI-compatible).
     public var showsBaseURLField: Bool {
         switch self {
-        case .custom, .llamaCpp, .azureOpenAI:
+        case .custom, .llamaCpp, .azureOpenAI, .cloudflareAIGateway, .cloudflareWorkersAI:
             return true
         default:
             return false

@@ -396,8 +396,16 @@ private func checkProviderRouting() throws {
     try nativeRequire(NativeProviderRouting.route(.moonshotaiCN).baseURL?.host == "api.moonshot.cn", "moonshot CN host")
     let uncovered = Set(NativeProviderRouting.uncoveredProviders)
     try nativeRequire(
-        uncovered == [.azureOpenAI, .googleVertex, .amazonBedrock, .cloudflareAIGateway, .cloudflareWorkersAI],
-        "uncovered families stay Azure/Vertex/Bedrock/Cloudflare"
+        uncovered == [.googleVertex, .amazonBedrock],
+        "uncovered families stay Vertex/Bedrock"
+    )
+    try nativeRequire(
+        NativeProviderRouting.route(.azureOpenAI).family == .openaiResponses,
+        "azure OpenAI is Responses"
+    )
+    try nativeRequire(
+        NativeProviderRouting.route(.cloudflareAIGateway).family == .openaiChatCompletions,
+        "cloudflare AI Gateway is chat completions"
     )
     for provider in AgentProviderID.allCases {
         let route = NativeProviderRouting.route(provider)

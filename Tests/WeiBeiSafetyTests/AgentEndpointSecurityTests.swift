@@ -39,6 +39,19 @@ final class AgentEndpointSecurityTests: XCTestCase {
         }
     }
 
+    func testCloudflareRequiresServiceAddress() {
+        XCTAssertThrowsError(
+            try AgentProviderEndpoint(provider: .cloudflareAIGateway, baseURL: "")
+        ) { error in
+            XCTAssertEqual(error as? AgentProviderEndpointError, .missing)
+        }
+        XCTAssertThrowsError(
+            try AgentProviderEndpoint(provider: .cloudflareWorkersAI, baseURL: "")
+        ) { error in
+            XCTAssertEqual(error as? AgentProviderEndpointError, .missing)
+        }
+    }
+
     func testEndpointTransportAllowsLocalHTTPButRejectsPublicHTTP() throws {
         XCTAssertEqual(
             try AgentProviderEndpoint(

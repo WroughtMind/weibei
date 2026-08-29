@@ -456,10 +456,26 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(NativeProviderRouting.route(.xai).family, .openaiResponses)
         XCTAssertEqual(NativeProviderRouting.route(.google).family, .googleGenerativeAI)
         XCTAssertEqual(NativeProviderRouting.route(.amazonBedrock).family, .unsupported)
+        XCTAssertEqual(NativeProviderRouting.route(.azureOpenAI).family, .openaiResponses)
+        XCTAssertEqual(NativeProviderRouting.route(.cloudflareAIGateway).family, .openaiChatCompletions)
+        XCTAssertEqual(NativeProviderRouting.route(.cloudflareWorkersAI).family, .openaiChatCompletions)
         XCTAssertEqual(
             Set(NativeProviderRouting.uncoveredProviders),
-            [.azureOpenAI, .googleVertex, .amazonBedrock, .cloudflareAIGateway, .cloudflareWorkersAI]
+            [.googleVertex, .amazonBedrock]
         )
+        let azureRoot = NativeProviderRouting.azureResponsesRoot(
+            URL(string: "https://example.openai.azure.com")!
+        )
+        XCTAssertEqual(azureRoot.absoluteString, "https://example.openai.azure.com/openai/v1")
+        let azureRequest = OpenAIResponsesProvider(
+            baseURL: azureRoot,
+            accessToken: "azure-key",
+            usesAzureAPIKey: true,
+            webSearchSupported: false
+        ).makeURLRequest(NativeLLMRequest(model: "gpt-4.1", messages: []))
+        XCTAssertEqual(azureRequest.value(forHTTPHeaderField: "api-key"), "azure-key")
+        XCTAssertNil(azureRequest.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertEqual(azureRequest.url?.lastPathComponent, "responses")
     }
 
     func testWorkspaceSearchToolDefaultsToCurrentCourseAndReportsEmptyHits() async throws {
