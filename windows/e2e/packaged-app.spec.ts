@@ -150,13 +150,13 @@ async function withPackagedApp(
 
   try {
     const page = await application.firstWindow();
-    await application.evaluate(({ BrowserWindow }) => {
+    await application.evaluate(({ BrowserWindow }, viewport) => {
       const window = BrowserWindow.getAllWindows()[0];
       if (!window) throw new Error("WeiBei did not create a BrowserWindow");
-      window.setContentSize(EVIDENCE_VIEWPORT.width, EVIDENCE_VIEWPORT.height);
+      window.setContentSize(viewport.width, viewport.height);
       window.show();
       window.focus();
-    });
+    }, EVIDENCE_VIEWPORT);
     await page.setViewportSize(EVIDENCE_VIEWPORT);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.addStyleTag({ content: [
