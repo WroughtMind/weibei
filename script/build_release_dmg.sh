@@ -159,7 +159,7 @@ fi
 "$ROOT_DIR/script/build_and_run.sh" check
 mkdir -p "$RELEASE_DIR"
 "$ROOT_DIR/script/build_and_run.sh" package
-(cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$BASE_APP")
+(cd "$ROOT_DIR" && swift run --disable-keychain --disable-netrc WeiBeiDev verify-release-metadata --require-clean "$BASE_APP")
 
 rm -rf "$RELEASE_APP"
 /usr/bin/ditto --norsrc --noextattr "$BASE_APP" "$RELEASE_APP"
@@ -196,8 +196,8 @@ fi
 /usr/bin/codesign --verify --strict --verbose=2 "$PDF_HELPER"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$SPARKLE_FRAMEWORK"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$RELEASE_APP"
-(cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$RELEASE_APP")
-(cd "$ROOT_DIR" && swift run WeiBeiDev verify-production-hygiene "$RELEASE_APP")
+(cd "$ROOT_DIR" && swift run --disable-keychain --disable-netrc WeiBeiDev verify-release-metadata --require-clean "$RELEASE_APP")
+(cd "$ROOT_DIR" && swift run --disable-keychain --disable-netrc WeiBeiDev verify-production-hygiene "$RELEASE_APP")
 
 npx tsx "$ROOT_DIR/script/dmg/build_dmg.ts" "$ROOT_DIR" "$RELEASE_APP" "$DMG_PATH" "$APP_VERSION"
 

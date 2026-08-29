@@ -142,10 +142,10 @@ if [[ "$CHECK_ONLY" != true ]]; then
   fi
 fi
 
-swift build -c "$BUILD_CONFIGURATION"
+swift build --disable-keychain --disable-netrc -c "$BUILD_CONFIGURATION"
 
 if [[ "$CHECK_ONLY" != true ]]; then
-  BUILD_DIR="$(swift build -c "$BUILD_CONFIGURATION" --show-bin-path)"
+  BUILD_DIR="$(swift build --disable-keychain --disable-netrc -c "$BUILD_CONFIGURATION" --show-bin-path)"
   BUILD_BINARY="$BUILD_DIR/$PRODUCT_NAME"
   RESOURCE_BUNDLES=(
     "$BUILD_DIR/${PRODUCT_NAME}_${PRODUCT_NAME}.bundle"
@@ -354,8 +354,8 @@ PLIST
       echo "package failed: strict-audit copy changed the final app binary UUID" >&2
       exit 18
     fi
-    (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata "$FINAL_APP_BUNDLE")
-    (cd "$ROOT_DIR" && swift run WeiBeiDev verify-production-hygiene "$FINAL_APP_BUNDLE")
+    (cd "$ROOT_DIR" && swift run --disable-keychain --disable-netrc WeiBeiDev verify-release-metadata "$FINAL_APP_BUNDLE")
+    (cd "$ROOT_DIR" && swift run --disable-keychain --disable-netrc WeiBeiDev verify-production-hygiene "$FINAL_APP_BUNDLE")
   fi
 fi
 
@@ -369,10 +369,10 @@ open_app() {
 }
 
 run_verifiers() {
-  swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
-  swift test -c "$BUILD_CONFIGURATION" --filter WeiBeiSafetyTests
-  swift run -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
-  swift run -c "$BUILD_CONFIGURATION" WeiBeiNativeCheck --authentication-status
+  swift run --disable-keychain --disable-netrc -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
+  swift test --disable-keychain --disable-netrc -c "$BUILD_CONFIGURATION" --filter WeiBeiSafetyTests
+  swift run --disable-keychain --disable-netrc -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
+  swift run --disable-keychain --disable-netrc -c "$BUILD_CONFIGURATION" WeiBeiNativeCheck --authentication-status
 }
 
 case "$MODE" in
