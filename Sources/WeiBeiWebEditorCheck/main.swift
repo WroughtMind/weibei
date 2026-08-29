@@ -2402,6 +2402,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private func validateSlashCodeBlockTypingStability() {
         let script = """
         (() => {
+          window.WeiBeiEditor.setDocumentID('list-tab'); window.WeiBeiEditor.setMarkdown('* 甲\\n* 乙'); window.WeiBeiEditor.selectDocumentEndForCheck(); window.WeiBeiEditor.pressKeyForCheck('Tab'); const bulletListTab = window.WeiBeiEditor.getMarkdown();
+          window.WeiBeiEditor.setMarkdown('1. 甲\\n2. 乙'); window.WeiBeiEditor.selectDocumentEndForCheck(); window.WeiBeiEditor.pressKeyForCheck('Tab'); const orderedListTab = window.WeiBeiEditor.getMarkdown();
+          if (!bulletListTab.includes('  * 乙') || !orderedListTab.includes('   1. 乙')) throw new Error('list Tab indentation diverged: ' + JSON.stringify({ bulletListTab, orderedListTab }));
           window.WeiBeiEditor.setDocumentID('slash-code-typing'); window.WeiBeiEditor.setMarkdown('/code'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('code');
           const pre = document.querySelector('.ProseMirror pre'); const input = pre?.querySelector('.weibei-code-language-input'); const code = pre?.querySelector('code'); const initialHeight = pre?.getBoundingClientRect().height;
           if (!pre || !input || !code || input.parentElement !== pre || code.contains(input) || getComputedStyle(code).tabSize !== '4') throw new Error('code NodeView shell or tab size is invalid');

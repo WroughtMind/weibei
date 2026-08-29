@@ -22,7 +22,7 @@ import { closeHistory, redo, undo } from '@milkdown/kit/prose/history';
 import { nodeRule } from '@milkdown/kit/prose';
 import { Fragment } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
-import { liftListItem } from '@milkdown/kit/prose/schema-list';
+import { liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
 import { addColumn, addColumnAfter, addRow, addRowAfter, columnResizing, deleteColumn, deleteRow, deleteTable, goToNextCell, isInTable, selectedRect, TableMap } from '@milkdown/kit/prose/tables';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $inputRule, $prose } from '@milkdown/kit/utils';
@@ -2543,14 +2543,20 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       compositionEndPending = false;
       const { $from } = view.state.selection;
       compositionTextblockFrom = $from.parent.isTextblock && $from.parent.content.size === 0 ? $from.before($from.depth) : null;
+      reportSelection();
     };
     const handleCompositionEnd = () => {
       compositionEndPending = true;
       setTimeout(publishCompletedCompositionMarkdown);
     };
-    /** Handles literal code-block keys before WebKit's native text substitution runs. */
-    const handleCodeBlockKeyDown = (event: any) => {
-      if (event.target !== view.dom || !view.hasFocus() || (!insertCodeBlockTab(view, event) && !insertLiteralCodeBlockCharacter(view, event))) return;
+    /** Handles keys that must run before WebKit or lower-priority editor keymaps. */
+    const handleEditorKeyDown = (event: any) => {
+      if (event.target !== view.dom || !view.hasFocus()) return;
+      const handled = insertCodeBlockTab(view, event)
+        || insertLiteralCodeBlockCharacter(view, event)
+        || (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && !event.isComposing && event.keyCode !== 229
+          && sinkListItem(view.state.schema.nodes.list_item)(view.state, view.dispatch, view));
+      if (!handled) return;
       event.preventDefault();
       event.stopImmediatePropagation();
     };
@@ -2571,7 +2577,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     if (WEIBEI_EDITOR_RUNTIME) {
       view.dom.addEventListener('compositionstart', handleCompositionStart, true);
       view.dom.addEventListener('compositionend', handleCompositionEnd, true);
-      view.dom.addEventListener('keydown', handleCodeBlockKeyDown, true);
+      view.dom.addEventListener('keydown', handleEditorKeyDown, true);
       view.dom.addEventListener('beforeinput', handleBeforeInput, true);
       tableToolbarElement.addEventListener('mousedown', keepTableSelection);
       tableToolbarElement.addEventListener('click', handleTableToolbarClick);
@@ -2598,7 +2604,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         if (WEIBEI_EDITOR_RUNTIME) {
           view.dom.removeEventListener('compositionstart', handleCompositionStart, true);
           view.dom.removeEventListener('compositionend', handleCompositionEnd, true);
-          view.dom.removeEventListener('keydown', handleCodeBlockKeyDown, true);
+          view.dom.removeEventListener('keydown', handleEditorKeyDown, true);
           view.dom.removeEventListener('beforeinput', handleBeforeInput, true);
           tableToolbarElement.removeEventListener('mousedown', keepTableSelection);
           tableToolbarElement.removeEventListener('click', handleTableToolbarClick);
@@ -2784,7 +2790,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
 
 const reportSelection = () => {
   if (window.weiBeiSuppressSelectionReport) return;
-  const text = selectedText();
+  const text = compositionStartMarkdown === null ? selectedText() : '';
   const rect = text ? rectFromSelection() : null;
   const details = text && editor ? editor.action((ctx) => {
     const { state } = ctx.get(editorViewCtx);
@@ -2983,6 +2989,7 @@ const publishCompletedCompositionMarkdown = () => {
   normalizeCompletedEmptyTextblockComposition();
   compositionEndPending = false;
   compositionStartMarkdown = null;
+  reportSelection();
   scheduleContentHeightReports();
   reportActiveHeading();
 };
