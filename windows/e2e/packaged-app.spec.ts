@@ -81,7 +81,7 @@ test.describe("packaged WeiBei Windows UI", () => {
         void dialog.accept("E2E visual course");
       });
       await page.locator(".empty-actions .entry-button").nth(1).click();
-      expect(promptType).toBe("prompt");
+      await expect.poll(() => promptType).toBe("prompt");
 
       const workspace = page.locator(".three-pane-workspace");
       await expect(workspace).toBeVisible();
