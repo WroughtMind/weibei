@@ -56,7 +56,7 @@ const api: WeiBeiDesktopAPI = {
   },
 };
 
-contextBridge.exposeInMainWorld("weibei", Object.freeze(api));
+contextBridge.exposeInMainWorld("weiBei", Object.freeze(api));
 
 function nullableSnapshot(value: unknown) {
   return value === null ? null : AppSnapshotSchema.parse(value);
