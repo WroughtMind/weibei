@@ -163,15 +163,7 @@ struct WeiBeiApp: App {
                 .keyboardShortcut(",", modifiers: .command)
             }
 
-            CommandMenu(store.appDisplayName) {
-                Button(store.ui("打开课程空间", "Open Course Space")) { store.presentCourseWorkspace(.hub) }
-                    .keyboardShortcut("0")
-
-                Divider()
-
-                Button(store.ui("打开资料", "Open Material")) { store.importFilesFromPanel() }
-                    .keyboardShortcut("o")
-
+            CommandGroup(replacing: .newItem) {
                 Button(store.ui("新建空白笔记", "New Blank Note")) { animateLayout { store.promptCreateBlankNotebookNote() } }
                     .keyboardShortcut("n")
                 if store.hasSelectedMaterial {
@@ -182,23 +174,30 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button(store.ui("聚焦课程目录", "Focus Course Index")) { animateLayout { store.focus(.library) } }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .focusLibrary))
-                Button(store.ui("聚焦阅读", "Focus Reader")) { animateLayout { store.focus(.reader) } }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .focusReader))
-                Button(store.ui("聚焦笔记", "Focus Notes")) { animateLayout { store.focus(.notes) } }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .focusNotes))
-                Button(store.ui("聚焦对话", "Focus Chat")) { animateLayout { store.focus(.agent) } }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .focusChat))
+                Button(store.ui("打开课程空间", "Open Course Space")) { store.presentCourseWorkspace(.hub) }
+                    .keyboardShortcut("0")
+                Button(store.ui("打开资料", "Open Material")) { store.importFilesFromPanel() }
+                    .keyboardShortcut("o")
+            }
 
-                Divider()
+            CommandGroup(after: .sidebar) {
+                Menu(store.ui("聚焦区域", "Focus Area")) {
+                    Button(store.ui("课程目录", "Course Index")) { animateLayout { store.focus(.library) } }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .focusLibrary))
+                    Button(store.ui("阅读", "Reader")) { animateLayout { store.focus(.reader) } }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .focusReader))
+                    Button(store.ui("笔记", "Notes")) { animateLayout { store.focus(.notes) } }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .focusNotes))
+                    Button(store.ui("对话", "Chat")) { animateLayout { store.focus(.agent) } }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .focusChat))
+                }
 
-                Button(store.ui("上一份资料", "Previous Material")) { animateLayout { store.selectAdjacentItem(step: -1) } }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .previousMaterial))
-                Button(store.ui("下一份资料", "Next Material")) { animateLayout { store.selectAdjacentItem(step: 1) } }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .nextMaterial))
-
-                Divider()
+                Menu(store.ui("切换资料", "Switch Material")) {
+                    Button(store.ui("上一份资料", "Previous Material")) { animateLayout { store.selectAdjacentItem(step: -1) } }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .previousMaterial))
+                    Button(store.ui("下一份资料", "Next Material")) { animateLayout { store.selectAdjacentItem(step: 1) } }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .nextMaterial))
+                }
 
                 Button(store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index")) {
                     store.toggleLibrary()
@@ -213,74 +212,61 @@ struct WeiBeiApp: App {
                     .weiBeiKeyboardShortcut(store.executableChord(for: .toggleRightPane))
                 }
 
-                Divider()
+                Menu(store.ui("工作区布局", "Workspace Layout")) {
+                    Button(store.ui("三栏工作台", "Three-Pane Workspace")) { setLayout(.documentAgentNotes) }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .threePaneWorkspace))
+                    if store.layout.isDocumentThreePane {
+                        Button(store.ui("交换笔记与对话", "Swap Notes and Chat")) {
+                            animateLayout {
+                                store.swapThreePaneSecondaryPanes()
+                            }
+                        }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .swapThreePaneSecondaryPanes))
+                    }
+                    Button(WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage)) { setLayout(.immersiveReading) }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .immersiveReading))
+                    Button(WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage)) { setLayout(.immersiveConversation) }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .immersiveChat))
+                    Button(WorkspaceLayout.immersiveWriting.label(language: store.interfaceLanguage)) { setLayout(.immersiveWriting) }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .immersiveWriting))
+                }
 
-                Button(store.ui("三栏工作台", "Three-Pane Workspace")) { setLayout(.documentAgentNotes) }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .threePaneWorkspace))
-                if store.layout.isDocumentThreePane {
-                    Button(store.ui("交换笔记与对话", "Swap Notes and Chat")) {
-                        animateLayout {
-                            store.swapThreePaneSecondaryPanes()
+                Menu(store.ui("外观与文字", "Appearance and Text")) {
+                    Button(store.appearanceMode.actionLabel(language: store.interfaceLanguage)) {
+                        animateAppearance {
+                            store.toggleAppearanceMode()
                         }
                     }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .swapThreePaneSecondaryPanes))
-                }
-                Button(WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage)) { setLayout(.immersiveReading) }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .immersiveReading))
-                Button(WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage)) { setLayout(.immersiveConversation) }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .immersiveChat))
-                Button(WorkspaceLayout.immersiveWriting.label(language: store.interfaceLanguage)) { setLayout(.immersiveWriting) }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .immersiveWriting))
-
-                Divider()
-
-                Button(store.appearanceMode.actionLabel(language: store.interfaceLanguage)) {
-                    animateAppearance {
-                        store.toggleAppearanceMode()
-                    }
-                }
                     .weiBeiKeyboardShortcut(store.executableChord(for: .toggleAppearance))
 
-                Button(store.ui("放大文字", "Zoom Text In")) {
-                    if let larger = store.interfaceTextScale.nextLarger {
-                        store.setInterfaceTextScale(larger)
+                    Button(store.ui("放大文字", "Zoom Text In")) {
+                        if let larger = store.interfaceTextScale.nextLarger {
+                            store.setInterfaceTextScale(larger)
+                        }
                     }
-                }
                     .keyboardShortcut("+", modifiers: .command)
                     .disabled(store.interfaceTextScale.nextLarger == nil)
-                Button(store.ui("缩小文字", "Zoom Text Out")) {
-                    if let smaller = store.interfaceTextScale.nextSmaller {
-                        store.setInterfaceTextScale(smaller)
+                    Button(store.ui("缩小文字", "Zoom Text Out")) {
+                        if let smaller = store.interfaceTextScale.nextSmaller {
+                            store.setInterfaceTextScale(smaller)
+                        }
                     }
-                }
                     .keyboardShortcut("-", modifiers: .command)
                     .disabled(store.interfaceTextScale.nextSmaller == nil)
-                Button(store.ui("重置文字大小", "Reset Text Size")) {
-                    store.setInterfaceTextScale(.standard)
-                }
+                    Button(store.ui("重置文字大小", "Reset Text Size")) {
+                        store.setInterfaceTextScale(.standard)
+                    }
                     .keyboardShortcut("0", modifiers: [.command, .option])
                     .disabled(store.interfaceTextScale == .standard)
-
-                Divider()
-
-                if store.canUseSelectionAgentSurface {
-                    Button(AgentSurface.selectionFloat.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.selectionFloat) }
-                        .weiBeiKeyboardShortcut(store.executableChord(for: .selectionPrompt))
                 }
-                Button(AgentSurface.hidden.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.hidden) }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .hideChatOverlay))
 
-                if store.canApplyAgentAnswer {
-                    Divider()
-
-                    Button(store.ui("写入回答到笔记", "Write Answer to Note")) { animatePanel { store.applyLastAgentAnswerToNote() } }
-                        .weiBeiKeyboardShortcut(store.executableChord(for: .applyAgentAnswerToNote))
-                    if store.canReplaceNoteSelection {
-                        Button(store.ui("替换笔记选区", "Replace Note Selection")) { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
-                            .weiBeiKeyboardShortcut(store.executableChord(for: .replaceNoteSelection))
+                Menu(store.ui("对话显示", "Chat Display")) {
+                    if store.canUseSelectionAgentSurface {
+                        Button(AgentSurface.selectionFloat.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.selectionFloat) }
+                            .weiBeiKeyboardShortcut(store.executableChord(for: .selectionPrompt))
                     }
-                    Button(store.ui("追加整理建议", "Append Organization Suggestion")) { animatePanel { store.applyAgentPatchToEditor() } }
-                        .weiBeiKeyboardShortcut(store.executableChord(for: .applyAgentPatchToEditor))
+                    Button(AgentSurface.hidden.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.hidden) }
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .hideChatOverlay))
                 }
 
                 Divider()
@@ -289,26 +275,44 @@ struct WeiBeiApp: App {
                     store.commandPalettePresented.toggle()
                 }
                     .weiBeiKeyboardShortcut(store.executableChord(for: .commandPalette))
+            }
 
-                Divider()
-
-                if store.canCopyReference {
-                    Button(store.copyReferenceActionTitle) { store.copyCurrentReference() }
-                        .weiBeiKeyboardShortcut(store.executableChord(for: .copyCurrentReference))
-                }
-                if store.hasSelectedMaterial {
-                    Button(store.ui("打开资料内搜索", "Search in Material")) {
-                        animatePanel {
-                            store.revealReaderSearch()
+            CommandGroup(after: .pasteboard) {
+                if store.canApplyAgentAnswer
+                    || store.canCopyReference
+                    || store.hasSelectedMaterial
+                    || store.isAgentRunningInActiveChat
+                    || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Menu(store.ui("处理当前内容", "Current Content")) {
+                        if store.canApplyAgentAnswer {
+                            Button(store.ui("写入回答到笔记", "Write Answer to Note")) { animatePanel { store.applyLastAgentAnswerToNote() } }
+                                .weiBeiKeyboardShortcut(store.executableChord(for: .applyAgentAnswerToNote))
+                            if store.canReplaceNoteSelection {
+                                Button(store.ui("替换笔记选区", "Replace Note Selection")) { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
+                                    .weiBeiKeyboardShortcut(store.executableChord(for: .replaceNoteSelection))
+                            }
+                            Button(store.ui("追加整理建议", "Append Organization Suggestion")) { animatePanel { store.applyAgentPatchToEditor() } }
+                                .weiBeiKeyboardShortcut(store.executableChord(for: .applyAgentPatchToEditor))
+                        }
+                        if store.canCopyReference {
+                            Button(store.copyReferenceActionTitle) { store.copyCurrentReference() }
+                                .weiBeiKeyboardShortcut(store.executableChord(for: .copyCurrentReference))
+                        }
+                        if store.hasSelectedMaterial {
+                            Button(store.ui("打开资料内搜索", "Search in Material")) {
+                                animatePanel {
+                                    store.revealReaderSearch()
+                                }
+                            }
+                            .weiBeiKeyboardShortcut(store.executableChord(for: .searchInMaterial))
+                        }
+                        if store.isAgentRunningInActiveChat || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button(store.sendAgentActionTitle) {
+                                store.submitAgentDraft()
+                            }
+                            .weiBeiKeyboardShortcut(store.executableChord(for: .submitAgentDraft))
                         }
                     }
-                    .weiBeiKeyboardShortcut(store.executableChord(for: .searchInMaterial))
-                }
-                if store.isAgentRunningInActiveChat || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button(store.sendAgentActionTitle) {
-                        store.submitAgentDraft()
-                    }
-                        .weiBeiKeyboardShortcut(store.executableChord(for: .submitAgentDraft))
                 }
             }
         }
