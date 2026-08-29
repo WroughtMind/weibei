@@ -26,6 +26,12 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
+const e2eProfileRoot = process.env.WEIBEI_E2E_PROFILE_ROOT?.trim();
+if (e2eProfileRoot) {
+  app.setPath("appData", path.join(e2eProfileRoot, "AppData", "Roaming"));
+  app.setPath("userData", path.join(e2eProfileRoot, "UserData"));
+}
+
 if (!app.requestSingleInstanceLock()) app.quit();
 
 let mainWindow: BrowserWindow | null = null;
