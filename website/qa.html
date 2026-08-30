@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN" data-title-zh="Q&amp;A · 魏碑" data-title-en="Q&amp;A · WeiBei">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Q&amp;A · 魏碑</title>
+  <link rel="stylesheet" href="style.css?v=20260830-global-nav">
+  <link rel="stylesheet" href="detail.css?v=20260830-feedback-github">
+</head>
+<body class="detail-page">
+  <nav class="topbar detail-topbar" aria-label="主导航" data-en-label="Main navigation">
+    <a class="brand" href="index.html#scene-1" aria-label="回到首页" data-en-label="Back home"><img src="assets/魏碑标记.png" alt=""><span>WeiBei</span><i aria-hidden="true"></i></a>
+    <div class="top-actions">
+      <a class="github-link" href="https://github.com/WroughtMind/weibei" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .7A12 12 0 0 0 8.21 24c.6.11.82-.26.82-.58v-2.23c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.2.08 1.83 1.23 1.83 1.23 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.34-5.47-5.93 0-1.31.47-2.38 1.23-3.22-.12-.3-.53-1.52.12-3.17 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.3-1.55 3.3-1.23 3.3-1.23.65 1.65.24 2.87.12 3.17.76.84 1.23 1.91 1.23 3.22 0 4.6-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .7Z"/></svg></a>
+      <div class="release-nav" aria-label="第四幕入口" data-en-label="More links"><a href="qa.html">Q&amp;A</a><a href="labs.html">Labs</a><a href="index.html#scene-4" data-en="Contact">联系方式</a><a href="feedback.html" data-en="Feedback">反馈</a></div>
+      <button class="language-toggle" type="button" data-language-toggle aria-label="Switch to English"><span>中</span><i aria-hidden="true"></i><span>EN</span></button>
+      <a class="nav-download" href="index.html#scene-4" data-en="Download">下载</a>
+    </div>
+  </nav>
+  <main class="detail-shell">
+    <h1 class="detail-heading" data-en="Frequently asked questions">常见问题</h1>
+    <p class="detail-lead" data-en="A few honest answers about reading, AI, privacy, installation, and the versions currently available.">关于阅读、模型、隐私、安装和当前版本，这里尽量说得具体一点。</p>
+    <section class="faq-list" aria-label="魏碑常见问题" data-en-label="WeiBei frequently asked questions">
+      <details open><summary data-en="What is WeiBei for?">魏碑是做什么的？</summary><p data-en="WeiBei is a Mac app for reading and taking notes. You can keep a document, a conversation about it, and your notes in the same window. It is mainly for times when you want to read carefully, ask about a particular passage, and still find the original source later.">魏碑是一个用来读资料、问问题和记笔记的 Mac 应用。文稿、围绕文稿的对话和笔记可以放在同一个窗口里。它比较适合需要认真读一段内容、针对原文追问，并且以后还想找回出处的时候。</p></details>
+      <details><summary data-en="What kinds of files can it read?">可以读哪些资料？</summary><p data-en="It currently supports PDF, HTML, Markdown, and plain text. Scanned PDF pages can be recognized on the Mac, although recognition may take longer and may contain mistakes. Very large files may only be partly indexed, and WeiBei will say so instead of presenting an incomplete search as complete.">目前支持 PDF、HTML、Markdown 和纯文本。扫描版 PDF 可以在本机识别文字，但速度会慢一些，识别结果也可能有错。遇到特别大的文件，魏碑可能只完成部分索引，这种情况会直接标出来，不会把不完整的搜索结果说成完整。</p></details>
+      <details><summary data-en="Do I have to use AI?">一定要接入 AI 才能用吗？</summary><p data-en="No. Importing materials, reading, searching, and writing notes work without a model. AI is only needed when you want to ask questions, summarize a passage, or prepare a note from a conversation.">不用。导入资料、阅读、全文搜索和写笔记都不需要模型。只有提问、总结一段内容，或者请模型根据对话整理笔记时，才需要接入模型。</p></details>
+      <details><summary data-en="Which AI services can I use?">可以使用哪些模型？</summary><p data-en="You choose the service yourself. WeiBei can connect to several common online providers, an OpenAI-compatible service, or a local llama.cpp model. Online services may require an API key or a supported subscription and may charge separately. WeiBei does not require a separate WeiBei account.">模型由你自己选择。魏碑可以连接常见的在线模型服务、兼容 OpenAI 接口的服务，也可以使用本机的 llama.cpp 模型。在线服务可能需要 API Key 或相应订阅，费用由服务商收取。魏碑本身不要求注册一个新的魏碑账号。</p></details>
+      <details><summary data-en="Will my materials be uploaded?">我的资料会被上传吗？</summary><p data-en="Your courses, notes, and search index are stored on your Mac. When you ask an online model a question, the text needed for that question is sent to the provider you selected. If you use a local model, that step can stay on the Mac as well. WeiBei cannot replace the privacy policy of an outside model provider, so it is still worth checking the provider you choose.">课程、笔记和搜索索引保存在你的 Mac 上。向在线模型提问时，回答这个问题所需的文字会发送给你选择的服务商；如果使用本地模型，这一步也可以留在本机。魏碑无法替第三方模型服务承诺隐私政策，接入前仍然需要看一眼所选服务商的规则。</p></details>
+      <details><summary data-en="Can AI change my notes by itself?">AI 会自己修改我的笔记吗？</summary><p data-en="No. It can prepare a suggested note, but you decide whether to accept it. Ordinary reading and note editing remain available even when no model is connected.">不会。模型可以整理一份建议，但是否写进笔记由你确认。没有接入模型时，正常阅读和手写笔记也不受影响。</p></details>
+      <details><summary data-en="Can answers take me back to the source?">回答能回到原文吗？</summary><p data-en="When a question is based on imported material, WeiBei tries to show references with the answer. Clicking a reference returns to the corresponding page or section. A model can still make mistakes, so important conclusions should be checked against the quoted source.">围绕已导入资料提问时，魏碑会尽量在回答里附上引用，点击后回到对应页码或小节。模型仍然可能理解错，重要结论最好回到引用的原文再确认一次。</p></details>
+      <details><summary data-en="Which computers are supported now?">现在支持哪些电脑？</summary><p data-en="This repository and its public downloads currently support macOS 14 or later only, with packaged builds for Apple silicon Macs.">本仓库及公开下载目前仅支持 macOS 14 或更高版本，安装包面向 Apple 芯片 Mac。</p></details>
+      <details><summary data-en="How do I install it on a Mac?">在 Mac 上怎么安装？</summary><p data-en="Download the DMG, open it, and drag WeiBei into Applications. Current community builds may require one confirmation in System Settings under Privacy & Security the first time they open. Do not disable macOS security checks globally.">下载 DMG 后双击打开，把魏碑拖进“应用程序”即可。当前社区构建首次打开时，可能需要到“系统设置”的“隐私与安全性”里确认一次。无需也不建议关闭整个系统的安全检查。</p></details>
+      <details><summary data-en="Is WeiBei finished and stable?">现在适合长期使用吗？</summary><p data-en="WeiBei is still being developed. The main reading, search, conversation, and note flows are already in place, but bugs and changes should still be expected. Please keep a normal backup of important materials and notes, and report anything that does not behave as expected.">魏碑仍在持续开发。阅读、搜索、对话和笔记这些主要流程已经可以使用，但仍然可能遇到错误，也会继续调整。重要资料和笔记请像平时一样做好备份，碰到不对的地方可以从反馈页告诉我们。</p></details>
+      <details><summary data-en="Is WeiBei open source?">魏碑是开源的吗？</summary><p data-en="The application code is available on GitHub under the MIT License. The WeiBei name, logo, screenshots, and other brand materials are not included in that license. If you want to modify or redistribute the app, please read the licensing notes in the repository first.">应用代码在 GitHub 上公开，使用 MIT 许可证。魏碑的名称、标志、截图和其他品牌素材不包含在这个许可证里。如果准备修改或重新分发应用，请先阅读仓库里的许可说明。</p></details>
+      <details><summary data-en="Where should I report a problem or suggestion?">遇到问题或有建议，发到哪里？</summary><p data-en="Use the Feedback page on this site. It will prepare the title and details, then take you to the matching GitHub form. You can review everything before submitting, and nothing is posted automatically.">可以使用官网的“反馈”页面。填好后，页面会带着标题和内容前往对应的 GitHub 表单，你可以在提交前再检查一遍，不会自动替你发布。</p></details>
+    </section>
+  </main>
+  <script src="detail.js?v=20260830-feedback-github"></script>
+</body>
+</html>

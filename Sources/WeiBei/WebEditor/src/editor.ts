@@ -22,8 +22,8 @@ import { closeHistory, redo, undo } from '@milkdown/kit/prose/history';
 import { nodeRule } from '@milkdown/kit/prose';
 import { Fragment } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
-import { liftListItem } from '@milkdown/kit/prose/schema-list';
-import { addColumnAfter, addRowAfter, columnResizing, deleteColumn, deleteRow, goToNextCell, isInTable, selectedRect } from '@milkdown/kit/prose/tables';
+import { liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
+import { addColumn, addColumnAfter, addRow, addRowAfter, columnResizing, deleteColumn, deleteRow, deleteTable, goToNextCell, isInTable, selectedRect, TableMap } from '@milkdown/kit/prose/tables';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $inputRule, $prose } from '@milkdown/kit/utils';
 import {
@@ -224,7 +224,7 @@ const editorLabels = {
     slashNoResults: '没有匹配命令', slashStructure: '结构', slashLists: '列表', slashContent: '内容', slashRichContent: '丰富内容', slashFonts: '字体',
     slashHeading1: '一级标题', slashHeading2: '二级标题', slashHeading3: '三级标题', slashHeading4: '四级标题', slashHeading5: '五级标题', slashHeading6: '六级标题', slashBulletList: '无序列表', slashOrderedList: '有序列表', slashTaskList: '待办列表', slashQuote: '引用', slashCallout: '提示块', slashCode: '代码块', slashDivider: '分隔线', slashTable: '表格', slashImage: '图片', slashMermaid: 'Mermaid 图表', slashLink: '链接', slashWikiLink: '笔记链接', slashFootnote: '脚注', slashInlineMath: '行内公式', slashBlockMath: '块级公式',
     slashFontSystem: '字体：SF Pro / PingFang SC', slashFontSerif: '字体：Songti SC', slashFontLiterary: '字体：WeiBeiStele',
-    slashRows: '行', slashColumns: '列', slashInsertTable: '插入表格', slashImageFailed: '图片读取或保存失败', tableAddRow: '＋行', tableDeleteRow: '−行', tableAddColumn: '＋列', tableDeleteColumn: '−列', tableHeader: '表头', linkPlaceholder: '链接文字', wikiLinkPlaceholder: '笔记标题', footnotePlaceholder: '脚注内容', codeLanguage: '代码语言', codeLanguagePlaceholder: 'text',
+    slashRows: '行', slashColumns: '列', slashInsertTable: '插入表格', slashImageFailed: '图片读取或保存失败', tableAddRow: '＋行', tableDeleteRow: '−行', tableAddColumn: '＋列', tableDeleteColumn: '−列', tableDelete: '删除表格', linkPlaceholder: '链接文字', wikiLinkPlaceholder: '笔记标题', footnotePlaceholder: '脚注内容', codeLanguage: '代码语言', codeLanguagePlaceholder: 'text',
   },
   en: {
     properties: 'Properties',
@@ -241,7 +241,7 @@ const editorLabels = {
     slashNoResults: 'No matching commands', slashStructure: 'Structure', slashLists: 'Lists', slashContent: 'Content', slashRichContent: 'Rich content', slashFonts: 'Fonts',
     slashHeading1: 'Heading 1', slashHeading2: 'Heading 2', slashHeading3: 'Heading 3', slashHeading4: 'Heading 4', slashHeading5: 'Heading 5', slashHeading6: 'Heading 6', slashBulletList: 'Bulleted list', slashOrderedList: 'Numbered list', slashTaskList: 'To-do list', slashQuote: 'Quote', slashCallout: 'Callout', slashCode: 'Code block', slashDivider: 'Divider', slashTable: 'Table', slashImage: 'Image', slashMermaid: 'Mermaid diagram', slashLink: 'Link', slashWikiLink: 'Note link', slashFootnote: 'Footnote', slashInlineMath: 'Inline formula', slashBlockMath: 'Block formula',
     slashFontSystem: 'Font: SF Pro / PingFang SC', slashFontSerif: 'Font: Songti SC', slashFontLiterary: 'Font: WeiBeiStele',
-    slashRows: 'Rows', slashColumns: 'Columns', slashInsertTable: 'Insert table', slashImageFailed: 'Image could not be read or saved', tableAddRow: '+ Row', tableDeleteRow: '− Row', tableAddColumn: '+ Column', tableDeleteColumn: '− Column', tableHeader: 'Header', linkPlaceholder: 'Link text', wikiLinkPlaceholder: 'Note title', footnotePlaceholder: 'Footnote', codeLanguage: 'Code language', codeLanguagePlaceholder: 'text',
+    slashRows: 'Rows', slashColumns: 'Columns', slashInsertTable: 'Insert table', slashImageFailed: 'Image could not be read or saved', tableAddRow: '+ Row', tableDeleteRow: '− Row', tableAddColumn: '+ Column', tableDeleteColumn: '− Column', tableDelete: 'Delete table', linkPlaceholder: 'Link text', wikiLinkPlaceholder: 'Note title', footnotePlaceholder: 'Footnote', codeLanguage: 'Code language', codeLanguagePlaceholder: 'text',
   },
 };
 const editorLabel = (key: any, values: any = {}) => {
@@ -412,7 +412,7 @@ if (WEIBEI_EDITOR_RUNTIME) {
   tableToolbarElement.dataset.state = 'closed';
   tableToolbarElement.setAttribute('aria-hidden', 'true');
   tableToolbarElement.setAttribute('role', 'toolbar');
-  for (const [action, label] of [['addRow', 'tableAddRow'], ['deleteRow', 'tableDeleteRow'], ['addColumn', 'tableAddColumn'], ['deleteColumn', 'tableDeleteColumn'], ['header', 'tableHeader']]) {
+  for (const [action, label] of [['addRow', 'tableAddRow'], ['deleteRow', 'tableDeleteRow'], ['addColumn', 'tableAddColumn'], ['deleteColumn', 'tableDeleteColumn'], ['deleteTable', 'tableDelete']]) {
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.action = action;
@@ -1922,7 +1922,7 @@ const createMathNodeView = (initialNode: any, view: any, getPos: any) => {
       return;
     }
     if (!editing) return;
-    if (keyEvent.key === 'Escape' || (keyEvent.key === 'Enter' && (!isBlock || keyEvent.metaKey))) {
+    if (keyEvent.key === 'Escape' || (keyEvent.key === 'Enter' && (!isBlock || keyEvent.metaKey || keyEvent.ctrlKey))) {
       event.preventDefault();
       commit();
     }
@@ -2436,15 +2436,7 @@ const runTableToolbarAction = (view: any, action: string) => {
   if (action === 'deleteRow') return deleteRow(view.state, view.dispatch);
   if (action === 'addColumn') return addColumnAfter(view.state, view.dispatch);
   if (action === 'deleteColumn') return deleteColumn(view.state, view.dispatch);
-  if (action === 'header') {
-    const { $from } = view.state.selection;
-    for (let depth = $from.depth; depth > 0; depth -= 1) {
-      if ($from.node(depth).type.name !== 'table') continue;
-      const position = Math.min($from.before(depth) + 4, view.state.doc.content.size);
-      view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(position), 1)).scrollIntoView());
-      return true;
-    }
-  }
+  if (action === 'deleteTable') return deleteTable(view.state, view.dispatch);
   return false;
 };
 
@@ -2551,14 +2543,20 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       compositionEndPending = false;
       const { $from } = view.state.selection;
       compositionTextblockFrom = $from.parent.isTextblock && $from.parent.content.size === 0 ? $from.before($from.depth) : null;
+      reportSelection();
     };
     const handleCompositionEnd = () => {
       compositionEndPending = true;
       setTimeout(publishCompletedCompositionMarkdown);
     };
-    /** Handles literal code-block keys before WebKit's native text substitution runs. */
-    const handleCodeBlockKeyDown = (event: any) => {
-      if (event.target !== view.dom || !view.hasFocus() || (!insertCodeBlockTab(view, event) && !insertLiteralCodeBlockCharacter(view, event))) return;
+    /** Handles keys that must run before WebKit or lower-priority editor keymaps. */
+    const handleEditorKeyDown = (event: any) => {
+      if (event.target !== view.dom || !view.hasFocus()) return;
+      const handled = insertCodeBlockTab(view, event)
+        || insertLiteralCodeBlockCharacter(view, event)
+        || (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && !event.isComposing && event.keyCode !== 229
+          && sinkListItem(view.state.schema.nodes.list_item)(view.state, view.dispatch, view));
+      if (!handled) return;
       event.preventDefault();
       event.stopImmediatePropagation();
     };
@@ -2579,7 +2577,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     if (WEIBEI_EDITOR_RUNTIME) {
       view.dom.addEventListener('compositionstart', handleCompositionStart, true);
       view.dom.addEventListener('compositionend', handleCompositionEnd, true);
-      view.dom.addEventListener('keydown', handleCodeBlockKeyDown, true);
+      view.dom.addEventListener('keydown', handleEditorKeyDown, true);
       view.dom.addEventListener('beforeinput', handleBeforeInput, true);
       tableToolbarElement.addEventListener('mousedown', keepTableSelection);
       tableToolbarElement.addEventListener('click', handleTableToolbarClick);
@@ -2606,7 +2604,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         if (WEIBEI_EDITOR_RUNTIME) {
           view.dom.removeEventListener('compositionstart', handleCompositionStart, true);
           view.dom.removeEventListener('compositionend', handleCompositionEnd, true);
-          view.dom.removeEventListener('keydown', handleCodeBlockKeyDown, true);
+          view.dom.removeEventListener('keydown', handleEditorKeyDown, true);
           view.dom.removeEventListener('beforeinput', handleBeforeInput, true);
           tableToolbarElement.removeEventListener('mousedown', keepTableSelection);
           tableToolbarElement.removeEventListener('click', handleTableToolbarClick);
@@ -2633,6 +2631,15 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       }
       if (pasteTargetIsCode(view)) return false;
       const text = event.clipboardData?.getData('text/plain') || '';
+      const tsv = parseTSV(text);
+      if (tsv) {
+        event.preventDefault();
+        if (!pasteTSVIntoTable(view, tsv)) {
+          view.dispatch(closeHistory(view.state.tr));
+          replaceSelectionInternal(tsvToMarkdown(tsv));
+        }
+        return true;
+      }
       const normalized = normalizeMarkdownSource(text, 'userPaste');
       if (!text || (normalized === text && !looksLikeMarkdownSyntax(normalized))) return false;
       event.preventDefault();
@@ -2783,7 +2790,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
 
 const reportSelection = () => {
   if (window.weiBeiSuppressSelectionReport) return;
-  const text = selectedText();
+  const text = compositionStartMarkdown === null ? selectedText() : '';
   const rect = text ? rectFromSelection() : null;
   const details = text && editor ? editor.action((ctx) => {
     const { state } = ctx.get(editorViewCtx);
@@ -2982,6 +2989,7 @@ const publishCompletedCompositionMarkdown = () => {
   normalizeCompletedEmptyTextblockComposition();
   compositionEndPending = false;
   compositionStartMarkdown = null;
+  reportSelection();
   scheduleContentHeightReports();
   reportActiveHeading();
 };
@@ -3226,7 +3234,10 @@ const loadMarkdownInternal = (markdown: any, revision = 0, dirty = false) => {
 const getMarkdownInternal = () => {
   ensureEditor();
   addEditorMetric(checkMetrics, 'fullSerializations');
-  return withFrontmatter(editor.action(readMarkdown()));
+  const markdown = editor.action(readMarkdown()).replace(/^\s*\|.*\|\s*$/gm, (line) => (
+    line.replace(/(?<=\|)[ \t]*<br\s*\/?>[ \t]*(?=\|)/gi, ' ')
+  ));
+  return withFrontmatter(markdown);
 };
 
 const pasteTargetIsCode = (view: any) => {
@@ -3235,6 +3246,54 @@ const pasteTargetIsCode = (view: any) => {
   if (selection.$from.parent.type.spec.code) return true;
   const marks = selection.$from.marks() || [];
   return marks.some((mark: any) => String(mark?.type?.name || '').toLowerCase().includes('code'));
+};
+
+const parseTSV = (text: string) => {
+  if (!text.includes('\t')) return null;
+  return text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n').map((row) => row.split('\t'));
+};
+
+const tsvToMarkdown = (rows: string[][]) => {
+  const width = Math.max(...rows.map((row) => row.length));
+  const line = (row: string[]) => `| ${Array.from({ length: width }, (_, index) => String(row[index] || '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|')).join(' | ')} |`;
+  return [line(rows[0]), line(Array.from({ length: width }, () => '---')), ...rows.slice(1).map(line)].join('\n');
+};
+
+const pasteTSVIntoTable = (view: any, rows: string[][]) => {
+  if (!isInTable(view.state)) return false;
+  const start = selectedRect(view.state);
+  const tablePosition = start.tableStart - 1;
+  const targetRows = start.top + rows.length;
+  const targetColumns = start.left + Math.max(...rows.map((row) => row.length));
+  const transaction = view.state.tr;
+  let rect = start;
+  const refresh = () => {
+    const table = transaction.doc.nodeAt(tablePosition);
+    if (!table) return false;
+    rect = { ...rect, table, map: TableMap.get(table) };
+    return true;
+  };
+  while (rect.map.width < targetColumns) {
+    addColumn(transaction, rect, rect.map.width);
+    if (!refresh()) return false;
+  }
+  while (rect.map.height < targetRows) {
+    addRow(transaction, rect, rect.map.height);
+    if (!refresh()) return false;
+  }
+  const cells = rows.flatMap((row, rowIndex) => row.map((value, columnIndex) => {
+    const position = rect.tableStart + rect.map.positionAt(start.top + rowIndex, start.left + columnIndex, rect.table);
+    return { cell: transaction.doc.nodeAt(position), position, value };
+  })).filter(({ cell }) => Boolean(cell)).sort((left, right) => right.position - left.position);
+  const paragraph = view.state.schema.nodes.paragraph;
+  if (!paragraph || cells.length !== rows.reduce((count, row) => count + row.length, 0)) return false;
+  for (const { cell, position, value } of cells) {
+    transaction.replaceWith(position + 1, position + cell.nodeSize - 1, paragraph.create(null, value ? view.state.schema.text(value) : null));
+  }
+  const firstPosition = rect.tableStart + rect.map.positionAt(start.top, start.left, rect.table);
+  transaction.setSelection(Selection.near(transaction.doc.resolve(firstPosition + 1), 1));
+  view.dispatch(closeHistory(transaction).scrollIntoView());
+  return true;
 };
 
 const replaceSelectionInternal = (markdown: any) => {
