@@ -94,7 +94,7 @@ WeiBei is named after the stele inscription style, and it leans into that: paper
 
 ## ▍Current limits
 
-- macOS 14 or later; packaged builds target Apple silicon. Windows and web versions are future work.
+- This repository and its public downloads currently support macOS 14 or later only; packaged builds target Apple silicon.
 - Course files and indexes are fully local. Reading and note-taking need no network — only AI responses do.
 - Learning memory is written automatically, with a light end-of-answer notice; formal notes and relationship changes still need your confirmation.
 - Large or difficult source files may be reported as partially indexed — honestly, never passed off as complete.

@@ -50,7 +50,7 @@ jobs:
 
           release="$(
             gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
-              jq -s 'add | map(select(.draft == false and .prerelease == false) | select(any(.assets[]?; (.name | ascii_downcase | test("\\.(dmg|exe|msi)$"))))) | .[0] // empty'
+              jq -s 'add | map(select(.draft == false and .prerelease == false) | select(any(.assets[]?; (.name | ascii_downcase | test("\\.dmg$"))))) | .[0] // empty'
           )"
 
           if [ -z "$release" ] || [ "$release" = "null" ]; then
@@ -60,7 +60,7 @@ jobs:
 
           tag="$(jq -r '.tag_name' <<<"$release")"
           published_at="$(jq -r '.published_at // ""' <<<"$release")"
-          assets="$(jq '[.assets[] | select(.name | ascii_downcase | test("\\.(dmg|exe|msi)$")) | {name,download_url:.browser_download_url,size}]' <<<"$release")"
+          assets="$(jq '[.assets[] | select(.name | ascii_downcase | test("\\.dmg$")) | {name,download_url:.browser_download_url,size}]' <<<"$release")"
           if [ "$(jq 'length' <<<"$assets")" -eq 0 ]; then
             echo '{"available":false}' > _site/release.json
             exit 0

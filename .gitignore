@@ -1,9 +1,5 @@
 .build/
 dist/
-windows/dist/
-windows/release/
-windows/playwright-report/
-windows/test-results/
 node_modules/
 .DS_Store
 /.codex/environments/
