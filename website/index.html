@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#eee1ca">
   <title>魏碑 · 把读、问、写放回同一张桌面</title>
   <link rel="preload" as="image" href="assets/第一幕-真实首页截图-去黑边.png">
-  <link rel="stylesheet" href="style.css?v=20260830-global-nav">
+  <link rel="stylesheet" href="style.css?v=20260830-download-selector-2">
 </head>
 <body>
   <nav class="topbar" aria-label="主导航" data-en-label="Main navigation">
@@ -137,16 +137,18 @@
         <div class="download-act">
           <img class="mascot mascot-four" src="assets/Webi-第四幕-下载.apng" alt="Webi 拉下下载箭头的循环动画">
           <div class="download-control" data-download-control>
-            <a class="primary-download is-disabled" data-download-link aria-disabled="true">
+            <a class="primary-download" href="https://github.com/WroughtMind/weibei/releases" data-download-link>
               <span class="download-title" data-download-title>下载 WeiBei</span>
-              <small data-download-label>正在识别版本</small>
             </a>
-            <button class="download-versions" type="button" data-download-toggle aria-haspopup="menu" aria-expanded="false" aria-label="选择下载版本"><span aria-hidden="true">⌄</span></button>
+            <button class="download-versions" type="button" data-download-toggle aria-haspopup="menu" aria-expanded="false" aria-label="选择下载版本">
+              <span data-download-caption>版本</span>
+              <strong data-download-label>Apple 芯片</strong>
+              <i aria-hidden="true">⌄</i>
+            </button>
             <div class="download-menu" data-download-menu role="menu" hidden>
-              <button type="button" role="menuitem" data-download-target="mac-universal"><span>macOS · 通用版</span><small>暂未提供</small></button>
-              <button type="button" role="menuitem" data-download-target="mac-arm64"><span>macOS · Apple 芯片</span><small>暂未提供</small></button>
-              <button type="button" role="menuitem" data-download-target="mac-intel"><span>macOS · Intel</span><small>暂未提供</small></button>
-              <button type="button" role="menuitem" data-download-target="windows-x64"><span>Windows · x64</span><small>暂未提供</small></button>
+              <button type="button" role="menuitem" data-download-target="mac-arm64"><span>macOS · Apple 芯片</span></button>
+              <button type="button" role="menuitem" data-download-target="mac-intel"><span>macOS · Intel 芯片</span></button>
+              <button type="button" role="menuitem" data-download-target="windows-x64"><span>Windows · x64</span></button>
             </div>
           </div>
         </div>
@@ -197,6 +199,6 @@
     </section>
   </main>
 
-  <script type="module" src="app.js?v=20260830-download-selector"></script>
+  <script type="module" src="app.js?v=20260830-download-selector-2"></script>
 </body>
 </html>

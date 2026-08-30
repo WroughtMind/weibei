@@ -225,7 +225,7 @@ html[data-theme] .mascot-three { opacity: 0; transform: translate(-50%, -50%) sc
 .release-destination:hover > img, .release-destination:focus-visible > img { filter: drop-shadow(0 13px 10px rgba(37,29,22,.16)); transform: translateY(-10px); }
 .release-qa { left: 12%; top: 13%; }
 .release-labs { right: 12%; top: 13%; }
-.release-contact { left: 10%; bottom: 21%; pointer-events: none; }
+.release-contact { left: 10%; bottom: 17.5%; pointer-events: none; }
 .release-feedback { right: 11%; bottom: 16%; }
 .release-contact > img { position: absolute; left: 10%; top: -36%; width: 62%; height: 64%; opacity: .12; filter: grayscale(1) drop-shadow(0 5px 5px rgba(37,29,22,.08)); }
 .contact-list { position: absolute; left: 48%; top: 34%; transform: translateX(-50%); }
@@ -271,25 +271,27 @@ html[data-scene="3"][data-theme="mist-slate"] .scene-rail button.is-active::befo
 .mascot-two { left: 24vw; bottom: -1vh; width: 230px; height: 230px; }
 
 html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linear-gradient(180deg, #eedfcb 0%, #ebdbc7 100%) fixed; }
-.download-act { position: absolute; z-index: 6; left: 51.1%; bottom: -2%; width: 38%; height: 54%; pointer-events: none; transform: translateX(-50%); }
+.download-act { position: absolute; z-index: 6; left: 50%; bottom: -2%; width: 38%; height: 54%; pointer-events: none; transform: translateX(-50%); }
 .download-act .mascot-four { position: absolute; z-index: 2; left: 50%; top: -4%; width: 88%; height: 88%; transform: translateX(-50%); }
 .download-control { position: absolute; z-index: 3; left: 50%; bottom: 4%; width: 330px; height: 92px; color: #2e2924; background: url("assets/第四幕-下载纸签-v4.png") center / contain no-repeat; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); pointer-events: auto; transform: translateX(-50%); transition: filter .24s ease, transform .24s ease; }
 .download-control:hover { filter: drop-shadow(0 8px 10px rgba(54,40,25,.18)) saturate(1.07); transform: translateX(-50%) translateY(1px) scale(1.015); }
 .download-control:active { transform: translateX(-50%) translateY(2px) scale(.99); }
-.primary-download { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 0 78px 0 42px; color: inherit; font-family: "Songti SC", "STSong", serif; white-space: nowrap; cursor: pointer; transform: translateY(-6px); }
+.primary-download { position: absolute; inset: 0; display: grid; place-items: center; padding: 0; color: inherit; font-family: "Songti SC", "STSong", serif; white-space: nowrap; cursor: pointer; transform: translateY(-13px); }
 .download-title { font-size: 17px; font-weight: 600; letter-spacing: .045em; }
-.primary-download small { font: 10px/1.2 "Songti SC", "STSong", serif; letter-spacing: .02em; opacity: .72; }
-.primary-download.is-disabled { color: #756b5f; cursor: not-allowed; }
-.download-versions { position: absolute; z-index: 2; right: 42px; top: 27px; width: 34px; height: 38px; border: 0; border-left: 1px solid rgba(64,50,37,.2); color: #3b332b; background: transparent; font: 21px/1 Georgia, serif; cursor: pointer; transition: color .18s ease, transform .18s ease; }
-.download-versions:hover { color: var(--vermilion); }
-.download-versions[aria-expanded="true"] { transform: rotate(180deg); }
-.download-menu { position: absolute; z-index: 8; left: 50%; bottom: 84px; width: 272px; padding: 7px; border: 1px solid rgba(74,58,42,.16); border-radius: 3px; background: rgba(246,236,217,.97); box-shadow: 0 15px 30px rgba(54,40,25,.2); backdrop-filter: blur(12px); transform: translateX(-50%); }
+.download-versions { position: absolute; z-index: 4; left: 50%; top: 50%; display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 142px; height: 21px; padding: 0 6px 1px; border: 0; border-bottom: 1px solid rgba(64,50,37,.24); color: #4c433a; background: transparent; font: 10px/1 "Songti SC", "STSong", serif; cursor: pointer; transform: translate(-50%, -2px); transition: color .18s ease, border-color .18s ease; }
+.download-versions span { color: #8a7b6b; }
+.download-versions strong { font-weight: 600; }
+.download-versions i { font: 14px/1 Georgia, serif; transition: transform .18s ease; }
+.download-versions:hover { border-color: var(--vermilion); color: var(--vermilion); }
+.download-versions:focus-visible { outline: 0; border-color: var(--vermilion); }
+.download-versions[aria-expanded="true"] i { transform: rotate(180deg); }
+.download-menu { position: absolute; z-index: 8; left: 50%; bottom: 80px; width: 224px; padding: 6px 10px; border: 0; background: rgba(246,236,217,.98); box-shadow: 0 14px 28px rgba(54,40,25,.2), inset 0 0 0 1px rgba(74,58,42,.1); backdrop-filter: blur(12px); transform: translateX(-50%); }
 .download-menu[hidden] { display: none; }
-.download-menu button { display: grid; grid-template-columns: 1fr auto; align-items: center; width: 100%; min-height: 38px; padding: 7px 10px; border: 0; color: #302a24; background: transparent; text-align: left; cursor: pointer; }
+.download-menu button { display: grid; grid-template-columns: 8px 1fr; align-items: center; gap: 7px; width: 100%; min-height: 38px; padding: 7px 8px; border: 0; color: #302a24; background: transparent; text-align: left; cursor: pointer; }
+.download-menu button::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--vermilion); opacity: 0; }
 .download-menu button + button { border-top: 1px solid rgba(74,58,42,.1); }
-.download-menu button:hover:not(:disabled), .download-menu button.is-selected { background: rgba(185,48,31,.07); }
-.download-menu button:disabled { color: #8b8175; cursor: not-allowed; }
-.download-menu small { font: 10px/1.2 "Songti SC", "STSong", serif; letter-spacing: 0; opacity: .7; }
+.download-menu button:hover, .download-menu button.is-selected { background: rgba(185,48,31,.07); }
+.download-menu button.is-selected::before { opacity: 1; }
 
 @supports (animation-timeline: scroll()) {
   .hero-tagline { animation: hero-tagline-journey 1s linear both; animation-timeline: scroll(root block); }
@@ -410,7 +412,7 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   .release-title { font-size: 15px; }
   .release-qa { left: 5%; top: 6%; }
   .release-labs { right: 5%; top: 6%; }
-  .release-contact { left: 5%; bottom: 23%; }
+  .release-contact { left: 5%; bottom: 20%; }
   .release-contact > img { display: block; left: 4%; top: -35%; width: 58%; height: 60%; }
   .contact-list { left: 52%; top: 30%; }
   .contact-list em { width: 72px; height: 72px; }
@@ -418,10 +420,10 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   .download-act { bottom: -1%; width: 52%; height: 31%; }
   .download-act .mascot-four { top: -17%; width: 110%; height: 110%; }
   .download-control { bottom: 0; width: 230px; height: 64px; }
-  .primary-download { gap: 1px; padding: 0 56px 0 28px; }
+  .primary-download { padding: 0; transform: translateY(-10px); }
   .download-title { font-size: 12px; }
-  .primary-download small { font-size: 8px; }
-  .download-versions { right: 29px; top: 18px; width: 27px; height: 28px; font-size: 17px; }
+  .download-versions { top: 50%; min-width: 112px; height: 17px; font-size: 8px; transform: translate(-50%, -2px); }
+  .download-versions i { font-size: 11px; }
   .download-menu { bottom: 57px; width: min(252px, 82vw); }
 }
 

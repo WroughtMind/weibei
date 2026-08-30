@@ -15,12 +15,14 @@ test('安装包按系统与芯片匹配', () => {
   assert.equal(chooseDownloadId(matched, preferredDownloadIds({ platform: 'Windows', architecture: 'x86' })), 'windows-x64');
 });
 
-test('芯片未知时优先通用版', () => {
-  const matched = matchDownloadAssets([{ name: 'WeiBei-1.0.0-macOS-universal.dmg' }]);
-  assert.equal(chooseDownloadId(matched, preferredDownloadIds({ platform: 'MacIntel' })), 'mac-universal');
+test('通用安装包在后台同时匹配两类 Mac', () => {
+  const universal = { name: 'WeiBei-1.0.0-macOS-universal.dmg' };
+  const matched = matchDownloadAssets([universal]);
+  assert.equal(matched['mac-arm64'], universal);
+  assert.equal(matched['mac-intel'], universal);
 });
 
-test('芯片未知且没有通用版时不猜测', () => {
+test('芯片未知时优先当前主力 Apple 芯片版', () => {
   const matched = matchDownloadAssets(assets);
-  assert.equal(chooseDownloadId(matched, preferredDownloadIds({ platform: 'MacIntel' })), 'mac-universal');
+  assert.equal(chooseDownloadId(matched, preferredDownloadIds({ platform: 'MacIntel' })), 'mac-arm64');
 });
