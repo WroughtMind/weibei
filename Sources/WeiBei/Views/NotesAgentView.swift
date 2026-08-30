@@ -2826,8 +2826,7 @@ private struct AgentBubble: View {
             // 完成后才拆出明确的交互块。
             if hasVisualBlocks, !isStreaming {
                 visualizedMessageFlow(
-                    fallbackText: citationParse.displayText,
-                    visibleText: answerText
+                    fallbackText: citationParse.displayText
                 )
             } else {
                 // One native surface owns the answer from first token through completion.
@@ -2995,10 +2994,9 @@ private struct AgentBubble: View {
 
     @ViewBuilder
     private func visualizedMessageFlow(
-        fallbackText: String,
-        visibleText: String
+        fallbackText: String
     ) -> some View {
-        let contentBlocks = visibleContentBlocks(visibleText: visibleText)
+        let contentBlocks = message.contentBlocks
         let hasTextBlock = contentBlocks.contains {
             if case let .text(text) = $0 {
                 return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -3036,19 +3034,6 @@ private struct AgentBubble: View {
                 UnavailableAgentContentBlockView(type: type, rawJSON: rawJSON)
                     .padding(.vertical, 4)
             }
-        }
-    }
-
-    private func visibleContentBlocks(
-        visibleText: String
-    ) -> [AgentMessageContentBlock] {
-        guard isStreaming else { return message.contentBlocks }
-        var remaining = visibleText.count
-        return message.contentBlocks.map { block in
-            guard case let .text(text) = block else { return block }
-            let visibleCount = min(remaining, text.count)
-            remaining -= visibleCount
-            return .text(String(text.prefix(visibleCount)))
         }
     }
 
