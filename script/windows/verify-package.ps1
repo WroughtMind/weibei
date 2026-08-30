@@ -123,8 +123,11 @@ try {
     $previousRunAsNode = $env:ELECTRON_RUN_AS_NODE
     try {
         $env:ELECTRON_RUN_AS_NODE = "1"
-        & $ElectronExecutable $probePath $ModuleRoot
-        Assert-Condition ($LASTEXITCODE -eq 0) "packaged better-sqlite3 could not load in Electron or FTS5 was unavailable"
+        $process = Start-Process -FilePath $ElectronExecutable -ArgumentList @(
+            "`"$probePath`"",
+            "`"$ModuleRoot`""
+        ) -Wait -PassThru
+        Assert-Condition ($process.ExitCode -eq 0) "packaged better-sqlite3 could not load in Electron or FTS5 was unavailable"
     }
     finally {
         if ($null -eq $previousRunAsNode) {
