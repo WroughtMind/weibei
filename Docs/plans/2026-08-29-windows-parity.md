@@ -1,29 +1,38 @@
-# 魏碑 Windows 等价版本实施方案
+# 魏碑 Windows 核心版本实施与合并边界
 
-> 状态：Windows 实现已落地，本地构建通过；候选包与真实 Windows 截图待 CI  
+> 状态：Windows 核心实现已落地；既有 PR 合并引用的 Windows CI 已全绿，5 张打包后截图已人工审阅。本轮合并不等于完整功能或精确像素等价验收
 > 分支：`codex/windows-parity-v2`  
-> 基线：`main@5cdcdd4ee2627506356d424dbcc26d16a7ec8571`
+> 历史实施基线：`main@5cdcdd4ee2627506356d424dbcc26d16a7ec8571`
 
 ## 目标
 
-Windows 版不是宣传页复刻，也不是只把三栏画出来。完成标准是用户从导入课程开始，能够走完与 macOS 版相同的核心闭环：
+Windows 版不是宣传页复刻，也不是只把三栏画出来。最终产品目标是用户从导入课程开始，能够走完与 macOS 版相同的核心闭环：
 
 ```text
 打开资料 → 选中 → 提问 → 查看证据 → 回到原文 → 确认写入笔记
 ```
 
-视觉、交互、数据语义、安全边界、快捷键和安装更新都进入同一份等价性验收。平台本身不同的地方采用 Windows 原生约定，但不能改变产品角色、信息层级和用户数据含义。
+这是最终等价目标，不是本次合并的完成声明。本次只以范围中已实现的 Windows 核心底座为合并边界，并以当前提交的 CI 复验为合并条件。
 
-## 当前实现
+## 本次可合并范围
 
-- Electron Windows 壳、八套主题、资料库 / 课程空间、三栏重排与显隐、设置和全局课程搜索；
+- Electron Windows 壳、八套主题、资料库 / 课程空间、三栏重排与显隐、设置和当前课程全文搜索；
 - PDF.js 阅读、文本层选区、页码、缩放、连续 / 单页模式和文内搜索；HTML 安全渲染，Markdown / 笔记复用同一份 canonical Milkdown 运行时；
 - Swift portable course / workspace / session JSON 兼容，课程文件外部变更自动刷新，SQLite FTS5 搜索独立进程；
-- Agent 流式网络独立进程、停止与崩溃恢复、真实课程检索上下文、来源回跳和会话持久化；
+- Agent 流式网络独立进程、停止、崩溃隔离与部分回答持久化、课程 FTS 有界上下文、来源条目打开和会话持久化；
 - Windows DPAPI 凭据、唯一笔记写闸、覆盖前备份、草稿恢复、外部修改冲突选择；
 - NSIS 与 Portable x64 打包、安装 / 卸载脚本，以及 3 条真实打包后 Electron 冒烟路径。
 
-仍不提前宣称视觉验收完成：当前 Linux 工作区不能启动真实 Windows 窗口，1240 × 760 打包后截图和安装包结果以 `windows-2025` CI 为准，PR 在此之前保持 Draft。
+既有 `windows-2025` CI 已在打包后完成 3 条 Playwright 场景、NSIS 安装 / 同版覆盖 / 卸载和 Portable 运行检查；5 张 1240 × 760 截图已人工审阅，未发现 P0 渲染缺陷。该证据只证明那一次 CI 合并引用的打包后核心 UI 可用，不是最终精确像素等价或真实用户验收。具体视觉证据与限制见仓库根目录 `design-qa.md`。
+
+## 本次不宣称完成
+
+- 精确像素等价尚未完成；当前截图没有与参考图同时呈现活跃文档、有来源的 Agent 回答和活跃笔记。
+- Agent → 笔记的提案、用户确认和安全写入闭环尚未完成。
+- Chat 当前只显示纯文本回答；富 Markdown / 公式 / 图表、工具调用、失败重试和 action UI 尚未完成。来源只能打开命中的课程条目，尚无页 / 节级精确定位。
+- 完整的出处关系台、学习记忆管理、自动更新与 OAuth provider 目录尚未完成。
+- 扫描 PDF 的 OCR 尚未实现；无文本层时只能如实显示未建立文本。
+- CI 中的 NSIS / Portable 产物是短期验收候选，不是经正式签名、发布授权与最终验收的 release。
 
 ## 架构决定
 
@@ -32,13 +41,13 @@ Windows 客户端采用固定 Chromium 运行时的 Electron 壳层，界面和�
 选择这条路线的原因：
 
 1. SwiftUI、AppKit、PDFKit、WKWebView、Vision、Security 与 Sparkle 没有可直接编译到 Windows 的等价实现，原应用不能通过条件编译得到 Windows 产品。
-2. 固定 Chromium 比依赖用户系统 WebView2 版本更容易控制逐像素渲染；现有 Milkdown、KaTeX、Mermaid、Prism 和流式 Markdown 运行时可以直接复用。
+2. 固定 Chromium 比依赖用户系统 WebView2 版本更容易控制渲染；现有 Milkdown、KaTeX、Mermaid 和 Prism 已用于文稿与笔记的 canonical 运行时，Chat 尚未接入这套富文本渲染。
 3. Electron 主进程可以把文件、凭据、SQLite、网络和窗口能力收在隔离边界内；渲染进程继续保持无 Node 权限、上下文隔离和沙箱。
-4. Windows 11 使用 Mica / Acrylic 背景材料，较旧系统使用同 token 的不透明回退；两者共享内容表面、字体和布局。
+4. 当前玻璃主题使用 CSS token 与 `backdrop-filter` 模拟透明层次；系统 Mica / Acrylic 尚未接入，实色主题不依赖系统背景材料。
 
 这不是把产品改成网页。Electron 只负责可重复渲染和桌面承载；课程文件、索引、会话、凭据和写盘仍是本地桌面能力。
 
-## 等价性边界
+## 最终等价目标（非本次完成声明）
 
 ### 必须相同
 
@@ -58,7 +67,7 @@ Windows 客户端采用固定 Chromium 运行时的 Electron 壳层，界面和�
 - SF Symbols 不跨 Apple 平台分发，Windows 版使用自有同语义线性 SVG，保持 1.5 px 笔画与 24 / 28 px 控件光学尺寸；
 - PingFang / Songti 不作为 Windows 依赖，随包携带 OFL 授权的 CJK Sans / Serif，并继续携带 `WeiBeiStele` 品牌字体；
 - Windows 11 使用系统背景材料；Windows 10 和关闭透明效果时回退为完全匹配 token 的实色表面；
-- Keychain 对应 Windows DPAPI（由 Electron `safeStorage` 封装）；Sparkle 对应签名后的 Windows 更新通道；
+- Keychain 对应 Windows DPAPI（由 Electron `safeStorage` 封装）；签名后的 Windows 更新通道是后续目标，本次不提供；
 - 扫描 PDF 在没有文本层时明确保持“未建立文本”的事实，不把空结果伪装成已完成 OCR。
 
 ## 进程与信任边界
@@ -66,43 +75,53 @@ Windows 客户端采用固定 Chromium 运行时的 Electron 壳层，界面和�
 ```text
 Sandboxed Renderer
   ├─ Workspace UI
-  ├─ Milkdown / KaTeX / Mermaid
+  ├─ Canonical document / note runtime
+  │    └─ Milkdown / KaTeX / Mermaid / Prism
   └─ PDF.js / safe document renderer
            │ typed IPC only
            ▼
 Electron Main
   ├─ capability roots + atomic write coordinator
   ├─ DPAPI credential vault
-  ├─ dialogs / window / updater
+  ├─ dialogs / window
+  ├─ file watcher + document extraction
   ├─ Agent utility process
-  │    └─ provider streaming + tools + ledger
-  └─ Index / document utility process
-       ├─ SQLite FTS5 + file watcher
-       ├─ PDF text extraction
-       └─ bounded OCR sidecar
+  │    └─ provider streaming + ledger
+  └─ Search-index utility process
+       └─ SQLite FTS5
 ```
 
-渲染进程不开启 `nodeIntegration`；启用 `contextIsolation` 和 Chromium sandbox。所有 IPC 都按命令逐项暴露并校验参数，不把 `ipcRenderer`、任意路径读写或任意网络请求直接交给页面。重索引、文档提取和 Agent 网络循环不占 Electron 主线程；OCR 使用随包可重复的中文识别 sidecar，系统 OCR 只作可选加速。导入 HTML、网页和模型返回内容一律当数据处理。
+渲染进程不开启 `nodeIntegration`；启用 `contextIsolation` 和 Chromium sandbox。所有 IPC 都按命令逐项暴露并校验参数，不把 `ipcRenderer`、任意路径读写或任意网络请求直接交给页面。SQLite FTS 与 Agent 网络循环在独立进程中；文件监听、索引协调和 PDF / 文本文档提取当前仍在 Electron Main，大型文档提取是后续需要移出的性能边界。导入 HTML、网页和模型返回内容一律当数据处理。
 
-## 实施顺序
+## 后续实施顺序
+
+下列是从当前核心版本到最终等价目标的路线，不表示每一项已在本 PR 完成。
 
 1. 建立 Windows 壳层、token、字体、顶栏、课程抽屉、可重排 pane 与响应式布局；
 2. 建立兼容课程目录和 `course-state.json` 的文件层、原子写闸、备份环和文件观察；
 3. 接入 PDF.js、HTML / Markdown / 文本阅读与统一选区锚点；
-4. 复用现有 Milkdown 编辑器协议，补齐图片、公式、Mermaid、斜杠命令、撤销和恢复；
-5. 移植供应商流式协议、会话外置存储、范围快照、引用验证、停止 / 重试；
-6. 补齐课程首页、关系台、记录、设置、全局搜索、命令面板和更新；
+4. 复用现有 Milkdown 编辑器协议，继续补齐尚缺的编辑能力；
+5. 在已有供应商流式协议、会话外置存储、引用回跳与停止基础上，补齐重试和 Agent → 笔记确认写入；
+6. 补齐课程首页、关系台、记忆管理、命令面板、OAuth provider 目录、OCR 和签名更新通道；
 7. 在 Windows CI 生成 NSIS 与 portable 候选包，运行单元、Playwright、截图、安装 / 卸载和冷启动冒烟；
 8. 用当前 macOS 真实窗口证据逐场景对拍，保留已确认的平台差异，其余差异归零。
 
-## 验证门槛
+## 本次合并门槛
 
 - `npm` 锁文件可重复安装，TypeScript、单元测试和现有编辑器测试通过；
-- Windows x64 候选包在干净 runner 上安装、冷启动、导入、重启恢复和卸载通过；
 - 只保留关键自动检查：编辑器协议、课程 / 会话兼容、搜索、Agent 流式、凭据和笔记防丢；
-- 打包后 Electron 冒烟覆盖启动、空态、课程抽屉、三栏工作台、设置与八套主题；
-- 1240 × 760 Windows 截图与现有参考图同状态对照，不建立无意义的跨系统字体像素矩阵；
+- 当前提交对应的 Windows CI 重新构建 NSIS / Portable，并通过安装、同版覆盖、卸载、Portable 可见窗口和打包后 Electron 冒烟；
+- 打包后 3 条 Electron 冒烟只覆盖启动空态与课程抽屉、创建空课程后的三栏工作台、设置与八套主题；
 - PR 明确区分代码实现、本地通过、Windows CI 通过、候选包、真实 App 验收，未经过的阶段不提前宣称完成。
+
+当前已有证据只覆盖既有 CI 合并引用：编译、定向测试、打包后 3 条 Playwright 场景、NSIS 安装 / 同版覆盖 / 卸载、Portable 以及 5 张截图人工审阅。任何后续代码变更都需以自己对应的检查结果为准，不得借用这次旧证据宣称通过。
+
+## 最终等价候选门槛（本 PR 尚未满足）
+
+- Windows x64 候选包在干净 runner 上覆盖真实导入、重启恢复和完整学习闭环；
+- 在同一 1240 × 760 状态呈现活跃文档、有依据的 Agent 回答和活跃笔记，再与参考图对照；
+- 补齐富文本 Chat、失败重试、Agent → 笔记确认写入、页 / 节级来源定位、关系与记忆管理后，分别完成对应专项验证；
+- 用户在最终候选包上完成真实 Windows 体验验收。
 
 ## 共享核心文件占用声明
 
@@ -114,4 +133,4 @@ Electron Main
 - `Sources/WeiBei/WebEditor/` 与生成资源：只在跨平台桥接必须修正时做向后兼容改动；
 - `Package.swift`、Swift 主 App 文件和 `VERSION` 默认不改，确需修改时先在 PR 更新占用说明。
 
-整合注意点：上述路径与同时进行的 macOS 功能分支可能重叠；Windows 任务只接受经过审查的最小共享改动，不从旧分支整体合并。释放条件是 Windows 候选包可重复构建、定向检查与 CI 通过，PR 已记录真实窗口冒烟结果和仍保留的平台差异。
+整合注意点：上述路径与同时进行的 macOS 功能分支可能重叠；Windows 任务只接受经过审查的最小共享改动，不从旧分支整体合并。释放条件是合并范围内的 Windows 候选包可重复构建、定向检查与 CI 通过，PR 已记录打包后 Windows 冒烟结果、仍保留的平台差异与未实现能力。
