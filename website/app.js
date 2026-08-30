@@ -63,11 +63,10 @@ function renderDownloadControl() {
   const english = document.documentElement.lang === 'en';
   const target = downloadTargets.find(item => item.id === selectedDownloadId) || downloadTargets[0];
   const asset = matchedDownloads[target.id];
-  const label = target.label[english ? 'en' : 'zh'];
 
   downloadTitle.textContent = english ? 'Download WeiBei' : '下载 WeiBei';
   downloadCaption.textContent = english ? 'Version' : '版本';
-  downloadLabel.textContent = label;
+  downloadLabel.textContent = target.label[english ? 'en' : 'zh'];
   downloadToggle.setAttribute('aria-label', english ? 'Choose download version' : '选择下载版本');
   if (asset?.download_url) {
     downloadLink.href = new URL(asset.download_url, document.baseURI).href;
@@ -171,6 +170,7 @@ themePreviews.forEach(preview => {
     if (!mobileLayout.matches && !activeThemePreview) activateThemePreview(preview);
   });
   preview.addEventListener('focus', () => {
+    if (mobileLayout.matches) return;
     if (!activeThemePreview || activeThemePreview === preview) activateThemePreview(preview);
   });
   preview.addEventListener('pointermove', event => {
@@ -188,8 +188,10 @@ themePreviews.forEach(preview => {
   });
   preview.addEventListener('click', () => {
     if (!mobileLayout.matches) return;
-    document.documentElement.dataset.theme = preview.dataset.theme;
-    activeThemePreview = preview;
+    if (activeThemePreview !== preview) {
+      activateThemePreview(preview);
+      return;
+    }
     preview.dataset.variant = preview.dataset.variant === 'dark' ? 'light' : 'dark';
   });
   preview.addEventListener('keydown', event => {
@@ -215,7 +217,7 @@ const observer = new IntersectionObserver(entries => {
   const activeChapter = chapters.reduce((best, chapter) => ratios.get(chapter) > ratios.get(best) ? chapter : best);
   const activeIndex = chapters.indexOf(activeChapter);
   document.documentElement.dataset.scene = String(activeIndex + 1);
-  if (activeIndex < 2) resetThemePreview();
+  if (activeIndex !== 2) resetThemePreview();
   railButtons.forEach((button, index) => button.classList.toggle('is-active', index === activeIndex));
 }, { threshold: [.25, .5, .75] });
 

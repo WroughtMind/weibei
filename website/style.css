@@ -361,6 +361,9 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
 }
 
 @media (max-width: 760px) {
+  html { scroll-snap-type: y mandatory; }
+  body { overscroll-behavior-y: contain; }
+  body::before { display: none; }
   .topbar { height: 58px; padding: 0 5vw; background: linear-gradient(to bottom, rgba(238,225,202,.98), rgba(238,225,202,.78), transparent); }
   .brand { gap: 7px; transform: none !important; animation: none !important; }
   .brand img { width: 23px; height: 23px; }
@@ -370,19 +373,30 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   .release-nav { position: fixed; top: 58px; left: 0; right: 0; grid-template-columns: 38px 34px 62px 44px; justify-content: center; height: 34px; gap: 12px; font-size: 11px; background: linear-gradient(to bottom, rgba(238,225,202,.9), transparent); }
   .language-toggle { font-size: 9px; }
   .scene { min-height: 100dvh; }
-  .chapter { min-height: 130dvh; }
-  .chapter-four { min-height: 115dvh; }
+  .chapter, .chapter-four { min-height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; }
   .hero-tagline { left: 7vw; top: 22%; width: 86vw; font-size: 18px; text-align: center; white-space: normal; }
   .giant-webi { display: none; }
   .mascot-one { left: 4vw; bottom: 8vh; width: 132px; height: 132px; }
   .mascot-two { left: 2vw; bottom: 4vh; width: 128px; height: 128px; }
 
   .journey-stage { top: 52%; width: 92vw; animation: none !important; transform: translate3d(-50%, -50%, 0) !important; }
-  .journey-layer { opacity: 0 !important; animation: none !important; }
+  .journey-layer {
+    visibility: hidden;
+    opacity: 0 !important;
+    transform: translate3d(0, 8px, 0) scale(.99) !important;
+    animation: none !important;
+    transition: opacity .25s ease-in-out, transform .25s var(--ease-smooth-out), visibility 0s linear .25s;
+    will-change: auto;
+  }
   html[data-scene="1"] .blank-layer,
   html[data-scene="2"] .experience-layer,
   html[data-scene="3"] .themes-layer,
-  html[data-scene="4"] .release-layer { opacity: 1 !important; }
+  html[data-scene="4"] .release-layer {
+    visibility: visible;
+    opacity: 1 !important;
+    transform: translate3d(0, 0, 0) scale(1) !important;
+    transition-delay: 0s;
+  }
   html[data-scene="1"] .journey-stage { top: 54%; transform: translate3d(-50%, -50%, 0) !important; }
   html[data-scene="2"] .journey-stage { top: 48%; transform: translate3d(-50%, -50%, 0) !important; }
   .experience-mode-label { top: -38px; }
@@ -401,6 +415,15 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   .theme-window { width: 94%; height: 84%; }
   .theme-name { left: 10px; bottom: 9px; font-size: 11px; }
   .themes-layer .mascot-three { width: 24%; }
+  html[data-theme] .theme-preview { transition: opacity .15s ease-in-out, transform .35s var(--ease-smooth-out), border-radius .25s ease; }
+  html[data-theme="paper-ink"] .theme-paper,
+  html[data-theme="xuan-stone"] .theme-ink,
+  html[data-theme="clear-glass"] .theme-sand,
+  html[data-theme="mist-slate"] .theme-blue { width: calc((100% - 9px) / 2); height: calc((100% - 9px) / 2); transform: scale(2.02); }
+  html[data-theme="paper-ink"] .theme-paper { left: 3px; top: 3px; transform-origin: top left; }
+  html[data-theme="xuan-stone"] .theme-ink { left: calc(50% + 1.5px); top: 3px; transform-origin: top right; }
+  html[data-theme="clear-glass"] .theme-sand { left: 3px; top: calc(50% + 1.5px); transform-origin: bottom left; }
+  html[data-theme="mist-slate"] .theme-blue { left: calc(50% + 1.5px); top: calc(50% + 1.5px); transform-origin: bottom right; }
   html[data-scene="3"][data-theme] .theme-window { width: 94%; height: 78%; }
 
   html[data-scene="4"] .journey-stage { top: 53%; width: 100vw; height: calc(100dvh - 58px); aspect-ratio: auto; transform: translate3d(-50%, -50%, 0) !important; }
@@ -424,7 +447,7 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   .download-title { font-size: 12px; }
   .download-versions { top: 50%; min-width: 112px; height: 17px; font-size: 8px; transform: translate(-50%, -2px); }
   .download-versions i { font-size: 11px; }
-  .download-menu { bottom: 57px; width: min(252px, 82vw); }
+  .download-menu { bottom: 57px; width: min(214px, 82vw); }
 }
 
 @media (prefers-reduced-motion: reduce) {
