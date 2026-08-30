@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       release: ${{ steps.scope.outputs.release }}
+      windows: ${{ steps.scope.outputs.windows }}
 
     steps:
       - name: 取出完整源码历史
@@ -77,7 +78,7 @@ jobs:
 
       - name: 安装 Node 依赖
         if: (github.event_name == 'pull_request' && (steps.scope.outputs.agent == 'true' || steps.scope.outputs.editor == 'true' || steps.scope.outputs.tools == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: npm ci
+        run: npm ci --workspaces=false
 
       - name: 运行 Node 工具脚本类型检查
         if: (github.event_name == 'pull_request' && steps.scope.outputs.tools == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
@@ -87,6 +88,7 @@ jobs:
         if: (github.event_name == 'pull_request' && steps.scope.outputs.editor == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: |
           npm run typecheck:editor
+          npm run test:editor
           npm run build:editor
           git diff --exit-code -- Sources/WeiBei/Resources/Editor
           swift run WeiBeiWebEditorCheck
@@ -100,6 +102,131 @@ jobs:
           git diff --check
           git diff --exit-code
           test -z "$(git status --porcelain=v1)"
+
+  windows-candidate:
+    name: Windows 编译、冒烟与候选包
+    needs: fast-check
+    if: ${{ needs.fast-check.result == 'success' && (needs.fast-check.outputs.windows == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)) }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      CI: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: 取出完整源码历史
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: 固定 Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: 安装 Windows 与共享依赖
+        run: npm ci --workspace @weibei/windows --include-workspace-root
+
+      - name: 记录 Windows 工具链
+        shell: pwsh
+        run: |
+          node --version
+          npm --version
+          npm exec --workspace @weibei/windows -- electron --version
+
+      - name: 运行共享编辑器检查
+        run: |
+          npm run typecheck:tools
+          npm run typecheck:editor
+          npm run test:editor
+          npm run build:editor
+          git diff --exit-code -- Sources/WeiBei/Resources/Editor
+
+      - name: 运行 Windows 类型与单元检查
+        run: |
+          npm run typecheck:windows
+          npm run test:windows
+
+      - name: 检查 Windows 验证脚本自身
+        shell: pwsh
+        run: |
+          ./script/windows/verify-package.ps1 -SelfCheck
+          ./script/windows/smoke-package.ps1 -SelfCheck
+
+      - name: 构建 Windows 应用与 NSIS / Portable 候选包
+        shell: pwsh
+        run: |
+          npm run rebuild:native --workspace @weibei/windows
+          npm run build:windows
+          npm exec --workspace @weibei/windows -- electron-builder --win nsis portable --x64 --publish never
+
+      - name: 发现可用的打包后 UI 检查
+        id: ui-checks
+        shell: pwsh
+        run: |
+          $package = Get-Content "windows/package.json" -Raw | ConvertFrom-Json
+          $smoke = $package.scripts.PSObject.Properties["test:smoke"]
+          $visual = $package.scripts.PSObject.Properties["test:visual"]
+          $smokeValue = if ($null -ne $smoke) { "true" } else { "false" }
+          $visualValue = if ($null -ne $visual) { "true" } else { "false" }
+          "smoke=$smokeValue" >> $env:GITHUB_OUTPUT
+          "visual=$visualValue" >> $env:GITHUB_OUTPUT
+          if ($null -eq $smoke) { Write-Host "test:smoke 尚未接入；安装包 PowerShell 冒烟仍会运行。" }
+          if ($null -eq $visual) { Write-Host "test:visual 尚未接入；基线建立后 CI 会自动启用。" }
+
+      - name: 运行 Playwright 打包后冒烟
+        if: steps.ui-checks.outputs.smoke == 'true'
+        run: npm run test:smoke --workspace @weibei/windows
+
+      - name: 运行 Playwright 截图回归
+        if: steps.ui-checks.outputs.visual == 'true'
+        run: npm run test:visual --workspace @weibei/windows
+
+      - name: 校验包内容、版本、原生模块与哈希
+        shell: pwsh
+        run: ./script/windows/verify-package.ps1
+
+      - name: 验证 NSIS 安装、同版覆盖、卸载与 Portable
+        shell: pwsh
+        run: ./script/windows/smoke-package.ps1
+
+      - name: 检查空白、生成文件与工作树
+        shell: pwsh
+        run: |
+          git diff --check
+          git diff --exit-code
+          if (git status --porcelain=v1) {
+            git status --short
+            throw "Windows 构建后工作树不干净"
+          }
+
+      - name: 保留 Windows 失败证据
+        if: failure() && !cancelled()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: WeiBei-Windows-${{ github.sha }}-diagnostics
+          path: |
+            windows/test-results/
+            windows/playwright-report/
+            windows/release/*.sha256
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: 保留短期 Windows 候选包
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: WeiBei-Windows-x64-${{ github.sha }}-验收包
+          path: |
+            windows/release/*-Setup.exe
+            windows/release/*-Portable.exe
+            windows/release/*.sha256
+            windows/test-results/**/evidence/*.png
+          retention-days: 1
+          if-no-files-found: error
 
   release-package:
     name: 完整候选构建与安装包追溯
@@ -115,7 +242,7 @@ jobs:
           fetch-depth: 0
 
       - name: 安装 Node 依赖（package 前置）
-        run: npm ci
+        run: npm ci --workspaces=false
 
       - name: 生成可追溯安装包
         run: ./script/build_and_run.sh package
