@@ -100,6 +100,11 @@ export interface VerifiedDirectoryIdentity {
   ino: bigint;
 }
 
+export interface AtomicFileMutationHooks {
+  /** Called after staged bytes are closed but before parent revalidation. */
+  afterStageClosed?: () => void | Promise<void>;
+}
+
 export async function assertVerifiedDirectoryIdentity(
   directory: VerifiedDirectoryIdentity,
 ): Promise<void> {
@@ -264,6 +269,7 @@ export async function atomicReplaceVerified(
   expectedData: string | Uint8Array,
   nextData: string | Uint8Array,
   expectedParent?: VerifiedDirectoryIdentity,
+  hooks?: AtomicFileMutationHooks,
 ): Promise<string> {
   const parent = await prepareMutationParent(path.dirname(targetPath), expectedParent);
   targetPath = path.join(parent, path.basename(targetPath));
@@ -312,6 +318,7 @@ export async function atomicReplaceVerified(
     } finally {
       await handle.close();
     }
+    await hooks?.afterStageClosed?.();
     await confirmMutationParent(expectedParent);
     await assertVerifiedDirectoryIdentity(transactionIdentity);
 
@@ -534,6 +541,7 @@ export async function atomicCreateVerified(
   targetPath: string,
   data: string | Uint8Array,
   expectedParent?: VerifiedDirectoryIdentity,
+  hooks?: AtomicFileMutationHooks,
 ): Promise<string> {
   const parent = await prepareMutationParent(path.dirname(targetPath), expectedParent);
   targetPath = path.join(parent, path.basename(targetPath));
@@ -548,10 +556,9 @@ export async function atomicCreateVerified(
   } finally {
     await handle.close();
   }
-  await confirmMutationParent(expectedParent);
-
   const expected = sha256(typeof data === "string" ? Buffer.from(data) : data);
   try {
+    await hooks?.afterStageClosed?.();
     await confirmMutationParent(expectedParent);
     await placeStagedFileExclusive(temporaryPath, targetPath);
     await confirmMutationParent(expectedParent);

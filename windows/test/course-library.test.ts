@@ -290,6 +290,7 @@ test("bound file mutations never follow a parent replaced after staging", async 
         parentPath: string;
         targetPath: string;
         identity: { absolutePath: string; dev: bigint; ino: bigint };
+        afterStageClosed: () => Promise<void>;
       }) => Promise<unknown>,
     ) => {
       const parentPath = path.join(directory, `${name}-parent`);
@@ -304,29 +305,52 @@ test("bound file mutations never follow a parent replaced after staging", async 
         ino: parentStats.ino,
       };
       const targetPath = path.join(parentPath, "state.json");
-      const swapped = (async () => {
-        await waitForDirectoryEntry(
-          parentPath,
-          (entry) => entry.includes("weibei-"),
-        );
+      let signalStageClosed!: () => void;
+      let releaseMutation!: () => void;
+      const stageClosed = new Promise<void>((resolve) => {
+        signalStageClosed = resolve;
+      });
+      const mutationReleased = new Promise<void>((resolve) => {
+        releaseMutation = resolve;
+      });
+      const afterStageClosed = async () => {
+        signalStageClosed();
+        await mutationReleased;
+      };
+      const pending = operation({ parentPath, targetPath, identity, afterStageClosed });
+      void pending.catch(() => undefined);
+      try {
+        await waitForPromise(stageClosed, "staged file to close");
         await rename(parentPath, movedParentPath);
         await symlink(
           outsidePath,
           parentPath,
           process.platform === "win32" ? "junction" : "dir",
         );
-      })();
-      await Promise.all([
-        assert.rejects(operation({ parentPath, targetPath, identity })),
-        swapped,
-      ]);
+      } finally {
+        releaseMutation();
+        await pending.catch(() => undefined);
+      }
+      await assert.rejects(pending);
       assert.deepEqual(await readdir(outsidePath), []);
     };
 
-    await exerciseSwap("exclusive-create", async ({ targetPath, identity }) =>
-      atomicCreateVerified(targetPath, Buffer.alloc(16 * 1024 * 1024, 0x61), identity));
+    await exerciseSwap(
+      "exclusive-create",
+      async ({ targetPath, identity, afterStageClosed }) =>
+        atomicCreateVerified(
+          targetPath,
+          Buffer.alloc(16 * 1024 * 1024, 0x61),
+          identity,
+          { afterStageClosed },
+        ),
+    );
 
-    await exerciseSwap("conditional-replace", async ({ targetPath, identity }) => {
+    await exerciseSwap("conditional-replace", async ({
+      targetPath,
+      identity,
+      afterStageClosed,
+    }) => {
       const baseline = "external baseline";
       await writeFile(targetPath, baseline, "utf8");
       return atomicReplaceVerified(
@@ -334,6 +358,7 @@ test("bound file mutations never follow a parent replaced after staging", async 
         baseline,
         Buffer.alloc(16 * 1024 * 1024, 0x62),
         identity,
+        { afterStageClosed },
       );
     });
   });
@@ -1941,4 +1966,25 @@ async function waitForDirectoryEntry(
     await new Promise<void>((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`timed out waiting for staged file in ${directory}`);
+}
+
+async function waitForPromise(
+  promise: Promise<void>,
+  description: string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`timed out waiting for ${description}`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
