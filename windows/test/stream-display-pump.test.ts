@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { AgentEvent } from "../src/shared/contracts";
+import { isTerminalAgentEvent } from "../src/renderer/app-state";
 import {
   AgentStreamDisplayPump,
   STREAM_CATCH_UP_BACKLOG_THRESHOLD,
@@ -155,6 +157,42 @@ test("finalize uses replacement when its authoritative body is a rewrite", () =>
   assert.deepEqual(rig.replacements, ["最终答案"]);
   assert.equal(rig.pump.pendingGraphemeCount, 0);
   assert.equal(rig.scheduler.pendingTaskCount, 1);
+});
+
+test("a failed terminal event flushes the authoritative partial tail instead of truncating it", () => {
+  const rig = new PumpRig();
+  const fullText = `${"尚未落屏".repeat(8)}【末尾不可丢】`;
+  rig.pump.enqueue(fullText);
+  rig.scheduler.advanceBy(80);
+  assert.notEqual(rig.displayed, fullText);
+  assert.ok(rig.pump.pendingGraphemeCount > 0);
+
+  const event: AgentEvent = {
+    type: "failed",
+    requestId: "11111111-1111-4111-8111-111111111111",
+    sessionId: "22222222-2222-4222-8222-222222222222",
+    messageId: "33333333-3333-4333-8333-333333333333",
+    failureKind: "provider-timeout",
+    message: {
+      id: "33333333-3333-4333-8333-333333333333",
+      role: "assistant",
+      text: fullText,
+      completionState: "interrupted",
+      sources: [],
+      actions: [],
+      failureKind: "provider-timeout",
+      retryQuestion: "继续",
+      createdAt: "2026-08-30T00:00:00.000Z",
+    },
+  };
+
+  assert.equal(isTerminalAgentEvent(event), true);
+  rig.pump.finalize(event.message.text);
+  assert.equal(rig.displayed, fullText);
+  assert.ok(rig.displayed.endsWith("【末尾不可丢】"));
+  assert.equal(rig.pump.pendingGraphemeCount, 0);
+  assert.equal(rig.pump.isRunning, false);
+  rig.pump.cancel();
 });
 
 test("cancel clears pacing and settle timers without late callbacks", () => {

@@ -10,6 +10,8 @@ import {
   type AgentStartRequest,
   type Citation,
   type NoteRecoveryRecord,
+  type NoteRecoverySaveInput,
+  type NoteRecoveryTarget,
   type Preferences,
   type ProviderPublicConfig,
   type SaveNoteRequest,
@@ -27,12 +29,21 @@ import type { CredentialVault } from "./services/credential-vault";
 import type { DocumentGrantService } from "./services/document-grants";
 import { NoteWriteGate } from "./services/note-write-gate";
 import { NoteRecoveryStore } from "./services/note-recovery-store";
-import { normalizeProviderEndpoint, providerCredentialID } from "./services/provider-client";
+import {
+  consumeLegacyProviderCredentialOnUpgrade,
+  deleteLegacyUnboundProviderCredential,
+  hasEndpointBoundProviderCredential,
+  normalizeProviderEndpoint,
+  providerCredentialID,
+} from "./services/provider-client";
 import { StudySessionStore } from "./services/session-store";
 import { extractSearchDocument } from "./services/document-indexer";
 import { SearchIndexClient } from "./search-index-worker/client";
 import { makeSearchIndexUtilityProcessSpawner } from "./search-index-worker/electron-process";
 import { COURSE_SEARCH_INDEX_FILE_NAME } from "./services/search-index-schema";
+import { LatestOperationGate } from "../shared/latest-operation-gate";
+import { LatestSerialOperationGate } from "../shared/latest-serial-operation-gate";
+import { SnapshotPublicationGate } from "./snapshot-publication-gate";
 import chokidar, { type FSWatcher } from "chokidar";
 
 export interface WeiBeiControllerOptions {
@@ -56,6 +67,10 @@ export class WeiBeiController {
   private library: CourseLibrary;
   private libraryWatcher: FSWatcher | null = null;
   private libraryChangeTimer: NodeJS.Timeout | null = null;
+  private readonly openItemGate = new LatestOperationGate();
+  private readonly libraryNavigationGate = new LatestSerialOperationGate();
+  private readonly snapshotPublicationGate = new SnapshotPublicationGate();
+  private readonly stopAgentPublicationInvalidation: () => void;
   private readonly libraryChangeListeners = new Set<(snapshot: AppSnapshot) => void>();
 
   private constructor(
@@ -77,6 +92,17 @@ export class WeiBeiController {
       ledgerRoot: path.join(options.userDataPath, "NativeAgent", "Ledgers"),
       spawnWorker: makeAgentUtilityProcessSpawner(),
     });
+    // AgentRuntime owns the session-file writes for a turn. Subscribe before
+    // IPC forwarding is registered so a persisted start/terminal event always
+    // invalidates an older watcher snapshot first.
+    this.stopAgentPublicationInvalidation = this.agent.onEvent((event) => {
+      if (event.type === "started"
+          || event.type === "completed"
+          || event.type === "failed"
+          || event.type === "cancelled") {
+        this.snapshotPublicationGate.invalidate();
+      }
+    });
   }
 
   static async open(options: WeiBeiControllerOptions): Promise<WeiBeiController> {
@@ -84,6 +110,15 @@ export class WeiBeiController {
       AppStateStore.open({ userDataPath: options.userDataPath, defaultLibraryRootPath: options.defaultLibraryRootPath }),
       StudySessionStore.open(path.join(options.userDataPath, "Workspace")),
     ]);
+    const storedProvider = state.snapshot().provider;
+    const hasCredential = await consumeLegacyProviderCredentialOnUpgrade(
+      options.vault,
+      storedProvider.providerId,
+      storedProvider.baseUrl,
+    );
+    if (storedProvider.hasCredential !== hasCredential) {
+      await state.updateProvider({ ...storedProvider, hasCredential });
+    }
     const searchIndex = await SearchIndexClient.open({
       dbPath: path.join(options.localDataPath, "CourseIndex", COURSE_SEARCH_INDEX_FILE_NAME),
       spawnWorker: makeSearchIndexUtilityProcessSpawner(),
@@ -104,6 +139,7 @@ export class WeiBeiController {
     this.libraryChangeTimer = null;
     await this.libraryWatcher?.close().catch(() => undefined);
     this.libraryWatcher = null;
+    this.stopAgentPublicationInvalidation();
     await Promise.allSettled([this.searchIndex.close(), this.agent.dispose()]);
   }
 
@@ -115,106 +151,175 @@ export class WeiBeiController {
   async bootstrap(): Promise<AppSnapshot> { return this.snapshot(); }
 
   async chooseLibraryRoot(): Promise<AppSnapshot | null> {
-    const result = await dialog.showOpenDialog(this.options.window, {
-      title: "选择魏碑资料库",
-      buttonLabel: "使用这个文件夹",
-      properties: ["openDirectory", "createDirectory"],
+    return this.runSnapshotMutation(async () => {
+      const result = await dialog.showOpenDialog(this.options.window, {
+        title: "选择魏碑资料库",
+        buttonLabel: "使用这个文件夹",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (result.canceled || result.filePaths.length !== 1) return null;
+      const ticket = this.libraryNavigationGate.begin();
+      return this.libraryNavigationGate.run(async () => {
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        const next = this.makeLibrary(result.filePaths[0]);
+        await next.ensureLayout();
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        await this.stopLibraryWatcher();
+        this.library = next;
+        try {
+          await this.state.setLibraryRoot(next.rootPath);
+        } finally {
+          await this.startLibraryWatcher();
+        }
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        const snapshot = await this.snapshotUnlocked();
+        return this.libraryNavigationGate.isLatest(ticket) ? snapshot : null;
+      });
     });
-    if (result.canceled || result.filePaths.length !== 1) return null;
-    const next = new CourseLibrary({ rootPath: result.filePaths[0], sessionsForCourse: (id) => this.sessions.listForCourse(id) });
-    await next.ensureLayout();
-    await this.stopLibraryWatcher();
-    await this.state.setLibraryRoot(next.rootPath);
-    this.library = next;
-    await this.startLibraryWatcher();
-    return this.snapshot();
   }
 
   async createCourse(title: string): Promise<AppSnapshot> {
-    const summary = await this.library.createCourse(title);
-    await this.state.setActiveCourse(summary.id);
-    return this.snapshot();
+    return this.runSnapshotMutation(() => this.libraryNavigationGate.run(async () => {
+      const summary = await this.library.createCourse(title);
+      await this.state.setActiveCourse(summary.id);
+      return this.snapshotUnlocked();
+    }));
   }
 
   async adoptCourseFolder(): Promise<AppSnapshot | null> {
-    const result = await dialog.showOpenDialog(this.options.window, {
-      title: "收录现有课程文件夹",
-      buttonLabel: "收录课程",
-      properties: ["openDirectory"],
+    return this.runSnapshotMutation(async () => {
+      const result = await dialog.showOpenDialog(this.options.window, {
+        title: "收录现有课程文件夹",
+        buttonLabel: "收录课程",
+        properties: ["openDirectory"],
+      });
+      if (result.canceled || result.filePaths.length !== 1) return null;
+      const selected = path.resolve(result.filePaths[0]);
+      const ticket = this.libraryNavigationGate.begin();
+      return this.libraryNavigationGate.run(async () => {
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        const parentLibrary = this.makeLibrary(path.dirname(selected));
+        const courses = await parentLibrary.listCourses();
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        const matching = courses.find((course) => path.resolve(course.rootPath) === selected);
+        if (!matching) throw new Error("所选文件夹不是可验证的魏碑课程（缺少 .weibei/course.json 或 portable state）。");
+        const changesLibrary = path.resolve(parentLibrary.rootPath) !== path.resolve(this.library.rootPath);
+        await (changesLibrary ? parentLibrary : this.library)
+          .ensureLegacySessionsExternalized(matching.id);
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        if (changesLibrary) {
+          await this.stopLibraryWatcher();
+          this.library = parentLibrary;
+          try {
+            await this.state.setLibraryRoot(parentLibrary.rootPath);
+          } finally {
+            await this.startLibraryWatcher();
+          }
+        }
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        await this.state.setActiveCourse(matching.id);
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        const snapshot = await this.snapshotUnlocked();
+        return this.libraryNavigationGate.isLatest(ticket) ? snapshot : null;
+      });
     });
-    if (result.canceled || result.filePaths.length !== 1) return null;
-    const selected = path.resolve(result.filePaths[0]);
-    const parentLibrary = new CourseLibrary({ rootPath: path.dirname(selected), sessionsForCourse: (id) => this.sessions.listForCourse(id) });
-    const matching = (await parentLibrary.listCourses()).find((course) => path.resolve(course.rootPath) === selected);
-    if (!matching) throw new Error("所选文件夹不是可验证的魏碑课程（缺少 .weibei/course.json 或 portable state）。");
-    if (path.resolve(parentLibrary.rootPath) !== path.resolve(this.library.rootPath)) {
-      await this.stopLibraryWatcher();
-      await this.state.setLibraryRoot(parentLibrary.rootPath);
-      this.library = parentLibrary;
-      await this.startLibraryWatcher();
-    }
-    await this.state.setActiveCourse(matching.id);
-    return this.snapshot();
   }
 
-  async selectCourse(courseID: string): Promise<AppSnapshot> { await this.state.setActiveCourse(courseID); return this.snapshot(); }
+  async selectCourse(courseID: string): Promise<AppSnapshot> {
+    return this.runSnapshotMutation(async () => {
+      const ticket = this.libraryNavigationGate.begin();
+      const selected = await this.libraryNavigationGate.run(async () => {
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        await this.library.ensureLegacySessionsExternalized(courseID);
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        await this.state.setActiveCourse(courseID);
+        if (!this.libraryNavigationGate.isLatest(ticket)) return null;
+        const snapshot = await this.snapshotUnlocked();
+        return this.libraryNavigationGate.isLatest(ticket) ? snapshot : null;
+      });
+      return selected ?? this.snapshot();
+    });
+  }
 
   async importItems(courseID: string): Promise<AppSnapshot> {
-    const selected = await dialog.showOpenDialog(this.options.window, {
-      title: "导入课程文稿",
-      buttonLabel: "导入",
-      properties: ["openFile", "multiSelections"],
-      filters: [{ name: "支持的文稿", extensions: ["pdf", "html", "htm", "md", "markdown", "txt", "text"] }],
+    return this.runSnapshotMutation(async () => {
+      const selected = await dialog.showOpenDialog(this.options.window, {
+        title: "导入课程文稿",
+        buttonLabel: "导入",
+        properties: ["openFile", "multiSelections"],
+        filters: [{ name: "支持的文稿", extensions: ["pdf", "html", "htm", "md", "markdown", "txt", "text"] }],
+      });
+      if (selected.canceled || selected.filePaths.length === 0) return this.snapshot();
+      return this.libraryNavigationGate.run(async () => {
+        const items = await this.library.importFiles(courseID, selected.filePaths);
+        if (items[0]) await this.state.setActiveItem(courseID, items[0].id);
+        return this.snapshotUnlocked();
+      });
     });
-    if (selected.canceled || selected.filePaths.length === 0) return this.snapshot();
-    const items = await this.library.importFiles(courseID, selected.filePaths);
-    if (items[0]) await this.state.setActiveItem(courseID, items[0].id);
-    return this.snapshot();
   }
 
   async createNote(courseID: string, title: string): Promise<AppSnapshot> {
-    const note = await this.library.createNote(courseID, title);
-    await this.state.setActiveNote(courseID, note.id);
-    return this.snapshot();
+    return this.runSnapshotMutation(() => this.libraryNavigationGate.run(async () => {
+      const note = await this.library.createNote(courseID, title);
+      await this.state.setActiveNote(courseID, note.id);
+      return this.snapshotUnlocked();
+    }));
   }
 
   async openItem(courseID: string, itemID: string) {
-    const opened = await this.library.openItem(courseID, itemID);
-    if (opened.payload.item.isNotebookNote) await this.state.setActiveNote(courseID, itemID);
-    else await this.state.setActiveItem(courseID, itemID);
-    const grant = opened.payload.mediaType === "application/pdf"
-      ? await this.options.grants.issue({ rootPath: this.library.rootPath, filePath: opened.absolutePath, scope: this.options.rendererScope, mediaType: opened.payload.mediaType })
-      : null;
-    return { ...opened.payload, documentGrantUrl: grant?.url ?? null };
+    const ticket = this.openItemGate.begin();
+    return this.runSnapshotMutation(() => this.libraryNavigationGate.run(async () => {
+      const opened = await this.library.openItem(courseID, itemID);
+      if (this.openItemGate.isLatest(ticket)) {
+        if (opened.payload.item.isNotebookNote) await this.state.setActiveNote(courseID, itemID);
+        else await this.state.setActiveItem(courseID, itemID);
+      }
+      const grant = opened.payload.mediaType === "application/pdf"
+        ? await this.options.grants.issue({ rootPath: this.library.rootPath, filePath: opened.absolutePath, scope: this.options.rendererScope, mediaType: opened.payload.mediaType })
+        : null;
+      return { ...opened.payload, documentGrantUrl: grant?.url ?? null };
+    }));
   }
 
   async saveNote(request: SaveNoteRequest): Promise<SaveNoteResult> {
-    const filePath = await this.library.resolveItemPath(request.courseId, request.itemId);
-    const result = await this.noteGate.write({ itemId: request.itemId, filePath, markdown: request.markdown, baselineDigest: request.baselineDigest });
-    if (result.status === "saved" && result.digest) {
-      await this.noteRecovery.clear(request.itemId).catch(() => undefined);
-      await this.indexItem(request.courseId, request.itemId, result.digest).catch(() => undefined);
-    }
-    return SaveNoteResultSchema.parse(result);
+    return this.runSnapshotMutation(() => this.libraryNavigationGate.run(async () => {
+      const filePath = await this.library.resolveItemPath(request.courseId, request.itemId);
+      const result = await this.noteGate.write({ itemId: request.itemId, filePath, markdown: request.markdown, baselineDigest: request.baselineDigest });
+      if (result.status === "saved" && result.digest) {
+        await this.noteRecovery.clear({
+          libraryRootPath: this.library.rootPath,
+          courseId: request.courseId,
+          itemId: request.itemId,
+        }).catch(() => undefined);
+        await this.indexItem(request.courseId, request.itemId, result.digest).catch(() => undefined);
+      }
+      return SaveNoteResultSchema.parse(result);
+    }));
   }
 
-  async loadNoteRecovery(itemID: string): Promise<NoteRecoveryRecord | null> {
-    return this.noteRecovery.load(itemID);
+  async loadNoteRecovery(target: NoteRecoveryTarget): Promise<NoteRecoveryRecord | null> {
+    return this.libraryNavigationGate.run(
+      () => this.noteRecovery.load(this.noteRecoveryScope(target)),
+    );
   }
 
-  async saveNoteRecovery(
-    input: Pick<NoteRecoveryRecord, "itemId" | "markdown" | "baselineDigest">,
-  ): Promise<NoteRecoveryRecord> {
-    return this.noteRecovery.save(input);
+  async saveNoteRecovery(input: NoteRecoverySaveInput): Promise<NoteRecoveryRecord> {
+    return this.libraryNavigationGate.run(
+      () => this.noteRecovery.save({ ...input, ...this.noteRecoveryScope(input) }),
+    );
   }
 
-  async clearNoteRecovery(itemID: string): Promise<void> {
-    await this.noteRecovery.clear(itemID);
+  async clearNoteRecovery(target: NoteRecoveryTarget): Promise<void> {
+    await this.libraryNavigationGate.run(
+      () => this.noteRecovery.clear(this.noteRecoveryScope(target)),
+    );
   }
 
   async updatePreferences(patch: Partial<Preferences>): Promise<Preferences> {
     const sanitized = PreferencesSchema.partial().parse(patch);
-    return this.state.updatePreferences(sanitized);
+    return this.runSnapshotMutation(() => this.libraryNavigationGate.run(
+      () => this.state.updatePreferences(sanitized),
+    ));
   }
 
   async search(request: SearchRequest): Promise<SearchResult[]> {
@@ -244,37 +349,51 @@ export class WeiBeiController {
   }
 
   async createSession(courseID: string): Promise<StudySession> {
-    const session = await this.sessions.create(courseID);
-    await this.state.setActiveSession(courseID, session.id);
-    return session;
+    return this.runSnapshotMutation(() => this.libraryNavigationGate.run(async () => {
+      const session = await this.sessions.create(courseID);
+      await this.state.setActiveSession(courseID, session.id);
+      return session;
+    }));
   }
 
   async selectSession(courseID: string, sessionID: string): Promise<AppSnapshot> {
-    await this.state.setActiveSession(courseID, sessionID);
-    return this.snapshot();
+    return this.runSnapshotMutation(() => this.libraryNavigationGate.run(async () => {
+      await this.state.setActiveSession(courseID, sessionID);
+      return this.snapshotUnlocked();
+    }));
   }
 
   async startAgent(request: AgentStartRequest): Promise<{ requestId: string }> {
-    const session = await this.sessions.get(request.sessionId);
-    if (!session || session.courseId !== request.courseId) throw new Error("agent-session-course-mismatch");
-    const retrieval = await this.buildAgentContext(request);
-    return this.agent.start(request, retrieval.context, retrieval.sources);
+    return this.runSnapshotMutation(() => this.libraryNavigationGate.run(async () => {
+      const session = await this.sessions.get(request.sessionId);
+      if (!session || session.courseId !== request.courseId) throw new Error("agent-session-course-mismatch");
+      const retrieval = await this.buildAgentContext(request);
+      return this.agent.start(request, retrieval.context, retrieval.sources);
+    }));
   }
 
   async saveProvider(config: { providerId: string; model: string; baseUrl: string; apiKey?: string }): Promise<ProviderPublicConfig> {
-    const baseURL = normalizeProviderEndpoint(config.baseUrl).toString().replace(/\/$/u, "");
-    const providerID = config.providerId.trim();
-    const model = config.model.trim();
-    if (!providerID || !model) throw new Error("供应商和模型不能为空。");
-    const credentialID = providerCredentialID(providerID, baseURL);
-    if (config.apiKey !== undefined) await this.options.vault.setSecret(credentialID, config.apiKey);
-    const provider = ProviderPublicConfigSchema.parse({
-      providerId: providerID,
-      model,
-      baseUrl: baseURL,
-      hasCredential: await this.options.vault.hasSecret(credentialID),
-    });
-    return this.state.updateProvider(provider);
+    return this.runSnapshotMutation(() => this.libraryNavigationGate.run(async () => {
+      const baseURL = normalizeProviderEndpoint(config.baseUrl).toString().replace(/\/$/u, "");
+      const providerID = config.providerId.trim();
+      const model = config.model.trim();
+      if (!providerID || !model) throw new Error("供应商和模型不能为空。");
+      const credentialID = providerCredentialID(providerID, baseURL);
+      if (config.apiKey !== undefined) await this.options.vault.setSecret(credentialID, config.apiKey);
+      await deleteLegacyUnboundProviderCredential(this.options.vault, providerID);
+      const hasCredential = await hasEndpointBoundProviderCredential(
+        this.options.vault,
+        providerID,
+        baseURL,
+      );
+      const provider = ProviderPublicConfigSchema.parse({
+        providerId: providerID,
+        model,
+        baseUrl: baseURL,
+        hasCredential,
+      });
+      return this.state.updateProvider(provider);
+    }));
   }
 
   async revealItem(courseID: string, itemID: string): Promise<void> {
@@ -292,11 +411,47 @@ export class WeiBeiController {
     throw new Error("这条回答没有可验证的笔记写入建议。");
   }
 
-  private async snapshot(): Promise<AppSnapshot> {
+  private async runSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const finishMutation = this.snapshotPublicationGate.beginMutation();
+    try {
+      return await operation();
+    } finally {
+      finishMutation();
+    }
+  }
+
+  private noteRecoveryScope(target: NoteRecoveryTarget) {
+    if (!sameLibraryRootPath(target.libraryRootPath, this.library.rootPath)) {
+      throw new Error("stale-note-recovery-library");
+    }
+    return {
+      libraryRootPath: this.library.rootPath,
+      courseId: target.courseId,
+      itemId: target.itemId,
+    };
+  }
+
+  private snapshot(): Promise<AppSnapshot> {
+    return this.libraryNavigationGate.run(() => this.snapshotUnlocked());
+  }
+
+  private async snapshotUnlocked(): Promise<AppSnapshot> {
+    for (;;) {
+      const generation = this.snapshotPublicationGate.captureGeneration();
+      const snapshot = await this.buildSnapshotUnlocked();
+      if (this.snapshotPublicationGate.isGenerationCurrent(generation)) return snapshot;
+      // Agent terminal persistence is not owned by controller navigation. If
+      // it completed while sessions were being read, rebuild in this same
+      // serial section so the explicit IPC response cannot erase the event.
+    }
+  }
+
+  private async buildSnapshotUnlocked(): Promise<AppSnapshot> {
     const local = this.state.snapshot();
     const courses = await this.library.listCourses();
     const activeID = courses.some((course) => course.id === local.activeCourseId) ? local.activeCourseId : courses[0]?.id ?? null;
     if (activeID !== local.activeCourseId) await this.state.setActiveCourse(activeID);
+    if (activeID) await this.library.ensureLegacySessionsExternalized(activeID);
     const activeCourse = activeID
       ? await this.library.detail(activeID, {
           activeItemId: local.activeItemsByCourse[activeID] ?? null,
@@ -316,7 +471,12 @@ export class WeiBeiController {
   }
 
   private makeLibrary(rootPath: string) {
-    return new CourseLibrary({ rootPath, sessionsForCourse: (id) => this.sessions.listForCourse(id) });
+    return new CourseLibrary({
+      rootPath,
+      sessionsForCourse: (id) => this.sessions.listForCourse(id),
+      migrateLegacySessions: (id, sessions, context) =>
+        this.sessions.migrateLegacyCourseSessions(id, sessions, context),
+    });
   }
 
   private async startLibraryWatcher(): Promise<void> {
@@ -350,8 +510,20 @@ export class WeiBeiController {
 
   private async publishLibrarySnapshot(): Promise<void> {
     try {
-      const next = await this.snapshot();
-      for (const listener of this.libraryChangeListeners) listener(next);
+      while (this.libraryChangeListeners.size > 0) {
+        const publicationGeneration = await this.snapshotPublicationGate.captureWhenIdle();
+        const navigationTicket = this.libraryNavigationGate.capture();
+        const next = await this.libraryNavigationGate.run(() => this.snapshotUnlocked());
+        if (!this.snapshotPublicationGate.isCurrent(publicationGeneration)
+            || !this.libraryNavigationGate.isLatest(navigationTicket)) {
+          // A mutation began after the read was authorized. Wait until all
+          // active mutations finish, then rebuild instead of publishing stale
+          // local selections, sessions, preferences, or provider state.
+          continue;
+        }
+        for (const listener of this.libraryChangeListeners) listener(next);
+        return;
+      }
     } catch {
       // A transient external write is picked up by the next filesystem event.
     }
@@ -393,4 +565,14 @@ export class WeiBeiController {
     });
     await this.searchIndex.upsertTextChunks(extracted);
   }
+}
+
+function sameLibraryRootPath(left: string, right: string): boolean {
+  const normalize = (value: string) => {
+    const resolved = path.resolve(value).normalize("NFC");
+    return process.platform === "win32"
+      ? resolved.toLocaleLowerCase("en-US")
+      : resolved;
+  };
+  return normalize(left) === normalize(right);
 }

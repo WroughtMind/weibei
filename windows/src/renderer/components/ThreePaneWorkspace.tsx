@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type DragEvent } from "react";
+import { useMemo, useRef, useState, type DragEvent, type Ref } from "react";
 import type {
   AppSnapshot,
   DocumentPayload,
@@ -8,6 +8,7 @@ import type {
   SelectionContext,
 } from "../../shared/contracts";
 import { AgentPane } from "./panes/AgentPane";
+import type { CanonicalNoteEditorHandle } from "./panes/CanonicalNoteEditor";
 import { NotePane } from "./panes/NotePane";
 import { ReaderPane } from "./panes/ReaderPane";
 
@@ -15,13 +16,15 @@ interface Props {
   snapshot: AppSnapshot;
   document: DocumentPayload | null;
   noteDraft: string;
+  noteEditorGeneration: number | null;
+  noteEditorRef: Ref<CanonicalNoteEditorHandle>;
   noteStatus: SaveNoteResult["status"] | null;
   noteConflict: SaveNoteResult | null;
   selection: SelectionContext | null;
-  onDraftChange(value: string): void;
+  activeAgentRequestId: string | null;
+  onDraftChange(value: string, itemId: string, documentGeneration: number): void;
   onSelection(value: SelectionContext | null): void;
   onSaveNote(): void;
-  onUseDiskNote(): void;
   onOverwriteDiskNote(): void;
   onOpenItem(courseId: string, itemId: string, target: "reader" | "notes"): void;
   onSnapshot(snapshot: AppSnapshot): void;
@@ -111,6 +114,7 @@ export function ThreePaneWorkspace(props: Props) {
               <AgentPane
                 snapshot={props.snapshot}
                 selection={props.selection}
+                activeRequestId={props.activeAgentRequestId}
                 onClearSelection={() => props.onSelection(null)}
                 onOpenSource={(itemId) => {
                   const courseId = props.snapshot.activeCourse?.id;
@@ -126,12 +130,13 @@ export function ThreePaneWorkspace(props: Props) {
               <NotePane
                 snapshot={props.snapshot}
                 draft={props.noteDraft}
+                editorGeneration={props.noteEditorGeneration}
+                editorRef={props.noteEditorRef}
                 status={props.noteStatus}
                 conflict={props.noteConflict}
                 onSelection={props.onSelection}
                 onDraftChange={props.onDraftChange}
                 onSave={props.onSaveNote}
-                onUseDisk={props.onUseDiskNote}
                 onOverwriteDisk={props.onOverwriteDiskNote}
                 onOpenItem={(courseId, itemId) => props.onOpenItem(courseId, itemId, "notes")}
                 onHeaderDragStart={() => setDragging("notes")}

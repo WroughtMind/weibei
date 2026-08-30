@@ -6,6 +6,7 @@ import { PaneHeader } from "../ThreePaneWorkspace";
 interface Props {
   snapshot: AppSnapshot;
   selection: SelectionContext | null;
+  activeRequestId: string | null;
   onClearSelection(): void;
   onOpenSource(itemId: string): void;
   onSnapshot(snapshot: AppSnapshot): void;
@@ -17,14 +18,13 @@ interface Props {
 export function AgentPane(props: Props) {
   const [question, setQuestion] = useState("");
   const [sending, setSending] = useState(false);
-  const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const course = props.snapshot.activeCourse;
   const session = course?.sessions.find((candidate) => candidate.id === course.activeSessionId) ?? course?.sessions[0] ?? null;
   const messages = session?.messages ?? [];
   const generating = messages.some((message) => message.completionState === "generating");
   const configured = props.snapshot.provider.hasCredential;
   const title = session?.title || "新 Chat";
-  const suggestions = useMemo(() => ["梳理这门课的知识地图", "概括当前文稿的论证", "把关键概念整理成笔记"], []);
+  const suggestions = useMemo(() => ["梳理这门课的知识地图", "概括当前文稿的论证", "把关键概念整理成笔记草稿"], []);
 
   async function ensureSession() {
     if (!course || !window.weiBei) return null;
@@ -42,13 +42,12 @@ export function AgentPane(props: Props) {
     try {
       const target = await ensureSession();
       if (!target) return;
-      const result = await window.weiBei.startAgent({
+      await window.weiBei.startAgent({
         courseId: course.id,
         sessionId: target.id,
         question: trimmed,
         selection: props.selection,
       });
-      setActiveRequestId(result.requestId);
       setQuestion("");
     } catch (error) {
       props.onFailure(error instanceof Error ? error.message : "Chat 没有发出");
@@ -58,10 +57,10 @@ export function AgentPane(props: Props) {
   }
 
   async function cancel() {
-    if (!activeRequestId || !window.weiBei) return;
+    if (!props.activeRequestId || !window.weiBei) return;
     setSending(true);
     try {
-      await window.weiBei.cancelAgent(activeRequestId);
+      await window.weiBei.cancelAgent(props.activeRequestId);
     } catch (error) {
       props.onFailure(error instanceof Error ? error.message : "无法停止当前回答");
     } finally {
@@ -84,7 +83,9 @@ export function AgentPane(props: Props) {
           <section className="agent-welcome">
             <span className="agent-seal">魏</span>
             <h3>和课程一起思考</h3>
-            <p>{configured ? "我会先阅读课程材料，再给出带出处的回答。" : "在设置里连接模型后，我会基于课程材料回答，并把写入操作交给你确认。"}</p>
+            <p>{configured
+              ? "我会结合当前课程的检索片段回答；若检索到资料，会列出可打开的来源条目。"
+              : "在设置里连接模型后，我会结合当前课程的检索片段回答；此版本不会自动修改笔记。"}</p>
             <div className="suggestion-list">
               {suggestions.map((suggestion) => <button key={suggestion} onClick={() => void send(suggestion)}>{suggestion}<span>↗</span></button>)}
             </div>
@@ -142,7 +143,7 @@ export function AgentPane(props: Props) {
             <Icon name={generating ? "stop" : "send"} size={17} />
           </button>
         </div>
-        <small className="composer-footnote">回答可能有误；引用会定位到你的课程材料。</small>
+        <small className="composer-footnote">回答可能有误；来源按钮会打开对应的课程条目。</small>
       </div>
     </div>
   );

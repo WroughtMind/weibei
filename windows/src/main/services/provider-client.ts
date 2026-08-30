@@ -1,11 +1,42 @@
 import { createHash } from "node:crypto";
 import type { ProviderPublicConfig } from "../../shared/contracts";
+import type { CredentialVault } from "./credential-vault";
 
 export type TextDeltaHandler = (delta: string) => void;
+
+export interface ProviderConversationMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/**
+ * Keep only complete user-led turns. Imported or interrupted histories can
+ * contain leading assistants or a final unanswered user message, neither of
+ * which is a valid portable chat prefix for every native provider.
+ */
+export function userLedCompleteConversationHistory(
+  messages: readonly ProviderConversationMessage[],
+): ProviderConversationMessage[] {
+  const result: ProviderConversationMessage[] = [];
+  let pendingUser: ProviderConversationMessage | null = null;
+  for (const message of messages) {
+    const text = message.text.trim();
+    if (!text) continue;
+    if (message.role === "user") {
+      pendingUser = { role: "user", text };
+      continue;
+    }
+    if (!pendingUser) continue;
+    result.push(pendingUser, { role: "assistant", text });
+    pendingUser = null;
+  }
+  return result;
+}
 
 export async function streamProviderAnswer(options: {
   provider: ProviderPublicConfig;
   apiKey: string;
+  history?: readonly ProviderConversationMessage[];
   question: string;
   context?: string;
   signal: AbortSignal;
@@ -33,12 +64,87 @@ export function normalizeProviderEndpoint(input: string): URL {
 
 export function providerCredentialID(providerID: string, baseURL: string): string {
   const normalized = normalizeProviderEndpoint(baseURL).toString();
-  const safeProvider = providerID.toLocaleLowerCase("en-US").replace(/[^a-z0-9._-]/gu, "-").slice(0, 64) || "custom";
-  if (safeProvider === "custom" || safeProvider.includes("llama")) {
-    const owner = createHash("sha256").update(normalized).digest("hex");
-    return `provider.${safeProvider}.${owner}`;
+  const safeProvider = providerCredentialSegment(providerID);
+  const endpointOwner = createHash("sha256").update(normalized).digest("hex");
+  return `provider.${safeProvider}.${endpointOwner}`;
+}
+
+type ProviderCredentialLookup = Pick<CredentialVault, "hasSecret">;
+type ProviderCredentialMigrationVault = Pick<
+  CredentialVault,
+  "deleteSecret" | "getSecret" | "hasSecret" | "setSecret"
+>;
+
+/** Reports only whether this exact provider endpoint owns a credential. */
+export async function hasEndpointBoundProviderCredential(
+  vault: ProviderCredentialLookup,
+  providerID: string,
+  baseURL: string,
+): Promise<boolean> {
+  return vault.hasSecret(providerCredentialID(providerID, baseURL));
+}
+
+/**
+ * Consumes the endpoint-unbound credential left by the pre-binding release.
+ * Only a provider already stored on its official endpoint may copy it first;
+ * every other endpoint discards it so a later endpoint change cannot revive it.
+ */
+export async function consumeLegacyProviderCredentialOnUpgrade(
+  vault: ProviderCredentialMigrationVault,
+  providerID: string,
+  baseURL: string,
+): Promise<boolean> {
+  const credentialID = providerCredentialID(providerID, baseURL);
+  let hasCredential = await vault.hasSecret(credentialID);
+  const legacyID = legacyUnboundProviderCredentialID(providerID);
+  if (!legacyID || !await vault.hasSecret(legacyID)) return hasCredential;
+
+  if (!hasCredential && isOfficialProviderEndpoint(providerID, baseURL)) {
+    let secret = await vault.getSecret(legacyID);
+    if (secret) {
+      try {
+        await vault.setSecret(credentialID, secret);
+        hasCredential = true;
+      } finally {
+        secret = "";
+      }
+    }
   }
+  await vault.deleteSecret(legacyID);
+  return hasCredential;
+}
+
+/** Removes any endpoint-unbound key before a newly saved endpoint is used. */
+export async function deleteLegacyUnboundProviderCredential(
+  vault: Pick<CredentialVault, "deleteSecret">,
+  providerID: string,
+): Promise<void> {
+  const legacyID = legacyUnboundProviderCredentialID(providerID);
+  if (legacyID) await vault.deleteSecret(legacyID);
+}
+
+const officialProviderEndpoints: Readonly<Record<string, string>> = Object.freeze({
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
+  google: "https://generativelanguage.googleapis.com/v1beta",
+});
+
+function isOfficialProviderEndpoint(providerID: string, baseURL: string): boolean {
+  const safeProvider = providerCredentialSegment(providerID);
+  const officialEndpoint = officialProviderEndpoints[safeProvider];
+  if (!officialEndpoint) return false;
+  const normalized = normalizeProviderEndpoint(baseURL).toString();
+  return normalized === normalizeProviderEndpoint(officialEndpoint).toString();
+}
+
+function legacyUnboundProviderCredentialID(providerID: string): string | null {
+  const safeProvider = providerCredentialSegment(providerID);
+  if (safeProvider === "custom" || safeProvider.includes("llama")) return null;
   return `provider.${safeProvider}`;
+}
+
+function providerCredentialSegment(providerID: string): string {
+  return providerID.toLocaleLowerCase("en-US").replace(/[^a-z0-9._-]/gu, "-").slice(0, 64) || "custom";
 }
 
 export class ProviderEndpointError extends Error {
@@ -57,7 +163,11 @@ async function streamOpenAIResponses(endpoint: URL, options: Parameters<typeof s
   const response = await fetch(joinEndpoint(endpoint, "responses"), {
     method: "POST",
     headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ model: options.provider.model, input: prompt(options), stream: true }),
+    body: JSON.stringify({
+      model: options.provider.model,
+      input: providerConversation(options).map((message) => ({ role: message.role, content: message.text })),
+      stream: true,
+    }),
     signal: options.signal,
     redirect: "error",
   });
@@ -72,7 +182,11 @@ async function streamOpenAIChat(endpoint: URL, options: Parameters<typeof stream
   const response = await fetch(joinEndpoint(endpoint, "chat/completions"), {
     method: "POST",
     headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ model: options.provider.model, messages: [{ role: "user", content: prompt(options) }], stream: true }),
+    body: JSON.stringify({
+      model: options.provider.model,
+      messages: providerConversation(options).map((message) => ({ role: message.role, content: message.text })),
+      stream: true,
+    }),
     signal: options.signal,
     redirect: "error",
   });
@@ -87,11 +201,17 @@ async function streamAnthropic(endpoint: URL, options: Parameters<typeof streamP
   const response = await fetch(joinEndpoint(endpoint, "messages"), {
     method: "POST",
     headers: { "x-api-key": options.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ model: options.provider.model, max_tokens: 8_192, messages: [{ role: "user", content: prompt(options) }], stream: true }),
+    body: JSON.stringify({
+      model: options.provider.model,
+      max_tokens: 8_192,
+      messages: providerConversation(options).map((message) => ({ role: message.role, content: message.text })),
+      stream: true,
+    }),
     signal: options.signal,
     redirect: "error",
   });
   return consumeSSE(response, options.onDelta, (event, data) => {
+    if (event === "error") throw providerStreamError(data);
     if (event !== "content_block_delta") return null;
     const delta = data.delta as { type?: unknown; text?: unknown } | undefined;
     return delta?.type === "text_delta" && typeof delta.text === "string" ? delta.text : null;
@@ -103,7 +223,12 @@ async function streamGoogle(endpoint: URL, options: Parameters<typeof streamProv
   const response = await fetch(joinEndpoint(endpoint, `models/${model}:streamGenerateContent?alt=sse`), {
     method: "POST",
     headers: { "x-goog-api-key": options.apiKey, "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt(options) }] }] }),
+    body: JSON.stringify({
+      contents: providerConversation(options).map((message) => ({
+        role: message.role === "assistant" ? "model" : "user",
+        parts: [{ text: message.text }],
+      })),
+    }),
     signal: options.signal,
     redirect: "error",
   });
@@ -155,6 +280,14 @@ function prompt(options: { question: string; context?: string }) {
   if (!options.context) return options.question;
   return `以下是应用提供的证据状态与有界上下文。严格遵守其中的出处约束，并把课程证据、通用知识与推断清楚区分。\n\n${options.context}\n\n用户问题：${options.question}`;
 }
+function providerConversation(
+  options: { question: string; context?: string; history?: readonly ProviderConversationMessage[] },
+): ProviderConversationMessage[] {
+  return [
+    ...userLedCompleteConversationHistory(options.history ?? []),
+    { role: "user", text: prompt(options) },
+  ];
+}
 function joinEndpoint(endpoint: URL, route: string): string {
   const base = endpoint.toString().replace(/\/+$/u, "");
   const cleanRoute = route.replace(/^\/+/, "");
@@ -162,6 +295,16 @@ function joinEndpoint(endpoint: URL, route: string): string {
   return `${base}/${cleanRoute}`;
 }
 function providerError(response: Response, data: unknown): Error { return new Error(`provider-http-${response.status}: ${JSON.stringify(data).slice(0, 1024)}`); }
+function providerStreamError(data: Record<string, unknown>): Error {
+  const detail = isRecord(data.error) ? data.error.type : null;
+  const kind = typeof detail === "string"
+    ? detail.toLocaleLowerCase("en-US").replace(/[^a-z0-9._-]+/gu, "-").slice(0, 80)
+    : "error";
+  return new Error(`provider-stream-${kind || "error"}`);
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 function isLocalOrLANHost(host: string): boolean {
   if (host === "localhost" || host === "::1" || host.endsWith(".local")) return true;
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(host);

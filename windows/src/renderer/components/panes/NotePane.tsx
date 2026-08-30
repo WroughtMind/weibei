@@ -1,17 +1,22 @@
+import type { Ref } from "react";
 import type { AppSnapshot, SaveNoteResult, SelectionContext } from "../../../shared/contracts";
 import { Icon } from "../Icon";
 import { PaneHeader } from "../ThreePaneWorkspace";
-import { CanonicalNoteEditor } from "./CanonicalNoteEditor";
+import {
+  CanonicalNoteEditor,
+  type CanonicalNoteEditorHandle,
+} from "./CanonicalNoteEditor";
 
 interface Props {
   snapshot: AppSnapshot;
   draft: string;
+  editorGeneration: number | null;
+  editorRef: Ref<CanonicalNoteEditorHandle>;
   status: SaveNoteResult["status"] | null;
   conflict: SaveNoteResult | null;
   onSelection(value: SelectionContext | null): void;
-  onDraftChange(value: string): void;
+  onDraftChange(value: string, itemId: string, documentGeneration: number): void;
   onSave(): void;
-  onUseDisk(): void;
   onOverwriteDisk(): void;
   onOpenItem(courseId: string, itemId: string): void;
   onHeaderDragStart(): void;
@@ -32,7 +37,7 @@ export function NotePane(props: Props) {
         onDragEnd={props.onHeaderDragEnd}
         actions={
           <>
-            <button className="text-action" disabled={!active} onClick={props.onSave}>保存</button>
+            <button className="text-action" disabled={!active || props.editorGeneration === null} onClick={props.onSave}>保存</button>
             <button className="icon-action" title="更多"><Icon name="more" /></button>
           </>
         }
@@ -40,22 +45,24 @@ export function NotePane(props: Props) {
       {props.conflict && (
         <div className="note-conflict-strip" role="alert">
           <span>磁盘上的笔记已变化，当前草稿仍保留。</span>
-          {props.conflict.diskMarkdown !== null && (
-            <button onClick={props.onUseDisk}>使用磁盘版</button>
-          )}
           <button onClick={props.onOverwriteDisk}>
             {props.conflict.diskMarkdown === null ? "重新创建" : "用草稿覆盖"}
           </button>
         </div>
       )}
-      {active ? (
+      {active && props.editorGeneration !== null ? (
         <CanonicalNoteEditor
+          ref={props.editorRef}
+          key={`${active.id}:${props.editorGeneration}`}
           itemId={active.id}
           markdown={props.draft}
+          documentGeneration={props.editorGeneration}
           preferences={props.snapshot.preferences}
           onChange={props.onDraftChange}
           onSelection={props.onSelection}
         />
+      ) : active ? (
+        <div className="reader-loading" role="status">正在打开《{active.title}》…</div>
       ) : (
         <div className="pane-picker">
           <span className="picker-seal">记</span>

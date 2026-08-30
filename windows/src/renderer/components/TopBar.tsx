@@ -42,8 +42,8 @@ export function TopBar(props: TopBarProps) {
         <span
           className={`persist-dot is-${props.persistState}`}
           title={{
-            saved: "全部更改已保存",
-            unsaved: "草稿已在本机暂存",
+            saved: "没有待保存的笔记更改",
+            unsaved: "有未保存的更改",
             conflict: "外部修改冲突",
           }[props.persistState]}
         />

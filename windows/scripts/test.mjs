@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const testRoots = ["test", "tests"]
+const testRoots = ["test", "tests", "src/renderer/editor"]
   .map((name) => resolve(root, name))
   .filter(existsSync);
 const tests = testRoots.flatMap((testRoot) =>

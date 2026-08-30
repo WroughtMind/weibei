@@ -1,7 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   mkdir,
-  open,
   readFile,
   readdir,
   rename,
@@ -9,6 +8,14 @@ import {
   stat,
 } from "node:fs/promises";
 import path from "node:path";
+import {
+  assertVerifiedDirectoryIdentity,
+  atomicCreateVerified,
+  atomicReplaceVerified,
+  FileWriteConflictError,
+  recoverAtomicReplace,
+  type VerifiedDirectoryIdentity,
+} from "./file-utils";
 import {
   decodePersistedWorkspace,
   encodePersistedWorkspace,
@@ -50,6 +57,7 @@ export interface WorkspaceSaveResult {
 export interface WorkspacePersistenceOptions {
   workspaceDirectory?: string;
   primaryPath?: string;
+  expectedParent?: VerifiedDirectoryIdentity;
   now?: () => Date;
 }
 
@@ -65,6 +73,9 @@ export class WorkspacePersistence {
   readonly primaryPath: string;
   private readonly now: () => Date;
   private operationQueue: Promise<void> = Promise.resolve();
+  /** Exact live bytes from the last successful load/save; null means absent. */
+  private primaryBaseline: Buffer | null | undefined;
+  private readonly expectedParent?: VerifiedDirectoryIdentity;
 
   constructor(options: WorkspacePersistenceOptions | string) {
     if (typeof options === "string") {
@@ -84,6 +95,15 @@ export class WorkspacePersistence {
       );
     } else {
       throw new TypeError("workspaceDirectory or primaryPath is required");
+    }
+    if (options.expectedParent) {
+      if (!sameFilesystemPath(
+        path.dirname(this.primaryPath),
+        options.expectedParent.absolutePath,
+      )) {
+        throw new TypeError("expectedParent must own workspace.json");
+      }
+      this.expectedParent = { ...options.expectedParent };
     }
     this.now = options.now ?? (() => new Date());
   }
@@ -113,10 +133,16 @@ export class WorkspacePersistence {
   }
 
   private async loadUnlocked(): Promise<WorkspaceLoadResult> {
-    const primaryExists = await pathExists(this.primaryPath);
-    if (primaryExists) {
-      const primary = await readValidSnapshot(this.primaryPath);
-      if (primary) {
+    await this.prepareParent();
+    await recoverAtomicReplace(this.primaryPath, this.expectedParent);
+    await this.assertParentIdentity();
+    const primaryBytes = await readOptionalFile(this.primaryPath);
+    await this.assertParentIdentity();
+    const primaryExists = primaryBytes !== null;
+    if (primaryBytes) {
+      const primary = decodeValidSnapshot(primaryBytes);
+      if (primary !== null) {
+        this.primaryBaseline = primaryBytes;
         return {
           snapshot: primary,
           source: "primary",
@@ -132,7 +158,9 @@ export class WorkspacePersistence {
         pathExists(this.backupPath(generation)),
       ),
     );
+    await this.assertParentIdentity();
     if (!primaryExists && !backupExistence.some(Boolean)) {
+      this.primaryBaseline = null;
       return {
         snapshot: null,
         source: "none",
@@ -142,12 +170,16 @@ export class WorkspacePersistence {
       };
     }
 
-    const quarantinedPath = primaryExists
-      ? await this.quarantinePrimary()
+    const quarantinedPath = primaryExists && primaryBytes
+      ? await this.quarantinePrimary(primaryBytes)
       : null;
+    await this.assertParentIdentity();
+    this.primaryBaseline = await readOptionalFile(this.primaryPath);
+    await this.assertParentIdentity();
     for (const generation of [1, 2, 3] as const) {
       if (!backupExistence[generation - 1]) continue;
       const backup = await readValidSnapshot(this.backupPath(generation));
+      await this.assertParentIdentity();
       if (backup) {
         return {
           snapshot: backup,
@@ -176,11 +208,49 @@ export class WorkspacePersistence {
     // Reject an invalid in-memory shape before disturbing the backup chain.
     decodePersistedWorkspace(serialized);
     const bytes = Buffer.from(serialized, "utf8");
-    await mkdir(path.dirname(this.primaryPath), { recursive: true });
-    const backupWarnings = await rotateWorkspaceBackups(this.primaryPath);
-    await atomicWriteExact(this.primaryPath, bytes);
+    await this.prepareParent();
+    if (this.primaryBaseline === undefined) {
+      await recoverAtomicReplace(this.primaryPath, this.expectedParent);
+      await this.assertParentIdentity();
+      if (await readOptionalFile(this.primaryPath)) {
+        throw new WorkspacePersistenceError(
+          "baseline-required",
+          "load workspace.json before replacing an existing primary",
+        );
+      }
+      this.primaryBaseline = null;
+    }
+    const baseline = this.primaryBaseline;
+    const backupWarnings = await rotateWorkspaceBackupHistory(
+      this.primaryPath,
+      baseline,
+      this.expectedParent,
+    );
+    if (baseline === null) {
+      try {
+        await atomicCreateVerified(
+          this.primaryPath,
+          bytes,
+          this.expectedParent,
+        );
+      } catch (error) {
+        if (isNodeError(error) && error.code === "EEXIST") {
+          throw new FileWriteConflictError();
+        }
+        throw error;
+      }
+    } else {
+      await atomicReplaceVerified(
+        this.primaryPath,
+        baseline,
+        bytes,
+        this.expectedParent,
+      );
+    }
 
+    await this.assertParentIdentity();
     const written = await readFile(this.primaryPath);
+    await this.assertParentIdentity();
     if (!written.equals(bytes)) {
       throw new WorkspacePersistenceError(
         "write-verification-failed",
@@ -196,6 +266,7 @@ export class WorkspacePersistence {
         error,
       );
     }
+    this.primaryBaseline = Buffer.from(written);
     return {
       digest: sha256(written),
       byteLength: written.byteLength,
@@ -203,12 +274,14 @@ export class WorkspacePersistence {
     };
   }
 
-  private async quarantinePrimary(): Promise<string | null> {
+  private async quarantinePrimary(primaryBytes: Uint8Array): Promise<string | null> {
+    await this.assertParentIdentity();
     const parent = path.dirname(this.primaryPath);
     const stamp = quarantineTimestamp(this.now());
     let target = path.join(parent, `workspace.corrupt-${stamp}.json`);
     let collision = 2;
     while (await pathExists(target)) {
+      await this.assertParentIdentity();
       target = path.join(
         parent,
         `workspace.corrupt-${stamp}-${String(collision).padStart(2, "0")}.json`,
@@ -216,12 +289,20 @@ export class WorkspacePersistence {
       collision += 1;
     }
     try {
-      await rename(this.primaryPath, target);
+      await this.assertParentIdentity();
+      if (this.expectedParent) {
+        // Copy through the identity-bound exclusive creator. The corrupt live
+        // file remains the exact CAS baseline for the later recovered save.
+        await atomicCreateVerified(target, primaryBytes, this.expectedParent);
+      } else {
+        await rename(this.primaryPath, target);
+      }
+      await this.assertParentIdentity();
     } catch {
       // Keep trying backups. A permissions failure must not hide a usable copy.
       return null;
     }
-    await pruneQuarantinedSnapshots(parent);
+    await pruneQuarantinedSnapshots(parent, this.expectedParent);
     return target;
   }
 
@@ -233,13 +314,28 @@ export class WorkspacePersistence {
     );
     return run;
   }
+
+  private async prepareParent(): Promise<void> {
+    if (this.expectedParent) {
+      await assertVerifiedDirectoryIdentity(this.expectedParent);
+      return;
+    }
+    await mkdir(path.dirname(this.primaryPath), { recursive: true });
+  }
+
+  private async assertParentIdentity(): Promise<void> {
+    if (this.expectedParent) {
+      await assertVerifiedDirectoryIdentity(this.expectedParent);
+    }
+  }
 }
 
 export class WorkspacePersistenceError extends Error {
   constructor(
     readonly code:
       | "write-verification-failed"
-      | "decode-verification-failed",
+      | "decode-verification-failed"
+      | "baseline-required",
     message: string,
     readonly cause?: unknown,
   ) {
@@ -262,26 +358,52 @@ export function workspaceBackupPath(
 export async function rotateWorkspaceBackups(
   primaryPath: string,
 ): Promise<string[]> {
+  return rotateWorkspaceBackupHistory(
+    primaryPath,
+    await readOptionalFile(primaryPath),
+    undefined,
+  );
+}
+
+async function rotateWorkspaceBackupHistory(
+  primaryPath: string,
+  previousPrimary: Uint8Array | null,
+  expectedParent: VerifiedDirectoryIdentity | undefined,
+): Promise<string[]> {
   const warnings: string[] = [];
   const backups = ([1, 2, 3] as const).map((generation) =>
     workspaceBackupPath(primaryPath, generation),
   );
   for (let index = backups.length - 1; index >= 1; index -= 1) {
-    await moveReplacingBestEffort(backups[index - 1], backups[index], warnings);
+    await copyReplacingBestEffort(
+      backups[index - 1],
+      backups[index],
+      warnings,
+      expectedParent,
+    );
   }
-  await moveReplacingBestEffort(primaryPath, backups[0], warnings);
+  if (previousPrimary) {
+    try {
+      await atomicWriteExact(backups[0], previousPrimary, expectedParent);
+    } catch (error) {
+      warnings.push(`workspace.json -> ${path.basename(backups[0])}: ${errorMessage(error)}`);
+    }
+  }
   return warnings;
 }
 
-async function moveReplacingBestEffort(
+async function copyReplacingBestEffort(
   source: string,
   destination: string,
   warnings: string[],
+  expectedParent: VerifiedDirectoryIdentity | undefined,
 ): Promise<void> {
-  if (!(await pathExists(source))) return;
   try {
-    await rm(destination, { force: true });
-    await rename(source, destination);
+    if (expectedParent) await assertVerifiedDirectoryIdentity(expectedParent);
+    const sourceBytes = await readOptionalFile(source);
+    if (expectedParent) await assertVerifiedDirectoryIdentity(expectedParent);
+    if (!sourceBytes) return;
+    await atomicWriteExact(destination, sourceBytes, expectedParent);
   } catch (error) {
     warnings.push(`${path.basename(source)} -> ${path.basename(destination)}: ${errorMessage(error)}`);
   }
@@ -290,25 +412,15 @@ async function moveReplacingBestEffort(
 async function atomicWriteExact(
   targetPath: string,
   bytes: Uint8Array,
+  expectedParent?: VerifiedDirectoryIdentity,
 ): Promise<void> {
-  const parent = path.dirname(targetPath);
-  const temporaryPath = path.join(
-    parent,
-    `.${path.basename(targetPath)}.weibei-stage-${randomUUID()}`,
-  );
-  const handle = await open(temporaryPath, "wx", 0o600);
-  try {
-    await handle.writeFile(bytes);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
-    await rename(temporaryPath, targetPath);
-    await syncDirectoryBestEffort(parent);
-  } catch (error) {
-    await rm(temporaryPath, { force: true });
-    throw error;
+  if (expectedParent) await assertVerifiedDirectoryIdentity(expectedParent);
+  const baseline = await readOptionalFile(targetPath);
+  if (expectedParent) await assertVerifiedDirectoryIdentity(expectedParent);
+  if (baseline === null) {
+    await atomicCreateVerified(targetPath, bytes, expectedParent);
+  } else {
+    await atomicReplaceVerified(targetPath, baseline, bytes, expectedParent);
   }
 }
 
@@ -322,6 +434,25 @@ async function readValidSnapshot(
   }
 }
 
+function decodeValidSnapshot(
+  bytes: Uint8Array,
+): PersistedWorkspaceRecord | null {
+  try {
+    return decodePersistedWorkspace(bytes);
+  } catch {
+    return null;
+  }
+}
+
+async function readOptionalFile(filePath: string): Promise<Buffer | null> {
+  try {
+    return await readFile(filePath);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 async function pathExists(filePath: string): Promise<boolean> {
   try {
     await stat(filePath);
@@ -332,7 +463,17 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function pruneQuarantinedSnapshots(parent: string): Promise<void> {
+async function pruneQuarantinedSnapshots(
+  parent: string,
+  expectedParent?: VerifiedDirectoryIdentity,
+): Promise<void> {
+  // Deleting by pathname cannot be made identity-bound portably. Security-
+  // scoped stores retain extra quarantine evidence instead of risking removal
+  // through a parent path replaced between validation and unlink.
+  if (expectedParent) {
+    await assertVerifiedDirectoryIdentity(expectedParent);
+    return;
+  }
   let names: string[];
   try {
     names = await readdir(parent);
@@ -354,18 +495,6 @@ async function pruneQuarantinedSnapshots(parent: string): Promise<void> {
   ).catch(() => undefined);
 }
 
-async function syncDirectoryBestEffort(parent: string): Promise<void> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    handle = await open(parent, "r");
-    await handle.sync();
-  } catch {
-    // Directory fsync is unavailable on Windows; the file itself was fsynced.
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
-}
-
 function quarantineTimestamp(date: Date): string {
   if (!Number.isFinite(date.getTime())) throw new RangeError("Invalid clock date");
   const iso = date.toISOString();
@@ -384,4 +513,9 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sameFilesystemPath(left: string, right: string): boolean {
+  return path.resolve(left).toLocaleLowerCase("en-US")
+    === path.resolve(right).toLocaleLowerCase("en-US");
 }

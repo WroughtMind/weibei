@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AppSnapshot, Preferences, ThemeMode } from "../../shared/contracts";
+import type { AppSnapshot, Preferences, ProviderPublicConfig, ThemeMode } from "../../shared/contracts";
 import { Icon } from "./Icon";
 
 type Section = "appearance" | "agent" | "data" | "about";
@@ -12,7 +12,7 @@ interface Props {
   snapshot: AppSnapshot;
   onClose(): void;
   onPreferences(patch: Partial<Preferences>): void;
-  onSnapshot(value: AppSnapshot): void;
+  onProvider(value: ProviderPublicConfig): void;
 }
 
 export function SettingsSheet(props: Props) {
@@ -67,12 +67,12 @@ export function SettingsSheet(props: Props) {
                 <button className="primary-paper-button" onClick={async () => {
                   if (!window.weiBei) return;
                   const provider = await window.weiBei.saveProvider({ providerId, model, baseUrl, apiKey: apiKey || undefined });
-                  props.onSnapshot({ ...props.snapshot, provider });
+                  props.onProvider(provider);
                   setApiKey(""); setSaved(true); setTimeout(() => setSaved(false), 1800);
                 }}>{saved ? "已保存" : "保存连接"}</button>
               </SettingsGroup>
-              <SettingsGroup title="写入确认" detail="Agent 不会直接更改笔记。每次修改都先形成建议，并在应用时重新校验磁盘基线。">
-                <div className="safety-callout"><Icon name="check" size={18} /><span><strong>唯一写入闸门已启用</strong><small>外部修改、撤销与 Agent 建议共用同一套冲突保护。</small></span></div>
+              <SettingsGroup title="笔记写入边界" detail="此版本的 Agent 不会创建或应用笔记修改；手动保存仍会重新校验磁盘基线。">
+                <div className="safety-callout"><Icon name="check" size={18} /><span><strong>笔记写入闸门已启用</strong><small>手动保存会检查外部修改；Agent 笔记建议尚未开放。</small></span></div>
               </SettingsGroup>
             </div>
           )}
@@ -91,7 +91,7 @@ function SettingsGroup(props: { title: string; detail?: string; children: React.
   return <section className="settings-group"><header><h2>{props.title}</h2>{props.detail && <p>{props.detail}</p>}</header><div className="settings-group-body">{props.children}</div></section>;
 }
 function DataPage({ snapshot }: { snapshot: AppSnapshot }) {
-  return <div className="settings-page"><SettingsGroup title="课程资料库" detail="课程目录是事实来源；索引和缓存可随时重建。"><div className="path-card"><Icon name="folder" /><span><strong>{snapshot.libraryRootPath || "尚未选择"}</strong><small>文稿、笔记与 portable state 保存在这里</small></span></div></SettingsGroup><SettingsGroup title="文件安全"><div className="safety-callout"><Icon name="check" size={18} /><span><strong>保存前校验外部修改</strong><small>只有磁盘摘要仍与打开时一致，魏碑才会原子替换文件。</small></span></div><div className="safety-callout"><Icon name="check" size={18} /><span><strong>写后重读验证</strong><small>OneDrive 或网络盘暂时不可用时会保留草稿，不会报告假成功。</small></span></div></SettingsGroup></div>;
+  return <div className="settings-page"><SettingsGroup title="课程资料库" detail="课程目录是事实来源；索引和缓存可随时重建。"><div className="path-card"><Icon name="folder" /><span><strong>{snapshot.libraryRootPath || "尚未选择"}</strong><small>文稿、笔记与 portable state 保存在这里</small></span></div></SettingsGroup><SettingsGroup title="文件安全"><div className="safety-callout"><Icon name="check" size={18} /><span><strong>保存前校验外部修改</strong><small>只有磁盘摘要仍与打开时一致，魏碑才会原子替换文件。</small></span></div><div className="safety-callout"><Icon name="check" size={18} /><span><strong>写后重读验证</strong><small>写入失败不会报告成功，当前编辑内容不会被磁盘旧内容替换。</small></span></div></SettingsGroup></div>;
 }
 function AboutPage({ version }: { version: string }) {
   return <div className="about-page"><span className="about-seal">魏</span><h2>魏碑</h2><p>专注于课程阅读、笔记与思考的本地工作台。</p><small>Windows 版本 {version}</small><div><button>隐私说明</button><button>第三方许可</button><button>素材归属</button></div></div>;

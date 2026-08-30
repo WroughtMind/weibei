@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, net, protocol, safeStorage, session } from "electron";
 import { WeiBeiController } from "./controller";
 import { registerIPC } from "./ipc";
+import { isAllowedMainWindowNavigation, type MainWindowNavigationPolicy } from "./navigation-policy";
 import { CredentialVault, type SafeStorageAdapter } from "./services/credential-vault";
 import {
   DocumentGrantService,
@@ -44,7 +46,11 @@ app.whenReady().then(async () => {
   app.setAppUserModelId("app.weibei.desktop");
   const rendererScope = randomUUID();
   const grants = new DocumentGrantService();
-  const rendererURL = process.env.WEIBEI_RENDERER_URL;
+  const rendererURL = app.isPackaged ? undefined : process.env.WEIBEI_RENDERER_URL;
+  const rendererEntryPath = path.join(app.getAppPath(), "dist", "renderer", "index.html");
+  const navigationPolicy: MainWindowNavigationPolicy = rendererURL
+    ? { mode: "development", rendererURL }
+    : { mode: "packaged", rendererEntryURL: pathToFileURL(rendererEntryPath).href };
   await registerEditorProtocol(rendererURL);
   await session.defaultSession.protocol.handle(documentGrantScheme, (request) => grants.handleRequest(request, rendererScope));
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -80,10 +86,11 @@ app.whenReady().then(async () => {
   });
   mainWindow = window;
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  window.webContents.on("will-navigate", (event, target) => {
-    const allowed = rendererURL ? target.startsWith(rendererURL) : target.startsWith("file:");
-    if (!allowed) event.preventDefault();
-  });
+  const enforceNavigationPolicy = (event: Electron.Event, target: string) => {
+    if (!isAllowedMainWindowNavigation(target, navigationPolicy)) event.preventDefault();
+  };
+  window.webContents.on("will-navigate", enforceNavigationPolicy);
+  window.webContents.on("will-redirect", enforceNavigationPolicy);
   window.once("ready-to-show", () => window.show());
 
   let libraryRootPath = path.join(userDataPath, "魏碑资料库");
@@ -112,7 +119,7 @@ app.whenReady().then(async () => {
     mainWindow = null;
   });
   if (rendererURL) await window.loadURL(rendererURL);
-  else await window.loadFile(path.join(app.getAppPath(), "dist", "renderer", "index.html"));
+  else await window.loadFile(rendererEntryPath);
 }).catch((error) => {
   console.error(error);
   void shutdownController().finally(() => app.exit(1));

@@ -1,8 +1,21 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { sha256 } from "../src/main/services/file-utils";
 import {
   SWIFT_REFERENCE_DATE_UNIX_MILLISECONDS,
   SwiftJSONNumber,
@@ -141,6 +154,121 @@ test("workspace persistence rotates three generations and verifies primary", asy
     assert.equal((await store.load()).source, "primary");
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("workspace persistence CAS preserves external and multi-instance winners", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "weibei-workspace-cas-"));
+  try {
+    const seed = new WorkspacePersistence(directory);
+    await seed.save(workspace(1));
+    const first = new WorkspacePersistence(directory);
+    const second = new WorkspacePersistence(directory);
+    await Promise.all([first.load(), second.load()]);
+
+    await first.save({ ...workspace(2), futureExternalEdit: "FIRST_WINS" });
+    await assert.rejects(second.save(workspace(3)), /write-conflict/);
+    let live = decodePersistedWorkspace(await readFile(first.primaryPath));
+    assert.equal(live.futureRevision, 2);
+    assert.equal(live.futureExternalEdit, "FIRST_WINS");
+
+    await second.load();
+    const external = {
+      ...live,
+      futureExternalEdit: "EXTERNAL_WINS",
+    } as PersistedWorkspaceRecord;
+    await writeFile(
+      first.primaryPath,
+      encodePersistedWorkspace(external, { trailingNewline: true }),
+      "utf8",
+    );
+    await assert.rejects(second.save(workspace(4)), /write-conflict/);
+    live = decodePersistedWorkspace(await readFile(first.primaryPath));
+    assert.equal(live.futureExternalEdit, "EXTERNAL_WINS");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("workspace load restores an interrupted CAS baseline", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "weibei-workspace-cas-recovery-"));
+  try {
+    const store = new WorkspacePersistence(directory);
+    await store.save(workspace(1));
+    const baseline = await readFile(store.primaryPath);
+    const next = Buffer.from(encodePersistedWorkspace(workspace(2)), "utf8");
+    const transactionDirectory = path.join(
+      directory,
+      `.workspace.json.weibei-transaction-${randomUUID()}`,
+    );
+    await mkdir(transactionDirectory);
+    await Promise.all([
+      writeFile(path.join(transactionDirectory, "next"), next),
+      writeFile(
+        path.join(transactionDirectory, "transaction.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          targetFileName: "workspace.json",
+          expectedDigest: sha256(baseline),
+          nextDigest: sha256(next),
+        }),
+        "utf8",
+      ),
+    ]);
+    await rename(store.primaryPath, path.join(transactionDirectory, "previous"));
+
+    const recovered = await new WorkspacePersistence(directory).load();
+    assert.equal(recovered.source, "primary");
+    assert.equal(recovered.snapshot?.futureRevision, 1);
+    assert.deepEqual(await readFile(store.primaryPath), baseline);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("identity-bound workspace save rejects a parent swap after preflight", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "weibei-workspace-parent-"));
+  const outside = await mkdtemp(path.join(os.tmpdir(), "weibei-workspace-outside-"));
+  const held = `${directory}-held-${randomUUID()}`;
+  try {
+    await new WorkspacePersistence(directory).save(workspace(1));
+    const info = await lstat(directory, { bigint: true });
+    const store = new WorkspacePersistence({
+      workspaceDirectory: directory,
+      expectedParent: {
+        absolutePath: await realpath(directory),
+        dev: info.dev,
+        ino: info.ino,
+      },
+    });
+    await store.load();
+    const outsidePath = path.join(outside, "workspace.json");
+    const outsideBytes = Buffer.from(encodePersistedWorkspace({
+      ...workspace(99),
+      futureExternalEdit: "OUTSIDE_WINNER",
+    }, { trailingNewline: true }));
+    await writeFile(outsidePath, outsideBytes);
+    const originalPrepare = Reflect.get(
+      store,
+      "prepareParent",
+    ) as () => Promise<void>;
+    Reflect.set(store, "prepareParent", async () => {
+      await originalPrepare.call(store);
+      await rename(directory, held);
+      await symlink(
+        outside,
+        directory,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    });
+
+    await assert.rejects(store.save(workspace(2)), /directory-identity-conflict/);
+    assert.deepEqual(await readFile(outsidePath), outsideBytes);
+    assert.deepEqual(await readdir(outside), ["workspace.json"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(held, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 

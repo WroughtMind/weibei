@@ -23,12 +23,12 @@ const api: WeiBeiDesktopAPI = {
   createNote: async (courseId, title) => AppSnapshotSchema.parse(await ipcRenderer.invoke(IPC.createNote, courseId, title)),
   openItem: async (courseId, itemId) => DocumentPayloadSchema.parse(await ipcRenderer.invoke(IPC.openItem, courseId, itemId)),
   saveNote: async (request) => SaveNoteResultSchema.parse(await ipcRenderer.invoke(IPC.saveNote, request)),
-  loadNoteRecovery: async (itemId) => {
-    const value: unknown = await ipcRenderer.invoke(IPC.loadNoteRecovery, itemId);
+  loadNoteRecovery: async (target) => {
+    const value: unknown = await ipcRenderer.invoke(IPC.loadNoteRecovery, target);
     return value === null ? null : NoteRecoveryRecordSchema.parse(value);
   },
   saveNoteRecovery: async (input) => NoteRecoveryRecordSchema.parse(await ipcRenderer.invoke(IPC.saveNoteRecovery, input)),
-  clearNoteRecovery: async (itemId) => { await ipcRenderer.invoke(IPC.clearNoteRecovery, itemId); },
+  clearNoteRecovery: async (target) => { await ipcRenderer.invoke(IPC.clearNoteRecovery, target); },
   updatePreferences: async (patch) => PreferencesSchema.parse(await ipcRenderer.invoke(IPC.updatePreferences, patch)),
   search: async (request) => SearchResultSchema.array().parse(await ipcRenderer.invoke(IPC.search, request)),
   createSession: async (courseId) => StudySessionSchema.parse(await ipcRenderer.invoke(IPC.createSession, courseId)),

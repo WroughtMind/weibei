@@ -2,7 +2,8 @@ import { ipcMain, type BrowserWindow } from "electron";
 import { z } from "zod";
 import {
   AgentStartRequestSchema,
-  NoteRecoveryRecordSchema,
+  NoteRecoverySaveInputSchema,
+  NoteRecoveryTargetSchema,
   PreferencesSchema,
   SaveNoteRequestSchema,
   SearchRequestSchema,
@@ -13,11 +14,6 @@ import type { WeiBeiController } from "./controller";
 const UUID = z.string().uuid();
 const nonemptyTitle = z.string().trim().min(1).max(120);
 const itemID = z.string().min(1).max(256);
-const noteRecoveryInput = NoteRecoveryRecordSchema.pick({
-  itemId: true,
-  markdown: true,
-  baselineDigest: true,
-});
 
 export function registerIPC(controller: WeiBeiController, window: BrowserWindow): () => void {
   const handles = <T extends (...args: never[]) => unknown>(channel: string, operation: T) => {
@@ -38,9 +34,9 @@ export function registerIPC(controller: WeiBeiController, window: BrowserWindow)
   handles(IPC.createNote, (courseID: unknown, title: unknown) => controller.createNote(UUID.parse(courseID), nonemptyTitle.parse(title)));
   handles(IPC.openItem, (courseID: unknown, rawItemID: unknown) => controller.openItem(UUID.parse(courseID), itemID.parse(rawItemID)));
   handles(IPC.saveNote, (request: unknown) => controller.saveNote(SaveNoteRequestSchema.parse(request)));
-  handles(IPC.loadNoteRecovery, (rawItemID: unknown) => controller.loadNoteRecovery(itemID.parse(rawItemID)));
-  handles(IPC.saveNoteRecovery, (input: unknown) => controller.saveNoteRecovery(noteRecoveryInput.parse(input)));
-  handles(IPC.clearNoteRecovery, (rawItemID: unknown) => controller.clearNoteRecovery(itemID.parse(rawItemID)));
+  handles(IPC.loadNoteRecovery, (target: unknown) => controller.loadNoteRecovery(NoteRecoveryTargetSchema.parse(target)));
+  handles(IPC.saveNoteRecovery, (input: unknown) => controller.saveNoteRecovery(NoteRecoverySaveInputSchema.parse(input)));
+  handles(IPC.clearNoteRecovery, (target: unknown) => controller.clearNoteRecovery(NoteRecoveryTargetSchema.parse(target)));
   handles(IPC.updatePreferences, (patch: unknown) => controller.updatePreferences(PreferencesSchema.partial().parse(patch)));
   handles(IPC.search, (request: unknown) => controller.search(SearchRequestSchema.parse(request)));
   handles(IPC.createSession, (courseID: unknown) => controller.createSession(UUID.parse(courseID)));

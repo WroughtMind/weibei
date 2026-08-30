@@ -89,6 +89,7 @@ export class AgentWorkerServer {
       const text = await this.providerStream({
         provider: command.provider,
         apiKey,
+        history: command.history,
         question: command.question,
         context: command.context,
         signal: controller.signal,

@@ -1,15 +1,33 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
-  AgentEvent,
   AppSnapshot,
   DocumentPayload,
   PaneRole,
   Preferences,
   SaveNoteResult,
   SelectionContext,
-  StudySession,
   WeiBeiDesktopAPI,
 } from "../shared/contracts";
+import { ExclusiveOperationGate, LatestOperationGate } from "../shared/latest-operation-gate";
+import {
+  activateOpenedItem,
+  applyAgentEvent,
+  applyAgentRequestEvent,
+  hydratedNoteSaveTarget,
+  isTerminalAgentEvent,
+  noteHydrationDisposition,
+  noteRecoveryFlushAction,
+  replaceAgentMessageText,
+  replaceSnapshotPreferences,
+  replaceSnapshotProvider,
+  saveRequestForProtectedNoteDraft,
+  sameHydratedNoteTarget,
+  shouldAcceptOpenedItemResult,
+  snapshotKeepsHydratedEditor,
+  type HydratedNoteTarget,
+  type ProtectedNoteDraft,
+  type TerminalAgentEvent,
+} from "./app-state";
 import { CourseSpace } from "./components/CourseSpace";
 import { EmptyLauncher } from "./components/EmptyLauncher";
 import { LibraryDrawer } from "./components/LibraryDrawer";
@@ -18,10 +36,18 @@ import { SettingsSheet } from "./components/SettingsSheet";
 import { SearchPalette } from "./components/SearchPalette";
 import { TopBar } from "./components/TopBar";
 import { ThreePaneWorkspace } from "./components/ThreePaneWorkspace";
+import type { CanonicalNoteEditorHandle } from "./components/panes/CanonicalNoteEditor";
+import { PostCommitReleaseQueue } from "./note-snapshot-flush";
+import { NoteRecoveryWriteEpochGate } from "./note-recovery-write-epoch";
 import { AgentStreamDisplayPump } from "./stream-display-pump";
+import { ProtectedWindowUnloadGuard } from "./protected-window-unload";
 
 type Overlay = "course" | "search" | "settings" | null;
 type ItemOpenTarget = "reader" | "notes" | "auto";
+type SnapshotCommitValue = AppSnapshot | null | ((current: AppSnapshot) => AppSnapshot);
+type NoteProtectionResult =
+  | { ok: false }
+  | { ok: true; note: ProtectedNoteDraft | null; release(): void };
 type NamePrompt =
   | { kind: "course"; closeLibrary: boolean }
   | { kind: "note"; closeLibrary: boolean; courseId: string };
@@ -58,7 +84,7 @@ export function App() {
   const [noteDraft, setNoteDraft] = useState("");
   const [noteBaseline, setNoteBaseline] = useState<string | null>(null);
   const [noteDiskMarkdown, setNoteDiskMarkdown] = useState("");
-  const [noteLoadedItemId, setNoteLoadedItemId] = useState<string | null>(null);
+  const [noteLoadedTarget, setNoteLoadedTarget] = useState<HydratedNoteTarget | null>(null);
   const [noteStatus, setNoteStatus] = useState<SaveNoteResult["status"] | null>(null);
   const [noteConflict, setNoteConflict] = useState<SaveNoteResult | null>(null);
   const [selection, setSelection] = useState<SelectionContext | null>(null);
@@ -67,21 +93,191 @@ export function App() {
   const [namePrompt, setNamePrompt] = useState<NamePrompt | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
+  const [recoveryRetryGeneration, setRecoveryRetryGeneration] = useState(0);
+  const [agentRequestIdsBySession, setAgentRequestIdsBySession] = useState<Record<string, string>>({});
   const streamPumps = useRef(new Map<string, AgentStreamDisplayPump>());
-  const finalStreamEvents = useRef(new Map<string, Extract<AgentEvent, { type: "completed" | "cancelled" }>>());
+  const finalStreamEvents = useRef(new Map<string, TerminalAgentEvent>());
   const noteHydrationSequence = useRef(0);
+  const noteEditorGeneration = useRef(0);
+  const noteBaselineRef = useRef<string | null>(null);
+  const noteDraftRef = useRef("");
+  const noteDiskMarkdownRef = useRef("");
+  const noteLoadedTargetRef = useRef<HydratedNoteTarget | null>(null);
+  const noteEditorRef = useRef<CanonicalNoteEditorHandle | null>(null);
+  const snapshotRef = useRef<AppSnapshot | null>(null);
+  const openItemGate = useRef(new LatestOperationGate());
+  const snapshotCommitGate = useRef(new LatestOperationGate());
+  const snapshotMutationGate = useRef(new ExclusiveOperationGate());
+  const pendingHydrationReleases = useRef<Array<() => void>>([]);
+  const postCommitReleases = useRef(new PostCommitReleaseQueue());
+  const recoveryWriteEpoch = useRef(new NoteRecoveryWriteEpochGate());
+  noteBaselineRef.current = noteBaseline;
+  noteDraftRef.current = noteDraft;
+  noteDiskMarkdownRef.current = noteDiskMarkdown;
+  noteLoadedTargetRef.current = noteLoadedTarget;
+  snapshotRef.current = snapshot;
 
   const api = window.weiBei;
   const preferences = snapshot?.preferences ?? defaultPreferences;
+  const activeLibraryRootPath = snapshot?.libraryRootPath ?? "";
   const activeCourse = snapshot?.activeCourse ?? null;
   const activeMaterial = activeCourse?.items.find((item) => item.id === activeCourse.activeItemId) ?? null;
   const activeNote = activeCourse?.items.find((item) => item.id === activeCourse.activeNoteId && item.isNotebookNote) ?? null;
+  const activeHydratedNoteTarget = hydratedNoteSaveTarget(snapshot, noteLoadedTarget);
   const activeMaterialIdentity = activeMaterial
-    ? `${activeCourse?.id}:${activeMaterial.id}:${activeMaterial.contentRevision}:${activeMaterial.contentDigest ?? ""}`
+    ? `${activeLibraryRootPath}:${activeCourse?.id}:${activeMaterial.id}:${activeMaterial.contentRevision}:${activeMaterial.contentDigest ?? ""}`
     : "";
   const activeNoteIdentity = activeNote
-    ? `${activeCourse?.id}:${activeNote.id}:${activeNote.contentRevision}:${activeNote.contentDigest ?? ""}`
+    ? `${activeLibraryRootPath}:${activeCourse?.id}:${activeNote.id}:${activeNote.contentRevision}:${activeNote.contentDigest ?? ""}`
     : "";
+  const recoveryWriteTicket = useMemo(
+    () => recoveryWriteEpoch.current.capture(),
+    [
+      activeHydratedNoteTarget?.libraryRootPath,
+      activeHydratedNoteTarget?.courseId,
+      activeHydratedNoteTarget?.itemId,
+      activeHydratedNoteTarget?.editorGeneration,
+      noteBaseline,
+      noteDiskMarkdown,
+      noteDraft,
+      recoveryRetryGeneration,
+    ],
+  );
+
+  const flushCurrentNoteRecovery = useCallback(async (): Promise<NoteProtectionResult> => {
+    const editor = noteEditorRef.current;
+    const target = hydratedNoteSaveTarget(snapshotRef.current, noteLoadedTargetRef.current);
+    if (!api || !editor || !target) return { ok: true, note: null, release: () => undefined };
+    let editorFlush: ReturnType<CanonicalNoteEditorHandle["beginSnapshotFlush"]> | null = null;
+    let invalidatedDelayedRecovery = false;
+    try {
+      editorFlush = editor.beginSnapshotFlush();
+      recoveryWriteEpoch.current.invalidate();
+      invalidatedDelayedRecovery = true;
+      const editorSnapshot = await withTimeout(
+        editorFlush.snapshot,
+        3_000,
+        "等待笔记编辑器快照超时",
+      );
+      const baselineDigest = noteBaselineRef.current;
+      const action = noteRecoveryFlushAction(
+        snapshotRef.current,
+        noteLoadedTargetRef.current,
+        editorSnapshot,
+        noteDiskMarkdownRef.current,
+        baselineDigest,
+      );
+      if (!action) throw new Error("笔记已切换，旧编辑器快照未写入其他笔记");
+      if (action.kind === "save") {
+        await api.saveNoteRecovery(action.request);
+      } else {
+        await api.clearNoteRecovery(action.target);
+      }
+      const activeTarget = hydratedNoteSaveTarget(snapshotRef.current, noteLoadedTargetRef.current);
+      if (!activeTarget
+          || activeTarget.itemId !== editorSnapshot.documentID
+          || activeTarget.editorGeneration !== editorSnapshot.documentGeneration) {
+        throw new Error("笔记已切换，草稿保护结果已失效");
+      }
+      return {
+        ok: true,
+        note: {
+          target: { ...activeTarget },
+          markdown: editorSnapshot.markdown,
+          baselineDigest,
+        },
+        release: editorFlush.release,
+      };
+    } catch (error) {
+      editorFlush?.release();
+      if (invalidatedDelayedRecovery) {
+        setRecoveryRetryGeneration((generation) => generation + 1);
+      }
+      setFailure(`切换前未能保护当前笔记草稿：${messageFor(error)}`);
+      return { ok: false };
+    }
+  }, [api]);
+
+  const releaseHydrationTransitions = useCallback(() => {
+    for (const release of pendingHydrationReleases.current.splice(0)) release();
+  }, []);
+
+  useLayoutEffect(() => {
+    postCommitReleases.current.drain();
+  });
+
+  const protectionMatchesCurrentNote = useCallback((
+    protection: Extract<NoteProtectionResult, { ok: true }>,
+  ): boolean => {
+    const currentTarget = hydratedNoteSaveTarget(snapshotRef.current, noteLoadedTargetRef.current);
+    if (!currentTarget) return protection.note === null;
+    if (!noteEditorRef.current) return protection.note === null;
+    return Boolean(protection.note
+      && sameHydratedNoteTarget(protection.note.target, currentTarget));
+  }, []);
+
+  const commitSnapshot = useCallback(async (
+    input: SnapshotCommitValue,
+    existingProtection?: Extract<NoteProtectionResult, { ok: true }>,
+  ): Promise<boolean> => {
+    if (input === null) {
+      existingProtection?.release();
+      return false;
+    }
+    const ticket = snapshotCommitGate.current.begin();
+    let target = noteLoadedTargetRef.current;
+    let protection: Extract<NoteProtectionResult, { ok: true }> | null = existingProtection ?? null;
+    for (;;) {
+      if (!snapshotCommitGate.current.isLatest(ticket)) {
+        protection?.release();
+        return false;
+      }
+      const current = snapshotRef.current;
+      const value = typeof input === "function"
+        ? current && input(current)
+        : input;
+      if (!value) {
+        protection?.release();
+        return false;
+      }
+      if (snapshotKeepsHydratedEditor(current, value, target)) {
+        protection?.release();
+        protection = null;
+      } else if (!protection || !protectionMatchesCurrentNote(protection)) {
+        protection?.release();
+        const nextProtection = await flushCurrentNoteRecovery();
+        if (!nextProtection.ok) return false;
+        protection = nextProtection;
+        target = noteLoadedTargetRef.current;
+        continue;
+      }
+      if (protection) {
+        const sameNoteWillHydrate = value.preferences.visiblePanes.length > 0
+          && hydratedNoteSaveTarget(value, target) !== null;
+        if (sameNoteWillHydrate) pendingHydrationReleases.current.push(protection.release);
+        else postCommitReleases.current.enqueue(protection.release);
+      }
+      snapshotRef.current = value;
+      if (typeof input === "function") {
+        setSnapshot((committedCurrent) => {
+          if (!committedCurrent) return committedCurrent;
+          const committedValue = input(committedCurrent);
+          snapshotRef.current = committedValue;
+          return committedValue;
+        });
+      } else {
+        setSnapshot(value);
+      }
+      setFailure(null);
+      return true;
+    }
+  }, [flushCurrentNoteRecovery, protectionMatchesCurrentNote]);
+
+  const mutateSnapshot = useCallback((mutation: (current: AppSnapshot) => AppSnapshot) => {
+    const current = snapshotRef.current;
+    if (current) snapshotRef.current = mutation(current);
+    setSnapshot((committedCurrent) => committedCurrent && mutation(committedCurrent));
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -106,10 +302,27 @@ export function App() {
   useEffect(() => {
     if (!api) return;
     return api.onLibraryChanged((value) => {
-      setSnapshot(value);
-      setFailure(null);
+      void commitSnapshot(value);
     });
-  }, [api]);
+  }, [api, commitSnapshot]);
+
+  useEffect(() => {
+    const guard = new ProtectedWindowUnloadGuard({
+      hasEditorToProtect: () => Boolean(noteEditorRef.current
+        && hydratedNoteSaveTarget(snapshotRef.current, noteLoadedTargetRef.current)),
+      flushRecovery: async () => {
+        const protection = await flushCurrentNoteRecovery();
+        return protection.ok
+          ? { ok: true, release: protection.release }
+          : { ok: false, release: () => undefined };
+      },
+      closeWindow: () => window.close(),
+      scheduleCloseFallback: (callback) => { window.setTimeout(callback, 250); },
+    });
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => guard.handle(event);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [flushCurrentNoteRecovery]);
 
   useEffect(() => { setSelection(null); }, [activeCourse?.id]);
 
@@ -126,11 +339,16 @@ export function App() {
 
   useEffect(() => {
     if (!api || !activeCourse) {
+      releaseHydrationTransitions();
       setDocument(null);
+      noteDraftRef.current = "";
       setNoteDraft("");
+      noteBaselineRef.current = null;
       setNoteBaseline(null);
+      noteDiskMarkdownRef.current = "";
       setNoteDiskMarkdown("");
-      setNoteLoadedItemId(null);
+      noteLoadedTargetRef.current = null;
+      setNoteLoadedTarget(null);
       setNoteStatus(null);
       setNoteConflict(null);
       return;
@@ -148,24 +366,75 @@ export function App() {
     if (activeNote) {
       const sequence = ++noteHydrationSequence.current;
       void api.openItem(activeCourse.id, activeNote.id).then(async (payload) => {
-        const hydrated = await hydrateNoteDraft(api, payload);
+        const hydrated = await hydrateNoteDraft(
+          api,
+          activeLibraryRootPath,
+          activeCourse.id,
+          payload,
+        );
         if (!live) return;
         if (sequence !== noteHydrationSequence.current) return;
-        setNoteDraft(hydrated.markdown);
-        setNoteBaseline(hydrated.baselineDigest);
+        const disposition = noteHydrationDisposition(
+          noteLoadedTargetRef.current,
+          activeLibraryRootPath,
+          activeCourse.id,
+          activeNote.id,
+          noteDraftRef.current,
+          noteDiskMarkdownRef.current,
+          hydrated.markdown,
+        );
+        noteDiskMarkdownRef.current = hydrated.diskMarkdown;
         setNoteDiskMarkdown(hydrated.diskMarkdown);
-        setNoteLoadedItemId(activeNote.id);
-        setNoteStatus(null);
+        if (disposition === "conflict") {
+          setNoteStatus("conflict");
+          setNoteConflict({
+            status: "conflict",
+            digest: payload.digest,
+            diskMarkdown: hydrated.diskMarkdown,
+            backupPath: null,
+          });
+          releaseHydrationTransitions();
+          return;
+        }
+        if (disposition === "bootstrap") {
+          for (const release of pendingHydrationReleases.current.splice(0)) {
+            postCommitReleases.current.enqueue(release);
+          }
+        }
+        noteDraftRef.current = hydrated.markdown;
+        if (disposition === "bootstrap") setNoteDraft(hydrated.markdown);
+        noteBaselineRef.current = hydrated.baselineDigest;
+        setNoteBaseline(hydrated.baselineDigest);
+        if (disposition === "bootstrap") {
+          const target: HydratedNoteTarget = {
+            libraryRootPath: activeLibraryRootPath,
+            courseId: activeCourse.id,
+            itemId: activeNote.id,
+            editorGeneration: ++noteEditorGeneration.current,
+          };
+          noteLoadedTargetRef.current = target;
+          setNoteLoadedTarget(target);
+          setNoteStatus(null);
+        }
         setNoteConflict(null);
+        if (disposition === "reuse") releaseHydrationTransitions();
       }, (error: unknown) => {
-        if (live) setFailure(messageFor(error));
+        if (live) {
+          releaseHydrationTransitions();
+          setFailure(messageFor(error));
+        }
       });
     } else {
+      releaseHydrationTransitions();
       noteHydrationSequence.current += 1;
+      noteDraftRef.current = "";
       setNoteDraft("");
+      noteBaselineRef.current = null;
       setNoteBaseline(null);
+      noteDiskMarkdownRef.current = "";
       setNoteDiskMarkdown("");
-      setNoteLoadedItemId(null);
+      noteLoadedTargetRef.current = null;
+      setNoteLoadedTarget(null);
       setNoteStatus(null);
       setNoteConflict(null);
     }
@@ -176,24 +445,36 @@ export function App() {
   }, [api, activeCourse?.id, activeMaterialIdentity, activeNoteIdentity]);
 
   useEffect(() => {
-    if (!api || !activeNote || noteLoadedItemId !== activeNote.id) return;
+    const target = activeHydratedNoteTarget;
+    if (!api || !target) return;
     if (noteDraft === noteDiskMarkdown) {
-      void api.clearNoteRecovery(activeNote.id).catch(() => undefined);
+      void recoveryWriteEpoch.current.runIfCurrent(recoveryWriteTicket, async () => {
+        await api.clearNoteRecovery({
+          libraryRootPath: target.libraryRootPath,
+          courseId: target.courseId,
+          itemId: target.itemId,
+        });
+      }).catch(() => undefined);
       return;
     }
     const timer = window.setTimeout(() => {
-      void api.saveNoteRecovery({
-        itemId: activeNote.id,
-        markdown: noteDraft,
-        baselineDigest: noteBaseline,
+      void recoveryWriteEpoch.current.runIfCurrent(recoveryWriteTicket, async () => {
+        await api.saveNoteRecovery({
+          libraryRootPath: target.libraryRootPath,
+          courseId: target.courseId,
+          itemId: target.itemId,
+          markdown: noteDraft,
+          baselineDigest: noteBaseline,
+        });
       }).catch(() => undefined);
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [activeNote, api, noteBaseline, noteDiskMarkdown, noteDraft, noteLoadedItemId]);
+  }, [activeHydratedNoteTarget, api, noteBaseline, noteDiskMarkdown, noteDraft, recoveryWriteTicket]);
 
   useEffect(() => {
     if (!api) return;
     return api.onAgentEvent((event) => {
+      setAgentRequestIdsBySession((current) => applyAgentRequestEvent(current, event));
       if (event.type === "delta") {
         let pump = streamPumps.current.get(event.messageId);
         if (!pump) {
@@ -207,7 +488,7 @@ export function App() {
         }
         return;
       }
-      if (event.type === "completed" || event.type === "cancelled") {
+      if (isTerminalAgentEvent(event)) {
         let pump = streamPumps.current.get(event.message.id);
         if (!pump) {
           pump = makeStreamPump(event.message.id);
@@ -215,7 +496,7 @@ export function App() {
         }
         if (preferences.reduceMotion) {
           pump.replaceImmediately(event.message.text);
-          setSnapshot((current) => current && applyAgentEvent(current, event));
+          mutateSnapshot((current) => applyAgentEvent(current, event));
           pump.cancel();
           streamPumps.current.delete(event.message.id);
         } else {
@@ -224,11 +505,7 @@ export function App() {
         }
         return;
       }
-      if (event.type === "failed") {
-        streamPumps.current.get(event.messageId)?.cancel();
-        streamPumps.current.delete(event.messageId);
-      }
-      setSnapshot((current) => current && applyAgentEvent(current, event));
+      mutateSnapshot((current) => applyAgentEvent(current, event));
     });
     function makeStreamPump(messageId: string) {
       let visible = "";
@@ -237,22 +514,22 @@ export function App() {
         hooks: {
           append(chunk) {
             visible += chunk;
-            setSnapshot((current) => current && replaceAgentMessageText(current, messageId, visible));
+            mutateSnapshot((current) => replaceAgentMessageText(current, messageId, visible));
           },
           replace(text) {
             visible = text;
-            setSnapshot((current) => current && replaceAgentMessageText(current, messageId, text));
+            mutateSnapshot((current) => replaceAgentMessageText(current, messageId, text));
           },
           settled() {
             const finalEvent = finalStreamEvents.current.get(messageId);
-            if (finalEvent) setSnapshot((current) => current && applyAgentEvent(current, finalEvent));
+            if (finalEvent) mutateSnapshot((current) => applyAgentEvent(current, finalEvent));
             finalStreamEvents.current.delete(messageId);
             streamPumps.current.delete(messageId);
           },
         },
       });
     }
-  }, [api, preferences.language, preferences.reduceMotion]);
+  }, [api, mutateSnapshot, preferences.language, preferences.reduceMotion]);
 
   useEffect(() => () => {
     for (const pump of streamPumps.current.values()) pump.cancel();
@@ -270,87 +547,136 @@ export function App() {
   );
 
   const replaceSnapshot = useCallback((value: AppSnapshot | null) => {
-    if (!value) return;
-    setSnapshot(value);
-    setFailure(null);
-  }, []);
+    void commitSnapshot(value);
+  }, [commitSnapshot]);
+
+  const runProtectedSnapshotMutation = useCallback(async (
+    operation: () => Promise<AppSnapshot | null>,
+  ): Promise<boolean> => {
+    const releaseOperation = snapshotMutationGate.current.tryBegin();
+    if (!releaseOperation) return false;
+    let protection: NoteProtectionResult | null = null;
+    try {
+      protection = await flushCurrentNoteRecovery();
+      if (!protection.ok) return false;
+      const value = await operation();
+      return await commitSnapshot(value, protection);
+    } catch (error) {
+      if (protection?.ok) protection.release();
+      throw error;
+    } finally {
+      releaseOperation();
+    }
+  }, [commitSnapshot, flushCurrentNoteRecovery]);
 
   const confirmNamePrompt = useCallback(async (value: string) => {
     if (!api || !namePrompt) return;
     const request = namePrompt;
-    setNamePrompt(null);
     try {
-      if (request.kind === "course") {
-        replaceSnapshot(await api.createCourse(value));
-      } else {
-        replaceSnapshot(await api.createNote(request.courseId, value));
-      }
+      const committed = await runProtectedSnapshotMutation(() => request.kind === "course"
+        ? api.createCourse(value)
+        : api.createNote(request.courseId, value));
+      if (!committed) return;
+      setNamePrompt(null);
       if (request.closeLibrary) setLibraryOpen(false);
     } catch (error) {
       setFailure(messageFor(error));
     }
-  }, [api, namePrompt, replaceSnapshot]);
+  }, [api, namePrompt, runProtectedSnapshotMutation]);
 
   const updatePreferences = useCallback(
     async (patch: Partial<Preferences>) => {
-      if (!snapshot) return;
-      const optimistic = { ...snapshot.preferences, ...patch };
-      setSnapshot({ ...snapshot, preferences: optimistic });
+      const current = snapshotRef.current;
+      if (!current) return;
+      const candidate = { ...current.preferences, ...patch };
+      const needsProtection = !snapshotKeepsHydratedEditor(
+        current,
+        replaceSnapshotPreferences(current, candidate),
+        noteLoadedTargetRef.current,
+      );
+      const protection = needsProtection ? await flushCurrentNoteRecovery() : null;
+      if (protection && !protection.ok) return;
       try {
-        const saved = api ? await api.updatePreferences(patch) : optimistic;
-        setSnapshot((current) => current && { ...current, preferences: saved });
-      } catch (error) {
-        setSnapshot((current) =>
-          current ? { ...current, preferences: snapshot.preferences } : current,
+        const saved = api ? await api.updatePreferences(patch) : candidate;
+        await commitSnapshot(
+          (latest) => replaceSnapshotPreferences(latest, saved),
+          protection?.ok ? protection : undefined,
         );
+      } catch (error) {
+        if (protection?.ok) protection.release();
         setFailure(messageFor(error));
       }
     },
-    [api, snapshot],
+    [api, commitSnapshot, flushCurrentNoteRecovery],
   );
 
   const openItem = useCallback(
     async (courseId: string, itemId: string, target: ItemOpenTarget = "auto") => {
       if (!api) return;
+      const ticket = openItemGate.current.begin();
+      let protection = await flushCurrentNoteRecovery();
+      if (!protection.ok) return;
+      let releaseTransferred = false;
       try {
+        if (!openItemGate.current.isLatest(ticket)) return;
         const payload = await api.openItem(courseId, itemId);
-        setSelection((current) => current?.itemId === itemId ? current : null);
-        if (payload.item.isNotebookNote) {
-          const sequence = ++noteHydrationSequence.current;
-          const hydrated = await hydrateNoteDraft(api, payload);
-          if (sequence !== noteHydrationSequence.current) return;
-          setNoteDraft(hydrated.markdown);
-          setNoteBaseline(hydrated.baselineDigest);
-          setNoteDiskMarkdown(hydrated.diskMarkdown);
-          setNoteLoadedItemId(payload.item.id);
-          setNoteStatus(null);
-          setNoteConflict(null);
+        if (!shouldAcceptOpenedItemResult(
+          snapshotRef.current,
+          courseId,
+          openItemGate.current.isLatest(ticket),
+        )) return;
+        if (!protectionMatchesCurrentNote(protection)) {
+          protection.release();
+          protection = await flushCurrentNoteRecovery();
+          if (!protection.ok
+              || !openItemGate.current.isLatest(ticket)
+              || !protectionMatchesCurrentNote(protection)) return;
         }
+        const current = snapshotRef.current;
+        if (!current) return;
+        const next = activateOpenedItem(current, courseId, payload.item);
+        if (!snapshotKeepsHydratedEditor(current, next, noteLoadedTargetRef.current)) {
+          postCommitReleases.current.enqueue(protection.release);
+          releaseTransferred = true;
+        }
+        snapshotRef.current = next;
+        setSnapshot(next);
+        setSelection((current) => current?.itemId === itemId ? current : null);
         const noteOnly = target === "notes"
           || (target === "auto" && payload.item.isNotebookNote && !payload.item.appearsInMaterials);
         if (!noteOnly) setDocument(payload);
       } catch (error) {
+        if (!shouldAcceptOpenedItemResult(
+          snapshotRef.current,
+          courseId,
+          openItemGate.current.isLatest(ticket),
+        )) return;
         setFailure(messageFor(error));
+      } finally {
+        if (protection.ok && !releaseTransferred) protection.release();
       }
     },
-    [api],
+    [api, flushCurrentNoteRecovery, protectionMatchesCurrentNote],
   );
 
-  const persistNote = useCallback(async (baselineDigest: string | null) => {
-    const course = snapshot?.activeCourse;
-    const note = course?.items.find((item) => item.id === course.activeNoteId);
-    if (!api || !course || !note) return;
+  const persistNote = useCallback(async (draft: ProtectedNoteDraft) => {
+    if (!api) return;
+    const request = saveRequestForProtectedNoteDraft(
+      snapshotRef.current,
+      noteLoadedTargetRef.current,
+      draft,
+    );
+    if (!request) return;
+    const { target, markdown } = draft;
     try {
-      const result = await api.saveNote({
-        courseId: course.id,
-        itemId: note.id,
-        markdown: noteDraft,
-        baselineDigest,
-      });
+      const result = await api.saveNote(request);
+      if (!sameHydratedNoteTarget(noteLoadedTargetRef.current, target)) return;
       setNoteStatus(result.status);
       if (result.status === "saved") {
+        noteBaselineRef.current = result.digest;
         setNoteBaseline(result.digest);
-        setNoteDiskMarkdown(noteDraft);
+        noteDiskMarkdownRef.current = markdown;
+        setNoteDiskMarkdown(markdown);
         setNoteConflict(null);
       }
       if (result.status === "conflict") {
@@ -360,27 +686,38 @@ export function App() {
           : "笔记已被外部修改。草稿仍保留，魏碑没有覆盖磁盘内容。");
       }
     } catch (error) {
+      if (!sameHydratedNoteTarget(noteLoadedTargetRef.current, target)) return;
       setNoteStatus("unavailable");
       setFailure(messageFor(error));
     }
-  }, [api, noteDraft, snapshot]);
+  }, [api]);
 
-  const saveNote = useCallback(() => persistNote(noteBaseline), [noteBaseline, persistNote]);
-
-  const useDiskNote = useCallback(() => {
-    if (!activeNote || !noteConflict || noteConflict.diskMarkdown === null) return;
-    setNoteDraft(noteConflict.diskMarkdown);
-    setNoteDiskMarkdown(noteConflict.diskMarkdown);
-    setNoteBaseline(noteConflict.digest);
-    setNoteStatus("saved");
-    setNoteConflict(null);
-    void api?.clearNoteRecovery(activeNote.id).catch(() => undefined);
-  }, [activeNote, api, noteConflict]);
+  const saveNote = useCallback(() => {
+    void (async () => {
+      const protection = await flushCurrentNoteRecovery();
+      if (!protection.ok) return;
+      try {
+        if (protection.note) await persistNote(protection.note);
+      } finally {
+        protection.release();
+      }
+    })();
+  }, [flushCurrentNoteRecovery, persistNote]);
 
   const overwriteDiskNote = useCallback(() => {
     if (!noteConflict) return;
-    void persistNote(noteConflict.digest);
-  }, [noteConflict, persistNote]);
+    void (async () => {
+      const protection = await flushCurrentNoteRecovery();
+      if (!protection.ok) return;
+      try {
+        if (protection.note) {
+          await persistNote({ ...protection.note, baselineDigest: noteConflict.digest });
+        }
+      } finally {
+        protection.release();
+      }
+    })();
+  }, [flushCurrentNoteRecovery, noteConflict, persistNote]);
 
   if (loading || !snapshot) {
     return (
@@ -391,6 +728,9 @@ export function App() {
   }
 
   const empty = preferences.visiblePanes.length === 0 || !snapshot.activeCourse;
+  const selectedSessionId = activeCourse?.sessions.find(
+    (session) => session.id === activeCourse.activeSessionId,
+  )?.id ?? activeCourse?.sessions[0]?.id ?? null;
 
   return (
     <main
@@ -401,7 +741,7 @@ export function App() {
     >
       <TopBar
         snapshot={snapshot}
-        persistState={noteConflict ? "conflict" : noteLoadedItemId && noteDraft !== noteDiskMarkdown ? "unsaved" : "saved"}
+        persistState={activeHydratedNoteTarget && noteConflict ? "conflict" : activeHydratedNoteTarget && noteDraft !== noteDiskMarkdown ? "unsaved" : "saved"}
         onToggleLibrary={() => setLibraryOpen((value) => !value)}
         onTogglePane={(pane) => {
           const visible = preferences.visiblePanes.includes(pane);
@@ -427,23 +767,32 @@ export function App() {
             hasCourses={snapshot.courses.length > 0}
             onLibrary={() => setLibraryOpen(true)}
             onCreateCourse={() => setNamePrompt({ kind: "course", closeLibrary: false })}
-            onAdopt={async () => replaceSnapshot(api ? await api.adoptCourseFolder() : null)}
+            onAdopt={() => {
+              if (api) void runProtectedSnapshotMutation(() => api.adoptCourseFolder());
+            }}
           />
         ) : (
           <ThreePaneWorkspace
             snapshot={snapshot}
             document={document}
             noteDraft={noteDraft}
-            noteStatus={noteStatus}
-            noteConflict={noteConflict}
+            noteEditorGeneration={activeHydratedNoteTarget?.editorGeneration ?? null}
+            noteEditorRef={noteEditorRef}
+            noteStatus={activeHydratedNoteTarget ? noteStatus : null}
+            noteConflict={activeHydratedNoteTarget ? noteConflict : null}
             selection={selection}
-            onDraftChange={(value) => {
+            activeAgentRequestId={selectedSessionId ? agentRequestIdsBySession[selectedSessionId] ?? null : null}
+            onDraftChange={(value, itemId, documentGeneration) => {
+              const target = noteLoadedTargetRef.current;
+              if (!target
+                  || target.itemId !== itemId
+                  || target.editorGeneration !== documentGeneration) return;
+              noteDraftRef.current = value;
               setNoteDraft(value);
               if (noteStatus === "saved") setNoteStatus(null);
             }}
             onSelection={setSelection}
             onSaveNote={saveNote}
-            onUseDiskNote={useDiskNote}
             onOverwriteDiskNote={overwriteDiskNote}
             onOpenItem={openItem}
             onSnapshot={replaceSnapshot}
@@ -460,14 +809,15 @@ export function App() {
         onClose={() => setLibraryOpen(false)}
         onSelectCourse={async (courseId) => {
           if (!api) return;
-          replaceSnapshot(await api.selectCourse(courseId));
+          if (!(await runProtectedSnapshotMutation(() => api.selectCourse(courseId)))) return;
           setLibraryOpen(false);
           setDocument(null);
         }}
         onCreateCourse={() => setNamePrompt({ kind: "course", closeLibrary: true })}
         onImport={async () => {
           if (!api || !snapshot.activeCourse) return;
-          replaceSnapshot(await api.importItems(snapshot.activeCourse.id));
+          const courseId = snapshot.activeCourse.id;
+          await runProtectedSnapshotMutation(() => api.importItems(courseId));
         }}
         onCreateNote={() => {
           if (api && snapshot.activeCourse) {
@@ -493,7 +843,9 @@ export function App() {
           snapshot={snapshot}
           onClose={() => setOverlay(null)}
           onPreferences={updatePreferences}
-          onSnapshot={replaceSnapshot}
+          onProvider={(provider) => {
+            void commitSnapshot((current) => replaceSnapshotProvider(current, provider));
+          }}
         />
       )}
 
@@ -523,9 +875,18 @@ export function App() {
   );
 }
 
-async function hydrateNoteDraft(api: WeiBeiDesktopAPI, payload: DocumentPayload) {
+async function hydrateNoteDraft(
+  api: WeiBeiDesktopAPI,
+  libraryRootPath: string,
+  courseId: string,
+  payload: DocumentPayload,
+) {
   const diskMarkdown = payload.content ?? "";
-  const recovery = await api.loadNoteRecovery(payload.item.id).catch(() => null);
+  const recovery = await api.loadNoteRecovery({
+    libraryRootPath,
+    courseId,
+    itemId: payload.item.id,
+  }).catch(() => null);
   if (recovery && recovery.markdown !== diskMarkdown) {
     return {
       markdown: recovery.markdown,
@@ -548,44 +909,18 @@ function messageFor(error: unknown): string {
   return error instanceof Error ? error.message : "操作未完成，请稍后重试。";
 }
 
-function applyAgentEvent(snapshot: AppSnapshot, event: AgentEvent): AppSnapshot {
-  const course = snapshot.activeCourse;
-  if (!course) return snapshot;
-  const sessions = course.sessions.map((session): StudySession => {
-    if (session.id !== ("sessionId" in event ? event.sessionId : course.activeSessionId)) return session;
-    if (event.type === "started") {
-      return { ...session, messages: [...session.messages, event.userMessage, event.assistantMessage] };
-    }
-    const messageId = event.type === "completed" || event.type === "cancelled"
-      ? event.message.id
-      : event.messageId;
-    return {
-      ...session,
-      messages: session.messages.map((message) => {
-        if (message.id !== messageId) return message;
-        if (event.type === "delta") return { ...message, text: event.text };
-        if (event.type === "completed" || event.type === "cancelled") return event.message;
-        if (event.type === "failed") {
-          return { ...message, completionState: "interrupted", failureKind: event.failureKind };
-        }
-        return message;
-      }),
-    };
+function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMilliseconds);
+    void promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
   });
-  return { ...snapshot, activeCourse: { ...course, sessions } };
-}
-
-function replaceAgentMessageText(snapshot: AppSnapshot, messageId: string, text: string): AppSnapshot {
-  const course = snapshot.activeCourse;
-  if (!course) return snapshot;
-  return {
-    ...snapshot,
-    activeCourse: {
-      ...course,
-      sessions: course.sessions.map((session) => ({
-        ...session,
-        messages: session.messages.map((message) => message.id === messageId ? { ...message, text } : message),
-      })),
-    },
-  };
 }

@@ -66,14 +66,14 @@ function CourseHub(props: {
   notes: NonNullable<AppSnapshot["activeCourse"]>["items"];
   onOpen(courseId: string, itemId: string): void;
 }) {
-  const recent = [...props.course.items].slice(0, 6);
+  const previewItems = [...props.course.items].slice(0, 6);
   return (
     <div className="course-hub-grid">
       <section className="hub-welcome">
         <span className="overline">继续学习</span>
         <h2>{props.course.title}</h2>
-        <p>把文稿、笔记和 Chat 放在同一个课程语境里。魏碑会保留你的阅读位置与学习脉络。</p>
-        {recent[0] && <button className="primary-paper-button" onClick={() => props.onOpen(props.course.id, recent[0].id)}>继续上次学习 <span>→</span></button>}
+        <p>把文稿、笔记和 Chat 放在同一个课程语境里。魏碑会保留课程内容、对话和最近选择的条目。</p>
+        {previewItems[0] && <button className="primary-paper-button" onClick={() => props.onOpen(props.course.id, previewItems[0].id)}>打开第一项 <span>→</span></button>}
       </section>
       <section className="hub-stat-grid">
         <Stat value={props.materials.length} label="篇文稿" seal="文" />
@@ -81,9 +81,9 @@ function CourseHub(props: {
         <Stat value={props.course.sessions.length} label="个 Chat" seal="问" />
       </section>
       <section className="hub-card recent-card">
-        <header><div><span className="overline">RECENT</span><h3>最近内容</h3></div><button>查看全部</button></header>
+        <header><div><span className="overline">CONTENT</span><h3>课程内容</h3></div><small>{props.course.items.length} 项</small></header>
         <div className="recent-grid">
-          {recent.map((item) => (
+          {previewItems.map((item) => (
             <button key={item.id} onClick={() => props.onOpen(props.course.id, item.id)}>
               <Icon name={item.kind} size={18} />
               <span><strong>{item.title}</strong><small>{item.isNotebookNote ? "笔记" : "文稿"} · {item.subtitle}</small></span>
@@ -160,8 +160,8 @@ function Memory() {
       <span className="memory-watermark">忆</span>
       <span className="overline">COURSE MEMORY</span>
       <h2>课程记忆</h2>
-      <p>魏碑会在得到你确认后，记住课程中的稳定偏好、学习目标和已经掌握的概念。记忆有来源、可查看，也可以随时撤销。</p>
-      <div className="memory-empty"><span>尚无课程记忆</span><small>继续阅读和对话后，经过确认的记忆会出现在这里。</small></div>
+      <p>本页为后续课程记忆管理预留；当前 Windows 核心版本不会从阅读或对话中生成、保存或修改记忆。</p>
+      <div className="memory-empty"><span>课程记忆尚未开放</span><small>当前版本不会写入记忆数据。</small></div>
     </section>
   );
 }

@@ -2,6 +2,7 @@ import {
   AGENT_WORKER_PROTOCOL_VERSION,
   DEFAULT_AGENT_TIMEOUT_MS,
   isAgentWorkerEvent,
+  type AgentWorkerHistoryMessage,
   type AgentWorkerCommand,
   type AgentWorkerEvent,
 } from "./protocol";
@@ -24,6 +25,7 @@ export interface AgentWorkerStreamRequest {
   sessionId: string;
   provider: ProviderPublicConfig;
   credential: Uint8Array;
+  history?: readonly AgentWorkerHistoryMessage[];
   question: string;
   context?: string;
   ledgerRoot: string;
@@ -108,6 +110,7 @@ export class AgentWorkerClient {
           sessionId: request.sessionId,
           provider: request.provider,
           credential: request.credential,
+          history: request.history ? request.history.map((message) => ({ ...message })) : [],
           question: request.question,
           context: request.context ?? "",
           ledgerRoot: request.ledgerRoot,

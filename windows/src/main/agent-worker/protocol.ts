@@ -5,6 +5,11 @@ export const DEFAULT_AGENT_TIMEOUT_MS = 120_000;
 export const MAXIMUM_AGENT_TIMEOUT_MS = 10 * 60_000;
 export const MAXIMUM_AGENT_CREDENTIAL_BYTES = 1024 * 1024;
 
+export interface AgentWorkerHistoryMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
 export interface AgentWorkerStartCommand {
   version: typeof AGENT_WORKER_PROTOCOL_VERSION;
   type: "start";
@@ -12,6 +17,7 @@ export interface AgentWorkerStartCommand {
   sessionId: string;
   provider: ProviderPublicConfig;
   credential: Uint8Array;
+  history: AgentWorkerHistoryMessage[];
   question: string;
   context: string;
   ledgerRoot: string;
@@ -92,6 +98,7 @@ export function isAgentWorkerCommand(value: unknown): value is AgentWorkerComman
     && value.credential instanceof Uint8Array
     && value.credential.byteLength > 0
     && value.credential.byteLength <= MAXIMUM_AGENT_CREDENTIAL_BYTES
+    && isHistory(value.history)
     && typeof value.question === "string"
     && value.question.trim().length > 0
     && value.question.length <= 32_000
@@ -105,6 +112,19 @@ export function isAgentWorkerCommand(value: unknown): value is AgentWorkerComman
     && Number.isInteger(value.timeoutMs)
     && value.timeoutMs >= 1_000
     && value.timeoutMs <= MAXIMUM_AGENT_TIMEOUT_MS;
+}
+
+function isHistory(value: unknown): value is AgentWorkerHistoryMessage[] {
+  if (!Array.isArray(value) || value.length > 40) return false;
+  let characters = 0;
+  for (const message of value) {
+    if (!isRecord(message)) return false;
+    if (message.role !== "user" && message.role !== "assistant") return false;
+    if (typeof message.text !== "string" || !message.text.trim() || message.text.length > 16_000) return false;
+    characters += message.text.length;
+    if (characters > 64_000) return false;
+  }
+  return true;
 }
 
 export function isAgentWorkerEvent(value: unknown): value is AgentWorkerEvent {

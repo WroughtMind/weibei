@@ -190,11 +190,21 @@ export const SaveNoteResultSchema = z.object({
 });
 export type SaveNoteResult = z.infer<typeof SaveNoteResultSchema>;
 
-export const NoteRecoveryRecordSchema = z.object({
-  schemaVersion: z.literal(1),
+export const NoteRecoveryTargetSchema = z.object({
+  libraryRootPath: z.string().min(1).max(32_768),
+  courseId: z.string().uuid(),
   itemId: z.string().min(1).max(256),
+});
+export type NoteRecoveryTarget = z.infer<typeof NoteRecoveryTargetSchema>;
+
+export const NoteRecoverySaveInputSchema = NoteRecoveryTargetSchema.extend({
   markdown: z.string(),
   baselineDigest: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
+});
+export type NoteRecoverySaveInput = z.infer<typeof NoteRecoverySaveInputSchema>;
+
+export const NoteRecoveryRecordSchema = NoteRecoverySaveInputSchema.extend({
+  schemaVersion: z.literal(2),
   savedAt: z.string(),
 });
 export type NoteRecoveryRecord = z.infer<typeof NoteRecoveryRecordSchema>;
@@ -218,23 +228,28 @@ export const AgentEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("delta"),
     requestId: z.string().uuid(),
+    sessionId: z.string().uuid(),
     messageId: z.string().uuid(),
     text: z.string(),
   }),
   z.object({
     type: z.literal("completed"),
     requestId: z.string().uuid(),
+    sessionId: z.string().uuid(),
     message: AgentMessageSchema,
   }),
   z.object({
     type: z.literal("failed"),
     requestId: z.string().uuid(),
+    sessionId: z.string().uuid(),
     messageId: z.string().uuid(),
     failureKind: z.string(),
+    message: AgentMessageSchema,
   }),
   z.object({
     type: z.literal("cancelled"),
     requestId: z.string().uuid(),
+    sessionId: z.string().uuid(),
     message: AgentMessageSchema,
   }),
 ]);
@@ -250,9 +265,9 @@ export interface WeiBeiDesktopAPI {
   createNote(courseId: string, title: string): Promise<AppSnapshot>;
   openItem(courseId: string, itemId: string): Promise<DocumentPayload>;
   saveNote(request: SaveNoteRequest): Promise<SaveNoteResult>;
-  loadNoteRecovery(itemId: string): Promise<NoteRecoveryRecord | null>;
-  saveNoteRecovery(input: Pick<NoteRecoveryRecord, "itemId" | "markdown" | "baselineDigest">): Promise<NoteRecoveryRecord>;
-  clearNoteRecovery(itemId: string): Promise<void>;
+  loadNoteRecovery(target: NoteRecoveryTarget): Promise<NoteRecoveryRecord | null>;
+  saveNoteRecovery(input: NoteRecoverySaveInput): Promise<NoteRecoveryRecord>;
+  clearNoteRecovery(target: NoteRecoveryTarget): Promise<void>;
   updatePreferences(patch: Partial<Preferences>): Promise<Preferences>;
   search(request: SearchRequest): Promise<SearchResult[]>;
   createSession(courseId: string): Promise<StudySession>;

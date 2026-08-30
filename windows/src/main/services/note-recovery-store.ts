@@ -9,19 +9,27 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
-export const NOTE_RECOVERY_SCHEMA_VERSION = 1 as const;
+export const NOTE_RECOVERY_SCHEMA_VERSION = 2 as const;
 export const NOTE_RECOVERY_MAX_UTF8_BYTES = 32 * 1_024 * 1_024;
 
 export interface NoteRecoveryRecord {
   schemaVersion: typeof NOTE_RECOVERY_SCHEMA_VERSION;
+  scopeHash: string;
+  libraryRootPath: string;
+  courseId: string;
   itemId: string;
   markdown: string;
   baselineDigest: string | null;
   savedAt: string;
 }
 
-export interface SaveNoteRecoveryInput {
+export interface NoteRecoveryScope {
+  libraryRootPath: string;
+  courseId: string;
   itemId: string;
+}
+
+export interface SaveNoteRecoveryInput extends NoteRecoveryScope {
   markdown: string;
   baselineDigest: string | null;
 }
@@ -35,7 +43,7 @@ export interface NoteRecoveryStoreOptions {
  * Stores unsaved editor text independently from the course library.
  *
  * Calls are ordered through one queue so a slower earlier save cannot replace
- * a later edit. Item IDs are hashed instead of embedded in paths, and ordinary
+ * a later edit. Recovery scopes are hashed instead of embedded in paths, and ordinary
  * files are required at every path the store reads or replaces.
  */
 export class NoteRecoveryStore {
@@ -53,16 +61,16 @@ export class NoteRecoveryStore {
     this.now = options.now ?? (() => new Date());
   }
 
-  async load(itemId: string): Promise<NoteRecoveryRecord | null> {
-    validateItemId(itemId);
+  async load(scope: NoteRecoveryScope): Promise<NoteRecoveryRecord | null> {
+    const normalizedScope = normalizeScope(scope);
     return this.runExclusive(async () => {
       try {
         await this.ensureRoot();
-        const filePath = this.filePath(itemId);
+        const filePath = this.filePath(normalizedScope);
         const info = await lstat(filePath);
         if (info.isSymbolicLink() || !info.isFile()) return null;
         const raw = await readFile(filePath, "utf8");
-        return parseRecord(raw, itemId);
+        return parseRecord(raw, normalizedScope);
       } catch {
         // A missing, damaged, or unsafe recovery file never blocks the editor.
         return null;
@@ -71,22 +79,23 @@ export class NoteRecoveryStore {
   }
 
   async save(input: SaveNoteRecoveryInput): Promise<NoteRecoveryRecord> {
-    const record = recoveryRecord(input, this.now());
+    const scope = normalizeScope(input);
+    const record = recoveryRecord({ ...input, ...scope }, this.now());
     const payload = `${JSON.stringify(record)}\n`;
     return this.runExclusive(async () => {
       await this.ensureRoot();
-      const filePath = this.filePath(record.itemId);
+      const filePath = this.filePath(scope);
       await requireMissingOrRegularFile(filePath);
-      await atomicWriteVerified(filePath, payload, record.itemId);
+      await atomicWriteVerified(filePath, payload, scope);
       return structuredClone(record);
     });
   }
 
-  async clear(itemId: string): Promise<void> {
-    validateItemId(itemId);
+  async clear(scope: NoteRecoveryScope): Promise<void> {
+    const normalizedScope = normalizeScope(scope);
     await this.runExclusive(async () => {
       await this.ensureRoot();
-      const filePath = this.filePath(itemId);
+      const filePath = this.filePath(normalizedScope);
       let info: Awaited<ReturnType<typeof lstat>>;
       try {
         info = await lstat(filePath);
@@ -101,8 +110,8 @@ export class NoteRecoveryStore {
     });
   }
 
-  private filePath(itemId: string): string {
-    return path.join(this.rootPath, noteRecoveryFileName(itemId));
+  private filePath(scope: NoteRecoveryScope): string {
+    return path.join(this.rootPath, noteRecoveryFileName(scope));
   }
 
   private async ensureRoot(): Promise<void> {
@@ -122,16 +131,15 @@ export class NoteRecoveryStore {
   }
 }
 
-export function noteRecoveryFileName(itemId: string): string {
-  validateItemId(itemId);
-  return `${createHash("sha256").update(itemId, "utf8").digest("hex")}.json`;
+export function noteRecoveryFileName(scope: NoteRecoveryScope): string {
+  return `${noteRecoveryScopeHash(normalizeScope(scope))}.json`;
 }
 
 function recoveryRecord(
   input: SaveNoteRecoveryInput,
   now: Date,
 ): NoteRecoveryRecord {
-  validateItemId(input.itemId);
+  const scope = normalizeScope(input);
   if (typeof input.markdown !== "string") {
     throw new TypeError("markdown must be a string");
   }
@@ -142,14 +150,17 @@ function recoveryRecord(
   if (!Number.isFinite(now.getTime())) throw new RangeError("invalid savedAt");
   return {
     schemaVersion: NOTE_RECOVERY_SCHEMA_VERSION,
-    itemId: input.itemId,
+    scopeHash: noteRecoveryScopeHash(scope),
+    libraryRootPath: scope.libraryRootPath,
+    courseId: scope.courseId,
+    itemId: scope.itemId,
     markdown: input.markdown,
     baselineDigest,
     savedAt: now.toISOString(),
   };
 }
 
-function parseRecord(raw: string, expectedItemId: string): NoteRecoveryRecord | null {
+function parseRecord(raw: string, expectedScope: NoteRecoveryScope): NoteRecoveryRecord | null {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -158,9 +169,21 @@ function parseRecord(raw: string, expectedItemId: string): NoteRecoveryRecord | 
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
+  const expectedScopeHash = noteRecoveryScopeHash(expectedScope);
+  let recordCourseId: string;
+  let recordLibraryRootPath: string;
+  try {
+    recordCourseId = normalizeCourseId(record.courseId);
+    recordLibraryRootPath = normalizeLibraryRootPath(record.libraryRootPath);
+  } catch {
+    return null;
+  }
   if (
     record.schemaVersion !== NOTE_RECOVERY_SCHEMA_VERSION ||
-    record.itemId !== expectedItemId ||
+    record.scopeHash !== expectedScopeHash ||
+    recordLibraryRootPath !== expectedScope.libraryRootPath ||
+    recordCourseId !== expectedScope.courseId ||
+    record.itemId !== expectedScope.itemId ||
     typeof record.markdown !== "string" ||
     Buffer.byteLength(record.markdown, "utf8") > NOTE_RECOVERY_MAX_UTF8_BYTES ||
     typeof record.savedAt !== "string" ||
@@ -176,7 +199,10 @@ function parseRecord(raw: string, expectedItemId: string): NoteRecoveryRecord | 
   }
   return {
     schemaVersion: NOTE_RECOVERY_SCHEMA_VERSION,
-    itemId: expectedItemId,
+    scopeHash: expectedScopeHash,
+    libraryRootPath: expectedScope.libraryRootPath,
+    courseId: expectedScope.courseId,
+    itemId: expectedScope.itemId,
     markdown: record.markdown,
     baselineDigest,
     savedAt: record.savedAt,
@@ -186,7 +212,7 @@ function parseRecord(raw: string, expectedItemId: string): NoteRecoveryRecord | 
 async function atomicWriteVerified(
   targetPath: string,
   payload: string,
-  itemId: string,
+  scope: NoteRecoveryScope,
 ): Promise<void> {
   const temporaryPath = path.join(
     path.dirname(targetPath),
@@ -207,7 +233,7 @@ async function atomicWriteVerified(
       throw new Error("note-recovery-write-verification-failed");
     }
     const verified = await readFile(targetPath, "utf8");
-    if (verified !== payload || parseRecord(verified, itemId) === null) {
+    if (verified !== payload || parseRecord(verified, scope) === null) {
       throw new Error("note-recovery-write-verification-failed");
     }
   } finally {
@@ -235,9 +261,47 @@ async function requireMissingOrRegularFile(filePath: string): Promise<void> {
 }
 
 function validateItemId(itemId: string): void {
-  if (typeof itemId !== "string" || !itemId || itemId.includes("\0")) {
+  if (typeof itemId !== "string" || !itemId || itemId.length > 256 || itemId.includes("\0")) {
     throw new TypeError("itemId is required");
   }
+}
+
+function normalizeScope(scope: NoteRecoveryScope): NoteRecoveryScope {
+  if (!scope || typeof scope !== "object") throw new TypeError("note recovery scope is required");
+  validateItemId(scope.itemId);
+  return {
+    libraryRootPath: normalizeLibraryRootPath(scope.libraryRootPath),
+    courseId: normalizeCourseId(scope.courseId),
+    itemId: scope.itemId,
+  };
+}
+
+function normalizeLibraryRootPath(value: unknown): string {
+  if (typeof value !== "string" || !value || value.length > 32_768 || value.includes("\0")) {
+    throw new TypeError("libraryRootPath is required");
+  }
+  const resolved = path.resolve(value).normalize("NFC");
+  return process.platform === "win32"
+    ? resolved.toLocaleLowerCase("en-US")
+    : resolved;
+}
+
+function normalizeCourseId(value: unknown): string {
+  if (typeof value !== "string"
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)) {
+    throw new TypeError("courseId must be a UUID");
+  }
+  return value.toLocaleLowerCase("en-US");
+}
+
+function noteRecoveryScopeHash(scope: NoteRecoveryScope): string {
+  const normalized = normalizeScope(scope);
+  return createHash("sha256").update(JSON.stringify([
+    "weibei-note-recovery-v2",
+    normalized.libraryRootPath,
+    normalized.courseId,
+    normalized.itemId,
+  ]), "utf8").digest("hex");
 }
 
 function normalizeDigest(value: unknown): string | null {
