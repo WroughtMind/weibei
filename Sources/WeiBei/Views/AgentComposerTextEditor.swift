@@ -21,7 +21,7 @@ struct AgentComposerTextEditor: NSViewRepresentable {
     @Binding var active: Bool
     var focused: FocusState<Bool>.Binding
     var fontSize: CGFloat
-    var lineLimit: ClosedRange<Int>
+    var lineLimit: ClosedRange<Int>?
     var focusRequest: Int
     var appearanceMode: WeiBeiAppearanceMode
     var accessibilityLabel: String
@@ -96,7 +96,7 @@ struct AgentComposerTextEditor: NSViewRepresentable {
     static func heights(
         for textView: NSTextView,
         width: CGFloat,
-        lineLimit: ClosedRange<Int>
+        lineLimit: ClosedRange<Int>?
     ) -> (content: CGFloat, fitted: CGFloat) {
         guard let textContainer = textView.textContainer,
               let layoutManager = textView.layoutManager else {
@@ -117,6 +117,9 @@ struct AgentComposerTextEditor: NSViewRepresentable {
             layoutManager.extraLineFragmentRect.maxY,
             lineHeight
         )
+        guard let lineLimit else {
+            return (contentHeight, contentHeight)
+        }
         let minimumHeight = lineHeight * CGFloat(lineLimit.lowerBound)
         let maximumHeight = lineHeight * CGFloat(lineLimit.upperBound)
         return (

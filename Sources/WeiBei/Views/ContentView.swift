@@ -1167,6 +1167,25 @@ struct PersistentPaneHost: NSViewRepresentable {
         context.coordinator.update(role: role, registry: registry, store: store, container: container)
     }
 
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: PersistentPaneContainerView,
+        context: Context
+    ) -> CGSize? {
+        guard
+            let width = proposal.width,
+            let height = proposal.height,
+            width.isFinite,
+            height.isFinite,
+            width >= 0,
+            height >= 0
+        else { return nil }
+        // The native pane split owns this exact frame. Falling back to the
+        // container's fittingSize recursively measures its entire hosted pane,
+        // including every visible Markdown, table, and formula view on scroll.
+        return CGSize(width: width, height: height)
+    }
+
     static func dismantleNSView(_ container: PersistentPaneContainerView, coordinator: Coordinator) {
         container.onWindowChange = nil
         coordinator.detach(from: container)
