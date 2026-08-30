@@ -7,34 +7,6 @@ import WeiBeiCore
 
 final class RichMarkdownEditorBridgeTests: XCTestCase {
     @MainActor
-    func testFinalizedStreamingHeightNeverShrinksTheLiveAnswer() {
-        XCTAssertEqual(
-            MarkdownPreviewView.resolvedContentHeight(
-                current: 4_601,
-                proposed: 4_600,
-                preservesCurrentFloor: true
-            ),
-            4_601
-        )
-        XCTAssertEqual(
-            MarkdownPreviewView.resolvedContentHeight(
-                current: 4_601,
-                proposed: 4_610,
-                preservesCurrentFloor: true
-            ),
-            4_610
-        )
-        XCTAssertEqual(
-            MarkdownPreviewView.resolvedContentHeight(
-                current: 4_601,
-                proposed: 4_600,
-                preservesCurrentFloor: false
-            ),
-            4_600
-        )
-    }
-
-    @MainActor
     func testContentCommandsBeyondOldLimitAwaitAcknowledgement() async throws {
         let allApplied = expectation(description: "all content commands applied")
         let fixture = await makeCommandBridge { name in

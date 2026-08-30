@@ -15,7 +15,11 @@ let package = Package(
         .executable(name: "WeiBeiDev", targets: ["WeiBeiDev"])
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
+        .package(
+            url: "https://github.com/WroughtMind/SwiftStreamingMarkdown",
+            revision: "e3b6e952a7121e95aecb5370c90459b5c800fdf1"
+        )
     ],
     targets: [
         .target(
@@ -35,7 +39,8 @@ let package = Package(
             name: "WeiBei",
             dependencies: [
                 "WeiBeiCore",
-                .product(name: "Sparkle", package: "Sparkle")
+                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "SwiftStreamingMarkdown", package: "SwiftStreamingMarkdown")
             ],
             exclude: ["WebEditor"],
             resources: [

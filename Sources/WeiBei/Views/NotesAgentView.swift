@@ -800,294 +800,6 @@ private struct NotebookCreationPanel: View {
     }
 }
 
-struct MarkdownPreviewView: View {
-    var markdown: String
-    var markdownBaseURL: URL?
-    var appearanceMode: WeiBeiAppearanceMode = .paper
-    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
-    var compact = false
-    var fitsContentHeight = true
-    /// When true, lock height after the first stable measure so chat LazyVStack
-    /// does not thrash on ResizeObserver jitter (hang-proof for agent turns).
-    var freezeHeightAfterMeasure = false
-    /// A finalized streaming snapshot remains live through its delayed font,
-    /// formula and image measurements before offscreen height freezing resumes.
-    var allowsHeightFreeze = true
-    /// Seed from a session cache so recycled rows do not collapse then grow.
-    var seedContentHeight: CGFloat? = nil
-    /// Exact point-rounded layout width kept for diagnostics only. Unfreeze uses
-    /// the 24pt bucket — 1pt key changes caused scrollbar/layout jitter to
-    /// unfreeze every KaTeX row and spin sizeThatFits at 100% CPU (sample 662).
-    var layoutWidthKey: Int = 0
-    var isChatWideTypography = false
-    /// Streaming prefix mode: markdown grows append-only, so keep the current
-    /// frame height until the next real measurement instead of collapsing to
-    /// the 44pt loading height on every append (which strobed the chat).
-    var preservesHeightAcrossMarkdownChanges = false
-    /// Pass-through to Milkdown's cumulative document-diff streaming session.
-    var streamsMarkdownUpdates = false
-    var onWikiLink: (String) -> Void = { _ in }
-    var onSourceReference: (String) -> Void = { _ in }
-    var onRenderReady: () -> Void = {}
-    var onFinalizedSnapshotReady: (CGFloat) -> Void = { _ in }
-    var onRenderFailure: () -> Void = {}
-    var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
-    var onContentHeightChange: () -> Void = {}
-    private static let compactPreviewLoadingHeight: CGFloat = 44
-    private static let compactPreviewMaximumHeight: CGFloat = 20_000
-
-    static func resolvedContentHeight(
-        current: CGFloat,
-        proposed: CGFloat,
-        preservesCurrentFloor: Bool
-    ) -> CGFloat {
-        preservesCurrentFloor ? max(current, proposed) : proposed
-    }
-
-    var onMeasuredHeight: (CGFloat) -> Void = { _ in }
-    @State private var command: NoteEditorCommand?
-    @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
-    @State private var heightFrozen = false
-    @State private var acceptedMeasureCount = 0
-    @State private var maxObservedMeasuredHeight: CGFloat = 0
-    @State private var hasAcceptedStreamingHeight = false
-    /// Post-completion height floor: once this row has shown streamed text, a
-    /// later shrink (caret row unwrap, tail blank settling after finalize)
-    /// never re-anchors the reader. Width-bucket and typography resets clear it.
-    @State private var everStreamedHeight = false
-    @State private var preservesFinalizedHeightFloor = false
-    @State private var finalizedStreamingMarkdown: String?
-    @State private var lastLayoutWidthKey = 0
-    @State private var lastChatWideTypography = false
-
-    var body: some View {
-        RichMarkdownEditorView(
-            markdown: markdown,
-            command: $command,
-            isEditable: false,
-            markdownBaseURL: markdownBaseURL,
-            appearanceMode: appearanceMode,
-            interfaceLanguage: interfaceLanguage,
-            isCompactPreview: compact,
-            isChatWideTypography: isChatWideTypography,
-            streamsMarkdownUpdates: streamsMarkdownUpdates,
-            onSelectionChange: onSelectionChange,
-            onAskAgentWithSelection: onSelectionChange,
-            onContentHeightChange: { height in
-                guard compact && fitsContentHeight else {
-                    WeiBeiPerf.event(
-                        "webview.markdown_height_ignored",
-                        extra: "reason=surface"
-                    )
-                    return
-                }
-                guard height.isFinite,
-                      height > 0,
-                      height <= Self.compactPreviewMaximumHeight else {
-                    WeiBeiPerf.event(
-                        "webview.markdown_height_ignored",
-                        extra: "reason=invalid"
-                    )
-                    return
-                }
-                let measuredHeight = ceil(height)
-                let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
-                if streamsMarkdownUpdates {
-                    hasAcceptedStreamingHeight = true
-                    everStreamedHeight = true
-                }
-                // Mid-stream markdown converges downward too: loose paragraphs
-                // become tight lists once markers arrive, trailing blanks collapse,
-                // withheld formulas land as blocks. Accepting the shrink yanks a
-                // bottom-anchored reader upward mid-stream; real convergence is
-                // settled by the finalized receipt and the width-bucket resets.
-                // everStreamedHeight extends the floor past completion: the caret
-                // decoration row unwraps and tail blanks settle up to ~600ms
-                // AFTER the finalized receipt, when the floor flags above have
-                // already been cleared by markdown-changed bookkeeping.
-                if preservesFinalizedHeightFloor || streamsMarkdownUpdates || everStreamedHeight,
-                   nextFrameHeight < contentHeight {
-                    WeiBeiPerf.event(
-                        "webview.markdown_height_ignored",
-                        extra: preservesFinalizedHeightFloor
-                            ? "reason=finalized-floor"
-                            : (streamsMarkdownUpdates ? "reason=streaming-floor" : "reason=poststream-floor")
-                    )
-                    onMeasuredHeight(contentHeight)
-                    return
-                }
-                if freezeHeightAfterMeasure, heightFrozen {
-                    // Keep rejecting recycled-row shrink and jitter, but accept
-                    // real late growth from Mermaid, formulas, fonts or images.
-                    if allowsHeightFreeze || nextFrameHeight < contentHeight + 2 {
-                        // Report the height the row actually keeps, not a measurement
-                        // produced while its pane is being clipped toward zero width.
-                        // Caching the ignored narrow-width height created giant blank
-                        // regions when the conversation pane was opened again.
-                        onMeasuredHeight(contentHeight)
-                        WeiBeiPerf.event(
-                            "webview.markdown_height_ignored",
-                            extra: "reason=frozen"
-                        )
-                        return
-                    }
-                }
-                // Ignored measurements can come from the pane's clipped animation
-                // width. Never let them poison the later stability backstop.
-                maxObservedMeasuredHeight = max(maxObservedMeasuredHeight, nextFrameHeight)
-                // This callback only receives a real JS measurement. Keep its
-                // success separate from the 44pt minimum SwiftUI frame so a
-                // legitimate short quote/list can reveal and freeze too.
-                onMeasuredHeight(measuredHeight)
-                // Ignore sub-pixel ResizeObserver jitter once we have a real measure.
-                if contentHeight >= Self.compactPreviewLoadingHeight,
-                   abs(contentHeight - nextFrameHeight) < 2 {
-                    if freezeHeightAfterMeasure, allowsHeightFreeze {
-                        heightFrozen = true
-                    }
-                    WeiBeiPerf.event(
-                        "webview.markdown_height_ignored",
-                        extra: "reason=jitter"
-                    )
-                    return
-                }
-                // Instant apply: an eased frame lags the WebView content for the
-                // animation's duration and .clipped() cuts the last wrapped
-                // line mid-flight. Growth now arrives in streaming-sized steps
-                // (the web side types the completion tail out), so there is no
-                // large snap left to smooth.
-                contentHeight = nextFrameHeight
-                // Do NOT freeze on a fresh accept: KaTeX displayMode re-layout
-                // and font loading can still grow the content. Freeze happens
-                // in the jitter branch above once two consecutive measures
-                // agree (<2pt). The storm backstop below is deliberately loose
-                // AND freezes at the MAX height ever observed — freezing at a
-                // partial-layout height clipped long answers mid-line
-                // (user report 2026-08-01 23:46).
-                acceptedMeasureCount += 1
-                if freezeHeightAfterMeasure,
-                   allowsHeightFreeze,
-                   acceptedMeasureCount >= 12 {
-                    contentHeight = max(nextFrameHeight, maxObservedMeasuredHeight)
-                    heightFrozen = true
-                }
-                WeiBeiPerf.event(
-                    "webview.markdown_height_accepted"
-                )
-                onContentHeightChange()
-            },
-            onWikiLink: onWikiLink,
-            onSourceReference: onSourceReference,
-            onRenderReady: onRenderReady,
-            onFinalizedRenderReady: { height in
-                guard compact && fitsContentHeight,
-                      height.isFinite,
-                      height > 0,
-                      height <= Self.compactPreviewMaximumHeight else { return }
-                let measuredHeight = ceil(height)
-                let nextFrameHeight = max(
-                    measuredHeight,
-                    Self.compactPreviewLoadingHeight
-                )
-                preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
-                    && hasAcceptedStreamingHeight
-                let settledHeight = Self.resolvedContentHeight(
-                    current: contentHeight,
-                    proposed: nextFrameHeight,
-                    preservesCurrentFloor: preservesFinalizedHeightFloor
-                )
-                let didChangeHeight = settledHeight != contentHeight
-                heightFrozen = false
-                acceptedMeasureCount = 0
-                contentHeight = settledHeight
-                maxObservedMeasuredHeight = settledHeight
-                onMeasuredHeight(measuredHeight)
-                if didChangeHeight {
-                    onContentHeightChange()
-                }
-                onFinalizedSnapshotReady(settledHeight)
-            },
-            onRenderFailure: onRenderFailure
-        )
-        .background(compact ? Color.clear : WeiBeiTheme.paper)
-        .frame(height: compact && fitsContentHeight ? max(contentHeight, Self.compactPreviewLoadingHeight) : nil)
-        .onAppear {
-            lastLayoutWidthKey = layoutWidthKey
-            lastChatWideTypography = isChatWideTypography
-            if let seed = seedContentHeight, seed.isFinite, seed > 0 {
-                contentHeight = max(ceil(seed), Self.compactPreviewLoadingHeight)
-                // Keep frozen across LazyVStack recycle. Unfreezing here forced
-                // every chat KaTeX row to remasure while scrolling (build 663).
-                if freezeHeightAfterMeasure {
-                    heightFrozen = true
-                    return
-                }
-            }
-            heightFrozen = false
-        }
-        .onChange(of: layoutWidthKey) { _, widthKey in
-            guard widthKey != lastLayoutWidthKey else { return }
-            // Only unfreeze across coarse width buckets. Sub-bucket jitter from
-            // scrollbar / split remasure must not restart every chat WKWebView.
-            let previousBucket = AgentFinalizedMarkdownHeightCache.widthBucket(
-                CGFloat(lastLayoutWidthKey)
-            )
-            let nextBucket = AgentFinalizedMarkdownHeightCache.widthBucket(
-                CGFloat(widthKey)
-            )
-            lastLayoutWidthKey = widthKey
-            guard previousBucket != nextBucket else { return }
-            hasAcceptedStreamingHeight = false
-            everStreamedHeight = false
-            preservesFinalizedHeightFloor = false
-            finalizedStreamingMarkdown = nil
-            heightFrozen = false
-            acceptedMeasureCount = 0
-            maxObservedMeasuredHeight = 0
-        }
-        .onChange(of: isChatWideTypography) { _, wideTypography in
-            guard wideTypography != lastChatWideTypography else { return }
-            lastChatWideTypography = wideTypography
-            hasAcceptedStreamingHeight = false
-            everStreamedHeight = false
-            preservesFinalizedHeightFloor = false
-            finalizedStreamingMarkdown = nil
-            heightFrozen = false
-            acceptedMeasureCount = 0
-            maxObservedMeasuredHeight = 0
-        }
-        .onChange(of: markdown) { _, nextMarkdown in
-            guard compact && fitsContentHeight else { return }
-            if !streamsMarkdownUpdates {
-                if hasAcceptedStreamingHeight,
-                   finalizedStreamingMarkdown == nil {
-                    finalizedStreamingMarkdown = nextMarkdown
-                    preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
-                } else if finalizedStreamingMarkdown != nextMarkdown {
-                    hasAcceptedStreamingHeight = false
-                    preservesFinalizedHeightFloor = false
-                    finalizedStreamingMarkdown = nil
-                }
-            }
-            heightFrozen = false
-            acceptedMeasureCount = 0
-            maxObservedMeasuredHeight = 0
-            if preservesHeightAcrossMarkdownChanges { return }
-            contentHeight = Self.compactPreviewLoadingHeight
-            onContentHeightChange()
-        }
-        .onChange(of: streamsMarkdownUpdates) { wasStreaming, isStreaming in
-            if isStreaming {
-                hasAcceptedStreamingHeight = false
-                preservesFinalizedHeightFloor = false
-                finalizedStreamingMarkdown = nil
-            } else if wasStreaming, hasAcceptedStreamingHeight {
-                finalizedStreamingMarkdown = markdown
-                preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
-            }
-        }
-    }
-}
 
 private struct AgentRailTurn {
     var id: UUID
@@ -1095,18 +807,6 @@ private struct AgentRailTurn {
     var startIndex: Int
     var question: String
     var answer: String
-}
-
-/// Keeps the last frame-level probe value without publishing it through SwiftUI state.
-/// The real parent proposal lays out visible content; sampled width settles render caches.
-private final class AgentPaneWidthRelay {
-    var pendingWidth: CGFloat?
-    var structureTransitionActive = false
-    var dividerDragActive = false
-
-    var isActive: Bool {
-        structureTransitionActive || dividerDragActive
-    }
 }
 
 /// Standard chat column metrics — one centered axis shared by messages and composer.
@@ -1176,43 +876,16 @@ struct AgentPaneView: View {
     @State private var isRenamingSession = false
     /// Settled pane width for renderer caches. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
-    @State private var paneWidthRelay = AgentPaneWidthRelay()
-    /// Structural pane show/hide animates the AppKit slot every frame. Visible
-    /// finalized Markdown follows the live column; offscreen web views hold one
-    /// width and settle once at the destination instead of all reflowing per frame.
-    @State private var heldPaneLayoutWidth: CGFloat?
-    @State private var isPaneWidthMotionActive = false
     @State private var lastReadablePaneWidth: CGFloat = 360
-    @State private var paneStructureTransitionSequence = 0
     /// Driven by the AppKit scroll probe — true when the viewport sits well
     /// above the newest message, revealing the jump-to-latest pill.
     @State private var showsJumpToLatest = false
-    /// Fold long history on open: only the newest page mounts KaTeX WKWebViews.
-    /// The limit only grows in-session. Offscreen unload (flag off by default)
-    /// may swap far rows for height placeholders — never switch this to LazyVStack.
-    @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
-    @State private var isRevealingEarlierAgentHistory = false
-    @State private var isAgentHistoryRevealButtonHovered = false
     /// Turn-start rows report reading-line crossings here at scroll rate. A
     /// reference type on purpose: per-event dictionary writes must not publish
     /// SwiftUI state; only the derived activeAgentRailID write renders.
     @State private var turnReadingPositions = AgentTurnReadingPositionModel()
-    /// Far-row IDs whose WKWebViews are height placeholders. Empty unless the
-    /// unload flag is on; published only when the set changes, not per scroll pixel.
-    @State private var offscreenPlaceholderIDs: Set<UUID> = []
-
-    private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
-    private static let paneStructureTransitionDuration: TimeInterval = 0.24
 
     private let agentBottomAnchorID = "agentConversationBottom"
-
-    private var hiddenAgentHistoryCount: Int {
-        max(store.messages.count - agentVisibleMessageLimit, 0)
-    }
-
-    private var visibleAgentMessages: ArraySlice<AgentMessage> {
-        store.messages.suffix(max(agentVisibleMessageLimit, 0))
-    }
 
     private var isImmersiveConversation: Bool {
         store.layout == .immersiveConversation
@@ -1250,10 +923,6 @@ struct AgentPaneView: View {
                 availableWidth: liveAvailableWidth,
                 wide: wide
             )
-            let markdownContentWidth = AgentChatLayoutMetrics.contentWidth(
-                availableWidth: heldPaneLayoutWidth ?? agentPaneWidth,
-                wide: wide
-            )
             let comfy = wide
                 || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
             let headerHeight: CGFloat = showsPaneHeader
@@ -1277,38 +946,18 @@ struct AgentPaneView: View {
                         }
 
                         ScrollView(showsIndicators: true) {
-                            // No scrollTargetLayout / scrollPosition / viewport minHeight
-                            // feedback — those all thrash sizeThatFits on the chat stack.
-                            // Eager VStack (not LazyVStack): each finalized turn may host
-                            // Milkdown/KaTeX WKWebView. Lazy recycle remounted PlatformViews
-                            // while dragging the chat scroller and froze the UI (build 664).
-                            // Long histories fold behind a reveal button. Offscreen unload
-                            // (flag off by default) only swaps far rows for height placeholders.
-                            VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
+                            LazyVStack(alignment: .leading, spacing: comfy ? 22 : 12) {
                                 // 显隐条件在 AgentUnconfiguredHint 自身判断——它观察 AgentAccountService,
                                 // 配置完成后能即时消失;这里只看消息是否为空。
                                 if store.messages.isEmpty {
                                     AgentUnconfiguredHint(store: store)
                                 }
-                                if hiddenAgentHistoryCount > 0 {
-                                    agentHistoryRevealButton(proxy: proxy)
-                                        .transition(WeiBeiTransition.message)
-                                }
-                                ForEach(visibleAgentMessages) { message in
-                                    AgentMessageViewportGatedRow(
-                                        isPlaceholder: offscreenPlaceholderIDs.contains(message.id),
-                                        placeholderHeight: AgentMessageViewportWindow.cachedHeight(
-                                            message: message,
-                                            layoutWidth: markdownContentWidth,
-                                            wideTypography: comfy
-                                        )
-                                    ) {
-                                        agentMessageRow(
-                                            message: message,
-                                            contentWidth: contentWidth,
-                                            wide: wide
-                                        )
-                                    }
+                                ForEach(store.messages) { message in
+                                    agentMessageRow(
+                                        message: message,
+                                        contentWidth: contentWidth,
+                                        wide: wide
+                                    )
                                     .background {
                                         if railTurnStartMessageIDs.contains(message.id) {
                                             AgentTurnReadingPositionProbe(messageID: message.id) {
@@ -1335,17 +984,13 @@ struct AgentPaneView: View {
                                     .id(agentBottomAnchorID)
                                     .background {
                                         AgentScrollDistanceProbe { metrics in
-                                            handleScrollMetrics(metrics, proxy: proxy)
+                                            handleScrollMetrics(metrics)
                                         }
                                     }
                             }
                             .padding(.horizontal, wide ? 8 : 10)
                             .padding(.vertical, wide ? 14 : 10)
-                            .environment(\.agentChatLayoutWidth, markdownContentWidth)
-                            .environment(\.agentChatPaneStructureTransitionActive, isPaneWidthMotionActive)
                             .padding(.top, store.messages.isEmpty ? 22 : 0)
-                            // A held offscreen renderer may be wider than the pane,
-                            // but it must never establish the scroll document width.
                             .frame(
                                 width: railOnly ? ContentRailMetrics.readableWidth : liveAvailableWidth,
                                 alignment: .topLeading
@@ -1376,8 +1021,7 @@ struct AgentPaneView: View {
                                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
                         }
                     }
-                    // Once the rail owns the pane, keep the invisible resident chat
-                    // at one readable proposal instead of laying WebKit out at 1–38pt.
+                    // Once the rail owns the pane, retain one readable proposal.
                     .frame(
                         minWidth: railOnly ? ContentRailMetrics.readableWidth : nil,
                         maxWidth: .infinity,
@@ -1433,26 +1077,12 @@ struct AgentPaneView: View {
                     if oldIDs.isEmpty, !newIDs.isEmpty {
                         paneState.dockInitialAgentComposer()
                     }
-                    // Only a true append to this conversation widens the mounted window.
-                    // Initial restore used to look like a 0 -> N append and mounted the
-                    // entire rich history, defeating paging and stalling pane toggles.
-                    if let appendedCount = AgentHistoryRevealPolicy.appendedMessageCount(
-                        previousMessageIDs: oldIDs,
-                        currentMessageIDs: newIDs
-                    ) {
-                        agentVisibleMessageLimit += appendedCount
-                    } else {
-                        agentVisibleMessageLimit = Self.agentHistoryPageSize
-                        isRevealingEarlierAgentHistory = false
-                    }
                     if showsContentRail, let lastID = store.messages.last?.id {
                         updateAgentRailPosition(for: lastID)
                     }
                     scrollAgentToBottom(proxy)
                 }
                 .onChange(of: store.activeStudySessionID) { _, _ in
-                    agentVisibleMessageLimit = Self.agentHistoryPageSize
-                    isRevealingEarlierAgentHistory = false
                     turnReadingPositions.passedByMessageID.removeAll()
                     activeAgentRailID = nil
                 }
@@ -1464,15 +1094,6 @@ struct AgentPaneView: View {
         }
         .onPreferenceChange(AgentPaneWidthKey.self) { width in
             applyMeasuredPaneWidth(width)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiDocumentDividerDragBegan)) { _ in
-            beginPaneDividerDrag()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiDocumentDividerDragEnded)) { _ in
-            endPaneDividerDrag()
-        }
-        .onChange(of: Set(store.visibleDocumentPaneOrder)) { _, _ in
-            beginPaneStructureTransition()
         }
         .onChange(of: store.layout) { _, layout in
             // Entering immersive: seed wide so we never flash the last three-pane strip width.
@@ -1543,31 +1164,9 @@ struct AgentPaneView: View {
         .accessibilityLabel(Text("agent chat pane"))
     }
 
-    /// AppKit owns live frames. SwiftUI state receives only the final semantic width so
-    /// the eager message tree is not invalidated for every divider pixel.
     private func applyMeasuredPaneWidth(_ width: CGFloat) {
         guard width > 1 else { return }
-        if paneWidthRelay.isActive {
-            paneWidthRelay.pendingWidth = width
-            return
-        }
         commitMeasuredPaneWidth(width)
-    }
-
-    private func beginPaneDividerDrag() {
-        guard !paneWidthRelay.dividerDragActive else { return }
-        paneWidthRelay.dividerDragActive = true
-        if !isPaneWidthMotionActive {
-            heldPaneLayoutWidth = agentPaneWidth
-            isPaneWidthMotionActive = true
-        }
-    }
-
-    private func endPaneDividerDrag() {
-        guard paneWidthRelay.dividerDragActive else { return }
-        paneWidthRelay.dividerDragActive = false
-        guard !paneWidthRelay.structureTransitionActive else { return }
-        finishPaneWidthMotion()
     }
 
     private func commitMeasuredPaneWidth(_ width: CGFloat) {
@@ -1586,49 +1185,6 @@ struct AgentPaneView: View {
         }
     }
 
-    private func beginPaneStructureTransition() {
-        paneStructureTransitionSequence &+= 1
-        paneWidthRelay.structureTransitionActive = true
-        paneWidthRelay.pendingWidth = nil
-        if !isPaneWidthMotionActive {
-            heldPaneLayoutWidth = agentPaneWidth
-            isPaneWidthMotionActive = true
-        }
-        if reduceMotion {
-            paneWidthRelay.structureTransitionActive = false
-            if !paneWidthRelay.dividerDragActive {
-                finishPaneWidthMotion()
-            }
-            return
-        }
-        let sequence = paneStructureTransitionSequence
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.paneStructureTransitionDuration) {
-            // AppKit's completion handler shares the same 0.24s deadline. One
-            // additional main turn lets it land before the single final reflow.
-            DispatchQueue.main.async {
-                guard sequence == paneStructureTransitionSequence else { return }
-                paneWidthRelay.structureTransitionActive = false
-                if !paneWidthRelay.dividerDragActive {
-                    finishPaneWidthMotion()
-                }
-            }
-        }
-    }
-
-    private func finishPaneWidthMotion() {
-        let finalWidth = paneWidthRelay.pendingWidth
-        paneWidthRelay.pendingWidth = nil
-        heldPaneLayoutWidth = nil
-        isPaneWidthMotionActive = false
-        // Closing ends at a collapsed resident host. Restore its last readable
-        // seed after it is hidden so the next opening has no 2pt layout flash.
-        if !store.isPaneVisible(.agent) {
-            measuredPaneWidth = lastReadablePaneWidth
-        } else if let finalWidth {
-            commitMeasuredPaneWidth(finalWidth)
-        }
-    }
-
     private func agentMessageRow(
         message: AgentMessage,
         contentWidth: CGFloat,
@@ -1636,7 +1192,6 @@ struct AgentPaneView: View {
     ) -> some View {
         let isUser = message.role == .user
 
-        // Native text rows: no per-message WKWebView height callbacks that thrash scroll.
         return agentReadingColumn(
             alignment: isUser ? .trailing : .leading
         ) {
@@ -1726,8 +1281,6 @@ struct AgentPaneView: View {
         guard let turn = agentRailTurns.first(where: { "chat-turn-\($0.id.uuidString)" == item.id }) else { return }
         activeAgentRailID = item.id
         agentFollowsLatest = false
-        // Folded turns must mount before scrollTo can find their row.
-        revealAgentHistory(throughMessageID: turn.startMessageID)
         let navigate = {
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(turn.startMessageID, anchor: .center)
@@ -1764,11 +1317,7 @@ struct AgentPaneView: View {
         }
     }
 
-    private func handleScrollMetrics(_ metrics: AgentScrollMetrics, proxy: ScrollViewProxy) {
-        refreshOffscreenPlaceholders(
-            viewportMinY: metrics.distanceFromTop,
-            viewportHeight: metrics.visibleHeight
-        )
+    private func handleScrollMetrics(_ metrics: AgentScrollMetrics) {
         // Hysteresis: reveal well above the bottom, hide near it — a boolean
         // flip at 8pt deadband keeps SwiftUI updates off the scroll hot path.
         let shouldShow = metrics.distanceFromBottom > 160
@@ -1783,22 +1332,6 @@ struct AgentPaneView: View {
             agentFollowsLatest = false
         }
 
-        if isRevealingEarlierAgentHistory {
-            if AgentHistoryRevealPolicy.shouldReleaseRevealLock(
-                isUserScrolling: metrics.isUserScrolling
-            ) {
-                isRevealingEarlierAgentHistory = false
-            }
-            return
-        }
-        guard AgentHistoryRevealPolicy.shouldRevealEarlierPage(
-            distanceFromTop: metrics.distanceFromTop,
-            isUserScrolling: metrics.isUserScrolling,
-            isScrollingTowardTop: metrics.isScrollingTowardTop,
-            hiddenMessageCount: hiddenAgentHistoryCount,
-            revealInFlight: isRevealingEarlierAgentHistory
-        ) else { return }
-        revealEarlierAgentHistory(proxy: proxy)
     }
 
     private func jumpToLatestButton(proxy: ScrollViewProxy) -> some View {
@@ -1818,76 +1351,6 @@ struct AgentPaneView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(store.ui("回到最新消息", "Jump to latest"))
-    }
-
-    private func refreshOffscreenPlaceholders(viewportMinY: CGFloat, viewportHeight: CGFloat) {
-        let next = AgentMessageViewportWindow.placeholderIDs(
-            enabled: AgentChatOffscreenUnloadFlag.isEnabled,
-            messages: Array(visibleAgentMessages),
-            layoutWidth: agentPaneWidth,
-            wideTypography: usesWideChatLayout
-                || agentPaneWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth,
-            viewportMinY: viewportMinY,
-            viewportHeight: viewportHeight,
-            spacing: usesWideChatLayout ? 22 : 12
-        )
-        if next != offscreenPlaceholderIDs {
-            offscreenPlaceholderIDs = next
-        }
-    }
-
-    private func revealAgentHistory(throughMessageID messageID: UUID) {
-        guard let index = store.messages.firstIndex(where: { $0.id == messageID }) else { return }
-        let needed = store.messages.count - index
-        if needed > agentVisibleMessageLimit {
-            agentVisibleMessageLimit = needed
-        }
-    }
-
-    private func revealEarlierAgentHistory(proxy: ScrollViewProxy) {
-        guard hiddenAgentHistoryCount > 0, !isRevealingEarlierAgentHistory else { return }
-        let anchorID = visibleAgentMessages.first?.id
-        isRevealingEarlierAgentHistory = true
-        agentFollowsLatest = false
-        agentVisibleMessageLimit = AgentHistoryRevealPolicy.expandedVisibleLimit(
-            currentLimit: agentVisibleMessageLimit,
-            totalMessageCount: store.messages.count
-        )
-        // Newly mounted rows land above; re-anchor the reader's previous top row.
-        if let anchorID {
-            DispatchQueue.main.async {
-                proxy.scrollTo(anchorID, anchor: .top)
-            }
-        } else {
-            isRevealingEarlierAgentHistory = false
-        }
-    }
-
-    private func agentHistoryRevealButton(proxy: ScrollViewProxy) -> some View {
-        let revealCount = min(Self.agentHistoryPageSize, hiddenAgentHistoryCount)
-        return Button {
-            revealEarlierAgentHistory(proxy: proxy)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.up")
-                    .weiBeiText(9.5, weight: .semibold)
-                Text(store.ui("查看更早的 \(revealCount) 条消息", "Show \(revealCount) earlier messages"))
-                    .weiBeiText(12, weight: .medium)
-            }
-                .foregroundStyle(isAgentHistoryRevealButtonHovered ? WeiBeiTheme.link : WeiBeiTheme.secondaryInk)
-                .padding(.vertical, 6)
-                .padding(.horizontal, 12)
-                .weibeiEtchedCapsuleBackground(
-                    fill: WeiBeiTheme.paperInset.opacity(isAgentHistoryRevealButtonHovered ? 0.42 : 0.24),
-                    stroke: WeiBeiTheme.hairline.opacity(isAgentHistoryRevealButtonHovered ? 0.72 : 0.44),
-                    contactShadow: isAgentHistoryRevealButtonHovered
-                )
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(isAgentHistoryRevealButtonHovered ? 1.015 : 1)
-        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: isAgentHistoryRevealButtonHovered)
-        .onHover { isAgentHistoryRevealButtonHovered = $0 }
-        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private func railText(_ value: String, fallback: String) -> String {
@@ -2116,14 +1579,6 @@ struct AgentPaneView: View {
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
             }
-        }
-        // WebView rows publish height on a ~100ms cadence, so the animated
-        // pass targets a bottom anchor that is already stale once the next
-        // measurement lands — the viewport then gets shoved again. A silent
-        // re-anchor after the reporting window keeps the follow settled.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [agentFollowsLatest] in
-            guard agentFollowsLatest else { return }
-            proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
         }
     }
 
@@ -2716,7 +2171,6 @@ struct FloatingSelectionAgentView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
-                    .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
                     .background {
                         GeometryReader { proxy in
                             Color.clear.preference(
@@ -3109,9 +2563,6 @@ private struct FloatingSelectionMessageBubble: View {
             rendersRichMarkdown: !isUser,
             compact: true,
             isChatWideTypography: false,
-            usesFinalizedKaTeX: !isUser,
-            messageID: message.id,
-            keepsMarkdownSurfaceMounted: !isUser && !isError,
             isStreaming: isStreaming
         )
     }
@@ -3123,7 +2574,6 @@ private struct FloatingSelectionMessageBubble: View {
 /// completed rows receive `inertAgentStreamingState`, which never publishes.
 private struct FloatingSelectionMessageRow: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     @ObservedObject var streaming: AgentStreamingState
 
@@ -3131,9 +2581,6 @@ private struct FloatingSelectionMessageRow: View {
     var body: some View {
         let isStreaming = streaming.isDisplaying(message.id)
         let text = isStreaming ? streaming.text : store.agentDisplayText(for: message)
-        // Mount the bubble (and its markdown WebView) while the thinking
-        // overlay is still up, so the renderer's cold start runs in parallel
-        // with the wait for the first token.
         ZStack(alignment: .topLeading) {
             FloatingSelectionMessageBubble(
                 message: message,
@@ -3148,15 +2595,6 @@ private struct FloatingSelectionMessageRow: View {
                     .padding(.vertical, 4)
             }
         }
-        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
-        .onDisappear {
-            if streaming.isDisplaying(message.id) {
-                store.landAgentStreamingDisplayImmediately()
-            }
-        }
-        .onChange(of: reduceMotion) { _, enabled in
-            store.setAgentStreamingReduceMotion(enabled)
-        }
     }
 }
 
@@ -3168,11 +2606,9 @@ private struct FloatingSelectionMessageRow: View {
 @MainActor private let inertAgentStreamingState = AgentStreamingState()
 
 /// Bubble row for one assistant/user message. A single type across the
-/// generating → completed flip keeps the view identity (and the mounted
-/// markdown WKWebView) alive at completion.
+/// generating → completed flip keeps the native Markdown view identity alive.
 private struct AgentMessageBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     @ObservedObject var streaming: AgentStreamingState
     var isChatWideTypography = false
@@ -3186,15 +2622,6 @@ private struct AgentMessageBubble: View {
             isStreaming: isStreaming,
             isChatWideTypography: isChatWideTypography
         )
-        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
-        .onDisappear {
-            if streaming.isDisplaying(message.id) {
-                store.landAgentStreamingDisplayImmediately()
-            }
-        }
-        .onChange(of: reduceMotion) { _, enabled in
-            store.setAgentStreamingReduceMotion(enabled)
-        }
     }
 }
 
@@ -3224,9 +2651,7 @@ private struct AgentBubble: View {
         .overlay(alignment: .bottomLeading) {
             if !isUser {
                 messageActionBar
-                    // Snug under the last rendered line: the WebView carries its
-                    // own bottom padding, so a large y-offset read as a detached
-                    // floating toolbar (user feedback 2026-08-25).
+                    // Snug under the last rendered line (user feedback 2026-08-25).
                     .offset(x: 16, y: 2)
             }
         }
@@ -3397,28 +2822,20 @@ private struct AgentBubble: View {
         let isAwaitingFirstToken = message.completionState == .generating
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            // 流式期间 viz 块只以骨架占位,整篇回答保持单一渲染表面:
-            // 中途切到逐块布局会为每个文本块冷挂载一个新 WebView,
-            // 整篇从头重排(流式中肉眼可见的"刷新一下")。结构切换
-            // 推迟到定稿,与高度收敛同时发生。
+            // 流式期间 GenUI 块只以骨架占位，正文保持同一个原生表面；
+            // 完成后才拆出明确的交互块。
             if hasVisualBlocks, !isStreaming {
                 visualizedMessageFlow(
                     fallbackText: citationParse.displayText,
                     visibleText: answerText
                 )
             } else {
-                // One surface owns the answer from question send through
-                // completion. The WebView mounts while the thinking overlay
-                // is still up, so its cold start runs in parallel with the
-                // wait for the first token instead of after it.
+                // One native surface owns the answer from first token through completion.
                 ZStack(alignment: .topLeading) {
                     AgentMessageMarkdownText(
                         text: citationParse.displayText,
                         rendersRichMarkdown: true,
                         isChatWideTypography: isChatWideTypography,
-                        usesFinalizedKaTeX: !isFailureMessage,
-                        messageID: message.id,
-                        keepsMarkdownSurfaceMounted: !isFailureMessage,
                         isStreaming: isStreaming
                     )
                     if isAwaitingFirstToken {
@@ -3593,8 +3010,6 @@ private struct AgentBubble: View {
                 text: fallbackText,
                 rendersRichMarkdown: true,
                 isChatWideTypography: isChatWideTypography,
-                usesFinalizedKaTeX: !isFailureMessage,
-                keepsMarkdownSurfaceMounted: !isFailureMessage,
                 isStreaming: isStreaming
             )
             .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=vizFallback msg=\(message.id.uuidString.prefix(8)) textlen=\(fallbackText.count) blocks=\(message.contentBlocks.count)") }
@@ -3607,8 +3022,6 @@ private struct AgentBubble: View {
                         text: AgentCitationParser.parse(text).displayText,
                         rendersRichMarkdown: true,
                         isChatWideTypography: isChatWideTypography,
-                        usesFinalizedKaTeX: !isFailureMessage,
-                        keepsMarkdownSurfaceMounted: !isFailureMessage,
                         isStreaming: isStreaming
                     )
                     .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=vizBlockText msg=\(message.id.uuidString.prefix(8)) textlen=\(text.count)") }
@@ -3989,10 +3402,13 @@ private struct AgentReplyActionCard: View {
     }
 }
 
-/// Memoizes the citation-parse + KaTeX-prepare pipeline for one message row.
+/// Memoizes source parsing and native formula input cleanup for one message row.
 /// A reference type in @State so recomputation never invalidates the view.
 private final class AgentMessageMarkdownMemo {
-    private var key: String?
+    private var cachedText: String?
+    private var cachedSourceIDs: [UUID] = []
+    private var cachedLanguage: WeiBeiInterfaceLanguage?
+    private var cachedStreaming: Bool?
     private var display = ""
     private var finalized = ""
 
@@ -4002,21 +3418,22 @@ private final class AgentMessageMarkdownMemo {
         language: WeiBeiInterfaceLanguage,
         streaming: Bool
     ) -> (display: String, finalized: String) {
-        let nextKey = "\(streaming ? 1 : 0)|\(language.rawValue)|\(sources.map(\.id.uuidString).joined(separator: ","))|\(text)"
-        if nextKey != key {
+        let sourceIDs = sources.map(\.id)
+        if cachedText != text
+            || cachedSourceIDs != sourceIDs
+            || cachedLanguage != language
+            || cachedStreaming != streaming {
             let presentation = AgentReplySourceInlinePresentation(
                 text: text,
                 sources: sources,
                 language: language
             )
-            // While streaming, hold back the tail whose prepared form is not
-            // decidable yet, so parse/prepare never rewrite shown characters.
-            let source = streaming
-                ? AgentChatKaTeXMarkdown.withholdUndecidableStreamingTail(presentation.markdown)
-                : presentation.markdown
-            display = AgentCitationParser.parse(source).displayText
-            finalized = AgentChatKaTeXMarkdown.prepare(display)
-            key = nextKey
+            display = AgentCitationParser.parse(presentation.markdown).displayText
+            finalized = AgentMarkdownInputNormalizer.normalize(display, isStreaming: streaming)
+            cachedText = text
+            cachedSourceIDs = sourceIDs
+            cachedLanguage = language
+            cachedStreaming = streaming
         }
         return (display, finalized)
     }
@@ -4024,7 +3441,7 @@ private final class AgentMessageMarkdownMemo {
 
 private enum AgentCitationParser {
     /// Matches `[材料：…]` / `[学习记录：上次位置]` style Agent citation labels.
-    private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话)[：:]\s*([^\]\n]{1,300})\]"#
+    private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话)[：:]\s*([^\]\n]+)\]"#
     private static let regex = try? NSRegularExpression(pattern: pattern)
     private static let collapsedSpaces = try? NSRegularExpression(pattern: #"[ \t]{2,}"#)
     private static let collapsedBlankLines = try? NSRegularExpression(pattern: #"\n{3,}"#)
@@ -4033,7 +3450,7 @@ private enum AgentCitationParser {
     /// from the very first character that can only belong to a citation. The
     /// whole group is optional so a lone trailing `[` is withheld too — it is
     /// either the start of a citation (kept hidden) or an ordinary bracket
-    /// (reappears with the next character, one pump tick later). Ordinary
+    /// (reappears with the next provider progress event). Ordinary
     /// brackets with non-citation content (`[x`, `[1`) never match.
     private static let trailingOpenCitation = try? NSRegularExpression(
         pattern: #"\[(?:(?:材|材料|笔|笔记|选|选区|学|学习|学习记|学习记录|学习记忆|会|会话)[：:]?[^\]\n]*)?$"#
@@ -4045,8 +3462,8 @@ private enum AgentCitationParser {
         guard let regex else {
             return (text, [])
         }
-        // Prefix-stability for streaming: the markdown WebView extends its
-        // streaming session by suffix, so the display text must only ever
+        // Prefix-stability for streaming: the native streaming parser receives
+        // cumulative text, so the display text must only ever
         // grow by appends. A citation label is therefore withheld while it is
         // still unterminated (it sits at the tail then), and stripped whole
         // once it closes — the visible text never sees it, and stripping it
@@ -4468,26 +3885,6 @@ private struct AgentCitationTag: View {
     }
 }
 
-private struct AgentChatLayoutWidthKey: EnvironmentKey {
-    static let defaultValue: CGFloat = 0
-}
-
-private struct AgentChatPaneStructureTransitionKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-private extension EnvironmentValues {
-    var agentChatLayoutWidth: CGFloat {
-        get { self[AgentChatLayoutWidthKey.self] }
-        set { self[AgentChatLayoutWidthKey.self] = newValue }
-    }
-
-    var agentChatPaneStructureTransitionActive: Bool {
-        get { self[AgentChatPaneStructureTransitionKey.self] }
-        set { self[AgentChatPaneStructureTransitionKey.self] = newValue }
-    }
-}
-
 private struct AgentScrollMetrics: Equatable {
     let distanceFromTop: CGFloat
     let distanceFromBottom: CGFloat
@@ -4496,98 +3893,6 @@ private struct AgentScrollMetrics: Equatable {
     let isScrollingTowardTop: Bool
 }
 
-
-/// Reports whether one finalized Markdown row intersects the chat viewport.
-/// The boolean changes only at viewport boundaries, keeping offscreen WebKit
-/// frames out of pane-animation reflow without putting SwiftUI geometry inside
-/// the scroll stack.
-private struct AgentScrollViewportVisibilityProbe: NSViewRepresentable {
-    var onChange: (Bool) -> Void
-
-    func makeNSView(context: Context) -> ProbeView {
-        let view = ProbeView()
-        view.onChange = onChange
-        return view
-    }
-
-    func updateNSView(_ nsView: ProbeView, context: Context) {
-        nsView.onChange = onChange
-        nsView.ensureObserversInstalled()
-        nsView.report()
-    }
-
-    final class ProbeView: NSView {
-        var onChange: ((Bool) -> Void)?
-        private var observers: [NSObjectProtocol] = []
-        private var lastReported: Bool?
-        private weak var observedClipView: NSClipView?
-
-        override func layout() {
-            super.layout()
-            // A representable can enter the SwiftUI hierarchy before its outer
-            // ScrollView exists. The first real layout is the reliable point to
-            // attach, so the first divider drag never uses stale visibility.
-            ensureObserversInstalled()
-            report()
-        }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            ensureObserversInstalled()
-        }
-
-        override func viewDidMoveToSuperview() {
-            super.viewDidMoveToSuperview()
-            ensureObserversInstalled()
-        }
-
-        fileprivate func report() {
-            // Before AppKit attaches and lays out the row, visibility is unknown.
-            // Reporting false here held the old Markdown width on the first drag,
-            // so a fast shrink clipped content until the divider was released.
-            guard let clipView = enclosingScrollView?.contentView,
-                  window != nil,
-                  bounds.width > 1,
-                  bounds.height > 1 else { return }
-            let frameInClip = convert(bounds, to: clipView)
-            let intersection = frameInClip.intersection(clipView.bounds)
-            let visible = !intersection.isNull
-                && intersection.width > 1
-                && intersection.height > 1
-            guard visible != lastReported else { return }
-            lastReported = visible
-            DispatchQueue.main.async { [weak self] in
-                self?.onChange?(visible)
-            }
-        }
-
-        fileprivate func ensureObserversInstalled() {
-            guard let clipView = enclosingScrollView?.contentView else { return }
-            guard observedClipView !== clipView else { return }
-            observers.forEach(NotificationCenter.default.removeObserver)
-            observers.removeAll()
-            observedClipView = clipView
-            clipView.postsBoundsChangedNotifications = true
-            clipView.postsFrameChangedNotifications = true
-            let center = NotificationCenter.default
-            observers.append(center.addObserver(
-                forName: NSView.boundsDidChangeNotification,
-                object: clipView,
-                queue: .main
-            ) { [weak self] _ in self?.report() })
-            observers.append(center.addObserver(
-                forName: NSView.frameDidChangeNotification,
-                object: clipView,
-                queue: .main
-            ) { [weak self] _ in self?.report() })
-            report()
-        }
-
-        deinit {
-            observers.forEach(NotificationCenter.default.removeObserver)
-        }
-    }
-}
 
 /// AppKit-side scroll probe: observes the enclosing NSScrollView's clip-view
 /// bounds and reports both history boundaries plus explicit live-scroll intent.
@@ -4709,42 +4014,19 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
     }
 }
 
-/// Agent chat markdown — shared by immersive conversation and selection float.
-/// - Finalized assistant turns: full `MarkdownPreviewView` with width-aware frozen height.
-/// - User turns, failures, and renderer fallback: native `AttributedString`.
+/// Agent chat Markdown shared by immersive conversation, selection Q&A and
+/// ordinary text fragments around GenUI.
 private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.agentChatLayoutWidth) private var layoutWidth
-    @Environment(\.agentChatPaneStructureTransitionActive) private var paneStructureTransitionActive
     var text: String
     var rendersRichMarkdown: Bool
-    /// Selection-float / narrow surfaces: smaller type, still fills available width.
     var compact: Bool = false
-    /// Immersive conversation typography tier for finalized WebKit markdown.
     var isChatWideTypography: Bool = false
-    /// Completed assistant turns only — never streaming, user, or failure bubbles.
-    var usesFinalizedKaTeX: Bool = false
-    var messageID: UUID? = nil
     var sources: [AgentReplySource] = []
     var onActivateSource: (AgentReplySource) -> Void = { _ in }
-    /// Assistant replies keep this Web renderer mounted from the first streamed text
-    /// through the completed message instead of handing off to a second view.
-    var keepsMarkdownSurfaceMounted = false
     var isStreaming = false
-    @ObservedObject private var bootQueueModel = AgentChatMarkdownBootQueueModel.shared
-    @State private var fallbackBootID = UUID()
-    /// Cold finalized rows wait for a shared boot slot (visible rows first)
-    /// before mounting their WebKit renderer; streamed rows never queue.
-    @State private var rendererSurfaceMounted = false
-    @State private var finalizedRendererReady = false
-    @State private var finalizedRendererFailed = false
-    @State private var awaitsFinalizedRendererReady = false
-    @State private var finalizedHeightSettling = false
-    @State private var finalizedHeightSettleGeneration = 0
-    /// nil = newly mounted and not classified yet. Treat unknown as visible so
-    /// an on-screen row never flashes the held offscreen width before the probe.
-    @State private var isInScrollViewport: Bool?
     @State private var expandedSourceURL: String?
+    @State private var markdownMemo = AgentMessageMarkdownMemo()
 
     private var sourcePresentation: AgentReplySourceInlinePresentation {
         AgentReplySourceInlinePresentation(
@@ -4753,9 +4035,6 @@ private struct AgentMessageMarkdownText: View {
             language: store.interfaceLanguage
         )
     }
-
-    /// One regex pipeline per input change, not per property access (~30Hz streaming).
-    @State private var markdownMemo = AgentMessageMarkdownMemo()
 
     private var finalizedMarkdown: String {
         markdownMemo.outputs(
@@ -4775,28 +4054,17 @@ private struct AgentMessageMarkdownText: View {
         ).display
     }
 
-    /// Coarse cache bucket — also drives MarkdownPreviewView freeze width.
-    private var layoutWidthBucket: Int {
-        AgentFinalizedMarkdownHeightCache.widthBucket(layoutWidth)
-    }
-
-    private var shouldUseFinalizedMarkdown: Bool {
-        usesFinalizedKaTeX && rendersRichMarkdown
-            && (keepsMarkdownSurfaceMounted
-                || AgentChatKaTeXMarkdown.requiresWebRenderer(finalizedMarkdown))
-    }
-
-    private var heldOffscreenRendererWidth: CGFloat? {
-        if paneStructureTransitionActive && isInScrollViewport == false {
-            return max(layoutWidth, 1)
-        }
-        return nil
-    }
-
     var body: some View {
         Group {
-            if shouldUseFinalizedMarkdown {
-                finalizedMarkdownBody
+            if rendersRichMarkdown {
+                AgentNativeMarkdownView(
+                    markdown: finalizedMarkdown,
+                    isStreaming: isStreaming,
+                    compact: compact,
+                    isChatWideTypography: isChatWideTypography,
+                    baseURL: store.currentMarkdownBaseURL,
+                    appearanceMode: store.appearanceMode
+                )
             } else {
                 nativeBody
             }
@@ -4807,9 +4075,6 @@ private struct AgentMessageMarkdownText: View {
         })
         .popover(
             isPresented: Binding(
-                // Only the selected URL should drive presentation. Evaluating
-                // expandedSources here rebuilt source presentations for every
-                // message on every WorkspaceStore publish (send-path freeze sample).
                 get: { expandedSourceURL != nil },
                 set: { if !$0 { expandedSourceURL = nil } }
             ),
@@ -4835,258 +4100,19 @@ private struct AgentMessageMarkdownText: View {
             .padding(.vertical, 6)
         }
         .help(sourceHelp)
-        .onAppear {
-            if isStreaming {
-                // The streaming condition mounts this surface before onAppear;
-                // retain that same instance across the first completed body.
-                rendererSurfaceMounted = true
-            } else {
-                updateColdBootSlotRequest()
-            }
-        }
-        .onChange(of: isInScrollViewport) { _, _ in
-            updateColdBootSlotRequest()
-        }
-        .onChange(of: bootQueueModel.admittedIDs) { _, admitted in
-            if admitted.contains(bootSlotID) { rendererSurfaceMounted = true }
-        }
-        .onDisappear(perform: releaseBootSlot)
-        .onChange(of: finalizedMarkdown) { _, _ in
-            // A live answer owns one renderer. Preserve its visible identity
-            // while the same WebView accepts the next snapshot or final text.
-            if !keepsMarkdownSurfaceMounted {
-                finalizedHeightSettleGeneration &+= 1
-                finalizedHeightSettling = false
-                finalizedRendererReady = false
-                finalizedRendererFailed = false
-                awaitsFinalizedRendererReady = false
-            }
-        }
-        .onChange(of: isStreaming) { wasStreaming, isStreaming in
-            guard wasStreaming, !isStreaming,
-                  keepsMarkdownSurfaceMounted else { return }
-            // The live surface stays mounted; it never needed a boot slot.
-            rendererSurfaceMounted = true
-            // The streaming measurement only proves the previous DOM was ready.
-            // Keep this WebView mounted — and visible, since it still shows the
-            // streamed answer — but wait for the finalized snapshot's own
-            // measurement before accepting height updates again.
-            finalizedRendererReady = false
-            finalizedRendererFailed = false
-            awaitsFinalizedRendererReady = true
-        }
-    }
-
-    private var cacheKey: String {
-        AgentFinalizedMarkdownHeightCache.cacheKey(
-            messageID: messageID,
-            text: finalizedMarkdown,
-            widthBucket: layoutWidthBucket,
-            wideTypography: isChatWideTypography
-        )
-    }
-
-    private var bootSlotID: UUID {
-        messageID ?? fallbackBootID
-    }
-
-    /// Opening a historical Chat eagerly mounts up to a page of finalized rows,
-    /// each cold-booting its own WKWebView. Requesting a shared boot slot
-    /// (visible rows first, bounded concurrency) staggers those cold starts so
-    /// on-screen rows stop waiting behind a whole-conversation boot storm.
-    private func updateColdBootSlotRequest() {
-        guard shouldUseFinalizedMarkdown, !isStreaming, !rendererSurfaceMounted else { return }
-        bootQueueModel.queue.requestBootSlot(id: bootSlotID, isInViewport: isInScrollViewport)
-        if bootQueueModel.queue.isAdmitted(bootSlotID) {
-            rendererSurfaceMounted = true
-        }
-    }
-
-    private func releaseBootSlot() {
-        bootQueueModel.queue.release(bootSlotID)
-    }
-
-    private var cachedFinalizedHeight: CGFloat? {
-        AgentFinalizedMarkdownHeightCache.height(for: cacheKey)
-    }
-
-    @ViewBuilder
-    private var finalizedMarkdownBody: some View {
-        // The mature Markdown renderer handles paragraphs, headings, lists, tables,
-        // fenced code and KaTeX through one path. Native text stays visible until
-        // the first valid measurement and returns immediately if WebKit fails.
-        // Settled/offscreen height freezes after a real measure; an on-screen
-        // row stays live while its pane is resizing so new wraps are not clipped.
-        // The 24pt-bucket cache supplies a first-frame seed, never readiness.
-        // NEVER wire onContentHeightChange to scrollAgentToBottom.
-        ZStack(alignment: .topLeading) {
-            if !finalizedRendererFailed && (isStreaming || rendererSurfaceMounted) {
-                MarkdownPreviewView(
-                    markdown: finalizedMarkdown,
-                    markdownBaseURL: store.currentMarkdownBaseURL,
-                    appearanceMode: store.appearanceMode,
-                    interfaceLanguage: store.interfaceLanguage,
-                    compact: true,
-                    fitsContentHeight: true,
-                    // Freezing is only a recycle optimization for offscreen rows.
-                    // A visible answer stays authoritative so delayed list, font,
-                    // image, or KaTeX growth can never be clipped by an old frame.
-                    freezeHeightAfterMeasure: !isStreaming
-                        && (!paneStructureTransitionActive || isInScrollViewport == false)
-                        && isInScrollViewport == false,
-                    allowsHeightFreeze: !finalizedHeightSettling,
-                    seedContentHeight: isStreaming ? nil : cachedFinalizedHeight,
-                    layoutWidthKey: layoutWidthBucket,
-                    isChatWideTypography: isChatWideTypography,
-                    preservesHeightAcrossMarkdownChanges: keepsMarkdownSurfaceMounted,
-                    streamsMarkdownUpdates: isStreaming,
-                    onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
-                    onSourceReference: { reference in
-                        if let url = URL(string: reference),
-                           handleSourceURL(url) {
-                            return
-                        }
-                        store.openSourceReference(reference)
-                    },
-                    onRenderReady: {
-                        finalizedRendererFailed = false
-                    },
-                    onFinalizedSnapshotReady: { height in
-                        guard !isStreaming else { return }
-                        releaseBootSlot()
-                        awaitsFinalizedRendererReady = false
-                        finalizedRendererFailed = false
-                        if !paneStructureTransitionActive {
-                            AgentFinalizedMarkdownHeightCache.store(
-                                height,
-                                for: cacheKey
-                            )
-                        }
-                        finalizedRendererReady = true
-                        finalizedHeightSettleGeneration &+= 1
-                        let settleGeneration = finalizedHeightSettleGeneration
-                        finalizedHeightSettling = true
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 650_000_000)
-                            guard settleGeneration
-                                    == finalizedHeightSettleGeneration else {
-                                return
-                            }
-                            finalizedHeightSettling = false
-                        }
-                    },
-                    onRenderFailure: {
-                        releaseBootSlot()
-                        finalizedHeightSettleGeneration &+= 1
-                        finalizedHeightSettling = false
-                        awaitsFinalizedRendererReady = false
-                        finalizedRendererReady = false
-                        finalizedRendererFailed = true
-                    },
-                    onMeasuredHeight: { height in
-                        if !awaitsFinalizedRendererReady,
-                           !isStreaming,
-                           !paneStructureTransitionActive {
-                            AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
-                        }
-                        if !awaitsFinalizedRendererReady,
-                           !finalizedRendererReady {
-                            releaseBootSlot()
-                            finalizedRendererReady = true
-                        }
-                    }
-                )
-                // Keep an offscreen WebView at its settled width without letting
-                // that fixed child establish the scroll document's minimum width.
-                .frame(width: heldOffscreenRendererWidth, alignment: .leading)
-                // The outer row always accepts the live parent proposal. Visible
-                // renderers use it directly; held offscreen renderers are clipped.
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                // Match opacity: the live WebView is the answer, including
-                // mid-stream. Already-rendered source/http links must open
-                // without waiting for the whole reply. Cold 0.01-opacity
-                // boots stay inert so they cannot steal scroll.
-                .allowsHitTesting(isStreaming || finalizedRendererReady
-                    || awaitsFinalizedRendererReady)
-                .accessibilityHidden(!(isStreaming || finalizedRendererReady || awaitsFinalizedRendererReady))
-                // Handoff (awaitsFinalizedRendererReady) keeps the live WebView
-                // fully visible: it already shows the streamed answer, and
-                // hiding it behind native text would flash at completion.
-                .opacity(isStreaming || finalizedRendererReady
-                    || awaitsFinalizedRendererReady ? 1 : 0.01)
-                .zIndex(0)
-            }
-            // Never flash native/raw Markdown over a live stream or over the
-            // streamed→finalized handoff. Cold-mounted rows show a content-free
-            // skeleton until this WebView's first measurement — any real-content
-            // preview used a typography that never matched the final render and
-            // the swap read as a glitch, not as loading.
-            if !finalizedRendererReady
-                && !awaitsFinalizedRendererReady
-                && (!isStreaming
-                    || !keepsMarkdownSurfaceMounted
-                    || finalizedRendererFailed) {
-                coldPlaceholderBody
-                    .background(WeiBeiTheme.paper)
-                    .allowsHitTesting(false)
-                    .zIndex(1)
-            }
-        }
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-        .animation(WeiBeiMotion.micro, value: finalizedRendererReady)
-        .clipped()
-        .background {
-            AgentScrollViewportVisibilityProbe { visible in
-                if isInScrollViewport != Optional(visible) {
-                    isInScrollViewport = visible
-                }
-            }
-        }
-    }
-
-    /// Interim surface for rows whose rich renderer is not authoritative yet.
-    /// A cold finalized row shows a quiet skeleton — the native text underneath
-    /// stays mounted invisibly so it reserves an approximate height and the
-    /// first real measurement barely moves the row. Live-streaming and failed
-    /// rows show structured native text at full opacity: there the native
-    /// surface IS the content.
-    @ViewBuilder
-    private var coldPlaceholderBody: some View {
-        if finalizedRendererFailed || isStreaming {
-            if rendersRichMarkdown {
-                AgentMarkdownBlockFallback(
-                    markdown: finalizedMarkdown,
-                    compact: compact
-                )
-            } else {
-                nativeBody
-            }
-        } else {
-            nativeBody
-                .opacity(0.001)
-                .overlay(alignment: .topLeading) {
-                    AgentMarkdownSkeleton(compact: compact)
-                        .padding(.top, 2)
-                }
-                .accessibilityHidden(true)
-        }
     }
 
     private var nativeBody: some View {
         Text(renderedText)
-            .weiBeiText(compact ? 13.2 : (rendersRichMarkdown ? 15 : 14.5))
-            .lineSpacing(compact ? 4.2 : (rendersRichMarkdown ? 5.5 : 4.5))
+            .weiBeiText(compact ? 13.2 : 14.5)
+            .lineSpacing(compact ? 4.2 : 4.5)
             .foregroundStyle(WeiBeiTheme.ink)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-            // NEVER enable SwiftUI textSelection here. Sample 2026-08-01: SelectionOverlay
-            // updateNSView + LazyVStack sizeThatFits spun the main thread at 100% after a
-            // few HTML reader scrolls (store publish fanout). KaTeX WKWebView still selects.
             .textSelection(.disabled)
     }
 
     private var renderedText: AttributedString {
-        // Streaming / no-math path: Unicode math readability without WKWebView.
         let display = AgentDisplayText.normalizedInlineMath(displayMarkdown)
         var attributed = (try? AttributedString(markdown: display))
             ?? AttributedString(display)
@@ -5205,8 +4231,6 @@ private struct AgentThinkingIndicator: View {
     /// Match the answer text that follows this indicator in the same surface:
     /// every hosting surface renders the reply in a compact Milkdown preview
     /// (14pt base), lifted to 16pt only by the chat-wide attribute — the
-    /// selection float and narrow conversation columns both stay at 14pt,
-    /// which is exactly what the `.ProseMirror` CSS shows next to this word.
     var chatWideTypography = false
     var compact = false
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -5219,17 +4243,14 @@ private struct AgentThinkingIndicator: View {
 
     private static let minimumStatusHold: TimeInterval = 0.6
 
-    /// Answer-text bases in pt, mirroring `.ProseMirror` in Editor/index.html.
-    /// The reply WebView is always a compact preview (14), raised to 16 by
-    /// `data-weibei-chat-wide`; the 17 non-compact base never applies here —
-    /// using it made the word read 3pt larger than the reply in narrow
-    /// conversation columns once the 520pt window minimum made those common.
-    /// ⌘± changes the text tier, so the status word must scale with it
-    /// exactly like the reply text.
+    /// Match the native answer typography for wide, regular and selection-float surfaces.
     private static let chatWideFontSize: CGFloat = 16
-    private static let compactFontSize: CGFloat = 14
+    private static let regularFontSize: CGFloat = 15
+    private static let compactFontSize: CGFloat = 13.2
     private var baseFontSize: CGFloat {
-        chatWideTypography && !compact ? Self.chatWideFontSize : Self.compactFontSize
+        compact
+            ? Self.compactFontSize
+            : (chatWideTypography ? Self.chatWideFontSize : Self.regularFontSize)
     }
     /// Single source for measure + line box + AppKit painting. Drawing at a
     /// different size than the measured width is what made the orbit sit far
@@ -5833,8 +4854,6 @@ private struct AgentStreamingResponse: View {
                 rendersRichMarkdown: true,
                 compact: compact,
                 isChatWideTypography: isChatWideTypography,
-                usesFinalizedKaTeX: true,
-                keepsMarkdownSurfaceMounted: true,
                 isStreaming: true
             )
         }

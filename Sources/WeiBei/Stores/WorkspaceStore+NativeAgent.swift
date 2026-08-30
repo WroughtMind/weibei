@@ -111,10 +111,6 @@ extension WorkspaceStore {
         agentReplyIDsThatDisplayedStreamingText.contains(message.id)
     }
 
-    var isAgentStreamingSurfaceVisible: Bool {
-        hasPrimaryConversationPaneVisible || agentSurface == .selectionFloat
-    }
-
     func finishAgentStreamingDisplay() {
         agentStreaming.finishDisplaying()
         latestAgentStreamingText = ""
@@ -122,29 +118,8 @@ extension WorkspaceStore {
 
     func settleAgentStreamingDisplayImmediately() {
         guard agentStreaming.displayingMessageID != nil else { return }
-        agentStreamingDisplayPump.settleImmediately(
-            cumulativeText: latestAgentStreamingText
-        )
-    }
-
-    func landAgentStreamingDisplayImmediately() {
-        guard agentStreaming.displayingMessageID != nil else { return }
-        agentStreamingDisplayPump.replaceImmediately(
-            cumulativeText: latestAgentStreamingText
-        )
-    }
-
-    func setAgentStreamingReduceMotion(_ enabled: Bool) {
-        agentStreamingUsesReducedMotion = enabled
-        guard enabled, agentStreaming.displayingMessageID != nil else { return }
-        agentStreamingDisplayPump.replaceImmediately(
-            cumulativeText: latestAgentStreamingText
-        )
-    }
-
-    func landAgentStreamingDisplayIfHidden() {
-        guard !isAgentStreamingSurfaceVisible else { return }
-        landAgentStreamingDisplayImmediately()
+        agentStreaming.text = latestAgentStreamingText
+        finishAgentStreamingDisplay()
     }
 
     func cancelStudyAgentRuntimes() async {
