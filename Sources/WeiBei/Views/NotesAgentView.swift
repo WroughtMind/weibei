@@ -1268,11 +1268,6 @@ struct AgentPaneView: View {
                             // Long histories fold behind a reveal button. Offscreen unload
                             // (flag off by default) only swaps far rows for height placeholders.
                             VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
-                                // 显隐条件在 AgentUnconfiguredHint 自身判断——它观察 AgentAccountService,
-                                // 配置完成后能即时消失;这里只看消息是否为空。
-                                if store.messages.isEmpty {
-                                    AgentUnconfiguredHint(store: store)
-                                }
                                 if hiddenAgentHistoryCount > 0 {
                                     agentHistoryRevealButton(proxy: proxy)
                                         .transition(WeiBeiTransition.message)
@@ -1893,6 +1888,8 @@ struct AgentPaneView: View {
         // separates input from messages.
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
+                AgentUnconfiguredHint(store: store)
+
                 if store.hasSelectionAttachments {
                     AgentSelectionAttachmentPill()
                         .transition(WeiBeiTransition.floating)
