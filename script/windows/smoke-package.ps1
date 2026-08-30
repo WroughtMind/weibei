@@ -275,7 +275,7 @@ try {
         }
         Start-Sleep -Milliseconds 300
     } while ([DateTime]::UtcNow -lt $deadline)
-    Assert-Condition ((Get-UninstallEntries -ProductName $productName).Count -eq 0) "uninstall entry remained after uninstall"
+    Assert-Condition (@(Get-UninstallEntries -ProductName $productName).Count -eq 0) "uninstall entry remained after uninstall"
     Assert-Condition (-not (Test-Path -LiteralPath $installedExecutable)) "installed executable remained after uninstall"
     Assert-Condition (Test-Path -LiteralPath $sentinel -PathType Leaf) "uninstall deleted user data"
 
