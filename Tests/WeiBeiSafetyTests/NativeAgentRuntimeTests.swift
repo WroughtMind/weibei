@@ -291,6 +291,52 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(events.last?.finishReason, .completed)
     }
 
+    func testVisualizationKeepsTextBlocksInEventOrder() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("native-visual-order-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let progress = AgentProgressRecorder()
+
+        let result = try await NativeAgentLoop().run(
+            request: testRequest(),
+            ledger: NativeAgentLedger(fileURL: url),
+            registry: registry,
+            adapter: VisualizationOrderAdapter(),
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: { event in await progress.record(event) }
+        )
+
+        XCTAssertEqual(result.text, "前后")
+        XCTAssertEqual(result.contentBlocks.count, 3)
+        if case let .text(text) = result.contentBlocks[0] {
+            XCTAssertEqual(text, "前")
+        } else {
+            XCTFail("first block must be text")
+        }
+        if case .visualization = result.contentBlocks[1] {} else {
+            XCTFail("second block must be visualization")
+        }
+        if case let .text(text) = result.contentBlocks[2] {
+            XCTAssertEqual(text, "后")
+        } else {
+            XCTFail("third block must be text")
+        }
+
+        let events = await progress.events
+        let blockSnapshots = events.compactMap { event -> [AgentMessageContentBlock]? in
+            switch event {
+            case let .text(_, blocks), let .visualization(_, blocks): return blocks
+            default: return nil
+            }
+        }
+        XCTAssertEqual(blockSnapshots.map(\.count), [1, 2, 3])
+        XCTAssertEqual(blockSnapshots.last, result.contentBlocks)
+    }
+
     func testLoopSendsFullSelectionAndQuestionToModel() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-context-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -885,6 +931,38 @@ private struct MockLLMAdapter: NativeLLMAdapter {
             }
             continuation.finish()
         }
+    }
+}
+
+private struct VisualizationOrderAdapter: NativeLLMAdapter {
+    let family = "mock"
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        let hasVisualization = request.messages.contains { $0.role == .tool }
+        return AsyncThrowingStream { continuation in
+            if hasVisualization {
+                continuation.yield(.textDelta(index: 0, text: "后"))
+                continuation.yield(.finish(reason: .stop, replayState: nil))
+            } else {
+                continuation.yield(.textDelta(index: 0, text: "前"))
+                continuation.yield(.toolCallDelta(
+                    index: 1,
+                    id: "visual-1",
+                    name: "weibei_visualize",
+                    argumentsDelta: #"{"id":"lesson-map","spec":{"items":[{"type":"text","content":"图"}]}}"#
+                ))
+                continuation.yield(.finish(reason: .toolCalls, replayState: nil))
+            }
+            continuation.finish()
+        }
+    }
+}
+
+private actor AgentProgressRecorder {
+    private(set) var events: [StudyAgentProgress] = []
+
+    func record(_ event: StudyAgentProgress) {
+        events.append(event)
     }
 }
 

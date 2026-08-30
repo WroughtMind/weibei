@@ -1,4 +1,5 @@
 import AppKit
+import Markdown
 import SwiftUI
 import SwiftStreamingMarkdown
 import WebKit
@@ -16,7 +17,7 @@ struct AgentNativeMarkdownView: View {
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: compact ? 8 : 12) {
-            ForEach(AgentMarkdownContentBlock.split(markdown, isStreaming: isStreaming)) { block in
+            ForEach(AgentMarkdownRenderBlock.split(markdown, isStreaming: isStreaming)) { block in
                 switch block.kind {
                 case .markdown(let text):
                     AgentStreamingMarkdownBlock(
@@ -214,7 +215,7 @@ private final class AgentCumulativeMarkdownSource: ObservableObject, StreamedMar
     }
 }
 
-private struct AgentMarkdownContentBlock: Identifiable {
+struct AgentMarkdownRenderBlock: Identifiable {
     enum Kind {
         case markdown(String)
         case mermaid(String)
@@ -224,49 +225,103 @@ private struct AgentMarkdownContentBlock: Identifiable {
     let kind: Kind
 
     static func split(_ markdown: String, isStreaming: Bool) -> [Self] {
-        guard !isStreaming, markdown.contains("```mermaid") else {
+        guard !isStreaming else {
+            return [.init(id: "markdown-0", kind: .markdown(markdown))]
+        }
+        var collector = MermaidCodeBlockCollector(markdown: markdown)
+        collector.visit(Document(parsing: markdown))
+        let mermaidBlocks = collector.blocks.sorted { $0.range.lowerBound < $1.range.lowerBound }
+        guard !mermaidBlocks.isEmpty else {
             return [.init(id: "markdown-0", kind: .markdown(markdown))]
         }
 
-        let lines = markdown.components(separatedBy: .newlines)
         var blocks: [Self] = []
-        var markdownLines: [String] = []
-        var mermaidLines: [String]?
-
-        func flushMarkdown() {
-            guard !markdownLines.isEmpty else { return }
+        var cursor = markdown.startIndex
+        for item in mermaidBlocks {
+            if cursor < item.range.lowerBound {
+                blocks.append(.init(
+                    id: "markdown-\(blocks.count)",
+                    kind: .markdown(String(markdown[cursor..<item.range.lowerBound]))
+                ))
+            }
+            blocks.append(.init(id: "mermaid-\(blocks.count)", kind: .mermaid(item.code)))
+            cursor = item.range.upperBound
+        }
+        if cursor < markdown.endIndex {
             blocks.append(.init(
                 id: "markdown-\(blocks.count)",
-                kind: .markdown(markdownLines.joined(separator: "\n"))
+                kind: .markdown(String(markdown[cursor...]))
             ))
-            markdownLines.removeAll(keepingCapacity: true)
         }
-
-        for line in lines {
-            if mermaidLines == nil,
-               line.trimmingCharacters(in: .whitespaces).lowercased() == "```mermaid" {
-                flushMarkdown()
-                mermaidLines = []
-            } else if let collected = mermaidLines,
-                      line.trimmingCharacters(in: .whitespaces) == "```" {
-                blocks.append(.init(
-                    id: "mermaid-\(blocks.count)",
-                    kind: .mermaid(collected.joined(separator: "\n"))
-                ))
-                mermaidLines = nil
-            } else if mermaidLines != nil {
-                mermaidLines?.append(line)
-            } else {
-                markdownLines.append(line)
-            }
-        }
-
-        if let unfinished = mermaidLines {
-            markdownLines.append("```mermaid")
-            markdownLines.append(contentsOf: unfinished)
-        }
-        flushMarkdown()
         return blocks.isEmpty ? [.init(id: "markdown-0", kind: .markdown(markdown))] : blocks
+    }
+
+    private struct MermaidCodeBlockCollector: MarkupWalker {
+        let markdown: String
+        var blocks: [(range: Range<String.Index>, code: String)] = []
+
+        mutating func visitCodeBlock(_ codeBlock: CodeBlock) {
+            guard codeBlock.language?
+                .split(whereSeparator: { $0.isWhitespace })
+                .first?
+                .lowercased() == "mermaid",
+                let sourceRange = codeBlock.range,
+                let range = Self.stringRange(for: sourceRange, in: markdown),
+                Self.hasExplicitClosingFence(in: markdown[range]) else { return }
+            blocks.append((range, codeBlock.code))
+        }
+
+        private static func stringRange(
+            for range: SourceRange,
+            in markdown: String
+        ) -> Range<String.Index>? {
+            let lineStarts = sourceLineStarts(in: markdown)
+            guard let lower = stringIndex(for: range.lowerBound, in: markdown, lineStarts: lineStarts),
+                  let upper = stringIndex(for: range.upperBound, in: markdown, lineStarts: lineStarts) else {
+                return nil
+            }
+            return lower..<upper
+        }
+
+        private static func sourceLineStarts(in markdown: String) -> [String.Index] {
+            var starts = [markdown.startIndex]
+            for index in markdown.indices where markdown[index] == "\n" {
+                starts.append(markdown.index(after: index))
+            }
+            return starts
+        }
+
+        private static func stringIndex(
+            for location: SourceLocation,
+            in markdown: String,
+            lineStarts: [String.Index]
+        ) -> String.Index? {
+            guard location.line > 0,
+                  location.line <= lineStarts.count,
+                  location.column > 0,
+                  let utf8Start = lineStarts[location.line - 1].samePosition(in: markdown.utf8),
+                  let utf8Index = markdown.utf8.index(
+                    utf8Start,
+                    offsetBy: location.column - 1,
+                    limitedBy: markdown.utf8.endIndex
+                  ) else { return nil }
+            return String.Index(utf8Index, within: markdown)
+        }
+
+        private static func hasExplicitClosingFence(in source: Substring) -> Bool {
+            let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+            guard let opening = lines.first.map({ $0.drop(while: { $0.isWhitespace }) }),
+                  let marker = opening.first,
+                  marker == "`" || marker == "~" else { return false }
+            let openingCount = opening.prefix(while: { $0 == marker }).count
+            guard openingCount >= 3,
+                  let closing = lines.dropFirst().reversed().first(where: {
+                    !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                  })?.drop(while: { $0.isWhitespace }) else { return false }
+            let closingFence = closing.prefix(while: { $0 == marker })
+            return closingFence.count >= openingCount
+                && closing.dropFirst(closingFence.count).allSatisfy({ $0.isWhitespace })
+        }
     }
 }
 
@@ -318,6 +373,7 @@ private struct AgentMermaidBlock: NSViewRepresentable {
         @Binding var height: CGFloat
         var source = ""
         var appearanceMode: WeiBeiAppearanceMode?
+        private var allowsInitialLocalNavigation = false
 
         init(height: Binding<CGFloat>) {
             _height = height
@@ -330,6 +386,7 @@ private struct AgentMermaidBlock: NSViewRepresentable {
         ) {
             self.source = source
             self.appearanceMode = appearanceMode
+            allowsInitialLocalNavigation = true
             guard let sourceJSON = Self.jsonString(source),
                   let runtimeURL = WeiBeiResources.bundle.url(
                     forResource: "mermaid-runtime",
@@ -383,12 +440,24 @@ private struct AgentMermaidBlock: NSViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
-            guard navigationAction.navigationType == .linkActivated,
-                  let url = navigationAction.request.url else {
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.cancel)
+                return
+            }
+            if navigationAction.navigationType == .linkActivated {
+                if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+                    NSWorkspace.shared.open(url)
+                }
+                decisionHandler(.cancel)
+                return
+            }
+            let isMainFrame = navigationAction.targetFrame?.isMainFrame != false
+            let isLocal = url.isFileURL || url.scheme?.lowercased() == "about"
+            if allowsInitialLocalNavigation, isMainFrame, isLocal {
+                allowsInitialLocalNavigation = false
                 decisionHandler(.allow)
                 return
             }
-            NSWorkspace.shared.open(url)
             decisionHandler(.cancel)
         }
 

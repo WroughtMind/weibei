@@ -16,6 +16,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.7.3"),
         .package(
             url: "https://github.com/WroughtMind/SwiftStreamingMarkdown",
             revision: "e3b6e952a7121e95aecb5370c90459b5c800fdf1"
@@ -40,6 +41,7 @@ let package = Package(
             dependencies: [
                 "WeiBeiCore",
                 .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftStreamingMarkdown", package: "SwiftStreamingMarkdown")
             ],
             exclude: ["WebEditor"],

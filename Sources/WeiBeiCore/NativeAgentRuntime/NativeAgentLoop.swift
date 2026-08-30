@@ -119,7 +119,14 @@ public actor NativeAgentLoop {
                     case let .textDelta(_, text):
                         stepText += text
                         collectedText += text
-                        await progress?(.text(collectedText, []))
+                        if !text.isEmpty {
+                            if case let .text(previous)? = contentBlocks.last {
+                                contentBlocks[contentBlocks.count - 1] = .text(previous + text)
+                            } else {
+                                contentBlocks.append(.text(text))
+                            }
+                        }
+                        await progress?(.text(collectedText, contentBlocks))
                     case let .webSearchSource(url):
                         if !context.currentRunSourceURLs.contains(url) {
                             context.currentRunSourceURLs.append(url)
@@ -199,7 +206,7 @@ public actor NativeAgentLoop {
                             result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
                         }
                     }
-                    applySideEffects(
+                    let visualization = applySideEffects(
                         name: call.name,
                         result: result,
                         contextRevision: request.contextRevision,
@@ -215,6 +222,9 @@ public actor NativeAgentLoop {
                         contentBlocks: &contentBlocks,
                         context: &context
                     )
+                    if let visualization {
+                        await progress?(.visualization(visualization, contentBlocks))
+                    }
                     _ = try await ledger.append { seq, time in
                         NativeSessionEvent(
                             type: .toolResult,
@@ -310,8 +320,9 @@ public actor NativeAgentLoop {
         sources: inout [AgentReplySource],
         contentBlocks: inout [AgentMessageContentBlock],
         context: inout NativeToolExecutionContext
-    ) {
-        if result.isError { return }
+    ) -> AgentVisualization? {
+        if result.isError { return nil }
+        var emittedVisualization: AgentVisualization?
         let details = result.details
         if name == "weibei_course_search"
             || name == "weibei_course_read"
@@ -377,7 +388,9 @@ public actor NativeAgentLoop {
            let spec = details["spec"],
            let specData = try? JSONSerialization.data(withJSONObject: spec),
            let specJSON = String(data: specData, encoding: .utf8) {
-            contentBlocks.append(.visualization(AgentVisualization(id: id, specJSON: specJSON)))
+            let visualization = AgentVisualization(id: id, specJSON: specJSON)
+            contentBlocks.append(.visualization(visualization))
+            emittedVisualization = visualization
         }
         if name == "load_skill" {
             if let loaded = details["loaded"] as? [String: Any],
@@ -402,6 +415,7 @@ public actor NativeAgentLoop {
                 }
             }
         }
+        return emittedVisualization
     }
 
     private func memoryApplyReceipt(from details: [String: Any]) -> AgentReplyMemoryUpdate? {

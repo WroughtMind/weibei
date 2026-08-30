@@ -4,6 +4,61 @@ import XCTest
 @testable import WeiBei
 
 final class AgentVisualizationSizingTests: XCTestCase {
+    func testNativeMarkdownPreservesCodeCitationsAndUsesASTForMermaidFences() {
+        let source = "正文第一行  \n"
+            + "    保留缩进 [材料：正文来源]\n"
+            + "`[材料：行内代码]`\n"
+            + "```text\n"
+            + "[材料：代码块]\n"
+            + "```"
+        let parsed = AgentCitationParser.parse(source)
+        XCTAssertEqual(parsed.citations.map(\.value), ["正文来源"])
+        let expected = "正文第一行  \n"
+            + "    保留缩进 \n"
+            + "`[材料：行内代码]`\n"
+            + "```text\n"
+            + "[材料：代码块]\n"
+            + "```"
+        XCTAssertEqual(parsed.displayText, expected)
+
+        let examples = """
+        ````markdown
+        ```mermaid
+        graph TD; A-->B
+        ```
+        ````
+        """
+        XCTAssertFalse(containsMermaid(AgentMarkdownRenderBlock.split(examples, isStreaming: false)))
+
+        let longerFence = """
+        ````mermaid
+        graph TD; A-->B
+        ````
+        """
+        XCTAssertTrue(containsMermaid(AgentMarkdownRenderBlock.split(longerFence, isStreaming: false)))
+
+        let tildeFence = """
+        ~~~mermaid
+        graph TD; A-->B
+        ~~~
+        """
+        XCTAssertTrue(containsMermaid(AgentMarkdownRenderBlock.split(tildeFence, isStreaming: false)))
+
+        let unfinished = """
+        ```mermaid
+        graph TD; A-->B
+        """
+        XCTAssertFalse(containsMermaid(AgentMarkdownRenderBlock.split(unfinished, isStreaming: false)))
+        XCTAssertFalse(containsMermaid(AgentMarkdownRenderBlock.split(longerFence, isStreaming: true)))
+    }
+
+    private func containsMermaid(_ blocks: [AgentMarkdownRenderBlock]) -> Bool {
+        blocks.contains { block in
+            if case .mermaid = block.kind { return true }
+            return false
+        }
+    }
+
     func testGenUILoadFailureRetriesOnceThenWaitsForUserReload() {
         var state = AgentVisualizationLoadState()
         let firstAttempt = state.attempt
