@@ -1,5 +1,6 @@
 import AppKit
 import PDFKit
+import SwiftStreamingMarkdown
 import SwiftUI
 import WeiBeiCore
 
@@ -2706,9 +2707,7 @@ private struct AgentBubble: View {
     }
 
     private func copyMessage() {
-        let markdown = isUser
-            ? message.text
-            : AgentCitationParser.parse(store.agentDisplayText(for: message)).displayText
+        let markdown = message.text
         guard !markdown.isEmpty else { return }
         NSPasteboard.general.clearContents()
         if NSPasteboard.general.setString(markdown, forType: .string) {
@@ -2790,20 +2789,6 @@ private struct AgentBubble: View {
             .contentShape(Rectangle())
     }
 
-    private var hasVisualBlocks: Bool {
-        message.contentBlocks.contains { block in
-            if case .text = block { return false }
-            return true
-        }
-    }
-
-    private var visualBlockCount: Int {
-        message.contentBlocks.count { block in
-            if case .text = block { return false }
-            return true
-        }
-    }
-
     private var regularMessageContent: some View {
         let answerText = liveStreamingText ?? store.agentDisplayText(for: message)
         let citationParse = AgentCitationParser.parse(answerText)
@@ -2822,9 +2807,7 @@ private struct AgentBubble: View {
         let isAwaitingFirstToken = message.completionState == .generating
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            // 流式期间 GenUI 块只以骨架占位，正文保持同一个原生表面；
-            // 完成后才拆出明确的交互块。
-            if hasVisualBlocks, !isStreaming {
+            if !message.contentBlocks.isEmpty {
                 visualizedMessageFlow(
                     fallbackText: citationParse.displayText
                 )
@@ -2845,9 +2828,6 @@ private struct AgentBubble: View {
                     }
                 }
                 .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=bubblePlain msg=\(message.id.uuidString.prefix(8)) streaming=\(isStreaming ? 1 : 0) textlen=\(citationParse.displayText.count) blocks=\(message.contentBlocks.count)") }
-                if hasVisualBlocks, isStreaming {
-                    AgentStreamingVisualizationScaffold(count: visualBlockCount)
-                }
             }
             if !availableSources.isEmpty {
                 AgentReplySourceTagRow(sources: availableSources) { source in
@@ -3050,7 +3030,7 @@ private struct AgentBubble: View {
 // MARK: - Agent citation tags (materials / learning / selection)
 
 /// Bracket citations Agent emits in answers, e.g. `[材料：…]`, `[学习记录：上次位置]`.
-private enum AgentCitationKind: String, Equatable {
+enum AgentCitationKind: String, Equatable {
     case material
     case note
     case selection
@@ -3081,7 +3061,7 @@ private enum AgentCitationKind: String, Equatable {
     }
 }
 
-private struct AgentCitation: Identifiable, Equatable {
+struct AgentCitation: Identifiable, Equatable {
     let id: String
     let kind: AgentCitationKind
     let raw: String
@@ -3424,92 +3404,54 @@ private final class AgentMessageMarkdownMemo {
     }
 }
 
-private enum AgentCitationParser {
+enum AgentCitationParser {
     /// Matches `[材料：…]` / `[学习记录：上次位置]` style Agent citation labels.
     private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话)[：:]\s*([^\]\n]+)\]"#
     private static let regex = try? NSRegularExpression(pattern: pattern)
-    private static let collapsedSpaces = try? NSRegularExpression(pattern: #"[ \t]{2,}"#)
-    private static let collapsedBlankLines = try? NSRegularExpression(pattern: #"\n{3,}"#)
-    /// Tail of an unterminated citation label (`[材料：书法笔` mid-stream). The
-    /// kind tokens are listed with every proper prefix so the tail is withheld
-    /// from the very first character that can only belong to a citation. The
-    /// whole group is optional so a lone trailing `[` is withheld too — it is
-    /// either the start of a citation (kept hidden) or an ordinary bracket
-    /// (reappears with the next provider progress event). Ordinary
-    /// brackets with non-citation content (`[x`, `[1`) never match.
-    private static let trailingOpenCitation = try? NSRegularExpression(
-        pattern: #"\[(?:(?:材|材料|笔|笔记|选|选区|学|学习|学习记|学习记录|学习记忆|会|会话)[：:]?[^\]\n]*)?$"#
-    )
-    private static let trailingBlankLines = try? NSRegularExpression(pattern: #"\n{3,}$"#)
-    private static let trailingSpaces = try? NSRegularExpression(pattern: #"[ \t]{2,}$"#)
-
     static func parse(_ text: String) -> (displayText: String, citations: [AgentCitation]) {
         guard let regex else {
             return (text, [])
         }
-        // Prefix-stability for streaming: the native streaming parser receives
-        // cumulative text, so the display text must only ever
-        // grow by appends. A citation label is therefore withheld while it is
-        // still unterminated (it sits at the tail then), and stripped whole
-        // once it closes — the visible text never sees it, and stripping it
-        // removes nothing that was already shown. Trailing blank-line/space
-        // runs are likewise clamped at the tail so the whole-document
-        // collapse below never rewrites already-shown characters. Without
-        // this, every closing citation rewrote the middle of the buffer and
-        // forced a whole-document re-parse (the visible completion flash).
-        var working = text
-        if let trailingOpenCitation,
-           let match = trailingOpenCitation.firstMatch(in: working, range: fullNSRange(working)),
-           let range = Range(match.range, in: working) {
-            working = String(working[..<range.lowerBound])
+        let nsRange = fullNSRange(text)
+        let codeRanges = MarkdownCodeRangeScanner.ranges(in: text)
+        let matches = regex.matches(in: text, options: [], range: nsRange).filter {
+            !overlaps($0.range, codeRanges)
         }
-        if let trailingBlankLines,
-           let match = trailingBlankLines.firstMatch(in: working, range: fullNSRange(working)),
-           let range = Range(match.range, in: working) {
-            working.replaceSubrange(range, with: "\n\n")
-        }
-        if let trailingSpaces,
-           let match = trailingSpaces.firstMatch(in: working, range: fullNSRange(working)),
-           let range = Range(match.range, in: working) {
-            working.replaceSubrange(range, with: " ")
-        }
-        let nsRange = fullNSRange(working)
         var citations: [AgentCitation] = []
         var seen = Set<String>()
-        regex.enumerateMatches(in: working, options: [], range: nsRange) { match, _, _ in
-            guard let match,
-                  let fullRange = Range(match.range, in: working),
-                  let kindRange = Range(match.range(at: 1), in: working),
-                  let valueRange = Range(match.range(at: 2), in: working) else { return }
-            let kindToken = String(working[kindRange])
-            let value = String(working[valueRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            let raw = String(working[fullRange])
-            guard let kind = kind(from: kindToken) else { return }
+        for match in matches {
+            guard let fullRange = Range(match.range, in: text),
+                  let kindRange = Range(match.range(at: 1), in: text),
+                  let valueRange = Range(match.range(at: 2), in: text) else { continue }
+            let kindToken = String(text[kindRange])
+            let value = String(text[valueRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let raw = String(text[fullRange])
+            guard let kind = kind(from: kindToken) else { continue }
             let key = "\(kind.rawValue)|\(value)"
-            guard seen.insert(key).inserted else { return }
-            citations.append(
-                AgentCitation(
-                    id: key,
-                    kind: kind,
-                    raw: raw,
-                    value: value
+            if seen.insert(key).inserted {
+                citations.append(
+                    AgentCitation(
+                        id: key,
+                        kind: kind,
+                        raw: raw,
+                        value: value
+                    )
                 )
-            )
+            }
         }
-        var cleaned = regex.stringByReplacingMatches(in: working, options: [], range: nsRange, withTemplate: "")
-        if let collapsedSpaces {
-            cleaned = collapsedSpaces.stringByReplacingMatches(
-                in: cleaned, options: [], range: fullNSRange(cleaned), withTemplate: " ")
+        let cleaned = NSMutableString(string: text)
+        for match in matches.reversed() {
+            cleaned.deleteCharacters(in: match.range)
         }
-        if let collapsedBlankLines {
-            cleaned = collapsedBlankLines.stringByReplacingMatches(
-                in: cleaned, options: [], range: fullNSRange(cleaned), withTemplate: "\n\n")
-        }
-        return (cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? working : cleaned, citations)
+        return (cleaned as String, citations)
     }
 
     private static func fullNSRange(_ text: String) -> NSRange {
         NSRange(text.startIndex..<text.endIndex, in: text)
+    }
+
+    private static func overlaps(_ range: NSRange, _ codeRanges: [NSRange]) -> Bool {
+        codeRanges.contains { NSIntersectionRange(range, $0).length > 0 }
     }
 
     private static func kind(from token: String) -> AgentCitationKind? {

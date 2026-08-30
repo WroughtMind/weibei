@@ -677,7 +677,6 @@ final class WorkspaceStore: ObservableObject {
     var activeAgentRequestID: UUID?
     var activeAgentReplyMessageID: UUID?
     var latestAgentStreamingText = ""
-    private var lastAgentVisualizationBlocksPublishNanoseconds: UInt64 = 0
     var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
     private var agentVisualizationIDsUpdatingHistory: Set<String> = []
     var activeAgentReplyChatID: UUID?
@@ -9486,7 +9485,6 @@ final class WorkspaceStore: ObservableObject {
         activeAgentRequestID = requestID
         settleAgentStreamingDisplayImmediately()
         latestAgentStreamingText = ""
-        lastAgentVisualizationBlocksPublishNanoseconds = 0
         agentVisualizationIDsUpdatingHistory = []
         agentStreaming.reset()
         agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
@@ -9496,7 +9494,6 @@ final class WorkspaceStore: ObservableObject {
                 activeAgentReplyMessageID = nil
                 activeAgentReplyChatID = nil
                 isAskingAgent = false
-                lastAgentVisualizationBlocksPublishNanoseconds = 0
                 agentVisualizationIDsUpdatingHistory = []
                 agentStreaming.activityText = nil
                 agentRequestTask = nil
@@ -9719,7 +9716,7 @@ final class WorkspaceStore: ObservableObject {
             }
             let sources = reply.sources
             if let messageID = replyMessageID {
-                let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
+                let visibleContentBlocks = currentAgentContentBlocks(reply.contentBlocks)
                 latestAgentStreamingText = reply.text
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
                     $0.text = reply.text
@@ -9946,7 +9943,6 @@ final class WorkspaceStore: ObservableObject {
         isAskingAgent = false
         isStoppingAgent = true
         latestAgentStreamingText = ""
-        lastAgentVisualizationBlocksPublishNanoseconds = 0
         agentStreaming.activityText = nil
         agentStopTask?.cancel()
         agentStopTask = Task { @MainActor [weak self] in
@@ -10114,14 +10110,9 @@ final class WorkspaceStore: ObservableObject {
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentReplyIDsThatDisplayedStreamingText.insert(replyMessageID)
             }
-            let now = DispatchTime.now().uptimeNanoseconds
-            if updatesVisibleChat,
-               now &- lastAgentVisualizationBlocksPublishNanoseconds >= 33_000_000 {
-                // Web-backed Mermaid/GenUI blocks publish at display cadence;
-                // ordinary Markdown text above always uses every provider snapshot.
-                lastAgentVisualizationBlocksPublishNanoseconds = now
+            if updatesVisibleChat {
                 updateStreamingAgentContentBlocks(
-                    currentAgentVisualizationBlocks(blocks),
+                    currentAgentContentBlocks(blocks),
                     messageID: replyMessageID,
                     chatID: chatID
                 )
@@ -10150,7 +10141,7 @@ final class WorkspaceStore: ObservableObject {
                 agentVisualizationIDsUpdatingHistory.insert(fragment.id)
             }
             _ = updateAgentMessage(replyMessageID, in: chatID) {
-                $0.contentBlocks = currentAgentVisualizationBlocks(blocks)
+                $0.contentBlocks = currentAgentContentBlocks(blocks)
             }
             if updatesVisibleChat {
                 agentStreaming.activityText = ui("正在继续回答", "Continuing response")
@@ -10183,11 +10174,7 @@ final class WorkspaceStore: ObservableObject {
         messageID: UUID,
         chatID: UUID
     ) {
-        guard blocks.contains(where: {
-            if case .visualization = $0 { return true }
-            return false
-        }),
-        let sessionIndex = studySessions.firstIndex(where: { $0.id == chatID }),
+        guard let sessionIndex = studySessions.firstIndex(where: { $0.id == chatID }),
         let messageIndex = studySessions[sessionIndex].messages.firstIndex(where: {
             $0.id == messageID
         }) else { return }
@@ -10211,7 +10198,7 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    private func currentAgentVisualizationBlocks(
+    private func currentAgentContentBlocks(
         _ blocks: [AgentMessageContentBlock]
     ) -> [AgentMessageContentBlock] {
         var result: [AgentMessageContentBlock] = []
