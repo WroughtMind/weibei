@@ -108,21 +108,15 @@ test.describe("packaged WeiBei Windows UI", () => {
 
       const themeButtons = settings.locator(".theme-grid > button");
       await expect(themeButtons).toHaveCount(themes.length);
-      const seenThemes = new Set<ThemeMode>();
-      for (const index of themes.keys()) {
+      for (const [index, expectedTheme] of themes.entries()) {
         const button = themeButtons.nth(index);
         await button.click();
-        const appliedTheme = await page.locator("main.app-shell").getAttribute("data-theme") as ThemeMode | null;
-        expect(appliedTheme).not.toBeNull();
-        expect(themes).toContain(appliedTheme);
-        expect(seenThemes.has(appliedTheme!)).toBe(false);
-        seenThemes.add(appliedTheme!);
+        await expect(page.locator("main.app-shell")).toHaveAttribute("data-theme", expectedTheme);
         await expect(button).toHaveClass(/\bis-selected\b/);
         await expect.poll(() => page.evaluate(async () =>
-          (await window.weiBei.bootstrap()).preferences.theme)).toBe(appliedTheme);
+          (await window.weiBei.bootstrap()).preferences.theme)).toBe(expectedTheme);
       }
 
-      expect([...seenThemes].sort()).toEqual([...themes].sort());
       await captureEvidence(page, testInfo, "05-settings-final-theme.png");
     });
   });
