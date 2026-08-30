@@ -9058,6 +9058,7 @@ final class WorkspaceStore: ObservableObject {
             cancelAgentRequest()
             return
         }
+        guard AgentProviderReadiness.isConfigured(for: self) else { return }
         let question = (pendingComposerDraft ?? agentDraft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isStoppingAgent else { return }
         if isAskingAgent {

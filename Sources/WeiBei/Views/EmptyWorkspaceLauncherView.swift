@@ -7,7 +7,7 @@ private enum EmptyWorkspaceLayoutMetrics {
     static let compactHeightThreshold: CGFloat = 680
     static let entryCenterRatio: CGFloat = 0.402
     static let inspirationCenterRatio: CGFloat = 0.66
-    static let contentMaxWidth: CGFloat = 760
+    static let contentMaxWidth: CGFloat = 820
     static let inspirationMaxWidth: CGFloat = 660
     static let inspirationSlotHeight: CGFloat = 210
     static let compactInspirationSlotHeight: CGFloat = 176
@@ -20,12 +20,22 @@ struct EmptyWorkspaceLauncherView: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Environment(\.weiBeiTextScale) private var textScale
     @AppStorage("weibei.libraryPlacementConfirmed") private var libraryPlacementConfirmed = false
+    @AppStorage("weibei.agentSetupPromptDismissed") private var agentSetupPromptDismissed = false
+    @ObservedObject private var agentAccount = AgentAccountService.shared
 
     @State private var selectedInspirationID: String?
     /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
     @State private var appearanceEpoch = 0
 
     private var liveAppearanceMode: WeiBeiAppearanceMode { store.appearanceMode }
+
+    private var showsAgentSetupPrompt: Bool {
+        !agentSetupPromptDismissed && !AgentProviderReadiness.isConfigured(for: store)
+    }
+
+    private var showsSetupCards: Bool {
+        !libraryPlacementConfirmed || showsAgentSetupPrompt
+    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
@@ -108,7 +118,9 @@ struct EmptyWorkspaceLauncherView: View {
             min(EmptyWorkspaceLayoutMetrics.contentMaxWidth, availableSize.width - horizontalPadding * 2)
         )
         let showsInspirationBlock = store.showDailyInspiration && !store.inspirationAsWatermark
-        let entryHeight: CGFloat = (compact ? 84 : 98) * textScale
+        let entryHeight: CGFloat = (
+            (compact ? 84 : 98) + (showsSetupCards ? (compact ? 188 : 178) : 0)
+        ) * textScale
         let entryCenterY = clampedCenterY(
             ratio: showsInspirationBlock ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5,
             elementHeight: entryHeight,
@@ -175,10 +187,19 @@ struct EmptyWorkspaceLauncherView: View {
     private func entryCluster(at date: Date, compact: Bool, spacing: CGFloat, entryWidth: CGFloat) -> some View {
         VStack(spacing: spacing) {
             greeting(at: date, compact: compact)
-            EmptyWorkspaceEntryRow(entryWidth: entryWidth)
-            if store.courses.isEmpty && store.importedItems.isEmpty {
-                if !libraryPlacementConfirmed { LibraryPlacementNoticeCard() }
-                AgentSetupPromptCard()
+            EmptyWorkspaceEntryRow(
+                entryWidth: entryWidth,
+                isEnabled: libraryPlacementConfirmed
+            )
+            if store.courses.isEmpty && store.importedItems.isEmpty && showsSetupCards {
+                HStack(alignment: .top, spacing: compact ? 12 : 16) {
+                    if !libraryPlacementConfirmed {
+                        LibraryPlacementNoticeCard()
+                    }
+                    if showsAgentSetupPrompt {
+                        AgentSetupPromptCard()
+                    }
+                }
             }
         }
     }
@@ -279,6 +300,7 @@ private struct EmptyWorkspaceEntryRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
     let entryWidth: CGFloat
+    let isEnabled: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -311,6 +333,8 @@ private struct EmptyWorkspaceEntryRow: View {
             )
         }
         .fixedSize(horizontal: true, vertical: false)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.42)
         .accessibilityElement(children: .contain)
     }
 
