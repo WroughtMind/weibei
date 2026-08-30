@@ -42,16 +42,15 @@ jobs:
           test -s _site/assets/第一幕-真实首页截图-去黑边.png
           test -s _site/assets/第四幕-折页地图-v1.png
 
-      - name: Add latest DMG downloads
+      - name: Add latest downloads
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p _site/downloads
 
           release="$(
             gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
-              jq -s 'add | map(select(.draft == false) | select(any(.assets[]?; (.name | ascii_downcase | endswith(".dmg"))))) | .[0] // empty'
+              jq -s 'add | map(select(.draft == false and .prerelease == false) | select(any(.assets[]?; (.name | ascii_downcase | test("\\.(dmg|exe|msi)$"))))) | .[0] // empty'
           )"
 
           if [ -z "$release" ] || [ "$release" = "null" ]; then
@@ -61,29 +60,7 @@ jobs:
 
           tag="$(jq -r '.tag_name' <<<"$release")"
           published_at="$(jq -r '.published_at // ""' <<<"$release")"
-          : > /tmp/weibei-dmg-assets.jsonl
-
-          jq -c '.assets[] | select(.name | ascii_downcase | endswith(".dmg"))' <<<"$release" |
-            while IFS= read -r asset; do
-              asset_name="$(jq -r '.name' <<<"$asset")"
-              asset_url="$(jq -r '.url' <<<"$asset")"
-              asset_size="$(jq -r '.size // 0' <<<"$asset")"
-
-              if [ "$(basename "$asset_name")" != "$asset_name" ]; then
-                continue
-              fi
-
-              gh api "$asset_url" -H "Accept: application/octet-stream" > "_site/downloads/$asset_name"
-              test -s "_site/downloads/$asset_name"
-
-              jq -n \
-                --arg name "$asset_name" \
-                --arg download_url "./downloads/$asset_name" \
-                --argjson size "$asset_size" \
-                '{name:$name,download_url:$download_url,size:$size}' >> /tmp/weibei-dmg-assets.jsonl
-            done
-
-          assets="$(jq -s '.' /tmp/weibei-dmg-assets.jsonl)"
+          assets="$(jq '[.assets[] | select(.name | ascii_downcase | test("\\.(dmg|exe|msi)$")) | {name,download_url:.browser_download_url,size}]' <<<"$release")"
           if [ "$(jq 'length' <<<"$assets")" -eq 0 ]; then
             echo '{"available":false}' > _site/release.json
             exit 0
