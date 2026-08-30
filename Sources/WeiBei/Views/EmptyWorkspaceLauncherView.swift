@@ -19,6 +19,7 @@ struct EmptyWorkspaceLauncherView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Environment(\.weiBeiTextScale) private var textScale
+    @AppStorage("weibei.libraryPlacementConfirmed") private var libraryPlacementConfirmed = false
 
     @State private var selectedInspirationID: String?
     /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
@@ -176,7 +177,7 @@ struct EmptyWorkspaceLauncherView: View {
             greeting(at: date, compact: compact)
             EmptyWorkspaceEntryRow(entryWidth: entryWidth)
             if store.courses.isEmpty && store.importedItems.isEmpty {
-                LibraryPlacementNoticeCard()
+                if !libraryPlacementConfirmed { LibraryPlacementNoticeCard() }
                 AgentSetupPromptCard()
             }
         }
