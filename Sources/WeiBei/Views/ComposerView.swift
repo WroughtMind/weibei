@@ -12,20 +12,15 @@ struct ComposerView: View {
     var prompt: String
     var focused: FocusState<Bool>.Binding
     var fontSize: CGFloat
-    var lineLimit: ClosedRange<Int>
+    var lineLimit: ClosedRange<Int>?
     var height: CGFloat
-    /// Cap for immersive grow; nil means fixed compact height.
-    var maxHeight: CGFloat? = nil
     /// Optional safety cap for a compact composer hosted inside a floating surface.
     var compactMaxHeight: CGFloat? = nil
     var sendButtonSize: CGFloat
     var trailingPadding: CGFloat
     var sendTrailing: CGFloat
-    var sendBottom: CGFloat
     var horizontalPadding: CGFloat = 10
     var verticalPadding: CGFloat = 0
-    /// Codex-style footer: model chip on the left, send on the right inside the card.
-    var showsModelFooter: Bool = false
     /// Floating paper surfaces already provide their own chrome.
     var showsChrome = true
     var submit: () -> Void
@@ -39,10 +34,8 @@ struct ComposerView: View {
         store.isAgentRunningInActiveChat || canSend
     }
 
-    private var isWideComposer: Bool { maxHeight != nil || showsModelFooter }
-
     var body: some View {
-        let corner: CGFloat = isWideComposer ? 24 : WeiBeiMetric.controlRadius
+        let corner = WeiBeiMetric.controlRadius
         let textHeight = max(editorHeight, fontSize + 3)
         let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
         VStack(alignment: .leading, spacing: 0) {
@@ -71,57 +64,30 @@ struct ComposerView: View {
                 }
             }
             .padding(.top, verticalPadding)
-            .padding(.bottom, showsModelFooter ? 6 : verticalPadding)
-            .padding(.trailing, showsModelFooter ? 0 : trailingPadding)
+            .padding(.bottom, verticalPadding)
+            .padding(.trailing, trailingPadding)
             .padding(.horizontal, horizontalPadding)
             .frame(
                 maxWidth: .infinity,
-                minHeight: isWideComposer
-                    ? nil
-                    : max(
-                        CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
-                            composerMinimumHeight: Double(height)
-                        )),
-                        reservedControlHeight
-                    ),
-                maxHeight: isWideComposer ? .infinity : nil,
+                minHeight: max(
+                    CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
+                        composerMinimumHeight: Double(height)
+                    )),
+                    reservedControlHeight
+                ),
                 alignment: .leading
             )
             .overlay(alignment: .trailing) {
-                if showsControl && !showsModelFooter {
+                if showsControl {
                     sendButton
                         .padding(.trailing, sendTrailing)
                 }
-            }
-
-            if showsModelFooter {
-                HStack(spacing: 10) {
-                    Text(store.modelName.isEmpty ? store.ui("模型", "Model") : store.modelName)
-                        .weiBeiText(12, weight: .medium)
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    ZStack {
-                        Color.clear
-                            .frame(
-                                width: sendButtonSize * textScale,
-                                height: sendButtonSize * textScale
-                            )
-                        if showsControl {
-                            sendButton
-                        }
-                    }
-                }
-                .padding(.leading, horizontalPadding)
-                .padding(.trailing, sendTrailing)
-                .padding(.bottom, sendBottom)
-                .padding(.top, 2)
             }
         }
         .frame(
             maxWidth: .infinity,
             minHeight: height,
-            maxHeight: isWideComposer ? maxHeight : compactMaxHeight,
+            maxHeight: compactMaxHeight,
             alignment: .topLeading
         )
         .fixedSize(horizontal: false, vertical: true)
@@ -159,7 +125,7 @@ struct ComposerView: View {
             }
         }
         .animation(WeiBeiMotion.micro, value: showsControl)
-        .accessibilityIdentifier(isWideComposer ? "agent-composer-codex" : "agent-composer-compact")
+        .accessibilityIdentifier("agent-composer-compact")
     }
 
     private func commitAndSubmit() {

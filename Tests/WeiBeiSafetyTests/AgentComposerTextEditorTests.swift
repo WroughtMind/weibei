@@ -45,8 +45,14 @@ final class AgentComposerTextEditorTests: XCTestCase {
             width: 260,
             lineLimit: 1...6
         )
+        let uncapped = AgentComposerTextEditor.heights(
+            for: textView,
+            width: 260,
+            lineLimit: nil
+        )
 
         XCTAssertGreaterThan(long.fitted, short.fitted * 2)
         XCTAssertGreaterThan(long.content, long.fitted)
+        XCTAssertEqual(uncapped.fitted, uncapped.content)
     }
 }
