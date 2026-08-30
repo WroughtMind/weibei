@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import {
   mkdir,
   readFile,
@@ -86,10 +87,11 @@ export class WorkspacePersistence {
     if (options.primaryPath && options.workspaceDirectory) {
       throw new TypeError("Specify primaryPath or workspaceDirectory, not both");
     }
+    let requestedPrimaryPath: string;
     if (options.primaryPath) {
-      this.primaryPath = path.resolve(options.primaryPath);
+      requestedPrimaryPath = path.resolve(options.primaryPath);
     } else if (options.workspaceDirectory) {
-      this.primaryPath = path.join(
+      requestedPrimaryPath = path.join(
         path.resolve(options.workspaceDirectory),
         WORKSPACE_FILE_NAME,
       );
@@ -97,13 +99,27 @@ export class WorkspacePersistence {
       throw new TypeError("workspaceDirectory or primaryPath is required");
     }
     if (options.expectedParent) {
-      if (!sameFilesystemPath(
-        path.dirname(this.primaryPath),
-        options.expectedParent.absolutePath,
-      )) {
+      let canonicalRequestedParent: string;
+      let canonicalExpectedParent: string;
+      try {
+        canonicalRequestedParent = realpathSync.native(path.dirname(requestedPrimaryPath));
+        canonicalExpectedParent = realpathSync.native(options.expectedParent.absolutePath);
+      } catch {
         throw new TypeError("expectedParent must own workspace.json");
       }
+      if (
+        !sameFilesystemPath(canonicalRequestedParent, canonicalExpectedParent)
+        || !sameFilesystemPath(canonicalExpectedParent, options.expectedParent.absolutePath)
+      ) {
+        throw new TypeError("expectedParent must own workspace.json");
+      }
+      this.primaryPath = path.join(
+        options.expectedParent.absolutePath,
+        path.basename(requestedPrimaryPath),
+      );
       this.expectedParent = { ...options.expectedParent };
+    } else {
+      this.primaryPath = requestedPrimaryPath;
     }
     this.now = options.now ?? (() => new Date());
   }

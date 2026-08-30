@@ -133,14 +133,10 @@ export async function createDirectoryExclusiveVerified(
   if (!sameFilesystemPath(path.dirname(requestedTarget), requestedParent)) {
     throw new Error("directory-must-be-direct-child");
   }
-  if (expectedParent) {
-    if (!sameFilesystemPath(requestedParent, expectedParent.absolutePath)) {
-      throw new Error("directory-identity-conflict");
-    }
-    await assertVerifiedDirectoryIdentity(expectedParent);
-  }
-
-  const canonicalParent = await realpath(requestedParent);
+  const canonicalParent = expectedParent
+    ? await prepareMutationParent(requestedParent, expectedParent)
+    : await realpath(requestedParent);
+  const canonicalTarget = path.join(canonicalParent, path.basename(requestedTarget));
   const parentBefore = await lstat(canonicalParent, { bigint: true });
   if (!parentBefore.isDirectory() || parentBefore.isSymbolicLink()) {
     throw new Error("unsafe-directory-parent");
@@ -150,22 +146,22 @@ export async function createDirectoryExclusiveVerified(
   try {
     // recursive:false is the creation claim: it cannot adopt a directory,
     // junction, or symlink that won the same name first.
-    await mkdir(requestedTarget, { recursive: false, mode: 0o700 });
+    await mkdir(canonicalTarget, { recursive: false, mode: 0o700 });
     await confirmMutationParent(expectedParent);
-    const first = await lstat(requestedTarget, { bigint: true });
+    const first = await lstat(canonicalTarget, { bigint: true });
     if (!first.isDirectory() || first.isSymbolicLink()) {
       throw new Error("unsafe-created-directory");
     }
     created = {
-      absolutePath: requestedTarget,
+      absolutePath: canonicalTarget,
       dev: first.dev,
       ino: first.ino,
     };
 
-    const [canonicalTarget, canonicalParentAfter, confirmed, parentAfter] = await Promise.all([
-      realpath(requestedTarget),
+    const [confirmedTarget, canonicalParentAfter, confirmed, parentAfter] = await Promise.all([
+      realpath(canonicalTarget),
       realpath(requestedParent),
-      lstat(requestedTarget, { bigint: true }),
+      lstat(canonicalTarget, { bigint: true }),
       lstat(canonicalParent, { bigint: true }),
     ]);
     if (
@@ -179,11 +175,11 @@ export async function createDirectoryExclusiveVerified(
       || confirmed.isSymbolicLink()
       || confirmed.dev !== first.dev
       || confirmed.ino !== first.ino
-      || !sameFilesystemPath(path.dirname(canonicalTarget), canonicalParent)
+      || !sameFilesystemPath(path.dirname(confirmedTarget), canonicalParent)
     ) {
       throw new Error("directory-identity-conflict");
     }
-    return { ...created, absolutePath: canonicalTarget };
+    return { ...created, absolutePath: confirmedTarget };
   } catch (error) {
     // Only remove the exact empty directory this call claimed. A replacement
     // or a directory populated by another process is always preserved.
@@ -269,8 +265,8 @@ export async function atomicReplaceVerified(
   nextData: string | Uint8Array,
   expectedParent?: VerifiedDirectoryIdentity,
 ): Promise<string> {
-  const parent = path.dirname(targetPath);
-  await prepareMutationParent(parent, expectedParent);
+  const parent = await prepareMutationParent(path.dirname(targetPath), expectedParent);
+  targetPath = path.join(parent, path.basename(targetPath));
   const expectedBytes = Buffer.from(expectedData);
   const nextBytes = Buffer.from(nextData);
   const transactionDirectory = path.join(
@@ -432,7 +428,8 @@ export async function recoverAtomicReplace(
   targetPath: string,
   expectedParent?: VerifiedDirectoryIdentity,
 ): Promise<"not-needed" | "restored" | "race-winner"> {
-  await prepareMutationParent(path.dirname(targetPath), expectedParent);
+  const parent = await prepareMutationParent(path.dirname(targetPath), expectedParent);
+  targetPath = path.join(parent, path.basename(targetPath));
   let targetExists = false;
   try {
     const target = await lstat(targetPath);
@@ -444,7 +441,6 @@ export async function recoverAtomicReplace(
     if (!isNodeError(error) || error.code !== "ENOENT") throw error;
   }
 
-  const parent = path.dirname(targetPath);
   const canonicalParent = await realpath(parent);
   await confirmMutationParent(expectedParent);
   const prefix = `.${path.basename(targetPath)}.weibei-transaction-`;
@@ -539,8 +535,8 @@ export async function atomicCreateVerified(
   data: string | Uint8Array,
   expectedParent?: VerifiedDirectoryIdentity,
 ): Promise<string> {
-  const parent = path.dirname(targetPath);
-  await prepareMutationParent(parent, expectedParent);
+  const parent = await prepareMutationParent(path.dirname(targetPath), expectedParent);
+  targetPath = path.join(parent, path.basename(targetPath));
   const temporaryPath = path.join(
     parent,
     `.${path.basename(targetPath)}.weibei-stage-${randomUUID()}`,
@@ -602,8 +598,9 @@ export async function copyFileExclusiveVerified(
   targetPath: string,
   expectedParent?: VerifiedDirectoryIdentity,
 ): Promise<string> {
+  const parent = await prepareMutationParent(path.dirname(targetPath), expectedParent);
+  targetPath = path.join(parent, path.basename(targetPath));
   const temporaryPath = `${targetPath}.weibei-copy-${randomUUID()}`;
-  await prepareMutationParent(path.dirname(targetPath), expectedParent);
   try {
     await copyFile(sourcePath, temporaryPath, constants.COPYFILE_EXCL);
     await confirmMutationParent(expectedParent);
@@ -778,15 +775,18 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 async function prepareMutationParent(
   parentPath: string,
   expectedParent?: VerifiedDirectoryIdentity,
-): Promise<void> {
+): Promise<string> {
   if (!expectedParent) {
     await mkdir(parentPath, { recursive: true });
-    return;
-  }
-  if (!sameFilesystemPath(parentPath, expectedParent.absolutePath)) {
-    throw new Error("directory-identity-conflict");
+    return realpath(parentPath);
   }
   await assertVerifiedDirectoryIdentity(expectedParent);
+  const canonicalParent = await realpath(parentPath);
+  await assertVerifiedDirectoryIdentity(expectedParent);
+  if (!sameFilesystemPath(canonicalParent, expectedParent.absolutePath)) {
+    throw new Error("directory-identity-conflict");
+  }
+  return expectedParent.absolutePath;
 }
 
 async function confirmMutationParent(

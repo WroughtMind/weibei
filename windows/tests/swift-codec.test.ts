@@ -15,7 +15,11 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { sha256 } from "../src/main/services/file-utils";
+import {
+  atomicCreateVerified,
+  atomicReplaceVerified,
+  sha256,
+} from "../src/main/services/file-utils";
 import {
   SWIFT_REFERENCE_DATE_UNIX_MILLISECONDS,
   SwiftJSONNumber,
@@ -187,6 +191,51 @@ test("workspace persistence CAS preserves external and multi-instance winners", 
     assert.equal(live.futureExternalEdit, "EXTERNAL_WINS");
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("identity-bound writes rebind an aliased ancestor to the canonical capability", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "weibei-workspace-alias-"));
+  const realContainer = path.join(root, "real");
+  const directory = path.join(realContainer, "workspace");
+  const aliasContainer = path.join(root, "alias");
+  const movedAlias = path.join(root, "alias-moved");
+  try {
+    await mkdir(directory, { recursive: true });
+    await symlink(
+      realContainer,
+      aliasContainer,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const aliasedDirectory = path.join(aliasContainer, "workspace");
+    const canonicalDirectory = await realpath(directory);
+    const info = await lstat(aliasedDirectory, { bigint: true });
+    assert.equal(info.isSymbolicLink(), false);
+    const identity = {
+      absolutePath: canonicalDirectory,
+      dev: info.dev,
+      ino: info.ino,
+    };
+
+    const store = new WorkspacePersistence({
+      workspaceDirectory: aliasedDirectory,
+      expectedParent: identity,
+    });
+    assert.equal(store.primaryPath, path.join(canonicalDirectory, "workspace.json"));
+
+    const statePath = path.join(aliasedDirectory, "state.json");
+    await atomicCreateVerified(statePath, "one", identity);
+    await atomicReplaceVerified(statePath, "one", "two", identity);
+    assert.equal(await readFile(path.join(canonicalDirectory, "state.json"), "utf8"), "two");
+
+    // Persistence must retain the verified capability, not the caller's
+    // mutable spelling of the path.
+    await rename(aliasContainer, movedAlias);
+    await store.save(workspace(1));
+    await store.save(workspace(2));
+    assert.equal((await store.load()).snapshot?.futureRevision, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
