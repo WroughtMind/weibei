@@ -243,6 +243,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             [.posixPermissions: 0o700],
             ofItemAtPath: databaseURL.deletingLastPathComponent().path
         )
+        try? FileManager.default.removeItem(
+            at: databaseURL.deletingLastPathComponent()
+                .appendingPathComponent("ReadSnapshots", isDirectory: true)
+        )
         guard let database = borrowDatabase() else { return }
         defer { returnDatabase() }
         _ = execute("PRAGMA page_size=4096", in: database)
