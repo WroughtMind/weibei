@@ -1,3 +1,5 @@
+import { chooseDownloadId, downloadTargets, matchDownloadAssets, preferredDownloadIds } from './download-selection.mjs';
+
 const chapters = [...document.querySelectorAll('.chapter')];
 const railButtons = [...document.querySelectorAll('.scene-rail button')];
 const experiencePages = [...document.querySelectorAll('.experience-page')];
@@ -8,6 +10,12 @@ const themePreviews = [...document.querySelectorAll('.theme-preview')];
 const themesLayer = document.querySelector('.themes-layer');
 const languageToggle = document.querySelector('[data-language-toggle]');
 const downloadLink = document.querySelector('[data-download-link]');
+const downloadTitle = document.querySelector('[data-download-title]');
+const downloadLabel = document.querySelector('[data-download-label]');
+const downloadControl = document.querySelector('[data-download-control]');
+const downloadToggle = document.querySelector('[data-download-toggle]');
+const downloadMenu = document.querySelector('[data-download-menu]');
+const downloadOptions = [...document.querySelectorAll('[data-download-target]')];
 const translatable = [...document.querySelectorAll('[data-en]')];
 const labelled = [...document.querySelectorAll('[data-en-label]')];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -16,6 +24,8 @@ let activeMode = 0;
 let experiencePaused = false;
 let experienceTimer;
 let activeThemePreview;
+let matchedDownloads = matchDownloadAssets([]);
+let selectedDownloadId = 'mac-universal';
 
 translatable.forEach(element => { element.dataset.zh = element.textContent; });
 labelled.forEach(element => { element.dataset.zhLabel = element.getAttribute('aria-label'); });
@@ -29,21 +39,96 @@ const setLanguage = language => {
   languageToggle.setAttribute('aria-label', english ? '切换为中文' : 'Switch to English');
   languageToggle.setAttribute('aria-pressed', String(english));
   localStorage.setItem('weibei-language', language);
+  renderDownloadControl();
 };
 
 languageToggle.addEventListener('click', () => setLanguage(document.documentElement.lang === 'en' ? 'zh-CN' : 'en'));
 setLanguage(localStorage.getItem('weibei-language') === 'en' ? 'en' : 'zh-CN');
 
-fetch('./release.json', { cache: 'no-store' })
-  .then(response => response.ok ? response.json() : Promise.reject())
-  .then(release => {
-    const assets = Array.isArray(release.assets) ? release.assets : [];
-    const asset = assets.find(item => /universal/i.test(item.name)) || assets[0];
-    if (!release.available || !asset?.download_url || !downloadLink) return;
+const detectDownloadEnvironment = async () => {
+  const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || '';
+  let architecture = '';
+  if (navigator.userAgentData?.getHighEntropyValues) {
+    try {
+      ({ architecture = '' } = await navigator.userAgentData.getHighEntropyValues(['architecture']));
+    } catch {}
+  }
+  return { platform, architecture };
+};
+
+function renderDownloadControl() {
+  if (!downloadLink || !downloadTitle || !downloadLabel) return;
+  const english = document.documentElement.lang === 'en';
+  const target = downloadTargets.find(item => item.id === selectedDownloadId) || downloadTargets[0];
+  const asset = matchedDownloads[target.id];
+  const label = target.label[english ? 'en' : 'zh'];
+
+  downloadTitle.textContent = english ? 'Download WeiBei' : '下载 WeiBei';
+  downloadLabel.textContent = asset
+    ? label
+    : (english ? `${label} · Unavailable` : `${label} · 暂未提供`);
+  downloadLink.classList.toggle('is-disabled', !asset);
+  downloadLink.setAttribute('aria-disabled', String(!asset));
+  if (asset?.download_url) {
     downloadLink.href = new URL(asset.download_url, document.baseURI).href;
     downloadLink.download = asset.name;
-  })
-  .catch(() => {});
+  } else {
+    downloadLink.removeAttribute('href');
+    downloadLink.removeAttribute('download');
+  }
+
+  downloadOptions.forEach(option => {
+    const optionTarget = downloadTargets.find(item => item.id === option.dataset.downloadTarget);
+    const optionAsset = matchedDownloads[option.dataset.downloadTarget];
+    option.querySelector('span').textContent = optionTarget.label[english ? 'en' : 'zh'];
+    option.querySelector('small').textContent = optionAsset
+      ? (english ? 'Available' : '可下载')
+      : (english ? 'Unavailable' : '暂未提供');
+    option.disabled = !optionAsset;
+    option.classList.toggle('is-selected', option.dataset.downloadTarget === selectedDownloadId);
+  });
+}
+
+const closeDownloadMenu = () => {
+  if (!downloadMenu || !downloadToggle) return;
+  downloadMenu.hidden = true;
+  downloadToggle.setAttribute('aria-expanded', 'false');
+};
+
+downloadLink?.addEventListener('click', event => {
+  if (downloadLink.getAttribute('aria-disabled') === 'true') event.preventDefault();
+});
+
+downloadToggle?.addEventListener('click', () => {
+  const opening = downloadMenu.hidden;
+  downloadMenu.hidden = !opening;
+  downloadToggle.setAttribute('aria-expanded', String(opening));
+});
+
+downloadOptions.forEach(option => option.addEventListener('click', () => {
+  selectedDownloadId = option.dataset.downloadTarget;
+  renderDownloadControl();
+  closeDownloadMenu();
+}));
+
+document.addEventListener('pointerdown', event => {
+  if (!downloadControl?.contains(event.target)) closeDownloadMenu();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeDownloadMenu();
+});
+
+detectDownloadEnvironment().then(async environment => {
+  const preferredIds = preferredDownloadIds(environment);
+  selectedDownloadId = preferredIds[0];
+  try {
+    const response = await fetch('./release.json', { cache: 'no-store' });
+    const release = response.ok ? await response.json() : { assets: [] };
+    matchedDownloads = matchDownloadAssets(release.available && Array.isArray(release.assets) ? release.assets : []);
+  } catch {}
+  selectedDownloadId = chooseDownloadId(matchedDownloads, preferredIds);
+  renderDownloadControl();
+});
 
 const setExperienceMode = nextMode => {
   activeMode = (nextMode + experiencePages.length) % experiencePages.length;

@@ -7,11 +7,11 @@
 
 .faq-list { width: min(720px, 100%); margin: 32px auto 0; border-top: 1px solid var(--line); }
 .faq-list details { border-bottom: 1px solid var(--line); }
-.faq-list summary { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 17px 0 17px 24px; cursor: pointer; list-style: none; font-size: clamp(17px, 1.45vw, 21px); text-align: center; }
+.faq-list summary { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 17px 10px 17px 24px; cursor: pointer; list-style: none; font-size: clamp(17px, 1.45vw, 21px); text-align: left; }
 .faq-list summary::-webkit-details-marker { display: none; }
 .faq-list summary::after { content: "+"; font: 24px/1 ui-sans-serif, system-ui, sans-serif; transition: transform .22s ease; }
 .faq-list details[open] summary::after { transform: rotate(45deg); }
-.faq-list details p { max-width: 610px; margin: -2px auto 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.75; }
+.faq-list details p { margin: -2px 0 22px; padding: 0 54px 0 24px; color: var(--ink-soft); font-size: 14px; line-height: 1.8; text-align: left; }
 
 .labs-list { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; margin-top: 42px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .lab-item { min-height: 230px; padding: 46px 34px; }
@@ -53,8 +53,8 @@
   .detail-heading { font-size: 34px; }
   .detail-lead { margin: 12px auto 24px; font-size: 14px; }
   .faq-list { margin-top: 24px; }
-  .faq-list summary { padding: 15px 0 15px 20px; font-size: 17px; }
-  .faq-list details p { padding: 0 10px; font-size: 13px; }
+  .faq-list summary { padding: 15px 8px 15px 12px; font-size: 17px; }
+  .faq-list details p { padding: 0 34px 0 12px; font-size: 13px; }
   .labs-list { grid-template-columns: 1fr; margin-top: 28px; }
   .lab-item { min-height: 0; padding: 27px 22px; }
   .lab-item + .lab-item { border-top: 1px solid var(--line); border-left: 0; }

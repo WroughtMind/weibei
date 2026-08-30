@@ -86,7 +86,7 @@ html[lang="en"] .language-toggle::after { transform: translateX(28px); }
 .nav-download::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 1px; background: currentColor; transform: scaleX(.55); transition: transform .2s ease; }
 .nav-download:hover::after { transform: scaleX(1); }
 .nav-download:hover { opacity: 1; transform: translateY(-1px); }
-:is(.release-nav, .nav-download, .mode-word, .theme-name, .release-title, .hero-tagline, .primary-download) { font-family: "WeiBei Stele", serif; font-weight: 400; letter-spacing: .08em; }
+:is(.release-nav, .nav-download, .mode-word, .theme-name, .release-title, .hero-tagline, .primary-download, .download-menu) { font-family: "WeiBei Stele", serif; font-weight: 400; letter-spacing: .08em; }
 
 .scene-rail {
   position: fixed;
@@ -273,10 +273,23 @@ html[data-scene="3"][data-theme="mist-slate"] .scene-rail button.is-active::befo
 html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linear-gradient(180deg, #eedfcb 0%, #ebdbc7 100%) fixed; }
 .download-act { position: absolute; z-index: 6; left: 51.1%; bottom: -2%; width: 38%; height: 54%; pointer-events: none; transform: translateX(-50%); }
 .download-act .mascot-four { position: absolute; z-index: 2; left: 50%; top: -4%; width: 88%; height: 88%; transform: translateX(-50%); }
-.primary-download { position: absolute; z-index: 3; left: 50%; bottom: 4%; display: grid; place-items: center; width: 330px; height: 92px; padding: 0 46px; color: #2e2924; background: url("assets/第四幕-下载纸签-v4.png") center / contain no-repeat; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); font-family: "Songti SC", "STSong", serif; font-size: 17px; font-weight: 600; letter-spacing: .025em; white-space: nowrap; pointer-events: auto; transform: translateX(-50%); transition: filter .24s ease, transform .24s ease; }
-.primary-download span { transform: translateY(-1px); }
-.primary-download:hover { filter: drop-shadow(0 8px 10px rgba(54,40,25,.18)) saturate(1.07); transform: translateX(-50%) translateY(1px) scale(1.015); }
-.primary-download:active { transform: translateX(-50%) translateY(3px) scale(.985); }
+.download-control { position: absolute; z-index: 3; left: 50%; bottom: 4%; width: 330px; height: 92px; color: #2e2924; background: url("assets/第四幕-下载纸签-v4.png") center / contain no-repeat; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); pointer-events: auto; transform: translateX(-50%); transition: filter .24s ease, transform .24s ease; }
+.download-control:hover { filter: drop-shadow(0 8px 10px rgba(54,40,25,.18)) saturate(1.07); transform: translateX(-50%) translateY(1px) scale(1.015); }
+.download-control:active { transform: translateX(-50%) translateY(2px) scale(.99); }
+.primary-download { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 0 78px 0 42px; color: inherit; font-family: "Songti SC", "STSong", serif; white-space: nowrap; cursor: pointer; transform: translateY(-6px); }
+.download-title { font-size: 17px; font-weight: 600; letter-spacing: .045em; }
+.primary-download small { font: 10px/1.2 "Songti SC", "STSong", serif; letter-spacing: .02em; opacity: .72; }
+.primary-download.is-disabled { color: #756b5f; cursor: not-allowed; }
+.download-versions { position: absolute; z-index: 2; right: 42px; top: 27px; width: 34px; height: 38px; border: 0; border-left: 1px solid rgba(64,50,37,.2); color: #3b332b; background: transparent; font: 21px/1 Georgia, serif; cursor: pointer; transition: color .18s ease, transform .18s ease; }
+.download-versions:hover { color: var(--vermilion); }
+.download-versions[aria-expanded="true"] { transform: rotate(180deg); }
+.download-menu { position: absolute; z-index: 8; left: 50%; bottom: 84px; width: 272px; padding: 7px; border: 1px solid rgba(74,58,42,.16); border-radius: 3px; background: rgba(246,236,217,.97); box-shadow: 0 15px 30px rgba(54,40,25,.2); backdrop-filter: blur(12px); transform: translateX(-50%); }
+.download-menu[hidden] { display: none; }
+.download-menu button { display: grid; grid-template-columns: 1fr auto; align-items: center; width: 100%; min-height: 38px; padding: 7px 10px; border: 0; color: #302a24; background: transparent; text-align: left; cursor: pointer; }
+.download-menu button + button { border-top: 1px solid rgba(74,58,42,.1); }
+.download-menu button:hover:not(:disabled), .download-menu button.is-selected { background: rgba(185,48,31,.07); }
+.download-menu button:disabled { color: #8b8175; cursor: not-allowed; }
+.download-menu small { font: 10px/1.2 "Songti SC", "STSong", serif; letter-spacing: 0; opacity: .7; }
 
 @supports (animation-timeline: scroll()) {
   .hero-tagline { animation: hero-tagline-journey 1s linear both; animation-timeline: scroll(root block); }
@@ -404,7 +417,12 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   .release-feedback { right: 5%; bottom: 27%; }
   .download-act { bottom: -1%; width: 52%; height: 31%; }
   .download-act .mascot-four { top: -17%; width: 110%; height: 110%; }
-  .primary-download { bottom: 0; width: 220px; height: 62px; padding: 0 32px; font-size: 12px; }
+  .download-control { bottom: 0; width: 230px; height: 64px; }
+  .primary-download { gap: 1px; padding: 0 56px 0 28px; }
+  .download-title { font-size: 12px; }
+  .primary-download small { font-size: 8px; }
+  .download-versions { right: 29px; top: 18px; width: 27px; height: 28px; font-size: 17px; }
+  .download-menu { bottom: 57px; width: min(252px, 82vw); }
 }
 
 @media (prefers-reduced-motion: reduce) {
