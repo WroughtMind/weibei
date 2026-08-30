@@ -407,7 +407,7 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
 
   html[data-scene="3"] .journey-stage { top: 52%; width: 100vw; height: 72dvh; aspect-ratio: auto; transform: translate3d(-50%, -50%, 0) !important; }
   .themes-layer { inset: 0; padding: 3px; }
-  .theme-preview { width: calc((100% - 9px) / 2); height: calc((100% - 9px) / 2); border-radius: 8px; }
+  .theme-preview { width: calc((100% - 9px) / 2); height: calc((100% - 9px) / 2); border-radius: 8px; touch-action: pan-y; }
   .theme-paper { left: 3px; top: 3px; }
   .theme-ink { left: calc(50% + 1.5px); top: 3px; }
   .theme-sand { left: 3px; top: calc(50% + 1.5px); }

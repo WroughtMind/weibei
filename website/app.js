@@ -25,6 +25,8 @@ let activeMode = 0;
 let experiencePaused = false;
 let experienceTimer;
 let activeThemePreview;
+let themeGesture;
+let suppressThemeClick = false;
 let matchedDownloads = matchDownloadAssets([]);
 let selectedDownloadId = 'mac-arm64';
 const downloadFallback = downloadLink?.href;
@@ -186,13 +188,30 @@ themePreviews.forEach(preview => {
     if (preview.dataset.defaultVariant) preview.dataset.variant = preview.dataset.defaultVariant;
     else delete preview.dataset.variant;
   });
+  preview.addEventListener('pointerdown', event => {
+    if (mobileLayout.matches && activeThemePreview === preview) themeGesture = { x: event.clientX, y: event.clientY };
+  });
+  preview.addEventListener('pointerup', event => {
+    if (!themeGesture || !mobileLayout.matches || activeThemePreview !== preview) return;
+    const deltaX = event.clientX - themeGesture.x;
+    const deltaY = event.clientY - themeGesture.y;
+    themeGesture = undefined;
+    if (Math.abs(deltaX) < 36 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.2) return;
+    preview.dataset.variant = deltaX < 0 ? 'dark' : 'light';
+    suppressThemeClick = true;
+  });
+  preview.addEventListener('pointercancel', () => { themeGesture = undefined; });
   preview.addEventListener('click', () => {
     if (!mobileLayout.matches) return;
+    if (suppressThemeClick) {
+      suppressThemeClick = false;
+      return;
+    }
     if (activeThemePreview !== preview) {
       activateThemePreview(preview);
       return;
     }
-    preview.dataset.variant = preview.dataset.variant === 'dark' ? 'light' : 'dark';
+    resetThemePreview();
   });
   preview.addEventListener('keydown', event => {
     if (event.key === 'ArrowLeft') preview.dataset.variant = 'light';
