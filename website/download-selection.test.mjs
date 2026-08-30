@@ -4,15 +4,13 @@ import { chooseDownloadId, matchDownloadAssets, preferredDownloadIds } from './d
 
 const assets = [
   { name: 'WeiBei-1.0.0-macOS-arm64.dmg' },
-  { name: 'WeiBei-1.0.0-macOS-x86_64.dmg' },
-  { name: 'WeiBei-1.0.0-Windows-x64.exe' }
+  { name: 'WeiBei-1.0.0-macOS-x86_64.dmg' }
 ];
 
 test('安装包按系统与芯片匹配', () => {
   const matched = matchDownloadAssets(assets);
   assert.equal(chooseDownloadId(matched, preferredDownloadIds({ platform: 'macOS', architecture: 'arm' })), 'mac-arm64');
   assert.equal(chooseDownloadId(matched, preferredDownloadIds({ platform: 'macOS', architecture: 'x86' })), 'mac-intel');
-  assert.equal(chooseDownloadId(matched, preferredDownloadIds({ platform: 'Windows', architecture: 'x86' })), 'windows-x64');
 });
 
 test('通用安装包在后台同时匹配两类 Mac', () => {

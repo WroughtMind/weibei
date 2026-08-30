@@ -7,7 +7,6 @@ editor=false
 data_safety=false
 release=false
 tools=false
-windows=false
 
 classify_path() {
   local path="$1"
@@ -59,20 +58,11 @@ classify_path() {
       tools=true
       ;;
   esac
-
-  # Windows Electron candidate, shared web runtime, and parity assets.
-  # Windows-only source does not set `code`: that flag controls the macOS
-  # Swift build above. Shared package/editor paths continue to set both.
-  case "$path" in
-    windows/*|script/windows/*|Sources/WeiBei/WebEditor/*|Sources/WeiBei/Resources/Editor/*|Sources/WeiBei/Resources/Fonts/*|Tests/Fixtures/*|DesignSystem/08-implementation/tokens.json|DesignSystem/09-qa/*|DesignSystem/assets/fonts/*|DesignSystem/assets/app-icon/*|DesignReferences/*|package.json|package-lock.json|VERSION|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|Makefile|.github/workflows/*)
-      windows=true
-      ;;
-  esac
 }
 
 emit_scopes() {
-  printf 'code=%s\nagent=%s\neditor=%s\ndata_safety=%s\nrelease=%s\ntools=%s\nwindows=%s\n' \
-    "$code" "$agent" "$editor" "$data_safety" "$release" "$tools" "$windows"
+  printf 'code=%s\nagent=%s\neditor=%s\ndata_safety=%s\nrelease=%s\ntools=%s\n' \
+    "$code" "$agent" "$editor" "$data_safety" "$release" "$tools"
 }
 
 reset_scopes() {
@@ -82,7 +72,6 @@ reset_scopes() {
   data_safety=false
   release=false
   tools=false
-  windows=false
 }
 
 expect_scopes() {
@@ -103,61 +92,52 @@ expect_scopes() {
 
 if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes \
-    "code=false agent=false editor=false data_safety=false release=false tools=false windows=false " \
+    "code=false agent=false editor=false data_safety=false release=false tools=false " \
     "Docs/plans/example.md"
   expect_scopes \
-    "code=true agent=true editor=true data_safety=true release=false tools=false windows=false " \
+    "code=true agent=true editor=true data_safety=true release=false tools=false " \
     "Sources/WeiBei/Stores/WorkspaceStore.swift"
   expect_scopes \
-    "code=true agent=false editor=true data_safety=false release=false tools=false windows=true " \
+    "code=true agent=false editor=true data_safety=false release=false tools=false " \
     "Sources/WeiBei/WebEditor/src/editor.ts"
   expect_scopes \
-    "code=true agent=false editor=true data_safety=false release=false tools=false windows=false " \
+    "code=true agent=false editor=true data_safety=false release=false tools=false " \
     "Sources/WeiBeiCore/MarkdownAttachmentStore.swift"
   expect_scopes \
-    "code=true agent=false editor=false data_safety=true release=false tools=false windows=false " \
+    "code=true agent=false editor=false data_safety=true release=false tools=false " \
     "Tests/WeiBeiSafetyTests/CourseProjectRootSelfCheck.swift"
   expect_scopes \
-    "code=true agent=false editor=false data_safety=true release=false tools=false windows=false " \
+    "code=true agent=false editor=false data_safety=true release=false tools=false " \
     "Sources/WeiBei/Views/SidebarView.swift" \
     "Sources/WeiBei/Views/CourseDrawerHost.swift"
   expect_scopes \
-    "code=true agent=false editor=false data_safety=true release=false tools=false windows=false " \
+    "code=true agent=false editor=false data_safety=true release=false tools=false " \
     "Sources/WeiBeiCore/LearningModels.swift" \
     "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" \
     "Sources/WeiBeiCore/NoteSourceRelations.swift"
   expect_scopes \
-    "code=true agent=true editor=true data_safety=true release=true tools=false windows=true " \
+    "code=true agent=true editor=true data_safety=true release=true tools=false " \
     ".github/workflows/pr-checks.yml"
   expect_scopes \
-    "code=true agent=true editor=false data_safety=false release=false tools=false windows=false " \
+    "code=true agent=true editor=false data_safety=false release=false tools=false " \
     "Sources/WeiBeiCore/NativeAgentRuntime/NativeAgentLoop.swift"
   expect_scopes \
-    "code=false agent=false editor=false data_safety=false release=true tools=false windows=false " \
+    "code=false agent=false editor=false data_safety=false release=true tools=false " \
     "LICENSE"
   expect_scopes \
-    "code=false agent=false editor=true data_safety=false release=false tools=false windows=false " \
+    "code=false agent=false editor=true data_safety=false release=false tools=false " \
     "tsconfig.editor.json"
   expect_scopes \
-    "code=true agent=false editor=false data_safety=false release=false tools=true windows=false " \
+    "code=true agent=false editor=false data_safety=false release=false tools=true " \
     "script/check-genui-math.ts" \
     "DesignSystem/scripts/build-icns.ts" \
     "tsconfig.json"
-  expect_scopes \
-    "code=false agent=false editor=false data_safety=false release=false tools=false windows=true " \
-    "windows/src/main/index.ts"
-  expect_scopes \
-    "code=true agent=false editor=false data_safety=false release=false tools=false windows=true " \
-    "script/windows/verify-package.ps1"
-  expect_scopes \
-    "code=true agent=false editor=false data_safety=false release=false tools=false windows=true " \
-    "Tests/Fixtures/Writing/math-dense.md"
   # 依赖清单变化影响 Agent、编辑器与 TypeScript 工具链 → 全部触发。
   expect_scopes \
-    "code=true agent=true editor=true data_safety=false release=true tools=true windows=true " \
+    "code=true agent=true editor=true data_safety=false release=true tools=true " \
     "package.json"
   expect_scopes \
-    "code=true agent=true editor=true data_safety=false release=true tools=true windows=true " \
+    "code=true agent=true editor=true data_safety=false release=true tools=true " \
     "package-lock.json"
   echo "CI scope self-check passed"
   exit 0
