@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN" data-title-zh="反馈 · 魏碑" data-title-en="Feedback · WeiBei">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>反馈 · 魏碑</title>
+  <link rel="stylesheet" href="style.css?v=20260830-global-nav">
+  <link rel="stylesheet" href="detail.css?v=20260830-feedback-github">
+</head>
+<body class="detail-page">
+  <nav class="topbar detail-topbar" aria-label="主导航" data-en-label="Main navigation">
+    <a class="brand" href="index.html#scene-1" aria-label="回到首页" data-en-label="Back home"><img src="assets/魏碑标记.png" alt=""><span>WeiBei</span><i aria-hidden="true"></i></a>
+    <div class="top-actions">
+      <a class="github-link" href="https://github.com/weibei-app/weibei" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .7A12 12 0 0 0 8.21 24c.6.11.82-.26.82-.58v-2.23c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.2.08 1.83 1.23 1.83 1.23 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.34-5.47-5.93 0-1.31.47-2.38 1.23-3.22-.12-.3-.53-1.52.12-3.17 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.3-1.55 3.3-1.23 3.3-1.23.65 1.65.24 2.87.12 3.17.76.84 1.23 1.91 1.23 3.22 0 4.6-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .7Z"/></svg></a>
+      <div class="release-nav" aria-label="第四幕入口" data-en-label="More links"><a href="qa.html">Q&amp;A</a><a href="labs.html">Labs</a><a href="index.html#scene-4" data-en="Contact">联系方式</a><a href="feedback.html" data-en="Feedback">反馈</a></div>
+      <button class="language-toggle" type="button" data-language-toggle aria-label="Switch to English"><span>中</span><i aria-hidden="true"></i><span>EN</span></button>
+      <a class="nav-download" href="index.html#scene-4" data-en="Download">下载</a>
+    </div>
+  </nav>
+  <main class="detail-shell feedback-shell">
+    <h1 class="detail-heading" data-en="Feedback">反馈</h1>
+    <p class="detail-lead" data-en="Found a problem, or have a new idea? Tell us.">遇到问题，或有新的想法，告诉我们。</p>
+    <form class="feedback-form" id="feedback-form">
+      <fieldset class="feedback-kind">
+        <legend data-en="What would you like to share?">你想说哪件事？</legend>
+        <div class="feedback-kind-grid">
+          <label class="feedback-kind-option">
+            <input type="radio" name="type" value="issue" checked>
+            <span><strong data-en="Experience issue">体验问题</strong><small>GitHub Issues</small></span>
+          </label>
+          <label class="feedback-kind-option">
+            <input type="radio" name="type" value="feature">
+            <span><strong data-en="Feature request">功能建议</strong><small>GitHub Ideas</small></span>
+          </label>
+          <label class="feedback-kind-option">
+            <input type="radio" name="type" value="content">
+            <span><strong data-en="Content &amp; copy">内容与表达</strong><small>GitHub Ideas</small></span>
+          </label>
+          <label class="feedback-kind-option">
+            <input type="radio" name="type" value="other">
+            <span><strong data-en="Other">其他</strong><small>GitHub General</small></span>
+          </label>
+        </div>
+      </fieldset>
+      <label class="feedback-field"><span data-en="Title">标题</span><input type="text" name="title" required maxlength="120" placeholder="一句话说清你遇到的问题或想法" data-en-placeholder="Describe the problem or idea in one sentence"></label>
+      <label class="feedback-field"><span data-en="Details">具体内容</span><textarea name="message" required placeholder="发生了什么？你原本希望它怎样？" data-en-placeholder="What happened, and what did you expect instead?"></textarea></label>
+      <div class="feedback-footer">
+        <p class="feedback-disclosure" data-en="This will open a public GitHub submission page. Please do not include private information.">提交后会打开 GitHub 公开页面，请勿填写私密信息。</p>
+        <button class="feedback-submit" type="submit" data-submit-zh="前往 GitHub Issue" data-submit-en="Continue to GitHub Issue">前往 GitHub Issue</button>
+      </div>
+      <p class="feedback-status" id="feedback-status" aria-live="polite"></p>
+    </form>
+  </main>
+  <script src="detail.js?v=20260830-feedback-github"></script>
+</body>
+</html>
