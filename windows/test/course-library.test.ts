@@ -10,7 +10,6 @@ import {
   rename,
   rm,
   symlink,
-  watch,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -305,31 +304,23 @@ test("bound file mutations never follow a parent replaced after staging", async 
         ino: parentStats.ino,
       };
       const targetPath = path.join(parentPath, "state.json");
-      const abort = new AbortController();
       const swapped = (async () => {
-        try {
-          for await (const event of watch(parentPath, { signal: abort.signal })) {
-            if (!event.filename?.includes("weibei-")) continue;
-            await rename(parentPath, movedParentPath);
-            await symlink(
-              outsidePath,
-              parentPath,
-              process.platform === "win32" ? "junction" : "dir",
-            );
-            return;
-          }
-        } catch (error) {
-          if (!(error instanceof Error) || error.name !== "AbortError") throw error;
-        }
+        await waitForDirectoryEntry(
+          parentPath,
+          (entry) => entry.includes("weibei-"),
+        );
+        await rename(parentPath, movedParentPath);
+        await symlink(
+          outsidePath,
+          parentPath,
+          process.platform === "win32" ? "junction" : "dir",
+        );
       })();
-      try {
-        await assert.rejects(operation({ parentPath, targetPath, identity }));
-        await swapped;
-        assert.deepEqual(await readdir(outsidePath), []);
-      } finally {
-        abort.abort();
-        await swapped;
-      }
+      await Promise.all([
+        assert.rejects(operation({ parentPath, targetPath, identity })),
+        swapped,
+      ]);
+      assert.deepEqual(await readdir(outsidePath), []);
     };
 
     await exerciseSwap("exclusive-create", async ({ targetPath, identity }) =>
@@ -1514,42 +1505,32 @@ test("a state edit after staging wins the course compare-and-swap", async () => 
     await writeFile(statePath, stringifySwiftJSON(state, { sortKeys: true }), "utf8");
 
     const metadataPath = path.dirname(statePath);
-    const abort = new AbortController();
     let externalBytes: string | null = null;
     const externalEdit = (async () => {
-      try {
-        for await (const event of watch(metadataPath, { signal: abort.signal })) {
-          if (!event.filename?.startsWith(".course-state.json.weibei-transaction-")) {
-            continue;
-          }
-          const stagedState = await readSwiftObject(statePath);
-          externalBytes = stringifySwiftJSON({
-            ...stagedState,
-            externalEdit: "MUST_SURVIVE",
-          }, { sortKeys: true });
-          await writeFile(statePath, externalBytes, "utf8");
-          return;
-        }
-      } catch (error) {
-        if (!(error instanceof Error) || error.name !== "AbortError") throw error;
-      }
+      await waitForDirectoryEntry(
+        metadataPath,
+        (entry) => entry.startsWith(".course-state.json.weibei-transaction-"),
+      );
+      const stagedState = await readSwiftObject(statePath);
+      externalBytes = stringifySwiftJSON({
+        ...stagedState,
+        externalEdit: "MUST_SURVIVE",
+      }, { sortKeys: true });
+      await writeFile(statePath, externalBytes, "utf8");
     })();
 
-    try {
-      await assert.rejects(
+    await Promise.all([
+      assert.rejects(
         library.createNote(course.id, "不能覆盖外部编辑"),
         isCourseError("portable-state-conflict"),
-      );
-      await externalEdit;
-      assert.ok(externalBytes);
-      assert.equal(await readFile(statePath, "utf8"), externalBytes);
-      const finalState = await readSwiftObject(statePath);
-      assert.equal(finalState.externalEdit, "MUST_SURVIVE");
-      assert.deepEqual(finalState.items, []);
-    } finally {
-      abort.abort();
-      await externalEdit;
-    }
+      ),
+      externalEdit,
+    ]);
+    assert.ok(externalBytes);
+    assert.equal(await readFile(statePath, "utf8"), externalBytes);
+    const finalState = await readSwiftObject(statePath);
+    assert.equal(finalState.externalEdit, "MUST_SURVIVE");
+    assert.deepEqual(finalState.items, []);
   });
 });
 
@@ -1946,4 +1927,18 @@ function isCourseError(code: string): (error: unknown) => boolean {
 
 function isNodeErrorCode(code: string): (error: unknown) => boolean {
   return (error) => error instanceof Error && "code" in error && error.code === code;
+}
+
+async function waitForDirectoryEntry(
+  directory: string,
+  matches: (entry: string) => boolean,
+  timeoutMs = 5_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const entry = (await readdir(directory)).find(matches);
+    if (entry) return entry;
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`timed out waiting for staged file in ${directory}`);
 }
