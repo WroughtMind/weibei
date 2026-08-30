@@ -104,7 +104,7 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
     @MainActor
     func testV2SnapshotUsesSingleDispatchEntry() async throws {
         let loaded = expectation(description: "test WebView loaded")
-        let navigationProbe = FinalizedMarkdownNavigationProbe { loaded.fulfill() }
+        let navigationProbe = MarkdownNavigationProbe { loaded.fulfill() }
         let webView = WKWebView(frame: .zero)
         webView.navigationDelegate = navigationProbe
         webView.loadHTMLString("""
@@ -152,102 +152,6 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
         withExtendedLifetime(navigationProbe) {}
     }
 
-    @MainActor
-    func testFinalizedMarkdownBridgeWithoutAnimationFrames() async throws {
-        let loaded = expectation(description: "test WebView loaded")
-        let finalized = expectation(description: "finalized Markdown became ready")
-        var finalizedHeight: CGFloat?
-        let preview = RichMarkdownEditorView(
-            documentID: "finalized-render-check",
-            markdown: "",
-            command: .constant(nil),
-            onSelectionChange: { _, _ in },
-            onAskAgentWithSelection: { _, _ in },
-            onFinalizedRenderReady: { height in
-                finalizedHeight = height
-                finalized.fulfill()
-            }
-        )
-        let coordinator = preview.makeCoordinator()
-        let configuration = WKWebViewConfiguration()
-        configuration.userContentController.add(coordinator, name: "finalizedStreaming")
-        let navigationProbe = FinalizedMarkdownNavigationProbe {
-            loaded.fulfill()
-        }
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.navigationDelegate = navigationProbe
-        webView.loadHTMLString("""
-        <!doctype html>
-        <body></body>
-        <script>
-          window.requestAnimationFrame = () => 1;
-          window.WeiBeiCompactPreviewHeight = 137;
-          window.WeiBeiEditor = {
-            finishStreamingMarkdown(markdown) {
-              document.body.dataset.finalizedMarkdown = markdown;
-              window.webkit.messageHandlers.finalizedStreaming.postMessage({
-                documentID: 'finalized-render-check',
-                height: window.WeiBeiCompactPreviewHeight
-              });
-              return true;
-            }
-          };
-        </script>
-        """, baseURL: nil)
-        await fulfillment(of: [loaded], timeout: 3)
-
-        coordinator.webView = webView
-        let mermaid = "```mermaid\ngraph TD\nA --> B\n```"
-        coordinator.finishStreamingMarkdown(mermaid)
-
-        await fulfillment(of: [finalized], timeout: 3)
-        XCTAssertEqual(finalizedHeight, 137)
-
-        let finalizedMarkdown = try await webView.evaluateJavaScript(
-            "document.body.dataset.finalizedMarkdown"
-        ) as? String
-        XCTAssertEqual(finalizedMarkdown, mermaid)
-
-        _ = try await webView.evaluateJavaScript("""
-        (() => {
-          window.WeiBeiEditor.finishStreamingMarkdown = () => false;
-          return true;
-        })()
-        """)
-
-        let renderFailed = expectation(description: "failed finalizer rejected")
-        var didUnexpectedlyBecomeReady = false
-        coordinator.onFinalizedRenderReady = { _ in
-            didUnexpectedlyBecomeReady = true
-        }
-        coordinator.onRenderFailure = {
-            renderFailed.fulfill()
-        }
-        coordinator.finishStreamingMarkdown(mermaid)
-        await fulfillment(of: [renderFailed], timeout: 3)
-        XCTAssertFalse(didUnexpectedlyBecomeReady)
-
-        _ = try await webView.evaluateJavaScript("""
-        (() => {
-          window.WeiBeiEditor.finishStreamingMarkdown = () => true;
-          return true;
-        })()
-        """)
-
-        var staleDocumentBecameReady = false
-        coordinator.documentID = "original-document"
-        coordinator.onFinalizedRenderReady = { _ in
-            staleDocumentBecameReady = true
-        }
-        coordinator.finishStreamingMarkdown(mermaid)
-        coordinator.documentID = "replacement-document"
-
-        _ = try await webView.evaluateJavaScript("true")
-        await Task.yield()
-        XCTAssertFalse(staleDocumentBecameReady)
-        configuration.userContentController.removeScriptMessageHandler(forName: "finalizedStreaming")
-        withExtendedLifetime(navigationProbe) {}
-    }
 }
 
 @MainActor
@@ -258,7 +162,7 @@ private final class EditorCommandBridgeFixture {
 
     private let commandBox: CommandBox
     private let completionProbe: EditorCommandQueueProbe
-    private let navigationProbe: FinalizedMarkdownNavigationProbe
+    private let navigationProbe: MarkdownNavigationProbe
     private let coordinator: RichMarkdownEditorView.Coordinator
     private let webView: WKWebView
 
@@ -285,7 +189,7 @@ private final class EditorCommandBridgeFixture {
         self.coordinator = coordinator
         let completionProbe = EditorCommandQueueProbe(receive: onProbe)
         self.completionProbe = completionProbe
-        let navigationProbe = FinalizedMarkdownNavigationProbe(onFinish: onLoaded)
+        let navigationProbe = MarkdownNavigationProbe(onFinish: onLoaded)
         self.navigationProbe = navigationProbe
 
         let controller = WKUserContentController()
@@ -377,7 +281,7 @@ private final class EditorCommandQueueProbe: NSObject, WKScriptMessageHandler {
     }
 }
 
-private final class FinalizedMarkdownNavigationProbe: NSObject, WKNavigationDelegate {
+private final class MarkdownNavigationProbe: NSObject, WKNavigationDelegate {
     private let onFinish: () -> Void
 
     init(onFinish: @escaping () -> Void) {
