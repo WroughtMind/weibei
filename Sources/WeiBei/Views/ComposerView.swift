@@ -35,7 +35,7 @@ struct ComposerView: View {
     }
 
     var body: some View {
-        let corner = WeiBeiMetric.controlRadius
+        let corner: CGFloat = showsChrome ? 24 : WeiBeiMetric.controlRadius
         let textHeight = max(editorHeight, fontSize + 3)
         let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
         VStack(alignment: .leading, spacing: 0) {
