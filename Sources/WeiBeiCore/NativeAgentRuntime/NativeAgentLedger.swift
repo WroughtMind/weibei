@@ -184,7 +184,8 @@ public actor NativeAgentLedger {
                 pendingFirstSeq = pendingFirstSeq ?? event.seq
                 pendingLastSeq = event.seq
                 pendingAssistant += event.text ?? ""
-                if let usage = event.usage {
+                if let usage = event.usage,
+                   checkpoint.map({ event.seq > $0.seq }) ?? true {
                     pendingUsage = pendingUsage?.merging(usage) ?? usage
                 }
             case .toolCall:

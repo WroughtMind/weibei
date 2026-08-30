@@ -182,7 +182,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let toolResultMessage = messages.first { $0.role == .tool && $0.toolCallID == "lookup-1" }
         XCTAssertNotNil(toolCallMessage)
         XCTAssertEqual(toolResultMessage?.content, "材料正文")
-        XCTAssertEqual(projection.latestUsage?.contextTokens, 100)
+        XCTAssertNil(projection.latestUsage)
     }
 
     func testContextCompactionCompletesSummaryCheckpointAndAnswerLoop() async throws {
