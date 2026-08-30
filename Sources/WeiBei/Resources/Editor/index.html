@@ -210,11 +210,6 @@
       overflow: hidden;
     }
 
-    :root[data-weibei-compact-preview="true"] html,
-    :root[data-weibei-compact-preview="true"] body {
-      background: transparent;
-    }
-
     #editor {
       box-sizing: border-box;
       height: 100vh;
@@ -222,19 +217,6 @@
       scrollbar-width: thin;
       scrollbar-color: transparent transparent;
       padding: 28px 34px 64px;
-      background: transparent;
-    }
-
-    :root[data-weibei-compact-preview="true"] #editor {
-      height: auto;
-      min-height: 0;
-      overflow: hidden;
-      padding: 0;
-      background: transparent;
-    }
-
-    :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] #editor,
-    :root[data-weibei-compact-preview="true"][data-weibei-theme="stele"] #editor {
       background: transparent;
     }
 
@@ -348,12 +330,6 @@
       margin: 0 auto;
     }
 
-    :root[data-weibei-compact-preview="true"] .milkdown {
-      max-width: none;
-      min-height: 0;
-      margin: 0;
-    }
-
     #frontmatter-panel {
       display: none;
       max-width: 760px;
@@ -416,17 +392,6 @@
       pointer-events: none;
     }
 
-    :root[data-weibei-compact-preview="true"] .ProseMirror {
-      min-height: 0;
-      font-size: calc(14px * var(--weibei-text-scale));
-      line-height: 1.68;
-    }
-
-    :root[data-weibei-chat-wide="true"] .ProseMirror {
-      font-size: calc(16px * var(--weibei-text-scale));
-      line-height: 1.8;
-    }
-
     .ProseMirror::selection,
     .ProseMirror ::selection {
       background: var(--selection);
@@ -462,15 +427,6 @@
       font-weight: 650;
     }
 
-    :root[data-weibei-compact-preview="true"] .ProseMirror h1,
-    :root[data-weibei-compact-preview="true"] .ProseMirror h2,
-    :root[data-weibei-compact-preview="true"] .ProseMirror h3,
-    :root[data-weibei-compact-preview="true"] .ProseMirror h4,
-    :root[data-weibei-compact-preview="true"] .ProseMirror h5,
-    :root[data-weibei-compact-preview="true"] .ProseMirror h6 {
-      margin: .9em 0 .25em;
-    }
-
     .ProseMirror h1 { font-size: 1.85rem; }
     .ProseMirror h2 { font-size: 1.42rem; }
     .ProseMirror h3 { font-size: 1.22rem; }
@@ -490,27 +446,7 @@
       margin: .85em 0 .35em;
     }
 
-    :root[data-weibei-compact-preview="true"] .ProseMirror h4 {
-      margin: .9em 0 .2em;
-    }
-
-    :root[data-weibei-compact-preview="true"] .ProseMirror h5,
-    :root[data-weibei-compact-preview="true"] .ProseMirror h6 {
-      margin: .9em 0 .18em;
-    }
-
     .ProseMirror p { margin: .65em 0; }
-
-    :root[data-weibei-compact-preview="true"] .ProseMirror p {
-      margin: .7em 0;
-    }
-
-    /* Read-only chat preview: model output often carries empty paragraphs
-       (esp. around display math) — collapse them so formulas do not float
-       inside a sea of blank lines. Notes editing keeps them visible. */
-    :root[data-weibei-compact-preview="true"] .ProseMirror p:has(> .ProseMirror-trailingBreak:only-child) {
-      display: none;
-    }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror h1,
     :root[data-weibei-theme="stele"] .ProseMirror h1,
@@ -575,10 +511,6 @@
     .ProseMirror ul li::marker,
     .ProseMirror ol li::marker {
       color: var(--faint);
-    }
-
-    :root[data-weibei-compact-preview="true"] .ProseMirror li {
-      margin: .26em 0;
     }
 
     .ProseMirror li[data-item-type="task"] {
@@ -1229,10 +1161,6 @@
       margin-bottom: 0;
     }
 
-    :root[data-weibei-compact-preview="true"] body[data-editable="false"] .weibei-mermaid-block {
-      display: none;
-    }
-
     .weibei-mermaid-render {
       margin: 0 0 1em;
       padding: 12px;
@@ -1348,56 +1276,6 @@
       white-space: pre-wrap;
     }
 
-    /* Chat previews cover the loading window with their own thinking
-       indicator; the 14px loading line would flash a third type size at the
-       start of every streamed answer. Errors stay visible. */
-    :root[data-weibei-compact-preview="true"] .editor-status:not(.error) {
-      display: none;
-    }
-
-    /* Streaming appearance: newly typed characters sharpen out of a soft blur
-       and a quiet caret follows the flow, so evenly paced inserts read as a
-       continuous stream instead of discrete character pops. The 480ms window
-       makes ~14 characters materialize simultaneously at typical Chinese
-       output rates, bridging the 33ms arrival gaps into a continuous flow.
-       Blur+opacity matches mainstream chat LLM styling; decoration spans
-       retire on schedule so the filter never lingers on settled text. */
-    .wb-stream-in {
-      animation: wb-stream-in 480ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
-    }
-
-    @keyframes wb-stream-in {
-      from { opacity: 0; filter: blur(4px); }
-      to   { opacity: 1; filter: blur(0); }
-    }
-
-    .wb-stream-caret {
-      display: inline-block;
-      width: 2px;
-      height: 1.05em;
-      vertical-align: -0.18em;
-      border-radius: 1px;
-      background: currentColor;
-      opacity: 0.7;
-      animation: wb-stream-caret-blink 1.06s ease-in-out infinite;
-      pointer-events: none;
-    }
-
-    .wb-stream-caret.is-finalized {
-      animation: none;
-      opacity: 0;
-      transition: opacity 160ms ease-out;
-    }
-
-    @keyframes wb-stream-caret-blink {
-      0%, 100% { opacity: 0.7; }
-      50%      { opacity: 0.06; }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .wb-stream-in { animation: none; }
-      .wb-stream-caret { animation: none; }
-    }
   </style>
 </head>
 <body>

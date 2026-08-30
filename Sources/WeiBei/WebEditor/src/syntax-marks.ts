@@ -122,7 +122,6 @@ const boundaryEscapeTransaction = (state: any) => {
 
 export interface SyntaxMarksDeps {
   isEditable: () => boolean;
-  isStreaming: () => boolean;
   /**
    * Position where the inline-math input rule just landed the caret. Real
    * WebKit typing fires extra normalization updates after the input
@@ -167,7 +166,7 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
     // surroundings (Typora-style). Typing transactions never escape, so a mark
     // just applied keeps flowing under continued input.
     appendTransaction: (trs: readonly any[], _oldState: any, newState: any) => {
-      if (!deps.isEditable() || deps.isStreaming()) return null;
+      if (!deps.isEditable()) return null;
       if (trs.some((tr: any) => tr.getMeta(mathCompletionKey))) return null;
       const navigated = trs.some((tr: any) => !tr.docChanged && tr.selectionSet);
       const edited = trs.some((tr: any) => tr.docChanged);
@@ -214,7 +213,7 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
     }),
     props: {
       decorations(state: any) {
-        if (!deps.isEditable() || deps.isStreaming() || isCodeContext(state)) {
+        if (!deps.isEditable() || isCodeContext(state)) {
           cache = null;
           clearAdjacent();
           return DecorationSet.empty;

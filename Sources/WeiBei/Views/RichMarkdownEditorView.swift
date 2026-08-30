@@ -461,38 +461,6 @@ private enum MarkdownWebNetworkGuard {
 
 final class MarkdownWebView: WKWebView {
     var pasteImageFromClipboard: (() -> Bool)?
-    var passesVerticalScrollToSuperview = false {
-        didSet { updateScrollWheelMonitor() }
-    }
-    private var scrollWheelMonitor: Any?
-
-    deinit {
-        removeScrollWheelMonitor()
-    }
-
-    /// Compact agent/chat previews use a fixed SwiftUI frame. Never answer
-    /// Auto Layout with WebKit's systemLayoutSizeFittingSize — that path
-    /// dominated hang samples (build 662) while LazyVStack remasured rows.
-    override var fittingSize: NSSize {
-        guard passesVerticalScrollToSuperview else { return super.fittingSize }
-        let size = bounds.size
-        return NSSize(width: max(size.width, 1), height: max(size.height, 1))
-    }
-
-    override var intrinsicContentSize: NSSize {
-        guard passesVerticalScrollToSuperview else { return super.intrinsicContentSize }
-        return fittingSize
-    }
-
-    /// Compact agent previews must not steal keyboard focus from the composer.
-    override var acceptsFirstResponder: Bool {
-        passesVerticalScrollToSuperview ? false : super.acceptsFirstResponder
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        updateScrollWheelMonitor()
-    }
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command),
@@ -501,89 +469,6 @@ final class MarkdownWebView: WKWebView {
             return
         }
         super.keyDown(with: event)
-    }
-
-    override func scrollWheel(with event: NSEvent) {
-        guard passesVerticalScrollToSuperview,
-              abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) else {
-            super.scrollWheel(with: event)
-            return
-        }
-
-        if !forwardVerticalScroll(event) {
-            super.scrollWheel(with: event)
-        }
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        if passesVerticalScrollToSuperview, NSApp.currentEvent?.type == .scrollWheel {
-            return nil
-        }
-        return super.hitTest(point)
-    }
-
-    private func nearestSuperviewScrollView() -> NSScrollView? {
-        var candidate = superview
-        while let view = candidate {
-            if let scrollView = view as? NSScrollView {
-                return scrollView
-            }
-            candidate = view.superview
-        }
-        return nil
-    }
-
-    private func updateScrollWheelMonitor() {
-        guard passesVerticalScrollToSuperview, window != nil else {
-            removeScrollWheelMonitor()
-            return
-        }
-        guard scrollWheelMonitor == nil else { return }
-        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self, self.shouldForwardVerticalScroll(event) else {
-                return event
-            }
-            return self.forwardVerticalScroll(event) ? nil : event
-        }
-    }
-
-    private func removeScrollWheelMonitor() {
-        if let scrollWheelMonitor {
-            NSEvent.removeMonitor(scrollWheelMonitor)
-            self.scrollWheelMonitor = nil
-        }
-    }
-
-    private func shouldForwardVerticalScroll(_ event: NSEvent) -> Bool {
-        guard passesVerticalScrollToSuperview,
-              event.window === window,
-              abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) else {
-            return false
-        }
-        let localPoint = convert(event.locationInWindow, from: nil)
-        return bounds.contains(localPoint)
-    }
-
-    @discardableResult
-    private func forwardVerticalScroll(_ event: NSEvent) -> Bool {
-        guard let outerScrollView = nearestSuperviewScrollView() else { return false }
-        outerScrollView.scrollWheel(with: event)
-        return true
-    }
-
-    @discardableResult
-    func scrollOuterSuperview(deltaY: CGFloat) -> Bool {
-        guard passesVerticalScrollToSuperview,
-              let outerScrollView = nearestSuperviewScrollView(),
-              let documentView = outerScrollView.documentView else { return false }
-        let clipView = outerScrollView.contentView
-        let maxY = max(0, documentView.bounds.height - clipView.bounds.height)
-        let direction: CGFloat = documentView.isFlipped ? 1 : -1
-        let nextY = min(max(clipView.bounds.origin.y + deltaY * direction, 0), maxY)
-        guard abs(nextY - clipView.bounds.origin.y) > 0.01 else { return false }
-        clipView.scroll(to: CGPoint(x: clipView.bounds.origin.x, y: nextY))
-        outerScrollView.reflectScrolledClipView(clipView)
-        return true
     }
 
 }
@@ -607,23 +492,15 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var searchQuery = ""
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
-    var isCompactPreview = false
-    var isChatWideTypography = false
-    /// A live read-only answer uses Milkdown's cumulative streaming document
-    /// diff. Completion ends that same session and reports its finalized height
-    /// back through the existing WebKit message bridge.
-    var streamsMarkdownUpdates = false
     var onSelectionChange: (String, CGPoint?) -> Void
     var onSelectionFormattingChange: (NoteSelectionFormatting?) -> Void = { _ in }
     var onLinkEditorRequest: () -> Void = {}
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
-    var onContentHeightChange: (CGFloat) -> Void = { _ in }
     var onActiveHeadingChange: (Int?) -> Void = { _ in }
     var onOutlineChange: ([NoteEditorOutlineItem]) -> Void = { _ in }
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onRenderReady: () -> Void = {}
-    var onFinalizedRenderReady: (CGFloat) -> Void = { _ in }
     var onRenderFailure: () -> Void = {}
     var onContentCommandPending: (String, NoteEditorCommand) -> Void = { _, _ in }
     var onContentCommandApplied: (String, NoteEditorCommand) -> Void = { _, _ in }
@@ -651,10 +528,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: searchQuery,
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
-            streamsMarkdownUpdates: streamsMarkdownUpdates,
             selectionAskMarks: selectionAskMarks,
             selectionRemarkMarks: selectionRemarkMarks,
-            onContentHeightChange: onContentHeightChange,
             onActiveHeadingChange: onActiveHeadingChange,
             onOutlineChange: onOutlineChange,
             onSelectionChange: onSelectionChange,
@@ -664,7 +539,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
             onRenderReady: onRenderReady,
-            onFinalizedRenderReady: onFinalizedRenderReady,
             onRenderFailure: onRenderFailure,
             onContentCommandPending: onContentCommandPending,
             onContentCommandApplied: onContentCommandApplied,
@@ -698,8 +572,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiLocalImageScheme = \(Self.json(Self.localImageScheme));
             window.weiBeiTheme = \(Self.json(appearanceMode.webThemeName));
             window.weiBeiInterfaceLanguage = \(Self.json(interfaceLanguage.rawValue));
-            window.weiBeiMarkdownCompactPreview = \(isCompactPreview ? "true" : "false");
-            window.weiBeiChatWideTypography = \(isChatWideTypography ? "true" : "false");
             window.weiBeiReduceMotion = \(reduceMotion ? "true" : "false");
             document.documentElement.dataset.weibeiReduceMotion = window.weiBeiReduceMotion;
             window.weiBeiTextScale = \(textScale);
@@ -711,20 +583,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
               document.documentElement.dataset.weibeiGlass = window.weiBeiTheme;
             }
             document.documentElement.dataset.weibeiLanguage = window.weiBeiInterfaceLanguage;
-            document.documentElement.dataset.weibeiCompactPreview = window.weiBeiMarkdownCompactPreview ? "true" : "false";
-            document.documentElement.dataset.weibeiChatWide = window.weiBeiChatWideTypography ? "true" : "false";
-            (() => {
-              if (window.weiBeiMarkdownCompactPreview) {
-                window.addEventListener("wheel", (event) => {
-                  if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
-                  event.preventDefault();
-                  window.webkit?.messageHandlers?.compactPreviewWheel?.postMessage({
-                    documentID: window.weiBeiDocumentID || "",
-                    deltaY: event.deltaY
-                  });
-                }, { capture: true, passive: false });
-              }
-            })();
             """ + Self.selectionAskMarksBootstrapScript + Self.selectionRemarkMarksBootstrapScript,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
@@ -734,7 +592,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         let view = MarkdownWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
-        view.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         view.pasteImageFromClipboard = { [weak coordinator = context.coordinator] in
             coordinator?.pasteImageFromClipboard() ?? false
@@ -744,7 +601,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         WeiBeiPerf.event(
             "webview.markdown_create",
             extra:
-                "instance=\(context.coordinator.performanceInstanceID.uuidString.lowercased()) surface=\(isEditable ? "editor" : "preview") compact=\(isCompactPreview ? 1 : 0) wide=\(isChatWideTypography ? 1 : 0) doc=\(documentID) mdlen=\(markdown.count)"
+                "instance=\(context.coordinator.performanceInstanceID.uuidString.lowercased()) surface=\(isEditable ? "editor" : "preview") doc=\(documentID) mdlen=\(markdown.count)"
         )
         let resourceURL = WeiBeiResources.bundle.url(
             forResource: "index",
@@ -773,9 +630,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         return view
     }
 
-    /// Chat/notes send publishes WorkspaceStore and remasures every markdown WKWebView.
-    /// Accept the SwiftUI proposal so AppKit never walks WebKit Auto Layout fittingSize
-    /// (cpu_resource + sample 2026-08-01: PlatformView.sizeThatFits freeze on send).
+    /// Accept the SwiftUI proposal so AppKit never walks WebKit Auto Layout fittingSize.
     func sizeThatFits(
         _ proposal: ProposedViewSize,
         nsView: WKWebView,
@@ -788,23 +643,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        (view as? MarkdownWebView)?.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         context.coordinator.markdown = markdown
         context.coordinator.command = $command
         context.coordinator.editingSession = editingSession
-        let wasStreamingMarkdown = context.coordinator.streamsMarkdownUpdates
-        context.coordinator.streamsMarkdownUpdates = streamsMarkdownUpdates
-        if !context.coordinator.isReady, wasStreamingMarkdown, !streamsMarkdownUpdates {
-            context.coordinator.pendingStreamingCompletion = true
-        } else if streamsMarkdownUpdates {
-            context.coordinator.pendingStreamingCompletion = false
-        }
         if context.coordinator.editingSession != nil {
             context.coordinator.transitionV2DocumentIfNeeded(to: documentID, markdown: markdown)
         } else if context.coordinator.documentID != documentID {
             context.coordinator.documentID = documentID
-            context.coordinator.pendingStreamingCompletion = false
             context.coordinator.setDocumentID(documentID)
         }
         context.coordinator.attachmentDirectory = attachmentDirectory
@@ -844,7 +690,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onWikiLink = onWikiLink
         context.coordinator.onSourceReference = onSourceReference
         context.coordinator.onRenderReady = onRenderReady
-        context.coordinator.onFinalizedRenderReady = onFinalizedRenderReady
         context.coordinator.onRenderFailure = onRenderFailure
         context.coordinator.onContentCommandPending = onContentCommandPending
         context.coordinator.onContentCommandApplied = onContentCommandApplied
@@ -863,28 +708,15 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onSelectionFormattingChange = onSelectionFormattingChange
         context.coordinator.onLinkEditorRequest = onLinkEditorRequest
         context.coordinator.onAskAgentWithSelection = onAskAgentWithSelection
-        context.coordinator.onContentHeightChange = onContentHeightChange
         context.coordinator.onActiveHeadingChange = onActiveHeadingChange
         context.coordinator.onOutlineChange = onOutlineChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
         context.coordinator.selectionAskMarks = selectionAskMarks
         context.coordinator.onSelectionRemarkMark = onSelectionRemarkMark
         context.coordinator.selectionRemarkMarks = selectionRemarkMarks
-        if context.coordinator.isChatWideTypography != isChatWideTypography {
-            context.coordinator.isChatWideTypography = isChatWideTypography
-            if context.coordinator.isReady {
-                context.coordinator.setChatWideTypography(isChatWideTypography)
-            }
-        }
 
         if context.coordinator.isReady, context.coordinator.editingSession == nil {
-            if streamsMarkdownUpdates, isCompactPreview, !isEditable {
-                if context.coordinator.webMarkdown != markdown || !wasStreamingMarkdown {
-                    context.coordinator.updateStreamingMarkdown(markdown)
-                }
-            } else if wasStreamingMarkdown {
-                context.coordinator.finishStreamingMarkdown(markdown)
-            } else if context.coordinator.webMarkdown != markdown {
+            if context.coordinator.webMarkdown != markdown {
                 context.coordinator.setMarkdown(markdown)
             }
         }
@@ -929,13 +761,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "editorFailure",
         "imageAttachmentRequested",
         "imagePickerRequested",
-        "contentHeightChanged",
-        "finalizedStreaming",
         "activeHeadingChanged",
-        "compactPreviewWheel",
         "selectionAskMark",
-        "remarkMark",
-        "streamDebug"
+        "remarkMark"
     ]
 
     /// CSS + apply helper for cinnabar underlines on asked selections (read-only markdown).
@@ -1030,13 +858,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onSelectionFormattingChange: (NoteSelectionFormatting?) -> Void
         var onLinkEditorRequest: () -> Void
         var onAskAgentWithSelection: (String, CGPoint?) -> Void
-        var onContentHeightChange: (CGFloat) -> Void
         var onActiveHeadingChange: (Int?) -> Void
         var onOutlineChange: ([NoteEditorOutlineItem]) -> Void
         var onWikiLink: (String) -> Void
         var onSourceReference: (String) -> Void
         var onRenderReady: () -> Void
-        var onFinalizedRenderReady: (CGFloat) -> Void
         var onRenderFailure: () -> Void
         var onContentCommandPending: (String, NoteEditorCommand) -> Void
         var onContentCommandApplied: (String, NoteEditorCommand) -> Void
@@ -1046,8 +872,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var selectionAskMarks: String
         var onSelectionRemarkMark: (String) -> Void
         var selectionRemarkMarks: String
-        var isChatWideTypography = false
-        var streamsMarkdownUpdates: Bool
         weak var webView: WKWebView?
         var isReady = false
         var isEditable: Bool
@@ -1061,7 +885,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var reduceMotion = false
         var textScale: CGFloat = 1
         var webMarkdown = ""
-        var pendingStreamingCompletion = false
         var lastCommandID: UUID?
         private var queuedCommands: [InFlightCommand] = []
         private var inFlightCommand: InFlightCommand?
@@ -1073,9 +896,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var lastAppliedFocusRequest = -1
         private var lastAppliedSelectionAskMarks = ""
         private var lastAppliedSelectionRemarkMarks = ""
-        private var finalizedRenderGeneration = 0
         private var hasReportedRenderFailure = false
-        private var pendingFinalizedRenderGeneration: Int?
 
         private struct InFlightCommand {
             let command: NoteEditorCommand
@@ -1097,10 +918,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: String,
             appearanceMode: WeiBeiAppearanceMode,
             interfaceLanguage: WeiBeiInterfaceLanguage,
-            streamsMarkdownUpdates: Bool,
             selectionAskMarks: String,
             selectionRemarkMarks: String,
-            onContentHeightChange: @escaping (CGFloat) -> Void,
             onActiveHeadingChange: @escaping (Int?) -> Void,
             onOutlineChange: @escaping ([NoteEditorOutlineItem]) -> Void,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
@@ -1110,7 +929,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onWikiLink: @escaping (String) -> Void,
             onSourceReference: @escaping (String) -> Void,
             onRenderReady: @escaping () -> Void,
-            onFinalizedRenderReady: @escaping (CGFloat) -> Void,
             onRenderFailure: @escaping () -> Void,
             onContentCommandPending: @escaping (String, NoteEditorCommand) -> Void,
             onContentCommandApplied: @escaping (String, NoteEditorCommand) -> Void,
@@ -1131,10 +949,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.searchQuery = searchQuery
             self.appearanceMode = appearanceMode
             self.interfaceLanguage = interfaceLanguage
-            self.streamsMarkdownUpdates = streamsMarkdownUpdates
             self.selectionAskMarks = selectionAskMarks
             self.selectionRemarkMarks = selectionRemarkMarks
-            self.onContentHeightChange = onContentHeightChange
             self.onActiveHeadingChange = onActiveHeadingChange
             self.onOutlineChange = onOutlineChange
             self.onSelectionChange = onSelectionChange
@@ -1144,7 +960,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onWikiLink = onWikiLink
             self.onSourceReference = onSourceReference
             self.onRenderReady = onRenderReady
-            self.onFinalizedRenderReady = onFinalizedRenderReady
             self.onRenderFailure = onRenderFailure
             self.onContentCommandPending = onContentCommandPending
             self.onContentCommandApplied = onContentCommandApplied
@@ -1286,11 +1101,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         fileprivate func reportRenderFailure() {
             guard !hasReportedRenderFailure else { return }
             hasReportedRenderFailure = true
-            // A failure can race the finalized JavaScript evaluation. Invalidate
-            // that completion before exposing the native fallback so a broken
-            // WebView cannot become ready again.
-            finalizedRenderGeneration &+= 1
-            pendingFinalizedRenderGeneration = nil
             isReady = false
             rejectUnconfirmedContentCommands()
             onRenderFailure()
@@ -1305,8 +1115,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard messageMatchesDocument(message.body) else { return }
             }
             switch message.name {
-            case "streamDebug":
-                break
             case "editorReady":
                 hasReportedRenderFailure = false
                 isReady = true
@@ -1322,12 +1130,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     setEditable(isEditable)
                     setInterfaceLanguage(interfaceLanguage)
                     webMarkdown = text
-                    if streamsMarkdownUpdates {
-                        updateStreamingMarkdown(markdown)
-                    } else if pendingStreamingCompletion {
-                        pendingStreamingCompletion = false
-                        finishStreamingMarkdown(markdown)
-                    } else if markdown == text {
+                    if markdown == text {
                         webMarkdown = text
                     } else {
                         setMarkdown(markdown)
@@ -1336,23 +1139,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     setDocumentID(documentID)
                     setEditable(isEditable)
                     setInterfaceLanguage(interfaceLanguage)
-                    // The JS editor initialized with the markdown baked in at
-                    // page load; tokens that accumulated during the cold start
-                    // (and any completion that landed before ready) must be
-                    // replayed now, or a short answer would stay frozen on the
-                    // first chunk forever.
-                    if streamsMarkdownUpdates {
-                        updateStreamingMarkdown(markdown)
-                    } else if pendingStreamingCompletion {
-                        pendingStreamingCompletion = false
-                        finishStreamingMarkdown(markdown)
-                    } else {
-                        webMarkdown = markdown
-                    }
+                    webMarkdown = markdown
                 }
                 applySearch()
                 setTheme(appearanceMode)
-                setChatWideTypography(isChatWideTypography)
                 setTextScale(textScale)
                 applyFocus()
                 applySelectionAskMarks(force: true)
@@ -1448,32 +1238,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                       let body = message.body as? [String: Any],
                       let id = body["id"] as? String else { return }
                 presentImagePicker(requestID: id, documentID: documentID)
-            case "contentHeightChanged":
-                guard let body = message.body as? [String: Any],
-                      let height = body["height"] as? Double else { return }
-                WeiBeiPerf.event(
-                    "webview.markdown_height_received",
-                    extra:
-                        "instance=\(performanceInstanceID.uuidString.lowercased())"
-                )
-                onContentHeightChange(CGFloat(height))
-            case "finalizedStreaming":
-                guard let body = message.body as? [String: Any],
-                      let height = body["height"] as? Double,
-                      height.isFinite,
-                      height > 0,
-                      pendingFinalizedRenderGeneration == finalizedRenderGeneration else { return }
-                pendingFinalizedRenderGeneration = nil
-                onFinalizedRenderReady(CGFloat(height))
             case "editorFailure":
                 reportRenderFailure()
             case "activeHeadingChanged":
                 guard let body = message.body as? [String: Any] else { return }
                 onActiveHeadingChange((body["index"] as? NSNumber)?.intValue)
-            case "compactPreviewWheel":
-                guard let body = message.body as? [String: Any],
-                      let deltaY = body["deltaY"] as? Double else { return }
-                (webView as? MarkdownWebView)?.scrollOuterSuperview(deltaY: CGFloat(deltaY))
             default:
                 break
             }
@@ -1488,55 +1257,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func setMarkdown(_ text: String) {
-            finalizedRenderGeneration &+= 1
-            pendingFinalizedRenderGeneration = nil
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
-        }
-
-        func updateStreamingMarkdown(_ text: String) {
-            finalizedRenderGeneration &+= 1
-            pendingFinalizedRenderGeneration = nil
-            let previous = webMarkdown
-            webMarkdown = text
-            // The WebView already holds `previous`, so a pure extension only
-            // needs the appended suffix; re-sending the full document would
-            // JSON-encode and cross-process-compile an ever-growing script
-            // on every streaming tick. Any non-extension falls back to full.
-            if !previous.isEmpty, text.hasPrefix(previous) {
-                let suffix = text[previous.endIndex...]
-                guard !suffix.isEmpty else { return }
-                evaluate("window.WeiBeiEditor?.appendStreamingMarkdown(\(Self.json(String(suffix))))")
-            } else {
-                evaluate("window.WeiBeiEditor?.updateStreamingMarkdown(\(Self.json(text)))")
-            }
-        }
-
-        func finishStreamingMarkdown(_ text: String) {
-            finalizedRenderGeneration &+= 1
-            let generation = finalizedRenderGeneration
-            let finalizedDocumentID = documentID
-            pendingFinalizedRenderGeneration = generation
-            webMarkdown = text
-            webView?.evaluateJavaScript("""
-            (() => {
-              const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)));
-              return didFinish === true;
-            })();
-            """) { [weak self] value, error in
-                guard let self,
-                      generation == self.finalizedRenderGeneration,
-                      finalizedDocumentID == self.documentID else { return }
-                guard error == nil,
-                      value as? Bool == true else {
-                    self.pendingFinalizedRenderGeneration = nil
-                    self.reportRenderFailure()
-                    return
-                }
-                // Scheduling succeeded. `finalizedStreaming` is the only ready
-                // signal; it arrives after the final body push, caret retirement,
-                // session end, and authoritative height publication.
-            }
         }
 
         func setEditable(_ editable: Bool) {
@@ -1593,13 +1315,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         /// page-side `--weibei-text-scale` variable, no reload involved.
         func setTextScale(_ scale: CGFloat) {
             evaluate("window.WeiBeiEditor?.setTextScale?.(\(scale))")
-        }
-
-        func setChatWideTypography(_ wide: Bool) {
-            evaluate("""
-            window.weiBeiChatWideTypography = \(wide ? "true" : "false");
-            document.documentElement.dataset.weibeiChatWide = window.weiBeiChatWideTypography ? "true" : "false";
-            """)
         }
 
         private func run(_ inFlight: InFlightCommand) {

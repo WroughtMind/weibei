@@ -517,9 +517,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 return
             }
             self.validateStructuredMarkdownNodes {
-                self.validateStreamingSnapshotIntegrity {
-                    self.validateFrontmatterLanguageCycle(completion: completion)
-                }
+                self.validateFrontmatterLanguageCycle(completion: completion)
             }
         }
     }
@@ -598,110 +596,6 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                                 completion()
                             }
                         }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Regression: cumulative snapshots must update one ProseMirror document.
-    /// Token fragments may not become standalone paragraphs, and settled
-    /// leading blocks must keep their DOM identity through completion.
-    private func validateStreamingSnapshotIntegrity(completion: @escaping () -> Void) {
-        let script = """
-        (() => {
-          window.WeiBeiEditor.setMarkdown("");
-          window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。");
-          const root = document.querySelector('.ProseMirror');
-          const firstBlock = root?.firstElementChild;
-          window.__weiBeiStreamingFirstBlockForCheck = firstBlock;
-          window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加");
-          const unfinishedText = root?.textContent || '';
-          const hiddenUnfinishedSyntax = Array.from(
-            root?.querySelectorAll('[data-weibei-streaming-syntax-hidden="true"]') || []
-          ).map((node) => node.textContent || '').join('');
-          window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。");
-          const closedSyntaxStillHidden = Boolean(
-            root?.querySelector('[data-weibei-streaming-syntax-hidden="true"]')
-          );
-          window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲");
-          window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲\\n- 列表乙");
-          const finalMarkdown = "第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲\\n- 列表乙\\n\\n收尾一段。";
-          window.WeiBeiEditor.finishStreamingMarkdown(finalMarkdown);
-          const blocks = root ? Array.from(root.children).filter((node) => !node.classList.contains('ProseMirror-trailingBreak') && !node.classList.contains('wb-stream-caret')) : [];
-          return JSON.stringify({
-            blockCount: blocks.length,
-            firstBlockPreserved: firstBlock === root?.firstElementChild,
-            unfinishedBodyVisible: unfinishedText.includes('加'),
-            hiddenUnfinishedSyntax,
-            closedSyntaxStillHidden,
-            text: (root?.textContent || '').replace(/\\s+/g, ''),
-            markdown: window.WeiBeiEditor.getMarkdown()
-          });
-        })();
-        """
-        webView.evaluateJavaScript(script) { [weak self] value, error in
-            guard let self else { return }
-            if let error {
-                self.fail("streaming snapshot check threw \(error.localizedDescription)")
-                return
-            }
-            guard let raw = value as? String,
-                  let data = raw.data(using: .utf8),
-                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                self.fail("streaming snapshot check returned no result")
-                return
-            }
-            let blockCount = result["blockCount"] as? Int ?? -1
-            let text = result["text"] as? String ?? ""
-            // 3 paragraphs + 1 list = 4 top-level blocks; fragmentation inflates this.
-            guard blockCount == 4 else {
-                self.fail("streaming snapshots fragmented blocks: expected 4 top-level blocks, got \(blockCount)")
-                return
-            }
-            guard result["firstBlockPreserved"] as? Bool == true else {
-                self.fail("streaming snapshots replaced an unchanged leading DOM block")
-                return
-            }
-            guard result["unfinishedBodyVisible"] as? Bool == true,
-                  result["hiddenUnfinishedSyntax"] as? String == "**" else {
-                self.fail("streaming snapshots hid unfinished body text or exposed its marker: \(result)")
-                return
-            }
-            guard result["closedSyntaxStillHidden"] as? Bool == false else {
-                self.fail("streaming snapshots kept hiding a closed emphasis marker")
-                return
-            }
-            guard text.contains("第二段带") else {
-                self.fail("streaming snapshots lost content: \(text)")
-                return
-            }
-            guard text.contains("收尾一段。"), text.contains("列表甲"), text.contains("列表乙") else {
-                self.fail("streaming snapshots dropped final blocks: \(text)")
-                return
-            }
-            // Completion serialization is asynchronous. Keep the document alive
-            // through that callback window before accepting DOM continuity.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                self.webView.evaluateJavaScript("""
-                (() => {
-                  const root = document.querySelector('.ProseMirror');
-                  const blocks = root ? Array.from(root.children).filter((node) => !node.classList.contains('ProseMirror-trailingBreak') && !node.classList.contains('wb-stream-caret')) : [];
-                  const preserved = Boolean(root
-                    && window.__weiBeiStreamingFirstBlockForCheck === root.firstElementChild
-                    && blocks.length === 4
-                    && root.textContent.includes('收尾一段。'));
-                  delete window.__weiBeiStreamingFirstBlockForCheck;
-                  return preserved;
-                })();
-                """) { value, error in
-                    guard error == nil, value as? Bool == true else {
-                        self.fail("streaming completion replaced the document after the serializer callback")
-                        return
-                    }
-                    // Restore the fixture document for the checks that follow.
-                    self.webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown(\(json(sampleMarkdown)))") { _, _ in
-                        completion()
                     }
                 }
             }
@@ -2911,8 +2805,8 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
         for name in [
             "editorReady", "dirtyChanged", "snapshotReady", "selectionChanged", "askAgentWithSelection",
             "wikiLinkActivated", "sourceReferenceActivated", "editorFailure",
-            "imageAttachmentRequested", "imagePickerRequested", "contentHeightChanged",
-            "activeHeadingChanged", "compactPreviewWheel", "appShortcut", "selectionAskMark"
+            "imageAttachmentRequested", "imagePickerRequested", "activeHeadingChanged",
+            "appShortcut", "selectionAskMark"
         ] {
             controller.add(self, name: name)
         }
