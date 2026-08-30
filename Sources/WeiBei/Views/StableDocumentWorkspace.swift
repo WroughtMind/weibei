@@ -53,6 +53,7 @@ struct StableDocumentWorkspace: NSViewRepresentable {
                 .environmentObject(store)
                 .environmentObject(store.paneState)
                 .environmentObject(store.interaction)
+                .environmentObject(store.libraryDrawer)
                 .weiBeiMotionScoped(),
             identifier: "stable-document-empty-workspace"
         )

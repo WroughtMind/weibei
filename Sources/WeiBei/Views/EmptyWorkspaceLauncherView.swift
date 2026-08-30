@@ -17,6 +17,7 @@ private enum EmptyWorkspaceLayoutMetrics {
 
 struct EmptyWorkspaceLauncherView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var libraryDrawer: LibraryDrawerState
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Environment(\.weiBeiTextScale) private var textScale
     @AppStorage("weibei.libraryPlacementConfirmed") private var libraryPlacementConfirmed = false
@@ -40,10 +41,16 @@ struct EmptyWorkspaceLauncherView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
             GeometryReader { geometry in
-                let compact = geometry.size.width < EmptyWorkspaceLayoutMetrics.compactWidthThreshold
-                    || geometry.size.height < EmptyWorkspaceLayoutMetrics.compactHeightThreshold
+                let drawerWidth = libraryDrawer.isOpen ? CourseDrawerContainerView.panelWidth : 0
+                let contentSize = CGSize(
+                    width: max(1, geometry.size.width - drawerWidth),
+                    height: geometry.size.height
+                )
+                let compact = contentSize.width < EmptyWorkspaceLayoutMetrics.compactWidthThreshold
+                    || contentSize.height < EmptyWorkspaceLayoutMetrics.compactHeightThreshold
                 let horizontalPadding: CGFloat = compact ? 24 : 52
-                let entryWidth = min(116, max(76, (geometry.size.width - (horizontalPadding * 2) - 2) / 3))
+                let contentCenterX = drawerWidth + contentSize.width / 2
+                let entryWidth = min(116, max(76, (contentSize.width - (horizontalPadding * 2) - 2) / 3))
                 let inspirationSlotHeight = compact
                     ? EmptyWorkspaceLayoutMetrics.compactInspirationSlotHeight
                     : EmptyWorkspaceLayoutMetrics.inspirationSlotHeight
@@ -67,22 +74,26 @@ struct EmptyWorkspaceLauncherView: View {
                             compact: compact,
                             onAdvance: { advanceInspiration(from: currentInspiration.id) }
                         )
-                        .frame(width: min(EmptyWorkspaceLayoutMetrics.watermarkMaxWidth, geometry.size.width - horizontalPadding * 2))
+                        .frame(width: min(EmptyWorkspaceLayoutMetrics.watermarkMaxWidth, contentSize.width - horizontalPadding * 2))
                         .position(
-                            x: geometry.size.width / 2,
-                            y: geometry.size.height * EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
+                            x: contentCenterX,
+                            y: geometry.size.height * (
+                                showsSetupCards ? 0.84 : EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
+                            )
                         )
                     }
 
                     workspaceContent(
                         at: timeline.date,
                         inspiration: currentInspiration,
-                        availableSize: geometry.size,
+                        availableSize: contentSize,
                         compact: compact,
                         horizontalPadding: horizontalPadding,
                         entryWidth: entryWidth,
                         inspirationSlotHeight: inspirationSlotHeight
                     )
+                    .frame(width: contentSize.width, height: contentSize.height)
+                    .position(x: contentCenterX, y: contentSize.height / 2)
                 }
                 // Rebuild the board when theme changes — long-lived NSHostingView
                 // does not always re-resolve ambient WeiBeiTheme Color snapshots.
