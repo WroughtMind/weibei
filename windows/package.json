@@ -63,6 +63,7 @@
     "files": [
       "dist/**",
       "!dist/**/*.map",
+      "!node_modules/**/playwright.config.*",
       "package.json"
     ],
     "extraResources": [
