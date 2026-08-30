@@ -3436,14 +3436,24 @@ struct ContextualContentPicker: View {
                         .padding(.top, 3)
                     }
 
-                    // 导入入口常驻列表底部：文稿/笔记窗口里打开列表任何时刻都能导入，
-                    // 不再只在列表为空时出现（有内容的用户看不到空分支）。
-                    Button(emptyImportTitle) {
-                        importIntoCurrentLevel()
+                    // 添加入口常驻列表底部：笔记可直接新建或导入，资料保持导入入口。
+                    HStack(spacing: 12) {
+                        if kind == .note {
+                            Button(store.ui("新建空白笔记", "New Blank Note")) {
+                                store.promptCreateBlankNotebookNote()
+                            }
+                            .buttonStyle(.plain)
+                            .weiBeiText(12, weight: .medium)
+                            .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
+                        }
+
+                        Button(emptyImportTitle) {
+                            importIntoCurrentLevel()
+                        }
+                        .buttonStyle(.plain)
+                        .weiBeiText(12, weight: .medium)
+                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
                     }
-                    .buttonStyle(.plain)
-                    .weiBeiText(12, weight: .medium)
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
                     .padding(.top, 6)
                 }
                 .frame(maxWidth: min(420, max(240, geometry.size.width - 48)))

@@ -81,12 +81,10 @@ enum AgentProviderReadiness {
     }
 }
 
-// MARK: - 聊天空态轻提示
+// MARK: - 聊天模型服务提示
 
-/// 对话为空且模型服务未配置时的一行安静提示,带直达设置的入口。
-/// 放在消息列表顶部,不占常驻空间——配置完成后自动消失。
-/// 显隐条件必须由本视图自己判断:父视图不观察 AgentAccountService,
-/// 条件写在父级时,配置完成后的 catalog 更新不会触发父级重算,提示会残留。
+/// 模型服务未配置时，在输入框旁说明原因并由用户主动进入配置。
+/// 显隐条件由本视图自己判断，配置完成后随 catalog 更新自动消失。
 struct AgentUnconfiguredHint: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject private var oauth = AgentAccountService.shared
@@ -100,19 +98,41 @@ struct AgentUnconfiguredHint: View {
     }
 
     private var hintRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "key.horizontal")
-                .font(.caption)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-            Text(store.ui("还没有配置模型服务", "No model service configured yet"))
-                .font(.caption)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-            Button(store.ui("去设置", "Open Settings")) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "key.horizontal")
+                    .weiBeiText(12, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                Text(store.ui("还没有连接模型服务", "No model service connected yet"))
+                    .weiBeiText(12.5, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.ink)
+            }
+
+            Text(store.ui(
+                "连接后才能发送问题。可以使用订阅登录或 API Key。",
+                "Connect a service before sending. You can use a subscription sign-in or an API key."
+            ))
+            .weiBeiText(11.5)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Button(store.ui("配置模型服务", "Configure Model Service")) {
                 openSettingsWindow(id: "weibei-settings")
             }
-            .buttonStyle(WeiBeiTextActionButtonStyle())
+            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
         }
-        .padding(.horizontal, 2)
-        .accessibilityElement(children: .combine)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 460, alignment: .leading)
+        .background {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                fill: WeiBeiTheme.paperRaised.opacity(0.45),
+                stroke: WeiBeiTheme.hairline.opacity(0.5)
+            )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agent-unconfigured-hint")
     }
 }

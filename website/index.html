@@ -1,277 +1,203 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="paper">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f2e2ca" />
-    <meta
-      name="description"
-      content="魏碑是一款本地优先的 macOS 学习工作台。打开资料，围绕原文提问，把确认过的内容写进笔记。"
-    />
-    <meta property="og:title" content="魏碑 WeiBei — 读、记、问，在同一张纸上" />
-    <meta
-      property="og:description"
-      content="HTML、PDF、Markdown 和纯文本，在同一个 macOS 工作台。每条重要回答，都能回到原文出处。"
-    />
-    <meta property="og:image" content="https://weibei-app.github.io/weibei/assets/brand/og-image.png" />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <link rel="canonical" href="https://weibei-app.github.io/weibei/" />
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="icon" href="./favicon.ico" sizes="any" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="preload" href="./assets/fonts/WeiBeiStele.ttf" as="font" type="font/ttf" crossorigin />
-    <link rel="preload" href="./assets/fonts/WeiBeiSteleMono.ttf" as="font" type="font/ttf" crossorigin />
-    <link rel="preload" href="./assets/fonts/NotoSerifSC-Web-600.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="./assets/fonts/NotoSansSC-Web-400.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="stylesheet" href="./styles.css" />
-    <script src="./main.js" defer></script>
-    <title>魏碑 WeiBei — 本地优先的 macOS 学习工作台</title>
-  </head>
-  <body>
-    <a class="skip-link" href="#main">跳到主要内容</a>
-
-    <header class="site-header" data-header>
-      <a class="brand" href="#top" aria-label="魏碑首页">
-        <svg class="brand-mark" viewBox="0 0 1254 1254" aria-hidden="true">
-          <g class="mark-ink">
-            <path d="M220 170H432V708H158V260Z" />
-            <path d="M511 170H749V708H511Z" />
-            <path d="M825 170H1010L1098 258V708H825Z" />
-            <path d="M158 708H432L474 816L511 708H749L789 816L825 708H1098V940L1014 1025L982 1083H915L814 967L720 1083H585L482 967L391 1083H270L158 960Z" />
-          </g>
-          <path class="mark-seal" d="M1042 1020H1108V1086H1042Z" />
-        </svg>
-        <span class="brand-word">WEIBEI</span>
-        <span class="brand-name">魏碑</span>
+<html lang="zh-CN" data-scene="1">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eee1ca">
+  <title>魏碑 · 把读、问、写放回同一张桌面</title>
+  <link rel="preload" as="image" href="assets/第一幕-真实首页截图-去黑边.png">
+  <link rel="stylesheet" href="style.css?v=20260830-mobile-themes-1">
+</head>
+<body>
+  <nav class="topbar" aria-label="主导航" data-en-label="Main navigation">
+    <a class="brand compact-brand" href="#scene-1" aria-label="回到第一幕" data-en-label="Back to scene one">
+      <img src="assets/魏碑标记.png" alt="">
+      <span>WeiBei</span><i aria-hidden="true"></i>
+    </a>
+    <div class="top-actions">
+      <a class="github-link" href="https://github.com/WroughtMind/weibei" aria-label="GitHub">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .7A12 12 0 0 0 8.21 24c.6.11.82-.26.82-.58v-2.23c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.2.08 1.83 1.23 1.83 1.23 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.34-5.47-5.93 0-1.31.47-2.38 1.23-3.22-.12-.3-.53-1.52.12-3.17 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.3-1.55 3.3-1.23 3.3-1.23.65 1.65.24 2.87.12 3.17.76.84 1.23 1.91 1.23 3.22 0 4.6-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .7Z"/></svg>
       </a>
-
-      <nav class="site-nav" aria-label="页面导航">
-        <a href="#workflow">工作流</a>
-        <a href="#sources">出处</a>
-        <a href="#relations">资料与笔记</a>
-      </nav>
-
-      <div class="header-actions">
-        <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换纸面与墨石主题">
-          <span class="theme-symbol" aria-hidden="true"></span>
-          <span data-theme-label>墨石</span>
-        </button>
-        <a class="header-download" data-download-link href="https://github.com/weibei-app/weibei/releases">
-          下载
-          <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 2.5v9m0 0 3.5-3.5M9 11.5 5.5 8M3 15h12" /></svg>
-        </a>
+      <div class="release-nav" aria-label="第四幕入口" data-en-label="More links">
+        <a href="qa.html">Q&amp;A</a>
+        <a href="labs.html">Labs</a>
+        <a href="#scene-4" data-en="Contact">联系方式</a>
+        <a href="feedback.html" data-en="Feedback">反馈</a>
       </div>
-    </header>
+      <button class="language-toggle" type="button" data-language-toggle aria-label="Switch to English"><span>中</span><i aria-hidden="true"></i><span>EN</span></button>
+      <a class="nav-download" href="#scene-4" data-en="Download">下载</a>
+    </div>
+  </nav>
 
-    <main id="main">
-      <section class="hero" id="top">
-        <div class="hero-copy reveal">
-          <p class="kicker">READ · NOTE · ASK · RETURN TO SOURCE</p>
-          <h1>读、记、问，<br />在同一张纸上。</h1>
-          <p class="hero-claim">把资料摊开，边读边记。有问题就问，答案直接回到出处。</p>
-          <p class="hero-detail">HTML、PDF、Markdown 和纯文本，在同一个原生 macOS 工作台。</p>
-          <div class="hero-actions">
-            <a class="button button-primary" data-download-link href="https://github.com/weibei-app/weibei/releases">
-              <span data-download-label>下载 macOS 版</span>
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5v10m0 0 4-4m-4 4-4-4M3.5 16.5h13" /></svg>
+  <aside class="scene-rail" aria-label="场景导航">
+    <button class="is-active" data-jump="scene-1" aria-label="第一幕"><span class="sr-only">第一幕</span></button>
+    <button data-jump="scene-2" aria-label="第二幕"><span class="sr-only">第二幕</span></button>
+    <button data-jump="scene-3" aria-label="第三幕"><span class="sr-only">第三幕</span></button>
+    <button data-jump="scene-4" aria-label="第四幕"><span class="sr-only">第四幕</span></button>
+  </aside>
+
+  <div class="journey-stage" aria-label="贯穿四幕的魏碑应用窗口">
+    <div class="journey-frame">
+      <div class="journey-layer blank-layer">
+        <img src="assets/第一幕-真实首页截图-去黑边.png" srcset="assets/mobile/第一幕-真实首页截图-去黑边.png 1080w, assets/第一幕-真实首页截图-去黑边.png 2940w" sizes="(max-width: 760px) 92vw, 72vw" alt="魏碑首页真实应用截图，中央显示阅读、对话和笔记入口" fetchpriority="high" decoding="async">
+      </div>
+
+      <div class="journey-layer experience-layer">
+        <div class="window-bar"><span class="traffic"><i></i><i></i><i></i></span><b>WeiBei</b><span>⌘</span></div>
+        <div class="experience-page experience-shot-page is-active" data-mode="overview">
+          <img src="assets/第二幕-真实三窗截图-去黑边.png" srcset="assets/mobile/第二幕-真实三窗截图-去黑边.png 1080w, assets/第二幕-真实三窗截图-去黑边.png 2940w" sizes="(max-width: 760px) 92vw, 72vw" alt="魏碑读、问、写三窗并行的真实应用截图" loading="lazy" decoding="async">
+        </div>
+        <div class="experience-page experience-shot-page" data-mode="read">
+          <img src="assets/第二幕-沉浸阅读-去黑边.png" srcset="assets/mobile/第二幕-沉浸阅读-去黑边.png 1080w, assets/第二幕-沉浸阅读-去黑边.png 2940w" sizes="(max-width: 760px) 92vw, 72vw" alt="魏碑沉浸阅读真实应用截图" loading="lazy" decoding="async">
+        </div>
+        <div class="experience-page experience-shot-page" data-mode="chat">
+          <img src="assets/第二幕-沉浸对话-去黑边.png" srcset="assets/mobile/第二幕-沉浸对话-去黑边.png 1080w, assets/第二幕-沉浸对话-去黑边.png 2940w" sizes="(max-width: 760px) 92vw, 72vw" alt="魏碑沉浸对话真实应用截图" loading="lazy" decoding="async">
+        </div>
+        <div class="experience-page experience-shot-page" data-mode="write">
+          <img src="assets/第二幕-沉浸写作-去黑边.png" srcset="assets/mobile/第二幕-沉浸写作-去黑边.png 1080w, assets/第二幕-沉浸写作-去黑边.png 2940w" sizes="(max-width: 760px) 92vw, 72vw" alt="魏碑沉浸写作真实应用截图" loading="lazy" decoding="async">
+        </div>
+      </div>
+
+      <div class="experience-mode-label" data-mode="overview" aria-live="polite" aria-atomic="true">
+        <span class="mode-word mode-read" data-en="READ">读</span>
+        <span class="mode-word mode-chat" data-en="CHAT">问</span>
+        <span class="mode-word mode-write" data-en="NOTE">写</span>
+      </div>
+
+      <div class="window-pager" role="group" aria-label="切换体验内容" data-en-label="Switch experience">
+        <button data-direction="-1" aria-label="上一个体验" data-en-label="Previous experience">←</button>
+        <button data-direction="1" aria-label="下一个体验" data-en-label="Next experience">→</button>
+      </div>
+
+      <div class="journey-layer themes-layer">
+        <article class="theme-preview theme-paper" data-theme="paper-ink" tabindex="0" aria-label="纸面与墨石主题" data-en-label="Paper and inkstone theme">
+          <img class="theme-art" src="assets/第三幕-画作-皮拉内西吊桥.jpg" srcset="assets/mobile/第三幕-画作-皮拉内西吊桥.jpg 1080w, assets/第三幕-画作-皮拉内西吊桥.jpg 2847w" sizes="(max-width: 760px) 100vw, 50vw" alt="" aria-hidden="true" loading="lazy" decoding="async">
+          <span class="theme-name" data-en="Paper · Inkstone">纸面 · 墨石</span>
+          <span class="theme-window">
+            <span class="theme-track">
+              <img src="assets/第三幕-真实截图-纸面-沉浸对话.png" srcset="assets/mobile/第三幕-真实截图-纸面-沉浸对话.png 1080w, assets/第三幕-真实截图-纸面-沉浸对话.png 2242w" sizes="(max-width: 760px) 94vw, 62vw" alt="魏碑纸面主题中的沉浸对话真实截图" loading="lazy" decoding="async">
+              <img src="assets/第三幕-真实截图-墨石-沉浸对话.png" srcset="assets/mobile/第三幕-真实截图-墨石-沉浸对话.png 1080w, assets/第三幕-真实截图-墨石-沉浸对话.png 2242w" sizes="(max-width: 760px) 94vw, 62vw" alt="魏碑墨石主题中的沉浸对话真实截图" loading="lazy" decoding="async">
+            </span>
+          </span>
+        </article>
+        <article class="theme-preview theme-ink" data-theme="xuan-stone" data-default-variant="dark" data-variant="dark" tabindex="0" aria-label="宣纸与石碑主题" data-en-label="Xuan paper and stele theme">
+          <img class="theme-art" src="assets/mobile/第三幕-画作-大桥骤雨.jpg" alt="" aria-hidden="true" loading="lazy" decoding="async">
+          <span class="theme-name" data-en="Xuan paper · Stele">宣纸 · 石碑</span>
+          <span class="theme-window">
+            <span class="theme-track">
+              <img src="assets/第三幕-真实截图-宣纸-论文选区浮窗.png" srcset="assets/mobile/第三幕-真实截图-宣纸-论文选区浮窗.png 1080w, assets/第三幕-真实截图-宣纸-论文选区浮窗.png 2242w" sizes="(max-width: 760px) 94vw, 62vw" alt="魏碑宣纸主题中的论文与笔记选区提问真实截图" loading="lazy" decoding="async">
+              <img src="assets/第三幕-真实截图-石碑-论文选区浮窗.png" srcset="assets/mobile/第三幕-真实截图-石碑-论文选区浮窗.png 1080w, assets/第三幕-真实截图-石碑-论文选区浮窗.png 2242w" sizes="(max-width: 760px) 94vw, 62vw" alt="魏碑石碑主题中的论文与笔记选区提问真实截图" loading="lazy" decoding="async">
+            </span>
+          </span>
+        </article>
+        <article class="theme-preview theme-sand" data-theme="clear-glass" tabindex="0" aria-label="通透玻璃主题，可切换浅色与深色" data-en-label="Clear glass theme, light and dark">
+          <img class="theme-art" src="assets/第三幕-画作-圣拉扎尔车站.jpg" srcset="assets/mobile/第三幕-画作-圣拉扎尔车站.jpg 1080w, assets/第三幕-画作-圣拉扎尔车站.jpg 1583w" sizes="(max-width: 760px) 100vw, 50vw" alt="" aria-hidden="true" loading="lazy" decoding="async">
+          <span class="theme-name" data-en="Clear glass">通透玻璃</span>
+          <span class="theme-window">
+            <span class="theme-track">
+              <img src="assets/第三幕-真实截图-晴璃-沉浸阅读.png" srcset="assets/mobile/第三幕-真实截图-晴璃-沉浸阅读.png 1080w, assets/第三幕-真实截图-晴璃-沉浸阅读.png 2242w" sizes="(max-width: 760px) 94vw, 62vw" alt="魏碑晴璃主题中的沉浸阅读真实截图" loading="lazy" decoding="async">
+              <img src="assets/第三幕-真实截图-夜璃-沉浸阅读.png" srcset="assets/mobile/第三幕-真实截图-夜璃-沉浸阅读.png 1080w, assets/第三幕-真实截图-夜璃-沉浸阅读.png 2242w" sizes="(max-width: 760px) 94vw, 62vw" alt="魏碑夜璃主题中的沉浸阅读真实截图" loading="lazy" decoding="async">
+            </span>
+          </span>
+        </article>
+        <article class="theme-preview theme-blue" data-theme="mist-slate" tabindex="0" aria-label="磨砂玻璃主题，可切换浅色与深色" data-en-label="Frosted glass theme, light and dark">
+          <img class="theme-art" src="assets/第三幕-画作-蓝与银的夜曲.jpg" srcset="assets/mobile/第三幕-画作-蓝与银的夜曲.jpg 1080w, assets/第三幕-画作-蓝与银的夜曲.jpg 2400w" sizes="(max-width: 760px) 100vw, 50vw" alt="" aria-hidden="true" loading="lazy" decoding="async">
+          <span class="theme-name" data-en="Frosted glass">磨砂玻璃</span>
+          <span class="theme-window">
+            <span class="theme-track">
+              <img src="assets/第三幕-真实截图-雾璃-沉浸写作.png" srcset="assets/mobile/第三幕-真实截图-雾璃-沉浸写作.png 1080w, assets/第三幕-真实截图-雾璃-沉浸写作.png 2242w" sizes="(max-width: 760px) 94vw, 62vw" alt="魏碑雾璃主题中的沉浸写作真实截图" loading="lazy" decoding="async">
+              <img src="assets/第三幕-真实截图-玄璃-沉浸写作.png" srcset="assets/mobile/第三幕-真实截图-玄璃-沉浸写作.png 1080w, assets/第三幕-真实截图-玄璃-沉浸写作.png 2242w" sizes="(max-width: 760px) 94vw, 62vw" alt="魏碑玄璃主题中的沉浸写作真实截图" loading="lazy" decoding="async">
+            </span>
+          </span>
+        </article>
+        <img class="mascot mascot-three" src="assets/Webi-第三幕-环绕.apng" alt="Webi 与小朱环绕互动的循环动画" loading="lazy" decoding="async">
+      </div>
+
+      <div class="journey-layer release-layer" aria-label="魏碑的更多入口">
+        <div class="release-map">
+          <img class="release-map-paper" src="assets/第四幕-折页地图-v1.png" srcset="assets/mobile/第四幕-折页地图-v1.png 1080w, assets/第四幕-折页地图-v1.png 1672w" sizes="100vw" alt="" aria-hidden="true" loading="lazy" decoding="async">
+          <a class="release-destination release-qa" href="qa.html" aria-label="Q&A">
+            <img src="assets/第四幕-Webi动作-QA-v1.png" alt="Webi 查看问题纸条" loading="lazy" decoding="async">
+            <span class="release-title">Q&amp;A</span>
+          </a>
+          <a class="release-destination release-labs" href="labs.html" aria-label="Labs">
+            <img src="assets/第四幕-Webi动作-Labs-v1.png" alt="Webi 用放大镜观察小朱" loading="lazy" decoding="async">
+            <span class="release-title">Labs</span>
+          </a>
+          <section class="release-destination release-contact" aria-label="联系方式" data-en-label="Contact">
+            <img src="assets/第四幕-Webi动作-官方群-v1.png" alt="三个 Webi 围着小朱相聚" loading="lazy" decoding="async">
+            <span class="release-title" data-en="Contact">联系方式</span>
+            <div class="contact-list"><em data-en="QR code pending">群二维码待放</em></div>
+          </section>
+          <a class="release-destination release-feedback" href="feedback.html" aria-label="反馈" data-en-label="Feedback">
+            <img src="assets/第四幕-Webi动作-反馈-v1.png" alt="Webi 投下反馈纸条" loading="lazy" decoding="async">
+            <span class="release-title" data-en="Feedback">反馈</span>
+          </a>
+        </div>
+        <div class="download-act">
+          <img class="mascot mascot-four" src="assets/Webi-第四幕-下载.apng" alt="Webi 拉下下载箭头的循环动画" loading="lazy" decoding="async">
+          <div class="download-control" data-download-control>
+            <a class="primary-download" href="https://github.com/WroughtMind/weibei/releases" data-download-link>
+              <span class="download-title" data-download-title>下载 WeiBei</span>
             </a>
-            <a class="text-link" href="https://github.com/weibei-app/weibei">
-              查看 GitHub
-              <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 14 14 4m0 0H7m7 0v7" /></svg>
-            </a>
-          </div>
-          <dl class="hero-meta" aria-label="版本信息">
-            <div><dt>系统</dt><dd>macOS 14+</dd></div>
-            <div><dt>格式</dt><dd>DMG</dd></div>
-            <div><dt>版本</dt><dd data-release-version>最新</dd></div>
-          </dl>
-        </div>
-
-        <div class="hero-brand-surface reveal" data-reveal-delay="1" aria-hidden="true">
-          <div class="brand-ruling brand-ruling-a"></div>
-          <div class="brand-ruling brand-ruling-b"></div>
-          <img class="hero-mark hero-mark-paper" src="./assets/brand/textured-mark.webp" alt="" />
-          <svg class="hero-mark hero-mark-inkstone" viewBox="0 0 1254 1254">
-            <g fill="currentColor">
-              <path d="M220 170H432V708H158V260Z" />
-              <path d="M511 170H749V708H511Z" />
-              <path d="M825 170H1010L1098 258V708H825Z" />
-              <path d="M158 708H432L474 816L511 708H749L789 816L825 708H1098V940L1014 1025L982 1083H915L814 967L720 1083H585L482 967L391 1083H270L158 960Z" />
-            </g>
-            <path fill="var(--brand-cinnabar)" d="M1042 1020H1108V1086H1042Z" />
-          </svg>
-          <p>READ · NOTE · ASK<br />RETURN TO SOURCE</p>
-          <span class="source-anchor"></span>
-        </div>
-
-        <figure class="workspace-figure reveal" data-reveal-delay="2">
-          <div class="window-bar" aria-hidden="true">
-            <span></span><span></span><span></span>
-            <b>WEIBEI · COURSE WORKSPACE</b>
-          </div>
-          <div class="workspace-viewport">
-            <img
-              src="./assets/screens/workspace.png"
-              alt="魏碑的原生学习工作台：课程材料、Agent 对话与 Markdown 笔记保留在同一个窗口"
-              width="2560"
-              height="1600"
-              fetchpriority="high"
-            />
-          </div>
-          <figcaption><span>01</span> 资料、问题与笔记共享同一份学习上下文。</figcaption>
-        </figure>
-      </section>
-
-      <section class="workflow section" id="workflow">
-        <div class="section-intro reveal">
-          <p class="kicker">READ · ASK · NOTE</p>
-          <h2>从原文开始，也回到原文。</h2>
-          <p>魏碑不把阅读变成聊天的附件。提问发生在材料旁边，写下的内容仍由你决定。</p>
-        </div>
-
-        <ol class="workflow-line">
-          <li class="reveal">
-            <div class="step-heading"><span>01</span><b>READ</b></div>
-            <h3>材料始终在眼前</h3>
-            <p>打开单个文件，或导入整门课程。PDF 页码、HTML 章节与当前选区都能成为可核对的上下文。</p>
-          </li>
-          <li class="reveal" data-reveal-delay="1">
-            <div class="step-heading"><span>02</span><b>ASK</b></div>
-            <h3>围绕正在读的句子发问</h3>
-            <p>问题线程与选区保持连接。之后再点回那道标记，仍能接着当时的问题继续读。</p>
-          </li>
-          <li class="reveal" data-reveal-delay="2">
-            <div class="step-heading"><span>03</span><b>NOTE</b></div>
-            <h3>确认之后再落笔</h3>
-            <p>Agent 可以提出笔记修改和学习状态更新；比较、保留或写入，最后一步始终交给学习者。</p>
-          </li>
-        </ol>
-      </section>
-
-      <section class="source-section section" id="sources">
-        <div class="source-copy reveal">
-          <p class="kicker">RETURN TO SOURCE</p>
-          <h2>每个重要判断，<br />都有回原文的路。</h2>
-          <p>回答里的来源由魏碑核对。点击引用，可以打开对应文件、PDF 页面、HTML 章节或关联笔记。</p>
-          <ul class="source-types">
-            <li><span>页</span>准确的 PDF 页面</li>
-            <li><span>节</span>对应的 HTML 章节</li>
-            <li><span>记</span>与材料相连的笔记</li>
-          </ul>
-        </div>
-
-        <div class="source-proof reveal" data-reveal-delay="1" aria-label="回答与出处示意">
-          <div class="proof-label">ANSWER · 03 SOURCES</div>
-          <p class="proof-answer">政策传导存在时滞：利率变化先影响融资条件，再逐步进入投资与消费决策。</p>
-          <div class="proof-citations">
-            <a href="#relations"><b>01</b><span>货币政策传导机制</span><em>PDF · 第 12 页</em></a>
-            <a href="#relations"><b>02</b><span>利率渠道与总需求</span><em>HTML · 3.2 节</em></a>
-            <a href="#relations"><b>03</b><span>政策工具笔记</span><em>NOTE · 关联材料</em></a>
-          </div>
-          <div class="proof-anchor" aria-hidden="true"></div>
-        </div>
-      </section>
-
-      <section class="relations section" id="relations">
-        <div class="relations-heading reveal">
-          <div>
-            <p class="kicker">MATERIALS × NOTES</p>
-            <h2>资料和笔记，保留长期关联。</h2>
-          </div>
-          <p>不是临时标签，也不只表示当前打开状态。关系台让一份笔记可以连接多份材料，也让一份材料进入不同的学习线索。</p>
-        </div>
-
-        <figure class="relations-figure reveal" data-reveal-delay="1">
-          <div class="workspace-viewport">
-            <img
-              src="./assets/screens/course-overview.png"
-              alt="魏碑资料关系台：课程材料与课程笔记之间保留可查看和管理的多对多关联"
-              width="2560"
-              height="1600"
-              loading="lazy"
-            />
-          </div>
-          <figcaption><span>02</span> 一门课程里的材料、笔记与学习线索，不必散落在不同应用里。</figcaption>
-        </figure>
-      </section>
-
-      <section class="control-section section" aria-label="本地与学习者控制">
-        <div class="control-quote reveal">
-          <p class="kicker">LEARNER DECIDES</p>
-          <blockquote>Agent 提出建议。<br />学习者决定写下什么。</blockquote>
-        </div>
-
-        <div class="note-proposal reveal" data-reveal-delay="1">
-          <div class="proposal-top"><span>笔记建议</span><b>第 12 页</b></div>
-          <p><del>政策效果会立刻出现。</del></p>
-          <p><ins>政策传导通常存在时滞，效果会经过融资、投资与消费决策逐步显现。</ins></p>
-          <div class="proposal-actions" aria-hidden="true"><span>保留原文</span><strong>确认写入</strong></div>
-        </div>
-
-        <dl class="product-facts reveal" data-reveal-delay="2">
-          <div><dt>LOCAL</dt><dd>资料、索引、学习记录与笔记默认保存在本机。</dd></div>
-          <div><dt>BOUNDED</dt><dd>每次提问只获得当前任务所需的有界上下文。</dd></div>
-          <div><dt>NATIVE</dt><dd>SwiftUI、AppKit、PDFKit 与 WebKit 组成一个原生窗口。</dd></div>
-        </dl>
-      </section>
-
-      <section class="appearance section reveal" aria-label="纸面与墨石主题">
-        <div class="appearance-copy">
-          <p class="kicker">PAPER / INKSTONE</p>
-          <h2>白天是纸面，夜里是墨石。</h2>
-          <p>两种外观都保留暖色文字、石青链接与克制的朱砂落点；正文不会被装饰抢走。</p>
-          <button type="button" class="appearance-button" data-theme-toggle-secondary>
-            <span>切换当前页面外观</span>
-            <i aria-hidden="true"></i>
-          </button>
-        </div>
-        <div class="appearance-study" aria-hidden="true">
-          <div class="study-rail"><span></span><span></span><span></span></div>
-          <div class="study-page">
-            <b>READING · PAGE 12</b>
-            <i></i><i></i><i></i><i class="short"></i>
-            <mark></mark>
-            <i></i><i class="medium"></i>
-          </div>
-          <div class="study-note"><b>NOTE</b><i></i><i></i><i class="short"></i></div>
-        </div>
-      </section>
-
-      <section class="download-section" id="download">
-        <div class="download-panel">
-          <img src="./assets/brand/app-icon.png" alt="魏碑应用图标" width="1024" height="1024" loading="lazy" />
-          <div class="download-copy reveal">
-            <p class="kicker">WEIBEI FOR MACOS</p>
-            <h2>读、记、问，<br />在同一张纸上。</h2>
-            <p class="download-meta" data-release-meta>macOS 14 及以上 · DMG</p>
-            <div class="download-actions">
-              <a class="button button-primary button-large" data-download-link href="https://github.com/weibei-app/weibei/releases">
-                <span data-download-label>下载最新版 DMG</span>
-                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5v10m0 0 4-4m-4 4-4-4M3.5 16.5h13" /></svg>
-              </a>
-              <span class="download-file" data-asset-name>WeiBei-latest.dmg</span>
+            <button class="download-versions" type="button" data-download-toggle aria-haspopup="menu" aria-expanded="false" aria-label="选择下载版本">
+              <span data-download-caption>版本</span>
+              <strong data-download-label>Apple 芯片</strong>
+              <i aria-hidden="true">⌄</i>
+            </button>
+            <div class="download-menu" data-download-menu role="menu" hidden>
+              <button type="button" role="menuitem" data-download-target="mac-arm64"><span>macOS · Apple 芯片</span></button>
+              <button type="button" role="menuitem" data-download-target="mac-intel"><span>macOS · Intel 芯片</span></button>
             </div>
-            <div class="download-options" data-download-options hidden aria-label="可用安装包"></div>
           </div>
-          <div class="download-word" aria-hidden="true">WEIBEI</div>
         </div>
-      </section>
-    </main>
+      </div>
+    </div>
+  </div>
 
-    <footer>
-      <a class="brand brand-footer" href="#top">
-        <svg class="brand-mark" viewBox="0 0 1254 1254" aria-hidden="true">
-          <g class="mark-ink"><path d="M220 170H432V708H158V260Z" /><path d="M511 170H749V708H511Z" /><path d="M825 170H1010L1098 258V708H825Z" /><path d="M158 708H432L474 816L511 708H749L789 816L825 708H1098V940L1014 1025L982 1083H915L814 967L720 1083H585L482 967L391 1083H270L158 960Z" /></g>
-          <path class="mark-seal" d="M1042 1020H1108V1086H1042Z" />
-        </svg>
-        <span class="brand-word">WEIBEI</span>
-      </a>
-      <p>A source-grounded reading and notes workspace for macOS.</p>
-      <nav aria-label="页脚导航">
-        <a href="https://github.com/weibei-app/weibei">GitHub</a>
-        <a href="https://github.com/weibei-app/weibei/releases">Releases</a>
-      </nav>
-    </footer>
-  </body>
+  <main>
+    <section class="chapter chapter-one" id="scene-1" data-scene="1">
+      <div class="scene">
+        <p class="hero-tagline" data-en="Read, ask, and write at one desk.">读、问、写，在同一张桌面。</p>
+        <img class="giant-webi" src="assets/第一幕-巨型Webi探入.png" alt="" aria-hidden="true">
+        <img class="mascot mascot-one" src="assets/Webi-第一幕-睡醒.apng" alt="Webi 从睡着到醒来的循环动画">
+      </div>
+    </section>
+
+    <section class="chapter chapter-two" id="scene-2" data-scene="2">
+      <div class="scene">
+        <img class="mascot mascot-two" src="assets/Webi-第二幕-读问写.apng" alt="Webi 举着读、问、写三张卡片的循环动画" loading="lazy" decoding="async">
+      </div>
+    </section>
+
+    <section class="chapter chapter-three" id="scene-3" data-scene="3">
+      <div class="scene">
+        <div class="theme-worlds" aria-hidden="true">
+          <figure class="theme-world world-paper-ink">
+            <img src="assets/第三幕-画作-皮拉内西吊桥.jpg" srcset="assets/mobile/第三幕-画作-皮拉内西吊桥.jpg 1080w, assets/第三幕-画作-皮拉内西吊桥.jpg 2847w" sizes="100vw" alt="" loading="lazy" decoding="async">
+            <figcaption><b>纸面 · 墨石</b><span>皮拉内西，《吊桥》</span></figcaption>
+          </figure>
+          <figure class="theme-world world-xuan-stone">
+            <img src="assets/mobile/第三幕-画作-大桥骤雨.jpg" alt="" loading="lazy" decoding="async">
+            <figcaption><b>宣纸 · 石碑</b><span>歌川广重，《大桥骤雨》</span></figcaption>
+          </figure>
+          <figure class="theme-world world-clear-glass">
+            <img src="assets/第三幕-画作-圣拉扎尔车站.jpg" srcset="assets/mobile/第三幕-画作-圣拉扎尔车站.jpg 1080w, assets/第三幕-画作-圣拉扎尔车站.jpg 1583w" sizes="100vw" alt="" loading="lazy" decoding="async">
+            <figcaption><b>通透玻璃</b><span>莫奈，《圣拉扎尔车站：诺曼底列车到站》</span></figcaption>
+          </figure>
+          <figure class="theme-world world-mist-slate">
+            <img src="assets/第三幕-画作-蓝与银的夜曲.jpg" srcset="assets/mobile/第三幕-画作-蓝与银的夜曲.jpg 1080w, assets/第三幕-画作-蓝与银的夜曲.jpg 2400w" sizes="100vw" alt="" loading="lazy" decoding="async">
+            <figcaption><b>磨砂玻璃</b><span>惠斯勒，《蓝与银的夜曲：巴特西河段》</span></figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter chapter-four" id="scene-4" data-scene="4">
+      <div class="scene scene-four"></div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js?v=20260830-mobile-themes-1"></script>
+</body>
 </html>

@@ -87,6 +87,7 @@ jobs:
         if: (github.event_name == 'pull_request' && steps.scope.outputs.editor == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: |
           npm run typecheck:editor
+          npm run test:editor
           npm run build:editor
           git diff --exit-code -- Sources/WeiBei/Resources/Editor
           swift run WeiBeiWebEditorCheck
