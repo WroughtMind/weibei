@@ -48,7 +48,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         try await ledger.closeTurn(turn: 1, reason: .completed)
         let previousSeq = (await ledger.allEvents()).last!.seq
 
-        _ = try await NativeAgentLoop().run(
+        let result = try await NativeAgentLoop().run(
             request: StudyAgentRequest(
                 purpose: .conversation,
                 question: "第二问",
@@ -80,6 +80,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             NativeModelMessage(role: .user, content: "第二问"),
             NativeModelMessage(role: .assistant, content: "第二答"),
         ])
+        XCTAssertTrue(result.contentBlocks.isEmpty)
     }
 
     func testContextCompactionProjectionUsesOnlyLatestCheckpointAndKeepsToolPairs() async throws {
@@ -564,7 +565,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             default: return nil
             }
         }
-        XCTAssertEqual(blockSnapshots.map(\.count), [1, 2, 3])
+        XCTAssertEqual(blockSnapshots.map(\.count), [0, 2, 3])
         XCTAssertEqual(blockSnapshots.last, result.contentBlocks)
     }
 

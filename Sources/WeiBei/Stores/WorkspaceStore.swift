@@ -10110,7 +10110,7 @@ final class WorkspaceStore: ObservableObject {
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentReplyIDsThatDisplayedStreamingText.insert(replyMessageID)
             }
-            if updatesVisibleChat {
+            if updatesVisibleChat, !blocks.isEmpty {
                 updateStreamingAgentContentBlocks(
                     currentAgentContentBlocks(blocks),
                     messageID: replyMessageID,

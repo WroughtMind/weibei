@@ -81,6 +81,7 @@ public actor NativeAgentLoop {
         var readItemIDs: [String] = []
         var sources: [AgentReplySource] = []
         var contentBlocks: [AgentMessageContentBlock] = []
+        var hasVisualizationContent = false
         var pendingUnstarted: [NativeToolCall] = []
 
         do {
@@ -175,7 +176,10 @@ public actor NativeAgentLoop {
                                         contentBlocks.append(.text(text))
                                     }
                                 }
-                                await progress?(.text(collectedText, contentBlocks))
+                                await progress?(.text(
+                                    collectedText,
+                                    hasVisualizationContent ? contentBlocks : []
+                                ))
                             case let .webSearchSource(url):
                                 if !context.currentRunSourceURLs.contains(url) {
                                     context.currentRunSourceURLs.append(url)
@@ -316,6 +320,7 @@ public actor NativeAgentLoop {
                         context: &context
                     )
                     if let visualization {
+                        hasVisualizationContent = true
                         await progress?(.visualization(visualization, contentBlocks))
                     }
                     _ = try await ledger.append { seq, time in
@@ -341,7 +346,7 @@ public actor NativeAgentLoop {
             try await ledger.closeTurn(turn: turn, reason: .completed)
             return NativeLoopResult(
                 text: collectedText,
-                contentBlocks: contentBlocks,
+                contentBlocks: hasVisualizationContent ? contentBlocks : [],
                 sources: sources,
                 toolTrace: toolTrace,
                 noteProposal: noteProposal,
