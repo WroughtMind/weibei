@@ -42,7 +42,7 @@ function Get-ExecutableFromCommand {
     if ($Command -match '^\s*"([^"]+[.]exe)"') {
         return $Matches[1]
     }
-    if ($Command -match '^\s*(.+?[.]exe)(?:\s|$)') {
+    if ($Command -match '^\s*(.+?[.]exe)(?:,-?\d+)?(?:\s|$)') {
         return $Matches[1].Trim()
     }
     return ""
@@ -181,6 +181,8 @@ function Resolve-InstalledExecutable {
 function Invoke-SelfCheck {
     Assert-Condition ((Get-ExecutableFromCommand '"C:\Program Files\WeiBei\Uninstall WeiBei.exe" /S') -eq "C:\Program Files\WeiBei\Uninstall WeiBei.exe") "quoted uninstall parser"
     Assert-Condition ((Get-ExecutableFromCommand "C:\Tools\uninstall.exe /quiet") -eq "C:\Tools\uninstall.exe") "plain uninstall parser"
+    Assert-Condition ((Get-ExecutableFromCommand "C:\Program Files\WeiBei\WeiBei.exe,0") -eq "C:\Program Files\WeiBei\WeiBei.exe") "unquoted display icon parser"
+    Assert-Condition ((Get-ExecutableFromCommand "C:\Program Files\WeiBei\WeiBei.exe,-1") -eq "C:\Program Files\WeiBei\WeiBei.exe") "negative display icon parser"
     Assert-Condition ([string]::IsNullOrWhiteSpace((Get-ExecutableFromCommand "not-an-executable"))) "invalid uninstall parser"
     Write-Host "Windows package smoke self-check passed"
 }
