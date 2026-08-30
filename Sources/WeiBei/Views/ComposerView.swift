@@ -5,6 +5,7 @@ import WeiBeiCore
 struct ComposerView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
+    @ObservedObject private var agentAccount = AgentAccountService.shared
     @State private var draft = ""
     @State private var editorHeight: CGFloat = 0
     @State private var editorActive = false
@@ -31,7 +32,8 @@ struct ComposerView: View {
     var submit: () -> Void
 
     private var canSend: Bool {
-        !store.isStoppingAgent
+        AgentProviderReadiness.isConfigured(for: store)
+            && !store.isStoppingAgent
             && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -163,6 +165,7 @@ struct ComposerView: View {
     }
 
     private func commitAndSubmit() {
+        guard AgentProviderReadiness.isConfigured(for: store) else { return }
         store.pendingComposerDraft = draft
         store.agentDraft = draft
         submit()
