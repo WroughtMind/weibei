@@ -366,6 +366,13 @@ func checkCourseDocumentSearchConnectionReuse() throws {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let databaseURL = root.appendingPathComponent("CourseIndex/search.sqlite3")
+    let snapshotsDirectory = databaseURL.deletingLastPathComponent()
+        .appendingPathComponent("ReadSnapshots", isDirectory: true)
+    try FileManager.default.createDirectory(at: snapshotsDirectory, withIntermediateDirectories: true)
+    try Data("stale".utf8).write(to: snapshotsDirectory.appendingPathComponent("snapshot-old"))
+    let snapshotsSentinel = databaseURL.deletingLastPathComponent()
+        .appendingPathComponent("read-snapshots-sentinel")
+    try Data("keep".utf8).write(to: snapshotsSentinel)
     let item = try makeSearchItem(
         "shared",
         body: "公开市场操作与政策利率",
@@ -374,6 +381,11 @@ func checkCourseDocumentSearchConnectionReuse() throws {
 
     do {
         let first = CourseDocumentSearchIndex(databaseURL: databaseURL)
+        try requireSearchCheck(
+            !FileManager.default.fileExists(atPath: snapshotsDirectory.path)
+                && FileManager.default.fileExists(atPath: snapshotsSentinel.path),
+            "搜索索引初始化只应清理 ReadSnapshots，不应删除同级文件"
+        )
         first.schedule([item])
         let firstHit = waitForSearchResult(until: Date().addingTimeInterval(8)) {
             first.lookup(items: [item], query: "公开市场操作")[item.id]

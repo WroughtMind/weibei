@@ -10149,6 +10149,7 @@ final class WorkspaceStore: ObservableObject {
             }
             let now = DispatchTime.now().uptimeNanoseconds
             if updatesVisibleChat,
+               !blocks.isEmpty,
                now &- lastAgentStreamingPublishNanoseconds >= 33_000_000 {
                 lastAgentStreamingPublishNanoseconds = now
                 updateStreamingAgentContentBlocks(

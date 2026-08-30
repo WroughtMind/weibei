@@ -1125,13 +1125,8 @@ private enum AgentChatLayoutMetrics {
     static let compactSideGutter: CGFloat = 12
     /// Codex-style: modest side margin; column grows/shrinks with the window.
     static let wideSideGutter: CGFloat = 28
-    static let compactComposerHeight: CGFloat = 52
-    static let compactComposerMaxHeight: CGFloat = 180
-    /// Immersive min height — grows with typed lines; never a giant empty white void.
-    static let wideComposerMinHeight: CGFloat = 88
-    static let wideComposerMaxHeight: CGFloat = 340
-    static let compactFontSize: CGFloat = 15
-    static let wideFontSize: CGFloat = 15
+    static let composerHeight: CGFloat = 52
+    static let composerFontSize: CGFloat = 15
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
         // Immersive conversation only — document multi-pane keeps compact strip metrics.
@@ -1145,19 +1140,6 @@ private enum AgentChatLayoutMetrics {
         // windows at one fixed readable column. The layout enum no longer picks
         // a different ceiling — a full-window chat tab reads like immersive.
         return min(usable, wideMaxWidth)
-    }
-
-    static func composerHeight(wide: Bool) -> CGFloat {
-        // Fixed min for immersive; field grows via TextField lineLimit, capped by max frame.
-        wide ? wideComposerMinHeight : compactComposerHeight
-    }
-
-    static func composerMaxHeight(wide: Bool) -> CGFloat {
-        wide ? wideComposerMaxHeight : compactComposerMaxHeight
-    }
-
-    static func composerFontSize(wide: Bool) -> CGFloat {
-        wide ? wideFontSize : compactFontSize
     }
 }
 
@@ -1256,6 +1238,7 @@ struct AgentPaneView: View {
             )
             let comfy = wide
                 || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
+            let composerHeight = AgentChatLayoutMetrics.composerHeight
             let headerHeight: CGFloat = showsPaneHeader
                 ? (liveAvailableWidth < 420 ? 44 : 54)
                 : 0
@@ -1355,7 +1338,7 @@ struct AgentPaneView: View {
                             .offset(y: initialComposerOffset(
                                 paneHeight: paneGeometry.size.height,
                                 headerHeight: headerHeight,
-                                wide: wide
+                                composerHeight: composerHeight
                             ))
                             .animation(
                                 reduceMotion ? nil : .smooth(duration: 0.42),
@@ -1367,7 +1350,7 @@ struct AgentPaneView: View {
                     .overlay(alignment: .bottom) {
                         if showsJumpToLatest {
                             jumpToLatestButton(proxy: proxy)
-                                .padding(.bottom, composerFieldHeight + (wide ? 46 : 34))
+                                .padding(.bottom, composerHeight + 34)
                                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
                         }
                     }
@@ -1898,14 +1881,13 @@ struct AgentPaneView: View {
     }
 
     private func agentInputTray(wide: Bool) -> some View {
-        let minHeight = AgentChatLayoutMetrics.composerHeight(wide: wide)
-        let maxHeight = AgentChatLayoutMetrics.composerMaxHeight(wide: wide)
-        let fontSize = AgentChatLayoutMetrics.composerFontSize(wide: wide)
+        let minHeight = AgentChatLayoutMetrics.composerHeight
+        let fontSize = AgentChatLayoutMetrics.composerFontSize
         // ChatGPT-like: the tray shares the exact conversation paper — no
         // gradient strip, no glass seam, no divider. The rounded field alone
         // separates input from messages.
         return VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: wide ? 8 : 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 AgentUnconfiguredHint(store: store)
 
                 if store.hasSelectionAttachments {
@@ -1917,24 +1899,21 @@ struct AgentPaneView: View {
                     prompt: agentPrompt,
                     focused: $draftFocused,
                     fontSize: fontSize,
-                    lineLimit: wide ? 1...10 : 1...6,
+                    lineLimit: nil,
                     height: minHeight,
-                    maxHeight: maxHeight,
-                    sendButtonSize: wide ? 32 : 28,
+                    sendButtonSize: 28,
                     trailingPadding: wide ? 48 : 40,
                     sendTrailing: wide ? 8 : 10,
-                    sendBottom: wide ? 8 : 10,
                     horizontalPadding: wide ? 16 : 12,
-                    verticalPadding: wide ? 12 : 8,
-                    showsModelFooter: wide
+                    verticalPadding: 8
                 ) {
                     submitAgentDraft()
                 }
             }
             .weiBeiText(fontSize)
             .frame(maxWidth: AgentChatLayoutMetrics.wideMaxWidth, alignment: .bottom)
-            .padding(.top, wide ? 6 : 4)
-            .padding(.bottom, wide ? 16 : 12)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
             .frame(maxWidth: .infinity)
             .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
@@ -1944,10 +1923,10 @@ struct AgentPaneView: View {
     private func initialComposerOffset(
         paneHeight: CGFloat,
         headerHeight: CGFloat,
-        wide: Bool
+        composerHeight: CGFloat
     ) -> CGFloat {
         guard paneState.centersInitialAgentComposer, store.messages.isEmpty else { return 0 }
-        let trayHeight = AgentChatLayoutMetrics.composerHeight(wide: wide) + (wide ? 22 : 16)
+        let trayHeight = composerHeight + 16
         let availableHeight = max(paneHeight - headerHeight, trayHeight)
         return -(availableHeight - trayHeight) * 0.45
     }
@@ -1969,21 +1948,6 @@ struct AgentPaneView: View {
 
     private var agentContentMaxWidth: CGFloat? {
         agentInputMaxWidth
-    }
-
-    /// Composer and rhythm follow the real column width, not the layout enum —
-    /// a full-window chat tab deserves the same roomy composer as immersive.
-    private var usesComfortableChatMetrics: Bool {
-        usesWideChatLayout
-            || (agentInputMaxWidth ?? 0) >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
-    }
-
-    private var composerFieldHeight: CGFloat {
-        AgentChatLayoutMetrics.composerHeight(wide: usesComfortableChatMetrics)
-    }
-
-    private var composerFontSize: CGFloat {
-        AgentChatLayoutMetrics.composerFontSize(wide: usesComfortableChatMetrics)
     }
 
     private var agentScrollBottomInset: CGFloat {
@@ -2779,7 +2743,6 @@ struct FloatingSelectionAgentView: View {
                 sendButtonSize: 26,
                 trailingPadding: 38,
                 sendTrailing: 4,
-                sendBottom: 4,
                 horizontalPadding: 2,
                 verticalPadding: 4,
                 showsChrome: false
