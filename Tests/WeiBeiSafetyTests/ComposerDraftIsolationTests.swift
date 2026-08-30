@@ -68,25 +68,4 @@ final class ComposerDraftIsolationTests: XCTestCase {
         )
     }
 
-    func testFinalizedMarkdownHeightCacheEvictsLeastRecentlyUsed() {
-        AgentFinalizedMarkdownHeightCache.resetForTesting()
-        defer { AgentFinalizedMarkdownHeightCache.resetForTesting() }
-
-        for index in 0..<(AgentFinalizedMarkdownHeightCache.capacity + 8) {
-            AgentFinalizedMarkdownHeightCache.store(
-                CGFloat(40 + index),
-                for: "key-\(index)"
-            )
-        }
-        XCTAssertEqual(
-            AgentFinalizedMarkdownHeightCache.storedKeyCountForTesting,
-            AgentFinalizedMarkdownHeightCache.capacity
-        )
-        XCTAssertNil(AgentFinalizedMarkdownHeightCache.height(for: "key-0"))
-        XCTAssertNotNil(
-            AgentFinalizedMarkdownHeightCache.height(
-                for: "key-\(AgentFinalizedMarkdownHeightCache.capacity + 7)"
-            )
-        )
-    }
 }

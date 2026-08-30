@@ -324,12 +324,6 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isStoppingAgent = false
     @Published private(set) var isAgentSwitchConfirmationPresented = false
     let agentStreaming = AgentStreamingState()
-    var agentStreamingUsesReducedMotion = false
-    lazy var agentStreamingDisplayPump = AgentStreamingDisplayPump(hooks: .init(
-        append: { [weak self] chunk in self?.agentStreaming.text.append(chunk) },
-        replace: { [weak self] text in self?.agentStreaming.text = text },
-        didDrain: { [weak self] in self?.finishAgentStreamingDisplay() }
-    ))
     @Published var showLoadingIndicatorSamples = false
     /// Last failed user question for precise one-tap retry.
     @Published private(set) var lastFailedAgentQuestion: String?
@@ -352,14 +346,7 @@ final class WorkspaceStore: ObservableObject {
     var courseKnowledgeProfiles: [CourseKnowledgeProfile] = []
     @Published var studySessions: [StudySession] = []
     let sessionMessagePersistence = StudySessionMessagePersistence()
-    @Published var activeStudySessionID: UUID? {
-        didSet {
-            if let chatID = agentStreaming.displayingChatID,
-               activeStudySessionID != chatID {
-                landAgentStreamingDisplayImmediately()
-            }
-        }
-    }
+    @Published var activeStudySessionID: UUID?
     /// Drawer open flag lives on `libraryDrawer` so toggles only refresh drawer chrome.
     let libraryDrawer = LibraryDrawerState()
     var showLibrary: Bool {
@@ -385,7 +372,6 @@ final class WorkspaceStore: ObservableObject {
         set {
             if paneState.showAgent != newValue {
                 paneState.showAgent = newValue
-                landAgentStreamingDisplayIfHidden()
             }
         }
     }
@@ -476,9 +462,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
     @Published private(set) var readerTargetLocationRequestID = UUID()
-    @Published var layout: WorkspaceLayout = .documentAgentNotes {
-        didSet { landAgentStreamingDisplayIfHidden() }
-    }
+    @Published var layout: WorkspaceLayout = .documentAgentNotes
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
     /// Live drag chrome only — not `@Published` on the main store (avoids full-tree thrash).
     let threePaneReorder = ThreePaneReorderState()
@@ -498,7 +482,6 @@ final class WorkspaceStore: ObservableObject {
         set {
             if interaction.agentSurface != newValue {
                 interaction.agentSurface = newValue
-                landAgentStreamingDisplayIfHidden()
             }
         }
     }
@@ -694,7 +677,7 @@ final class WorkspaceStore: ObservableObject {
     var activeAgentRequestID: UUID?
     var activeAgentReplyMessageID: UUID?
     var latestAgentStreamingText = ""
-    private var lastAgentStreamingPublishNanoseconds: UInt64 = 0
+    private var lastAgentVisualizationBlocksPublishNanoseconds: UInt64 = 0
     var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
     private var agentVisualizationIDsUpdatingHistory: Set<String> = []
     var activeAgentReplyChatID: UUID?
@@ -4859,8 +4842,8 @@ final class WorkspaceStore: ObservableObject {
     func updateReaderPageIndex(_ index: Int, publishesUI: Bool = false) {
         let nextIndex = max(index, 0)
         guard readerPageIndex != nextIndex else { return }
-        // Continuous PDF scroll uses publishesUI=false so agent chat WKWebViews
-        // are not remasured on every page crossing (same hang class as HTML scroll).
+        // Continuous PDF scroll uses publishesUI=false to avoid rebuilding unrelated UI
+        // on every page crossing.
         if publishesUI {
             readerPageIndex = nextIndex
             recordCurrentStudyLocation(incrementVisit: false)
@@ -9503,8 +9486,7 @@ final class WorkspaceStore: ObservableObject {
         activeAgentRequestID = requestID
         settleAgentStreamingDisplayImmediately()
         latestAgentStreamingText = ""
-        lastAgentStreamingPublishNanoseconds = 0
-        agentStreamingDisplayPump.stopAndReset()
+        lastAgentVisualizationBlocksPublishNanoseconds = 0
         agentVisualizationIDsUpdatingHistory = []
         agentStreaming.reset()
         agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
@@ -9514,13 +9496,12 @@ final class WorkspaceStore: ObservableObject {
                 activeAgentReplyMessageID = nil
                 activeAgentReplyChatID = nil
                 isAskingAgent = false
-                lastAgentStreamingPublishNanoseconds = 0
+                lastAgentVisualizationBlocksPublishNanoseconds = 0
                 agentVisualizationIDsUpdatingHistory = []
                 agentStreaming.activityText = nil
                 agentRequestTask = nil
                 if agentStreaming.displayingMessageID == nil {
                     latestAgentStreamingText = ""
-                    agentStreamingDisplayPump.stopAndReset()
                 }
                 // Answer finished: keep float pinned so the user can scroll the reply.
                 if keepFloatingSelectionForAnswer, !isConversationSurfaceVisible {
@@ -9754,14 +9735,8 @@ final class WorkspaceStore: ObservableObject {
                     $0.toolTrace = reply.toolTrace
                 }
                 if agentStreaming.isDisplaying(messageID) {
-                    if agentStreamingUsesReducedMotion
-                        || !isAgentStreamingSurfaceVisible
-                        || agentStreaming.displayingChatID != activeStudySessionID {
-                        agentStreamingDisplayPump.replaceImmediately(
-                            cumulativeText: reply.text
-                        )
-                    }
-                    agentStreamingDisplayPump.finish(cumulativeText: reply.text)
+                    agentStreaming.text = reply.text
+                    finishAgentStreamingDisplay()
                 }
                 if reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    visibleContentBlocks.isEmpty,
@@ -9971,8 +9946,7 @@ final class WorkspaceStore: ObservableObject {
         isAskingAgent = false
         isStoppingAgent = true
         latestAgentStreamingText = ""
-        lastAgentStreamingPublishNanoseconds = 0
-        agentStreamingDisplayPump.stopAndReset()
+        lastAgentVisualizationBlocksPublishNanoseconds = 0
         agentStreaming.activityText = nil
         agentStopTask?.cancel()
         agentStopTask = Task { @MainActor [weak self] in
@@ -10135,22 +10109,17 @@ final class WorkspaceStore: ObservableObject {
         case let .text(text, blocks):
             latestAgentStreamingText = text
             if agentStreaming.isDisplaying(replyMessageID) {
-                let canPaceVisibleReply = !agentStreamingUsesReducedMotion
-                    && isAgentStreamingSurfaceVisible
-                    && agentStreaming.displayingChatID == activeStudySessionID
-                if canPaceVisibleReply {
-                    agentStreamingDisplayPump.enqueue(cumulativeText: text)
-                } else {
-                    agentStreamingDisplayPump.replaceImmediately(cumulativeText: text)
-                }
+                agentStreaming.text = text
             }
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentReplyIDsThatDisplayedStreamingText.insert(replyMessageID)
             }
             let now = DispatchTime.now().uptimeNanoseconds
             if updatesVisibleChat,
-               now &- lastAgentStreamingPublishNanoseconds >= 33_000_000 {
-                lastAgentStreamingPublishNanoseconds = now
+               now &- lastAgentVisualizationBlocksPublishNanoseconds >= 33_000_000 {
+                // Web-backed Mermaid/GenUI blocks publish at display cadence;
+                // ordinary Markdown text above always uses every provider snapshot.
+                lastAgentVisualizationBlocksPublishNanoseconds = now
                 updateStreamingAgentContentBlocks(
                     currentAgentVisualizationBlocks(blocks),
                     messageID: replyMessageID,

@@ -127,7 +127,7 @@ public enum AgentDisplayText {
         }
 
         // Single-dollar inline math: $...$ (skip $$ already cleared).
-        result = replacing(#"\$([^$\n]{1,120})\$"#, in: result, with: "$1")
+        result = replacing(#"\$([^$\n]+)\$"#, in: result, with: "$1")
 
         result = replacing(#"\s*([≤≥≠≈∝])\s*"#, in: result, with: "$1")
         result = replacing(#"√\(([A-Za-z0-9.]+)\)"#, in: result, with: "√$1")

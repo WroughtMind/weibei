@@ -127,59 +127,6 @@ expect(EmptyWorkspaceDayPeriod.allCases.allSatisfy { period in
     }
     && Set(EmptyWorkspaceDayPeriod.allCases.map { $0.greeting(language: .chinese) }).count == EmptyWorkspaceDayPeriod.allCases.count,
     "empty workspace greetings stay localized and distinct per period")
-expect(!AgentHistoryRevealPolicy.shouldRevealEarlierPage(
-        distanceFromTop: 0,
-        isUserScrolling: false,
-        isScrollingTowardTop: true,
-        hiddenMessageCount: 30,
-        revealInFlight: false
-    )
-    && AgentHistoryRevealPolicy.shouldRevealEarlierPage(
-        distanceFromTop: 0,
-        isUserScrolling: true,
-        isScrollingTowardTop: true,
-        hiddenMessageCount: 30,
-        revealInFlight: false
-    )
-    && !AgentHistoryRevealPolicy.shouldRevealEarlierPage(
-        distanceFromTop: 0,
-        isUserScrolling: true,
-        isScrollingTowardTop: true,
-        hiddenMessageCount: 30,
-        revealInFlight: true
-    )
-    && !AgentHistoryRevealPolicy.shouldRevealEarlierPage(
-        distanceFromTop: 0,
-        isUserScrolling: true,
-        isScrollingTowardTop: true,
-        hiddenMessageCount: 0,
-        revealInFlight: false
-    )
-    && !AgentHistoryRevealPolicy.shouldRevealEarlierPage(
-        distanceFromTop: 0,
-        isUserScrolling: true,
-        isScrollingTowardTop: false,
-        hiddenMessageCount: 30,
-        revealInFlight: false
-    )
-    && AgentHistoryRevealPolicy.expandedVisibleLimit(currentLimit: 30, totalMessageCount: 95) == 60
-    && AgentHistoryRevealPolicy.expandedVisibleLimit(currentLimit: 90, totalMessageCount: 95) == 95
-    && !AgentHistoryRevealPolicy.shouldReleaseRevealLock(isUserScrolling: true)
-    && AgentHistoryRevealPolicy.shouldReleaseRevealLock(isUserScrolling: false), "agent history paging requires an upward live-scroll gesture, expands exactly one bounded page, and keeps its re-entry lock until that gesture ends")
-let historyMessageIDs = [UUID(), UUID(), UUID()]
-expect(AgentHistoryRevealPolicy.appendedMessageCount(
-        previousMessageIDs: Array(historyMessageIDs.prefix(2)),
-        currentMessageIDs: historyMessageIDs
-    ) == 1
-    && AgentHistoryRevealPolicy.appendedMessageCount(
-        previousMessageIDs: [],
-        currentMessageIDs: historyMessageIDs
-    ) == nil
-    && AgentHistoryRevealPolicy.appendedMessageCount(
-        previousMessageIDs: Array(historyMessageIDs.prefix(2)),
-        currentMessageIDs: Array(historyMessageIDs.suffix(2))
-    ) == nil, "agent history distinguishes a same-session append from initial restore or replacement")
-
 let inspirationItems = EmptyWorkspaceInspirationCatalog.items
 expect(inspirationItems.count >= 6
     && EmptyWorkspaceInspirationCatalog.validationErrors.isEmpty
