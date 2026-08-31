@@ -28,10 +28,46 @@ public enum NativeContentBlock: Codable, Equatable, Sendable {
 public struct NativeTokenUsage: Codable, Equatable, Sendable {
     public var inputTokens: Int
     public var outputTokens: Int
+    public var cacheReadTokens: Int?
+    public var cacheWriteTokens: Int?
+    public var totalTokens: Int?
 
-    public init(inputTokens: Int = 0, outputTokens: Int = 0) {
+    public init(
+        inputTokens: Int = 0,
+        outputTokens: Int = 0,
+        cacheReadTokens: Int? = nil,
+        cacheWriteTokens: Int? = nil,
+        totalTokens: Int? = nil
+    ) {
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.totalTokens = totalTokens
+    }
+
+    public var contextTokens: Int {
+        if let totalTokens, totalTokens > 0 {
+            return totalTokens
+        }
+        return inputTokens + outputTokens + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)
+    }
+
+    public func merging(_ newer: NativeTokenUsage) -> NativeTokenUsage {
+        func maximum(_ left: Int?, _ right: Int?) -> Int? {
+            switch (left, right) {
+            case let (.some(left), .some(right)): max(left, right)
+            case let (.some(value), .none), let (.none, .some(value)): value
+            case (.none, .none): nil
+            }
+        }
+        return NativeTokenUsage(
+            inputTokens: max(inputTokens, newer.inputTokens),
+            outputTokens: max(outputTokens, newer.outputTokens),
+            cacheReadTokens: maximum(cacheReadTokens, newer.cacheReadTokens),
+            cacheWriteTokens: maximum(cacheWriteTokens, newer.cacheWriteTokens),
+            totalTokens: maximum(totalTokens, newer.totalTokens)
+        )
     }
 }
 
@@ -51,6 +87,26 @@ public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Senda
     public var message: String
 
     public var errorDescription: String? { message }
+
+    public var isContextOverflow: Bool {
+        let normalizedCode = code.lowercased()
+        if [
+            "context_length_exceeded",
+            "context_window_exceeded",
+            "input_too_long",
+            "prompt_too_long",
+        ].contains(normalizedCode) {
+            return true
+        }
+        let normalizedMessage = message.lowercased()
+        return normalizedMessage.contains("context_length_exceeded")
+            || normalizedMessage.contains("context window exceeded")
+            || normalizedMessage.contains("maximum context length")
+            || (normalizedMessage.contains("context length") && normalizedMessage.contains("exceed"))
+            || (normalizedMessage.contains("input token count") && normalizedMessage.contains("exceed"))
+            || normalizedMessage.contains("prompt is too long")
+            || normalizedMessage.contains("request exceeds the model's context")
+    }
 
     public init(
         code: String,
@@ -110,7 +166,7 @@ public enum NativeSessionEventType: String, Codable, Sendable {
     case assistantMessage = "assistant/message"
     case toolCall = "tool/call"
     case toolResult = "tool/result"
-    case surfaceReplace = "surface/replace"
+    case contextCompaction = "context/compaction"
     case closer = "session/closer"
 }
 
@@ -127,8 +183,9 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
     public var isError: Bool
     public var finishReason: NativeTurnEndReason?
     public var chunk: NativeStreamChunk?
-    public var replaceStart: Int?
-    public var replaceEnd: Int?
+    public var usage: NativeTokenUsage?
+    public var summary: String?
+    public var firstKeptSeq: Int?
     public var imageMediaType: String?
     public var imageBase64: String?
 
@@ -145,8 +202,9 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         isError: Bool = false,
         finishReason: NativeTurnEndReason? = nil,
         chunk: NativeStreamChunk? = nil,
-        replaceStart: Int? = nil,
-        replaceEnd: Int? = nil,
+        usage: NativeTokenUsage? = nil,
+        summary: String? = nil,
+        firstKeptSeq: Int? = nil,
         imageMediaType: String? = nil,
         imageBase64: String? = nil
     ) {
@@ -162,8 +220,9 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         self.isError = isError
         self.finishReason = finishReason
         self.chunk = chunk
-        self.replaceStart = replaceStart
-        self.replaceEnd = replaceEnd
+        self.usage = usage
+        self.summary = summary
+        self.firstKeptSeq = firstKeptSeq
         self.imageMediaType = imageMediaType
         self.imageBase64 = imageBase64
     }

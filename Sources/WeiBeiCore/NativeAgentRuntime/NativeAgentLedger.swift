@@ -1,5 +1,49 @@
 import Foundation
 
+struct NativeProjectedMessage: Sendable {
+    var message: NativeModelMessage
+    var firstSeq: Int
+    var lastSeq: Int
+    var usage: NativeTokenUsage?
+}
+
+struct NativeLedgerProjection: Sendable {
+    var summaryMessage: NativeModelMessage?
+    var records: [NativeProjectedMessage]
+    var turnCutSeqs: [Int]
+    var stepCutSeqs: [Int]
+
+    var messages: [NativeModelMessage] {
+        (summaryMessage.map { [$0] } ?? []) + records.map(\.message)
+    }
+
+    var latestUsageRecordIndex: Int? {
+        records.lastIndex { ($0.usage?.contextTokens ?? 0) > 0 }
+    }
+
+    var latestUsage: NativeTokenUsage? {
+        latestUsageRecordIndex.flatMap { records[$0].usage }
+    }
+
+    var recordsAfterLatestUsage: ArraySlice<NativeProjectedMessage> {
+        guard let latestUsageRecordIndex else { return records[...] }
+        return records.suffix(from: records.index(after: latestUsageRecordIndex))
+    }
+
+    func exitingMessages(before firstKeptSeq: Int) -> [NativeModelMessage] {
+        (summaryMessage.map { [$0] } ?? [])
+            + records.filter { $0.lastSeq < firstKeptSeq }.map(\.message)
+    }
+
+    func keptMessages(from firstKeptSeq: Int) -> [NativeModelMessage] {
+        records.filter { $0.firstSeq >= firstKeptSeq }.map(\.message)
+    }
+
+    func hasNewHistory(before firstKeptSeq: Int) -> Bool {
+        records.contains { $0.lastSeq < firstKeptSeq }
+    }
+}
+
 /// Append-only JSONL session ledger. Model-visible history is a projection.
 public actor NativeAgentLedger {
     public let fileURL: URL
@@ -85,75 +129,117 @@ public actor NativeAgentLedger {
     }
 
     public func deriveMessages() -> [NativeModelMessage] {
-        var messages: [NativeModelMessage] = []
+        deriveProjection().messages
+    }
+
+    func deriveProjection() -> NativeLedgerProjection {
+        let checkpoint = events.last { $0.type == .contextCompaction }
+        let firstVisibleSeq = checkpoint?.firstKeptSeq ?? Int.min
+        let visibleEvents = events.filter {
+            $0.type != .contextCompaction && $0.seq >= firstVisibleSeq
+        }
+        var records: [NativeProjectedMessage] = []
         var pendingAssistant = ""
         var pendingCalls: [NativeToolCall] = []
-        for event in events {
+        var pendingFirstSeq: Int?
+        var pendingLastSeq: Int?
+        var pendingUsage: NativeTokenUsage?
+
+        func flushAssistant() {
+            guard !pendingAssistant.isEmpty || !pendingCalls.isEmpty || pendingUsage != nil,
+                  let firstSeq = pendingFirstSeq,
+                  let lastSeq = pendingLastSeq else { return }
+            records.append(
+                NativeProjectedMessage(
+                    message: NativeModelMessage(
+                        role: .assistant,
+                        content: pendingAssistant,
+                        toolCalls: pendingCalls.isEmpty ? nil : pendingCalls
+                    ),
+                    firstSeq: firstSeq,
+                    lastSeq: lastSeq,
+                    usage: pendingUsage
+                )
+            )
+            pendingAssistant = ""
+            pendingCalls = []
+            pendingFirstSeq = nil
+            pendingLastSeq = nil
+            pendingUsage = nil
+        }
+
+        for event in visibleEvents {
             switch event.type {
             case .userMessage:
-                if !pendingAssistant.isEmpty || !pendingCalls.isEmpty {
-                    messages.append(
-                        NativeModelMessage(
-                            role: .assistant,
-                            content: pendingAssistant,
-                            toolCalls: pendingCalls.isEmpty ? nil : pendingCalls
-                        )
+                flushAssistant()
+                records.append(
+                    NativeProjectedMessage(
+                        message: NativeModelMessage(role: .user, content: event.text ?? ""),
+                        firstSeq: event.seq,
+                        lastSeq: event.seq,
+                        usage: nil
                     )
-                    pendingAssistant = ""
-                    pendingCalls = []
-                }
-                messages.append(NativeModelMessage(role: .user, content: event.text ?? ""))
+                )
             case .assistantMessage:
+                pendingFirstSeq = pendingFirstSeq ?? event.seq
+                pendingLastSeq = event.seq
                 pendingAssistant += event.text ?? ""
+                if let usage = event.usage {
+                    pendingUsage = pendingUsage?.merging(usage) ?? usage
+                }
             case .toolCall:
                 if let id = event.toolCallID, let name = event.toolName {
+                    pendingFirstSeq = pendingFirstSeq ?? event.seq
+                    pendingLastSeq = event.seq
                     pendingCalls.append(
                         NativeToolCall(id: id, name: name, arguments: event.argumentsJSON ?? "{}")
                     )
                 }
             case .toolResult:
-                if !pendingAssistant.isEmpty || !pendingCalls.isEmpty {
-                    messages.append(
-                        NativeModelMessage(
-                            role: .assistant,
-                            content: pendingAssistant,
-                            toolCalls: pendingCalls.isEmpty ? nil : pendingCalls
-                        )
-                    )
-                    pendingAssistant = ""
-                    pendingCalls = []
-                }
-                messages.append(
-                    NativeModelMessage(
-                        role: .tool,
-                        content: event.text ?? "",
-                        toolCallID: event.toolCallID,
-                        images: event.imagePart.map { [$0] } ?? []
+                flushAssistant()
+                records.append(
+                    NativeProjectedMessage(
+                        message: NativeModelMessage(
+                            role: .tool,
+                            content: event.text ?? "",
+                            toolCallID: event.toolCallID,
+                            images: event.imagePart.map { [$0] } ?? []
+                        ),
+                        firstSeq: event.seq,
+                        lastSeq: event.seq,
+                        usage: nil
                     )
                 )
-            case .surfaceReplace:
-                if let start = event.replaceStart, let end = event.replaceEnd,
-                   start >= 0, end < messages.count, start <= end {
-                    let replacement = NativeModelMessage(
-                        role: .assistant,
-                        content: event.text ?? "[truncated]"
-                    )
-                    messages.replaceSubrange(start...end, with: [replacement])
-                }
-            case .turnStart, .turnEnd, .stepStart, .stepEnd, .assistantChunk, .closer:
+            case .turnStart, .turnEnd, .stepStart, .stepEnd, .assistantChunk,
+                 .contextCompaction, .closer:
                 break
             }
         }
-        if !pendingAssistant.isEmpty || !pendingCalls.isEmpty {
-            messages.append(
-                NativeModelMessage(
-                    role: .assistant,
-                    content: pendingAssistant,
-                    toolCalls: pendingCalls.isEmpty ? nil : pendingCalls
-                )
-            )
+        flushAssistant()
+
+        let summaryMessage: NativeModelMessage?
+        if let summary = checkpoint?.summary,
+           !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            summaryMessage = NativeContextCompaction.summaryMessage(summary)
+        } else {
+            summaryMessage = nil
         }
-        return messages
+        let nextSeqAfterCheckpoint = nextSeq + 1
+        func cut(after event: NativeSessionEvent) -> Int {
+            visibleEvents.first { $0.seq > event.seq }?.seq ?? nextSeqAfterCheckpoint
+        }
+        let turnCuts = visibleEvents
+            .filter { $0.type == .turnEnd }
+            .map(cut)
+        let stepCuts = visibleEvents
+            .filter { $0.type == .stepEnd }
+            .map(cut)
+        return NativeLedgerProjection(
+            summaryMessage: summaryMessage,
+            records: records,
+            turnCutSeqs: Array(Set(turnCuts)).sorted(),
+            stepCutSeqs: Array(Set(stepCuts)).sorted()
+        )
     }
 
     public func closeTurn(turn: Int, reason: NativeTurnEndReason) throws {

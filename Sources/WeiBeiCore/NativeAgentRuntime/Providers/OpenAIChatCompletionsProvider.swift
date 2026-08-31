@@ -24,12 +24,14 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
     public var idleTimeoutNanoseconds: UInt64
     public var extraHeaders: [String: String]
     public var webSearchStyle: ChatWebSearchStyle
+    public var includesStreamUsage: Bool
 
     public init(
         baseURL: URL = URL(string: "https://api.deepseek.com/v1")!,
         apiKey: String,
         extraHeaders: [String: String] = [:],
         webSearchStyle: ChatWebSearchStyle = .none,
+        includesStreamUsage: Bool = false,
         session: URLSession = .shared,
         idleTimeoutNanoseconds: UInt64 = 45_000_000_000
     ) {
@@ -37,6 +39,7 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         self.apiKey = apiKey
         self.extraHeaders = extraHeaders
         self.webSearchStyle = webSearchStyle
+        self.includesStreamUsage = includesStreamUsage
         self.session = session
         self.idleTimeoutNanoseconds = idleTimeoutNanoseconds
     }
@@ -84,7 +87,9 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
                         try await run(webSearchStyle)
                         continuation.finish()
                     } catch let failure as NativeLLMFailure
-                        where failure.status == 400 && webSearchStyle != .none {
+                        where failure.status == 400
+                            && !failure.isContextOverflow
+                            && webSearchStyle != .none {
                         // 端点不认服务端搜索注入:去掉注入重试一次,本轮退化为不联网。
                         try await run(.none)
                         continuation.finish()
@@ -158,6 +163,9 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
             "stream": true,
             "messages": messages,
         ]
+        if includesStreamUsage {
+            payload["stream_options"] = ["include_usage": true]
+        }
         var allTools = tools
         let enableSearch = request.enableNativeWebSearch
             || request.tools.contains(where: { $0.name == "weibei_course_map" })
@@ -235,21 +243,26 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         }
         if let error = object["error"] as? [String: Any] {
             let message = error["message"] as? String ?? "provider error"
-            throw NativeLLMFailure(code: "server_error", message: message)
-        }
-        guard let choices = object["choices"] as? [[String: Any]], let choice = choices.first else {
-            return []
+            throw NativeLLMFailure(code: error["code"] as? String ?? "server_error", message: message)
         }
         var chunks: [NativeStreamChunk] = []
         if let usage = object["usage"] as? [String: Any] {
+            let promptDetails = usage["prompt_tokens_details"] as? [String: Any]
+            let cacheRead = promptDetails?["cached_tokens"] as? Int
+            let promptTokens = usage["prompt_tokens"] as? Int ?? 0
             chunks.append(
                 .usage(
                     NativeTokenUsage(
-                        inputTokens: usage["prompt_tokens"] as? Int ?? 0,
-                        outputTokens: usage["completion_tokens"] as? Int ?? 0
+                        inputTokens: max(0, promptTokens - (cacheRead ?? 0)),
+                        outputTokens: usage["completion_tokens"] as? Int ?? 0,
+                        cacheReadTokens: cacheRead,
+                        totalTokens: usage["total_tokens"] as? Int
                     )
                 )
             )
+        }
+        guard let choices = object["choices"] as? [[String: Any]], let choice = choices.first else {
+            return chunks
         }
         // 智谱系:顶层 web_search 数组,每条 link 为来源。
         if let searchResults = object["web_search"] as? [[String: Any]] {

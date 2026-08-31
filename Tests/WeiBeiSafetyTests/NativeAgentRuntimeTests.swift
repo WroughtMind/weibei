@@ -83,6 +83,237 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(result.contentBlocks.isEmpty)
     }
 
+    func testContextCompactionProjectionUsesOnlyLatestCheckpointAndKeepsToolPairs() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("native-compaction-projection-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+
+        let firstTurnStart = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: 1)
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .userMessage, seq: seq, timeMS: time, turn: 1, text: "旧问题")
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .assistantMessage, seq: seq, timeMS: time, turn: 1, step: 1, text: "旧回答")
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: 1, step: 1)
+        }
+        try await ledger.closeTurn(turn: 1, reason: .completed)
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(
+                type: .contextCompaction,
+                seq: seq,
+                timeMS: time,
+                summary: "第一版摘要",
+                firstKeptSeq: firstTurnStart.seq
+            )
+        }
+
+        let secondTurnStart = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: 2)
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .userMessage, seq: seq, timeMS: time, turn: 2, text: "保留的问题")
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .stepStart, seq: seq, timeMS: time, turn: 2, step: 1)
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(
+                type: .assistantMessage,
+                seq: seq,
+                timeMS: time,
+                turn: 2,
+                step: 1,
+                text: "",
+                usage: NativeTokenUsage(inputTokens: 70, outputTokens: 20, cacheReadTokens: 10)
+            )
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(
+                type: .toolCall,
+                seq: seq,
+                timeMS: time,
+                turn: 2,
+                step: 1,
+                toolCallID: "lookup-1",
+                toolName: "weibei_course_read",
+                argumentsJSON: #"{"itemID":"material-1"}"#
+            )
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(
+                type: .toolResult,
+                seq: seq,
+                timeMS: time,
+                turn: 2,
+                step: 1,
+                text: "材料正文",
+                toolCallID: "lookup-1",
+                toolName: "weibei_course_read"
+            )
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: 2, step: 1)
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(
+                type: .contextCompaction,
+                seq: seq,
+                timeMS: time,
+                summary: "第二版摘要",
+                firstKeptSeq: secondTurnStart.seq
+            )
+        }
+
+        let events = await ledger.allEvents()
+        let projection = await ledger.deriveProjection()
+        let messages = projection.messages
+        XCTAssertEqual(events.filter { $0.type == .contextCompaction }.count, 2)
+        XCTAssertTrue(events.contains { $0.text == "旧问题" })
+        XCTAssertTrue(events.contains { $0.text == "旧回答" })
+        XCTAssertTrue(messages.first?.content.contains("第二版摘要") == true)
+        XCTAssertFalse(messages.contains { $0.content.contains("第一版摘要") })
+        XCTAssertFalse(messages.contains { $0.content == "旧问题" || $0.content == "旧回答" })
+        XCTAssertTrue(messages.contains { $0.content == "保留的问题" })
+        let toolCallMessage = messages.first { $0.toolCalls?.first?.id == "lookup-1" }
+        let toolResultMessage = messages.first { $0.role == .tool && $0.toolCallID == "lookup-1" }
+        XCTAssertNotNil(toolCallMessage)
+        XCTAssertEqual(toolResultMessage?.content, "材料正文")
+        XCTAssertEqual(projection.latestUsage?.contextTokens, 100)
+    }
+
+    func testContextCompactionCompletesSummaryCheckpointAndAnswerLoop() async throws {
+        XCTAssertNil(NativeProviderRouting.contextWindow(provider: .custom, model: "gpt-4.1"))
+        XCTAssertNil(NativeProviderRouting.contextWindow(provider: .githubCopilot, model: "gpt-4.1"))
+        let strictBody = try XCTUnwrap(
+            OpenAIChatCompletionsProvider(apiKey: "test")
+                .makeURLRequest(NativeLLMRequest(model: "gpt-4.1", messages: []))
+                .httpBody
+        )
+        let strictPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: strictBody) as? [String: Any]
+        )
+        XCTAssertNil(strictPayload["stream_options"])
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("native-compaction-loop-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        for turn in 1...3 {
+            _ = try await ledger.append { seq, time in
+                NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: turn)
+            }
+            _ = try await ledger.append { seq, time in
+                NativeSessionEvent(
+                    type: .userMessage,
+                    seq: seq,
+                    timeMS: time,
+                    turn: turn,
+                    text: String(repeating: "用户历史\(turn)", count: 32)
+                )
+            }
+            _ = try await ledger.append { seq, time in
+                NativeSessionEvent(
+                    type: .assistantMessage,
+                    seq: seq,
+                    timeMS: time,
+                    turn: turn,
+                    step: 1,
+                    text: String(repeating: "回答历史\(turn)", count: 32),
+                    usage: turn == 3
+                        ? NativeTokenUsage(inputTokens: 24_000, outputTokens: 7_000, totalTokens: 31_000)
+                        : nil
+                )
+            }
+            _ = try await ledger.append { seq, time in
+                NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: turn, step: 1)
+            }
+            try await ledger.closeTurn(turn: turn, reason: .completed)
+        }
+        let adapter = CompactionLoopAdapter()
+        let firstResult = try await NativeAgentLoop().run(
+            request: StudyAgentRequest(
+                purpose: .conversation,
+                question: "继续解释",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                contextRevision: "r4"
+            ),
+            ledger: ledger,
+            registry: NativeToolRegistry(),
+            adapter: adapter,
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: nil
+        )
+        do {
+            _ = try await NativeAgentLoop().run(
+                request: StudyAgentRequest(
+                    purpose: .conversation,
+                    question: "继续追问",
+                    materialTitle: "",
+                    materialText: "",
+                    noteTitle: "",
+                    noteText: "",
+                    contextRevision: "r5"
+                ),
+                ledger: ledger,
+                registry: NativeToolRegistry(),
+                adapter: adapter,
+                model: "mock",
+                hostToolHandler: nil,
+                systemPrompt: "test",
+                progress: nil
+            )
+            XCTFail("没有完成标记的回答必须失败")
+        } catch let failure as NativeLLMFailure {
+            XCTAssertEqual(failure.code, "incomplete")
+        }
+
+        let events = await ledger.allEvents()
+        let requests = adapter.snapshot()
+        let summaryRequest = requests.first { $0.messages.first?.content == NativeContextCompaction.summarySystemPrompt }
+        let answerRequest = requests.last { $0.messages.first?.content == "test" }
+        let checkpoints = events.filter { $0.type == .contextCompaction }
+        let proactiveCheckpointIndex = events.firstIndex { $0.type == .contextCompaction }
+        let firstStepIndex = events.firstIndex {
+            $0.type == .stepStart && $0.turn == 4
+        }
+        let secondStepIndex = events.firstIndex {
+            $0.type == .stepStart && $0.turn == 5
+        }
+        let overflowCheckpointIndex = events.lastIndex { $0.type == .contextCompaction }
+        XCTAssertEqual(firstResult.text, "压缩后继续回答")
+        XCTAssertEqual(summaryRequest?.tools.count, 0)
+        XCTAssertEqual(summaryRequest?.maxTokens, NativeContextCompaction.maximumSummaryTokens)
+        XCTAssertEqual(summaryRequest?.reasoningEffort, "low")
+        XCTAssertEqual(checkpoints.count, 2)
+        XCTAssertEqual(checkpoints.last?.summary, "保留用户纠正、材料位置和未完成问题。")
+        XCTAssertNotNil(checkpoints.last?.firstKeptSeq)
+        XCTAssertTrue(answerRequest?.messages.contains { $0.content.contains("保留用户纠正") } == true)
+        XCTAssertTrue(answerRequest?.messages.contains { $0.content.contains("继续追问") } == true)
+        XCTAssertTrue(
+            proactiveCheckpointIndex != nil && firstStepIndex != nil
+                && proactiveCheckpointIndex! < firstStepIndex!
+        )
+        XCTAssertTrue(
+            firstStepIndex != nil && overflowCheckpointIndex != nil && secondStepIndex != nil
+                && firstStepIndex! < overflowCheckpointIndex!
+                && overflowCheckpointIndex! < secondStepIndex!
+        )
+        XCTAssertEqual(adapter.overflowCount, 1)
+        XCTAssertEqual(adapter.normalRequestCount, 3)
+        let incompleteAssistant = events.last { $0.type == .assistantMessage && $0.turn == 5 }
+        XCTAssertEqual(incompleteAssistant?.text, "未完成")
+        XCTAssertNil(incompleteAssistant?.usage)
+    }
+
     func testCredentialPermissionsAndBackup() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-cred-test-\(UUID().uuidString).json")
         defer {
@@ -663,7 +894,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(NativeVisualAssetMagic.matches(webp, mediaType: "image/webp"))
     }
 
-    func testTurnLocationStaysOffTheLedger() async throws {
+    func testTurnLocationIsPersistedWithTheUserMessage() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-location-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
         let ledger = try NativeAgentLedger(fileURL: url)
@@ -710,8 +941,8 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(NativeTurnLocation.displayPage(11), 12)
         XCTAssertTrue(outgoing.contains("12"))
         let logged = await ledger.deriveMessages().last { $0.role == .user }?.content ?? ""
-        XCTAssertEqual(logged, "这段什么意思")
-        XCTAssertFalse(logged.contains("12"))
+        XCTAssertEqual(logged, outgoing)
+        XCTAssertTrue(logged.contains("12"))
     }
 
     func testVisualAssetPutsPixelsOnToolResult() async throws {
@@ -886,6 +1117,74 @@ private struct MockLLMAdapter: NativeLLMAdapter {
             }
             continuation.finish()
         }
+    }
+}
+
+private final class CompactionLoopAdapter: NativeContextWindowTestingAdapter, @unchecked Sendable {
+    let family = "mock"
+    let contextWindowForTesting = 40_000
+    private let lock = NSLock()
+    private var requests: [NativeLLMRequest] = []
+    private var normalRequests = 0
+    private var overflows = 0
+
+    var normalRequestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return normalRequests
+    }
+
+    var overflowCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return overflows
+    }
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        lock.lock()
+        requests.append(request)
+        let isSummary = request.messages.first?.content == NativeContextCompaction.summarySystemPrompt
+        if !isSummary {
+            normalRequests += 1
+        }
+        let normalRequest = normalRequests
+        let shouldOverflow = !isSummary && normalRequest == 1
+        let endsWithoutFinish = !isSummary && normalRequest == 3
+        if shouldOverflow {
+            overflows += 1
+        }
+        lock.unlock()
+        let text = isSummary
+            ? "保留用户纠正、材料位置和未完成问题。"
+            : (endsWithoutFinish ? "未完成" : "压缩后继续回答")
+        return AsyncThrowingStream { continuation in
+            if shouldOverflow {
+                continuation.finish(throwing: NativeLLMFailure(
+                    code: "context_length_exceeded",
+                    status: 400,
+                    message: "maximum context length exceeded"
+                ))
+                return
+            }
+            if !isSummary {
+                continuation.yield(.usage(NativeTokenUsage(
+                    inputTokens: 4_000,
+                    outputTokens: 1_000,
+                    totalTokens: endsWithoutFinish ? 39_000 : 5_000
+                )))
+            }
+            continuation.yield(.textDelta(index: 0, text: text))
+            if !endsWithoutFinish {
+                continuation.yield(.finish(reason: .stop, replayState: nil))
+            }
+            continuation.finish()
+        }
+    }
+
+    func snapshot() -> [NativeLLMRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
     }
 }
 

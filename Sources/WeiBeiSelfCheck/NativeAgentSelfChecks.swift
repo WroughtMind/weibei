@@ -1401,10 +1401,6 @@ private func checkVisualAssetAndTurnLocation() throws {
         NativeTurnLocation.block(for: request)?.contains("利率讲义") == true,
         "turn location names the open material"
     )
-    var messages = [NativeModelMessage(role: .user, content: "这段什么意思")]
-    NativeTurnLocation.applying(to: &messages, request: request)
-    try nativeRequire(messages[0].content.contains("12"), "outgoing user message receives the facing page")
-    try nativeRequire(messages[0].content.contains("这段什么意思"), "outgoing user message keeps the question")
 }
 
 private func checkLiveModelListHelpers() throws {

@@ -178,7 +178,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         }
         if let error = object["error"] as? [String: Any] {
             throw NativeLLMFailure(
-                code: "server_error",
+                code: error["code"] as? String ?? "server_error",
                 message: error["message"] as? String ?? "Responses error"
             )
         }
@@ -216,9 +216,31 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
                 $0["type"] as? String == "function_call"
             }
             let reason: NativeFinishReason = hasTools ? .toolCalls : (status == "incomplete" ? .length : .stop)
-            return [.finish(reason: reason, replayState: nil)]
+            var chunks: [NativeStreamChunk] = []
+            if let usage = response?["usage"] as? [String: Any] {
+                let inputDetails = usage["input_tokens_details"] as? [String: Any]
+                let cacheRead = inputDetails?["cached_tokens"] as? Int
+                let inputTokens = usage["input_tokens"] as? Int ?? 0
+                chunks.append(
+                    .usage(
+                        NativeTokenUsage(
+                            inputTokens: max(0, inputTokens - (cacheRead ?? 0)),
+                            outputTokens: usage["output_tokens"] as? Int ?? 0,
+                            cacheReadTokens: cacheRead,
+                            totalTokens: usage["total_tokens"] as? Int
+                        )
+                    )
+                )
+            }
+            chunks.append(.finish(reason: reason, replayState: nil))
+            return chunks
         case "response.failed", "error":
-            throw NativeLLMFailure(code: "server_error", message: object["message"] as? String ?? type)
+            let error = (object["response"] as? [String: Any])?["error"] as? [String: Any]
+                ?? object["error"] as? [String: Any]
+            throw NativeLLMFailure(
+                code: error?["code"] as? String ?? "server_error",
+                message: error?["message"] as? String ?? object["message"] as? String ?? type
+            )
         default:
             return []
         }

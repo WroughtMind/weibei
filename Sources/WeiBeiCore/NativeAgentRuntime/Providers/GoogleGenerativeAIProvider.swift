@@ -139,13 +139,30 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
             throw NativeLLMFailure(code: "invalid_sse", message: "Gemini SSE was not JSON")
         }
         if let error = object["error"] as? [String: Any] {
-            throw NativeLLMFailure(code: "server_error", message: error["message"] as? String ?? "Gemini error")
+            throw NativeLLMFailure(
+                code: error["status"] as? String ?? "server_error",
+                message: error["message"] as? String ?? "Gemini error"
+            )
+        }
+        var chunks: [NativeStreamChunk] = []
+        if let usage = object["usageMetadata"] as? [String: Any] {
+            let cacheRead = usage["cachedContentTokenCount"] as? Int
+            let promptTokens = usage["promptTokenCount"] as? Int ?? 0
+            chunks.append(
+                .usage(
+                    NativeTokenUsage(
+                        inputTokens: max(0, promptTokens - (cacheRead ?? 0)),
+                        outputTokens: usage["candidatesTokenCount"] as? Int ?? 0,
+                        cacheReadTokens: cacheRead,
+                        totalTokens: usage["totalTokenCount"] as? Int
+                    )
+                )
+            )
         }
         let candidates = object["candidates"] as? [[String: Any]] ?? []
         guard let candidate = candidates.first else {
-            return []
+            return chunks
         }
-        var chunks: [NativeStreamChunk] = []
         // 接地来源:groundingMetadata.groundingChunks[].web.uri(可能单独出现,不带 content)
         if let grounding = candidate["groundingMetadata"] as? [String: Any],
            let groundChunks = grounding["groundingChunks"] as? [[String: Any]] {

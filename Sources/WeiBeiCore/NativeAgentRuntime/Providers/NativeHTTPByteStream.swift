@@ -40,7 +40,9 @@ enum NativeHTTPByteStream {
                         try await pump(request)
                         continuation.finish()
                     } catch let failure as NativeLLMFailure
-                        where failure.status == 400 && fallbackRequest != nil {
+                        where failure.status == 400
+                            && !failure.isContextOverflow
+                            && fallbackRequest != nil {
                         // 端点不认服务端搜索工具(如网关未透传):去掉搜索重试一次,
                         // 本次回答退化为不联网,不让整轮对话失败。
                         try await pump(fallbackRequest!)
