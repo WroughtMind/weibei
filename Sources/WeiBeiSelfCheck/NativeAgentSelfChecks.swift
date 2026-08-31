@@ -1331,28 +1331,6 @@ private func checkSessionTitleGeneration() throws {
         "semantic titles only run after the first completed turn"
     )
 
-    let request = NativeLLMRequest(
-        model: "mock",
-        messages: [NativeModelMessage(role: .user, content: "q")],
-        maxTokens: NativeSessionTitle.maxTokens
-    )
-    let anthropic = AnthropicMessagesProvider.payload(for: request)
-    try nativeRequire(
-        anthropic["max_tokens"] as? Int == NativeSessionTitle.maxTokens,
-        "title request caps Anthropic max_tokens"
-    )
-    let responses = OpenAIResponsesProvider.payload(for: request, webSearchSupported: false)
-    try nativeRequire(
-        responses["max_output_tokens"] as? Int == NativeSessionTitle.maxTokens,
-        "title request caps Responses max_output_tokens"
-    )
-    let gemini = GoogleGenerativeAIProvider.payload(for: request)
-    let config = gemini["generationConfig"] as? [String: Any]
-    try nativeRequire(
-        config?["maxOutputTokens"] as? Int == NativeSessionTitle.maxTokens,
-        "title request caps Gemini maxOutputTokens"
-    )
-
     let generated = try waitFor {
         await NativeSessionTitle.generate(
             adapter: SessionTitleMockAdapter(),

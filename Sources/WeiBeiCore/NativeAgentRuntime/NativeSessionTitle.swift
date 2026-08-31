@@ -2,8 +2,7 @@ import Foundation
 
 /// First-turn semantic chat title. Best-effort: never delays or fails the reply.
 public enum NativeSessionTitle {
-    public static let maxTokens = 256
-    public static let timeoutNanoseconds: UInt64 = 15_000_000_000
+    public static let timeoutNanoseconds: UInt64 = 5_000_000_000
 
     public static let systemPrompt = [
         "只为这段对话生成一个小标题。概括真实主题和用户意图，不要照抄开头的客套话或命令。",
@@ -22,7 +21,7 @@ public enum NativeSessionTitle {
         answer: String,
         timeoutNanoseconds: UInt64 = timeoutNanoseconds
     ) async -> String? {
-        var request = NativeLLMRequest(
+        let request = NativeLLMRequest(
             model: model,
             messages: [
                 NativeModelMessage(role: .system, content: systemPrompt),
@@ -30,12 +29,8 @@ public enum NativeSessionTitle {
                     role: .user,
                     content: "用户问题：\n\(excerpt(question))\n\n首轮回答：\n\(excerpt(answer))"
                 ),
-            ],
-            maxTokens: maxTokens
+            ]
         )
-        if adapter.family.contains("responses") {
-            request.reasoningEffort = "low"
-        }
         return await withTaskGroup(of: String?.self) { group in
             group.addTask {
                 do {
