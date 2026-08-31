@@ -10,6 +10,8 @@ enum NativeHTTPByteStream {
         AsyncThrowingStream { continuation in
             let task = Task {
                 func pump(_ request: URLRequest) async throws {
+                    var request = request
+                    request.timeoutInterval = 300
                     let (bytes, response) = try await session.bytes(for: request)
                     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                         var body = ""
@@ -50,6 +52,8 @@ enum NativeHTTPByteStream {
                     }
                 } catch is CancellationError {
                     continuation.finish(throwing: NativeLLMFailure(code: "cancelled", message: "cancelled"))
+                } catch let error as URLError where error.code == .timedOut {
+                    continuation.finish(throwing: NativeLLMFailure(code: "timeout", message: "stream idle timeout"))
                 } catch {
                     continuation.finish(throwing: error)
                 }

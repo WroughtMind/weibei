@@ -27,7 +27,8 @@ extension WorkspaceStore {
     /// 课程内搜索——行为与迁移前完全一致。
     func searchCourseHome(
         courseID: UUID,
-        query rawQuery: String
+        query rawQuery: String,
+        resultLimit: Int = 50
     ) async -> CourseHomeSearchOutcome {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty,
@@ -52,7 +53,8 @@ extension WorkspaceStore {
             itemInputs: itemInputs,
             sessions: sessions,
             query: query,
-            chatDetail: ui("%d 条消息", "%d messages")
+            chatDetail: ui("%d 条消息", "%d messages"),
+            resultLimit: resultLimit
         )
         guard !Task.isCancelled else {
             return CourseHomeSearchOutcome(results: [], availability: .ready)
@@ -65,10 +67,11 @@ extension WorkspaceStore {
     }
 
     /// 跨课程全局搜索:所有课程的资料/笔记/对话一次查完;
-    /// 当前课程命中排在最前,其余按内核排序跟随,单次上限 100 条。
+    /// 当前课程命中排在最前,其余按内核排序跟随,默认返回 100 条。
     func searchAllCourses(
         currentCourseID: UUID?,
-        query rawQuery: String
+        query rawQuery: String,
+        resultLimit: Int = 100
     ) async -> GlobalSearchOutcome {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
@@ -106,7 +109,7 @@ extension WorkspaceStore {
             sessions: sessions,
             query: query,
             chatDetail: ui("%d 条消息", "%d messages"),
-            resultLimit: 100
+            resultLimit: resultLimit
         )
         guard !Task.isCancelled else {
             return GlobalSearchOutcome(hits: [], availability: .ready)
@@ -147,7 +150,7 @@ extension WorkspaceStore {
                 }
                 return $0.index < $1.index
             }
-            .prefix(100)
+            .prefix(resultLimit)
             .map(\.hit)
         return GlobalSearchOutcome(hits: ordered, availability: search.availability)
     }

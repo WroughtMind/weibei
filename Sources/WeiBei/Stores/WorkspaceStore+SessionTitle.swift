@@ -3,15 +3,27 @@ import WeiBeiCore
 
 @MainActor
 extension WorkspaceStore {
+    static func sessionNeedsSemanticTitle(
+        replacing currentTitle: String,
+        messages: [AgentMessage],
+        titleSetByUser: Bool = false
+    ) -> Bool {
+        guard !titleSetByUser,
+              let firstQuestion = messages.first(where: { $0.role == .user }) else { return false }
+        return currentTitle == sessionTitle(from: firstQuestion.text)
+    }
+
     static func semanticSessionTitle(
         from suggestion: String?,
         replacing currentTitle: String,
         messages: [AgentMessage],
         titleSetByUser: Bool = false
     ) -> String? {
-        guard !titleSetByUser,
-              let firstQuestion = messages.first(where: { $0.role == .user }),
-              currentTitle == sessionTitle(from: firstQuestion.text),
+        guard sessionNeedsSemanticTitle(
+                  replacing: currentTitle,
+                  messages: messages,
+                  titleSetByUser: titleSetByUser
+              ),
               let suggestion,
               !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil

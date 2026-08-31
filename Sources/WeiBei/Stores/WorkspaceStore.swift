@@ -7833,7 +7833,7 @@ final class WorkspaceStore: ObservableObject {
         let handler = makeAgentHostToolHandler(target: target, access: access)
         try beforeSearch?()
         return try waitForCourseFileOperation {
-            try await handler(.courseSearch(query: query, limit: 8))
+            try await handler(.courseSearch(query: query, offset: 0, limit: 8))
         }
     }
 
@@ -7983,9 +7983,10 @@ final class WorkspaceStore: ObservableObject {
         let searchIndex = courseDocumentSearchIndex
 
         return { request in
-            if case let .workspaceSearch(query, limit, crossLibrary) = request {
+            if case let .workspaceSearch(query, offset, limit, crossLibrary) = request {
                 return await self.searchWorkspaceForAgent(
                     query: query,
+                    cursor: offset,
                     limit: limit,
                     crossLibrary: crossLibrary,
                     currentCourseID: target.courseID

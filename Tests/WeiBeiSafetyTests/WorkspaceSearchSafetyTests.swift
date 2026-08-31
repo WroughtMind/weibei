@@ -34,6 +34,13 @@ final class WorkspaceSearchSafetyTests: XCTestCase {
             fileName: "AlphaCurrentHitToken.md",
             content: "当前课笔记 AlphaCurrentHitToken"
         )
+        let secondCurrentNote = try await importMarkdown(
+            store,
+            base: root,
+            courseID: currentCourseID,
+            fileName: "AlphaCurrentHitTokenTwo.md",
+            content: "当前课第二份笔记 AlphaCurrentHitToken"
+        )
         let otherNote = try await importMarkdown(
             store,
             base: root,
@@ -44,15 +51,29 @@ final class WorkspaceSearchSafetyTests: XCTestCase {
 
         let currentHit = await store.searchWorkspaceForAgent(
             query: "AlphaCurrentHitToken",
-            limit: 8,
+            limit: 1,
             crossLibrary: false,
             currentCourseID: currentCourseID
         )
         XCTAssertEqual(currentHit.items.count, 1)
         XCTAssertEqual(currentHit.items.first?.item.id, currentNote.id)
+        XCTAssertEqual(currentHit.total, 2)
+        XCTAssertEqual(currentHit.nextCursor, "1")
         XCTAssertEqual(currentHit.items.first?.courseIDs, [currentCourseID.uuidString.lowercased()])
         XCTAssertEqual(currentHit.items.first?.courseTitles, ["当前课"])
         XCTAssertFalse(currentHit.items.contains { $0.item.id == otherNote.id })
+        XCTAssertNotEqual(currentHit.items.first?.item.id, secondCurrentNote.id)
+
+        let nextCurrentHit = await store.searchWorkspaceForAgent(
+            query: "AlphaCurrentHitToken",
+            cursor: 1,
+            limit: 1,
+            crossLibrary: false,
+            currentCourseID: currentCourseID
+        )
+        XCTAssertEqual(nextCurrentHit.items.first?.item.id, secondCurrentNote.id)
+        XCTAssertEqual(nextCurrentHit.total, 2)
+        XCTAssertNil(nextCurrentHit.nextCursor)
 
         let isolated = await store.searchWorkspaceForAgent(
             query: "BetaOtherNoteToken",

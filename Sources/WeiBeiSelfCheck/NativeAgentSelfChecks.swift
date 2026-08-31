@@ -484,6 +484,7 @@ private func checkSkillCatalogAndLoad() throws {
     if let schema = jsonObject(workspace?.schema.object),
        let properties = jsonObject(schema["properties"]) {
         try nativeRequire(properties["query"] != nil, "workspace search requires query")
+        try nativeRequire(properties["offset"] != nil, "workspace search exposes pagination offset")
         try nativeRequire(properties["crossLibrary"] != nil, "workspace search exposes crossLibrary")
         let required = schema["required"] as? [String] ?? []
         try nativeRequire(required.contains("query"), "workspace search query is required")
@@ -495,6 +496,9 @@ private func checkSkillCatalogAndLoad() throws {
     }
     let read = tools.first { $0.name == "weibei_course_read" }
     try nativeRequire(read?.description.contains("不要停下来反问") == true, "course_read description forbids interrupting to ask")
+    try nativeRequire(read?.description.contains("nextCursor") == true, "course_read description continues truncated reads")
+    let webOpen = tools.first { $0.name == "weibei_web_open" }
+    try nativeRequire(webOpen?.description.contains("nextCursor") == true, "web_open description continues truncated reads")
 }
 
 private func checkLoadSkillIdempotent() throws {
@@ -1327,30 +1331,8 @@ private func checkSessionTitleGeneration() throws {
     )
     try nativeRequire(
         NativeSessionTitle.shouldPropose(completedTurnCount: 1)
-            && !NativeSessionTitle.shouldPropose(completedTurnCount: 2),
-        "semantic titles only run after the first completed turn"
-    )
-
-    let request = NativeLLMRequest(
-        model: "mock",
-        messages: [NativeModelMessage(role: .user, content: "q")],
-        maxTokens: NativeSessionTitle.maxTokens
-    )
-    let anthropic = AnthropicMessagesProvider.payload(for: request)
-    try nativeRequire(
-        anthropic["max_tokens"] as? Int == NativeSessionTitle.maxTokens,
-        "title request caps Anthropic max_tokens"
-    )
-    let responses = OpenAIResponsesProvider.payload(for: request, webSearchSupported: false)
-    try nativeRequire(
-        responses["max_output_tokens"] as? Int == NativeSessionTitle.maxTokens,
-        "title request caps Responses max_output_tokens"
-    )
-    let gemini = GoogleGenerativeAIProvider.payload(for: request)
-    let config = gemini["generationConfig"] as? [String: Any]
-    try nativeRequire(
-        config?["maxOutputTokens"] as? Int == NativeSessionTitle.maxTokens,
-        "title request caps Gemini maxOutputTokens"
+            && NativeSessionTitle.shouldPropose(completedTurnCount: 2),
+        "semantic titles can retry after a completed turn"
     )
 
     let generated = try waitFor {

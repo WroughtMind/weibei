@@ -536,11 +536,12 @@ public enum NativeBuiltinTools {
     private static var courseSearch: NativeToolDefinition {
         hostTool(
             name: "weibei_course_search",
-            description: "在课程索引中搜索材料与笔记。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read，itemID 用搜索结果里的 id。PDF 结果的 indexedPageCount/totalPageCount 是当前文件版本的索引覆盖率，uncoveredPageNumbers 是未覆盖页，failedPageNumbers/failedPageReasons 是识别失败页及人话原因，失败页可由用户明确要求重试；即使没有正文命中也要报告这些状态，存在未覆盖页时不得声称搜遍全文。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
+            description: "在课程索引中搜索材料与笔记。单次结果有输出预算；返回 nextCursor 时，把它作为下一次 offset 继续调用，直到 nextCursor 为空，不能把单页当作全部结果。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read，itemID 用搜索结果里的 id。PDF 结果的 indexedPageCount/totalPageCount 是当前文件版本的索引覆盖率，uncoveredPageNumbers 是未覆盖页，failedPageNumbers/failedPageReasons 是识别失败页及人话原因，失败页可由用户明确要求重试；即使没有正文命中也要报告这些状态，存在未覆盖页时不得声称搜遍全文。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
                     "query": ["type": "string"],
+                    "offset": ["type": "integer"],
                     "limit": ["type": "integer"],
                 ],
                 "required": ["query"],
@@ -548,7 +549,8 @@ public enum NativeBuiltinTools {
             makeRequest: { arguments, _ in
                 .courseSearch(
                     query: string(arguments["query"]) ?? "",
-                    limit: int(arguments["limit"], default: 8, range: 1...8)
+                    offset: int(arguments["offset"], default: 0, range: 0...1_000_000),
+                    limit: int(arguments["limit"], default: 100, range: 1...100)
                 )
             }
         )
@@ -557,11 +559,12 @@ public enum NativeBuiltinTools {
     private static var workspaceSearch: NativeToolDefinition {
         hostTool(
             name: "weibei_search_workspace",
-            description: "在工作区检索材料与笔记。默认只搜当前课程；只有用户明确要求查全部资料或问题明显跨课时，才把 crossLibrary 设为 true，跨库时其他课程的材料与笔记同样可搜，当前课程的命中排最前。结果带来源课程、标题和摘录；没有命中就如实报告空结果，不要编。不含网页。",
+            description: "在工作区检索材料与笔记。单次结果有输出预算；返回 nextCursor 时，把它作为下一次 offset 继续调用，直到 nextCursor 为空。默认只搜当前课程；只有用户明确要求查全部资料或问题明显跨课时，才把 crossLibrary 设为 true，跨库时其他课程的材料与笔记同样可搜，当前课程的命中排最前。结果带来源课程、标题和摘录；没有命中就如实报告空结果，不要编。不含网页。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
                     "query": ["type": "string"],
+                    "offset": ["type": "integer"],
                     "limit": ["type": "integer"],
                     "crossLibrary": ["type": "boolean"],
                 ],
@@ -570,7 +573,8 @@ public enum NativeBuiltinTools {
             makeRequest: { arguments, _ in
                 .workspaceSearch(
                     query: string(arguments["query"]) ?? "",
-                    limit: int(arguments["limit"], default: 8, range: 1...8),
+                    offset: int(arguments["offset"], default: 0, range: 0...1_000_000),
+                    limit: int(arguments["limit"], default: 100, range: 1...100),
                     crossLibrary: bool(arguments["crossLibrary"], default: false)
                 )
             }
@@ -580,7 +584,7 @@ public enum NativeBuiltinTools {
     private static var courseRead: NativeToolDefinition {
         hostTool(
             name: "weibei_course_read",
-            description: "按搜索结果里的 itemID 渐进读取真实正文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。itemID 必须是搜索返回的 id。PDF 的 uncoveredPageNumbers 与 failedPageNumbers 不在已读正文覆盖范围内；failedPageReasons 是人话失败原因，失败页可由用户明确要求重试。",
+            description: "按搜索结果里的 itemID 渐进读取真实正文。单次读取有字符预算；返回 nextCursor 时，必须原样传回 cursor 继续读取，直到 nextCursor 为空，不能把单段当作全文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。itemID 必须是搜索返回的 id。PDF 的 uncoveredPageNumbers 与 failedPageNumbers 不在已读正文覆盖范围内；failedPageReasons 是人话失败原因，失败页可由用户明确要求重试。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
@@ -604,7 +608,7 @@ public enum NativeBuiltinTools {
                     query: string(arguments["query"]) ?? "",
                     location: string(arguments["location"]),
                     cursor: string(arguments["cursor"]),
-                    maximumCharacters: int(arguments["maximumCharacters"], default: 6_000, range: 1_000...12_000)
+                    maximumCharacters: int(arguments["maximumCharacters"], default: 12_000, range: 1_000...12_000)
                 )
             }
         )
@@ -613,11 +617,12 @@ public enum NativeBuiltinTools {
     private static var webOpen: NativeToolDefinition {
         hostTool(
             name: "weibei_web_open",
-            description: "读取用户本轮明确贴出、原生网页搜索返回，或已成功读取页面中真实链接指向的 HTTPS 网页。",
+            description: "读取用户本轮明确贴出、原生网页搜索返回，或已成功读取页面中真实链接指向的 HTTPS 网页。单次读取有字符预算；返回 nextCursor 时，必须原样传回 cursor 继续读取，直到 nextCursor 为空。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
                     "url": ["type": "string"],
+                    "cursor": ["type": "string"],
                     "maximumCharacters": ["type": "integer"],
                 ],
                 "required": ["url"],
@@ -625,6 +630,7 @@ public enum NativeBuiltinTools {
             makeRequest: { arguments, _ in
                 .webOpen(
                     url: string(arguments["url"]) ?? "",
+                    cursor: string(arguments["cursor"]),
                     maximumCharacters: int(arguments["maximumCharacters"], default: 12_000, range: 1_000...20_000)
                 )
             }
