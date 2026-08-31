@@ -216,6 +216,7 @@ public enum WeiBeiWebResearchClient {
 
     public static func open(
         _ rawURL: String,
+        cursor: Int = 0,
         maximumCharacters: Int
     ) async throws -> StudyAgentWebPage {
         let url = try WeiBeiWebResearchURLPolicy.validatedPublicHTTPSURL(rawURL)
@@ -292,14 +293,16 @@ public enum WeiBeiWebResearchClient {
         let cleaned = normalizedText(rawText)
         guard !cleaned.isEmpty else { throw WeiBeiWebResearchError.emptyContent }
         let boundedCharacters = min(max(maximumCharacters, 1_000), 20_000)
-        let isTruncated = cleaned.count > boundedCharacters
+        let start = min(max(cursor, 0), cleaned.count)
+        let text = String(cleaned.dropFirst(start).prefix(boundedCharacters))
+        let isTruncated = start + text.count < cleaned.count
         let title = mimeType == "text/plain"
             ? finalURL.host ?? finalURL.absoluteString
             : htmlTitle(from: decoded) ?? finalURL.host ?? finalURL.absoluteString
         return StudyAgentWebPage(
             url: finalURL.absoluteString,
             title: String(title.prefix(300)),
-            text: String(cleaned.prefix(boundedCharacters)),
+            text: text,
             isTruncated: isTruncated,
             links: mimeType == "text/plain" ? [] : linkedHTTPSURLs(in: decoded, relativeTo: finalURL)
         )

@@ -589,7 +589,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             adapter: SearchedWebURLAdapter(),
             model: "mock",
             hostToolHandler: { request in
-                guard case let .webOpen(url, _) = request else {
+                guard case let .webOpen(url, _, _) = request else {
                     return StudyAgentHostToolResult(query: "", items: [])
                 }
                 await opened.record(url)
@@ -624,7 +624,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             adapter: LinkedWebURLAdapter(),
             model: "mock",
             hostToolHandler: { request in
-                guard case let .webOpen(url, _) = request else {
+                guard case let .webOpen(url, _, _) = request else {
                     return StudyAgentHostToolResult(query: "", items: [])
                 }
                 await opened.record(url)
@@ -748,10 +748,12 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(decoded.items.isEmpty)
         XCTAssertEqual(decoded.webPages.count, 0)
         let captured = await recorder.request
-        guard case let .workspaceSearch(query, _, crossLibrary) = captured else {
+        guard case let .workspaceSearch(query, offset, limit, crossLibrary) = captured else {
             return XCTFail("expected workspaceSearch")
         }
         XCTAssertEqual(query, "利率")
+        XCTAssertEqual(offset, 0)
+        XCTAssertEqual(limit, 100)
         XCTAssertFalse(crossLibrary)
     }
 
@@ -783,7 +785,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             scope: .global
         )
         let captured = await recorder.request
-        guard case let .workspaceSearch(_, _, crossLibrary) = captured else {
+        guard case let .workspaceSearch(_, _, _, crossLibrary) = captured else {
             return XCTFail("expected workspaceSearch")
         }
         XCTAssertTrue(crossLibrary)

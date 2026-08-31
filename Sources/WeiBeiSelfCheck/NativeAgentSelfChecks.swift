@@ -484,6 +484,7 @@ private func checkSkillCatalogAndLoad() throws {
     if let schema = jsonObject(workspace?.schema.object),
        let properties = jsonObject(schema["properties"]) {
         try nativeRequire(properties["query"] != nil, "workspace search requires query")
+        try nativeRequire(properties["offset"] != nil, "workspace search exposes pagination offset")
         try nativeRequire(properties["crossLibrary"] != nil, "workspace search exposes crossLibrary")
         let required = schema["required"] as? [String] ?? []
         try nativeRequire(required.contains("query"), "workspace search query is required")
@@ -495,6 +496,9 @@ private func checkSkillCatalogAndLoad() throws {
     }
     let read = tools.first { $0.name == "weibei_course_read" }
     try nativeRequire(read?.description.contains("不要停下来反问") == true, "course_read description forbids interrupting to ask")
+    try nativeRequire(read?.description.contains("nextCursor") == true, "course_read description continues truncated reads")
+    let webOpen = tools.first { $0.name == "weibei_web_open" }
+    try nativeRequire(webOpen?.description.contains("nextCursor") == true, "web_open description continues truncated reads")
 }
 
 private func checkLoadSkillIdempotent() throws {

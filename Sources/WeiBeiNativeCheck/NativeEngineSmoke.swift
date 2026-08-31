@@ -107,7 +107,7 @@ enum NativeEngineSmoke {
             question: "利率这一节讲了什么？",
             adapter: adapter,
             host: { request in
-                guard case let .courseSearch(query, _) = request, query.contains("利率") else {
+                guard case let .courseSearch(query, _, _) = request, query.contains("利率") else {
                     throw NSError(domain: "WeiBei.NativeSmoke", code: 2, userInfo: [NSLocalizedDescriptionKey: "unexpected host request"])
                 }
                 return StudyAgentHostToolResult(
@@ -239,7 +239,7 @@ enum NativeEngineSmoke {
             """,
             adapter: adapter,
             host: { request in
-                guard case let .courseSearch(query, _) = request else {
+                guard case let .courseSearch(query, _, _) = request else {
                     throw NSError(domain: "WeiBei.NativeSmoke", code: 8, userInfo: [NSLocalizedDescriptionKey: "\(label) expected courseSearch"])
                 }
                 return StudyAgentHostToolResult(

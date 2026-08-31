@@ -274,48 +274,96 @@ extension WorkspaceStore {
 
     func searchWorkspaceForAgent(
         query rawQuery: String,
+        cursor: Int = 0,
         limit: Int,
         crossLibrary: Bool,
         currentCourseID: UUID?
     ) async -> StudyAgentHostToolResult {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cappedLimit = min(max(limit, 1), 8)
+        let offset = max(cursor, 0)
+        let pageLimit = min(max(limit, 1), 100)
         guard !query.isEmpty else {
-            return StudyAgentHostToolResult(query: rawQuery, items: [])
+            return StudyAgentHostToolResult(query: rawQuery, items: [], total: 0)
         }
         if crossLibrary {
             let outcome = await searchAllCourses(
                 currentCourseID: currentCourseID,
-                query: query
+                query: query,
+                resultLimit: .max
             )
             // 检索能力对所有 Chat 一致：跨库时其他课程的材料与笔记一样可搜，
             // 当前课程命中已由 searchAllCourses 排在最前，这里只按类型过滤。
             let hits = outcome.hits.filter { hit in
                 hit.result.kind == .material || hit.result.kind == .note
             }
-            return StudyAgentHostToolResult(
+            return Self.pagedSearchResult(
                 query: query,
-                items: hits.prefix(cappedLimit).map { hostToolItem(from: $0) }
+                items: hits.dropFirst(offset).prefix(pageLimit).map { hostToolItem(from: $0) },
+                total: hits.count,
+                offset: offset
             )
         }
         guard let currentCourseID else {
-            return StudyAgentHostToolResult(query: query, items: [])
+            return StudyAgentHostToolResult(query: query, items: [], total: 0)
         }
-        let outcome = await searchCourseHome(courseID: currentCourseID, query: query)
+        let outcome = await searchCourseHome(
+            courseID: currentCourseID,
+            query: query,
+            resultLimit: .max
+        )
         let courseTitle = course(withID: currentCourseID)?.title ?? ""
         let results = outcome.results.filter {
             $0.kind == .material || $0.kind == .note
         }
-        return StudyAgentHostToolResult(
+        return Self.pagedSearchResult(
             query: query,
-            items: results.prefix(cappedLimit).map {
+            items: results.dropFirst(offset).prefix(pageLimit).map {
                 hostToolItem(
                     from: $0,
                     courseID: currentCourseID,
                     courseTitle: courseTitle
                 )
-            }
+            },
+            total: results.count,
+            offset: offset
         )
+    }
+
+    nonisolated private static func pagedSearchResult(
+        query: String,
+        items: [StudyAgentHostToolItem],
+        total: Int,
+        offset: Int
+    ) -> StudyAgentHostToolResult {
+        var page: [StudyAgentHostToolItem] = []
+        for item in items {
+            let candidate = StudyAgentHostToolResult(
+                query: query,
+                items: page + [item],
+                total: total,
+                nextCursor: offset + page.count + 1 < total
+                    ? String(offset + page.count + 1)
+                    : nil
+            )
+            guard page.isEmpty || searchPageFitsBudget(candidate) else { break }
+            page.append(item)
+        }
+        let nextOffset = offset + page.count
+        return StudyAgentHostToolResult(
+            query: query,
+            items: page,
+            total: total,
+            nextCursor: nextOffset < total ? String(nextOffset) : nil
+        )
+    }
+
+    nonisolated private static func searchPageFitsBudget(
+        _ result: StudyAgentHostToolResult
+    ) -> Bool {
+        guard let data = try? JSONEncoder().encode(result),
+              data.count <= 50_000,
+              let text = String(data: data, encoding: .utf8) else { return false }
+        return text.components(separatedBy: "\\n").count <= 2_000
     }
 
     private func hostToolItem(from hit: GlobalSearchHit) -> StudyAgentHostToolItem {
@@ -405,7 +453,7 @@ extension WorkspaceStore {
                     : nil
             )
 
-        case let .courseSearch(query, limit):
+        case let .courseSearch(query, offset, limit):
             let approvedSources = sources.filter(agentHostToolSourceIsValid)
             let indexed = searchIndex.lookup(
                 items: approvedSources.compactMap {
@@ -473,7 +521,7 @@ extension WorkspaceStore {
                 return (left.result.rank ?? .greatestFiniteMagnitude)
                     < (right.result.rank ?? .greatestFiniteMagnitude)
             }
-            let knowledgeSources = matched.prefix(max(limit * 4, limit)).map { match in
+            let knowledgeSources = matched.dropFirst(offset).prefix(limit).map { match in
                 CourseKnowledgeSource(
                     id: match.source.item.id,
                     title: match.source.title,
@@ -507,9 +555,9 @@ extension WorkspaceStore {
                     ($0.source.item.id, $0.result.sourceRevision)
                 }
             )
-            return StudyAgentHostToolResult(
+            return pagedSearchResult(
                 query: query,
-                items: context.items.prefix(limit).compactMap { item in
+                items: context.items.compactMap { item in
                     guard let source = sourceByID[item.id] else { return nil }
                     return StudyAgentHostToolItem(
                         item: item,
@@ -518,7 +566,9 @@ extension WorkspaceStore {
                         courseTitles: source.courseTitles,
                         sourceRevision: sourceRevisionByID[item.id] ?? nil
                     )
-                }
+                },
+                total: matched.count,
+                offset: offset
             )
 
         case let .courseRead(itemID, query, location, cursor, maximumCharacters):
@@ -606,16 +656,18 @@ extension WorkspaceStore {
                 items: []
             )
 
-        case let .webOpen(url, maximumCharacters):
+        case let .webOpen(url, cursor, maximumCharacters):
+            let offset = max(Int(cursor ?? "") ?? 0, 0)
+            let page = try await WeiBeiWebResearchClient.open(
+                url,
+                cursor: offset,
+                maximumCharacters: maximumCharacters
+            )
             return StudyAgentHostToolResult(
                 query: url,
                 items: [],
-                webPages: [
-                    try await WeiBeiWebResearchClient.open(
-                        url,
-                        maximumCharacters: maximumCharacters
-                    ),
-                ]
+                webPages: [page],
+                nextCursor: page.isTruncated ? String(offset + page.text.count) : nil
             )
 
         case .workspaceSearch:

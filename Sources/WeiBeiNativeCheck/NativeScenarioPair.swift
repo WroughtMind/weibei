@@ -182,7 +182,7 @@ enum NativeScenarioPair {
     }
 
     private static func workspaceHost(_ request: StudyAgentHostToolRequest) async throws -> StudyAgentHostToolResult {
-        guard case let .workspaceSearch(query, _, crossLibrary) = request, crossLibrary else {
+        guard case let .workspaceSearch(query, _, _, crossLibrary) = request, crossLibrary else {
             return StudyAgentHostToolResult(query: "", items: [])
         }
         let item = StudyAgentCourseItem(

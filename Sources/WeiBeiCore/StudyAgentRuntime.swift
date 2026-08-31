@@ -320,8 +320,8 @@ public struct StudyAgentFocus: Codable, Equatable, Sendable {
 
 public enum StudyAgentHostToolRequest: Equatable, Sendable {
     case courseMap(itemID: String?, offset: Int, limit: Int)
-    case courseSearch(query: String, limit: Int)
-    case workspaceSearch(query: String, limit: Int, crossLibrary: Bool)
+    case courseSearch(query: String, offset: Int, limit: Int)
+    case workspaceSearch(query: String, offset: Int, limit: Int, crossLibrary: Bool)
     case courseRead(
         itemID: String,
         query: String,
@@ -330,7 +330,7 @@ public enum StudyAgentHostToolRequest: Equatable, Sendable {
         maximumCharacters: Int
     )
     case retryFailedPDFPages(itemID: String)
-    case webOpen(url: String, maximumCharacters: Int)
+    case webOpen(url: String, cursor: String?, maximumCharacters: Int)
 }
 
 public struct StudyAgentWebPage: Codable, Equatable, Sendable {
