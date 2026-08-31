@@ -217,7 +217,7 @@ html[data-theme] .mascot-three { opacity: 0; transform: translate(-50%, -50%) sc
 
 .release-layer { overflow: visible; border: 0; background: transparent; }
 .release-map { position: absolute; inset: -7% -10%; isolation: isolate; }
-.release-map-paper { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 34px 42px rgba(53,39,25,.2)); -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 86%, transparent 100%); mask-image: linear-gradient(to bottom, #000 0%, #000 86%, transparent 100%); transform-origin: 50% 52%; will-change: clip-path, opacity, transform; }
+.release-map-paper { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 34px 42px rgba(53,39,25,.2)); -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 86%, transparent 100%); mask-image: linear-gradient(to bottom, #000 0%, #000 86%, transparent 100%); transform-origin: 50% 52%; will-change: opacity, transform; }
 .release-destination { position: absolute; z-index: 2; display: grid; place-items: center; width: 25%; height: 27%; padding: 0 1.5% 2.4%; color: #2d2823; text-align: center; pointer-events: none; transform-origin: center; transition: transform .4s var(--ease-smooth-out), color .24s ease; }
 .release-destination > img { display: block; width: 78%; height: 80%; object-fit: contain; filter: drop-shadow(0 8px 7px rgba(37,29,22,.1)); transition: transform .4s var(--ease-smooth-out), filter .4s ease; }
 .release-title { position: absolute; left: 0; right: 0; bottom: 0; font-size: clamp(14px, 1.55vw, 25px); font-weight: 540; letter-spacing: .025em; transition: transform .38s var(--ease-smooth-out), opacity .22s ease; }
@@ -273,7 +273,7 @@ html[data-scene="3"][data-theme="mist-slate"] .scene-rail button.is-active::befo
 html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linear-gradient(180deg, #eedfcb 0%, #ebdbc7 100%) fixed; }
 .download-act { position: absolute; z-index: 6; left: 50%; bottom: -2%; width: 38%; height: 54%; pointer-events: none; transform: translateX(-50%); }
 .download-act .mascot-four { position: absolute; z-index: 2; left: 50%; top: -4%; width: 88%; height: 88%; transform: translateX(-50%); }
-.download-control { position: absolute; z-index: 3; left: 50%; bottom: 4%; width: 330px; height: 92px; color: #2e2924; background: url("assets/第四幕-下载纸签-v4.png") center / contain no-repeat; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); pointer-events: auto; transform: translateX(-50%); transition: filter .24s ease, transform .24s ease; }
+.download-control { position: absolute; z-index: 3; left: 50%; bottom: 4%; width: 330px; height: 92px; color: #2e2924; background: url("assets/第四幕-下载纸签-v4.webp") center / contain no-repeat; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); pointer-events: auto; transform: translateX(-50%); transition: filter .24s ease, transform .24s ease; }
 .download-control:hover { filter: drop-shadow(0 8px 10px rgba(54,40,25,.18)) saturate(1.07); transform: translateX(-50%) translateY(1px) scale(1.015); }
 .download-control:active { transform: translateX(-50%) translateY(2px) scale(.99); }
 .primary-download { position: absolute; inset: 0; display: grid; place-items: center; padding: 0; color: inherit; font-family: "Songti SC", "STSong", serif; white-space: nowrap; cursor: pointer; transform: translateY(-13px); }
@@ -327,9 +327,9 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   @keyframes themes-journey { 0%, 50% { opacity: 0; transform: scale(.9); } 58% { opacity: 1; transform: scale(.97); } 63%, 78% { opacity: 1; transform: scale(1); } 85%, 100% { opacity: 0; transform: scale(.98); } }
   @keyframes release-journey { 0%, 79% { opacity: 0; } 84%, 100% { opacity: 1; } }
   @keyframes map-paper-journey {
-    0%, 79% { opacity: 0; clip-path: inset(3% 48% 3% 48%); transform: scaleX(.12) scaleY(.74); }
-    88% { opacity: 1; clip-path: inset(0); transform: scaleX(1.025) scaleY(1); }
-    92%, 100% { opacity: 1; clip-path: inset(0); transform: scale(1); }
+    0%, 79% { opacity: 0; transform: scaleX(.12) scaleY(.74); }
+    88% { opacity: 1; transform: scaleX(1.025) scaleY(1); }
+    92%, 100% { opacity: 1; transform: scale(1); }
   }
   @keyframes map-destination-journey {
     0%, 85% { opacity: 0; transform: translateY(22px) scale(.82); }
@@ -345,11 +345,11 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   html[data-scene="3"] .journey-stage { transform: translate3d(-50%, -50%, 0) scale(.98) rotate(0deg); }
   html[data-scene="4"] .journey-stage { transform: translate3d(-50%, calc(-50% - 3vh), 0) scale(1.18) rotate(0deg); }
   html[data-scene="1"] .blank-layer, html[data-scene="2"] .experience-layer, html[data-scene="3"] .themes-layer, html[data-scene="4"] .release-layer { opacity: 1; }
-  .release-map-paper { clip-path: inset(3% 48%); opacity: 0; transform: scaleX(.12) scaleY(.74); }
+  .release-map-paper { opacity: 0; transform: scaleX(.12) scaleY(.74); }
   .release-destination { opacity: 0; transform: translateY(22px) scale(.82); }
   html[data-scene="4"] .release-map-paper { animation: map-paper-open .9s var(--ease-smooth-out) both; }
   html[data-scene="4"] .release-destination { animation: map-destination-open .46s var(--ease-smooth-out) .5s both; }
-  @keyframes map-paper-open { to { opacity: 1; clip-path: inset(0); transform: scale(1); } }
+  @keyframes map-paper-open { to { opacity: 1; transform: scale(1); } }
   @keyframes map-destination-open { to { opacity: 1; transform: translateY(0) scale(1); } }
 }
 

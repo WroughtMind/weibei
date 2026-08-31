@@ -231,12 +231,19 @@ railButtons.forEach(button => {
 });
 
 const ratios = new Map(chapters.map(chapter => [chapter, 0]));
+let sceneFourPreloaded = false;
+const preloadSceneFour = () => {
+  if (sceneFourPreloaded) return;
+  sceneFourPreloaded = true;
+  ['第四幕-折页地图-v1', '第四幕-下载纸签-v4', '第四幕-Webi动作-QA-v1', '第四幕-Webi动作-Labs-v1', '第四幕-Webi动作-官方群-v1', '第四幕-Webi动作-反馈-v1', 'Webi-第四幕-下载'].forEach(name => { new Image().src = `assets/${name}.webp`; });
+};
 const observer = new IntersectionObserver(entries => {
   entries.forEach(entry => ratios.set(entry.target, entry.intersectionRatio));
   const activeChapter = chapters.reduce((best, chapter) => ratios.get(chapter) > ratios.get(best) ? chapter : best);
   const activeIndex = chapters.indexOf(activeChapter);
   document.documentElement.dataset.scene = String(activeIndex + 1);
   if (activeIndex !== 2) resetThemePreview();
+  if (activeIndex === 2) preloadSceneFour();
   railButtons.forEach((button, index) => button.classList.toggle('is-active', index === activeIndex));
 }, { threshold: [.25, .5, .75] });
 
