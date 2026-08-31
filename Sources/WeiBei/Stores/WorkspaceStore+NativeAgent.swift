@@ -231,6 +231,19 @@ extension WorkspaceStore {
                 )
             }
         )
+        let sessionTitleHandler: StudyAgentSessionTitleHandler?
+        if let session = studySessions.first(where: { $0.id == target.sessionID }),
+           Self.sessionNeedsSemanticTitle(
+               replacing: session.title,
+               messages: session.messages,
+               titleSetByUser: session.titleSetByUser
+           ) {
+            sessionTitleHandler = { [weak self] title in
+                await self?.applySemanticSessionTitleAndSave(title, to: target.sessionID)
+            }
+        } else {
+            sessionTitleHandler = nil
+        }
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
@@ -242,9 +255,7 @@ extension WorkspaceStore {
             systemPromptText: resources.systemPrompt,
             hostToolHandler: hostToolHandler,
             liveStores: liveStores,
-            sessionTitleHandler: { [weak self] title in
-                await self?.applySemanticSessionTitleAndSave(title, to: target.sessionID)
-            }
+            sessionTitleHandler: sessionTitleHandler
         )
         NativeAgentRuntimeBox.runtime = runtime
         defer { NativeAgentRuntimeBox.runtime = nil }

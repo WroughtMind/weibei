@@ -1327,8 +1327,8 @@ private func checkSessionTitleGeneration() throws {
     )
     try nativeRequire(
         NativeSessionTitle.shouldPropose(completedTurnCount: 1)
-            && !NativeSessionTitle.shouldPropose(completedTurnCount: 2),
-        "semantic titles only run after the first completed turn"
+            && NativeSessionTitle.shouldPropose(completedTurnCount: 2),
+        "semantic titles can retry after a completed turn"
     )
 
     let generated = try waitFor {

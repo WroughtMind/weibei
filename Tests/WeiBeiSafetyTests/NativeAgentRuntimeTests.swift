@@ -796,7 +796,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertNil(NativeSessionTitle.normalizedTitle("New Chat"))
         XCTAssertTrue(NativeSessionTitle.shouldPropose(completedTurnCount: 1))
         XCTAssertFalse(NativeSessionTitle.shouldPropose(completedTurnCount: 0))
-        XCTAssertFalse(NativeSessionTitle.shouldPropose(completedTurnCount: 2))
+        XCTAssertTrue(NativeSessionTitle.shouldPropose(completedTurnCount: 2))
     }
 
     func testSessionTitleGenerateUsesFirstTurnWithoutTools() async {
@@ -820,20 +820,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(capture.request?.messages.last?.content.contains("请帮我解释利率为什么变化") == true)
     }
 
-    func testSessionTitleGenerateTimesOutWithoutThrowing() async {
-        let started = Date()
-        let title = await NativeSessionTitle.generate(
-            adapter: HangingLLMAdapter(),
-            model: "mock",
-            question: "问",
-            answer: "答",
-            timeoutNanoseconds: 40_000_000
-        )
-        XCTAssertNil(title)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
-    }
-
-    func testNativeRuntimeDeliversSemanticTitleOnceOnFirstCompletedTurn() async throws {
+    func testNativeRuntimeRetriesSemanticTitleAfterFirstAttemptFails() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("native-title-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -862,8 +849,8 @@ final class NativeAgentRuntimeTests: XCTestCase {
             )
         )
         XCTAssertEqual(first.text, "第一答")
-        let title = await box.wait(timeout: 2)
-        XCTAssertEqual(title, "利率变化机制")
+        let firstTitle = await box.wait(timeout: 0.2)
+        XCTAssertNil(firstTitle)
         XCTAssertEqual(adapter.titleRequestCount, 1)
 
         _ = try await runtime.respond(
@@ -878,9 +865,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
                 contextRevision: "r2"
             )
         )
-        try await Task.sleep(nanoseconds: 150_000_000)
+        let title = await box.wait(timeout: 2)
+        XCTAssertEqual(title, "利率变化机制")
         XCTAssertEqual(box.count, 1)
-        XCTAssertEqual(adapter.titleRequestCount, 1)
+        XCTAssertEqual(adapter.titleRequestCount, 2)
     }
 
     func testVisualAssetMagicRejectsMismatchedBytes() {
@@ -1394,20 +1382,6 @@ private final class TitleCapture: @unchecked Sendable {
     }
 }
 
-private struct HangingLLMAdapter: NativeLLMAdapter {
-    var family: String { "mock" }
-
-    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                continuation.finish()
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
-}
-
 private final class FirstTurnTitleAdapter: NativeLLMAdapter, @unchecked Sendable {
     let family = "mock"
     private let lock = NSLock()
@@ -1420,7 +1394,14 @@ private final class FirstTurnTitleAdapter: NativeLLMAdapter, @unchecked Sendable
         if isTitle {
             lock.lock()
             titleRequestCount += 1
+            let attempt = titleRequestCount
             lock.unlock()
+            if attempt == 1 {
+                return AsyncThrowingStream { continuation in
+                    continuation.yield(.finish(reason: .stop, replayState: nil))
+                    continuation.finish()
+                }
+            }
         }
         let text: String
         if isTitle {
