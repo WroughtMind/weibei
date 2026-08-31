@@ -235,7 +235,12 @@ let sceneFourPreloaded = false;
 const preloadSceneFour = () => {
   if (sceneFourPreloaded) return;
   sceneFourPreloaded = true;
-  ['第四幕-折页地图-v1', '第四幕-下载纸签-v4', '第四幕-Webi动作-QA-v1', '第四幕-Webi动作-Labs-v1', '第四幕-Webi动作-官方群-v1', '第四幕-Webi动作-反馈-v1', 'Webi-第四幕-下载'].forEach(name => { new Image().src = `assets/${name}.webp`; });
+  ['第四幕-折页地图-v1', '第四幕-下载纸签-v4', '第四幕-Webi动作-QA-v1', '第四幕-Webi动作-Labs-v1', '第四幕-Webi动作-官方群-v1', '第四幕-Webi动作-反馈-v1', 'Webi-第四幕-下载'].forEach(name => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = `assets/${name}.webp`;
+    img.decode().catch(() => {}); // 提前解码,避免进入第四幕时解码撞上展开动画
+  });
 };
 const observer = new IntersectionObserver(entries => {
   entries.forEach(entry => ratios.set(entry.target, entry.intersectionRatio));
