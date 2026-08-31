@@ -217,7 +217,9 @@ html[data-theme] .mascot-three { opacity: 0; transform: translate(-50%, -50%) sc
 
 .release-layer { overflow: visible; border: 0; background: transparent; }
 .release-map { position: absolute; inset: -7% -10%; isolation: isolate; }
-.release-map-paper { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 50% 52%; will-change: opacity, transform; } /* 阴影与底部渐隐已烘焙进图片素材,勿再加 filter/mask——展开动画缩放时会反复重光栅化导致掉帧 */
+/* 阴影与底部渐隐已烘焙进素材:阴影是独立图层(不参与展开动画,展开完成后淡入),地图本体无任何 filter/mask——大幅 scale 动画中挂滤镜会反复重光栅化导致掉帧 */
+.release-map-shadow { position: absolute; z-index: -1; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; will-change: opacity; }
+.release-map-paper { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 50% 52%; will-change: opacity, transform; }
 .release-destination { position: absolute; z-index: 2; display: grid; place-items: center; width: 25%; height: 27%; padding: 0 1.5% 2.4%; color: #2d2823; text-align: center; pointer-events: none; transform-origin: center; transition: transform .4s var(--ease-smooth-out), color .24s ease; }
 .release-destination > img { display: block; width: 78%; height: 80%; object-fit: contain; filter: drop-shadow(0 8px 7px rgba(37,29,22,.1)); transition: transform .4s var(--ease-smooth-out), filter .4s ease; }
 .release-title { position: absolute; left: 0; right: 0; bottom: 0; font-size: clamp(14px, 1.55vw, 25px); font-weight: 540; letter-spacing: .025em; transition: transform .38s var(--ease-smooth-out), opacity .22s ease; }
@@ -302,6 +304,7 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   .themes-layer { animation: themes-journey 1s linear both; animation-timeline: scroll(root block); }
   .release-layer { animation: release-journey 1s linear both; animation-timeline: scroll(root block); }
   .release-map-paper { animation: map-paper-journey 1s linear both; animation-timeline: scroll(root block); }
+  .release-map-shadow { animation: map-shadow-journey 1s linear both; animation-timeline: scroll(root block); }
   .release-destination { animation: map-destination-journey 1s linear both; animation-timeline: scroll(root block); }
 
   @keyframes hero-tagline-journey {
@@ -331,6 +334,7 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
     88% { opacity: 1; transform: scaleX(1.025) scaleY(1); }
     92%, 100% { opacity: 1; transform: scale(1); }
   }
+  @keyframes map-shadow-journey { 0%, 91% { opacity: 0; } 96%, 100% { opacity: 1; } }
   @keyframes map-destination-journey {
     0%, 85% { opacity: 0; transform: translateY(22px) scale(.82); }
     91%, 100% { opacity: 1; transform: translateY(0) scale(1); }
@@ -347,7 +351,9 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   html[data-scene="1"] .blank-layer, html[data-scene="2"] .experience-layer, html[data-scene="3"] .themes-layer, html[data-scene="4"] .release-layer { opacity: 1; }
   .release-map-paper { opacity: 0; transform: scaleX(.12) scaleY(.74); }
   .release-destination { opacity: 0; transform: translateY(22px) scale(.82); }
+  .release-map-shadow { transition: opacity .4s ease .45s; }
   html[data-scene="4"] .release-map-paper { animation: map-paper-open .9s var(--ease-smooth-out) both; }
+  html[data-scene="4"] .release-map-shadow { opacity: 1; }
   html[data-scene="4"] .release-destination { animation: map-destination-open .46s var(--ease-smooth-out) .5s both; }
   @keyframes map-paper-open { to { opacity: 1; transform: scale(1); } }
   @keyframes map-destination-open { to { opacity: 1; transform: translateY(0) scale(1); } }
@@ -429,6 +435,7 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   html[data-scene="4"] .journey-stage { top: 53%; width: 100vw; height: calc(100dvh - 58px); aspect-ratio: auto; transform: translate3d(-50%, -50%, 0) !important; }
   .release-layer { overflow: hidden; }
   .release-map { inset: 0; }
+  .release-map-shadow { display: none; }
   .release-map-paper { width: 100%; height: 100%; object-fit: cover; opacity: .68 !important; -webkit-mask-image: none; mask-image: none; }
   .release-destination { width: 42%; height: 22%; padding: 0 2% 5%; animation: none !important; opacity: 1 !important; transform: none !important; }
   .release-destination > img { width: 70%; height: 74%; }

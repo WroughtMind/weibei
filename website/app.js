@@ -235,7 +235,7 @@ let sceneFourPreloaded = false;
 const preloadSceneFour = () => {
   if (sceneFourPreloaded) return;
   sceneFourPreloaded = true;
-  ['第四幕-折页地图-v1', '第四幕-下载纸签-v4', '第四幕-Webi动作-QA-v1', '第四幕-Webi动作-Labs-v1', '第四幕-Webi动作-官方群-v1', '第四幕-Webi动作-反馈-v1', 'Webi-第四幕-下载'].forEach(name => {
+  ['第四幕-折页地图-v1', '第四幕-折页地图-阴影', '第四幕-下载纸签-v4', '第四幕-Webi动作-QA-v1', '第四幕-Webi动作-Labs-v1', '第四幕-Webi动作-官方群-v1', '第四幕-Webi动作-反馈-v1', 'Webi-第四幕-下载'].forEach(name => {
     const img = new Image();
     img.decoding = 'async';
     img.src = `assets/${name}.webp`;
