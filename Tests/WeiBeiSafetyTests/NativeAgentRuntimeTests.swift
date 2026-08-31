@@ -803,6 +803,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let capture = RequestCapture()
         let title = await NativeSessionTitle.generate(
             adapter: MockLLMAdapter(
+                family: "responses-mock",
                 chunks: [
                     .textDelta(index: 0, text: "利率变化机制"),
                     .finish(reason: .stop, replayState: nil),
@@ -814,7 +815,8 @@ final class NativeAgentRuntimeTests: XCTestCase {
             answer: "利率是资金的价格。"
         )
         XCTAssertEqual(title, "利率变化机制")
-        XCTAssertEqual(capture.request?.maxTokens, NativeSessionTitle.maxTokens)
+        XCTAssertEqual(capture.request?.maxTokens, 256)
+        XCTAssertEqual(capture.request?.reasoningEffort, "low")
         XCTAssertTrue(capture.request?.tools.isEmpty == true)
         XCTAssertEqual(capture.request?.messages.first?.content, NativeSessionTitle.systemPrompt)
         XCTAssertTrue(capture.request?.messages.last?.content.contains("请帮我解释利率为什么变化") == true)
@@ -1105,7 +1107,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
 }
 
 private struct MockLLMAdapter: NativeLLMAdapter {
-    var family: String { "mock" }
+    var family = "mock"
     var chunks: [NativeStreamChunk]
     var inspect: @Sendable (NativeLLMRequest) -> Void = { _ in }
 
