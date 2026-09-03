@@ -15,16 +15,20 @@ async function main() {
     throw new Error("appdmg unavailable"); // 不可达；仅为满足 TS 的赋值分析
   }
 
-  const [rootArgument, appArgument, targetArgument, version] = process.argv.slice(2);
+  const [rootArgument, appArgument, targetArgument, version, backgroundArgument] = process.argv.slice(2);
   if (!rootArgument || !appArgument || !targetArgument || !version) {
-    throw new Error("usage: build_dmg.ts <repo-root> <魏碑.app> <output.dmg> <version>");
+    throw new Error(
+      "usage: build_dmg.ts <repo-root> <魏碑.app> <output.dmg> <version> [background.png]",
+    );
   }
 
   const root = path.resolve(rootArgument);
   const appPath = path.resolve(appArgument);
   const target = path.resolve(targetArgument);
   const designSystem = path.join(root, "DesignSystem");
-  const background = path.join(designSystem, "assets/dmg/dmg-background.png");
+  const background = backgroundArgument
+    ? path.resolve(backgroundArgument)
+    : path.join(designSystem, "assets/dmg/dmg-background.png");
   const icon = path.join(designSystem, "assets/app-icon/AppIcon.icns");
 
   for (const requiredPath of [appPath, background, `${background.slice(0, -4)}@2x.png`, icon]) {

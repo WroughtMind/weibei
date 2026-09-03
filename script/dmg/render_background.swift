@@ -19,14 +19,17 @@ private func fail(_ message: String) -> Never {
     exit(1)
 }
 
-guard CommandLine.arguments.count == 4,
+guard CommandLine.arguments.count == 5,
       let scale = Int(CommandLine.arguments[3]),
-      scale == 1 || scale == 2 else {
-    fail("usage: swift render_background.swift <DesignSystem> <output.png> <1|2>")
+      scale == 1 || scale == 2,
+      ["arm64", "x86_64"].contains(CommandLine.arguments[4]) else {
+    fail("usage: swift render_background.swift <DesignSystem> <output.png> <1|2> <arm64|x86_64>")
 }
 
 let designSystemURL = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 let outputURL = URL(fileURLWithPath: CommandLine.arguments[2])
+let architecture = CommandLine.arguments[4]
+let architectureLabel = architecture == "arm64" ? "Apple 芯片" : "Intel 芯片"
 let paperURL = designSystemURL.appendingPathComponent("assets/logo/source/paper-texture-2048.png")
 let markURL = designSystemURL.appendingPathComponent("assets/logo/exports/transparent/weibei-mark-flat-1024.png")
 let fontURL = designSystemURL.appendingPathComponent("assets/fonts/WeiBeiStele.ttf")
@@ -115,7 +118,7 @@ arrow.stroke()
 color(170, 42, 35).setFill()
 NSRect(x: 38, y: 46, width: 9, height: 9).fill()
 
-("macOS 14+  ·  Apple 芯片  ·  读、记、问，回到出处" as NSString).draw(
+("macOS 14+  ·  \(architectureLabel)  ·  读、记、问，回到出处" as NSString).draw(
     at: NSPoint(x: 58, y: 42),
     withAttributes: [
         .font: detailFont,

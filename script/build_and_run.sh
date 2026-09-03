@@ -7,6 +7,10 @@ if [[ "$MODE" == "--package" || "$MODE" == "package" ]]; then
   MODE="package"
   PACKAGE_ONLY=true
 fi
+if [[ "$MODE" == "--verify" || "$MODE" == "verify" ]]; then
+  MODE="verify"
+  PACKAGE_ONLY=true
+fi
 CHECK_ONLY=false
 if [[ "$MODE" == "--check" || "$MODE" == "check" ]]; then
   MODE="check"
@@ -22,6 +26,19 @@ if [[ "$MODE" == "check" || "$MODE" == "--debug" || "$MODE" == "debug" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOST_ARCH="$(uname -m)"
+TARGET_ARCH="${WEIBEI_TARGET_ARCH:-$HOST_ARCH}"
+case "$TARGET_ARCH" in
+  arm64|x86_64) ;;
+  *)
+    echo "build failed: WEIBEI_TARGET_ARCH must be arm64 or x86_64" >&2
+    exit 32
+    ;;
+esac
+if [[ "$HOST_ARCH" != "$TARGET_ARCH" ]]; then
+  echo "build failed: native $TARGET_ARCH package requires a $TARGET_ARCH runner (host is $HOST_ARCH)" >&2
+  exit 33
+fi
 VERSION_FILE="$ROOT_DIR/VERSION"
 FINAL_DIST_DIR="$ROOT_DIR/dist"
 FINAL_APP_BUNDLE="$FINAL_DIST_DIR/$APP_DISPLAY_NAME.app"
@@ -60,7 +77,7 @@ PDF_TEXT_WORKER="$APP_HELPERS/$PDF_TEXT_WORKER_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 SPARKLE_TEST_PUBLIC_KEY="eRFPLZuNM6m8bltmtpPX4fzKbufI1z6rKJHtgIIsllk="
 SPARKLE_PUBLIC_KEY="${WEIBEI_SPARKLE_PUBLIC_KEY:-$SPARKLE_TEST_PUBLIC_KEY}"
-SPARKLE_FEED_URL="${WEIBEI_SPARKLE_FEED_URL:-https://github.com/weibei-app/weibei/releases/latest/download/appcast.xml}"
+SPARKLE_FEED_URL="${WEIBEI_SPARKLE_FEED_URL:-https://github.com/WroughtMind/weibei/releases/latest/download/appcast-$TARGET_ARCH.xml}"
 
 target_app_is_running() {
   local pid command target_binary="$APP_BINARY"
@@ -134,7 +151,7 @@ if [[ "$CHECK_ONLY" != true ]]; then
   fi
   GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)"
   BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count "$GIT_COMMIT")"
-  DSYM_NAME="$PRODUCT_NAME-$APP_VERSION-build-$BUILD_NUMBER-$GIT_COMMIT.dSYM"
+  DSYM_NAME="$PRODUCT_NAME-$APP_VERSION-$TARGET_ARCH-build-$BUILD_NUMBER-$GIT_COMMIT.dSYM"
   DSYM_PATH="$FINAL_DIST_DIR/$DSYM_NAME"
   SOURCE_DIRTY=false
   if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]]; then
@@ -272,6 +289,8 @@ if [[ "$CHECK_ONLY" != true ]]; then
   <string>$BUILD_NUMBER</string>
   <key>WeiBeiGitCommit</key>
   <string>$GIT_COMMIT</string>
+  <key>WeiBeiArchitecture</key>
+  <string>$TARGET_ARCH</string>
   <key>WeiBeiSourceDirty</key>
   <$SOURCE_DIRTY/>
   <key>LSMinimumSystemVersion</key>
@@ -355,6 +374,7 @@ PLIST
       exit 18
     fi
     (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata "$FINAL_APP_BUNDLE")
+    (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-architecture "$TARGET_ARCH" "$FINAL_APP_BUNDLE")
     (cd "$ROOT_DIR" && swift run WeiBeiDev verify-production-hygiene "$FINAL_APP_BUNDLE")
   fi
 fi
@@ -375,11 +395,44 @@ run_verifiers() {
   swift run -c "$BUILD_CONFIGURATION" WeiBeiNativeCheck --authentication-status
 }
 
+verify_launch() {
+  local pid="" command=""
+  open_app
+  for _ in {1..120}; do
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" ]] || continue
+      command="$(ps -p "$candidate" -o command= 2>/dev/null || true)"
+      if [[ "$command" == "$APP_BINARY" || "$command" == "$APP_BINARY "* ]]; then
+        pid="$candidate"
+        break 2
+      fi
+    done < <(pgrep -x "$PRODUCT_NAME" 2>/dev/null || true)
+    sleep 0.25
+  done
+  if [[ -z "$pid" ]]; then
+    echo "verify failed: packaged app did not stay running after launch" >&2
+    exit 34
+  fi
+  kill -TERM "$pid" 2>/dev/null || true
+  for _ in {1..260}; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "verify_launch=passed"
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "verify failed: packaged app did not exit after SIGTERM" >&2
+  exit 35
+}
+
 case "$MODE" in
   check)
     run_verifiers
     ;;
   package)
+    ;;
+  verify)
+    verify_launch
     ;;
   run)
     open_app
@@ -396,7 +449,7 @@ case "$MODE" in
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
     ;;
   *)
-    echo "usage: $0 [run|check|package|--debug|--logs|--telemetry]" >&2
+    echo "usage: $0 [run|check|package|verify|--debug|--logs|--telemetry]" >&2
     exit 2
     ;;
 esac
