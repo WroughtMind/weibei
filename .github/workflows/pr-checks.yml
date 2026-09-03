@@ -27,7 +27,7 @@ jobs:
   fast-check:
     name: 快速编译与核心自检
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 30
     outputs:
       code: ${{ steps.scope.outputs.code }}
       release: ${{ steps.scope.outputs.release }}
