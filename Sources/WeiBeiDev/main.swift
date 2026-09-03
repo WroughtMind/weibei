@@ -265,7 +265,10 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
     }
 
     let expectedArchitecture = arguments[0]
-    let appBundle = URL(fileURLWithPath: arguments[1])
+    // FileManager may enumerate a /var-based mount through its canonical
+    // /private/var path. Canonicalize the bundle root so required-binary URL
+    // comparisons use the same spelling as enumerated URLs.
+    let appBundle = URL(fileURLWithPath: arguments[1]).resolvingSymlinksInPath()
     let contents = appBundle.appendingPathComponent("Contents", isDirectory: true)
     let infoPlist = contents.appendingPathComponent("Info.plist")
     guard let plistData = try? Data(contentsOf: infoPlist),
