@@ -396,13 +396,13 @@ run_verifiers() {
 }
 
 verify_launch() {
-  local pid="" command=""
+  local pid="" exe_path="" staged_marker="weibei-package-$UID"
   open_app
   for _ in {1..120}; do
     while IFS= read -r candidate; do
       [[ -n "$candidate" ]] || continue
-      command="$(ps -p "$candidate" -o command= 2>/dev/null || true)"
-      if [[ "$command" == "$APP_BINARY" || "$command" == "$APP_BINARY "* ]]; then
+      exe_path="$(ps -p "$candidate" -o comm= 2>/dev/null || true)"
+      if [[ "$exe_path" == *"$staged_marker"* ]]; then
         pid="$candidate"
         break 2
       fi
