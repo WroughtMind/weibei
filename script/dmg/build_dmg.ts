@@ -15,20 +15,16 @@ async function main() {
     throw new Error("appdmg unavailable"); // 不可达；仅为满足 TS 的赋值分析
   }
 
-  const [rootArgument, appArgument, targetArgument, version, backgroundArgument] = process.argv.slice(2);
+  const [rootArgument, appArgument, targetArgument, version] = process.argv.slice(2);
   if (!rootArgument || !appArgument || !targetArgument || !version) {
-    throw new Error(
-      "usage: build_dmg.ts <repo-root> <魏碑.app> <output.dmg> <version> [background.png]",
-    );
+    throw new Error("usage: build_dmg.ts <repo-root> <魏碑.app> <output.dmg> <version>");
   }
 
   const root = path.resolve(rootArgument);
   const appPath = path.resolve(appArgument);
   const target = path.resolve(targetArgument);
   const designSystem = path.join(root, "DesignSystem");
-  const background = backgroundArgument
-    ? path.resolve(backgroundArgument)
-    : path.join(designSystem, "assets/dmg/dmg-background.png");
+  const background = path.join(designSystem, "assets/dmg/dmg-background.png");
   const icon = path.join(designSystem, "assets/app-icon/AppIcon.icns");
 
   for (const requiredPath of [appPath, background, `${background.slice(0, -4)}@2x.png`, icon]) {
@@ -55,8 +51,8 @@ async function main() {
         size: { width: 720, height: 460 },
       },
       contents: [
-        { x: 205, y: 270, type: "file", path: appPath, name: "魏碑.app" },
-        { x: 515, y: 270, type: "link", path: "/Applications", name: "应用程序" },
+        { x: 145, y: 270, type: "file", path: appPath, name: "魏碑.app" },
+        { x: 565, y: 270, type: "link", path: "/Applications", name: "应用程序" },
       ],
     },
   });

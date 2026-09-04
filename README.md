@@ -79,14 +79,14 @@
 4. 点答案里的引用标签，跳回出处。
 5. 让 AI 把有用的东西存进笔记，审一眼提案卡片再放行。
 
-首次打开会被 Gatekeeper 拦下（社区构建未经 Apple 公证）。放行一次即可，之后正常打开；更新到新下载的版本后，需要再放行一次：
+当前发布未经 Apple 公证，首次打开可能会被 Gatekeeper 拦下。放行一次即可，之后正常打开；更新到新下载的版本后，需要再放行一次：
 
 - macOS 15 及以后：双击尝试打开一次，再到**系统设置 → 隐私与安全性**点底部的**仍要打开**并确认。右键“打开”的旧捷径从 macOS 15 起已被系统移除。
 - macOS 14：在“应用程序”里右键 `魏碑.app`，选**打开**，再确认一次**打开**。
 
 这只放行魏碑一个应用，不要全局关闭 Gatekeeper。新版本检查在设置里，不用盯着 Releases 页。
 
-发布流程会为同一版本生成 Apple Silicon（arm64）与 Intel（x86_64）两个原生 DMG；请在 Releases 或官网选择与 Mac 芯片一致的文件。Homebrew Cask 会同时记录两份校验值；tap 发布前，请用 DMG 或从源码构建。
+发布流程会为同一版本生成 Apple Silicon（arm64）与 Intel（x86_64）两个原生 DMG；有可用版本时，请在 Releases 或官网选择与 Mac 芯片一致的文件。Homebrew Cask 会同时记录两份校验值；tap 发布前，请用 DMG 或从源码构建。
 
 ## ▍为长夜而生
 
@@ -98,7 +98,7 @@
 - 资料与索引完全本地。读书、记笔记不需要联网，只有 AI 回答需要。
 - 学习记忆自动记录，回答末尾有轻提示；正式笔记与关系修改仍需你确认。
 - 大文件可能只索引了部分，应用会如实标注，不假装完整。
-- 社区构建未经 Apple 公证，首次打开需手动放行。
+- 当前发布未经 Apple 公证，首次打开需手动放行。
 
 ---
 
@@ -138,8 +138,7 @@ cd weibei
 | `make editor-build` | `npm run build:editor` |
 | `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)`（用法：`make perf-p95 LOG=<perf日志> METRIC=<指标名>`） |
-| `make release-community` | `./script/build_release_dmg.sh --community` |
-| `make release-notarized` | `./script/build_release_dmg.sh --notarized` |
+| `make release` | `./script/build_release_dmg.sh`（构建当前架构未公证的正式 DMG） |
 | `make clean` | `swift package clean && rm -rf dist`（保留 `node_modules` 与用户数据） |
 
 Node 工具链：仓库只有一个根锁文件（`package-lock.json`），覆盖 `Prototypes/RichAnswerWebRuntime` 工作区，一次 `npm ci` 装齐。`script/`、`DesignSystem/scripts/` 与原型 `scripts/` 下的工具脚本是 TypeScript，用 `tsx` 运行（如 `npx tsx script/check-genui-math.ts`）；`npm run typecheck:tools` 做类型检查。

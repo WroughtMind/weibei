@@ -7,14 +7,6 @@ on:
         description: "与 VERSION/package.json 一致的 major.minor.patch（不含 v）"
         required: true
         type: string
-      trust:
-        description: "公证正式版，或明确标注 Gatekeeper 限制的社区版"
-        required: true
-        type: choice
-        default: notarized
-        options:
-          - notarized
-          - community
 
 permissions:
   contents: read
@@ -99,47 +91,14 @@ jobs:
           test -s "$RUNNER_TEMP/weibei-sparkle-private-key"
           chmod 600 "$RUNNER_TEMP/weibei-sparkle-private-key"
 
-      - name: 准备 Developer ID 与公证凭据
-        if: ${{ inputs.trust == 'notarized' }}
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.WEIBEI_DEVELOPER_ID_P12_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.WEIBEI_DEVELOPER_ID_P12_PASSWORD }}
-          NOTARY_KEY_BASE64: ${{ secrets.WEIBEI_NOTARY_PRIVATE_KEY_BASE64 }}
-          NOTARY_KEY_ID: ${{ secrets.WEIBEI_NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ secrets.WEIBEI_NOTARY_ISSUER_ID }}
-        run: |
-          test -n "$CERTIFICATE_BASE64"
-          test -n "$CERTIFICATE_PASSWORD"
-          test -n "$NOTARY_KEY_BASE64"
-          test -n "$NOTARY_KEY_ID"
-          test -n "$NOTARY_ISSUER_ID"
-          keychain="$RUNNER_TEMP/weibei-signing.keychain-db"
-          keychain_password="$(uuidgen)"
-          /usr/bin/printf '%s' "$CERTIFICATE_BASE64" | /usr/bin/base64 -D -o "$RUNNER_TEMP/weibei-developer-id.p12"
-          /usr/bin/printf '%s' "$NOTARY_KEY_BASE64" | /usr/bin/base64 -D -o "$RUNNER_TEMP/AuthKey_$NOTARY_KEY_ID.p8"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$RUNNER_TEMP/weibei-developer-id.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
-          security list-keychains -d user -s "$keychain"
-          xcrun notarytool store-credentials weibei-ci \
-            --key "$RUNNER_TEMP/AuthKey_$NOTARY_KEY_ID.p8" \
-            --key-id "$NOTARY_KEY_ID" \
-            --issuer "$NOTARY_ISSUER_ID" \
-            --keychain "$keychain"
-
       - name: 构建、签名并验证当前架构 DMG
         env:
           WEIBEI_TARGET_ARCH: ${{ matrix.arch }}
           WEIBEI_SPARKLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/weibei-sparkle-private-key
           WEIBEI_SPARKLE_PUBLIC_KEY: ${{ secrets.WEIBEI_SPARKLE_PUBLIC_KEY }}
           WEIBEI_REQUIRE_APPCAST: "1"
-          WEIBEI_CODESIGN_IDENTITY: ${{ secrets.WEIBEI_CODESIGN_IDENTITY }}
-          WEIBEI_NOTARY_KEYCHAIN_PROFILE: weibei-ci
-          WEIBEI_NOTARY_KEYCHAIN: ${{ runner.temp }}/weibei-signing.keychain-db
-          WEIBEI_NOTARIZED_RELEASE_APPROVED: ${{ inputs.trust == 'notarized' && '1' || '0' }}
-        run: ./script/build_release_dmg.sh --${{ inputs.trust }} --arch "${{ matrix.arch }}"
+          WEIBEI_VERIFY_LAUNCH: "1"
+        run: ./script/build_release_dmg.sh --arch "${{ matrix.arch }}"
 
       - name: 再验收公开资产集合
         env:
@@ -166,18 +125,13 @@ jobs:
             dist/release/${{ matrix.arch }}/WeiBei-${{ needs.authorize.outputs.version }}-macOS-${{ matrix.arch }}.dmg.sha256
             dist/release/${{ matrix.arch }}/appcast-${{ matrix.arch }}.xml
             dist/release/${{ matrix.arch }}/appcast.xml
+            dist/release/${{ matrix.arch }}/WeiBei-*.dSYM/**
           if-no-files-found: error
           retention-days: 14
 
       - name: 清理临时发布密钥
         if: ${{ always() }}
-        run: |
-          /bin/rm -f "$RUNNER_TEMP/weibei-sparkle-private-key"
-          /bin/rm -f "$RUNNER_TEMP/weibei-developer-id.p12"
-          /bin/rm -f "$RUNNER_TEMP"/AuthKey_*.p8
-          if [[ -f "$RUNNER_TEMP/weibei-signing.keychain-db" ]]; then
-            security delete-keychain "$RUNNER_TEMP/weibei-signing.keychain-db"
-          fi
+        run: /bin/rm -f "$RUNNER_TEMP/weibei-sparkle-private-key"
 
   publish:
     name: 汇总后原子公开双架构 Release
@@ -203,7 +157,6 @@ jobs:
       - name: 汇总校验并生成双架构 Homebrew Cask
         env:
           RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
-          RELEASE_TRUST: ${{ inputs.trust }}
         run: |
           npm ci
           for arch in arm64 x86_64; do
@@ -218,31 +171,37 @@ jobs:
           arm_sha="$(awk '{print $1}' "dist/publish/WeiBei-$RELEASE_VERSION-macOS-arm64.dmg.sha256")"
           intel_sha="$(awk '{print $1}' "dist/publish/WeiBei-$RELEASE_VERSION-macOS-x86_64.dmg.sha256")"
           npx tsx script/homebrew/generate_cask.ts \
-            "$RELEASE_VERSION" "$arm_sha" "$intel_sha" "$RELEASE_TRUST" \
+            "$RELEASE_VERSION" "$arm_sha" "$intel_sha" \
             dist/publish/weibei.rb
           ruby -c dist/publish/weibei.rb
+          symbol_count="$(find dist/publish -maxdepth 1 -type d -name 'WeiBei-*.dSYM' | wc -l | tr -d ' ')"
+          test "$symbol_count" = "2"
+          mkdir -p dist/publish/debug-symbols
+          while IFS= read -r symbol; do
+            ditto "$symbol" "dist/publish/debug-symbols/$(basename "$symbol")"
+          done < <(find dist/publish -maxdepth 1 -type d -name 'WeiBei-*.dSYM' | sort)
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/publish/debug-symbols \
+            "dist/publish/WeiBei-$RELEASE_VERSION-debug-symbols.zip"
+          unzip -t "dist/publish/WeiBei-$RELEASE_VERSION-debug-symbols.zip"
 
       - name: 创建草稿、上传完整资产后再公开
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
           RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
-          RELEASE_TRUST: ${{ inputs.trust }}
         run: |
-          trust_label="Apple Developer ID 签名与公证"
-          if [[ "$RELEASE_TRUST" == "community" ]]; then
-            trust_label="社区 ad-hoc 签名（未公证）"
-          fi
           gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --draft \
             --generate-notes \
-            --notes "同时提供原生 Apple Silicon（arm64）与 Intel（x86_64）版本。信任方式：$trust_label。" \
+            --notes "同时提供原生 Apple Silicon（arm64）与 Intel（x86_64）版本。当前安装包使用 ad-hoc 签名，未经 Apple 公证；首次打开可能需要在系统设置中单独允许魏碑。" \
             --title "魏碑 $RELEASE_VERSION"
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             dist/publish/WeiBei-*.dmg \
             dist/publish/WeiBei-*.dmg.sha256 \
+            "dist/publish/WeiBei-$RELEASE_VERSION-debug-symbols.zip" \
             dist/publish/appcast-arm64.xml \
             dist/publish/appcast-x86_64.xml \
             dist/publish/appcast.xml \

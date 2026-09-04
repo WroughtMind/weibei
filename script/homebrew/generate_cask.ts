@@ -3,10 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-const [version, armSha256, intelSha256, trust, outputArgument] = process.argv.slice(2);
+const [version, armSha256, intelSha256, outputArgument] = process.argv.slice(2);
 if (!version || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(version)) {
   throw new Error(
-    "usage: generate_cask.ts <version> <arm-sha256> <intel-sha256> <community|notarized> <output.rb>",
+    "usage: generate_cask.ts <version> <arm-sha256> <intel-sha256> <output.rb>",
   );
 }
 if (!armSha256 || !/^[0-9a-f]{64}$/.test(armSha256)) {
@@ -15,16 +15,12 @@ if (!armSha256 || !/^[0-9a-f]{64}$/.test(armSha256)) {
 if (!intelSha256 || !/^[0-9a-f]{64}$/.test(intelSha256)) {
   throw new Error("Intel DMG SHA-256 must be 64 lowercase hexadecimal characters");
 }
-if (trust !== "community" && trust !== "notarized") {
-  throw new Error("release trust must be community or notarized");
-}
 if (!outputArgument) {
   throw new Error("missing output path");
 }
 
 const output = path.resolve(outputArgument);
-const caveats = trust === "community"
-  ? `
+const caveats = `
   caveats <<~EOS
     魏碑 ${version} 尚未经过 Apple 公证。Homebrew 会使用固定 SHA-256 校验下载文件，
     但不会替代 macOS 的首次启动确认。
@@ -34,8 +30,7 @@ const caveats = trust === "community"
 
     这只为魏碑建立单应用例外，请勿关闭整个 Gatekeeper。
   EOS
-`
-  : "";
+`;
 const cask = `cask "weibei" do
   version "${version}"
   arch arm: "arm64", intel: "x86_64"

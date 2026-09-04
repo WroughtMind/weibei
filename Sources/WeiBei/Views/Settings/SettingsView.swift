@@ -977,7 +977,7 @@ struct SettingsView: View {
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
                 process.arguments = [
                     "gh", "issue", "create",
-                    "--repo", "weibei-app/weibei",
+                    "--repo", "WroughtMind/weibei",
                     "--title", title,
                     "--body", body,
                     "--label", "bug",
@@ -1004,7 +1004,7 @@ struct SettingsView: View {
     }
 
     private func openPrefilledGitHubIssue(title: String, body: String) {
-        var components = URLComponents(string: "https://github.com/weibei-app/weibei/issues/new")!
+        var components = URLComponents(string: "https://github.com/WroughtMind/weibei/issues/new")!
         components.queryItems = [
             URLQueryItem(name: "title", value: title),
             URLQueryItem(name: "body", value: body),

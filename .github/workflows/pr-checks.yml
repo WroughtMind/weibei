@@ -125,7 +125,7 @@ jobs:
         env:
           WEIBEI_TARGET_ARCH: arm64
           WEIBEI_VERIFY_LAUNCH: "1"
-        run: ./script/build_release_dmg.sh --community --arch arm64
+        run: ./script/build_release_dmg.sh --arch arm64
 
       - name: 校验版本、构建号与提交来源
         run: swift run WeiBeiDev verify-release-metadata --require-clean
@@ -189,7 +189,7 @@ jobs:
         env:
           WEIBEI_TARGET_ARCH: x86_64
           WEIBEI_VERIFY_LAUNCH: "1"
-        run: ./script/build_release_dmg.sh --community --arch x86_64
+        run: ./script/build_release_dmg.sh --arch x86_64
 
       - name: 校验 Intel 包身份、架构与签名
         if: ${{ (github.event_name == 'pull_request' && needs.fast-check.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
