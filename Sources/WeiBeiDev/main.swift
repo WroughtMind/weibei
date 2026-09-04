@@ -265,10 +265,7 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
     }
 
     let expectedArchitecture = arguments[0]
-    // FileManager may enumerate a /var-based mount through its canonical
-    // /private/var path. Canonicalize the bundle root so required-binary URL
-    // comparisons use the same spelling as enumerated URLs.
-    let appBundle = URL(fileURLWithPath: arguments[1]).resolvingSymlinksInPath()
+    let appBundle = URL(fileURLWithPath: arguments[1])
     let contents = appBundle.appendingPathComponent("Contents", isDirectory: true)
     let infoPlist = contents.appendingPathComponent("Info.plist")
     guard let plistData = try? Data(contentsOf: infoPlist),
@@ -311,11 +308,29 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
 
     let appBinary = contents.appendingPathComponent("MacOS/WeiBei")
     let helperBinary = contents.appendingPathComponent("Helpers/WeiBeiPDFTextWorker")
-    for requiredBinary in [appBinary, helperBinary] where !machOBinaries.contains(requiredBinary) {
-        fail("missing required Mach-O binary \(requiredBinary.path)", exitCode: 6)
-    }
     guard !machOBinaries.isEmpty else {
         fail("app bundle contains no Mach-O binaries", exitCode: 6)
+    }
+
+    // Inspect required executables directly. FileManager can enumerate a DMG
+    // mounted below /var using /private/var URLs, so URL equality is not a
+    // reliable way to prove that these files were present in the enumeration.
+    for requiredBinary in [appBinary, helperBinary] {
+        guard fileManager.fileExists(atPath: requiredBinary.path),
+              let fileDescription = runCommand("/usr/bin/file", arguments: ["-b", requiredBinary.path]),
+              fileDescription.contains("Mach-O") else {
+            fail("missing required Mach-O binary \(requiredBinary.path)", exitCode: 6)
+        }
+        guard let architectures = runCommand("/usr/bin/lipo", arguments: ["-archs", requiredBinary.path]) else {
+            fail("cannot inspect architectures for \(requiredBinary.path)", exitCode: 7)
+        }
+        let architectureSet = Set(architectures.split(separator: " ").map(String.init))
+        guard architectureSet == Set([expectedArchitecture]) else {
+            fail(
+                "native executable \(requiredBinary.path) must contain only \(expectedArchitecture); found \(architectures)",
+                exitCode: 9
+            )
+        }
     }
 
     for binary in machOBinaries.sorted(by: { $0.path < $1.path }) {
@@ -327,13 +342,6 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
             fail(
                 "\(binary.path) lacks \(expectedArchitecture); found \(architectures)",
                 exitCode: 8
-            )
-        }
-        if binary == appBinary || binary == helperBinary,
-           architectureSet != Set([expectedArchitecture]) {
-            fail(
-                "native executable \(binary.path) must contain only \(expectedArchitecture); found \(architectures)",
-                exitCode: 9
             )
         }
     }
