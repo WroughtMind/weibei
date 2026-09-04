@@ -3,7 +3,7 @@
 The release build generates a checksum-pinned `weibei.rb` from the exact final DMG:
 
 ```bash
-./script/build_release_dmg.sh --community
+./script/build_release_dmg.sh
 ```
 
 Generated output:

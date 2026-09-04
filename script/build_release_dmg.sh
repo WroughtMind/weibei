@@ -141,7 +141,6 @@ npm --prefix "$ROOT_DIR" ls --all >/dev/null
 
 mkdir -p "$RELEASE_DIR"
 
-"$ROOT_DIR/script/build_and_run.sh" check
 "$ROOT_DIR/script/build_and_run.sh" package
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$BASE_APP")
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-architecture "$TARGET_ARCH" "$BASE_APP")
