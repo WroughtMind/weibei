@@ -13,12 +13,12 @@
 所以核心完全本地：导入课程、阅读、全文搜索、笔记、出处关系，不需要任何模型。想用 AI 时接上——它在你自己的资料上回答，答案带引用，一点回到原文；笔记走提案，你审过才落笔。不接，魏碑就是一个安静、完整的阅读器和笔记本，复习的晚上不用再在 PDF、AI 网页、笔记软件之间来回切窗。
 
 <p align="center">
-  <a href="https://github.com/weibei-app/weibei/releases/download/v1.0.0/WeiBei-1.0.0-macOS-arm64.dmg">⬇ <strong>下载魏碑 1.0.0</strong></a>
-  · macOS 14 及以上 · Apple 芯片 · 校验值见 <a href="https://github.com/weibei-app/weibei/releases">Releases</a>
+  <a href="https://github.com/WroughtMind/weibei/releases">⬇ <strong>查看可用版本</strong></a>
+  · macOS 14 及以上 · Apple 与 Intel 芯片 · 安装包和校验值见 Releases
 </p>
 
 <p align="center">
-  <a href="https://github.com/weibei-app/weibei/releases"><img alt="Release" src="https://img.shields.io/github/v/release/weibei-app/weibei"></a>
+  <a href="https://github.com/WroughtMind/weibei/releases"><img alt="Release" src="https://img.shields.io/github/v/release/WroughtMind/weibei"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138">
@@ -79,14 +79,14 @@
 4. 点答案里的引用标签，跳回出处。
 5. 让 AI 把有用的东西存进笔记，审一眼提案卡片再放行。
 
-首次打开会被 Gatekeeper 拦下（社区构建未经 Apple 公证）。放行一次即可，之后正常打开；更新到新下载的版本后，需要再放行一次：
+当前发布未经 Apple 公证，首次打开可能会被 Gatekeeper 拦下。放行一次即可，之后正常打开；更新到新下载的版本后，需要再放行一次：
 
 - macOS 15 及以后：双击尝试打开一次，再到**系统设置 → 隐私与安全性**点底部的**仍要打开**并确认。右键“打开”的旧捷径从 macOS 15 起已被系统移除。
 - macOS 14：在“应用程序”里右键 `魏碑.app`，选**打开**，再确认一次**打开**。
 
 这只放行魏碑一个应用，不要全局关闭 Gatekeeper。新版本检查在设置里，不用盯着 Releases 页。
 
-Homebrew cask 在计划中；tap 发布前，请用 DMG 或从源码构建。
+发布流程会为同一版本生成 Apple Silicon（arm64）与 Intel（x86_64）两个原生 DMG；有可用版本时，请在 Releases 或官网选择与 Mac 芯片一致的文件。Homebrew Cask 会同时记录两份校验值；tap 发布前，请用 DMG 或从源码构建。
 
 ## ▍为长夜而生
 
@@ -94,11 +94,11 @@ Homebrew cask 在计划中；tap 发布前，请用 DMG 或从源码构建。
 
 ## ▍当前限制
 
-- 本仓库及公开下载目前仅支持 macOS 14 及以上；安装包面向 Apple 芯片。
+- 本仓库支持 macOS 14 及以上；发布门禁要求 Apple Silicon 与 Intel 两个原生安装包同时通过后才能公开。
 - 资料与索引完全本地。读书、记笔记不需要联网，只有 AI 回答需要。
 - 学习记忆自动记录，回答末尾有轻提示；正式笔记与关系修改仍需你确认。
 - 大文件可能只索引了部分，应用会如实标注，不假装完整。
-- 社区构建未经 Apple 公证，首次打开需手动放行。
+- 当前发布未经 Apple 公证，首次打开需手动放行。
 
 ---
 
@@ -111,7 +111,7 @@ Homebrew cask 在计划中；tap 发布前，请用 DMG 或从源码构建。
 要求：macOS 14+、Xcode Command Line Tools（Swift 5.9）、已配置的模型供应商（用于真实 Agent 回复）；仅重建 Milkdown 网页编辑器时需要 Node.js。
 
 ```bash
-git clone https://github.com/weibei-app/weibei.git
+git clone https://github.com/WroughtMind/weibei.git
 cd weibei
 ./script/build_and_run.sh
 ```
@@ -134,14 +134,16 @@ cd weibei
 | `make run` | `./script/build_and_run.sh` |
 | `make check` | `./script/build_and_run.sh check` |
 | `make package` | `./script/build_and_run.sh package` |
+| `make verify` | `./script/build_and_run.sh verify`（打包并完成一次真实进程启动验收） |
 | `make editor-build` | `npm run build:editor` |
 | `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)`（用法：`make perf-p95 LOG=<perf日志> METRIC=<指标名>`） |
-| `make release-community` | `./script/build_release_dmg.sh --community` |
-| `make release-notarized` | `./script/build_release_dmg.sh --notarized` |
+| `make release` | `./script/build_release_dmg.sh`（构建当前架构未公证的正式 DMG） |
 | `make clean` | `swift package clean && rm -rf dist`（保留 `node_modules` 与用户数据） |
 
 Node 工具链：仓库只有一个根锁文件（`package-lock.json`），覆盖 `Prototypes/RichAnswerWebRuntime` 工作区，一次 `npm ci` 装齐。`script/`、`DesignSystem/scripts/` 与原型 `scripts/` 下的工具脚本是 TypeScript，用 `tsx` 运行（如 `npx tsx script/check-genui-math.ts`）；`npm run typecheck:tools` 做类型检查。
+
+应用和 DMG 始终在对应芯片的 Mac 上原生构建：Apple runner 使用 `--arch arm64`，Intel runner 使用 `--arch x86_64`。完整双架构发布资产、密钥变量和原子公开流程见 [Docs/releases/dual-architecture.md](Docs/releases/dual-architecture.md)。
 
 ### 检查
 

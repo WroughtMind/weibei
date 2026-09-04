@@ -4,6 +4,7 @@ import Foundation
 // 子命令：
 //   selfcheck-assertions          吸收 script/check_selfcheck_source_assertions.sh
 //   verify-release-metadata       吸收 script/verify_release_metadata.sh
+//   verify-release-architecture   校验 App 与全部嵌套 Mach-O 的目标架构
 //   verify-production-hygiene     吸收 script/verify_production_hygiene.sh
 //   nslog-scan                    防回潮：Sources/ 下断言无 NSLog 调用
 
@@ -55,6 +56,26 @@ func runGit(_ arguments: [String], in directory: URL) -> String? {
 /// 读文件内容（UTF-8），读不到返回空字符串。
 func readText(_ url: URL) -> String {
     (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+}
+
+/// 执行一个只读命令并返回 trim 后的 stdout；失败返回 nil。
+private func runCommand(_ executable: String, arguments: [String]) -> String? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    do {
+        try process.run()
+    } catch {
+        return nil
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { return nil }
+    return String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 // MARK: - selfcheck-assertions
@@ -232,6 +253,102 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     print("release_metadata_min_system=\(actualMinSystem)")
     print("release_metadata_sparkle_validation=enabled")
     print("release_metadata_notices=packaged")
+}
+
+// MARK: - verify-release-architecture
+
+func runVerifyReleaseArchitecture(arguments: [String]) {
+    guard arguments.count == 2,
+          ["arm64", "x86_64"].contains(arguments[0]) else {
+        fputs("usage: WeiBeiDev verify-release-architecture <arm64|x86_64> <path/to/魏碑.app>\n", stderr)
+        exit(2)
+    }
+
+    let expectedArchitecture = arguments[0]
+    let appBundle = URL(fileURLWithPath: arguments[1])
+    let contents = appBundle.appendingPathComponent("Contents", isDirectory: true)
+    let infoPlist = contents.appendingPathComponent("Info.plist")
+    guard let plistData = try? Data(contentsOf: infoPlist),
+          let plist = try? PropertyListSerialization.propertyList(from: plistData, format: nil),
+          let plistDictionary = plist as? [String: Any] else {
+        fail("cannot parse Info.plist at \(infoPlist.path)", exitCode: 3)
+    }
+
+    let declaredArchitecture = plistDictionary["WeiBeiArchitecture"] as? String ?? ""
+    let feedURL = plistDictionary["SUFeedURL"] as? String ?? ""
+    guard declaredArchitecture == expectedArchitecture else {
+        fail(
+            "WeiBeiArchitecture expected \(expectedArchitecture), got \(declaredArchitecture)",
+            exitCode: 4
+        )
+    }
+    guard feedURL.hasSuffix("/appcast-\(expectedArchitecture).xml") else {
+        fail("SUFeedURL does not select appcast-\(expectedArchitecture).xml", exitCode: 5)
+    }
+
+    let fileManager = FileManager.default
+    let binaryRoots = ["MacOS", "Helpers", "Frameworks"].map {
+        contents.appendingPathComponent($0, isDirectory: true)
+    }
+    var machOBinaries: [URL] = []
+    for root in binaryRoots where fileManager.fileExists(atPath: root.path) {
+        guard let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { continue }
+        for case let url as URL in enumerator where !url.hasDirectoryPath {
+            let isRegular = (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
+            guard isRegular,
+                  let fileDescription = runCommand("/usr/bin/file", arguments: ["-b", url.path]),
+                  fileDescription.contains("Mach-O") else { continue }
+            machOBinaries.append(url)
+        }
+    }
+
+    let appBinary = contents.appendingPathComponent("MacOS/WeiBei")
+    let helperBinary = contents.appendingPathComponent("Helpers/WeiBeiPDFTextWorker")
+    guard !machOBinaries.isEmpty else {
+        fail("app bundle contains no Mach-O binaries", exitCode: 6)
+    }
+
+    // Inspect required executables directly. FileManager can enumerate a DMG
+    // mounted below /var using /private/var URLs, so URL equality is not a
+    // reliable way to prove that these files were present in the enumeration.
+    for requiredBinary in [appBinary, helperBinary] {
+        guard fileManager.fileExists(atPath: requiredBinary.path),
+              let fileDescription = runCommand("/usr/bin/file", arguments: ["-b", requiredBinary.path]),
+              fileDescription.contains("Mach-O") else {
+            fail("missing required Mach-O binary \(requiredBinary.path)", exitCode: 6)
+        }
+        guard let architectures = runCommand("/usr/bin/lipo", arguments: ["-archs", requiredBinary.path]) else {
+            fail("cannot inspect architectures for \(requiredBinary.path)", exitCode: 7)
+        }
+        let architectureSet = Set(architectures.split(separator: " ").map(String.init))
+        guard architectureSet == Set([expectedArchitecture]) else {
+            fail(
+                "native executable \(requiredBinary.path) must contain only \(expectedArchitecture); found \(architectures)",
+                exitCode: 9
+            )
+        }
+    }
+
+    for binary in machOBinaries.sorted(by: { $0.path < $1.path }) {
+        guard let architectures = runCommand("/usr/bin/lipo", arguments: ["-archs", binary.path]) else {
+            fail("cannot inspect architectures for \(binary.path)", exitCode: 7)
+        }
+        let architectureSet = Set(architectures.split(separator: " ").map(String.init))
+        guard architectureSet.contains(expectedArchitecture) else {
+            fail(
+                "\(binary.path) lacks \(expectedArchitecture); found \(architectures)",
+                exitCode: 8
+            )
+        }
+    }
+
+    print("release_architecture=\(expectedArchitecture)")
+    print("release_architecture_macho_count=\(machOBinaries.count)")
+    print("release_architecture_feed=\(feedURL)")
 }
 
 // MARK: - verify-production-hygiene
@@ -426,6 +543,7 @@ guard allArguments.count >= 2 else {
     usage: WeiBeiDev <subcommand> [args]
       selfcheck-assertions [--self-check]
       verify-release-metadata [--require-clean] [path/to/魏碑.app]
+      verify-release-architecture <arm64|x86_64> <path/to/魏碑.app>
       verify-production-hygiene [path/to/魏碑.app]
       nslog-scan
     """, stderr)
@@ -449,6 +567,8 @@ case "selfcheck-assertions":
     runSelfcheckAssertions()
 case "verify-release-metadata":
     runVerifyReleaseMetadata(arguments: subArguments)
+case "verify-release-architecture":
+    runVerifyReleaseArchitecture(arguments: subArguments)
 case "verify-production-hygiene":
     runVerifyProductionHygiene(arguments: subArguments)
 case "nslog-scan":

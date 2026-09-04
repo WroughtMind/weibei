@@ -1,0 +1,212 @@
+name: 魏碑双架构正式发布
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "与 VERSION/package.json 一致的 major.minor.patch（不含 v）"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weibei-production-release
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: 校验发布来源与版本
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: 只允许从 main 发起
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: test "$RELEASE_REF" = "refs/heads/main"
+
+      - name: 取出完整源码历史
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: 校验版本、更新摘要与未重复发布
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(tr -d '\r\n' < VERSION)" = "$RELEASE_VERSION"
+          test "$(node -p 'require("./package.json").version')" = "$RELEASE_VERSION"
+          test -s "Docs/update-summaries/v$RELEASE_VERSION.md"
+          ! git show-ref --verify --quiet "refs/tags/v$RELEASE_VERSION"
+          ! gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          printf 'value=%s\n' "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'tag=v%s\n' "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: 构建 ${{ matrix.arch }} 正式资产
+    needs: authorize
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-26
+          - arch: x86_64
+            runner: macos-26-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+
+    steps:
+      - name: 取出完整源码历史
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: 验证原生 runner
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(uname -m)" = "$TARGET_ARCH"
+          swift --version
+          xcodebuild -version
+
+      - name: 安装固定 Node 依赖
+        run: npm ci
+
+      - name: 准备 Sparkle 发布密钥
+        env:
+          SPARKLE_PRIVATE_KEY_BASE64: ${{ secrets.WEIBEI_SPARKLE_PRIVATE_KEY_BASE64 }}
+          SPARKLE_PUBLIC_KEY: ${{ secrets.WEIBEI_SPARKLE_PUBLIC_KEY }}
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY_BASE64"
+          test -n "$SPARKLE_PUBLIC_KEY"
+          /usr/bin/printf '%s' "$SPARKLE_PRIVATE_KEY_BASE64" | /usr/bin/base64 -D -o "$RUNNER_TEMP/weibei-sparkle-private-key"
+          test -s "$RUNNER_TEMP/weibei-sparkle-private-key"
+          chmod 600 "$RUNNER_TEMP/weibei-sparkle-private-key"
+
+      - name: 构建、签名并验证当前架构 DMG
+        env:
+          WEIBEI_TARGET_ARCH: ${{ matrix.arch }}
+          WEIBEI_SPARKLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/weibei-sparkle-private-key
+          WEIBEI_SPARKLE_PUBLIC_KEY: ${{ secrets.WEIBEI_SPARKLE_PUBLIC_KEY }}
+          WEIBEI_REQUIRE_APPCAST: "1"
+          WEIBEI_VERIFY_LAUNCH: "1"
+        run: ./script/build_release_dmg.sh --arch "${{ matrix.arch }}"
+
+      - name: 再验收公开资产集合
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          release_dir="dist/release/$TARGET_ARCH"
+          dmg="WeiBei-$RELEASE_VERSION-macOS-$TARGET_ARCH.dmg"
+          test -s "$release_dir/$dmg"
+          test -s "$release_dir/$dmg.sha256"
+          test -s "$release_dir/appcast-$TARGET_ARCH.xml"
+          (cd "$release_dir" && shasum -a 256 -c "$dmg.sha256")
+          grep -Fq "$dmg" "$release_dir/appcast-$TARGET_ARCH.xml"
+          if [[ "$TARGET_ARCH" == "arm64" ]]; then
+            cmp "$release_dir/appcast-arm64.xml" "$release_dir/appcast.xml"
+          fi
+
+      - name: 保存架构发布资产
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ matrix.arch }}
+          path: |
+            dist/release/${{ matrix.arch }}/WeiBei-${{ needs.authorize.outputs.version }}-macOS-${{ matrix.arch }}.dmg
+            dist/release/${{ matrix.arch }}/WeiBei-${{ needs.authorize.outputs.version }}-macOS-${{ matrix.arch }}.dmg.sha256
+            dist/release/${{ matrix.arch }}/appcast-${{ matrix.arch }}.xml
+            dist/release/${{ matrix.arch }}/appcast.xml
+            dist/release/${{ matrix.arch }}/WeiBei-*.dSYM/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 清理临时发布密钥
+        if: ${{ always() }}
+        run: /bin/rm -f "$RUNNER_TEMP/weibei-sparkle-private-key"
+
+  publish:
+    name: 汇总后原子公开双架构 Release
+    needs: [authorize, build]
+    runs-on: macos-26
+    environment: production-release
+    permissions:
+      contents: write
+
+    steps:
+      - name: 取出发布工具
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: 下载两套原生资产
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          path: dist/publish
+          merge-multiple: true
+
+      - name: 汇总校验并生成双架构 Homebrew Cask
+        env:
+          RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          npm ci
+          for arch in arm64 x86_64; do
+            dmg="WeiBei-$RELEASE_VERSION-macOS-$arch.dmg"
+            test -s "dist/publish/$dmg"
+            test -s "dist/publish/$dmg.sha256"
+            test -s "dist/publish/appcast-$arch.xml"
+            (cd dist/publish && shasum -a 256 -c "$dmg.sha256")
+            grep -Fq "$dmg" "dist/publish/appcast-$arch.xml"
+          done
+          cmp dist/publish/appcast-arm64.xml dist/publish/appcast.xml
+          arm_sha="$(awk '{print $1}' "dist/publish/WeiBei-$RELEASE_VERSION-macOS-arm64.dmg.sha256")"
+          intel_sha="$(awk '{print $1}' "dist/publish/WeiBei-$RELEASE_VERSION-macOS-x86_64.dmg.sha256")"
+          npx tsx script/homebrew/generate_cask.ts \
+            "$RELEASE_VERSION" "$arm_sha" "$intel_sha" \
+            dist/publish/weibei.rb
+          ruby -c dist/publish/weibei.rb
+          symbol_count="$(find dist/publish -maxdepth 1 -type d -name 'WeiBei-*.dSYM' | wc -l | tr -d ' ')"
+          test "$symbol_count" = "2"
+          mkdir -p dist/publish/debug-symbols
+          while IFS= read -r symbol; do
+            ditto "$symbol" "dist/publish/debug-symbols/$(basename "$symbol")"
+          done < <(find dist/publish -maxdepth 1 -type d -name 'WeiBei-*.dSYM' | sort)
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/publish/debug-symbols \
+            "dist/publish/WeiBei-$RELEASE_VERSION-debug-symbols.zip"
+          unzip -t "dist/publish/WeiBei-$RELEASE_VERSION-debug-symbols.zip"
+
+      - name: 创建草稿、上传完整资产后再公开
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
+          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --generate-notes \
+            --notes "同时提供原生 Apple Silicon（arm64）与 Intel（x86_64）版本。当前安装包使用 ad-hoc 签名，未经 Apple 公证；首次打开可能需要在系统设置中单独允许魏碑。" \
+            --title "魏碑 $RELEASE_VERSION"
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/publish/WeiBei-*.dmg \
+            dist/publish/WeiBei-*.dmg.sha256 \
+            "dist/publish/WeiBei-$RELEASE_VERSION-debug-symbols.zip" \
+            dist/publish/appcast-arm64.xml \
+            dist/publish/appcast-x86_64.xml \
+            dist/publish/appcast.xml \
+            dist/publish/weibei.rb
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --latest \
+            --draft=false

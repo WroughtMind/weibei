@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "license": "MIT",
-  "repository": "https://github.com/weibei-app/weibei",
+  "repository": "https://github.com/WroughtMind/weibei",
   "scripts": {
     "build:editor": "node script/build_editor.mjs",
     "typecheck:tools": "tsc --noEmit -p tsconfig.json",
+    "test:release-tools": "node --test script/homebrew/*.test.mjs",
     "typecheck:editor": "tsc --noEmit -p tsconfig.editor.json",
     "test:editor": "node --import tsx --test Sources/WeiBei/WebEditor/test/*.test.ts"
   },

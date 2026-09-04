@@ -27,8 +27,9 @@ jobs:
   fast-check:
     name: 快速编译与核心自检
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 30
     outputs:
+      code: ${{ steps.scope.outputs.code }}
       release: ${{ steps.scope.outputs.release }}
 
     steps:
@@ -81,7 +82,9 @@ jobs:
 
       - name: 运行 Node 工具脚本类型检查
         if: (github.event_name == 'pull_request' && steps.scope.outputs.tools == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: npm run typecheck:tools
+        run: |
+          npm run typecheck:tools
+          npm run test:release-tools
 
       - name: 运行编辑器自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.editor == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
@@ -107,7 +110,7 @@ jobs:
     needs: fast-check
     if: ${{ needs.fast-check.result == 'success' && ((github.event_name == 'pull_request' && needs.fast-check.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)) }}
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: 取出完整源码历史
@@ -118,11 +121,17 @@ jobs:
       - name: 安装 Node 依赖（package 前置）
         run: npm ci
 
-      - name: 生成可追溯安装包
-        run: ./script/build_and_run.sh package
+      - name: 生成、启动并挂载验收 Apple Silicon DMG
+        env:
+          WEIBEI_TARGET_ARCH: arm64
+          WEIBEI_VERIFY_LAUNCH: "1"
+        run: ./script/build_release_dmg.sh --arch arm64
 
       - name: 校验版本、构建号与提交来源
         run: swift run WeiBeiDev verify-release-metadata --require-clean
+
+      - name: 校验 Apple Silicon 二进制架构与更新源
+        run: swift run WeiBeiDev verify-release-architecture arm64 "dist/魏碑.app"
 
       - name: 校验安装包签名
         run: /usr/bin/codesign --verify --deep --strict "dist/魏碑.app"
@@ -137,6 +146,71 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: 魏碑-${{ github.sha }}-真实窗口验收包
-          path: dist/魏碑-CI验收包.zip
+          path: |
+            dist/魏碑-CI验收包.zip
+            dist/release/arm64/WeiBei-*-macOS-arm64.dmg
+            dist/release/arm64/WeiBei-*-macOS-arm64.dmg.sha256
+          retention-days: 1
+          if-no-files-found: error
+
+  intel-check:
+    name: Intel 编译、启动与安装包追溯
+    needs: fast-check
+    if: ${{ always() && needs.fast-check.result == 'success' }}
+    runs-on: macos-26-intel
+    timeout-minutes: 60
+
+    steps:
+      - name: 取出完整源码历史
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: 记录 Intel 构建工具链
+        run: |
+          test "$(uname -m)" = "x86_64"
+          swift --version
+          xcodebuild -version
+
+      - name: Intel 原生编译与核心自检
+        if: ${{ github.event_name != 'pull_request' || needs.fast-check.outputs.code == 'true' }}
+        run: |
+          swift build
+          swift run WeiBeiSelfCheck
+          swift run WeiBeiDev selfcheck-assertions
+          swift run WeiBeiDev nslog-scan
+
+      - name: 安装安装包前置依赖
+        if: ${{ (github.event_name == 'pull_request' && needs.fast-check.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+        run: npm ci
+
+      - name: Intel 打包、启动并挂载验收 DMG
+        if: ${{ (github.event_name == 'pull_request' && needs.fast-check.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+        env:
+          WEIBEI_TARGET_ARCH: x86_64
+          WEIBEI_VERIFY_LAUNCH: "1"
+        run: ./script/build_release_dmg.sh --arch x86_64
+
+      - name: 校验 Intel 包身份、架构与签名
+        if: ${{ (github.event_name == 'pull_request' && needs.fast-check.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+        run: |
+          swift run WeiBeiDev verify-release-metadata --require-clean
+          swift run WeiBeiDev verify-release-architecture x86_64 "dist/魏碑.app"
+          /usr/bin/codesign --verify --deep --strict "dist/魏碑.app"
+          swift run WeiBeiDev verify-production-hygiene "dist/魏碑.app"
+
+      - name: 压缩短期 Intel 真实窗口验收包
+        if: ${{ (github.event_name == 'pull_request' && needs.fast-check.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+        run: ditto -c -k --sequesterRsrc --keepParent "dist/魏碑.app" "dist/魏碑-Intel-CI验收包.zip"
+
+      - name: 保留短期 Intel 真实窗口验收包
+        if: ${{ (github.event_name == 'pull_request' && needs.fast-check.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: 魏碑-${{ github.sha }}-Intel-真实窗口验收包
+          path: |
+            dist/魏碑-Intel-CI验收包.zip
+            dist/release/x86_64/WeiBei-*-macOS-x86_64.dmg
+            dist/release/x86_64/WeiBei-*-macOS-x86_64.dmg.sha256
           retention-days: 1
           if-no-files-found: error

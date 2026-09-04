@@ -13,12 +13,12 @@ WeiBei is a place for reading and keeping notes.
 So the core is fully local: importing a course, reading, full-text search, notes, and source relationships all work without any model. Connect one when you want AI — it answers on top of your own material, with citations that jump back to the source, and note updates that wait for your approval. Don't connect one, and WeiBei is still a calm, complete reader and notebook — no more juggling a PDF, an AI chat page, and a notes app on revision night.
 
 <p align="center">
-  <a href="https://github.com/weibei-app/weibei/releases/download/v1.0.0/WeiBei-1.0.0-macOS-arm64.dmg">⬇ <strong>Download WeiBei 1.0.0</strong></a>
-  · macOS 14 or later · Apple silicon · Checksums in <a href="https://github.com/weibei-app/weibei/releases">Releases</a>
+  <a href="https://github.com/WroughtMind/weibei/releases">⬇ <strong>View available downloads</strong></a>
+  · macOS 14 or later · Apple silicon and Intel · DMGs and checksums in Releases
 </p>
 
 <p align="center">
-  <a href="https://github.com/weibei-app/weibei/releases"><img alt="Release" src="https://img.shields.io/github/v/release/weibei-app/weibei"></a>
+  <a href="https://github.com/WroughtMind/weibei/releases"><img alt="Release" src="https://img.shields.io/github/v/release/WroughtMind/weibei"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138">
@@ -79,14 +79,14 @@ Read and keep work fully offline, with no model required; ask is optional — wi
 4. Click a citation label to jump back to the source.
 5. Ask the Agent to save something to your notes, then review the proposal card before it is applied.
 
-The first launch is blocked by Gatekeeper (the community build is not Apple-notarized). Approve it once and later launches open normally; each newly downloaded version needs the same one-time approval:
+Current releases are not Apple-notarized, so Gatekeeper may block the first launch. Approve it once and later launches open normally; each newly downloaded version needs the same one-time approval:
 
 - macOS 15 or later: double-click to trigger the block once, then open **System Settings → Privacy & Security**, click **Open Anyway** at the bottom, and confirm. The old right-click "Open" shortcut was removed by Apple in macOS 15.
 - macOS 14: right-click `魏碑.app` in Applications, choose **Open**, then confirm **Open**.
 
 This allows WeiBei only — don't disable Gatekeeper globally. WeiBei checks for new versions from Settings, so you don't need to watch the Releases page.
 
-A Homebrew cask is planned; until the tap is published, use the DMG or build from source.
+The release pipeline produces native Apple silicon (arm64) and Intel (x86_64) DMGs for the same version. When a version is available, choose the file that matches your Mac on Releases or the website. The Homebrew Cask records both checksums; until the tap is published, use the DMG or build from source.
 
 ## ▍Made for long nights
 
@@ -94,11 +94,11 @@ WeiBei is named after the stele inscription style, and it leans into that: paper
 
 ## ▍Current limits
 
-- This repository and its public downloads currently support macOS 14 or later only; packaged builds target Apple silicon.
+- This repository supports macOS 14 or later; the release gate requires both native Apple silicon and Intel packages to pass before publication.
 - Course files and indexes are fully local. Reading and note-taking need no network — only AI responses do.
 - Learning memory is written automatically, with a light end-of-answer notice; formal notes and relationship changes still need your confirmation.
 - Large or difficult source files may be reported as partially indexed — honestly, never passed off as complete.
-- The community build is not Apple-notarized; the first launch needs a manual allow.
+- Current releases are not Apple-notarized; the first launch needs a manual allow.
 
 ---
 
@@ -111,7 +111,7 @@ Everything below is for people building WeiBei itself. WeiBei was born in the Ed
 Requirements: macOS 14+, Xcode Command Line Tools with Swift 5.9, a configured model provider for live Agent responses, and Node.js only when rebuilding the Milkdown web editor.
 
 ```bash
-git clone https://github.com/weibei-app/weibei.git
+git clone https://github.com/WroughtMind/weibei.git
 cd weibei
 ./script/build_and_run.sh
 ```
@@ -134,14 +134,16 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 | `make run` | `./script/build_and_run.sh` |
 | `make check` | `./script/build_and_run.sh check` |
 | `make package` | `./script/build_and_run.sh package` |
+| `make verify` | `./script/build_and_run.sh verify` (package, launch, and confirm a live process) |
 | `make editor-build` | `npm run build:editor` |
 | `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)` (usage: `make perf-p95 LOG=<perf-log> METRIC=<metric-name>`) |
-| `make release-community` | `./script/build_release_dmg.sh --community` |
-| `make release-notarized` | `./script/build_release_dmg.sh --notarized` |
+| `make release` | `./script/build_release_dmg.sh` (build the current architecture's unnotarized release DMG) |
 | `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules` and user data) |
 
 Node tooling: the repository has a single root lockfile (`package-lock.json`) covering the `Prototypes/RichAnswerWebRuntime` workspace; one `npm ci` installs everything. Tool scripts under `script/`, `DesignSystem/scripts/`, and the prototype `scripts/` are TypeScript run with `tsx` (e.g. `npx tsx script/check-genui-math.ts`); `npm run typecheck:tools` type-checks them.
+
+Apps and DMGs are always built natively on the matching Mac: the Apple runner uses `--arch arm64`, while the Intel runner uses `--arch x86_64`. See [Docs/releases/dual-architecture.md](Docs/releases/dual-architecture.md) for the complete asset contract, secret variables, and atomic publication flow.
 
 ### Checks
 

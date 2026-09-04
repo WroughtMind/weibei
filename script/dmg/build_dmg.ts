@@ -51,8 +51,8 @@ async function main() {
         size: { width: 720, height: 460 },
       },
       contents: [
-        { x: 205, y: 270, type: "file", path: appPath, name: "魏碑.app" },
-        { x: 515, y: 270, type: "link", path: "/Applications", name: "应用程序" },
+        { x: 145, y: 270, type: "file", path: appPath, name: "魏碑.app" },
+        { x: 565, y: 270, type: "link", path: "/Applications", name: "应用程序" },
       ],
     },
   });
