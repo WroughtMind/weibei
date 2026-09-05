@@ -128,7 +128,7 @@ struct CourseRecordsView: View {
                             icon: "bubble.left.and.text.bubble.right",
                             title: session.title,
                             detail: sessionDetail(session),
-                            status: courseRelativeDate(
+                            status: store.isAgentRunning(in: session.id) ? store.ui("处理中", "Working") : courseRelativeDate(
                                 session.updatedAt,
                                 language: store.interfaceLanguage
                             ),

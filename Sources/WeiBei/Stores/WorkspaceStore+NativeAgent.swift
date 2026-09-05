@@ -84,15 +84,11 @@ extension WorkspaceStore {
     }
 
     var isAgentRunningInActiveChat: Bool {
-        isAskingAgent && activeAgentReplyChatID == activeStudySessionID
+        agentRequestTask != nil && agentRun.chatID == activeStudySessionID
     }
 
-    var runningAgentChatTitle: String {
-        guard let chatID = activeAgentReplyChatID,
-              let session = studySessions.first(where: { $0.id == chatID }) else {
-            return ui("另一条 Chat", "another Chat")
-        }
-        return session.title
+    func isAgentRunning(in chatID: UUID) -> Bool {
+        agentRuns[chatID]?.agentRequestTask != nil
     }
 
     var hasPersistedGeneratingAgentReply: Bool {
@@ -147,10 +143,6 @@ extension WorkspaceStore {
         landAgentStreamingDisplayImmediately()
     }
 
-    func cancelStudyAgentRuntimes() async {
-        await NativeAgentRuntimeBox.runtime?.cancel()
-    }
-
     func dispatchStudyAgentRequest(
         _ request: StudyAgentRequest,
         provider selectedProvider: AgentProviderID,
@@ -176,9 +168,9 @@ extension WorkspaceStore {
     ) async throws -> StudyAgentReply {
         let endpoint = try AgentProviderEndpoint(
             provider: selectedProvider,
-            baseURL: agentBaseURL
+            baseURL: agentRun.baseURL
         )
-        let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedModel = agentRun.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         let routedModel = NativeProviderRouting.route(selectedProvider).defaultModel
         let model = selectedModel.isEmpty
             ? (routedModel.isEmpty ? "deepseek-chat" : routedModel)
@@ -257,17 +249,20 @@ extension WorkspaceStore {
             liveStores: liveStores,
             sessionTitleHandler: sessionTitleHandler
         )
-        NativeAgentRuntimeBox.runtime = runtime
-        defer { NativeAgentRuntimeBox.runtime = nil }
+        let run = agentRun
+        run.runtime = runtime
+        defer { run.runtime = nil }
         return try await runtime.respond(
             to: request,
             progress: { [weak self] progress in
-                await self?.applyAgentProgress(
-                    progress,
-                    requestID: request.id,
-                    replyMessageID: replyMessageID,
-                    chatID: target.sessionID
-                )
+                await AgentConversationExecution.$run.withValue(run) {
+                    await self?.applyAgentProgress(
+                        progress,
+                        requestID: request.id,
+                        replyMessageID: replyMessageID,
+                        chatID: target.sessionID
+                    )
+                }
             }
         )
     }
@@ -746,9 +741,4 @@ extension WorkspaceStore {
             draftPreserved: true
         )
     }
-}
-
-@MainActor
-enum NativeAgentRuntimeBox {
-    static var runtime: NativeStudyAgentRuntime?
 }

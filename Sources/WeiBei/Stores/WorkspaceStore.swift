@@ -320,16 +320,10 @@ final class WorkspaceStore: ObservableObject {
     )
     @Published var agentDraft = ""
     @Published var messages: [AgentMessage] = []
-    @Published var isAskingAgent = false
-    @Published private(set) var isStoppingAgent = false
-    @Published private(set) var isAgentSwitchConfirmationPresented = false
-    let agentStreaming = AgentStreamingState()
+    var agentNoteActionWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    var agentRuns: [UUID: AgentConversationRun] = [:]
+    let idleAgentRun = AgentConversationRun(chatID: nil)
     var agentStreamingUsesReducedMotion = false
-    lazy var agentStreamingDisplayPump = AgentStreamingDisplayPump(hooks: .init(
-        append: { [weak self] chunk in self?.agentStreaming.text.append(chunk) },
-        replace: { [weak self] text in self?.agentStreaming.text = text },
-        didDrain: { [weak self] in self?.finishAgentStreamingDisplay() }
-    ))
     @Published var showLoadingIndicatorSamples = false
     /// Last failed user question for precise one-tap retry.
     @Published private(set) var lastFailedAgentQuestion: String?
@@ -691,21 +685,12 @@ final class WorkspaceStore: ObservableObject {
         ) throws -> Void
     let selectionAskThreadDefaults: UserDefaults
     let courseDocumentSearchIndex: CourseDocumentSearchIndex
-    var activeAgentRequestID: UUID?
-    var activeAgentReplyMessageID: UUID?
-    var latestAgentStreamingText = ""
-    private var lastAgentStreamingPublishNanoseconds: UInt64 = 0
-    var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
-    private var agentVisualizationIDsUpdatingHistory: Set<String> = []
-    var activeAgentReplyChatID: UUID?
-    var agentRequestTask: Task<Void, Never>?
 #if DEBUG
+    var selfCheckAgentResponder: ((StudyAgentRequest) async throws -> StudyAgentReply)?
     private var capturesAgentRequestForSelfCheck = false
     private var selfCheckCapturedAgentRequest: StudyAgentRequest?
 #endif
-    var agentStopTask: Task<Void, Never>?
-    private var pendingAgentSwitchTargetID: UUID?
-    private var pendingAgentSwitchCourseID: UUID?
+    var lastWork: WorkspaceResumePoint?
     private var agentDraftsBySessionID: [UUID: String] = [:]
     var pendingComposerDraft: String?
     /// Session-local identity of the one reusable, newly created empty Chat.
@@ -1027,6 +1012,7 @@ final class WorkspaceStore: ObservableObject {
             noteText = noteText(for: activeNoteItem)
         }
         if startsAtBlankEntries {
+            captureLastWork()
             resetPrimaryEntriesForLaunch()
         }
         ensureActiveStudySession(preferFresh: startsAtBlankEntries)
@@ -1758,7 +1744,6 @@ final class WorkspaceStore: ObservableObject {
             agentDraftsBySessionID[session.id] = ""
             return session
         }
-        dismissAgentSwitchConfirmation()
         saveActiveAgentDraft()
         syncActiveStudySession()
         let session = StudySession(
@@ -1790,7 +1775,6 @@ final class WorkspaceStore: ObservableObject {
             messages = session.messages
             return true
         }
-        dismissAgentSwitchConfirmation()
         saveActiveAgentDraft()
         syncActiveStudySession()
         if let blankID = freshlyCreatedEmptyStudySessionID,
@@ -1866,13 +1850,17 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func deleteStudySession(_ id: UUID) {
-        guard let index = studySessions.firstIndex(where: { $0.id == id }) else {
+        if let run = agentRuns[id], run.agentRequestTask != nil {
+            AgentConversationExecution.$run.withValue(run) { cancelAgentRequest(restoreDraft: false) }
+            Task { @MainActor in
+                await run.agentStopTask?.value
+                deleteStudySession(id)
+            }
             return
         }
+        guard let index = studySessions.firstIndex(where: { $0.id == id }) else { return }
+        agentRuns.removeValue(forKey: id)
         let deletingActiveSession = activeStudySessionID == id
-        if activeAgentReplyChatID == id {
-            cancelAgentRequest(restoreDraft: false)
-        }
         if freshlyCreatedEmptyStudySessionID == id {
             freshlyCreatedEmptyStudySessionID = nil
         }
@@ -1960,11 +1948,21 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func appendAgentMessage(_ message: AgentMessage) {
-        if freshlyCreatedEmptyStudySessionID == activeStudySessionID {
+        if freshlyCreatedEmptyStudySessionID == (AgentConversationExecution.run?.chatID ?? activeStudySessionID) {
             freshlyCreatedEmptyStudySessionID = nil
         }
-        messages.append(message)
-        syncActiveStudySession(titleSeed: message.role == .user ? message.text : nil)
+        if let chatID = AgentConversationExecution.run?.chatID, chatID != activeStudySessionID {
+            guard let index = studySessions.firstIndex(where: { $0.id == chatID }) else { return }
+            studySessions[index].messages.append(message)
+            studySessions[index].updatedAt = Date()
+            if message.role == .user, !studySessions[index].titleSetByUser,
+               studySessions[index].messages.filter({ $0.role == .user }).count == 1 {
+                studySessions[index].title = Self.sessionTitle(from: message.text)
+            }
+        } else {
+            messages.append(message)
+            syncActiveStudySession(titleSeed: message.role == .user ? message.text : nil)
+        }
         save()
     }
 
@@ -2118,6 +2116,22 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    private func acquireAgentNoteAction(_ itemID: String) async {
+        if agentNoteActionWaiters[itemID] == nil {
+            agentNoteActionWaiters[itemID] = []
+        } else {
+            await withCheckedContinuation { agentNoteActionWaiters[itemID, default: []].append($0) }
+        }
+    }
+
+    private func releaseAgentNoteAction(_ itemID: String) {
+        if agentNoteActionWaiters[itemID]?.isEmpty == false {
+            agentNoteActionWaiters[itemID]?.removeFirst().resume()
+        } else {
+            agentNoteActionWaiters.removeValue(forKey: itemID)
+        }
+    }
+
     func confirmAgentReplyAction(
         messageID: UUID,
         actionID: UUID,
@@ -2132,6 +2146,13 @@ final class WorkspaceStore: ObservableObject {
               snapshot.action.state == .pending || snapshot.action.state == .failed else {
             return
         }
+        if let itemID = snapshot.action.targetItemID {
+            await acquireAgentNoteAction(itemID)
+        }
+        defer {
+            if let itemID = snapshot.action.targetItemID { releaseAgentNoteAction(itemID) }
+        }
+        guard !Task.isCancelled else { return }
         switch snapshot.action.kind {
         case .writeNote:
             await confirmAgentNoteAction(
@@ -2157,6 +2178,13 @@ final class WorkspaceStore: ObservableObject {
                         || snapshot.action.createdRelationID != nil)) else {
             return
         }
+        if let itemID = snapshot.action.targetItemID {
+            await acquireAgentNoteAction(itemID)
+        }
+        defer {
+            if let itemID = snapshot.action.targetItemID { releaseAgentNoteAction(itemID) }
+        }
+        guard !Task.isCancelled else { return }
         switch snapshot.action.kind {
         case .writeNote:
             await undoAgentNoteAction(messageID: messageID, snapshot: snapshot)
@@ -3100,17 +3128,17 @@ final class WorkspaceStore: ObservableObject {
     /// The UI draft stays transient while tokens arrive. Durability boundaries
     /// checkpoint its latest cumulative snapshot once, before the workspace is written.
     private func checkpointActiveAgentStreamingText() {
-        guard let messageID = activeAgentReplyMessageID,
-              let chatID = activeAgentReplyChatID,
-              !latestAgentStreamingText.isEmpty,
-              let message = studySessions.first(where: { $0.id == chatID })?
-                .messages.first(where: { $0.id == messageID }),
-              message.completionState == .generating,
-              message.text != latestAgentStreamingText
-        else { return }
-        _ = updateAgentMessage(messageID, in: chatID) {
-            $0.text = latestAgentStreamingText
-            $0.backend = .native
+        for run in agentRuns.values {
+            guard let messageID = run.activeAgentReplyMessageID,
+                  let chatID = run.chatID,
+                  !run.latestAgentStreamingText.isEmpty,
+                  let message = studySessions.first(where: { $0.id == chatID })?.messages.first(where: { $0.id == messageID }),
+                  message.completionState == .generating,
+                  message.text != run.latestAgentStreamingText else { continue }
+            _ = updateAgentMessage(messageID, in: chatID) {
+                $0.text = run.latestAgentStreamingText
+                $0.backend = .native
+            }
         }
     }
 
@@ -4405,7 +4433,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func createBlankNotebookNote() {
-        createNotebookNote(seed: .blank)
+        createBlankNotebookNote(in: courseWorkspaceCourseID)
     }
 
     func waitForCourseFileOperation<T>(
@@ -4465,13 +4493,19 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func promptCreateBlankNotebookNote() {
-        notebookRenameDraft = nil
-        notebookCreationDraft = NotebookCreationDraft(
-            kind: .blank,
-            sourceItemID: nil,
-            title: suggestedNotebookTitle(for: .blank)
-        )
-        focus(.notes)
+        createBlankNotebookNote()
+    }
+
+    func createBlankNotebookNote(in courseID: UUID?) {
+        guard let courseID else { createNotebookNote(seed: .blank); return }
+        Task { @MainActor in
+            _ = await createCourseNotebookNote(
+                courseID: courseID,
+                title: suggestedNotebookTitle(for: .blank),
+                markdown: defaultNotebookNote(),
+                conflictResolution: .keepBoth(preferredFileName: nil)
+            )
+        }
     }
 
     func promptCreateNotebookNoteFromCurrentMaterial() {
@@ -4505,7 +4539,7 @@ final class WorkspaceStore: ObservableObject {
            let item = allItems.first(where: { $0.id == sourceItemID && $0.isCourseMaterial }) {
             createNotebookNote(seed: .currentMaterial(item), title: title)
         } else {
-            createNotebookNote(seed: .blank, title: title)
+            createNotebookNote(seed: .blank, title: title, courseID: courseWorkspaceCourseID)
         }
     }
 
@@ -5992,7 +6026,8 @@ final class WorkspaceStore: ObservableObject {
     private func createNotebookNote(
         seed: NotebookNoteSeed,
         title rawTitle: String? = nil,
-        initialMarkdown: String? = nil
+        initialMarkdown: String? = nil,
+        courseID: UUID? = nil
     ) -> StudyItem? {
         let sourceItem: StudyItem?
         let defaultTitle = suggestedNotebookTitle(for: seed)
@@ -6017,7 +6052,7 @@ final class WorkspaceStore: ObservableObject {
         let targetCourseID: UUID?
         switch seed {
         case .blank:
-            targetCourseID = courseWorkspaceCourseID
+            targetCourseID = courseID
         case .currentMaterial(let item):
             targetCourseID = item.storage.ownerCourseID ?? courseWorkspaceCourseID
         }
@@ -7830,7 +7865,7 @@ final class WorkspaceStore: ObservableObject {
         precondition(WeiBeiSafetyTestMode.isEnabled)
         let target = try agentConversationTargetForSelfCheck(courseID: courseID)
         let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access)
+        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
         try beforeSearch?()
         return try waitForCourseFileOperation {
             try await handler(.courseSearch(query: query, offset: 0, limit: 8))
@@ -7845,7 +7880,7 @@ final class WorkspaceStore: ObservableObject {
         precondition(WeiBeiSafetyTestMode.isEnabled)
         let target = try agentConversationTargetForSelfCheck(courseID: courseID)
         let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access)
+        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
         return try waitForCourseFileOperation {
             try await handler(.courseMap(itemID: itemID, offset: offset, limit: 40))
         }
@@ -7860,7 +7895,7 @@ final class WorkspaceStore: ObservableObject {
         precondition(WeiBeiSafetyTestMode.isEnabled)
         let target = try agentConversationTargetForSelfCheck(courseID: courseID)
         let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access)
+        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
         return try waitForCourseFileOperation {
             try await handler(
                 .courseRead(
@@ -7921,17 +7956,9 @@ final class WorkspaceStore: ObservableObject {
         selfCheckCapturedAgentRequest = nil
         capturesAgentRequestForSelfCheck = true
         defer { capturesAgentRequestForSelfCheck = false }
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let scopedTarget = AgentConversationTarget(
-            sessionID: session.id,
-            workingDirectory: target.workingDirectory,
-            courseID: target.courseID,
-            courseRootURL: target.courseRootURL,
-            courseRootIdentity: target.courseRootIdentity
-        )
-        try waitForCourseFileOperation {
-            await self.performAgentRequest(target: scopedTarget)
-        }
+        _ = askAgent(targetCourseID: courseID)
+        let requestTask = agentRequestTask
+        try waitForCourseFileOperation { await requestTask?.value }
         guard let selfCheckCapturedAgentRequest else {
             throw AgentConversationTargetError(
                 message: "没有捕获最终课程 Agent 请求："
@@ -7955,14 +7982,12 @@ final class WorkspaceStore: ObservableObject {
 
     private func makeAgentHostToolHandler(
         target: AgentConversationTarget,
-        access: AgentProjectAccessSnapshot
+        access: AgentProjectAccessSnapshot,
+        focusItemIDs: Set<String>
     ) -> StudyAgentHostToolHandler {
         let preferredCourseID = target.courseID?.uuidString.lowercased()
         // 相关性排序（不是权限门槛）：正在读的资料/文稿排最前，本课程资料
         // 次之，其余已导入资料照样可搜，按标题稳定跟随。
-        let focusItemIDs = Set(
-            [selectedMaterialItem?.id, activeNoteItem?.id].compactMap { $0 }
-        )
         let sources = access.sources.sorted { left, right in
             let leftFocus = focusItemIDs.contains(left.item.id)
             let rightFocus = focusItemIDs.contains(right.item.id)
@@ -8984,7 +9009,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func appendMessageToActiveSelectionAskThread(_ messageID: UUID) {
-        guard let threadID = activeSelectionAskThreadID,
+        let threadID = AgentConversationExecution.run.map { $0.selectionThreadID } ?? activeSelectionAskThreadID
+        guard let threadID,
               let index = selectionAskThreads.firstIndex(where: { $0.id == threadID }) else { return }
         if !selectionAskThreads[index].messageIDs.contains(messageID) {
             selectionAskThreads[index].messageIDs.append(messageID)
@@ -9061,35 +9087,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let question = (pendingComposerDraft ?? agentDraft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isStoppingAgent else { return }
-        if isAskingAgent {
-            pendingAgentSwitchTargetID = activeStudySessionID
-            pendingAgentSwitchCourseID = targetCourseID
-            isAgentSwitchConfirmationPresented = true
-            return
-        }
         askAgent(targetCourseID: targetCourseID)
-    }
-
-    func dismissAgentSwitchConfirmation() {
-        isAgentSwitchConfirmationPresented = false
-        pendingAgentSwitchTargetID = nil
-        pendingAgentSwitchCourseID = nil
-    }
-
-    func confirmAgentSwitchAndSend() {
-        guard isAgentSwitchConfirmationPresented,
-              let targetID = pendingAgentSwitchTargetID,
-              activeStudySessionID == targetID,
-              !(pendingComposerDraft ?? agentDraft).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let targetCourseID = pendingAgentSwitchCourseID
-        dismissAgentSwitchConfirmation()
-        stopAgent(restoreDraft: false) { [weak self] in
-            guard let self,
-                  self.activeStudySessionID == targetID,
-                  self.studySessions.contains(where: { $0.id == targetID }),
-                  !(self.pendingComposerDraft ?? self.agentDraft).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            self.askAgent(targetCourseID: targetCourseID)
-        }
     }
 
     @discardableResult
@@ -9132,13 +9130,22 @@ final class WorkspaceStore: ObservableObject {
             )
             return reason
         }
-        agentRequestTask = Task { @MainActor [weak self] in
-            await self?.performAgentRequest(
+        let run = AgentConversationRun(chatID: target.sessionID)
+        run.selectionThreadID = activeSelectionAskThreadID
+        run.courseID = target.courseID
+        run.baseURL = agentBaseURL
+        run.modelName = modelName
+        agentRuns[target.sessionID] = run
+        objectWillChange.send()
+        freshlyCreatedEmptyStudySessionID = nil
+        run.agentRequestTask = AgentConversationExecution.$run.withValue(run) {
+            prepareAgentRequest(
                 target: target,
                 reusingLastUserMessage: reusingLastUserMessage,
                 replayingSelections: replayingSelections,
                 visibleQuestionOverride: visibleQuestionOverride,
-                questionOverride: questionOverride
+                questionOverride: questionOverride,
+                submittedQuestion: question
             )
         }
         return nil
@@ -9326,9 +9333,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func currentVisualAssetsForAgent(
-        access: AgentProjectAccessSnapshot
+        access: AgentProjectAccessSnapshot,
+        selectedItem: StudyItem?
     ) async -> [StudyAgentVisualAsset] {
-        guard let item = selectedMaterialItem,
+        guard let item = selectedItem,
               let source = access.sources.first(where: { $0.item.id == item.id }),
               Self.agentHostToolSourceIsValid(source),
               let sourceURL = source.grants.first(where: Self.agentFileGrantIsValid)?
@@ -9373,23 +9381,22 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func performAgentRequest(
+    private func prepareAgentRequest(
         target: AgentConversationTarget,
         reusingLastUserMessage: Bool = false,
         replayingSelections: [SelectionContext]? = nil,
         visibleQuestionOverride: String? = nil,
-        questionOverride: String? = nil
-    ) async {
-        guard !Task.isCancelled, activeStudySessionID == target.sessionID else {
+        questionOverride: String? = nil,
+        submittedQuestion: String
+    ) -> Task<Void, Never>? {
+        guard !Task.isCancelled else {
             agentRequestTask = nil
-            return
+            return nil
         }
-        _ = try? await noteEditingSession.snapshot()
-        let question = (questionOverride ?? agentDraft)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let question = submittedQuestion
         guard !question.isEmpty, !isAskingAgent else {
             agentRequestTask = nil
-            return
+            return nil
         }
         let requestProvider = agentProviderID
         let requestAuthMethod = agentAuthMethod
@@ -9398,7 +9405,7 @@ final class WorkspaceStore: ObservableObject {
                   userMessage.role == .user,
                   userMessage.text.trimmingCharacters(in: .whitespacesAndNewlines) == question else {
                 agentRequestTask = nil
-                return
+                return nil
             }
         }
         do {
@@ -9413,7 +9420,7 @@ final class WorkspaceStore: ObservableObject {
                 preserveComposerDraft: questionOverride != nil
             )
             agentRequestTask = nil
-            return
+            return nil
         }
 
         persistCurrentNote()
@@ -9424,7 +9431,7 @@ final class WorkspaceStore: ObservableObject {
            !selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             addSelectionAttachment(selectionContext)
         }
-        let projectAccess = makeAgentProjectAccessSnapshot(target: target)
+        var projectAccess = makeAgentProjectAccessSnapshot(target: target)
         let allowedItemIDs = Set(projectAccess.sources.map(\.item.id))
         // Focus materials/notes do not require project-file grants (legacyExternal etc.).
         let replayMaterialItemID = replayingSelections?
@@ -9481,7 +9488,7 @@ final class WorkspaceStore: ObservableObject {
         let sentNoteTitle = sentNoteItem == nil
             ? ui("当前笔记", "Current Note")
             : agentNoteTitle
-        let sentNoteText = sentNoteItem.flatMap { note in
+        let capturedNoteText = sentNoteItem.flatMap { note in
             projectAccess.sources.first(where: { $0.item.id == note.id })?.memoryText
                 ?? loadedAgentNoteText(for: note)
         } ?? ""
@@ -9495,397 +9502,424 @@ final class WorkspaceStore: ObservableObject {
         )
         let sentLearningContext = makeLearningContext(target: target)
         let sentCourseProfile = makeCourseProfileContext(courseID: target.courseID)
-        let sentVisualAssets = await currentVisualAssetsForAgent(access: projectAccess)
-        defer { Self.removeAgentVisualSnapshots(sentVisualAssets) }
         let sentLanguage = interfaceLanguage
-        let courseQuery = [question, sentSelectionText ?? ""]
-            .joined(separator: "\n\n")
-        isAskingAgent = true
-        activeAgentRequestID = requestID
-        settleAgentStreamingDisplayImmediately()
-        latestAgentStreamingText = ""
-        lastAgentStreamingPublishNanoseconds = 0
-        agentStreamingDisplayPump.stopAndReset()
-        agentVisualizationIDsUpdatingHistory = []
-        agentStreaming.reset()
-        agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
-        defer {
-            if activeAgentRequestID == requestID {
-                activeAgentRequestID = nil
-                activeAgentReplyMessageID = nil
-                activeAgentReplyChatID = nil
-                isAskingAgent = false
-                lastAgentStreamingPublishNanoseconds = 0
-                agentVisualizationIDsUpdatingHistory = []
-                agentStreaming.activityText = nil
-                agentRequestTask = nil
-                if agentStreaming.displayingMessageID == nil {
-                    latestAgentStreamingText = ""
-                    agentStreamingDisplayPump.stopAndReset()
-                }
-                // Answer finished: keep float pinned so the user can scroll the reply.
-                if keepFloatingSelectionForAnswer, !isConversationSurfaceVisible {
-                    pinnedFloatingAgent = true
-                    agentSurface = .selectionFloat
-                }
-            }
+        let visualItem = selectedMaterialItem
+        // Capture the editor request now, before another Chat or note can be selected.
+        let (snapshots, continuation) = AsyncStream<NoteEditorSnapshotReadyEvent?>.makeStream()
+        noteEditingSession.requestSnapshot { result in
+            continuation.yield(try? result.get())
+            continuation.finish()
         }
-
-        var didAppendUserMessage = reusingLastUserMessage
-        var replyMessageID: UUID?
-        var didStartModelRequest = false
-        do {
-            if !reusingLastUserMessage {
-                let userMessage = AgentMessage(
-                    role: .user,
-                    text: visibleQuestionOverride ?? question,
-                    source: sourceTitle
-                )
-                appendAgentMessage(userMessage)
-                appendMessageToActiveSelectionAskThread(userMessage.id)
-                didAppendUserMessage = true
-            }
-            if let courseID = target.courseID {
-                associateStudySession(target.sessionID, with: [courseID])
-                _ = captureCourseResumePoint(
-                    courseID: courseID,
-                    chatID: target.sessionID
-                )
-            }
-            // Never flushPendingWorkspaceSave() here: RunLoop-spin on MainActor = deadlock.
-            guard await flushPendingWorkspaceSaveAsync() else {
-                throw AgentConversationTargetError(
-                    message: ui(
-                        "问题尚未安全写入本地，魏碑没有把它发送给 Agent。",
-                        "The question was not safely saved, so WeiBei did not send it to the Agent."
-                    )
-                )
-            }
-
-            let assistantMessage = AgentMessage(
-                role: .assistant,
-                text: "",
-                source: sourceTitle,
-                backend: .native,
-                completionState: .generating,
-                origin: AgentReplyOrigin(
-                    requestID: requestID,
-                    chatID: target.sessionID,
-                    courseID: target.courseID
-                ),
-                retryQuestion: question
-            )
-            replyMessageID = assistantMessage.id
-            activeAgentReplyMessageID = assistantMessage.id
-            activeAgentReplyChatID = target.sessionID
-            agentStreaming.begin(
-                messageID: assistantMessage.id,
-                chatID: target.sessionID
-            )
-            appendAgentMessage(assistantMessage)
-            appendMessageToActiveSelectionAskThread(assistantMessage.id)
-            guard await flushPendingWorkspaceSaveAsync() else {
-                throw AgentConversationTargetError(
-                    message: ui(
-                        "回答状态尚未安全写入本地，魏碑没有继续请求 Agent。",
-                        "The reply state was not saved safely, so WeiBei did not continue the request."
-                    )
-                )
-            }
-
-            if questionOverride == nil {
-                agentDraft = ""; pendingComposerDraft = nil
-                agentDraftsBySessionID[target.sessionID] = ""
-            }
-            lastFailedAgentQuestion = nil
-            lastAgentFailureKind = nil
-            latestAgentLearningUpdate = nil
-            if !sentSelectionIDs.isEmpty {
-                // No withAnimation here: animating attachment chrome while chat
-                // PlatformViews remasure was part of the send-path main-thread freeze.
-                cancelPendingSelectionAttachment()
-                selectionAttachments.removeAll { sentSelectionIDs.contains($0.id) }
-                if selectionAttachments.isEmpty {
-                    lastSelectionAttachmentDate = nil
-                    lastSelectionUpdateDate = nil
-                }
-            }
-            // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
-            if isConversationSurfaceVisible {
-                agentSurface = .hidden
-                keepFloatingSelectionForAnswer = false
-                if shouldClearSentDocumentSelection, !pinnedFloatingAgent {
-                    clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
-                }
-            } else if shouldClearSentDocumentSelection,
-                      !keepFloatingSelectionForAnswer,
-                      !pinnedFloatingAgent {
-                clearUnpinnedFloatingSelection(
-                    keepContext: false,
-                    invalidatesAgentContext: false
-                )
-            } else if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
-                agentSurface = .selectionFloat
-                pinnedFloatingAgent = true
-            }
-
-            let courseBuild = try await makeCourseContext(
-                query: courseQuery,
-                courseID: target.courseID,
-                access: projectAccess,
-                focusMaterialItem: sentMaterialItem,
-                focusNoteItem: sentNoteItem
-            )
-            guard activeAgentRequestID == requestID else { return }
-            try validateAgentConversationTarget(target, mustBeActive: false)
-            let hostToolHandler = makeAgentHostToolHandler(
-                target: target,
-                access: projectAccess
-            )
-            let sourceReference = SourceReferenceTitle.parse(sentMaterialTitle)
-            let request = StudyAgentRequest(
-                id: requestID,
-                purpose: .conversation,
-                question: question,
-                materialTitle: sentMaterialTitle,
-                materialText: "",
-                materialIsTruncated: false,
-                noteTitle: sentNoteTitle,
-                noteText: "",
-                selectionTitle: sentSelectionTitle,
-                selectionText: sentSelectionText,
-                selectionSources: sentSelectionSources,
-                courseContext: courseBuild.context,
-                projectScope: projectAccess.scope,
-                focus: StudyAgentFocus(
-                    chatID: target.sessionID.uuidString.lowercased(),
-                    courseID: target.courseID?.uuidString.lowercased(),
-                    materialItemID: sentMaterialItemID,
-                    materialTitle: sentMaterialItem.map(displayTitle),
-                    pageIndex: sourceReference.pageIndex,
-                    sectionTitle: sourceReference.sectionTitle,
-                    sectionLocationID: sourceReference.sectionLocationID,
-                    sectionOrdinal: sourceReference.sectionOrdinal,
-                    selectionText: sentSelectionText,
-                    actionSource: sentSelectionText == nil
-                        ? (sentMaterialItem == nil ? "chat" : "reader")
-                        : "selection"
-                ),
-                visualAssets: sentVisualAssets,
-                learningContext: sentLearningContext,
-                courseProfile: sentCourseProfile,
-                language: sentLanguage,
-                contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())",
-                confirmedNotes: confirmedAgentNotes(in: target)
-            )
-            agentStreaming.activityText = ui("正在思考", "Thinking")
-            didStartModelRequest = true
-            let reply = try await executeStudyAgentRequest(
-                request,
-                provider: requestProvider,
-                target: target,
-                replyMessageID: assistantMessage.id,
-                hostToolHandler: hostToolHandler
-            )
-            guard activeAgentRequestID == request.id else { return }
-            recordAgentAuthenticationSuccess(
-                provider: requestProvider,
-                authMethod: requestAuthMethod
-            )
-            try validateAgentConversationTarget(target, mustBeActive: false)
-            let memoryUpdate = reply.appliedMemoryUpdate ?? applyLearningUpdate(
-                reply.learningUpdate,
-                expectedContextRevision: request.contextRevision,
-                expectedMemoryRevision: requestMemoryRevision,
-                expectedUserQuestion: request.question,
-                target: target,
-                messageID: assistantMessage.id
-            )
-            let profileUpdate = reply.appliedProfileUpdate ?? applyCourseProfileUpdate(
-                reply.courseProfileUpdate,
-                expectedContextRevision: request.contextRevision,
-                expectedProfileRevision: sentCourseProfile.revision,
-                target: target
-            )
-            if activeStudySessionID == target.sessionID {
-                lastAgentReplyContextRevision = requestWorkspaceRevision
-            }
-            var actions: [AgentReplyAction] = []
-            if let proposal = reply.noteProposal,
-               sentNoteItemID != nil || target.courseID != nil {
-                actions.append(
-                    AgentReplyAction(
-                        kind: .writeNote,
-                        targetItemID: sentNoteItemID,
-                        sourceItemID: sentMaterialItemID,
-                        proposedMarkdown: proposal.markdown,
-                        evidence: proposal.evidence,
-                        contextRevision: proposal.contextRevision,
-                        baselineContentDigest: sentNoteItemID == nil
-                            ? Self.noteContentDigest(Data())
-                            : Self.noteContentDigest(Data(sentNoteText.utf8))
-                    )
-                )
-            }
-            if let proposal = reply.relationProposal {
-                actions.append(
-                    AgentReplyAction(
-                        kind: .createRelation,
-                        targetItemID: proposal.noteItemID,
-                        sourceItemID: proposal.sourceItemID,
-                        contextRevision: proposal.contextRevision
-                    )
-                )
-            }
-            let sources = reply.sources
-            if let messageID = replyMessageID {
-                let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
-                latestAgentStreamingText = reply.text
-                _ = updateAgentMessage(messageID, in: target.sessionID) {
-                    $0.text = reply.text
-                    $0.contentBlocks = visibleContentBlocks
-                    $0.backend = reply.backend
-                    $0.completionState = .completed
-                    $0.sources = sources
-                    $0.actions = actions
-                    $0.memoryUpdate = memoryUpdate
-                    $0.profileUpdate = profileUpdate
-                    $0.failureKind = nil
-                    $0.retryQuestion = nil
-                    $0.toolTrace = reply.toolTrace
-                }
-                if agentStreaming.isDisplaying(messageID) {
-                    if agentStreamingUsesReducedMotion
-                        || !isAgentStreamingSurfaceVisible
-                        || agentStreaming.displayingChatID != activeStudySessionID {
-                        agentStreamingDisplayPump.replaceImmediately(
-                            cumulativeText: reply.text
-                        )
+        return Task { @MainActor in
+            var sentNoteText = capturedNoteText
+            for await snapshot in snapshots {
+                if let snapshot, snapshot.documentID == sentNoteItemID {
+                    sentNoteText = snapshot.markdown
+                    if let index = projectAccess.sources.firstIndex(where: { $0.item.id == snapshot.documentID }) {
+                        projectAccess.sources[index].memoryText = snapshot.markdown
                     }
-                    agentStreamingDisplayPump.finish(cumulativeText: reply.text)
-                }
-                if reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   visibleContentBlocks.isEmpty,
-                   actions.isEmpty {
-                    removeAgentMessage(messageID, from: target.sessionID)
                 }
             }
-            associateStudySession(
-                target.sessionID,
-                with: sources.compactMap(\.courseID)
-            )
-            associateStudySession(
-                target.sessionID,
-                with: agentContextCourseIDs(
-                    for: sources.compactMap(\.itemID),
-                    targetCourseID: target.courseID
-                )
-            )
-            associateStudySession(
-                target.sessionID,
-                with: agentContextCourseIDs(
-                    for: reply.readItemIDs,
-                    targetCourseID: target.courseID
-                )
-            )
-            // 用户明确要求写笔记：直接执行写入，不再等确认卡。防覆盖 digest
-            // 对比与撤销都走同一条动作管线，这里只是替用户按下"写入"。
-            if let proposal = reply.noteProposal,
-               proposal.userRequested,
-               let writeAction = actions.last(where: { $0.kind == .writeNote }) {
-                await confirmAgentReplyAction(
-                    messageID: assistantMessage.id,
-                    actionID: writeAction.id
-                )
+            guard !Task.isCancelled else { agentRequestTask = nil; return }
+            let sentVisualAssets = await currentVisualAssetsForAgent(access: projectAccess, selectedItem: visualItem)
+            defer { Self.removeAgentVisualSnapshots(sentVisualAssets) }
+            guard !Task.isCancelled else { agentRequestTask = nil; return }
+            let courseQuery = [question, sentSelectionText ?? ""]
+                .joined(separator: "\n\n")
+            isAskingAgent = true
+            activeAgentRequestID = requestID
+            settleAgentStreamingDisplayImmediately()
+            latestAgentStreamingText = ""
+            lastAgentStreamingPublishNanoseconds = 0
+            agentStreamingDisplayPump.stopAndReset()
+            agentVisualizationIDsUpdatingHistory = []
+            agentStreaming.reset()
+            agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
+            defer {
+                if activeAgentRequestID == requestID {
+                    activeAgentRequestID = nil
+                    activeAgentReplyMessageID = nil
+                    activeAgentReplyChatID = nil
+                    isAskingAgent = false
+                    lastAgentStreamingPublishNanoseconds = 0
+                    agentVisualizationIDsUpdatingHistory = []
+                    agentStreaming.activityText = nil
+                    agentRequestTask = nil
+                    if agentStreaming.displayingMessageID == nil {
+                        latestAgentStreamingText = ""
+                        agentStreamingDisplayPump.stopAndReset()
+                    }
+                    // Answer finished: keep float pinned so the user can scroll the reply.
+                    if activeStudySessionID == target.sessionID, keepFloatingSelectionForAnswer, !isConversationSurfaceVisible {
+                        pinnedFloatingAgent = true
+                        agentSurface = .selectionFloat
+                    }
+                }
             }
-            // Durable reply before request finish; save errors must not hide it.
-            _ = await flushPendingWorkspaceSaveAsync()
-        } catch is CancellationError {
-            guard activeAgentRequestID == requestID else { return }
-            if let replyMessageID {
-                interruptAgentReply(
-                    requestID: requestID,
-                    messageID: replyMessageID,
-                    chatID: target.sessionID,
-                    kind: .cancelled,
-                    restoreDraft: questionOverride == nil
-                )
-            }
-            if questionOverride == nil {
-                agentDraftsBySessionID[target.sessionID] = question
-            }
-            if questionOverride == nil,
-               activeStudySessionID == target.sessionID,
-               agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                agentDraft = question
-                lastAgentFailureKind = .cancelled
-            }
-            return
-        } catch {
-            guard activeAgentRequestID == requestID else { return }
-            if !didAppendUserMessage {
-                appendAgentMessage(
-                    AgentMessage(
+
+            var didAppendUserMessage = reusingLastUserMessage
+            var replyMessageID: UUID?
+            var didStartModelRequest = false
+            do {
+                if !reusingLastUserMessage {
+                    let userMessage = AgentMessage(
                         role: .user,
                         text: visibleQuestionOverride ?? question,
                         source: sourceTitle
                     )
+                    appendAgentMessage(userMessage)
+                    appendMessageToActiveSelectionAskThread(userMessage.id)
+                    didAppendUserMessage = true
+                }
+                if let courseID = target.courseID {
+                    associateStudySession(target.sessionID, with: [courseID])
+                    _ = captureCourseResumePoint(
+                        courseID: courseID,
+                        chatID: target.sessionID
+                    )
+                }
+                // Never flushPendingWorkspaceSave() here: RunLoop-spin on MainActor = deadlock.
+                guard await flushPendingWorkspaceSaveAsync() else {
+                    throw AgentConversationTargetError(
+                        message: ui(
+                            "问题尚未安全写入本地，魏碑没有把它发送给 Agent。",
+                            "The question was not safely saved, so WeiBei did not send it to the Agent."
+                        )
+                    )
+                }
+
+                try Task.checkCancellation()
+                let assistantMessage = AgentMessage(
+                    role: .assistant,
+                    text: "",
+                    source: sourceTitle,
+                    backend: .native,
+                    completionState: .generating,
+                    origin: AgentReplyOrigin(
+                        requestID: requestID,
+                        chatID: target.sessionID,
+                        courseID: target.courseID
+                    ),
+                    retryQuestion: question
                 )
-            }
-            // Always restore the failed question so composer matches the failure copy.
-            let kind = AgentFailureKind.classify(error)
-            if didStartModelRequest {
-                agentAuthenticationStatus.recordFailure(
-                    kind,
+                replyMessageID = assistantMessage.id
+                activeAgentReplyMessageID = assistantMessage.id
+                activeAgentReplyChatID = target.sessionID
+                agentStreaming.begin(
+                    messageID: assistantMessage.id,
+                    chatID: target.sessionID
+                )
+                appendAgentMessage(assistantMessage)
+                appendMessageToActiveSelectionAskThread(assistantMessage.id)
+                guard await flushPendingWorkspaceSaveAsync() else {
+                    throw AgentConversationTargetError(
+                        message: ui(
+                            "回答状态尚未安全写入本地，魏碑没有继续请求 Agent。",
+                            "The reply state was not saved safely, so WeiBei did not continue the request."
+                        )
+                    )
+                }
+
+                if questionOverride == nil {
+                    agentDraftsBySessionID[target.sessionID] = ""
+                    if activeStudySessionID == target.sessionID {
+                        agentDraft = ""; pendingComposerDraft = nil
+                    }
+                }
+                if activeStudySessionID == target.sessionID {
+                lastFailedAgentQuestion = nil
+                lastAgentFailureKind = nil
+                latestAgentLearningUpdate = nil
+                if !sentSelectionIDs.isEmpty {
+                    // No withAnimation here: animating attachment chrome while chat
+                    // PlatformViews remasure was part of the send-path main-thread freeze.
+                    cancelPendingSelectionAttachment()
+                    selectionAttachments.removeAll { sentSelectionIDs.contains($0.id) }
+                    if selectionAttachments.isEmpty {
+                        lastSelectionAttachmentDate = nil
+                        lastSelectionUpdateDate = nil
+                    }
+                }
+                // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
+                if isConversationSurfaceVisible {
+                    agentSurface = .hidden
+                    keepFloatingSelectionForAnswer = false
+                    if shouldClearSentDocumentSelection, !pinnedFloatingAgent {
+                        clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
+                    }
+                } else if shouldClearSentDocumentSelection,
+                          !keepFloatingSelectionForAnswer,
+                          !pinnedFloatingAgent {
+                    clearUnpinnedFloatingSelection(
+                        keepContext: false,
+                        invalidatesAgentContext: false
+                    )
+                } else if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
+                    agentSurface = .selectionFloat
+                    pinnedFloatingAgent = true
+                }
+
+                }
+
+                let courseBuild = try await makeCourseContext(
+                    query: courseQuery,
+                    courseID: target.courseID,
+                    access: projectAccess,
+                    focusMaterialItem: sentMaterialItem,
+                    focusNoteItem: sentNoteItem
+                )
+                guard activeAgentRequestID == requestID else { return }
+                try validateAgentConversationTarget(target, mustBeActive: false)
+                let hostToolHandler = makeAgentHostToolHandler(
+                    target: target,
+                    access: projectAccess,
+                    focusItemIDs: Set([sentMaterialItemID, sentNoteItemID].compactMap { $0 })
+                )
+                let sourceReference = SourceReferenceTitle.parse(sentMaterialTitle)
+                let request = StudyAgentRequest(
+                    id: requestID,
+                    purpose: .conversation,
+                    question: question,
+                    materialTitle: sentMaterialTitle,
+                    materialText: "",
+                    materialIsTruncated: false,
+                    noteTitle: sentNoteTitle,
+                    noteText: "",
+                    selectionTitle: sentSelectionTitle,
+                    selectionText: sentSelectionText,
+                    selectionSources: sentSelectionSources,
+                    courseContext: courseBuild.context,
+                    projectScope: projectAccess.scope,
+                    focus: StudyAgentFocus(
+                        chatID: target.sessionID.uuidString.lowercased(),
+                        courseID: target.courseID?.uuidString.lowercased(),
+                        materialItemID: sentMaterialItemID,
+                        materialTitle: sentMaterialItem.map(displayTitle),
+                        pageIndex: sourceReference.pageIndex,
+                        sectionTitle: sourceReference.sectionTitle,
+                        sectionLocationID: sourceReference.sectionLocationID,
+                        sectionOrdinal: sourceReference.sectionOrdinal,
+                        selectionText: sentSelectionText,
+                        actionSource: sentSelectionText == nil
+                            ? (sentMaterialItem == nil ? "chat" : "reader")
+                            : "selection"
+                    ),
+                    visualAssets: sentVisualAssets,
+                    learningContext: sentLearningContext,
+                    courseProfile: sentCourseProfile,
+                    language: sentLanguage,
+                    contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())",
+                    confirmedNotes: confirmedAgentNotes(in: target)
+                )
+                agentStreaming.activityText = ui("正在思考", "Thinking")
+                didStartModelRequest = true
+                let reply = try await executeStudyAgentRequest(
+                    request,
+                    provider: requestProvider,
+                    target: target,
+                    replyMessageID: assistantMessage.id,
+                    hostToolHandler: hostToolHandler
+                )
+                try Task.checkCancellation()
+                guard activeAgentRequestID == request.id else { return }
+                recordAgentAuthenticationSuccess(
                     provider: requestProvider,
                     authMethod: requestAuthMethod
                 )
-            }
-            if questionOverride == nil {
-                agentDraftsBySessionID[target.sessionID] = question
-            }
-            if activeStudySessionID == target.sessionID {
-                if questionOverride == nil {
-                    agentDraft = question
-                }
-                focusedPane = .agent
-                lastAgentFailureKind = kind
-                lastFailedAgentQuestion = question
-            }
-            let failureText = Self.agentFailureMessage(
-                for: error,
-                kind: kind,
-                language: interfaceLanguage
-            )
-            if let replyMessageID {
-                interruptAgentReply(
-                    requestID: requestID,
-                    messageID: replyMessageID,
-                    chatID: target.sessionID,
-                    kind: kind,
-                    fallbackText: failureText,
-                    restoreDraft: questionOverride == nil
+                try validateAgentConversationTarget(target, mustBeActive: false)
+                let memoryUpdate = reply.appliedMemoryUpdate ?? applyLearningUpdate(
+                    reply.learningUpdate,
+                    expectedContextRevision: request.contextRevision,
+                    expectedMemoryRevision: requestMemoryRevision,
+                    expectedUserQuestion: request.question,
+                    target: target,
+                    messageID: assistantMessage.id
                 )
-            } else {
-                appendAgentMessage(
-                    AgentMessage(
-                        role: .assistant,
-                        text: failureText,
-                        source: sourceTitle,
-                        completionState: .interrupted,
-                        origin: AgentReplyOrigin(
-                            requestID: requestID,
-                            chatID: target.sessionID,
-                            courseID: target.courseID
-                        ),
-                        failureKind: kind,
-                        retryQuestion: question
+                let profileUpdate = reply.appliedProfileUpdate ?? applyCourseProfileUpdate(
+                    reply.courseProfileUpdate,
+                    expectedContextRevision: request.contextRevision,
+                    expectedProfileRevision: sentCourseProfile.revision,
+                    target: target
+                )
+                if activeStudySessionID == target.sessionID {
+                    lastAgentReplyContextRevision = requestWorkspaceRevision
+                }
+                var actions: [AgentReplyAction] = []
+                if let proposal = reply.noteProposal,
+                   sentNoteItemID != nil || target.courseID != nil {
+                    actions.append(
+                        AgentReplyAction(
+                            kind: .writeNote,
+                            targetItemID: sentNoteItemID,
+                            sourceItemID: sentMaterialItemID,
+                            proposedMarkdown: proposal.markdown,
+                            evidence: proposal.evidence,
+                            contextRevision: proposal.contextRevision,
+                            baselineContentDigest: sentNoteItemID == nil
+                                ? Self.noteContentDigest(Data())
+                                : Self.noteContentDigest(Data(sentNoteText.utf8))
+                        )
+                    )
+                }
+                if let proposal = reply.relationProposal {
+                    actions.append(
+                        AgentReplyAction(
+                            kind: .createRelation,
+                            targetItemID: proposal.noteItemID,
+                            sourceItemID: proposal.sourceItemID,
+                            contextRevision: proposal.contextRevision
+                        )
+                    )
+                }
+                let sources = reply.sources
+                if let messageID = replyMessageID {
+                    let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
+                    latestAgentStreamingText = reply.text
+                    _ = updateAgentMessage(messageID, in: target.sessionID) {
+                        $0.text = reply.text
+                        $0.contentBlocks = visibleContentBlocks
+                        $0.backend = reply.backend
+                        $0.completionState = .completed
+                        $0.sources = sources
+                        $0.actions = actions
+                        $0.memoryUpdate = memoryUpdate
+                        $0.profileUpdate = profileUpdate
+                        $0.failureKind = nil
+                        $0.retryQuestion = nil
+                        $0.toolTrace = reply.toolTrace
+                    }
+                    if agentStreaming.isDisplaying(messageID) {
+                        if agentStreamingUsesReducedMotion
+                            || !isAgentStreamingSurfaceVisible
+                            || agentStreaming.displayingChatID != activeStudySessionID {
+                            agentStreamingDisplayPump.replaceImmediately(
+                                cumulativeText: reply.text
+                            )
+                        }
+                        agentStreamingDisplayPump.finish(cumulativeText: reply.text)
+                    }
+                    if reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       visibleContentBlocks.isEmpty,
+                       actions.isEmpty {
+                        removeAgentMessage(messageID, from: target.sessionID)
+                    }
+                }
+                associateStudySession(
+                    target.sessionID,
+                    with: sources.compactMap(\.courseID)
+                )
+                associateStudySession(
+                    target.sessionID,
+                    with: agentContextCourseIDs(
+                        for: sources.compactMap(\.itemID),
+                        targetCourseID: target.courseID
                     )
                 )
+                associateStudySession(
+                    target.sessionID,
+                    with: agentContextCourseIDs(
+                        for: reply.readItemIDs,
+                        targetCourseID: target.courseID
+                    )
+                )
+                // 用户明确要求写笔记：直接执行写入，不再等确认卡。防覆盖 digest
+                // 对比与撤销都走同一条动作管线，这里只是替用户按下"写入"。
+                if let proposal = reply.noteProposal,
+                   proposal.userRequested,
+                   let writeAction = actions.last(where: { $0.kind == .writeNote }) {
+                    await confirmAgentReplyAction(
+                        messageID: assistantMessage.id,
+                        actionID: writeAction.id
+                    )
+                }
+                // Durable reply before request finish; save errors must not hide it.
+                _ = await flushPendingWorkspaceSaveAsync()
+            } catch is CancellationError {
+                guard activeAgentRequestID == requestID else { return }
+                if let replyMessageID {
+                    interruptAgentReply(
+                        requestID: requestID,
+                        messageID: replyMessageID,
+                        chatID: target.sessionID,
+                        kind: .cancelled,
+                        restoreDraft: questionOverride == nil
+                    )
+                }
+                if questionOverride == nil {
+                    agentDraftsBySessionID[target.sessionID] = question
+                }
+                if questionOverride == nil,
+                   activeStudySessionID == target.sessionID,
+                   agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    agentDraft = question
+                    lastAgentFailureKind = .cancelled
+                }
+                return
+            } catch {
+                guard activeAgentRequestID == requestID else { return }
+                if !didAppendUserMessage {
+                    appendAgentMessage(
+                        AgentMessage(
+                            role: .user,
+                            text: visibleQuestionOverride ?? question,
+                            source: sourceTitle
+                        )
+                    )
+                }
+                // Always restore the failed question so composer matches the failure copy.
+                let kind = AgentFailureKind.classify(error)
+                if didStartModelRequest {
+                    agentAuthenticationStatus.recordFailure(
+                        kind,
+                        provider: requestProvider,
+                        authMethod: requestAuthMethod
+                    )
+                }
+                if questionOverride == nil {
+                    agentDraftsBySessionID[target.sessionID] = question
+                }
+                if activeStudySessionID == target.sessionID {
+                    if questionOverride == nil {
+                        agentDraft = question
+                    }
+                    focusedPane = .agent
+                    lastAgentFailureKind = kind
+                    lastFailedAgentQuestion = question
+                }
+                let failureText = Self.agentFailureMessage(
+                    for: error,
+                    kind: kind,
+                    language: interfaceLanguage
+                )
+                if let replyMessageID {
+                    interruptAgentReply(
+                        requestID: requestID,
+                        messageID: replyMessageID,
+                        chatID: target.sessionID,
+                        kind: kind,
+                        fallbackText: failureText,
+                        restoreDraft: questionOverride == nil
+                    )
+                } else {
+                    appendAgentMessage(
+                        AgentMessage(
+                            role: .assistant,
+                            text: failureText,
+                            source: sourceTitle,
+                            completionState: .interrupted,
+                            origin: AgentReplyOrigin(
+                                requestID: requestID,
+                                chatID: target.sessionID,
+                                courseID: target.courseID
+                            ),
+                            failureKind: kind,
+                            retryQuestion: question
+                        )
+                    )
+                }
+                _ = await flushPendingWorkspaceSaveAsync()
             }
-            _ = await flushPendingWorkspaceSaveAsync()
         }
-
     }
 
     private func interruptAgentReply(
@@ -9933,55 +9967,40 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    func cancelAgentRequestIfRunning(
-        in courseID: UUID,
-        completion: (@MainActor () -> Void)? = nil
-    ) -> Bool {
-        guard let runningChatID = activeAgentReplyChatID,
-              let messageID = activeAgentReplyMessageID,
-              studySessions.first(where: { $0.id == runningChatID })?
-                .messages.first(where: { $0.id == messageID })?
-                .origin?.courseID == courseID else {
-            return false
+    func cancelAgentRequestIfRunning(in courseID: UUID, completion: (@MainActor () -> Void)? = nil) -> Bool {
+        let runs = agentRuns.values.filter { run in
+            run.agentRequestTask != nil && run.courseID == courseID
         }
-        stopAgent(restoreDraft: false, completion: completion)
+        guard !runs.isEmpty else { return false }
+        for run in runs {
+            AgentConversationExecution.$run.withValue(run) { stopAgent(restoreDraft: false) }
+        }
+        Task { @MainActor in
+            for run in runs { await run.agentStopTask?.value }
+            completion?()
+        }
         return true
     }
 
-    private func stopAgent(
-        restoreDraft: Bool,
-        completion: (@MainActor () -> Void)? = nil
-    ) {
-        guard !isStoppingAgent,
-              let requestID = activeAgentRequestID,
-              let messageID = activeAgentReplyMessageID,
-              let chatID = activeAgentReplyChatID else { return }
-        interruptAgentReply(
-            requestID: requestID,
-            messageID: messageID,
-            chatID: chatID,
-            kind: .cancelled,
-            restoreDraft: restoreDraft
-        )
-        let requestTask = agentRequestTask
-        requestTask?.cancel()
-        agentRequestTask = nil
-        activeAgentRequestID = nil
-        activeAgentReplyMessageID = nil
-        activeAgentReplyChatID = nil
-        isAskingAgent = false
-        isStoppingAgent = true
-        latestAgentStreamingText = ""
-        lastAgentStreamingPublishNanoseconds = 0
-        agentStreamingDisplayPump.stopAndReset()
-        agentStreaming.activityText = nil
-        agentStopTask?.cancel()
-        agentStopTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.cancelStudyAgentRuntimes()
-            await requestTask?.value
-            self.isStoppingAgent = false
-            self.agentStopTask = nil
+    private func stopAgent(restoreDraft: Bool, completion: (@MainActor () -> Void)? = nil) {
+        let run = agentRun
+        guard !run.isStoppingAgent, let requestTask = run.agentRequestTask else { return }
+        if let requestID = run.activeAgentRequestID,
+           let messageID = run.activeAgentReplyMessageID,
+           let chatID = run.chatID {
+            interruptAgentReply(requestID: requestID, messageID: messageID, chatID: chatID, kind: .cancelled, restoreDraft: restoreDraft)
+        }
+        requestTask.cancel()
+        run.isStoppingAgent = true
+        objectWillChange.send()
+        run.agentStopTask = Task { @MainActor [weak self] in
+            await run.runtime?.cancel()
+            await requestTask.value
+            run.agentRequestTask = nil
+            run.isAskingAgent = false
+            run.isStoppingAgent = false
+            run.agentStopTask = nil
+            self?.objectWillChange.send()
             completion?()
         }
     }
@@ -10065,6 +10084,9 @@ final class WorkspaceStore: ObservableObject {
         hostToolHandler: @escaping StudyAgentHostToolHandler
     ) async throws -> StudyAgentReply {
 #if DEBUG
+        if WeiBeiSafetyTestMode.isEnabled, let selfCheckAgentResponder {
+            return try await selfCheckAgentResponder(request)
+        }
         if capturesAgentRequestForSelfCheck,
            WeiBeiSafetyTestMode.isEnabled {
             selfCheckCapturedAgentRequest = request
@@ -10083,12 +10105,18 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    func shutdownAgentRuntime() {
-        let span = WeiBeiPerf.begin("agent.shutdown")
-        agentRequestTask?.cancel()
-        agentStopTask?.cancel()
-        WeiBeiPerf.end(span, extra: "outcome=completed")
+    func cancelAllAgentRequests() {
+        for run in Array(agentRuns.values) {
+            AgentConversationExecution.$run.withValue(run) { stopAgent(restoreDraft: false) }
+        }
     }
+
+    func waitForAgentRequestsToStop(in courseID: UUID? = nil) async {
+        let runs = Array(agentRuns.values).filter { courseID == nil || $0.courseID == courseID }
+        for run in runs { await run.agentStopTask?.value }
+    }
+
+    func shutdownAgentRuntime() { cancelAllAgentRequests() }
 
     func applyAgentProgress(
         _ progress: StudyAgentProgress,
@@ -10099,14 +10127,10 @@ final class WorkspaceStore: ObservableObject {
         guard activeAgentRequestID == requestID,
               activeAgentReplyMessageID == replyMessageID,
               activeAgentReplyChatID == chatID else { return }
-        let updatesVisibleChat = activeStudySessionID == chatID
         switch progress {
         case .preparing:
-            if updatesVisibleChat {
-                agentStreaming.activityText = ui("正在思考", "Thinking")
-            }
+            agentStreaming.activityText = ui("正在思考", "Thinking")
         case let .usingTool(name, detail):
-            guard updatesVisibleChat else { return }
             let base: String
             switch name {
             case "weibei_course_search", "weibei_search_workspace":
@@ -10149,8 +10173,7 @@ final class WorkspaceStore: ObservableObject {
                 agentReplyIDsThatDisplayedStreamingText.insert(replyMessageID)
             }
             let now = DispatchTime.now().uptimeNanoseconds
-            if updatesVisibleChat,
-               !blocks.isEmpty,
+            if !blocks.isEmpty,
                now &- lastAgentStreamingPublishNanoseconds >= 33_000_000 {
                 lastAgentStreamingPublishNanoseconds = now
                 updateStreamingAgentContentBlocks(
@@ -10159,12 +10182,8 @@ final class WorkspaceStore: ObservableObject {
                     chatID: chatID
                 )
             }
-            if updatesVisibleChat {
-                let activity = ui("正在组织回答", "Composing answer")
-                if agentStreaming.activityText != activity {
-                    agentStreaming.activityText = activity
-                }
-            }
+            let activity = ui("正在组织回答", "Composing answer")
+            if agentStreaming.activityText != activity { agentStreaming.activityText = activity }
         case let .visualization(fragment, blocks):
             if let historicalMessageID = historicalAgentMessageID(
                 containingVisualization: fragment.id,
@@ -10185,9 +10204,7 @@ final class WorkspaceStore: ObservableObject {
             _ = updateAgentMessage(replyMessageID, in: chatID) {
                 $0.contentBlocks = currentAgentVisualizationBlocks(blocks)
             }
-            if updatesVisibleChat {
-                agentStreaming.activityText = ui("正在继续回答", "Continuing response")
-            }
+            agentStreaming.activityText = ui("正在继续回答", "Continuing response")
         }
     }
 
@@ -11260,6 +11277,7 @@ final class WorkspaceStore: ObservableObject {
               let snapshot = try? JSONDecoder().decode(PersistedWorkspace.self, from: data) else {
             return
         }
+        lastWork = snapshot.lastWork
         importedItems = snapshot.importedItems
         replaceNoteDrafts(snapshot.notesByItemID.mapValues(cleanLegacyPlaceholder))
         // 解码容忍旧 pendingNoteWrites；S2 写回路径不再依赖冲突状态机，启动时一次性迁移。
@@ -11453,9 +11471,11 @@ final class WorkspaceStore: ObservableObject {
 
     private func makePersistedWorkspaceSnapshot()
         -> (snapshot: PersistedWorkspace, resumePoints: [CourseResumePoint]) {
+        captureLastWork()
         let resumePoints = sanitizedCourseResumePoints()
         return (
             PersistedWorkspace(
+                lastWork: lastWork,
                 importedItems: importedItems,
                 notesByItemID: notesByItemID,
                 pendingNoteWritesByItemID: pendingNoteWritesByItemID.isEmpty

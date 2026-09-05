@@ -130,7 +130,7 @@ struct CourseHubView: View {
                 id: "chat:\(session.id.uuidString)",
                 kind: .chat(session),
                 title: session.title,
-                detail: store.ui(
+                detail: store.isAgentRunning(in: session.id) ? store.ui("处理中", "Working") : store.ui(
                     "\(session.displayedMessageCount) 条消息 · \(courseRelativeDate(session.updatedAt, language: store.interfaceLanguage))",
                     "\(session.displayedMessageCount) messages · \(courseRelativeDate(session.updatedAt, language: store.interfaceLanguage))"
                 ),
@@ -376,7 +376,7 @@ struct CourseHubView: View {
                 CourseHubContinueCard(
                     icon: "bubble.left.and.text.bubble.right",
                     title: conversation.title,
-                    detail: store.ui(
+                    detail: store.isAgentRunning(in: conversation.id) ? store.ui("处理中", "Working") : store.ui(
                         "\(conversation.displayedMessageCount) 条消息 · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))",
                         "\(conversation.displayedMessageCount) messages · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))"
                     ),
@@ -736,24 +736,10 @@ struct CourseHubView: View {
     }
 
     private func open(_ hit: GlobalSearchHit) {
-        switch hit.result.kind {
-        case .material:
-            guard let itemID = hit.result.itemID, let courseID = hit.courseID else { return }
-            selectedMaterialID = itemID
-            _ = store.openCourseMaterial(itemID, in: courseID)
-        case .note:
-            guard let itemID = hit.result.itemID, let courseID = hit.courseID else { return }
-            selectedNoteID = itemID
-            store.openCourseNote(itemID, in: courseID)
-        case .chat:
-            guard let sessionID = hit.result.sessionID else { return }
-            selectedSessionID = sessionID
-            store.continueCourseSession(
-                sessionID,
-                expectedCourseID: hit.courseID,
-                expectedScopeNeedsReview: false
-            )
-        }
+        selectedMaterialID = hit.result.kind == .material ? hit.result.itemID : selectedMaterialID
+        selectedNoteID = hit.result.kind == .note ? hit.result.itemID : selectedNoteID
+        selectedSessionID = hit.result.kind == .chat ? hit.result.sessionID : selectedSessionID
+        store.openGlobalSearchHit(hit)
     }
 
     private func handleDrop(_ providers: [NSItemProvider], asNotes: Bool) -> Bool {

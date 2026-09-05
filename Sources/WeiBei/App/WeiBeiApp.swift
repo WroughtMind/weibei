@@ -76,7 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 sender.reply(toApplicationShouldTerminate: false)
                 return
             }
-            sharedWorkspaceStore.cancelAgentRequest(restoreDraft: false)
+            sharedWorkspaceStore.cancelAllAgentRequests()
+            await sharedWorkspaceStore.waitForAgentRequestsToStop()
             sharedWorkspaceStore.flushPendingNotePersistence(flushWorkspace: false)
             let saved = await sharedWorkspaceStore.flushPendingWorkspaceSaveAsync()
             guard let self else {
@@ -91,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        sharedWorkspaceStore.cancelAgentRequest(restoreDraft: false)
+        sharedWorkspaceStore.cancelAllAgentRequests()
         if !terminationApproved {
             _ = sharedWorkspaceStore.flushPendingWorkspaceSave()
         }

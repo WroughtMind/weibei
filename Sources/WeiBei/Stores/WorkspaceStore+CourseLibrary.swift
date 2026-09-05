@@ -339,27 +339,9 @@ extension WorkspaceStore {
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
         if let previousScope {
-            let stopScope = courseSecurityScopeStopper
-            let runningLibraryCourseID = activeAgentReplyChatID
-                .flatMap { runningChatID in
-                    studySessions.first(where: { $0.id == runningChatID })?.courseID
-                }
-                .flatMap { runningCourseID in
-                    course(withID: runningCourseID)?.sourceRootRelativePath != nil
-                        ? runningCourseID
-                        : nil
-                }
-            if let runningLibraryCourseID,
-               cancelAgentRequestIfRunning(
-                   in: runningLibraryCourseID,
-                   completion: {
-                       stopScope(previousScope)
-                   }
-               ) {
-                // The old scope stays valid until the running Agent request has stopped.
-            } else {
-                courseSecurityScopeStopper(previousScope)
-            }
+            cancelAllAgentRequests()
+            await waitForAgentRequestsToStop()
+            courseSecurityScopeStopper(previousScope)
         }
     }
 
@@ -1268,9 +1250,7 @@ extension WorkspaceStore {
                         && $0.completionState == .generating
                 }
         } || (
-            isAskingAgent
-                && activeAgentReplyChatID.map(sessionIDs.contains)
-                    == true
+            agentRuns.values.contains { $0.agentRequestTask != nil && $0.chatID.map(sessionIDs.contains) == true }
         ) || agentReplyActionIDsInFlight.contains {
             actionIDs.contains($0)
         }
@@ -5134,7 +5114,7 @@ extension WorkspaceStore {
                 await Task.yield()
             }
             cancelAgentRequestIfRunning(in: courseID)
-            await agentStopTask?.value
+            await waitForAgentRequestsToStop(in: courseID)
 
             let reconciliationTask = courseReconciliationTask
             courseReconciliationTask?.cancel()

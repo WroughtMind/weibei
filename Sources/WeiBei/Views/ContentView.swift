@@ -151,29 +151,6 @@ struct ContentView: View {
         // A second root `.animation(value: appearanceMode)` desynced chrome vs paper.
         // showLibrary animation is scoped to the drawer ZStack only (above).
         .animation(WeiBeiMotion.panel, value: store.courseWorkspacePresented)
-        .confirmationDialog(
-            store.ui(
-                "“\(store.runningAgentChatTitle)”仍在回答",
-                "“\(store.runningAgentChatTitle)” is still responding"
-            ),
-            isPresented: Binding(
-                get: { store.isAgentSwitchConfirmationPresented },
-                set: { if !$0 { store.dismissAgentSwitchConfirmation() } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button(store.ui("停止原回答并发送", "Stop it and send")) {
-                store.confirmAgentSwitchAndSend()
-            }
-            Button(store.ui("取消", "Cancel"), role: .cancel) {
-                store.dismissAgentSwitchConfirmation()
-            }
-        } message: {
-            Text(store.ui(
-                "不会排队。确认后，魏碑会先保存原 Chat 已生成的正文，再在当前 Chat 提问。",
-                "Nothing is queued. WeiBei will preserve the generated text, stop the original reply, then send in the current Chat."
-            ))
-        }
     }
 
     private var isImmersiveLayout: Bool {

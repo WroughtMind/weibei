@@ -2045,7 +2045,9 @@ struct AgentPaneView: View {
                 expectedScopeNeedsReview: false
             )
         } label: {
-            if session.id == store.activeStudySessionID {
+            if store.isAgentRunning(in: session.id) {
+                Label(session.title + store.ui(" · 处理中", " · Working"), systemImage: "ellipsis.circle")
+            } else if session.id == store.activeStudySessionID {
                 Label(session.title, systemImage: "checkmark")
             } else if !session.relatedCourseIDs.isEmpty {
                 Label(session.title, systemImage: "folder")
@@ -2073,7 +2075,9 @@ struct AgentPaneView: View {
 
     private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {
         guard agentFollowsLatest else { return }
+        let chatID = store.activeStudySessionID
         DispatchQueue.main.async {
+            guard agentFollowsLatest, store.activeStudySessionID == chatID else { return }
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
             }
@@ -2082,8 +2086,8 @@ struct AgentPaneView: View {
         // pass targets a bottom anchor that is already stale once the next
         // measurement lands — the viewport then gets shoved again. A silent
         // re-anchor after the reporting window keeps the follow settled.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [agentFollowsLatest] in
-            guard agentFollowsLatest else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard agentFollowsLatest, store.activeStudySessionID == chatID else { return }
             proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
         }
     }
