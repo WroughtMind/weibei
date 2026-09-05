@@ -245,7 +245,7 @@ trap cleanup_mount EXIT
 
 /usr/bin/hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_DIR" -nobrowse -noautoopen -readonly >/dev/null
 MOUNTED=true
-if [[ ! -d "$MOUNT_DIR/$APP_NAME" || ! -L "$MOUNT_DIR/应用程序" ]]; then
+if [[ ! -d "$MOUNT_DIR/$APP_NAME" || ! -L "$MOUNT_DIR/Applications" ]]; then
   echo "release failed: mounted DMG is missing the app or Applications link" >&2
   exit 14
 fi
