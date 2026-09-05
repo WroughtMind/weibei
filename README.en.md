@@ -1,106 +1,98 @@
-English | **[中文](README.md)**
+<p align="right"><a href="README.md">中文</a> · English</p>
 
 <!-- WEIBEI_VISUAL:hero:START -->
-![WeiBei / 魏碑](./Docs/brand/readme-hero-1983x793.png)
+<p align="center">
+  <img src="./Docs/brand/readme-hero-1983x793.png" alt="WeiBei / 魏碑: reading, notes, and questions on the same page" width="100%">
+</p>
 <!-- WEIBEI_VISUAL:hero:END -->
 
-# WeiBei / 魏碑
+<h1 align="center">Read, ask, and keep notes in one window</h1>
 
-WeiBei is a place for reading and keeping notes.
-
-> Long-form reading, excerpting, and note-taking by hand are meaningful in themselves — even with the AI taken out entirely.
-
-So the core is fully local: importing a course, reading, full-text search, notes, and source relationships all work without any model. Connect one when you want AI — it answers on top of your own material, with citations that jump back to the source, and note updates that wait for your approval. Don't connect one, and WeiBei is still a calm, complete reader and notebook — no more juggling a PDF, an AI chat page, and a notes app on revision night.
+<p align="center">WeiBei is a native macOS workspace for reading and notes. Keep your material locally, and connect AI when you need it.</p>
 
 <p align="center">
-  <strong>In development — no official downloads yet</strong>
-  · macOS 14 or later · Apple silicon and Intel · Build from source
+  <a href="https://wroughtmind.github.io/weibei/">Website</a> ·
+  <a href="#get-started">Get started</a> ·
+  <a href="#contribute">Contribute</a> ·
+  <a href="https://github.com/WroughtMind/weibei/issues">Report an issue</a>
 </p>
 
 <p align="center">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
-  <img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138">
+  <img src="https://img.shields.io/badge/macOS-14%2B-35332F?style=flat-square" alt="macOS 14 or later">
+  <img src="https://img.shields.io/badge/Swift-5.9-A44735?style=flat-square" alt="Swift 5.9">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/code-MIT-35332F?style=flat-square" alt="Source code under the MIT License"></a>
+  <br>
+  <sub>In development, no official installer yet · Apple silicon and Intel · Build from source</sub>
 </p>
-
-## ▍What a revision night usually looks like
-
-A lecture PDF and an HTML page open in your browser, an AI chat in another window, a notes app in a third. Every jump breaks the context you had just built: answers drift away from the pages they came from, notes forget which question produced them, and "where did I read that?" becomes the evening's refrain.
-
-WeiBei keeps the material, the question, its evidence, and the resulting note as one connected object. I built it during my own final-exam revision — the night the window-juggling finally became unbearable.
-
-## ▍Compared with "an AI chat page + a notes app"
-
-| | Chat window + notes app | WeiBei |
-|---|---|---|
-| Your material | re-pasted or attached in pieces | a whole folder imported as a course, indexed locally, open in the same window |
-| Answers | may sound right, sources unclear | every answer cites its sources; one click back to the page or section |
-| A week later | scrolling chat history to reconstruct why | the underlined passage reopens its exact thread |
-| Notes | you retype the useful parts by hand | AI proposes, you review and accept — never silent edits |
-| Without AI | close the chat page and nothing is left | reading, search, notes, and relationships keep working |
-| Your data | split across services | stored locally |
-
-## ▍One window, three steps: read → ask → keep
-
-Reading local material and keeping notes require no model; ask is optional — without a provider connected, WeiBei is still a complete study workspace.
 
 <!-- WEIBEI_VISUAL:workspace:START -->
 <p align="center">
-  <img src="./Docs/release-evidence/app-offline-learning-flow.png" alt="WeiBei reading, Agent conversation, and note workspace" width="1200">
+  <img src="./website/assets/第二幕-真实三窗截图-去黑边.webp" alt="WeiBei's three-pane workspace: an article on the left, a conversation in the middle, and notes on the right" width="100%">
+  <br>
+  <sub>Open the reader, chat, and notes side by side or as separate panes.</sub>
 </p>
 <!-- WEIBEI_VISUAL:workspace:END -->
 
-**Read: import a folder, and it's a course.** PDF, HTML, Markdown, and plain text all work. Everything is indexed and searchable locally; the reader jumps straight to a PDF page or an HTML section.
+## Features
 
-**Ask: select a passage, ask right there.** Answers arrive with citation labels — click one to jump back to the exact file, page, or section. The passage keeps a cinnabar underline that reopens its question thread whenever you return: the conversation stays attached to the text it was about. Math renders in KaTeX, diagrams in Mermaid, interactive fragments run in a sandbox — with readable plain text always underneath.
+| Task | In WeiBei |
+|:---|:---|
+| **Read** | Import a folder as a course, read PDF, HTML, Markdown, and plain text, and search your course material. |
+| **Ask** | Select text to ask a question. Click citations to view the source, or click an underlined passage to reopen its conversation. |
+| **Write** | Edit Markdown with images, formulas, and code blocks. AI changes appear as proposals and are saved after you approve them. |
+| **Revisit** | View the material linked to a note and use learning memory to look up previous progress and questions. |
 
-**Keep: anything worth saving comes to you as a proposal.** Notes live in a WYSIWYG editor with slash commands, images, and code blocks. When the Agent has something worth saving, it proposes a note update as a card you review and accept — your notes are never silently rewritten. Meaningful learning moments are remembered automatically, with a light notice so you always know what was stored. Every note links to its sources as real many-to-many relationships, managed on the relationship bench:
+> Reading at length, taking excerpts, and writing notes by hand are meaningful in themselves, even without AI.
 
-<!-- WEIBEI_VISUAL:course-relations:START -->
 <p align="center">
-  <img src="./Docs/release-evidence/app-course-workspace-overview-flow.png" alt="WeiBei course material and note relationship view" width="1200">
+  <img src="./website/assets/第三幕-真实截图-宣纸-论文选区浮窗.webp" alt="A paper and notes open side by side, with a floating panel for asking about or keeping selected text" width="100%">
+  <br>
+  <sub>Select text to open a floating panel for questions or excerpts.</sub>
 </p>
-<!-- WEIBEI_VISUAL:course-relations:END -->
 
-## ▍Privacy is structure, not a setting
+## Themes
 
-- Your library, notes, and full-text index are stored locally. Online models receive relevant excerpts, and remote content such as images may load over the network. See the [privacy notice](PRIVACY.md).
-- The Agent only reads through a fixed set of host-mediated tools. No shell, no open file system; each request sees a bounded snapshot of the current material.
-- Citations, source jumps, memory writes, note proposals, and rich-answer payloads are all validated by the local host before anything is displayed or applied.
-- Web pages and materials are treated strictly as data, never as instructions — a page telling the Agent to do something can't change its behavior. Search queries carry only the public topic of your question, never your course text, notes, or local paths.
-- Choose your own model: dozens of built-in profiles (OpenAI, Anthropic, Google, DeepSeek, Kimi, OpenRouter, and more), OAuth subscriptions, a local llama.cpp, or any OpenAI-compatible endpoint.
+Choose Paper, Xuan, Inkstone, or Stele, or one of four frosted-glass themes: Clear Glass, Dark Glass, Mist Glass, and Slate Glass. Open reading, chat, or writing on its own, and adjust text size across the app with <kbd>⌘</kbd> + <kbd>+</kbd> / <kbd>−</kbd>.
 
-## ▍Five minutes to get started
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./website/assets/第三幕-真实截图-纸面-沉浸对话.webp"><img src="./website/assets/第三幕-真实截图-纸面-沉浸对话.webp" alt="Paper theme with a warm background in the chat pane" width="100%"></a>
+      <br><sub><b>Paper</b> · Chat</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./website/assets/第三幕-真实截图-墨石-沉浸对话.webp"><img src="./website/assets/第三幕-真实截图-墨石-沉浸对话.webp" alt="Inkstone theme with a dark background in the chat pane" width="100%"></a>
+      <br><sub><b>Inkstone</b> · Chat</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./website/assets/第三幕-真实截图-晴璃-沉浸阅读.webp"><img src="./website/assets/第三幕-真实截图-晴璃-沉浸阅读.webp" alt="Clear Glass theme with a light frosted background in the reader" width="100%"></a>
+      <br><sub><b>Clear Glass</b> · Reading</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./website/assets/第三幕-真实截图-夜璃-沉浸阅读.webp"><img src="./website/assets/第三幕-真实截图-夜璃-沉浸阅读.webp" alt="Dark Glass theme with a dark frosted background in the reader" width="100%"></a>
+      <br><sub><b>Dark Glass</b> · Reading</sub>
+    </td>
+  </tr>
+</table>
 
-1. Launch WeiBei and import a folder of your own material as a course. No sample data ships in the app; nothing is bundled that you didn't bring.
-2. (Optional) Connect a model provider in Settings. WeiBei is fully usable without one — reading, search, and notes are unaffected; this step only enables 3 and 5 below.
-3. Select a passage in the reader and ask from the selection.
-4. Click a citation label to jump back to the source.
-5. Ask the Agent to save something to your notes, then review the proposal card before it is applied.
+<p align="center"><sub>Four themes in the app. Click an image to enlarge it. The materials shown are for demonstration and are not bundled with WeiBei.</sub></p>
 
-There is no release scheduled. The next official version will be **0.0.1**; for now, build from source using the steps below. See the [release status](Docs/releases/README.md).
+## Local storage and AI permissions
 
-## ▍Made for long nights
+| Topic | How it works |
+|:---|:---|
+| Storage | Courses, notes, full-text indexes, and learning memory are stored locally. Reading local files and writing notes require no model. |
+| Network | Online models receive the relevant excerpts needed for your request. Remote images and web content in documents also use the network. |
+| Approval | Formal notes and source relationships use proposals you review and accept. Learning memory is recorded automatically, with a notice of what was saved. |
+| Access | AI reads through WeiBei's scoped tools, with no terminal or unrestricted file-system access. |
 
-WeiBei is named after the stele inscription style, and it leans into that: paper, xuan, inkstone, and stele themes alongside four frosted-glass variants; app-wide text scaling (⌘+ / ⌘−) for 3 a.m. eyes; quiet skeleton states instead of blank flashes while long documents load; and a daily calligraphy line from the stele tradition as a background watermark — every one of the 50 lines carries its source and rights basis in a ledger you can open in Settings.
+Choose your model: built-in profiles include OpenAI, Anthropic, Google, DeepSeek, Kimi, and OpenRouter. Subscription sign-in, local llama.cpp, and custom OpenAI-compatible endpoints are also supported. Read the [privacy notice](PRIVACY.md) for the full data flow.
 
-## ▍Current limits
+## Get started
 
-- This repository supports macOS 14 or later; the release gate requires both native Apple silicon and Intel packages to pass before publication.
-- Course files and indexes are stored locally; online models and remote content in documents use the network.
-- Learning memory is written automatically, with a light end-of-answer notice; formal notes and relationship changes still need your confirmation.
-- Large or difficult source files may be reported as partially indexed — honestly, never passed off as complete.
-- The project is in development; no official installer is available yet.
-
----
-
-## ▍For developers
-
-Everything below is for people building WeiBei itself. WeiBei was born in the Education track of OpenAI Build Week 2026 and has been developed as an ongoing product since; the submission record lives in [Docs/build-week.md](Docs/build-week.md).
-
-### Build from source
-
-Requirements: macOS 14+, Xcode Command Line Tools with Swift 5.9, a model provider only for live Agent responses. Full checks, packaging, and editor rebuilds require Node.js 22 or later and `npm ci` first.
+For now, build from source. You need **macOS 14 or later** and **Xcode Command Line Tools with Swift 5.9 or later**. The first build needs a network connection to fetch dependencies.
 
 ```bash
 git clone https://github.com/WroughtMind/weibei.git
@@ -108,15 +100,20 @@ cd weibei
 ./script/build_and_run.sh
 ```
 
-The script builds and opens `dist/魏碑.app`.
+The script builds and opens WeiBei. Full checks, packaging, and web-editor rebuilds also require **Node.js 22 or later** and `npm ci` from the repository root.
 
-### How it is built
+1. Import a folder of your own material as a course.
+2. Open a document, write notes alongside it, and try full-text search.
+3. When you want AI, connect a model in Settings. Select text to ask a question, follow a citation back to the source, or review a note proposal.
 
-WeiBei is a native Swift 5.9 application: SwiftUI for the interface, AppKit hosting the long-lived reader, Agent, and note panes. PDFKit reads PDFs, WebKit renders HTML and the Milkdown editor, Vision handles OCR for scanned pages, and SQLite FTS5 stores the local course index. A Swift-native runtime owns the Agent loop, provider adapters, credentials, and session ledger; WeiBei itself owns the material context, citations, learning memory, note write-back, and interface rendering.
+Large files and scans may be reported as partially indexed. There is no release scheduled; the next official version will be **0.0.1**. See the [release status](Docs/releases/README.md).
 
-Each Agent request receives a bounded snapshot of the working context — no open file system, no shell, and web reading limited to HTTPS URLs the user explicitly provided in that same turn. The host validates citations, source jumps, learning-memory updates, note proposals, and rich-answer payloads before display or application; `visualize` fragments execute in a sandboxed runtime with no network or local file access. For long or scanned PDFs, text extraction runs in a resource-bounded helper process, with Vision OCR only where a page has no native text; partial indexing is reported honestly rather than passed off as complete.
+## Contribute
 
-### Tooling
+WeiBei began in the Education track of OpenAI Build Week 2026 and has been developed since. See the [contribution guide](CONTRIBUTING.md) to get involved and the [security policy](SECURITY.md) to report security issues.
+
+<details>
+<summary><strong>Build commands and checks</strong></summary>
 
 The root `Makefile` is a thin entry point that forwards to the underlying build scripts (run `make help` for the same list):
 
@@ -133,11 +130,13 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 | `make release` | `./script/build_release_dmg.sh` (build the current architecture's unnotarized release DMG) |
 | `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules` and user data) |
 
-Node tooling: run `npm ci` at the repository root to install dependencies from the single `package-lock.json`. TypeScript tools under `script/` and `DesignSystem/scripts/` run with `tsx`; `npm run typecheck:tools` type-checks them.
+Node tooling: run `npm ci` at the repository root to install dependencies from the single `package-lock.json`. TypeScript tools under `script/` and `DesignSystem/scripts/` run with `tsx`; `npm run typecheck:tools` checks their types.
 
-Apps and DMGs are always built natively on the matching Mac: the Apple runner uses `--arch arm64`, while the Intel runner uses `--arch x86_64`. See [Docs/releases/dual-architecture.md](Docs/releases/dual-architecture.md) for the complete asset contract, secret variables, and atomic publication flow.
+Apple silicon and Intel packages are built natively on the matching Mac. See the [dual-architecture release guide](Docs/releases/dual-architecture.md) for assets and verification requirements.
 
 ### Checks
+
+Requires Node.js 22 or later:
 
 ```bash
 npm ci
@@ -155,24 +154,31 @@ swift run WeiBeiNativeCheck --authentication-status
 
 Live-provider checks require valid local credentials and are never silently replaced with mock answers.
 
-### Documentation
+</details>
 
-- [Docs/build-week.md](Docs/build-week.md) — OpenAI Build Week 2026 submission record and judge walkthrough
-- [Docs/note-slash-commands.md](Docs/note-slash-commands.md) — note editor slash commands, image insertion, and code block behavior
-- [Docs/course-library-architecture.md](Docs/course-library-architecture.md) — course library and storage architecture
-- [Docs/plans/2026-08-22-native-agent-runtime-实验计划.md](Docs/plans/2026-08-22-native-agent-runtime-实验计划.md) — validation and rollout notes for the Swift-native Agent runtime
-- [Docs/生成式界面基础与Visualize借鉴.md](Docs/生成式界面基础与Visualize借鉴.md) — generative UI foundations and the `visualize` decision
-- [Docs/releases/README.md](Docs/releases/README.md) — current release status
+<details>
+<summary><strong>Architecture</strong></summary>
 
----
+SwiftUI handles the interface, with AppKit hosting persistent reader, chat, and note panes. PDFKit reads PDFs, WebKit renders HTML and the Milkdown editor, Vision handles OCR for scanned pages, and SQLite FTS5 provides local full-text indexes. Math uses KaTeX, and diagrams use Mermaid.
 
-## ▍Licensing
+A Swift-native Agent runtime handles the tool loop, provider connections, credentials, and session ledger. WeiBei validates citations, memory updates, note proposals, and rich answers before display or writing. Interactive `visualize` fragments run in a sandbox without network or local-file access. Long PDFs and scans use a resource-bounded helper process for text extraction, with OCR only on pages that have no native text.
+
+</details>
+
+<details>
+<summary><strong>Further reading</strong></summary>
+
+- [Build Week record](Docs/build-week.md): OpenAI Build Week 2026 submission record and judge walkthrough
+- [Note editor guide](Docs/note-slash-commands.md): note editor slash commands, image insertion, and code block behavior
+- [Course library and storage](Docs/course-library-architecture.md): course library and storage architecture
+- [Native Agent implementation](Docs/plans/2026-08-22-native-agent-runtime-实验计划.md): validation and rollout notes for the Swift-native Agent runtime
+- [Generative UI design](Docs/生成式界面基础与Visualize借鉴.md): generative UI foundations and the `visualize` decision
+
+</details>
+
+## Licensing
 
 - WeiBei-authored source code and developer documentation: [MIT License](LICENSE).
 - `WeiBeiStele` and `WeiBeiSteleMono` fonts: [SIL Open Font License 1.1](Sources/WeiBei/Resources/Fonts/OFL.txt). Modified fonts must use different names unless the project grants written permission to retain the reserved names.
 - The WeiBei / 魏碑 names, logos, visual identity, screenshots, and release media are not licensed under MIT or OFL. Third-party software and reference assets retain their original terms.
-- Read [`LICENSING.md`](LICENSING.md) before redistributing a fork or packaged app. Contributions follow [`CONTRIBUTING.md`](CONTRIBUTING.md); security issues follow [`SECURITY.md`](SECURITY.md).
-
-## ▍Technology
-
-`Swift` · `SwiftUI` · `AppKit` · `PDFKit` · `WebKit` · `Vision OCR` · `SQLite FTS5` · `Milkdown` · `KaTeX` · `Mermaid` · `OpenAI Codex OAuth`
+- Read [the licensing guide](LICENSING.md) before redistributing a fork or packaged app. Contributions follow [the contribution guide](CONTRIBUTING.md); security issues follow [the security policy](SECURITY.md).
