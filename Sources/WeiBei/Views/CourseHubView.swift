@@ -376,7 +376,7 @@ struct CourseHubView: View {
                 CourseHubContinueCard(
                     icon: "bubble.left.and.text.bubble.right",
                     title: conversation.title,
-                    detail: store.ui(
+                    detail: store.isAgentRunning(in: conversation.id) ? store.ui("处理中", "Working") : store.ui(
                         "\(conversation.displayedMessageCount) 条消息 · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))",
                         "\(conversation.displayedMessageCount) messages · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))"
                     ),
