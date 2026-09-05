@@ -6,14 +6,13 @@ does not replace them.
 
 ## JavaScript components
 
-The Milkdown editor and rich-answer runtime use packages including Milkdown,
-KaTeX, Mermaid, PrismJS, React, ECharts, zrender, Vite, TypeScript, Zod, and
-their transitive dependencies.
+The editor and document viewer use Milkdown, KaTeX, Mermaid, PrismJS,
+remark-math, and their transitive dependencies. Build tools include esbuild,
+TypeScript, tsx, and appdmg.
 
 Exact package versions and declared licenses are recorded in:
 
 - [`package-lock.json`](package-lock.json)
-- [`Prototypes/RichAnswerWebRuntime/package-lock.json`](Prototypes/RichAnswerWebRuntime/package-lock.json)
 
 Generated JavaScript bundles retain embedded copyright and license notices.
 Rebuilds must preserve those notices.
@@ -22,12 +21,12 @@ The safe mathematical expression evaluator used by the inline generative UI
 is adapted from `dsh-external/dsh-genui`, copyright 2026 dsh-external, under
 the MIT License.
 
-## Website fonts
+## Fonts
 
-The marketing website includes Noto Sans CJK and Noto Serif CJK web fonts.
-They remain licensed under the SIL Open Font License 1.1. The copyright notice
-and complete license text are preserved in
-[`website/assets/fonts/OFL-Noto-CJK.txt`](website/assets/fonts/OFL-Noto-CJK.txt).
+The website uses the project's WeiBeiStele font at `website/assets/WeiBeiStele.ttf`.
+Its SIL Open Font License 1.1 and Reserved Font Names are recorded in
+[`DesignSystem/assets/fonts/OFL.txt`](DesignSystem/assets/fonts/OFL.txt).
+System font fallbacks named in CSS are not bundled web fonts.
 
 ## Reference assets
 
