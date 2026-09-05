@@ -37,12 +37,12 @@
 
 I built WeiBei during final-exam revision because I was tired of moving between PDFs, chat pages, and a separate notes app. I wanted to keep my reading position, the source of a passage, and the reason I wrote something down together.
 
-| What you want to do | In WeiBei |
+| Task | In WeiBei |
 |:---|:---|
 | **Read** | Import a folder as a course. Read PDF, HTML, Markdown, and plain text in one place, with local full-text search. |
-| **Ask in context** | Select text and ask about it. Follow citations to the file, page, or section, and reopen a conversation from its underlined passage. |
-| **Keep a note** | Write Markdown with images, formulas, and code blocks. Review AI-proposed changes before they are saved. |
-| **Come back later** | Follow a note's source relationships back to the material. Learning memory helps you pick up your progress and open questions. |
+| **Ask** | Select text and ask about it. Follow citations to the file, page, or section, and reopen a conversation from its underlined passage. |
+| **Write** | Write Markdown with images, formulas, and code blocks. Review AI-proposed changes before they are saved. |
+| **Revisit** | Follow a note's source relationships back to the material. Learning memory helps you pick up your progress and open questions. |
 
 > Reading at length, taking excerpts, and writing notes by hand are meaningful in themselves, even without AI.
 
@@ -83,12 +83,12 @@ Choose Paper, Xuan, Inkstone, or Stele, or one of four frosted-glass themes: Cle
 
 ## Your files and the AI's access
 
-| What matters | How it works |
+| Topic | How it works |
 |:---|:---|
-| Local storage | Courses, notes, full-text indexes, and learning memory are stored locally. Reading local files and writing notes require no model. |
-| Network use | Online models receive the relevant excerpts needed for your request. Remote images and web content in documents also use the network. |
-| Changes you approve | Formal notes and source relationships use proposals you review and accept. Learning memory is recorded automatically, with a notice of what was saved. |
-| Access boundaries | AI reads through WeiBei's scoped tools, with no terminal or unrestricted file-system access. |
+| Storage | Courses, notes, full-text indexes, and learning memory are stored locally. Reading local files and writing notes require no model. |
+| Network | Online models receive the relevant excerpts needed for your request. Remote images and web content in documents also use the network. |
+| Approval | Formal notes and source relationships use proposals you review and accept. Learning memory is recorded automatically, with a notice of what was saved. |
+| Access | AI reads through WeiBei's scoped tools, with no terminal or unrestricted file-system access. |
 
 Choose your model: built-in profiles include OpenAI, Anthropic, Google, DeepSeek, Kimi, and OpenRouter. Subscription sign-in, local llama.cpp, and custom OpenAI-compatible endpoints are also supported. Read the [privacy notice](PRIVACY.md) for the full data flow.
 
