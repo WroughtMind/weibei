@@ -269,6 +269,8 @@ if [[ "$CHECK_ONLY" != true ]]; then
     fi
     cp "$legal_source" "$APP_RESOURCES/Legal/$(basename "$legal_source")"
   done
+  # SwiftPM dependencies can carry read-only resource modes into this copy.
+  chmod -R u+w "$APP_RESOURCES"
   # Clear inherited provenance/quarantine metadata before first launch.
   # Downloaded DMGs receive a fresh quarantine marker on the user's Mac.
   /usr/bin/xattr -cr "$APP_BUNDLE"
