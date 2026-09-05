@@ -36,11 +36,13 @@ struct ContextualContentPicker: View {
             let columns = min(groups.count, max(1, Int((min(available, 1140) + 16) / 200)))
             let width = min(available, CGFloat(columns) * 220 + CGFloat(columns - 1) * 16)
             ScrollView {
-                CoursePickerColumns(columns: columns, spacing: 16) {
-                    ForEach(groups) { group in
-                        courseBlock(group)
-                    }
+                VStack(alignment: .leading, spacing: 16) {
                     globalActions
+                    CoursePickerColumns(columns: columns, spacing: 16) {
+                        ForEach(groups) { group in
+                            courseBlock(group)
+                        }
+                    }
                 }
                 .frame(width: width)
                 .padding(.top, min(100, max(28, geometry.size.height * 0.12)))
@@ -155,8 +157,7 @@ struct ContextualContentPicker: View {
     }
 }
 
-/// Stable source order; each next course occupies the shortest column. The
-/// final action row belongs below the last course, not to that course's data.
+/// Stable source order; each next course occupies the shortest column.
 private struct CoursePickerColumns: Layout {
     let columns: Int
     let spacing: CGFloat
@@ -164,13 +165,11 @@ private struct CoursePickerColumns: Layout {
     private func frames(width: CGFloat, subviews: Subviews) -> [CGRect] {
         let columnWidth = max(1, (width - CGFloat(columns - 1) * spacing) / CGFloat(columns))
         var heights = Array(repeating: CGFloat.zero, count: columns)
-        var lastColumn = 0
         return subviews.indices.map { index in
-            let column = index == subviews.count - 1 ? lastColumn : heights.indices.min(by: { heights[$0] < heights[$1] })!
+            let column = heights.indices.min(by: { heights[$0] < heights[$1] })!
             let size = subviews[index].sizeThatFits(ProposedViewSize(width: columnWidth, height: nil))
             let rect = CGRect(x: CGFloat(column) * (columnWidth + spacing), y: heights[column], width: columnWidth, height: size.height)
             heights[column] += size.height + spacing
-            lastColumn = column
             return rect
         }
     }
