@@ -70,7 +70,7 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
         case .glassMist:
             return language.text("雾白磨砂玻璃", "Mist-white frosted glass")
         case .glassSlate:
-            return language.text("玄蓝磨砂玻璃", "Slate-blue frosted glass")
+            return language.text("烟灰磨砂玻璃", "Smoke-gray frosted glass")
         }
     }
 
@@ -412,14 +412,14 @@ struct WeiBeiGlassForegroundSheet: View {
             switch mode {
             case .glassMist, .glassSlate:
                 Color(nsColor: WeiBeiNativePalette.paperRaised(for: mode))
+                    .opacity(0.35 + 0.65 * WeiBeiThemeRuntime.appliedGlassIntensity)
             case .glassLight, .glassDark:
                 clearPairGradient
+                    .opacity(WeiBeiThemeRuntime.appliedGlassIntensity)
             default:
                 Color.clear
             }
         }
-        // The slider owns the whole sheet (6% floor — see appliedGlassIntensity).
-        .opacity(WeiBeiThemeRuntime.appliedGlassIntensity)
         .allowsHitTesting(false)
     }
 
@@ -523,7 +523,8 @@ private struct WeiBeiBehindWindowMaterial: NSViewRepresentable {
                 view.alphaValue = 0.58 * WeiBeiThemeRuntime.appliedGlassIntensity
             case .glassMist, .glassSlate:
                 view.material = .underPageBackground
-                view.alphaValue = 0.72 * WeiBeiThemeRuntime.appliedGlassIntensity
+                // 低浓度仍保留细雾；滑杆增加遮蔽，文字层不参与透明度变化。
+                view.alphaValue = 0.80 + 0.20 * WeiBeiThemeRuntime.appliedGlassIntensity
             default:
                 view.material = .hudWindow
                 view.alphaValue = 0
@@ -572,9 +573,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.105, green: 0.135, blue: 0.185, alpha: 0.16)
         case .glassMist:
-            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.55)
+            return NSColor(calibratedRed: 0.965, green: 0.961, blue: 0.949, alpha: 0.55)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.55)
+            return NSColor(calibratedRed: 0.157, green: 0.157, blue: 0.149, alpha: 0.55)
         }
     }
 
@@ -593,9 +594,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.180, green: 0.230, blue: 0.310, alpha: 0.16)
         case .glassMist:
-            return NSColor(calibratedRed: 0.700, green: 0.760, blue: 0.830, alpha: 0.16)
+            return NSColor(calibratedRed: 0.700, green: 0.690, blue: 0.660, alpha: 0.16)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.180, green: 0.220, blue: 0.290, alpha: 0.20)
+            return NSColor(calibratedRed: 0.240, green: 0.240, blue: 0.225, alpha: 0.20)
         }
     }
 
@@ -606,9 +607,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.025, green: 0.040, blue: 0.065, alpha: 0.28)
         case .glassMist:
-            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.26)
+            return NSColor(calibratedRed: 0.965, green: 0.961, blue: 0.949, alpha: 0.26)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.42)
+            return NSColor(calibratedRed: 0.157, green: 0.157, blue: 0.149, alpha: 0.42)
         default:
             return .clear
         }
@@ -623,9 +624,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.055, green: 0.075, blue: 0.105, alpha: 0.22)
         case .glassMist:
-            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.42)
+            return NSColor(calibratedRed: 0.965, green: 0.961, blue: 0.949, alpha: 0.42)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.44)
+            return NSColor(calibratedRed: 0.157, green: 0.157, blue: 0.149, alpha: 0.44)
         default:
             return paper(for: mode)
         }
@@ -655,7 +656,7 @@ enum WeiBeiNativePalette {
         case .glassMist:
             return NSColor(calibratedRed: 0.145, green: 0.140, blue: 0.128, alpha: 1.0)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.824, green: 0.839, blue: 0.863, alpha: 1.0)
+            return NSColor(calibratedRed: 0.914, green: 0.902, blue: 0.867, alpha: 1.0)
         }
     }
 
@@ -676,7 +677,7 @@ enum WeiBeiNativePalette {
         case .glassMist:
             return NSColor(calibratedRed: 0.360, green: 0.345, blue: 0.320, alpha: 1.0)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.604, green: 0.631, blue: 0.671, alpha: 1.0)
+            return NSColor(calibratedRed: 0.722, green: 0.710, blue: 0.675, alpha: 1.0)
         }
     }
 
@@ -697,7 +698,7 @@ enum WeiBeiNativePalette {
         case .glassMist:
             return NSColor(calibratedRed: 0.500, green: 0.480, blue: 0.450, alpha: 1.0)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.430, green: 0.460, blue: 0.510, alpha: 1.0)
+            return NSColor(calibratedRed: 0.580, green: 0.573, blue: 0.549, alpha: 1.0)
         }
     }
 
@@ -716,9 +717,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.790, green: 0.860, blue: 0.950, alpha: 0.26)
         case .glassMist:
-            return NSColor(calibratedRed: 0.275, green: 0.350, blue: 0.455, alpha: 0.18)
+            return NSColor(calibratedRed: 0.360, green: 0.350, blue: 0.320, alpha: 0.18)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.725, green: 0.776, blue: 0.847, alpha: 0.14)
+            return NSColor(calibratedRed: 0.780, green: 0.769, blue: 0.729, alpha: 0.14)
         }
     }
 
@@ -760,7 +761,7 @@ enum WeiBeiNativePalette {
         case .glassMist:
             return NSColor(calibratedRed: 0.200, green: 0.320, blue: 0.390, alpha: 1.0)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.722, green: 0.769, blue: 0.816, alpha: 1.0)
+            return NSColor(calibratedRed: 0.800, green: 0.784, blue: 0.714, alpha: 1.0)
         }
     }
 
@@ -781,7 +782,7 @@ enum WeiBeiNativePalette {
         case .glassMist:
             return NSColor(calibratedRed: 0.140, green: 0.138, blue: 0.132, alpha: 1.0)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.063, green: 0.071, blue: 0.090, alpha: 1.0)
+            return NSColor(calibratedRed: 0.110, green: 0.110, blue: 0.102, alpha: 1.0)
         }
     }
 
@@ -802,7 +803,7 @@ enum WeiBeiNativePalette {
         case .glassMist:
             return NSColor(calibratedRed: 0.430, green: 0.410, blue: 0.380, alpha: 1.0)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.659, green: 0.686, blue: 0.722, alpha: 1.0)
+            return NSColor(calibratedRed: 0.722, green: 0.710, blue: 0.675, alpha: 1.0)
         }
     }
 
@@ -880,7 +881,7 @@ enum WeiBeiNativePalette {
         case .glassMist:
             return NSColor(calibratedWhite: 0.150, alpha: 0.050)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.102, green: 0.118, blue: 0.141, alpha: 0.72)
+            return NSColor(calibratedRed: 0.125, green: 0.125, blue: 0.118, alpha: 0.72)
         }
     }
 
@@ -899,9 +900,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.150, green: 0.210, blue: 0.300, alpha: 1.0)
         case .glassMist:
-            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 1.0)
+            return NSColor(calibratedRed: 0.965, green: 0.961, blue: 0.949, alpha: 1.0)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 1.0)
+            return NSColor(calibratedRed: 0.157, green: 0.157, blue: 0.149, alpha: 1.0)
         }
     }
 
@@ -922,7 +923,7 @@ enum WeiBeiNativePalette {
         case .glassMist:
             return NSColor(calibratedWhite: 1.000, alpha: 1.0)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.725, green: 0.776, blue: 0.847, alpha: 1.0)
+            return NSColor(calibratedRed: 0.780, green: 0.769, blue: 0.729, alpha: 1.0)
         }
     }
 
@@ -945,9 +946,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.56, green: 0.60, blue: 0.67, alpha: 1.0)
         case .glassMist:
-            return NSColor(calibratedRed: 0.84, green: 0.88, blue: 0.93, alpha: 1.0)
+            return NSColor(calibratedRed: 0.89, green: 0.88, blue: 0.85, alpha: 1.0)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.58, green: 0.60, blue: 0.64, alpha: 1.0)
+            return NSColor(calibratedRed: 0.62, green: 0.61, blue: 0.58, alpha: 1.0)
         }
     }
 
@@ -972,9 +973,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.700, green: 0.820, blue: 0.950, alpha: 0.19)
         case .glassMist:
-            return NSColor(calibratedRed: 0.275, green: 0.350, blue: 0.455, alpha: 0.14)
+            return NSColor(calibratedRed: 0.360, green: 0.350, blue: 0.320, alpha: 0.14)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.725, green: 0.776, blue: 0.847, alpha: 0.14)
+            return NSColor(calibratedRed: 0.780, green: 0.769, blue: 0.729, alpha: 0.14)
         }
     }
 
@@ -1031,9 +1032,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return ("rgba(12,16,24,.36)", "rgba(27,35,48,.40)", "#e8eef9", "rgba(174,186,204,.88)", "#eb5746", "#7dbeF5", "rgba(235,87,70,.34)")
         case .glassMist:
-            return ("rgba(244,249,255,.38)", "rgba(244,249,255,.55)", "#25231f", "rgba(90,86,78,.74)", "#8a2f24", "#335266", "rgba(138,47,36,.16)")
+            return ("rgba(246,245,242,.38)", "rgba(246,245,242,.55)", "#25231f", "rgba(90,86,78,.74)", "#8a2f24", "#335266", "rgba(138,47,36,.16)")
         case .glassSlate:
-            return ("rgba(27,33,43,.40)", "rgba(27,33,43,.55)", "#d2d6dc", "rgba(154,161,171,.88)", "#b04034", "#b8c4d0", "rgba(176,64,52,.32)")
+            return ("rgba(40,40,38,.40)", "rgba(40,40,38,.55)", "#e9e6dd", "rgba(184,181,172,.88)", "#b04034", "#ccc8b6", "rgba(176,64,52,.32)")
         }
     }
 }
