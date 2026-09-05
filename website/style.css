@@ -74,8 +74,9 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--vermilion); out
 .github-link { display: grid; place-items: center; width: 28px; height: 28px; opacity: .72; transition: opacity .2s ease, transform .2s ease; }
 .github-link svg { width: 18px; height: 18px; fill: currentColor; }
 .github-link:hover { opacity: 1; transform: translateY(-1px); }
-.release-nav { display: grid; grid-template-columns: 42px 38px 70px 56px; align-items: center; gap: 14px; white-space: nowrap; text-align: center; }
-.release-nav a { display: block; }
+.release-nav { display: grid; grid-template-columns: repeat(3, 44px) 70px; align-items: center; gap: 20px; white-space: nowrap; text-align: left; }
+.release-nav a { display: flex; align-items: center; height: 28px; line-height: 1; }
+html[lang="zh-CN"] .release-nav a[data-en] { font-size: .93em; transform: translateY(-1px); }
 .language-toggle { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 52px; padding: 4px 0; border: 0; color: inherit; background: transparent; font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
 .language-toggle span { opacity: .38; transition: opacity .2s ease; }
 .language-toggle i { width: 10px; height: 1px; background: currentColor; opacity: .28; }
@@ -373,7 +374,7 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   .brand span { font-size: 14px; }
   .top-actions { gap: 13px; font-size: 12px; }
   .top-actions > a:first-child { display: none; }
-  .release-nav { position: fixed; top: 58px; left: 0; right: 0; grid-template-columns: 38px 34px 62px 44px; justify-content: center; height: 34px; gap: 12px; font-size: 11px; background: linear-gradient(to bottom, rgba(238,225,202,.9), transparent); }
+  .release-nav { position: fixed; top: 58px; left: 0; right: 0; grid-template-columns: repeat(3, 38px) 56px; justify-content: center; height: 34px; gap: 16px; font-size: 11px; background: linear-gradient(to bottom, rgba(238,225,202,.9), transparent); }
   .language-toggle { font-size: 9px; }
   .scene { min-height: 100dvh; }
   .chapter, .chapter-four { min-height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; }
