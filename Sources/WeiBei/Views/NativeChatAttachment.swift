@@ -1,6 +1,5 @@
 import AppKit
 import SwiftMath
-import HighlightSwift
 import SwiftUI
 import WeiBeiCore
 
@@ -119,7 +118,6 @@ private final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
     private var naturalSize = NSSize(width: 1, height: 1)
     private var imageTaskStarted = false
     private var highlightTask: Task<Void, Never>?
-    private static let highlighter = Highlight()
     override var isFlipped: Bool { true }
     var isInlineMath: Bool {
         if case .math(_, false) = attachment.descriptor { return true }
@@ -235,7 +233,7 @@ private final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
             document.addSubview(text)
             naturalSize = text.textStorage!.size()
             naturalSize.height = CGFloat(source.components(separatedBy: "\n").count) * ceil(attachment.fontSize * 1.4)
-            // HighlightSwift runs its existing highlighter asynchronously; the native text remains selectable while it completes.
+            // Tokenize with the existing grammars off the main thread; the source remains selectable.
             highlightTask = Task { [weak self] in
                 guard let self else { return }
                 await self.highlight(source, language: language)
@@ -311,27 +309,11 @@ private final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
     private func highlight(_ source: String, language: String?) async {
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         do {
-            let colors: HighlightColors = attachment.isDark ? .dark(.xcode) : .light(.xcode)
-            let result: AttributedString
-            if let language, !language.isEmpty {
-                result = try await Self.highlighter.attributedText(source, language: language, colors: colors)
-            } else {
-                result = try await Self.highlighter.attributedText(source, colors: colors)
-            }
+            let tokens = try await NativeChatCodeHighlighter.shared.tokens(source, language: language)
             guard !Task.isCancelled, let storage = code?.textStorage else { return }
-            let highlighted = NSAttributedString(result)
-            // The library trims outer whitespace. Apply its styles onto the original
-            // source so leading indentation, trailing blank lines and copy stay exact.
-            let range = (source as NSString).range(of: highlighted.string)
-            guard range.location != NSNotFound else { return }
-            storage.beginEditing()
-            highlighted.enumerateAttributes(in: NSRange(location: 0, length: highlighted.length)) { attributes, span, _ in
-                var colorsOnly = attributes
-                colorsOnly.removeValue(forKey: .font)
-                colorsOnly.removeValue(forKey: .paragraphStyle)
-                storage.addAttributes(colorsOnly, range: NSRange(location: range.location + span.location, length: span.length))
-            }
-            storage.endEditing()
+            NativeChatCodeHighlighter.apply(tokens, to: storage,
+                font: .monospacedSystemFont(ofSize: attachment.fontSize - 1, weight: .regular),
+                isDark: attachment.isDark)
         } catch {
             caption.toolTip = attachment.interfaceLanguage.text("此代码语言无法高亮：", "Could not highlight this language: ") + error.localizedDescription
         }

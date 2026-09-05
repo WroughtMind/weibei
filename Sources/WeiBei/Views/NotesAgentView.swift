@@ -3176,7 +3176,7 @@ private struct AgentMessageBubble: View {
     }
 }
 
-private struct AgentBubble: View {
+struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.openWindow) private var openSettingsWindow
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -3463,7 +3463,8 @@ private struct AgentBubble: View {
                     }
                 }
                 .padding(.top, 2)
-            } else if message.id == store.lastUsableAgentAnswerID {
+            } else if message.id == store.lastUsableAgentAnswerID,
+                      store.selectionContext != nil || store.canReplaceNoteSelection {
                 HStack(spacing: 6) {
                     if store.selectionContext != nil {
                         Button(store.ui("摘录", "Excerpt")) {

@@ -1,4 +1,6 @@
 import AppKit
+import SwiftUI
+import WeiBeiCore
 import XCTest
 @testable import WeiBei
 
@@ -123,12 +125,19 @@ final class NativeChatMarkdownTests: XCTestCase {
         textView.delegate = coordinator
         let pixel = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l2cAAAAASUVORK5CYII="))
         coordinator.imageLoader = { _, completion in completion(pixel) }
+        let codeSource = "    let answer = 42 // 中文🙂 <tag>&\n\n"
+        let codeFont = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let highlighted = NSMutableAttributedString(string: codeSource, attributes: [.font: codeFont])
+        let tokens = try await NativeChatCodeHighlighter.shared.tokens(codeSource, language: "swift")
+        NativeChatCodeHighlighter.apply(tokens, to: highlighted, font: codeFont, isDark: false)
+        XCTAssertEqual(highlighted.string, codeSource)
+        XCTAssertEqual(tokens.reduce(0) { $0 + $1.range.length }, codeSource.utf16.count)
+        XCTAssertNotEqual(highlighted.attribute(.foregroundColor, at: (codeSource as NSString).range(of: "let").location, effectiveRange: nil) as? NSColor, WeiBeiNativePalette.ink())
         let source = """
         一段足够在窄窗口换行的中文回答，保留数学 $x^2$ 与正常的文字选择。
 
         ```swift
-        let answer = 42
-        ```
+        \(codeSource)```
 
         | 项目 | 内容 |
         | --- | --- |
@@ -179,8 +188,61 @@ final class NativeChatMarkdownTests: XCTestCase {
         defer { pasteboard.releaseGlobally() }
         XCTAssertTrue(textView.writeSelection(to: pasteboard, type: .string))
         let copied = try XCTUnwrap(pasteboard.string(forType: .string))
-        XCTAssertTrue(copied.contains("x^2") && copied.contains("let answer = 42") && copied.contains("示意图"))
+        XCTAssertTrue(copied.contains("x^2") && copied.contains(codeSource) && copied.contains("示意图"))
         XCTAssertFalse(copied.contains("\u{fffc}"))
+        XCTAssertFalse(window.isVisible)
+    }
+
+
+    // Completing an answer with no available note actions must not insert an empty footer.
+    @MainActor func testCompletionKeepsActualMessageHeightWithoutNoteActions() async throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let source = "生成结束时，正文和阅读位置应保持不变。"
+        var message = AgentMessage(role: .assistant, text: source, source: nil, completionState: .generating)
+        store.messages = [message]
+        XCTAssertNil(store.selectionContext)
+        XCTAssertFalse(store.canReplaceNoteSelection)
+        func bubble(_ value: AgentMessage) -> some View {
+            AgentBubble(message: value,
+                        liveStreamingText: value.completionState == .generating ? source : nil,
+                        isStreaming: value.completionState == .generating)
+                .environmentObject(store)
+                .frame(width: 560)
+        }
+        let host = NSHostingView(rootView: bubble(message))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 300),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        func nativeText(in view: NSView) -> NativeChatTextView? {
+            if let text = view as? NativeChatTextView { return text }
+            return view.subviews.lazy.compactMap { nativeText(in: $0) }.first
+        }
+        func settledHeight() async throws -> CGFloat {
+            var previous: CGFloat = -1
+            for _ in 0..<100 {
+                try await Task.sleep(nanoseconds: 20_000_000)
+                host.layoutSubtreeIfNeeded()
+                let height = host.fittingSize.height
+                if nativeText(in: host)?.string == source, abs(height - previous) < 0.1 { return height }
+                previous = height
+            }
+            XCTFail("native message did not finish layout")
+            return host.fittingSize.height
+        }
+        let before = try await settledHeight()
+        let textView = try XCTUnwrap(nativeText(in: host))
+        message.completionState = .completed
+        store.messages = [message]
+        host.rootView = bubble(message)
+        let after = try await settledHeight()
+        XCTAssertEqual(after, before, accuracy: 0.5)
+        XCTAssertTrue(nativeText(in: host) === textView)
         XCTAssertFalse(window.isVisible)
     }
 
