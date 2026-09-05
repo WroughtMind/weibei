@@ -5,13 +5,14 @@ import WeiBeiCore
 struct CommandPaletteView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var query = ""
+    @State private var hits: [GlobalSearchHit] = []
+    @State private var searching = false
     @State private var selectedIndex = 0
     @FocusState private var searchFocused: Bool
 
     private var commands: [PaletteCommand] {
         var items = [
             PaletteCommand(title: store.ui("打开课程空间", "Open Course Space"), shortcut: "⌘0", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace(.hub) },
-            PaletteCommand(title: store.ui("搜索全部课程", "Search All Courses"), shortcut: "", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace(.hub) },
             PaletteCommand(title: store.ui("打开资料", "Open Material"), shortcut: "⌘O") { store.importFilesFromPanel() },
             PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.promptCreateBlankNotebookNote() },
             PaletteCommand(title: store.ui("聚焦课程目录", "Focus Course Index"), shortcut: store.chord(for: .focusLibrary).display, animation: WeiBeiMotion.layout) { store.focus(.library) },
@@ -120,7 +121,23 @@ struct CommandPaletteView: View {
     private var filtered: [PaletteCommand] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return commands }
-        return commands.filter { $0.title.localizedCaseInsensitiveContains(query) }
+        let content = hits.map { hit in
+            let kind: String
+            switch hit.result.kind {
+            case .material: kind = store.ui("资料", "Material")
+            case .note: kind = store.ui("笔记", "Note")
+            case .chat: kind = store.ui("对话", "Chat")
+            }
+            return PaletteCommand(
+                title: hit.result.title,
+                shortcut: "",
+                detail: "\(kind) · \(hit.courseTitle)",
+                snippet: hit.result.matchedText,
+                resultID: hit.id,
+                action: { store.openGlobalSearchHit(hit) }
+            )
+        }
+        return content + commands.filter { $0.title.localizedCaseInsensitiveContains(query) }
     }
 
     var body: some View {
@@ -143,7 +160,7 @@ struct CommandPaletteView: View {
                     TextField(
                         "",
                         text: $query,
-                        prompt: Text(store.ui("输入命令", "Type a command"))
+                        prompt: Text(store.ui("搜索资料、笔记、对话或命令", "Search files, notes, chats or commands"))
                             .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 18, weight: .semibold))
                             .foregroundStyle(WeiBeiTheme.placeholderInk)
                     )
@@ -164,7 +181,7 @@ struct CommandPaletteView: View {
                     ScrollView(showsIndicators: false) {
                         LazyVStack(spacing: 3) {
                             if filtered.isEmpty {
-                                Text(store.ui("没有匹配命令", "No matching commands"))
+                                Text(searching ? store.ui("正在搜索…", "Searching…") : store.ui("没有匹配内容或命令", "No matching content or commands"))
                                     .weiBeiText(13)
                                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,9 +193,18 @@ struct CommandPaletteView: View {
                                         run(command)
                                     } label: {
                                         HStack(spacing: 12) {
-                                            Text(command.title)
-                                                .weiBeiText(13, weight: .medium)
-                                                .lineLimit(1)
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(command.title)
+                                                    .weiBeiText(13, weight: .medium)
+                                                    .lineLimit(1)
+                                                if let detail = command.detail {
+                                                    Text(detail).weiBeiText(11).foregroundStyle(WeiBeiTheme.secondaryInk)
+                                                }
+                                                if let snippet = command.snippet {
+                                                    Text(snippet).weiBeiText(12).foregroundStyle(WeiBeiTheme.secondaryInk).lineLimit(2)
+                                                }
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
                                             Spacer()
                                             if !command.shortcut.isEmpty {
                                                 Text(command.shortcut)
@@ -187,7 +213,7 @@ struct CommandPaletteView: View {
                                             }
                                         }
                                         .padding(.horizontal, 13)
-                                        .frame(height: 34)
+                                        .padding(.vertical, 9)
                                         .contentShape(Rectangle())
                                         .background(index == selectedIndex ? WeiBeiTheme.cinnabarSoft : Color.clear)
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -234,7 +260,17 @@ struct CommandPaletteView: View {
             searchFocused = true
         }
         .onChange(of: query) { _, _ in
+            hits = []
+            searching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             selectedIndex = 0
+        }
+        .task(id: query) {
+            let submitted = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !submitted.isEmpty else { searching = false; return }
+            let outcome = await store.searchAllCourses(currentCourseID: store.activeCourseID, query: submitted)
+            guard !Task.isCancelled else { return }
+            hits = outcome.hits
+            searching = false
         }
         .onChange(of: filtered.count) { _, count in
             selectedIndex = min(selectedIndex, max(count - 1, 0))
@@ -267,9 +303,12 @@ private struct PaletteCommand: Identifiable {
     var title: String
     var shortcut: String
     var animation = WeiBeiMotion.panel
+    var detail: String? = nil
+    var snippet: String? = nil
+    var resultID: String? = nil
     var action: () -> Void
 
-    var id: String { title }
+    var id: String { resultID ?? title }
 }
 
 private struct PaletteKeyboardBridge: NSViewRepresentable {

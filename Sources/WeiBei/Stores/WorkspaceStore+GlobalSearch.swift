@@ -81,24 +81,17 @@ extension WorkspaceStore {
         let courseTitleByID = Dictionary(
             uniqueKeysWithValues: courses.map { ($0.id, $0.title) }
         )
-        var courseIDByItemID: [String: UUID] = [:]
-        var itemInputs: [CourseSearchItemInput] = []
-        for course in courses {
-            for item in courseItems(in: course.id) {
-                courseIDByItemID[item.id] = course.id
-                itemInputs.append(
-                    CourseSearchItemInput(
-                        item: item,
-                        title: displayTitle(for: item),
-                        detail: displaySubtitle(for: item),
-                        memoryText: item.isNotebookNote
-                            ? (item.id == activeNotebookItemID
-                                ? noteText
-                                : notesByItemID[item.id] ?? loadedCourseNoteTextByItemID[item.id])
-                            : nil
-                    )
-                )
-            }
+        let itemInputs = allItems.filter { $0.isCourseMaterial || $0.isNotebookNote }.map { item in
+            CourseSearchItemInput(
+                item: item,
+                title: displayTitle(for: item),
+                detail: displaySubtitle(for: item),
+                memoryText: item.isNotebookNote
+                    ? (item.id == activeNotebookItemID
+                        ? noteText
+                        : notesByItemID[item.id] ?? loadedCourseNoteTextByItemID[item.id])
+                    : nil
+            )
         }
         let sessionByID = Dictionary(
             uniqueKeysWithValues: orderedStudySessions.map { ($0.id, $0) }
@@ -120,12 +113,14 @@ extension WorkspaceStore {
             let result = pair.element
             switch result.kind {
             case .material, .note:
-                guard let itemID = result.itemID,
-                      let courseID = courseIDByItemID[itemID] else { return nil }
+                guard let itemID = result.itemID else { return nil }
+                let memberships = courseIDs(for: itemID)
+                let courseID = currentCourseID.flatMap { memberships.contains($0) ? $0 : nil }
+                    ?? courses.first(where: { memberships.contains($0.id) })?.id
                 return (pair.offset, GlobalSearchHit(
                     courseID: courseID,
-                    courseTitle: courseTitleByID[courseID] ?? unaffiliatedLabel,
-                    isCurrentCourse: courseID == currentCourseID,
+                    courseTitle: courseID.flatMap { courseTitleByID[$0] } ?? ui("通用", "Common"),
+                    isCurrentCourse: currentCourseID != nil && courseID == currentCourseID,
                     result: result
                 ))
             case .chat:
@@ -137,7 +132,7 @@ extension WorkspaceStore {
                 return (pair.offset, GlobalSearchHit(
                     courseID: courseID,
                     courseTitle: courseID.flatMap { courseTitleByID[$0] } ?? unaffiliatedLabel,
-                    isCurrentCourse: courseID == currentCourseID,
+                    isCurrentCourse: currentCourseID != nil && courseID == currentCourseID,
                     result: result
                 ))
             }
@@ -153,6 +148,19 @@ extension WorkspaceStore {
             .prefix(resultLimit)
             .map(\.hit)
         return GlobalSearchOutcome(hits: ordered, availability: search.availability)
+    }
+
+    func openGlobalSearchHit(_ hit: GlobalSearchHit) {
+        switch hit.result.kind {
+        case .material:
+            if let id = hit.result.itemID { openContextualItem(id, kind: .material) }
+        case .note:
+            if let id = hit.result.itemID { openContextualItem(id, kind: .note) }
+        case .chat:
+            if let id = hit.result.sessionID {
+                continueCourseSession(id, expectedCourseID: hit.courseID, expectedScopeNeedsReview: false)
+            }
+        }
     }
 
     // MARK: - 共享内核(自 WorkspaceStore.searchCourseHome 原样迁移)
@@ -207,7 +215,11 @@ extension WorkspaceStore {
                     .split(whereSeparator: \.isWhitespace)
                     .joined(separator: " ")
                 guard !compact.isEmpty else { return nil }
-                return String(compact.prefix(150))
+                guard let match = compact.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) else {
+                    return String(compact.prefix(150))
+                }
+                let start = compact.index(match.lowerBound, offsetBy: -45, limitedBy: compact.startIndex) ?? compact.startIndex
+                return (start == compact.startIndex ? "" : "…") + String(compact[start...].prefix(150))
             }
 
             var scored: [(score: Int, result: CourseHomeSearchResult)] = []

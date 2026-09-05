@@ -21,22 +21,12 @@ struct EmptyWorkspaceLauncherView: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Environment(\.weiBeiTextScale) private var textScale
     @AppStorage("weibei.libraryPlacementConfirmed") private var libraryPlacementConfirmed = false
-    @AppStorage("weibei.agentSetupPromptDismissed") private var agentSetupPromptDismissed = false
-    @ObservedObject private var agentAccount = AgentAccountService.shared
 
     @State private var selectedInspirationID: String?
     /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
     @State private var appearanceEpoch = 0
 
     private var liveAppearanceMode: WeiBeiAppearanceMode { store.appearanceMode }
-
-    private var showsAgentSetupPrompt: Bool {
-        !agentSetupPromptDismissed && !AgentProviderReadiness.isConfigured(for: store)
-    }
-
-    private var showsSetupCards: Bool {
-        !libraryPlacementConfirmed || showsAgentSetupPrompt
-    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
@@ -78,7 +68,7 @@ struct EmptyWorkspaceLauncherView: View {
                         .position(
                             x: contentCenterX,
                             y: geometry.size.height * (
-                                showsSetupCards ? 0.84 : EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
+                                !libraryPlacementConfirmed ? 0.84 : EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
                             )
                         )
                     }
@@ -130,7 +120,7 @@ struct EmptyWorkspaceLauncherView: View {
         )
         let showsInspirationBlock = store.showDailyInspiration && !store.inspirationAsWatermark
         let entryHeight: CGFloat = (
-            (compact ? 84 : 98) + (showsSetupCards ? (compact ? 188 : 178) : 0)
+            (compact ? 84 : 98) + (!libraryPlacementConfirmed ? (compact ? 188 : 178) : 0)
         ) * textScale
         let entryCenterY = clampedCenterY(
             ratio: showsInspirationBlock ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5,
@@ -202,13 +192,19 @@ struct EmptyWorkspaceLauncherView: View {
                 entryWidth: entryWidth,
                 isEnabled: libraryPlacementConfirmed
             )
-            if store.courses.isEmpty && store.importedItems.isEmpty && showsSetupCards {
+            if store.canContinueLastWork && libraryPlacementConfirmed {
+                Button(store.ui("继续上次", "Continue where you left off")) {
+                    store.continueLastWork()
+                }
+                .buttonStyle(.plain)
+                .weiBeiText(12)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .padding(.top, 8)
+            }
+            if store.courses.isEmpty && store.importedItems.isEmpty && !libraryPlacementConfirmed {
                 HStack(alignment: .top, spacing: compact ? 12 : 16) {
                     if !libraryPlacementConfirmed {
                         LibraryPlacementNoticeCard()
-                    }
-                    if showsAgentSetupPrompt {
-                        AgentSetupPromptCard()
                     }
                 }
             }

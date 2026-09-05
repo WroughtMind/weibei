@@ -2036,6 +2036,7 @@ public struct PendingNoteWriteState: Codable, Hashable, Sendable {
 }
 
 public struct PersistedWorkspace: Codable, Sendable {
+    public var lastWork: WorkspaceResumePoint?
     public var importedItems: [StudyItem]
     public var notesByItemID: [String: String]
     public var pendingNoteWritesByItemID: [String: PendingNoteWriteState]?
@@ -2089,6 +2090,7 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var interfaceTextScaleRaw: String?
 
     public init(
+        lastWork: WorkspaceResumePoint? = nil,
         importedItems: [StudyItem] = [],
         notesByItemID: [String: String] = [:],
         pendingNoteWritesByItemID: [String: PendingNoteWriteState]? = nil,
@@ -2138,6 +2140,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         interfaceLanguageRaw: String? = nil,
         interfaceTextScaleRaw: String? = nil
     ) {
+        self.lastWork = lastWork
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
         self.pendingNoteWritesByItemID = pendingNoteWritesByItemID
