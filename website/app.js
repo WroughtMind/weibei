@@ -154,6 +154,7 @@ setExperienceMode(0);
 startExperienceRotation();
 
 const activateThemePreview = preview => {
+  if (document.documentElement.dataset.scene !== '3' || (!mobileLayout.matches && enteringSceneFour())) return;
   if (activeThemePreview === preview) return;
   document.documentElement.dataset.theme = preview.dataset.theme;
   activeThemePreview = preview;
@@ -168,14 +169,13 @@ const resetThemePreview = () => {
 const enteringSceneFour = () => scrollY + innerHeight >= chapters[3].offsetTop;
 
 themePreviews.forEach(preview => {
-  preview.addEventListener('pointerenter', () => {
-    if (!mobileLayout.matches && !activeThemePreview) activateThemePreview(preview);
-  });
   preview.addEventListener('focus', () => {
     if (mobileLayout.matches) return;
     if (!activeThemePreview || activeThemePreview === preview) activateThemePreview(preview);
   });
   preview.addEventListener('pointermove', event => {
+    // A scene moving under a stationary pointer is not a request to expand it.
+    if (!mobileLayout.matches && !activeThemePreview) activateThemePreview(preview);
     if (mobileLayout.matches || activeThemePreview !== preview) return;
     const bounds = preview.getBoundingClientRect();
     const middle = bounds.left + bounds.width / 2;

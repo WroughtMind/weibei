@@ -230,7 +230,8 @@ html[data-theme] .mascot-three { opacity: 0; transform: translate(-50%, -50%) sc
 .release-labs { right: 12%; top: 13%; }
 .release-webi { left: 11%; bottom: 16%; }
 .release-feedback { right: 11%; bottom: 16%; }
-html[data-scene="4"] .journey-stage { z-index: 24; pointer-events: auto; }
+html[data-scene="4"] .journey-stage { z-index: 24; }
+html[data-scene="4"] .download-control { pointer-events: auto; }
 html[data-scene="4"] .release-destination { pointer-events: auto; }
 
 .chapter { position: relative; min-height: 170vh; }
@@ -273,7 +274,7 @@ html[data-scene="3"][data-theme="mist-slate"] .scene-rail button.is-active::befo
 html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linear-gradient(180deg, #eedfcb 0%, #ebdbc7 100%) fixed; }
 .download-act { position: absolute; z-index: 6; left: 50%; bottom: -2%; width: 38%; height: 54%; pointer-events: none; transform: translateX(-50%); }
 .download-act .mascot-four { position: absolute; z-index: 2; left: 50%; top: -4%; width: 88%; height: 88%; transform: translateX(-50%); }
-.download-control { position: absolute; z-index: 3; left: 50%; bottom: 4%; width: 330px; height: 92px; color: #2e2924; background: url("assets/第四幕-下载纸签-v4.webp") center / contain no-repeat; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); pointer-events: auto; transform: translateX(-50%); transition: filter .24s ease, transform .24s ease; }
+.download-control { position: absolute; z-index: 3; left: 50%; bottom: 4%; width: 330px; height: 92px; color: #2e2924; background: url("assets/第四幕-下载纸签-v4.webp") center / contain no-repeat; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); pointer-events: none; transform: translateX(-50%); transition: filter .24s ease, transform .24s ease; }
 .download-control:hover { filter: drop-shadow(0 8px 10px rgba(54,40,25,.18)) saturate(1.07); transform: translateX(-50%) translateY(1px) scale(1.015); }
 .download-control:active { transform: translateX(-50%) translateY(2px) scale(.99); }
 .primary-download { position: absolute; inset: 0; display: grid; place-items: center; padding: 0; color: inherit; font-family: "Songti SC", "STSong", serif; white-space: nowrap; cursor: pointer; transform: translateY(-13px); }
@@ -320,16 +321,15 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
     28%, 49% { transform: translate3d(-50%, -50%, 0) scale(.88) rotate(0deg); }
     58% { transform: translate3d(-50%, -50%, 0) scale(.94) rotate(0deg); }
     63%, 78% { transform: translate3d(-50%, -50%, 0) scale(.98) rotate(0deg); }
-    82% { transform: translate3d(-50%, calc(-50% - 1vh), 0) scale(.98) rotate(0deg); }
-    90%, 100% { transform: translate3d(-50%, calc(-50% - 3vh), 0) scale(1.18) rotate(0deg); }
+    82% { transform: translate3d(-50%, calc(-50% - 1vh), 0) scale(.98) rotate(0deg); animation-timing-function: cubic-bezier(.4,0,.2,1); }
+    92%, 100% { transform: translate3d(-50%, calc(-50% - 3vh), 0) scale(1.18) rotate(0deg); }
   }
   @keyframes blank-journey { 0%, 20% { opacity: 1; transform: scale(1); } 28%, 100% { opacity: 0; transform: scale(1.025); } }
   @keyframes experience-journey { 0%, 20% { opacity: 0; transform: scale(.985); } 28%, 49% { opacity: 1; transform: scale(1); } 57%, 100% { opacity: 0; transform: scale(.98); } }
   @keyframes themes-journey { 0%, 50% { opacity: 0; transform: scale(.9); } 58% { opacity: 1; transform: scale(.97); } 63%, 78% { opacity: 1; transform: scale(1); } 85%, 100% { opacity: 0; transform: scale(.98); } }
   @keyframes release-journey { 0%, 79% { opacity: 0; } 84%, 100% { opacity: 1; } }
   @keyframes map-paper-journey {
-    0%, 79% { opacity: 0; transform: scaleX(.12) scaleY(.74); }
-    88% { opacity: 1; transform: scaleX(1.025) scaleY(1); }
+    0%, 79% { opacity: 0; transform: scaleX(.12) scaleY(.74); animation-timing-function: cubic-bezier(.4,0,.2,1); }
     92%, 100% { opacity: 1; transform: scale(1); }
   }
   @keyframes map-shadow-journey { 0%, 91% { opacity: 0; } 96%, 100% { opacity: 1; } }
