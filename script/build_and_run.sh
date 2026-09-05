@@ -159,6 +159,13 @@ if [[ "$CHECK_ONLY" != true ]]; then
   fi
 fi
 
+# SwiftPM's generated lookup targets command-line layouts. The native libraries
+# must also find their resource bundles in a signed macOS App's Contents/Resources.
+swift package resolve
+git apply --directory=.build/checkouts --check script/native-bundle-resources.patch 2>/dev/null && {
+  git apply --directory=.build/checkouts script/native-bundle-resources.patch
+} || git apply --directory=.build/checkouts --reverse --check script/native-bundle-resources.patch
+
 swift build -c "$BUILD_CONFIGURATION"
 
 if [[ "$CHECK_ONLY" != true ]]; then
@@ -167,6 +174,8 @@ if [[ "$CHECK_ONLY" != true ]]; then
   RESOURCE_BUNDLES=(
     "$BUILD_DIR/${PRODUCT_NAME}_${PRODUCT_NAME}.bundle"
     "$BUILD_DIR/${PRODUCT_NAME}_WeiBeiCore.bundle"
+    "$BUILD_DIR/SwiftMath_SwiftMath.bundle"
+    "$BUILD_DIR/HighlightSwift_HighlightSwift.bundle"
   )
 
   rm -rf "$APP_BUNDLE"
