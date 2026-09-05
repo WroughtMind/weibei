@@ -42,6 +42,8 @@
 | **Write** | Edit Markdown with images, formulas, and code blocks. AI changes appear as proposals and are saved after you approve them. |
 | **Revisit** | View the material linked to a note and use learning memory to look up previous progress and questions. |
 
+> Reading at length, taking excerpts, and writing notes by hand are meaningful in themselves, even without AI.
+
 <p align="center">
   <img src="./website/assets/第三幕-真实截图-宣纸-论文选区浮窗.webp" alt="A paper and notes open side by side, with a floating panel for asking about or keeping selected text" width="100%">
   <br>
