@@ -151,13 +151,13 @@
     },
     {
       "path": "assets/dmg/dmg-background.png",
-      "bytes": 373089,
-      "sha256": "2af39eb8168ec15024829213f4a438d42ee0ff81cf4d55a3fdf373f778f69fc8"
+      "bytes": 381079,
+      "sha256": "fc97f6feb132e2ed54ad80a78adc10cef1df59a5751e0736306afcd9051ab549"
     },
     {
       "path": "assets/dmg/dmg-background@2x.png",
-      "bytes": 1520259,
-      "sha256": "1ec0f540c06cef3408a758fd44c0bf802d976e628631ec396d288b2a80c58fe2"
+      "bytes": 1490906,
+      "sha256": "888fe78552ef0b3a84c59407d4090c8cad9a4a11286c075076520ebfbf590e6d"
     },
     {
       "path": "assets/examples/design-system-overview.png",

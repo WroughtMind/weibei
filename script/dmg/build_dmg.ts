@@ -52,7 +52,7 @@ async function main() {
       },
       contents: [
         { x: 145, y: 270, type: "file", path: appPath, name: "魏碑.app" },
-        { x: 565, y: 270, type: "link", path: "/Applications", name: "应用程序" },
+        { x: 565, y: 270, type: "link", path: "/Applications", name: "Applications" },
       ],
     },
   });
