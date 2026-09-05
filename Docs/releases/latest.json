@@ -1,7 +1,0 @@
-{
-  "version": "1.0.0",
-  "build": 908,
-  "commit": "acc85915065f0c36ce7a0d93e583c469eb9ea8ad",
-  "url": "https://github.com/weibei-app/weibei/releases/download/v1.0.0/WeiBei-1.0.0-macOS-arm64.dmg",
-  "notes": "魏碑首个稳定社区版本；Apple 芯片，macOS 14 或更高版本。"
-}

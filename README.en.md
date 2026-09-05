@@ -29,30 +29,26 @@
 <p align="center">
   <img src="./website/assets/第二幕-真实三窗截图-去黑边.webp" alt="WeiBei's three-pane workspace: an article on the left, a conversation in the middle, and notes on the right" width="100%">
   <br>
-  <sub>Read, chat, and write side by side, or keep only the pane you need.</sub>
+  <sub>Open the reader, chat, and notes side by side or as separate panes.</sub>
 </p>
 <!-- WEIBEI_VISUAL:workspace:END -->
 
-## Keep the question beside the passage
-
-I built WeiBei during final-exam revision because I was tired of moving between PDFs, chat pages, and a separate notes app. I wanted to keep my reading position, the source of a passage, and the reason I wrote something down together.
+## Features
 
 | Task | In WeiBei |
 |:---|:---|
-| **Read** | Import a folder as a course. Read PDF, HTML, Markdown, and plain text in one place, with local full-text search. |
-| **Ask** | Select text and ask about it. Follow citations to the file, page, or section, and reopen a conversation from its underlined passage. |
-| **Write** | Write Markdown with images, formulas, and code blocks. Review AI-proposed changes before they are saved. |
-| **Revisit** | Follow a note's source relationships back to the material. Learning memory helps you pick up your progress and open questions. |
-
-> Reading at length, taking excerpts, and writing notes by hand are meaningful in themselves, even without AI.
+| **Read** | Import a folder as a course, read PDF, HTML, Markdown, and plain text, and search your course material. |
+| **Ask** | Select text to ask a question. Click citations to view the source, or click an underlined passage to reopen its conversation. |
+| **Write** | Edit Markdown with images, formulas, and code blocks. AI changes appear as proposals and are saved after you approve them. |
+| **Revisit** | View the material linked to a note and use learning memory to look up previous progress and questions. |
 
 <p align="center">
   <img src="./website/assets/第三幕-真实截图-宣纸-论文选区浮窗.webp" alt="A paper and notes open side by side, with a floating panel for asking about or keeping selected text" width="100%">
   <br>
-  <sub>Select text in a document or note to ask about it or keep an excerpt.</sub>
+  <sub>Select text to open a floating panel for questions or excerpts.</sub>
 </p>
 
-## From paper to inkstone
+## Themes
 
 Choose Paper, Xuan, Inkstone, or Stele, or one of four frosted-glass themes: Clear Glass, Dark Glass, Mist Glass, and Slate Glass. Open reading, chat, or writing on its own, and adjust text size across the app with <kbd>⌘</kbd> + <kbd>+</kbd> / <kbd>−</kbd>.
 
@@ -81,7 +77,7 @@ Choose Paper, Xuan, Inkstone, or Stele, or one of four frosted-glass themes: Cle
 
 <p align="center"><sub>Four themes in the app. Click an image to enlarge it. The materials shown are for demonstration and are not bundled with WeiBei.</sub></p>
 
-## Your files and the AI's access
+## Local storage and AI permissions
 
 | Topic | How it works |
 |:---|:---|
@@ -108,7 +104,7 @@ The script builds and opens WeiBei. Full checks, packaging, and web-editor rebui
 2. Open a document, write notes alongside it, and try full-text search.
 3. When you want AI, connect a model in Settings. Select text to ask a question, follow a citation back to the source, or review a note proposal.
 
-Large files and scans may be reported as partially indexed. WeiBei is still in development; official installers will appear on the [Releases page](https://github.com/WroughtMind/weibei/releases).
+Large files and scans may be reported as partially indexed. There is no release scheduled; the next official version will be **0.0.1**. See the [release status](Docs/releases/README.md).
 
 ## Contribute
 
@@ -132,7 +128,7 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 | `make release` | `./script/build_release_dmg.sh` (build the current architecture's unnotarized release DMG) |
 | `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules` and user data) |
 
-Node tooling: run `npm ci` at the repository root to install dependencies from the single `package-lock.json`. TypeScript tools run with `tsx`; `npm run typecheck:tools` checks their types.
+Node tooling: run `npm ci` at the repository root to install dependencies from the single `package-lock.json`. TypeScript tools under `script/` and `DesignSystem/scripts/` run with `tsx`; `npm run typecheck:tools` checks their types.
 
 Apple silicon and Intel packages are built natively on the matching Mac. See the [dual-architecture release guide](Docs/releases/dual-architecture.md) for assets and verification requirements.
 
