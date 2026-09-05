@@ -13,12 +13,11 @@ WeiBei is a place for reading and keeping notes.
 So the core is fully local: importing a course, reading, full-text search, notes, and source relationships all work without any model. Connect one when you want AI — it answers on top of your own material, with citations that jump back to the source, and note updates that wait for your approval. Don't connect one, and WeiBei is still a calm, complete reader and notebook — no more juggling a PDF, an AI chat page, and a notes app on revision night.
 
 <p align="center">
-  <a href="https://github.com/WroughtMind/weibei/releases">⬇ <strong>View available downloads</strong></a>
-  · macOS 14 or later · Apple silicon and Intel · DMGs and checksums in Releases
+  <strong>In development — no official downloads yet</strong>
+  · macOS 14 or later · Apple silicon and Intel · Build from source
 </p>
 
 <p align="center">
-  <a href="https://github.com/WroughtMind/weibei/releases"><img alt="Release" src="https://img.shields.io/github/v/release/WroughtMind/weibei"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138">
@@ -39,11 +38,11 @@ WeiBei keeps the material, the question, its evidence, and the resulting note as
 | A week later | scrolling chat history to reconstruct why | the underlined passage reopens its exact thread |
 | Notes | you retype the useful parts by hand | AI proposes, you review and accept — never silent edits |
 | Without AI | close the chat page and nothing is left | reading, search, notes, and relationships keep working |
-| Your data | split across services | local-first, on your Mac only |
+| Your data | split across services | stored locally |
 
 ## ▍One window, three steps: read → ask → keep
 
-Read and keep work fully offline, with no model required; ask is optional — without a provider connected, WeiBei is still a complete study workspace.
+Reading local material and keeping notes require no model; ask is optional — without a provider connected, WeiBei is still a complete study workspace.
 
 <!-- WEIBEI_VISUAL:workspace:START -->
 <p align="center">
@@ -65,7 +64,7 @@ Read and keep work fully offline, with no model required; ask is optional — wi
 
 ## ▍Privacy is structure, not a setting
 
-- Your library and full-text index stay on your Mac.
+- Your library, notes, and full-text index are stored locally. Online models receive relevant excerpts, and remote content such as images may load over the network. See the [privacy notice](PRIVACY.md).
 - The Agent only reads through a fixed set of host-mediated tools. No shell, no open file system; each request sees a bounded snapshot of the current material.
 - Citations, source jumps, memory writes, note proposals, and rich-answer payloads are all validated by the local host before anything is displayed or applied.
 - Web pages and materials are treated strictly as data, never as instructions — a page telling the Agent to do something can't change its behavior. Search queries carry only the public topic of your question, never your course text, notes, or local paths.
@@ -79,14 +78,7 @@ Read and keep work fully offline, with no model required; ask is optional — wi
 4. Click a citation label to jump back to the source.
 5. Ask the Agent to save something to your notes, then review the proposal card before it is applied.
 
-Current releases are not Apple-notarized, so Gatekeeper may block the first launch. Approve it once and later launches open normally; each newly downloaded version needs the same one-time approval:
-
-- macOS 15 or later: double-click to trigger the block once, then open **System Settings → Privacy & Security**, click **Open Anyway** at the bottom, and confirm. The old right-click "Open" shortcut was removed by Apple in macOS 15.
-- macOS 14: right-click `魏碑.app` in Applications, choose **Open**, then confirm **Open**.
-
-This allows WeiBei only — don't disable Gatekeeper globally. WeiBei checks for new versions from Settings, so you don't need to watch the Releases page.
-
-The release pipeline produces native Apple silicon (arm64) and Intel (x86_64) DMGs for the same version. When a version is available, choose the file that matches your Mac on Releases or the website. The Homebrew Cask records both checksums; until the tap is published, use the DMG or build from source.
+There is no release scheduled. The next official version will be **0.0.1**; for now, build from source using the steps below. See the [release status](Docs/releases/README.md).
 
 ## ▍Made for long nights
 
@@ -95,10 +87,10 @@ WeiBei is named after the stele inscription style, and it leans into that: paper
 ## ▍Current limits
 
 - This repository supports macOS 14 or later; the release gate requires both native Apple silicon and Intel packages to pass before publication.
-- Course files and indexes are fully local. Reading and note-taking need no network — only AI responses do.
+- Course files and indexes are stored locally; online models and remote content in documents use the network.
 - Learning memory is written automatically, with a light end-of-answer notice; formal notes and relationship changes still need your confirmation.
 - Large or difficult source files may be reported as partially indexed — honestly, never passed off as complete.
-- Current releases are not Apple-notarized; the first launch needs a manual allow.
+- The project is in development; no official installer is available yet.
 
 ---
 
@@ -108,7 +100,7 @@ Everything below is for people building WeiBei itself. WeiBei was born in the Ed
 
 ### Build from source
 
-Requirements: macOS 14+, Xcode Command Line Tools with Swift 5.9, a configured model provider for live Agent responses, and Node.js only when rebuilding the Milkdown web editor.
+Requirements: macOS 14+, Xcode Command Line Tools with Swift 5.9, a model provider only for live Agent responses. Full checks, packaging, and editor rebuilds require Node.js 22 or later and `npm ci` first.
 
 ```bash
 git clone https://github.com/WroughtMind/weibei.git
@@ -141,13 +133,14 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 | `make release` | `./script/build_release_dmg.sh` (build the current architecture's unnotarized release DMG) |
 | `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules` and user data) |
 
-Node tooling: the repository has a single root lockfile (`package-lock.json`) covering the `Prototypes/RichAnswerWebRuntime` workspace; one `npm ci` installs everything. Tool scripts under `script/`, `DesignSystem/scripts/`, and the prototype `scripts/` are TypeScript run with `tsx` (e.g. `npx tsx script/check-genui-math.ts`); `npm run typecheck:tools` type-checks them.
+Node tooling: run `npm ci` at the repository root to install dependencies from the single `package-lock.json`. TypeScript tools under `script/` and `DesignSystem/scripts/` run with `tsx`; `npm run typecheck:tools` type-checks them.
 
 Apps and DMGs are always built natively on the matching Mac: the Apple runner uses `--arch arm64`, while the Intel runner uses `--arch x86_64`. See [Docs/releases/dual-architecture.md](Docs/releases/dual-architecture.md) for the complete asset contract, secret variables, and atomic publication flow.
 
 ### Checks
 
 ```bash
+npm ci
 ./script/build_and_run.sh check
 ```
 
@@ -169,7 +162,7 @@ Live-provider checks require valid local credentials and are never silently repl
 - [Docs/course-library-architecture.md](Docs/course-library-architecture.md) — course library and storage architecture
 - [Docs/plans/2026-08-22-native-agent-runtime-实验计划.md](Docs/plans/2026-08-22-native-agent-runtime-实验计划.md) — validation and rollout notes for the Swift-native Agent runtime
 - [Docs/生成式界面基础与Visualize借鉴.md](Docs/生成式界面基础与Visualize借鉴.md) — generative UI foundations and the `visualize` decision
-- [Docs/releases/v1.0.0.md](Docs/releases/v1.0.0.md) — v1.0.0 release notes and evidence
+- [Docs/releases/README.md](Docs/releases/README.md) — current release status
 
 ---
 

@@ -154,6 +154,7 @@ setExperienceMode(0);
 startExperienceRotation();
 
 const activateThemePreview = preview => {
+  if (document.documentElement.dataset.scene !== '3' || (!mobileLayout.matches && enteringSceneFour())) return;
   if (activeThemePreview === preview) return;
   document.documentElement.dataset.theme = preview.dataset.theme;
   activeThemePreview = preview;
@@ -168,14 +169,13 @@ const resetThemePreview = () => {
 const enteringSceneFour = () => scrollY + innerHeight >= chapters[3].offsetTop;
 
 themePreviews.forEach(preview => {
-  preview.addEventListener('pointerenter', () => {
-    if (!mobileLayout.matches && !activeThemePreview) activateThemePreview(preview);
-  });
   preview.addEventListener('focus', () => {
     if (mobileLayout.matches) return;
     if (!activeThemePreview || activeThemePreview === preview) activateThemePreview(preview);
   });
   preview.addEventListener('pointermove', event => {
+    // A scene moving under a stationary pointer is not a request to expand it.
+    if (!mobileLayout.matches && !activeThemePreview) activateThemePreview(preview);
     if (mobileLayout.matches || activeThemePreview !== preview) return;
     const bounds = preview.getBoundingClientRect();
     const middle = bounds.left + bounds.width / 2;
@@ -235,11 +235,11 @@ let sceneFourPreloaded = false;
 const preloadSceneFour = () => {
   if (sceneFourPreloaded) return;
   sceneFourPreloaded = true;
-  ['第四幕-折页地图-v1', '第四幕-折页地图-阴影', '第四幕-下载纸签-v4', '第四幕-Webi动作-QA-v1', '第四幕-Webi动作-Labs-v1', '第四幕-Webi动作-官方群-v1', '第四幕-Webi动作-反馈-v1', 'Webi-第四幕-下载'].forEach(name => {
-    const img = new Image();
+  // Decode the displayed elements (including their selected srcset), not detached copies.
+  document.querySelectorAll('.release-layer img').forEach(img => {
+    img.loading = 'eager';
     img.decoding = 'async';
-    img.src = `assets/${name}.webp`;
-    img.decode().catch(() => {}); // 提前解码,避免进入第四幕时解码撞上展开动画
+    img.decode().catch(() => {});
   });
 };
 const observer = new IntersectionObserver(entries => {
@@ -248,7 +248,7 @@ const observer = new IntersectionObserver(entries => {
   const activeIndex = chapters.indexOf(activeChapter);
   document.documentElement.dataset.scene = String(activeIndex + 1);
   if (activeIndex !== 2) resetThemePreview();
-  if (activeIndex === 2) preloadSceneFour();
+  if (activeIndex >= 1) preloadSceneFour();
   railButtons.forEach((button, index) => button.classList.toggle('is-active', index === activeIndex));
 }, { threshold: [.25, .5, .75] });
 

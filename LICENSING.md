@@ -22,10 +22,10 @@ to publish their source code.
 
 - `Sources/WeiBei/Resources/Fonts/`;
 - `DesignSystem/assets/fonts/`;
-- `website/assets/fonts/`.
+- `website/assets/WeiBeiStele.ttf`.
 
-The full license travels with each distribution copy as `OFL.txt` or
-`OFL-WeiBei.txt`. `WeiBeiStele` and `WeiBeiSteleMono` are Reserved Font Names:
+The full license is in [`DesignSystem/assets/fonts/OFL.txt`](DesignSystem/assets/fonts/OFL.txt)
+and must accompany redistributed font files. `WeiBeiStele` and `WeiBeiSteleMono` are Reserved Font Names:
 modified versions must use different names unless the copyright holder gives
 written permission.
 
@@ -58,10 +58,8 @@ rights. See [`TRADEMARKS.md`](TRADEMARKS.md) for the project identity policy.
 
 Third-party components keep their original licenses:
 
-- JavaScript dependencies are recorded in the root and prototype
-  `package-lock.json` files. Generated bundles retain embedded upstream notices.
-- Noto Sans CJK and Noto Serif CJK web fonts under `website/assets/fonts/` are
-  licensed under the SIL Open Font License 1.1 included in that directory.
+- JavaScript dependencies are recorded in the root `package-lock.json`.
+  Generated bundles retain embedded upstream notices.
 - Apple system frameworks are used under the terms supplied by Apple and are
   not part of this repository's MIT grant.
 
