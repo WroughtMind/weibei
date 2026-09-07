@@ -1406,6 +1406,118 @@
       .wb-stream-in { animation: none; }
       .wb-stream-caret { animation: none; }
     }
+
+    /* Notes follow the user's Typora Onigiri typography. Reader/chat keep their
+       own density; explicit per-selection font marks still override the default. */
+    @font-face {
+      font-family: "Mplus1p";
+      font-weight: 300 400;
+      src: url("./Mplus1p-Light.ttf") format("truetype");
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "Mplus1p Heading";
+      font-weight: 400 700;
+      src: url("./Mplus1p-Regular.ttf") format("truetype");
+      font-display: swap;
+    }
+    html:has(body[data-editable="true"]) {
+      font-size: calc(16px * var(--weibei-text-scale));
+      -webkit-font-smoothing: antialiased;
+    }
+    body[data-editable="true"] {
+      --weibei-writing-font: "Mplus1p", sans-serif;
+    }
+    body[data-editable="true"] #editor {
+      padding: 36px 20px 64px;
+    }
+    body[data-editable="true"] :is(.milkdown, #frontmatter-panel, .editor-status) {
+      box-sizing: border-box;
+      max-width: 984px; /* Typora's 1024px border box includes 20px on each side. */
+    }
+    body[data-editable="true"] .ProseMirror {
+      font-size: 1rem;
+      font-weight: 300;
+      line-height: 1.75;
+      text-align: justify;
+      min-height: calc(100vh - 100px);
+    }
+    body[data-editable="true"] .milkdown { min-height: calc(100vh - 100px); }
+    body[data-editable="true"] .ProseMirror :is(h1,h2,h3,h4,h5,h6) {
+      font-family: "Mplus1p Heading", sans-serif;
+      font-weight: 400;
+      letter-spacing: 0;
+      line-height: 1.42857143;
+      margin: 1rem 0;
+      color: var(--ink);
+    }
+    body[data-editable="true"] .ProseMirror h1 { font-size: 3rem; line-height: 4rem; margin: 0 0 1.75rem; }
+    body[data-editable="true"] .ProseMirror h2 { font-size: 1.8rem; line-height: 3rem; margin: 0 0 1.9375rem; }
+    body[data-editable="true"] .ProseMirror h3 { font-size: 1.6rem; }
+    body[data-editable="true"] .ProseMirror h4 { font-size: 1.4rem; }
+    body[data-editable="true"] .ProseMirror h5 { font-size: 1.125rem; }
+    body[data-editable="true"] .ProseMirror h6 { font-size: 1rem; font-weight: 700; }
+    body[data-editable="true"] .ProseMirror > h1:first-child { margin-top: 2.75rem; }
+    body[data-editable="true"] .ProseMirror > h2:first-child { margin-top: 1.75rem; }
+    body[data-editable="true"] .ProseMirror > h3:first-child { margin-top: 1rem; }
+    body[data-editable="true"] .ProseMirror > h4:first-child { margin-top: .5rem; }
+    body[data-editable="true"] .ProseMirror p { line-height: 1.75; margin: 0 0 1.25rem; }
+    body[data-editable="true"] .ProseMirror :is(ul,ol) { margin: 1rem 0; padding-left: 30px; }
+    body[data-editable="true"] .ProseMirror li { margin: 0; padding-left: 0; }
+    body[data-editable="true"] .ProseMirror li > p { margin: .5rem 0; }
+    body[data-editable="true"] .ProseMirror li > :first-child { margin-top: 0; }
+    body[data-editable="true"] .ProseMirror li :is(ul,ol) { margin: 0; }
+    body[data-editable="true"] .ProseMirror li[data-item-type="task"] { padding-left: 2.125rem; }
+    body[data-editable="true"] .ProseMirror li[data-item-type="task"]::before { top: .45rem; }
+    body[data-editable="true"] .ProseMirror blockquote:not(.weibei-callout) {
+      margin: 0 0 1.11111rem;
+      padding: .5rem 1.11111rem 0 1.05556rem;
+      border-left: 1px solid var(--line);
+      background: transparent;
+      border-radius: 0;
+    }
+    body[data-editable="true"] .ProseMirror blockquote:not(.weibei-callout) p { line-height: 1.6; }
+    body[data-editable="true"] .ProseMirror blockquote > :last-child { margin-bottom: 0; }
+    body[data-editable="true"] .ProseMirror table { margin: 0 0 1.25rem; font-size: 1rem; }
+    body[data-editable="true"] .ProseMirror :is(th,td) {
+      padding: .5rem;
+      line-height: 1.25rem;
+      border: 0;
+      border-top: 1px solid var(--line);
+    }
+    body[data-editable="true"] .ProseMirror thead tr:first-child > * { border-top: 0; }
+    body[data-editable="true"] .ProseMirror :is(th,td) > p { margin: 0; min-height: 0; line-height: inherit; }
+    body[data-editable="true"] .ProseMirror code {
+      font-family: Monaco, Consolas, "Andale Mono", "DejaVu Sans Mono", monospace;
+      font-size: .9em;
+      padding: .1em;
+      border-radius: 0;
+    }
+    body[data-editable="true"] .ProseMirror pre {
+      font-size: 1rem;
+      line-height: 1.42857143;
+      margin: 0 0 1.25rem;
+      padding: 29px 1rem .3rem; /* Reserve the existing language control's row. */
+      border: 1px solid var(--line);
+      border-radius: 0;
+      text-align: left;
+    }
+    body[data-editable="true"] .ProseMirror pre code { font-size: 1em; padding: 0; }
+    body[data-editable="true"] .ProseMirror img:not(.ProseMirror-separator) { border-radius: 0; box-shadow: none; }
+    body[data-editable="true"] .ProseMirror hr { margin: 1rem 0; }
+    @media (max-width: 768px) {
+      body[data-editable="true"] .ProseMirror h1 { font-size: 2.827rem; }
+      body[data-editable="true"] .ProseMirror h2 { font-size: 1.999rem; }
+      body[data-editable="true"] .ProseMirror h3 { font-size: 1.413rem; }
+      body[data-editable="true"] .ProseMirror h4 { font-size: 1.25rem; }
+      body[data-editable="true"] .ProseMirror h5 { font-size: 1.15rem; }
+      body[data-editable="true"] .ProseMirror blockquote:not(.weibei-callout) { margin-left: 1rem; margin-right: 0; padding: .5em; }
+    }
+    body[data-editable="true"][data-typewriter="true"] #editor {
+      padding-top: calc(50vh - .875rem);
+      padding-bottom: 50vh;
+    }
+    body[data-editable="true"][data-typewriter="true"] :is(.milkdown,.ProseMirror) { min-height: 0; }
   </style>
 </head>
 <body>

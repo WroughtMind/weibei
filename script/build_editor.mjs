@@ -28,6 +28,11 @@ if (!check) {
   for (const name of generated) await rm(resolve(resources, name), { recursive: true, force: true });
 }
 await mkdir(output, { recursive: true });
+if (check) {
+  for (const font of ['Mplus1p-Light.ttf', 'Mplus1p-Regular.ttf']) {
+    await writeFile(resolve(output, font), await readFile(resolve(resources, font)));
+  }
+}
 
 const [editorMeta, viewerMeta] = await Promise.all([
   bundle('editor-entry.ts', 'editor-entry.js', true),

@@ -19,3 +19,10 @@ Logo、App 图标、纸纹、宣传图和社交分享图仍是保留权利的品
 ## 应用内容资产
 
 - 空工作台中的古典原文、公式与《兰亭集序》书法透明图，来源和权利依据见应用资源包中的 `Inspiration/SOURCES.md`。
+
+## 笔记排版字体
+
+笔记默认使用 M PLUS 1p（Light / Regular），Copyright 2016 The M+ Project Authors，
+采用 SIL Open Font License 1.1；完整许可随应用资源包中的 `Mplus1p-OFL.txt` 分发。
+字体原样取自 Typora 官方主题库收录的 [Onigiri](https://theme.typora.io/theme/Onigiri/)，
+用于匹配该主题的笔记排版。中文缺字由系统无衬线字体补齐。

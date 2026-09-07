@@ -7,8 +7,17 @@ public enum CourseLibraryLayout {
     public static let courseMaterialsDirectoryName = "文稿"
     public static let courseNotesDirectoryName = "笔记"
 
-    public static func defaultRootURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
+    public static func defaultRootURL(
+        workspaceDirectory: String? = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"]
+    ) -> URL {
+        let override = workspaceDirectory?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !override.isEmpty {
+            let workspace = URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL
+            // Library roots must not overlap the workspace's internal state directory.
+            return workspace.deletingLastPathComponent()
+                .appendingPathComponent(workspace.lastPathComponent + "-" + defaultFolderName, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
             .appendingPathComponent(defaultFolderName, isDirectory: true)
     }
