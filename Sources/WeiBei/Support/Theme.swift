@@ -401,18 +401,14 @@ enum WeiBeiTheme {
     static var stone: Color { secondaryInk }
 }
 
-/// The single glass foreground sheet (ContentView ZStack root). Frosted pairs
-/// paint an even veil; clear pairs fade from a legible top-bar band into
-/// near-bare translucency so the desktop keeps showing through the body.
+/// Clear glass keeps its top-bar gradient. Frosted glass uses only the native
+/// backdrop material, without a second full-window paint layer.
 struct WeiBeiGlassForegroundSheet: View {
     let mode: WeiBeiAppearanceMode
 
     var body: some View {
         Group {
             switch mode {
-            case .glassMist, .glassSlate:
-                Color(nsColor: WeiBeiNativePalette.paperRaised(for: mode))
-                    .opacity(0.35 + 0.65 * WeiBeiThemeRuntime.appliedGlassIntensity)
             case .glassLight, .glassDark:
                 clearPairGradient
                     .opacity(WeiBeiThemeRuntime.appliedGlassIntensity)
@@ -450,9 +446,7 @@ struct WeiBeiThemeBackdrop: View {
                     mode: mode,
                     isFullScreen: isFullScreen
                 )
-                // The slider owns blur + surfaces, but the tint keeps a 35%
-                // floor: at minimum glass, dark pairs stay faintly inked and
-                // light pairs run near-bare — the two ends never converge.
+                // 浓度调整轻微调色，不降低磨砂材质的 alpha，以免混回清晰背景。
                 Color(nsColor: WeiBeiNativePalette.glassBaseTint(for: mode))
                     .opacity(max(0.35, WeiBeiThemeRuntime.appliedGlassIntensity))
             }
@@ -509,8 +503,7 @@ private struct WeiBeiBehindWindowMaterial: NSViewRepresentable {
 
     /// 捕获当前 mode / isFullScreen 与实时玻璃浓度的应用闭包；滑杆变化时由
     /// Coordinator 重放，SwiftUI 不重渲染主窗口也能生效。
-    /// 材质分工：透亮对（晴璃/夜璃）轻糊薄染求"透"；磨砂对（雾璃/玄璃）
-    /// 用系统最重的 behindWindow 模糊档求"砂"。
+    /// 磨砂使用系统浮层材质的完整背景采样；不以视图透明度模拟模糊强度。
     private func applyClosure(for view: NSVisualEffectView?) -> () -> Void {
         { [weak view] in
             guard let view else { return }
@@ -522,9 +515,8 @@ private struct WeiBeiBehindWindowMaterial: NSViewRepresentable {
                 view.material = .hudWindow
                 view.alphaValue = 0.58 * WeiBeiThemeRuntime.appliedGlassIntensity
             case .glassMist, .glassSlate:
-                view.material = .underPageBackground
-                // 低浓度仍保留细雾；滑杆增加遮蔽，文字层不参与透明度变化。
-                view.alphaValue = 0.80 + 0.20 * WeiBeiThemeRuntime.appliedGlassIntensity
+                view.material = mode == .glassMist ? .popover : .hudWindow
+                view.alphaValue = 1
             default:
                 view.material = .hudWindow
                 view.alphaValue = 0
@@ -607,9 +599,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.025, green: 0.040, blue: 0.065, alpha: 0.28)
         case .glassMist:
-            return NSColor(calibratedRed: 0.965, green: 0.961, blue: 0.949, alpha: 0.26)
+            return NSColor(calibratedRed: 0.965, green: 0.961, blue: 0.949, alpha: 0.08)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.157, green: 0.157, blue: 0.149, alpha: 0.42)
+            return NSColor(calibratedRed: 0.157, green: 0.157, blue: 0.149, alpha: 0.10)
         default:
             return .clear
         }
