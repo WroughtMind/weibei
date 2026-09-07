@@ -93,6 +93,12 @@ export const revealSelectionMarks = (root: ParentNode, marks: SelectionMark[]) =
 };
 
 export const applyDOMSelectionMarks = (root: HTMLElement, marks: SelectionMark[], className: string, idAttribute: string) => {
+  const selection = window.getSelection();
+  const selected = selection?.anchorNode && selection.focusNode
+    && root.contains(selection.anchorNode) && root.contains(selection.focusNode)
+    ? domSelectionTextAnchor(selection, root) : null;
+  const backwards = selected && selection?.focusNode === selection?.getRangeAt(0).startContainer
+    && selection?.focusOffset === selection?.getRangeAt(0).startOffset;
   root.querySelectorAll(`.${className}`).forEach(element => {
     const parent = element.parentNode;
     if (!parent) return;
@@ -122,6 +128,14 @@ export const applyDOMSelectionMarks = (root: HTMLElement, marks: SelectionMark[]
       fragment.surroundContents(span);
       last = false;
     }
+  }
+  // Rewrapping marks moves text nodes; restore the reader's live selection by its stable text offsets.
+  if (selected && selection) {
+    const points = indexDOMSelectionText(root).points;
+    const first = points[selected.startOffset], last = points[selected.endOffset - 1];
+    if (first && last) selection.setBaseAndExtent(
+      backwards ? last.node : first.node, backwards ? last.offset + 1 : first.offset,
+      backwards ? first.node : last.node, backwards ? first.offset : last.offset + 1);
   }
   if (className === 'weibei-remark-mark') revealSelectionMarks(root, marks);
 };

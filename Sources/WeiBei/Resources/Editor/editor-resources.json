@@ -343,8 +343,8 @@
     },
     {
       "name": "selection-runtime.js",
-      "bytes": 3320,
-      "sha256": "3d7ebad368589c493e80e3864be5ed5cff5859c5e8b01fdad433db7563f3508a"
+      "bytes": 3706,
+      "sha256": "09944bbb41bcfc08f748256840d5e6badd5b4a7471c41787749249a86d4b71f3"
     },
     {
       "name": "viewer-entry.js",

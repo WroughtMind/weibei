@@ -106,6 +106,11 @@ expect(html.querySelectorAll('[data-record-id="repeat"]').length === 1 && !html.
 expect(Array.from(html.querySelectorAll('[data-record-id="multi"]')).map(node => node.textContent).join('') === passage.replace(/\s/g, ''), 'HTML marks lost formatted or multi-paragraph text');
 const htmlTarget = html.querySelector('.weibei-remark-active').getBoundingClientRect();
 expect(htmlTarget.top >= 0 && htmlTarget.bottom <= innerHeight, 'HTML return did not reveal the anchored occurrence');
+const htmlSelected = html.querySelector('.weibei-remark-active').firstChild;
+selection.setBaseAndExtent(htmlSelected, 2, htmlSelected, 0);
+window.WeiBeiSelection.applyDOMSelectionMarks(html, htmlMarks.map(mark => ({ ...mark, active: false })), 'weibei-remark-mark', 'data-record-id');
+expect(selection.toString() === '同一' && window.WeiBeiSelection.selectionEndpointRect(selection).prefersAbove, 'Refreshing the active HTML mark destroyed the new backward selection');
+selection.removeAllRanges();
 window.scrollTo(0, 0);
 window.WeiBeiSelection.applyDOMSelectionMarks(html, htmlMarks, 'weibei-remark-mark', 'data-record-id');
 expect(window.scrollY === 0, 'HTML mark refresh took over scrolling');
