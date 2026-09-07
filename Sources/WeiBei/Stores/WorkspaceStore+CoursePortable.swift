@@ -1395,13 +1395,13 @@ extension WorkspaceStore {
                         studySessions[index].messageCount =
                             legacySession.messages.count
                     }
-                    markStudySessionMessagesLoaded(legacySession.id)
+                    sessionMessagePersistence.markLoaded(legacySession.id)
                 } else {
                     legacySession.relatedCourseIDs = Set(
                         legacySession.relatedCourseIDs + [courseID]
                     ).sorted { $0.uuidString < $1.uuidString }
                     studySessions.append(legacySession)
-                    markStudySessionMessagesLoaded(legacySession.id)
+                    sessionMessagePersistence.markLoaded(legacySession.id)
                 }
             }
         }
