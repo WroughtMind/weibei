@@ -11,6 +11,12 @@ tools=false
 classify_path() {
   local path="$1"
 
+  # 官网由 Pages 工作流验证；分类器由每次必跑的 --self-check 验证。
+  # 两者都不改变 App 二进制，不能落入下面的通用脚本/工作流规则。
+  case "$path" in
+    website/*|.github/workflows/pages.yml|script/ci_changed_scopes.sh) return ;;
+  esac
+
   case "$path" in
     Sources/*|Tests/*|Package.swift|Package.resolved|package.json|package-lock.json|script/*|.github/workflows/*|VERSION|DesignSystem/*|Config/*)
       code=true
@@ -37,7 +43,7 @@ classify_path() {
 
   # Shared roots cannot be classified safely from the path alone.
   case "$path" in
-    Sources/WeiBei/Stores/WorkspaceStore.swift|Sources/WeiBei/App/WeiBeiApp.swift|Sources/WeiBei/Views/ContentView.swift|Sources/WeiBei/Views/StableDocumentWorkspace.swift|Sources/WeiBeiSelfCheck/main.swift|Package.swift|Package.resolved|.github/workflows/*|script/ci_changed_scopes.sh)
+    Sources/WeiBei/Stores/WorkspaceStore.swift|Sources/WeiBei/App/WeiBeiApp.swift|Sources/WeiBei/Views/ContentView.swift|Sources/WeiBei/Views/StableDocumentWorkspace.swift|Sources/WeiBeiSelfCheck/main.swift|Package.swift|Package.resolved|.github/workflows/*)
       agent=true
       editor=true
       data_safety=true
@@ -91,6 +97,19 @@ expect_scopes() {
 }
 
 if [[ "${1:-}" == "--self-check" ]]; then
+  expect_scopes \
+    "code=false agent=false editor=false data_safety=false release=false tools=false " \
+    "website/index.html" \
+    ".github/workflows/pages.yml" \
+    "script/ci_changed_scopes.sh"
+  # 官网和 App 同时修改时，App 验证不能被官网规则吞掉。
+  expect_scopes \
+    "code=true agent=true editor=true data_safety=true release=false tools=false " \
+    ".github/workflows/pages.yml" \
+    "Sources/WeiBei/Stores/WorkspaceStore.swift"
+  expect_scopes \
+    "code=true agent=true editor=true data_safety=true release=true tools=false " \
+    ".github/workflows/release.yml"
   expect_scopes \
     "code=false agent=false editor=false data_safety=false release=false tools=false " \
     "Docs/plans/example.md"
