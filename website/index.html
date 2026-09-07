@@ -6,7 +6,8 @@
   <meta name="theme-color" content="#eee1ca">
   <title>魏碑 · 把读、问、写放回同一张桌面</title>
   <link rel="preload" as="image" href="assets/第一幕-真实首页截图-去黑边.webp">
-  <link rel="stylesheet" href="style.css?v=20260905-fold-motion">
+  <link rel="stylesheet" href="style.css?v=20260907-css-fold">
+  <link rel="stylesheet" href="paper-fold.css?v=20260907-css-fold">
 </head>
 <body>
   <nav class="topbar" aria-label="主导航" data-en-label="Main navigation">
@@ -113,42 +114,55 @@
         <img class="mascot mascot-three" src="assets/Webi-第三幕-环绕.webp" alt="Webi 与小朱环绕互动的循环动画" loading="lazy" decoding="async">
       </div>
 
-      <div class="journey-layer release-layer" aria-label="魏碑的更多入口">
-        <div class="release-map">
-          <img class="release-map-shadow" src="assets/第四幕-折页地图-阴影.webp" alt="" aria-hidden="true" loading="lazy" decoding="async">
-          <img class="release-map-paper" src="assets/第四幕-折页地图-v1.webp" srcset="assets/mobile/第四幕-折页地图-v1.webp 1080w, assets/第四幕-折页地图-v1.webp 1672w" sizes="100vw" alt="" aria-hidden="true" loading="lazy" decoding="async">
-          <a class="release-destination release-qa" href="qa.html" aria-label="Q&A">
-            <img src="assets/第四幕-Webi动作-QA-v1.webp" alt="Webi 查看问题纸条" loading="lazy" decoding="async">
-            <span class="release-title">Q&amp;A</span>
-          </a>
-          <a class="release-destination release-labs" href="labs.html" aria-label="Labs">
-            <img src="assets/第四幕-Webi动作-Labs-v1.webp" alt="Webi 用放大镜观察小朱" loading="lazy" decoding="async">
-            <span class="release-title">Labs</span>
-          </a>
-          <a class="release-destination release-webi" href="webi.html" aria-label="认识 Webi" data-en-label="Meet Webi">
-            <img src="assets/第四幕-Webi动作-官方群-v1.webp" alt="Webi 与小朱">
-            <span class="release-title">Webi</span>
-          </a>
-          <a class="release-destination release-feedback" href="feedback.html" aria-label="反馈" data-en-label="Feedback">
-            <img src="assets/第四幕-Webi动作-反馈-v1.webp" alt="Webi 投下反馈纸条" loading="lazy" decoding="async">
-            <span class="release-title" data-en="Feedback">反馈</span>
-          </a>
+    </div>
+  </div>
+
+  <div class="release-stage">
+    <div class="journey-layer release-layer" aria-label="魏碑的更多入口">
+      <div class="release-map">
+        <div class="paper-sheet" aria-hidden="true">
+          <div class="paper-shadow"></div>
+          <div class="paper-hinge paper-left">
+            <div class="paper-face"></div>
+            <div class="paper-hinge paper-outer"><div class="paper-face"></div></div>
+          </div>
+          <div class="paper-hinge paper-right">
+            <div class="paper-face"></div>
+            <div class="paper-hinge paper-outer"><div class="paper-face"></div></div>
+          </div>
+          <div class="paper-seal"></div>
         </div>
-        <div class="download-act">
-          <img class="mascot mascot-four" src="assets/Webi-第四幕-下载.webp" alt="Webi 拉下下载箭头的循环动画" loading="lazy" decoding="async">
-          <div class="download-control" data-download-control>
-            <a class="primary-download" href="https://github.com/WroughtMind/weibei/releases" data-download-link>
-              <span class="download-title" data-download-title>下载 WeiBei</span>
-            </a>
-            <button class="download-versions" type="button" data-download-toggle aria-haspopup="menu" aria-expanded="false" aria-label="选择下载版本">
-              <span data-download-caption>版本</span>
-              <strong data-download-label>Apple 芯片</strong>
-              <i aria-hidden="true">⌄</i>
-            </button>
-            <div class="download-menu" data-download-menu role="menu" hidden>
-              <button type="button" role="menuitem" data-download-target="mac-arm64"><span>macOS · Apple 芯片</span></button>
-              <button type="button" role="menuitem" data-download-target="mac-intel"><span>macOS · Intel 芯片</span></button>
-            </div>
+        <a class="release-destination release-qa" href="qa.html" aria-label="Q&A">
+          <img src="assets/第四幕-Webi动作-QA-v1.webp" alt="Webi 查看问题纸条" loading="lazy" decoding="async">
+          <span class="release-title">Q&amp;A</span>
+        </a>
+        <a class="release-destination release-labs" href="labs.html" aria-label="Labs">
+          <img src="assets/第四幕-Webi动作-Labs-v1.webp" alt="Webi 用放大镜观察小朱" loading="lazy" decoding="async">
+          <span class="release-title">Labs</span>
+        </a>
+        <a class="release-destination release-webi" href="webi.html" aria-label="认识 Webi" data-en-label="Meet Webi">
+          <img src="assets/第四幕-Webi动作-官方群-v1.webp" alt="Webi 与小朱">
+          <span class="release-title">Webi</span>
+        </a>
+        <a class="release-destination release-feedback" href="feedback.html" aria-label="反馈" data-en-label="Feedback">
+          <img src="assets/第四幕-Webi动作-反馈-v1.webp" alt="Webi 投下反馈纸条" loading="lazy" decoding="async">
+          <span class="release-title" data-en="Feedback">反馈</span>
+        </a>
+      </div>
+      <div class="download-act">
+        <img class="mascot mascot-four" src="assets/Webi-第四幕-下载.webp" alt="Webi 拉下下载箭头的循环动画" loading="lazy" decoding="async">
+        <div class="download-control" data-download-control>
+          <a class="primary-download" href="https://github.com/WroughtMind/weibei/releases" data-download-link>
+            <span class="download-title" data-download-title>下载 WeiBei</span>
+          </a>
+          <button class="download-versions" type="button" data-download-toggle aria-haspopup="menu" aria-expanded="false" aria-label="选择下载版本">
+            <span data-download-caption>版本</span>
+            <strong data-download-label>Apple 芯片</strong>
+            <i aria-hidden="true">⌄</i>
+          </button>
+          <div class="download-menu" data-download-menu role="menu" hidden>
+            <button type="button" role="menuitem" data-download-target="mac-arm64"><span>macOS · Apple 芯片</span></button>
+            <button type="button" role="menuitem" data-download-target="mac-intel"><span>macOS · Intel 芯片</span></button>
           </div>
         </div>
       </div>

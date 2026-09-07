@@ -17,7 +17,10 @@ async (page) => {
   const widths = [];
   for (let p = .82; p <= .951; p += .005) {
     await seek(p);
-    widths.push(await page.locator('.release-map-paper').evaluate(el => el.getBoundingClientRect().width));
+    widths.push(await page.locator('.paper-sheet').evaluate(el => {
+      const faces = [...el.querySelectorAll('.paper-face')].map(face => face.getBoundingClientRect());
+      return Math.max(...faces.map(face => face.right)) - Math.min(...faces.map(face => face.left));
+    }));
   }
   const increments = widths.slice(1).map((width, index) => width - widths[index]);
   const reverses = increments.some(delta => delta < -1);
