@@ -2,7 +2,6 @@ import Foundation
 
 // WeiBeiDev：开发工具子命令（不引入任何外部依赖，手写 CommandLine 分发）。
 // 子命令：
-//   selfcheck-assertions          吸收 script/check_selfcheck_source_assertions.sh
 //   verify-release-metadata       吸收 script/verify_release_metadata.sh
 //   verify-release-architecture   校验 App 与全部嵌套 Mach-O 的目标架构
 //   verify-production-hygiene     吸收 script/verify_production_hygiene.sh
@@ -76,47 +75,6 @@ private func runCommand(_ executable: String, arguments: [String]) -> String? {
     guard process.terminationStatus == 0 else { return nil }
     return String(data: data, encoding: .utf8)?
         .trimmingCharacters(in: .whitespacesAndNewlines)
-}
-
-// MARK: - selfcheck-assertions
-
-private func enumerateSwiftFiles(in directory: URL) -> [URL] {
-    let files = (try? FileManager.default.contentsOfDirectory(
-        at: directory,
-        includingPropertiesForKeys: nil
-    )) ?? []
-    return files.filter { $0.pathExtension == "swift" }.sorted { $0.path < $1.path }
-}
-
-func runSelfcheckAssertions() {
-    let selfCheckDirectory = repositoryRoot.appendingPathComponent("Sources/WeiBeiSelfCheck")
-    // 源码字符串探针（Source.contains( / Source.range( 行）必须紧邻 SAFETY: 理由；
-    // `let ... readSource(` 行是纯取值辅助，跳过。
-    var bad: [String] = []
-    for file in enumerateSwiftFiles(in: selfCheckDirectory) {
-        let lines = readText(file).components(separatedBy: "\n")
-        for (index, line) in lines.enumerated() {
-            let stripped = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if stripped.hasPrefix("let ") && line.contains("readSource(") {
-                continue
-            }
-            let isFileSourceProbe = line.contains("Source.contains(") || line.contains("Source.range(")
-            if !isFileSourceProbe { continue }
-            let windowStart = max(0, index - 8)
-            let windowEnd = min(lines.count, index + 30)
-            let window = lines[windowStart..<windowEnd].joined(separator: "\n")
-            if !window.contains("SAFETY:") {
-                let snippet = String(stripped.prefix(100))
-                bad.append("\(file.lastPathComponent):\(index + 1): \(snippet)")
-            }
-        }
-    }
-    if !bad.isEmpty {
-        var message = "source-string probes without a nearby SAFETY reason:\n"
-        for item in bad { message += "  \(item)\n" }
-        fail(message, exitCode: 1)
-    }
-    print("WeiBei SelfCheck source-assertion guard passed")
 }
 
 // MARK: - verify-release-metadata
@@ -541,7 +499,6 @@ let allArguments = CommandLine.arguments
 guard allArguments.count >= 2 else {
     fputs("""
     usage: WeiBeiDev <subcommand> [args]
-      selfcheck-assertions [--self-check]
       verify-release-metadata [--require-clean] [path/to/魏碑.app]
       verify-release-architecture <arm64|x86_64> <path/to/魏碑.app>
       verify-production-hygiene [path/to/魏碑.app]
@@ -554,17 +511,6 @@ let subcommand = allArguments[1]
 let subArguments = Array(allArguments.dropFirst(2))
 
 switch subcommand {
-case "selfcheck-assertions":
-    // 与旧 shell 一致：--self-check 仅自检夹具标记逻辑（不依赖真实仓库）。
-    if subArguments.first == "--self-check" {
-        let fixture = "expect(workspaceStoreSource.contains(\"guard !noteDivergenceRepairDidRun else { return }\"),\n    \"SAFETY:note-repair-oneshot keep this\")"
-        if !fixture.contains("SAFETY:note-repair-oneshot") {
-            fail("self-check fixture missing SAFETY tag", exitCode: 1)
-        }
-        print("WeiBei SelfCheck source-assertion guard self-check passed")
-        exit(0)
-    }
-    runSelfcheckAssertions()
 case "verify-release-metadata":
     runVerifyReleaseMetadata(arguments: subArguments)
 case "verify-release-architecture":

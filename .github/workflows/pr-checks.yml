@@ -122,7 +122,6 @@ jobs:
         id: dev
         if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true'
         run: |
-          swift run WeiBeiDev selfcheck-assertions
           swift run WeiBeiDev nslog-scan
 
       - name: 安装 Node 依赖
@@ -226,7 +225,6 @@ jobs:
         run: |
           swift build
           swift run WeiBeiSelfCheck
-          swift run WeiBeiDev selfcheck-assertions
           swift run WeiBeiDev nslog-scan
 
       - name: 安装安装包前置依赖

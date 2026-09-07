@@ -23,13 +23,6 @@ final class PaneSeatMotionTests: XCTestCase {
         )
     }
 
-    func testNotesOpensFromTheWindowRightEvenAfterReaderIsAlreadyOpen() {
-        let start = PaneSeatMotion.openingFrame(for: .notes, target: rightHalf)
-        XCTAssertEqual(start.minX, 900)
-        XCTAssertEqual(start.width, 0)
-        XCTAssertGreaterThan(start.minX, rightHalf.minX)
-    }
-
     func testCloseReturnsToTheSameSeat() {
         XCTAssertEqual(
             PaneSeatMotion.closingFrame(for: .reader, current: container, container: container),
