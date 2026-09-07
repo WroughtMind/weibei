@@ -16,7 +16,7 @@ JOBS = WORKFLOW['jobs']
 PAGES = yaml.safe_load((ROOT / '.github/workflows/pages.yml').read_text())
 
 
-def condition(expression, context):
+def expression_value(expression, context):
     if isinstance(expression, bool):
         return expression
     expression = expression.removeprefix('${{').removesuffix('}}').strip()
@@ -30,7 +30,11 @@ def condition(expression, context):
     expression = expression.replace('&&', ' and ').replace('||', ' or ')
     expression = re.sub(r'!(?!=)', ' not ', expression)
     expression = re.sub(r"'[^']*'|\btrue\b|\bfalse\b", lambda m: {'true': 'True', 'false': 'False'}.get(m[0], m[0]), expression)
-    return bool(eval(expression.strip(), {'__builtins__': {}}, {}))
+    return eval(expression.strip(), {'__builtins__': {}}, {})
+
+
+def condition(expression, context):
+    return bool(expression_value(expression, context))
 
 
 def selected(scopes, full=False, event='pull_request', jobs=JOBS):
@@ -138,6 +142,8 @@ assert 'push' not in WORKFLOW.get('on', WORKFLOW.get(True, {}))
 
 # 执行工作流真实汇总脚本；需要的任务 skipped 也不能被当作通过。
 gate = JOBS['fast-check']
+for event, name in [('pull_request', '快速编译与核心自检'), ('workflow_dispatch', '手动检查汇总')]:
+    assert expression_value(gate['name'], {'github': {'event_name': event}}) == name, '手动结果不得覆盖 PR 合并门槛'
 assert condition(gate['if'], {})
 assert set(gate['needs']) == set(JOBS) - {'fast-check'}
 outputs = dict.fromkeys(['code', 'agent', 'editor', 'data_safety', 'release', 'tools', 'website'], 'true')

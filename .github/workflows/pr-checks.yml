@@ -268,7 +268,8 @@ jobs:
 
   # 保留分支保护要求的名称；分类失败或应用检查失败不能被跳过伪装成成功。
   fast-check:
-    name: 快速编译与核心自检
+    # 手动局部检查不能以同名结果覆盖 PR 的必需合并检查。
+    name: ${{ github.event_name == 'pull_request' && '快速编译与核心自检' || '手动检查汇总' }}
     needs: [scope, website-check, tools-check, app-check, release-package, intel-check]
     if: always()
     runs-on: ubuntu-latest
