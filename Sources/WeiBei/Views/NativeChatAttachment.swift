@@ -12,7 +12,7 @@ final class NativeChatTextAttachment: NSTextAttachment {
     private(set) var isDark: Bool
     private(set) var interfaceLanguage: WeiBeiInterfaceLanguage
     private var appearanceMode = WeiBeiNativePalette.current
-    private var mathNaturalSize: NSSize?
+    fileprivate var mathNaturalSize: NSSize?
     private let providers = NSHashTable<NativeChatAttachmentProvider>.weakObjects()
     let onOpenURL: (URL) -> Void
     let onSizeChange: () -> Void
@@ -232,7 +232,8 @@ private final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
         case let .math(latex, display):
             let label = attachment.makeMathLabel(latex: latex, display: display)
             math = label
-            naturalSize = label.intrinsicContentSize
+            naturalSize = attachment.mathNaturalSize ?? label.intrinsicContentSize
+            attachment.mathNaturalSize = naturalSize
             document.addSubview(label)
             copyButton.isHidden = !display
             caption.isHidden = true

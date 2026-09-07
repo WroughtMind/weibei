@@ -67,6 +67,7 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.delegate = context.coordinator
         context.coordinator.view = view
+        view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.layoutDidChange() }
         context.coordinator.pipeline.onApply = { [weak coordinator = context.coordinator] document, edit in coordinator?.apply(document, edit: edit) }
         updateNSView(view, context: context)
         return view
@@ -90,7 +91,11 @@ struct NativeChatMarkdownView: NSViewRepresentable {
             ? placeholderHeight : context.coordinator.measuredHeight(width: width)
         return CGSize(width: width, height: max(1, height))
     }
-    static func dismantleNSView(_ nsView: NativeChatTextView, coordinator: Coordinator) { coordinator.pipeline.invalidate() }
+    static func dismantleNSView(_ nsView: NativeChatTextView, coordinator: Coordinator) {
+        nsView.onLayout = nil
+        coordinator.pipeline.invalidate()
+        coordinator.view = nil
+    }
 
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
         weak var view: NativeChatTextView?
@@ -106,6 +111,67 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         private var applying = false
         private var heightCache: (width: CGFloat, height: CGFloat)?
         private var snapshot: NativeChatMarkdownPipeline.Snapshot?
+        private var pendingLayoutUpdate = false
+        private var lastLayoutHeight: CGFloat = 0
+        private var readingAnchor: (location: any NSTextLocation, offset: CGFloat, width: CGFloat)?
+        private var pendingAnchor: (location: any NSTextLocation, offset: CGFloat, width: CGFloat)?
+
+        func layoutDidChange() {
+            guard !pendingLayoutUpdate else { return }
+            pendingLayoutUpdate = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.pendingLayoutUpdate = false
+                guard !self.document.runs.isEmpty, let view = self.view, let container = view.textContainer,
+                      let height = view.textLayoutManager?.usageBoundsForTextContainer.maxY else { return }
+                if abs(height - self.lastLayoutHeight) > 0.5 {
+                    self.lastLayoutHeight = height
+                    self.heightCache = (container.size.width, max(1, ceil(height)))
+                    view.invalidateIntrinsicContentSize()
+                    return
+                }
+                // Restore only after SwiftUI has applied the new height. Earlier coordinates
+                // still belong to the previous row frame and move the reader to another paragraph.
+                guard abs(view.frame.height - ceil(height)) < 1 else { return }
+                self.restoreReadingPosition()
+                if self.pendingAnchor == nil { self.rememberReadingPosition() }
+            }
+        }
+
+        private func rememberReadingPosition() {
+            guard let view, view.visibleRect.minY > 0,
+                  let clip = view.enclosingScrollView?.contentView,
+                  let manager = view.textLayoutManager, let content = manager.textContentManager,
+                  let fragment = manager.textLayoutFragment(for: CGPoint(x: 1, y: view.visibleRect.minY + 1)),
+                  let line = fragment.textLineFragment(forVerticalOffset: view.visibleRect.minY + 1 - fragment.layoutFragmentFrame.minY, requiresExactMatch: false),
+                  let location = content.location(fragment.textElement?.elementRange?.location ?? fragment.rangeInElement.location, offsetBy: line.characterRange.location)
+            else { readingAnchor = nil; return }
+            let y = fragment.layoutFragmentFrame.minY + line.typographicBounds.minY
+            // Keep the same character through successive reflows, even when it is no longer
+            // the first character on its line. Otherwise each width step drifts backwards.
+            let end = content.location(location, offsetBy: line.characterRange.length)
+            let retained = readingAnchor?.location
+            let anchor = retained.flatMap { previous in
+                previous.compare(location) != .orderedAscending && end.map { previous.compare($0) == .orderedAscending } == true ? previous : nil
+            } ?? location
+            readingAnchor = (anchor, view.convert(CGPoint(x: 0, y: y), to: clip).y - clip.bounds.minY, view.frame.width)
+        }
+
+        private func restoreReadingPosition() {
+            guard let anchor = pendingAnchor, let view, abs(view.frame.width - anchor.width) < 0.5,
+                  let scroll = view.enclosingScrollView, let manager = view.textLayoutManager else { return }
+            manager.ensureLayout(for: NSTextRange(location: anchor.location))
+            guard let fragment = manager.textLayoutFragment(for: anchor.location),
+                  let line = fragment.textLineFragment(for: anchor.location, isUpstreamAffinity: false) else { return }
+            let y = fragment.layoutFragmentFrame.minY + line.typographicBounds.minY
+            let clip = scroll.contentView
+            let target = view.convert(CGPoint(x: 0, y: y), to: clip).y - anchor.offset
+            let rect = CGRect(x: clip.bounds.minX, y: target, width: clip.bounds.width, height: clip.bounds.height)
+            let origin = clip.constrainBoundsRect(rect).origin
+            if abs(origin.y - clip.bounds.minY) < 0.5 { pendingAnchor = nil; return }
+            clip.scroll(to: origin)
+            scroll.reflectScrolledClipView(clip)
+        }
 
         func submit(markdown: String, messageID: UUID?) {
             let toggles = snapshot?.messageID == messageID ? snapshot?.toggledCallouts ?? [] : []
@@ -137,6 +203,7 @@ struct NativeChatMarkdownView: NSViewRepresentable {
             self.document = document
             heightCache = nil
             guard edit.range.length > 0 || !edit.replacement.isEmpty else { return }
+            readingAnchor = nil; pendingAnchor = nil
             applying = true
             defer { applying = false; heightCache = nil }
             let selected = view.selectedRanges.map(\.rangeValue).map(edit.mapSelection)
@@ -195,15 +262,21 @@ struct NativeChatMarkdownView: NSViewRepresentable {
                   let manager = view.textLayoutManager, let content = manager.textContentManager else { return max(1, fontSize * 1.5) }
             let width = width ?? view.frame.width
             guard width > 0 else { return max(1, fontSize * 1.5) }
+            if let anchor = readingAnchor, abs(anchor.width - width) > 0.5 {
+                pendingAnchor = (anchor.location, anchor.offset, width)
+            }
             // Measure the proposed line width without moving the live view during SwiftUI's sizing pass.
             if abs(container.size.width - width) > 0.5 { container.size.width = width }
             if let cached = heightCache, abs(cached.width - width) < 0.5 { return cached.height }
-            manager.ensureLayout(for: content.documentRange)
+            if let anchor = pendingAnchor { manager.ensureLayout(for: NSTextRange(location: anchor.location)) }
+            // Lay out the end paragraph for an extent estimate; the native viewport lays out
+            // what is actually visible. Measuring every offscreen paragraph stalls each resize.
+            manager.ensureLayout(for: NSTextRange(location: content.documentRange.endLocation))
             var height: CGFloat = 0
             manager.enumerateTextLayoutFragments(from: content.documentRange.endLocation, options: [.reverse, .ensuresLayout]) { fragment in
                 height = fragment.layoutFragmentFrame.maxY; return false
             }
-            let measured = max(1, ceil(height + view.textContainerInset.height * 2))
+            let measured = max(1, ceil(max(height, manager.usageBoundsForTextContainer.maxY) + view.textContainerInset.height * 2))
             heightCache = (width, measured)
             return measured
         }
@@ -211,6 +284,13 @@ struct NativeChatMarkdownView: NSViewRepresentable {
 }
 
 final class NativeChatTextView: NSTextView {
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+
     override func copy(_ sender: Any?) {
         _ = writeSelection(to: .general, type: .string)
     }

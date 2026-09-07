@@ -187,6 +187,7 @@ final class NativeChatMarkdownTests: XCTestCase {
             XCTAssertTrue(checked)
         }
         checkCodeAttachmentSize()
+        let firstLaidOutHeight = manager.usageBoundsForTextContainer.maxY
         var originalAttachments: [NativeChatTextAttachment] = []
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
             if let attachment = value as? NativeChatTextAttachment { originalAttachments.append(attachment) }
@@ -195,9 +196,11 @@ final class NativeChatMarkdownTests: XCTestCase {
         textView.setSelectedRange(NSRange(location: 0, length: 4))
         textView.setFrameSize(NSSize(width: 300, height: firstHeight))
         let narrowHeight = coordinator.measuredHeight()
-        XCTAssertTrue(narrowHeight.isFinite && narrowHeight >= firstHeight)
+        XCTAssertTrue(narrowHeight.isFinite && narrowHeight > 0)
         textView.layoutSubtreeIfNeeded()
         checkCodeAttachmentSize()
+        // The synchronous size is an estimate; compare completed layouts after inspecting all attachments.
+        XCTAssertGreaterThanOrEqual(manager.usageBoundsForTextContainer.maxY, firstLaidOutHeight)
         coordinator.submit(markdown: markdownMemo.outputs(text: source + "\n\n回答结束。", sources: [], language: .chinese).finalized, messageID: messageID)
         await fulfillment(of: [completed], timeout: 5)
         XCTAssertTrue(coordinator.view === textView)
@@ -291,4 +294,67 @@ final class NativeChatMarkdownTests: XCTestCase {
         XCTAssertFalse(window.isVisible)
     }
 
+    // A long answer must keep the reader's line on resize and still expose its final paragraph.
+    @MainActor func testLongAnswerKeepsReadingPositionAndReachableEnd() async throws {
+        _ = NSApplication.shared
+        let source = (0..<100).map { index in
+            "第 \(index) 段：" + String(repeating: "改变窗口宽度时应继续读到同一处文字。", count: 8) + " $x_i^2$。"
+        }.joined(separator: "\n\n")
+        let host = NSHostingView(rootView: ScrollView {
+            NativeChatMarkdownView(markdown: source, fontSize: 16, isDark: false, onOpenURL: { _ in })
+                .frame(minWidth: 0, maxWidth: .infinity).padding(20)
+        })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 768),
+                              styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        func textView(in view: NSView) -> NativeChatTextView? {
+            if let text = view as? NativeChatTextView { return text }
+            return view.subviews.lazy.compactMap { textView(in: $0) }.first
+        }
+        func settle() async throws {
+            for _ in 0..<10 {
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        for _ in 0..<25 {
+            try await settle()
+            if let text = textView(in: host), !text.string.isEmpty, text.frame.height > 768 { break }
+        }
+        let text = try XCTUnwrap(textView(in: host))
+        let manager = try XCTUnwrap(text.textLayoutManager)
+        let content = try XCTUnwrap(manager.textContentManager)
+        let scroll = try XCTUnwrap(text.enclosingScrollView)
+        let clip = scroll.contentView
+        func readingPosition() throws -> (NSRange, CGFloat) {
+            let fragment = try XCTUnwrap(manager.textLayoutFragment(for: CGPoint(x: 1, y: text.visibleRect.minY + 1)))
+            let line = try XCTUnwrap(fragment.textLineFragment(
+                forVerticalOffset: text.visibleRect.minY + 1 - fragment.layoutFragmentFrame.minY, requiresExactMatch: false))
+            let start = try XCTUnwrap(fragment.textElement?.elementRange?.location)
+            let index = content.offset(from: content.documentRange.location, to: start) + line.characterRange.location
+            let y = fragment.layoutFragmentFrame.minY + line.typographicBounds.minY
+            return (NSRange(location: index, length: line.characterRange.length), text.convert(CGPoint(x: 0, y: y), to: clip).y - clip.bounds.minY)
+        }
+        clip.scroll(to: CGPoint(x: 0, y: 1800))
+        try await settle()
+        let before = try readingPosition()
+        for width in [720, 480, 720, 960] {
+            window.setContentSize(NSSize(width: width, height: 768))
+            try await settle()
+            let after = try readingPosition()
+            XCTAssertTrue(NSLocationInRange(before.0.location, after.0))
+            XCTAssertEqual(after.1, before.1, accuracy: 1)
+        }
+        for _ in 0..<3 {
+            let document = try XCTUnwrap(scroll.documentView)
+            clip.scroll(to: CGPoint(x: 0, y: max(0, document.frame.height - clip.bounds.height)))
+            try await settle()
+        }
+        let viewport = try XCTUnwrap(manager.textViewportLayoutController.viewportRange)
+        XCTAssertEqual(viewport.endLocation.compare(content.documentRange.endLocation), .orderedSame)
+        XCTAssertEqual(text.frame.height, ceil(manager.usageBoundsForTextContainer.maxY), accuracy: 1)
+        XCTAssertFalse(window.isVisible)
+    }
 }
