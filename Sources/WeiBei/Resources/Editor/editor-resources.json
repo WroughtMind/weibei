@@ -3,8 +3,8 @@
   "assets": [
     {
       "name": "editor-entry.js",
-      "bytes": 611602,
-      "sha256": "727fb02d4f8ef69a17f0240243c3420c6000e1a67dece0e70df16b42d1c40ae1"
+      "bytes": 611592,
+      "sha256": "bbc3d437bbf1f6f8cae8ec0c6fe88ebbaa70816cee7970b74ec2791f694b2a0f"
     },
     {
       "name": "editor.css",

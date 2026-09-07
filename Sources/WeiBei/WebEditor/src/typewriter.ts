@@ -15,26 +15,27 @@ export const createTypewriterPlugin = () => {
       handleScrollToSelection: () => enabled() && pendingInput,
     },
     view(view) {
-      let frame = 0;
+      let scrollTimer = 0;
       let compositionTimer = 0;
       const scroll = document.getElementById('editor')!;
       const cancel = () => {
         pendingInput = false;
-        cancelAnimationFrame(frame);
+        clearTimeout(scrollTimer);
         clearTimeout(compositionTimer);
       };
       const schedule = () => {
         if (!enabled()) return;
         pendingInput = true;
-        cancelAnimationFrame(frame);
-        frame = requestAnimationFrame(() => {
-          if (!pendingInput || !enabled() || view.composing || !view.hasFocus()
-              || !view.state.selection.empty || !view.editable) return;
+        clearTimeout(scrollTimer);
+        scrollTimer = window.setTimeout(() => {
+          const follow = pendingInput;
           pendingInput = false;
+          if (!follow || !enabled() || view.composing || !view.hasFocus()
+              || !view.state.selection.empty || !view.editable) return;
           const caret = view.coordsAtPos(view.state.selection.head);
           const bounds = scroll.getBoundingClientRect();
           scroll.scrollTop += (caret.top + caret.bottom) / 2 - bounds.top - scroll.clientHeight / 2;
-        });
+        }, 0);
       };
       const keydown = (event: KeyboardEvent) => {
         if (event.key === 'Enter' || event.key === 'Backspace' || event.key === 'Delete'
