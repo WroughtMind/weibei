@@ -12,6 +12,7 @@ final class NativeChatTextAttachment: NSTextAttachment {
     private(set) var isDark: Bool
     private(set) var interfaceLanguage: WeiBeiInterfaceLanguage
     private var appearanceMode = WeiBeiNativePalette.current
+    private var mathNaturalSize: NSSize?
     private let providers = NSHashTable<NativeChatAttachmentProvider>.weakObjects()
     let onOpenURL: (URL) -> Void
     let onSizeChange: () -> Void
@@ -50,13 +51,34 @@ final class NativeChatTextAttachment: NSTextAttachment {
         appearanceMode = WeiBeiNativePalette.current
         self.interfaceLanguage = language
         let old = self.descriptor
+        if old != descriptor || self.fontSize != fontSize { mathNaturalSize = nil }
         self.descriptor = descriptor
         self.fontSize = fontSize
         self.isDark = isDark
         for provider in providers.allObjects {
-            (provider.view as? NativeChatAttachmentView)?.update(from: old)
+            provider.loadedContent?.update(from: old)
         }
         onSizeChange()
+    }
+
+    func measuredMathSize(for width: CGFloat) -> NSSize? {
+        guard case let .math(latex, display) = descriptor else { return nil }
+        let natural = mathNaturalSize ?? makeMathLabel(latex: latex, display: display).intrinsicContentSize
+        mathNaturalSize = natural
+        return NSSize(width: display ? width : min(width, ceil(natural.width)),
+                      height: ceil(natural.height) + (display ? 28 : 0) + (natural.width > width ? 12 : 0))
+    }
+
+    func makeMathLabel(latex: String, display: Bool) -> MTMathUILabel {
+        let label = MTMathUILabel()
+        let font = MTFontManager().latinModernFont(withSize: fontSize)
+        font?.fallbackFont = NSFont.systemFont(ofSize: fontSize)
+        label.font = font
+        label.latex = latex
+        label.labelMode = display ? .display : .text
+        label.textColor = WeiBeiNativePalette.ink()
+        label.displayErrorInline = true
+        return label
     }
 
     var readableText: String {
@@ -81,19 +103,24 @@ final class NativeChatTextAttachment: NSTextAttachment {
 
 @MainActor
 private final class NativeChatAttachmentProvider: NSTextAttachmentViewProvider {
+    private(set) weak var loadedContent: NativeChatAttachmentView?
+
     override func loadView() {
         guard let attachment = textAttachment as? NativeChatTextAttachment else { return }
-        view = NativeChatAttachmentView(attachment)
+        let content = NativeChatAttachmentView(attachment)
+        loadedContent = content
+        view = content
     }
 
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation,
         textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
-        if view == nil { loadView() }
-        guard let content = view as? NativeChatAttachmentView else { return .zero }
+        guard let attachment = textAttachment as? NativeChatTextAttachment else { return .zero }
         let width = max(1, textContainer.map { $0.size.width - 2 * $0.lineFragmentPadding } ?? proposedLineFragment.width)
-        let size = content.size(for: width)
-        let inline = content.isInlineMath
-        let font = attributes[.font] as? NSFont ?? .systemFont(ofSize: content.attachment.fontSize)
+        // Measuring an offscreen formula must not recreate its presentation view.
+        guard let size = attachment.measuredMathSize(for: width) ?? (view as? NativeChatAttachmentView)?.size(for: width) else { return .zero }
+        let inline: Bool
+        if case .math(_, false) = attachment.descriptor { inline = true } else { inline = false }
+        let font = attributes[.font] as? NSFont ?? .systemFont(ofSize: attachment.fontSize)
         return CGRect(x: 0, y: inline ? (font.xHeight - size.height) / 2 : 0, width: size.width, height: size.height)
     }
 }
@@ -203,14 +230,7 @@ private final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
     private func configure() {
         switch attachment.descriptor {
         case let .math(latex, display):
-            let label = MTMathUILabel()
-            let font = MTFontManager().latinModernFont(withSize: attachment.fontSize)
-            font?.fallbackFont = NSFont.systemFont(ofSize: attachment.fontSize)
-            label.font = font
-            label.latex = latex
-            label.labelMode = display ? .display : .text
-            label.textColor = WeiBeiNativePalette.ink()
-            label.displayErrorInline = true
+            let label = attachment.makeMathLabel(latex: latex, display: display)
             math = label
             naturalSize = label.intrinsicContentSize
             document.addSubview(label)
@@ -342,8 +362,7 @@ private final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
         let chrome: CGFloat = isInlineMath ? 0 : 28
         switch attachment.descriptor {
         case .math:
-            return NSSize(width: isInlineMath ? min(width, ceil(naturalSize.width)) : width,
-                          height: ceil(naturalSize.height) + chrome + (naturalSize.width > width ? 12 : 0))
+            return attachment.measuredMathSize(for: width) ?? .zero
         case .code:
             return NSSize(width: width, height: mermaid == nil ? ceil(naturalSize.height) + chrome + 24 : mermaidHeight + chrome)
         case .table:

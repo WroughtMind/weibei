@@ -216,6 +216,13 @@ final class NativeChatMarkdownTests: XCTestCase {
         let copied = try XCTUnwrap(pasteboard.string(forType: .string))
         XCTAssertTrue(copied.contains("x^2") && copied.contains(codeSource) && copied.contains("示意图"))
         XCTAssertFalse(copied.contains("\u{fffc}"))
+        // A typography change must also refresh the formula's measured dimensions.
+        let formula = try XCTUnwrap(finalAttachments.first { if case .math = $0.descriptor { return true }; return false })
+        let oldFormulaHeight = try XCTUnwrap(formula.measuredMathSize(for: 300)).height
+        coordinator.fontSize = 20
+        coordinator.restyle()
+        _ = coordinator.measuredHeight()
+        XCTAssertGreaterThan(try XCTUnwrap(formula.measuredMathSize(for: 300)).height, oldFormulaHeight)
         XCTAssertFalse(window.isVisible)
     }
 
@@ -274,6 +281,9 @@ final class NativeChatMarkdownTests: XCTestCase {
         }
         message.completionState = .completed
         store.messages = [message]
+        // A history estimate must not leave extra blank space after the real body is ready.
+        AgentFinalizedMarkdownHeightCache.store(before * 2, for: AgentFinalizedMarkdownHeightCache.cacheKey(
+            messageID: message.id, text: source, widthBucket: 0, wideTypography: false))
         host.rootView = bubble(message)
         let after = try await settledHeight()
         XCTAssertEqual(after, before, accuracy: 0.5)

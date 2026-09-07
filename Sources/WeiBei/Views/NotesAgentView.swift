@@ -4483,6 +4483,7 @@ private struct AgentMessageMarkdownText: View {
                     isDark: store.appearanceMode.isDark,
                     appearanceKey: store.appearanceMode.rawValue,
                     interfaceLanguage: store.interfaceLanguage,
+                    placeholderHeight: initialBodyHeight,
                     onOpenURL: openLink,
                     visualizationView: { identifier, width, onHeight in
                         guard let messageID else { return nil }
@@ -4506,7 +4507,7 @@ private struct AgentMessageMarkdownText: View {
                         imageHandler.loadImage(source: source, completion: completion)
                     }
                 )
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: initialBodyHeight, alignment: .leading)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             } else {
                 Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
                     .weiBeiText(compact ? 13.2 : 14.5)

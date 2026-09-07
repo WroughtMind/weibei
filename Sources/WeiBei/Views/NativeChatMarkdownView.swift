@@ -45,6 +45,7 @@ struct NativeChatMarkdownView: NSViewRepresentable {
     var isDark: Bool
     var appearanceKey: String = ""
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    var placeholderHeight: CGFloat = 1
     var onOpenURL: (URL) -> Void
     var visualizationView: NativeChatVisualizationView? = nil
     var imageLoader: ((String, @escaping (Data?) -> Void) -> Void)? = nil
@@ -85,7 +86,9 @@ struct NativeChatMarkdownView: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeChatTextView, context: Context) -> CGSize? {
         // An infinite proposal asks for flexibility; it must not resize the live text container.
         guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
-        return CGSize(width: width, height: context.coordinator.measuredHeight(width: width))
+        let height = context.coordinator.document.runs.isEmpty
+            ? placeholderHeight : context.coordinator.measuredHeight(width: width)
+        return CGSize(width: width, height: max(1, height))
     }
     static func dismantleNSView(_ nsView: NativeChatTextView, coordinator: Coordinator) { coordinator.pipeline.invalidate() }
 
