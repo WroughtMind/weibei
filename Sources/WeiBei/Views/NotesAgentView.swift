@@ -236,6 +236,7 @@ private struct AccessibilityFrameProbe: NSViewRepresentable {
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
+    @AppStorage("weibei.notes.typewriterMode") private var notesTypewriterMode = false
     @State private var noteTabTitleDraft = ""
     @State private var editingNoteTabTitle = false
     @State private var editorRecoveryGeneration = 0
@@ -284,6 +285,21 @@ struct NotePaneView: View {
                     }
 
                     noteBody
+
+                    if hasNoteContent {
+                        HStack {
+                            Spacer(minLength: 0)
+                            Toggle(store.ui("打字机模式", "Typewriter Mode"), isOn: $notesTypewriterMode)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .fixedSize()
+                                .accessibilityIdentifier("notes-typewriter-toggle")
+                        }
+                        .weiBeiText(12)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                    }
                 }
                 .opacity(railOnly ? 0 : 1)
                 .allowsHitTesting(!railOnly)
