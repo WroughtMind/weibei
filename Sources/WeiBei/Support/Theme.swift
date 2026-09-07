@@ -33,24 +33,7 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
     }
 
     func label(language: WeiBeiInterfaceLanguage) -> String {
-        switch self {
-        case .paper:
-            return language.text("纸面", "Paper")
-        case .xuan:
-            return language.text("宣纸", "Xuan")
-        case .inkstone:
-            return language.text("墨石", "Inkstone")
-        case .stele:
-            return language.text("石碑", "Stele")
-        case .glassLight:
-            return language.text("晴璃", "Clear Glass")
-        case .glassDark:
-            return language.text("夜璃", "Dark Glass")
-        case .glassMist:
-            return language.text("雾璃", "Mist Glass")
-        case .glassSlate:
-            return language.text("玄璃", "Slate Glass")
-        }
+        WeiBeiAppearanceStyle.of(self).label { language.text($0, $1) }
     }
 
     func detail(language: WeiBeiInterfaceLanguage) -> String {
