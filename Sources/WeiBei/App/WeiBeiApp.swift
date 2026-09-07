@@ -121,6 +121,7 @@ extension Notification.Name {
 
 @main
 struct WeiBeiApp: App {
+    @AppStorage("weibei.notes.typewriterMode") private var notesTypewriterMode = false
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = sharedWorkspaceStore
     @StateObject private var updateService = WeiBeiUpdateService()
@@ -260,6 +261,8 @@ struct WeiBeiApp: App {
                     .keyboardShortcut("0", modifiers: [.command, .option])
                     .disabled(store.interfaceTextScale == .standard)
                 }
+
+                Toggle(store.ui("笔记打字机模式", "Notes Typewriter Mode"), isOn: $notesTypewriterMode)
 
                 Menu(store.ui("对话显示", "Chat Display")) {
                     if store.canUseSelectionAgentSurface {
