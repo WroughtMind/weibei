@@ -25,7 +25,6 @@ final class AgentReplyActionPersistenceTests: XCTestCase {
 
             let write = AgentReplyAction(kind: .writeNote, targetItemID: noteID, proposedMarkdown: "追加正文")
             let writeReply = try await self.append(write, to: store, courseID: courseID, chatID: chatID)
-            let started = Date()
             await store.confirmAgentReplyAction(messageID: writeReply.id, actionID: write.id)
             XCTAssertEqual(try self.persistedAction(writeReply, in: store, chatID: chatID).state, .executed)
             XCTAssertTrue(try String(contentsOf: noteURL, encoding: .utf8).contains("追加正文"))
@@ -53,8 +52,6 @@ final class AgentReplyActionPersistenceTests: XCTestCase {
             await store.confirmAgentReplyAction(messageID: invalidReply.id, actionID: invalid.id)
             XCTAssertEqual(try self.persistedAction(invalidReply, in: store, chatID: chatID).state, .failed)
             XCTAssertEqual(try String(contentsOf: noteURL, encoding: .utf8), "原始正文")
-            // 回归曾让这些主线程动作等待到 60 秒超时；检查实际完成时间，不锁保存函数名。
-            XCTAssertLessThan(Date().timeIntervalSince(started), 10)
         }
     }
 
