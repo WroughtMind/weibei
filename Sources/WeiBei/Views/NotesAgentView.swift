@@ -361,7 +361,7 @@ struct NotePaneView: View {
                 reorderRole: reorderRole
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
-                writingModeMenu
+                typewriterButton
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }
@@ -383,7 +383,7 @@ struct NotePaneView: View {
                 titleRename: noteTabRename
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
-                writingModeMenu
+                typewriterButton
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }
@@ -398,16 +398,20 @@ struct NotePaneView: View {
         }
     }
 
-    private var writingModeMenu: some View {
-        Menu(store.ui("书写模式", "Writing Mode")) {
-            Toggle(store.ui("打字机模式", "Typewriter Mode"), isOn: $notesTypewriterMode)
-                .accessibilityIdentifier("notes-typewriter-toggle")
+    private var typewriterButton: some View {
+        let actionLabel = notesTypewriterMode
+            ? store.ui("关闭打字机模式", "Turn Off Typewriter Mode")
+            : store.ui("开启打字机模式", "Turn On Typewriter Mode")
+        return Button {
+            notesTypewriterMode.toggle()
+        } label: {
+            Image(systemName: "keyboard")
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .weiBeiText(11, weight: .medium)
-        .foregroundStyle(WeiBeiTheme.secondaryInk)
-        .accessibilityIdentifier("notes-writing-menu")
+        .buttonStyle(WeiBeiIconButtonStyle(active: notesTypewriterMode, size: 24))
+        .accessibilityLabel(Text(actionLabel))
+        .accessibilityValue(Text(notesTypewriterMode ? store.ui("开启", "On") : store.ui("关闭", "Off")))
+        .accessibilityIdentifier("notes-typewriter-toggle")
+        .help(actionLabel)
     }
 
     private func notebookCreationPanel(draft: NotebookCreationDraft) -> some View {
