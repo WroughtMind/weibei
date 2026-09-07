@@ -12,9 +12,9 @@ classify_path() {
   local path="$1"
 
   # 官网由 Pages 工作流验证；分类器由每次必跑的 --self-check 验证。
-  # 两者都不改变 App 二进制，不能落入下面的通用脚本/工作流规则。
+  # 检查编排由 check_ci_routing.py 验证；这些文件都不改变 App 二进制。
   case "$path" in
-    website/*|.github/workflows/pages.yml|script/ci_changed_scopes.sh) return ;;
+    website/*|.github/workflows/pages.yml|.github/workflows/pr-checks.yml|script/ci_changed_scopes.sh|script/check_ci_routing.py) return ;;
   esac
 
   case "$path" in
@@ -101,7 +101,9 @@ if [[ "${1:-}" == "--self-check" ]]; then
     "code=false agent=false editor=false data_safety=false release=false tools=false " \
     "website/index.html" \
     ".github/workflows/pages.yml" \
-    "script/ci_changed_scopes.sh"
+    "script/ci_changed_scopes.sh" \
+    "script/check_ci_routing.py" \
+    ".github/workflows/pr-checks.yml"
   # 官网和 App 同时修改时，App 验证不能被官网规则吞掉。
   expect_scopes \
     "code=true agent=true editor=true data_safety=true release=false tools=false " \
@@ -135,7 +137,7 @@ if [[ "${1:-}" == "--self-check" ]]; then
     "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" \
     "Sources/WeiBeiCore/NoteSourceRelations.swift"
   expect_scopes \
-    "code=true agent=true editor=true data_safety=true release=true tools=false " \
+    "code=false agent=false editor=false data_safety=false release=false tools=false " \
     ".github/workflows/pr-checks.yml"
   expect_scopes \
     "code=true agent=true editor=false data_safety=false release=false tools=false " \
