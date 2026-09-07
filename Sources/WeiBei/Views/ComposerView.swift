@@ -105,6 +105,10 @@ struct ComposerView: View {
         .onAppear {
             draft = store.agentDraft
             store.pendingComposerDraft = draft
+            if focused.wrappedValue { focusRequest &+= 1 }
+        }
+        .onChange(of: focused.wrappedValue) { _, focused in
+            if focused { focusRequest &+= 1 }
         }
         .onChange(of: store.agentDraft) { _, newValue in
             guard draft != newValue else { return }

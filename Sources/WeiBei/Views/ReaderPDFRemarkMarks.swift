@@ -7,7 +7,7 @@ struct PDFRemarkMarkHit {
     var recordID: String
     var pageIndex: Int
     var hitBounds: CGRect
-    var highlightRects: [CGRect]
+    var highlightRectsByPage: [Int: [CGRect]]
 }
 
 // 记过原文标记渲染(用户定稿 2026-08-22 验收修订):
@@ -30,7 +30,7 @@ extension PDFReaderRepresentable.Coordinator {
         in view: PDFView
     ) {
         guard let document = view.document else { return }
-        let signature = marks.map { "\($0.id)|\($0.anchor?.pdf != nil)" }.joined(separator: ",")
+        let signature = marks.map { "\($0.id)|\(String(describing: $0.anchor))" }.joined(separator: ",")
         guard signature != lastAppliedRemarkMarkSignature else { return }
         lastAppliedRemarkMarkSignature = signature
         remarkHits = []
@@ -43,19 +43,20 @@ extension PDFReaderRepresentable.Coordinator {
             var lineMidY: CGFloat
             var lineRight: CGFloat
             var textEndX: CGFloat
-            var highlightRects: [CGRect]
+            var highlightRectsByPage: [Int: [CGRect]]
         }
         var pendings: [PendingDot] = []
         for mark in marks {
             guard let pdf = mark.anchor?.pdf,
-                  pdf.pageIndex != NSNotFound,
-                  let page = document.page(at: pdf.pageIndex) else { continue }
-            let rects = pdf.lineRects.map(\.cgRect).filter { $0.width > 1 && $0.height > 0.5 }
+                  let pageIndex = pdf.rectsByPage.keys.max(),
+                  let page = document.page(at: pageIndex) else { continue }
+            let rectsByPage = pdf.rectsByPage.mapValues { $0.map(\.cgRect).filter { $0.width > 1 && $0.height > 0.5 } }
+            let rects = rectsByPage[pageIndex] ?? []
             guard let lastLine = rects.last else { continue }
             pendings.append(
                 PendingDot(
                     recordID: mark.id,
-                    pageIndex: pdf.pageIndex,
+                    pageIndex: pageIndex,
                     lineMidY: lastLine.midY,
                     lineRight: Self.pageLineRightEdge(
                         containing: lastLine,
@@ -63,7 +64,7 @@ extension PDFReaderRepresentable.Coordinator {
                         document: document
                     ),
                     textEndX: lastLine.maxX,
-                    highlightRects: rects
+                    highlightRectsByPage: rectsByPage
                 )
             )
         }
@@ -112,8 +113,8 @@ extension PDFReaderRepresentable.Coordinator {
                     PDFRemarkMarkHit(
                         recordID: dot.recordID,
                         pageIndex: dot.pageIndex,
-                        hitBounds: dotRect.insetBy(dx: -6, dy: -6),
-                        highlightRects: dot.highlightRects
+                        hitBounds: dotRect.insetBy(dx: -8, dy: -8),
+                        highlightRectsByPage: dot.highlightRectsByPage
                     )
                 )
             }
@@ -183,12 +184,14 @@ extension PDFReaderRepresentable.Coordinator {
         guard let recordID = hoveredRemarkRecordID else { return }
         let fill = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.14)
         for hit in remarkHits where hit.recordID == recordID {
-            guard let page = document.page(at: hit.pageIndex) else { continue }
-            for rect in hit.highlightRects {
-                let annotation = PDFAnnotation(bounds: rect, forType: .highlight, withProperties: nil)
-                annotation.color = fill
-                annotation.userName = Self.remarkMarkHoverMarker
-                page.addAnnotation(annotation)
+            for (pageIndex, rects) in hit.highlightRectsByPage {
+                guard let page = document.page(at: pageIndex) else { continue }
+                for rect in rects {
+                    let annotation = PDFAnnotation(bounds: rect, forType: .highlight, withProperties: nil)
+                    annotation.color = fill
+                    annotation.userName = Self.remarkMarkHoverMarker
+                    page.addAnnotation(annotation)
+                }
             }
         }
     }

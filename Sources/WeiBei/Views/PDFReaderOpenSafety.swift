@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import PDFKit
+import WeiBeiCore
 
 /// Keeps PDF open/click on the main thread cheap.
 /// Full-document `page.string` and PDFKit's tagged accessibility tree
@@ -53,26 +54,22 @@ enum PDFReaderOpenSafety {
         for selection: PDFSelection,
         in view: PDFView,
         fallbackLocalPoint: CGPoint?
-    ) -> CGPoint? {
-        if let page = selection.pages.first {
-            let bounds = selection.bounds(for: page)
-            if !bounds.isEmpty {
-                let localRect = view.convert(bounds, from: page)
-                if !localRect.isEmpty {
-                    let localPoint = CGPoint(x: localRect.midX, y: localRect.minY)
-                    if let anchor = SelectionAnchorContentPoint.fromLocalPoint(localPoint, in: view) {
-                        return anchor
-                    }
-                }
+    ) -> SelectionPopoverAnchor? {
+        let lines = selection.selectionsByLine().flatMap { line in
+            line.pages.compactMap { page -> CGRect? in
+                let rect = view.convert(line.bounds(for: page), from: page)
+                return rect.isEmpty ? nil : rect
             }
         }
-        if let fallbackLocalPoint,
-           let anchor = SelectionAnchorContentPoint.fromLocalPoint(fallbackLocalPoint, in: view) {
-            return anchor
-        }
-        return SelectionAnchorContentPoint.fromLocalPoint(
-            CGPoint(x: view.bounds.midX, y: view.bounds.midY),
-            in: view
-        )
+        guard let first = lines.first, let last = lines.last,
+              let start = SelectionAnchorContentPoint.fromLocalPoint(
+                CGPoint(x: first.minX, y: view.isFlipped ? first.minY : first.maxY), in: view),
+              let end = SelectionAnchorContentPoint.fromLocalPoint(
+                CGPoint(x: last.maxX, y: view.isFlipped ? last.maxY : last.minY), in: view) else { return nil }
+        guard let pointer = fallbackLocalPoint.flatMap({ SelectionAnchorContentPoint.fromLocalPoint($0, in: view) }) else { return end }
+        let distanceToStart = hypot(pointer.x - start.x, pointer.y - start.y)
+        let distanceToEnd = hypot(pointer.x - end.x, pointer.y - end.y)
+        let above = distanceToStart < distanceToEnd
+        return SelectionPopoverAnchor(x: pointer.x, y: above ? start.y : end.y, prefersAbove: above)
     }
 }

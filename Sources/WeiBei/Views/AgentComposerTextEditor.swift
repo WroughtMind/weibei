@@ -3,12 +3,19 @@ import SwiftUI
 
 final class AgentComposerNativeScrollView: NSScrollView {
     private var appliedFocusRequest = 0
+    private var pendingFocusRequest = 0
 
     func applyFocusRequest(_ request: Int) {
+        pendingFocusRequest = request
         guard request != appliedFocusRequest else { return }
+        guard let textView = documentView as? NSTextView,
+              let window, window.makeFirstResponder(textView) else { return }
         appliedFocusRequest = request
-        guard let textView = documentView as? NSTextView else { return }
-        window?.makeFirstResponder(textView)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyFocusRequest(pendingFocusRequest)
     }
 }
 
@@ -74,7 +81,7 @@ struct AgentComposerTextEditor: NSViewRepresentable {
         context.coordinator.parent = self
         scrollView.applyFocusRequest(focusRequest)
         applyPresentation(to: textView)
-        if textView.string != text {
+        if !textView.hasMarkedText(), textView.string != text {
             textView.string = text
         }
         updateFocus(of: textView)

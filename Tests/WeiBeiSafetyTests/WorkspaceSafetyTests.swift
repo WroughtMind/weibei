@@ -277,7 +277,7 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectionRemarkHistoryKeepsOlderRecordsAndPersistsThem() throws {
+    func testSelectionRemarkHistoryKeepsOlderRecordsAndPersistsThem() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiSelectionRemarks-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -297,7 +297,8 @@ final class WorkspaceSafetyTests: XCTestCase {
             ownerTitle: "课堂资料"
         )
 
-        store.saveSelectionRemark("新札记")
+        let saved = await store.saveSelectionRemark("新札记")
+        XCTAssertTrue(saved)
 
         XCTAssertEqual(store.selectionRemarkRecords.count, 201)
         XCTAssertEqual(store.selectionRemarkRecords.last?.id, existing.last?.id)
@@ -672,7 +673,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         store.pinnedFloatingAgent = true
         store.keepFloatingSelectionForAnswer = true
         store.agentSurface = .selectionFloat
-        store.selectionAnchor = CGPoint(x: 12, y: 24)
+        store.selectionAnchor = SelectionPopoverAnchor(x: 12, y: 24)
 
         XCTAssertEqual(workspaceChanges, 0, "pane/interaction chrome must not forward to WorkspaceStore")
         XCTAssertGreaterThan(paneChanges, 0)

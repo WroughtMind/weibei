@@ -528,13 +528,15 @@ final class WorkspaceStore: ObservableObject {
             }
         }
     }
-    var selectionAnchor: CGPoint? {
+    var selectionAnchor: SelectionPopoverAnchor? {
         get { interaction.selectionAnchor }
         set { interaction.selectionAnchor = newValue }
     }
     /// Durable selection→chat threads (underline marks + reopen floating Q&A).
     @Published var selectionAskThreads: [SelectionAskThread] = []
     /// 选区"记"留痕(原文标记渲染与回访;管理逻辑在 WorkspaceStore+SelectionRemark)。
+    @Published var excerptBookPresented = false
+    @Published var excerptBookCourseID: UUID?
     @Published var selectionRemarkRecords: [SelectionRemarkRecord] = []
     /// Thread currently shown in the floating selection agent (full answer surface).
     var activeSelectionAskThreadID: UUID? {
@@ -4997,6 +4999,15 @@ final class WorkspaceStore: ObservableObject {
         return sourceReferenceItem(from: selectionContext?.text) != nil
     }
 
+    func openExcerptSource(_ record: SelectionRemarkRecord) {
+        guard let id = record.itemID, let item = item(withID: id) else { return }
+        excerptBookPresented = false
+        openContextualItem(id, kind: item.isNotebookNote ? .note : .material)
+        if item.kind == .pdf {
+            requestReaderPDFPage(record.documentAnchor?.pdf?.pageIndex, recordsLocation: true)
+        }
+    }
+
     func openSelectedSourceReference() {
         guard let text = selectionContext?.text else { return }
         openSourceReference(text)
@@ -6183,10 +6194,12 @@ final class WorkspaceStore: ObservableObject {
         NSPasteboard.general.setString(reference, forType: .string)
     }
 
-    func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true, documentAnchor: SelectionDocumentAnchor? = nil) {
+    func updateSelection(_ text: String, source: SelectionSource, anchor: SelectionPopoverAnchor? = nil, ownerTitle: String? = nil, isEditable: Bool = true, documentAnchor: SelectionDocumentAnchor? = nil) {
         guard !courseWorkspacePresented else { return }
+        let documentAnchor = documentAnchor ?? anchor?.textAnchor.map { SelectionDocumentAnchor(text: $0) }
         let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
+            guard selectionContext?.source == source else { return }
             let now = Date()
             if lastSelectionUpdateDate.map({ now.timeIntervalSince($0) > selectionAttachmentMergeWindow }) ?? true {
                 lastSelectionUpdateDate = nil
@@ -6205,6 +6218,7 @@ final class WorkspaceStore: ObservableObject {
                 && $0.source == source
                 && $0.ownerTitle == resolvedOwnerTitle
                 && $0.isEditable == isEditable
+                && $0.documentAnchor == documentAnchor
         } ?? false
 
         // Drag stream: same text, only anchor moves — no spring, no new SelectionContext id.
@@ -8948,7 +8962,7 @@ final class WorkspaceStore: ObservableObject {
 
     /// Reopen the floating agent for a past selection-ask thread (hover / mark click / top menu).
     /// When `anchor` is provided (e.g. underline click), the expanded panel docks beside that point.
-    func openSelectionAskThread(_ threadID: UUID, jumpToConversation: Bool = false, anchor: CGPoint? = nil) {
+    func openSelectionAskThread(_ threadID: UUID, jumpToConversation: Bool = false, anchor: SelectionPopoverAnchor? = nil) {
         guard let thread = selectionAskThreads.first(where: { $0.id == threadID }) else { return }
         withAnimation(WeiBeiMotion.panel) {
             activeSelectionAskThreadID = thread.id
@@ -8965,7 +8979,8 @@ final class WorkspaceStore: ObservableObject {
                 source: thread.source,
                 ownerTitle: thread.ownerTitle,
                 itemID: thread.itemID,
-                isEditable: thread.source == .note
+                isEditable: thread.source == .note,
+                documentAnchor: thread.documentAnchor
             )
             if jumpToConversation, isConversationSurfaceVisible,
                let lastID = thread.messageIDs.last {
@@ -8986,11 +9001,11 @@ final class WorkspaceStore: ObservableObject {
         let itemID = selection.itemID
             ?? (selection.source == .note ? activeNotebookItemID : selectedItemID)
         if let index = selectionAskThreads.firstIndex(where: {
-            // 锚点优先(同处原文续同线程),文字匹配兜底。
-            selection.documentAnchor?.matches($0.documentAnchor) == true
-                || ($0.normalizedText == normalized
-                    && $0.source == selection.source
-                    && ($0.itemID == nil || $0.itemID == itemID || itemID == nil))
+            guard $0.source == selection.source, $0.itemID == itemID else { return false }
+            if let anchor = selection.documentAnchor, $0.documentAnchor != nil {
+                return anchor.matches($0.documentAnchor) && $0.normalizedText == normalized
+            }
+            return !normalized.isEmpty && $0.normalizedText == normalized
         }) {
             selectionAskThreads[index].updatedAt = Date()
             selectionAskThreads[index].itemID = selectionAskThreads[index].itemID ?? itemID
@@ -9023,7 +9038,7 @@ final class WorkspaceStore: ObservableObject {
 
     func selectionAskThreads(forItemID itemID: String?) -> [SelectionAskThread] {
         guard let itemID else { return selectionAskThreads }
-        return selectionAskThreads.filter { $0.itemID == nil || $0.itemID == itemID }
+        return selectionAskThreads.filter { $0.itemID == itemID }
     }
 
     func selectionAskThread(matchingText text: String) -> SelectionAskThread? {
@@ -10791,6 +10806,9 @@ final class WorkspaceStore: ObservableObject {
                 return seen.insert(migratedID).inserted ? migratedID : nil
             }
         }
+        for index in selectionRemarkRecords.indices where selectionRemarkRecords[index].itemID == oldID {
+            selectionRemarkRecords[index].itemID = newID
+        }
         for index in selectionAskThreads.indices where selectionAskThreads[index].itemID == oldID {
             selectionAskThreads[index].itemID = newID
         }
@@ -11665,7 +11683,7 @@ final class WorkspaceStore: ObservableObject {
                 return thread
             }
         workspace.selectionRemarkRecords = workspace.selectionRemarkRecords?.filter {
-            $0.itemID.map(removedItemIDs.contains) != true
+            $0.courseID != courseID && $0.itemID.map(removedItemIDs.contains) != true
         }
         return workspace
     }

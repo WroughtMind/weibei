@@ -11,17 +11,17 @@ const check = process.argv.includes('--check');
 const output = check ? await mkdtemp(join(tmpdir(), 'weibei-editor-')) : resources;
 const generated = new Set([
   'editor-entry.js', 'viewer-entry.js', 'katex-runtime.js', 'mermaid-runtime.js',
-  'prism-runtime.js', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
+  'prism-runtime.js', 'selection-runtime.js', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
 ]);
 
-const bundle = (entry, outfile, editable) => build({
+const bundle = (entry, outfile, editable, globalName) => build({
   entryPoints: [resolve(source, entry)], bundle: true, format: 'iife', minify: true,
   outfile: resolve(output, outfile), define: { WEIBEI_EDITOR_RUNTIME: String(editable) },
   alias: editable ? {} : Object.fromEntries([
     '@milkdown/kit/plugin/clipboard', '@milkdown/kit/plugin/history', '@milkdown/kit/plugin/slash',
     '@milkdown/kit/plugin/upload', '@milkdown/kit/prose/history', '@milkdown/kit/prose/inputrules',
   ].map((name) => [name, resolve(source, 'viewerEditorStubs.ts')])),
-  metafile: true, logLevel: 'warning',
+  metafile: true, logLevel: 'warning', globalName,
 });
 
 if (!check) {
@@ -40,6 +40,7 @@ const [editorMeta, viewerMeta] = await Promise.all([
   bundle('vendor/katex-runtime.ts', 'katex-runtime.js', false),
   bundle('vendor/mermaid-runtime.ts', 'mermaid-runtime.js', false),
   bundle('vendor/prism-runtime.ts', 'prism-runtime.js', false),
+  bundle('selection.ts', 'selection-runtime.js', false, 'WeiBeiSelection'),
   build({
     entryPoints: [resolve(root, 'node_modules/katex/dist/katex.css')], bundle: true, minify: true,
     outfile: resolve(output, 'editor.css'), loader: { '.woff': 'file', '.woff2': 'file', '.ttf': 'file' },

@@ -406,11 +406,15 @@ struct ReaderView: View {
 
     private func selectionAskMarksJSON(for itemID: String) -> String {
         let marks = store.selectionAskThreads(forItemID: itemID)
-            .map { thread -> [String: String] in
-                [
+            .map { thread -> [String: Any] in
+                var mark: [String: Any] = [
                     "id": thread.id.uuidString,
-                    "text": String(thread.selectionText.prefix(240)),
+                    "text": thread.selectionText,
                 ]
+                if let anchor = thread.documentAnchor?.text {
+                    mark["anchor"] = ["startOffset": anchor.startOffset, "endOffset": anchor.endOffset]
+                }
+                return mark
             }
         // .sortedKeys keeps the output stable for identical mark data; without it
         // dictionary key order can reshuffle and defeat the dedup guard in
@@ -1035,13 +1039,13 @@ struct ReaderView: View {
                         selectionRemarkMarks: selectionRemarkMarksJSON(store.selectionRemarkRecords(forItemID: item.id)),
                         onContentRailChange: applyHTMLContentRailSections,
                         onContentRailActiveChange: applyHTMLContentRailActiveID,
-                        onSelectionAskMark: { threadID in
+                        onSelectionAskMark: { threadID, anchor in
                             if let uuid = UUID(uuidString: threadID) {
-                                store.openSelectionAskThread(uuid, jumpToConversation: false)
+                                store.openSelectionAskThread(uuid, jumpToConversation: false, anchor: anchor)
                             }
                         },
-                        onSelectionRemarkMark: { recordID in
-                            store.openSelectionRemarkRecord(recordID, anchor: nil)
+                        onSelectionRemarkMark: { recordID, anchor in
+                            store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
@@ -1123,13 +1127,13 @@ struct ReaderView: View {
             ),
             onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
             onSourceReference: { reference in store.openSourceReference(reference) },
-            onSelectionAskMark: { threadID in
+            onSelectionAskMark: { threadID, anchor in
                 if let uuid = UUID(uuidString: threadID) {
-                    store.openSelectionAskThread(uuid, jumpToConversation: false)
+                    store.openSelectionAskThread(uuid, jumpToConversation: false, anchor: anchor)
                 }
             },
-            onSelectionRemarkMark: { recordID in
-                store.openSelectionRemarkRecord(recordID, anchor: nil)
+            onSelectionRemarkMark: { recordID, anchor in
+                store.openSelectionRemarkRecord(recordID, anchor: anchor)
             }
         ) { text, anchor in
             store.updateSelection(text, source: .document, anchor: anchor)
@@ -1243,13 +1247,13 @@ struct PDFReaderRepresentable: NSViewRepresentable {
     var underlineSnippets: [String] = []
     /// Asked-selection marks with thread ids for hover/click reopen.
     var askUnderlineMarks: [(id: String, text: String, anchor: SelectionDocumentAnchor?)] = []
-    var onAskUnderlineActivate: (String, CGPoint?) -> Void = { _, _ in }
+    var onAskUnderlineActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     /// 记过原文标记(句末朱砂短棒):数据来自 selectionRemarkRecords,渲染在 ReaderPDFRemarkMarks。
     var remarkMarks: [(id: String, anchor: SelectionDocumentAnchor?, text: String)] = []
-    var onRemarkMarkActivate: (String, CGPoint?) -> Void = { _, _ in }
+    var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
-    var onSelectionChange: (String, CGPoint?, Int, PDFSelectionAnchor?) -> Void
+    var onSelectionChange: (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -1380,8 +1384,8 @@ struct PDFReaderRepresentable: NSViewRepresentable {
         var pageCount: Binding<Int>
         var onUserPageChange: (Int) -> Void
         var onSelectableTextChange: (Bool?) -> Void
-        var onSelectionChange: (String, CGPoint?, Int, PDFSelectionAnchor?) -> Void
-        var onAskUnderlineActivate: (String, CGPoint?) -> Void
+        var onSelectionChange: (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void
+        var onAskUnderlineActivate: (String, SelectionPopoverAnchor?) -> Void
         var appearanceMode: WeiBeiAppearanceMode = .paper
         private weak var observedView: PDFView?
         private var observer: NSObjectProtocol?
@@ -1400,7 +1404,7 @@ struct PDFReaderRepresentable: NSViewRepresentable {
         private var lastAppliedAskUnderlineMarks: [(id: String, text: String, anchor: SelectionDocumentAnchor?)] = []
         private var askUnderlineHits: [(threadID: String, pageIndex: Int, hitBounds: CGRect)] = []
         private var hoveredAskThreadID: String?
-        var onRemarkMarkActivate: (String, CGPoint?) -> Void = { _, _ in }
+        var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
         var remarkHits: [PDFRemarkMarkHit] = []
         var hoveredRemarkRecordID: String?
         var lastAppliedRemarkMarkSignature: String?
@@ -1414,9 +1418,9 @@ struct PDFReaderRepresentable: NSViewRepresentable {
             pageCount: Binding<Int>,
             onUserPageChange: @escaping (Int) -> Void,
             onSelectableTextChange: @escaping (Bool?) -> Void,
-            onSelectionChange: @escaping (String, CGPoint?, Int, PDFSelectionAnchor?) -> Void,
-            onAskUnderlineActivate: @escaping (String, CGPoint?) -> Void,
-            onRemarkMarkActivate: @escaping (String, CGPoint?) -> Void = { _, _ in }
+            onSelectionChange: @escaping (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void,
+            onAskUnderlineActivate: @escaping (String, SelectionPopoverAnchor?) -> Void,
+            onRemarkMarkActivate: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
         ) {
             self.pageIndex = pageIndex
             self.pageCount = pageCount
@@ -1442,6 +1446,9 @@ struct PDFReaderRepresentable: NSViewRepresentable {
             lastSearchQuery = ""
             lastSearchTargetPageIndex = nil
             lastAppliedAskUnderlineMarks = []
+            lastAppliedRemarkMarkSignature = nil
+            remarkHits = []
+            hoveredRemarkRecordID = nil
             askUnderlineHits = []
             hoveredAskThreadID = nil
             onSelectableTextChange(nil)
@@ -1728,24 +1735,28 @@ struct PDFReaderRepresentable: NSViewRepresentable {
                     fallbackLocalPoint: lastPointerInView
                 ),
                 pageIndex: selectionPageIndex,
-                documentAnchor: Self.lineAnchor(for: selection, pageIndex: selectionPageIndex)
+                documentAnchor: view.document.map { Self.lineAnchor(for: selection, in: $0, pageIndex: selectionPageIndex) }
             )
         }
 
         /// 把 PDFSelection 收敛成行矩形锚(页面坐标),供问/记线程与原文标记使用。
-        private static func lineAnchor(for selection: PDFSelection, pageIndex: Int) -> PDFSelectionAnchor {
-            var rects: [SelectionRect] = []
+        static func lineAnchor(for selection: PDFSelection, in document: PDFDocument, pageIndex: Int) -> PDFSelectionAnchor {
+            var pages: [Int: [SelectionRect]] = [:]
             for line in selection.selectionsByLine() {
                 for page in line.pages {
-                    rects.append(SelectionRect(line.bounds(for: page)))
+                    let index = document.index(for: page)
+                    let rect = line.bounds(for: page)
+                    guard index != NSNotFound, !rect.isEmpty else { continue }
+                    pages[index, default: []].append(SelectionRect(rect))
                 }
             }
-            return PDFSelectionAnchor(pageIndex: pageIndex, lineRects: rects)
+            let first = pages.removeValue(forKey: pageIndex) ?? []
+            return PDFSelectionAnchor(pageIndex: pageIndex, lineRects: first, additionalPageRects: pages.isEmpty ? nil : pages)
         }
 
         private func reportSelectionAfterDragSettles(
             text: String,
-            anchor: CGPoint?,
+            anchor: SelectionPopoverAnchor?,
             pageIndex: Int,
             documentAnchor: PDFSelectionAnchor?
         ) {
@@ -1809,8 +1820,8 @@ struct PDFReaderRepresentable: NSViewRepresentable {
         /// Anchored threads (第二刀起) draw straight from anchor rects; text search stays as fallback.
         func applyAskUnderlines(_ marks: [(id: String, text: String, anchor: SelectionDocumentAnchor?)], in view: PDFView) {
             guard let document = view.document else { return }
-            let signature = marks.map { "\($0.id)|\($0.text)|\($0.anchor?.pdf != nil)" }
-            let previous = lastAppliedAskUnderlineMarks.map { "\($0.id)|\($0.text)|\($0.anchor?.pdf != nil)" }
+            let signature = marks.map { "\($0.id)|\($0.text)|\(String(describing: $0.anchor))" }
+            let previous = lastAppliedAskUnderlineMarks.map { "\($0.id)|\($0.text)|\(String(describing: $0.anchor))" }
             guard signature != previous else { return }
             lastAppliedAskUnderlineMarks = marks
             askUnderlineHits = []
@@ -1818,18 +1829,20 @@ struct PDFReaderRepresentable: NSViewRepresentable {
             clearAskUnderlineAnnotations(in: document, includingHover: true)
             let cinnabar = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.92)
             for mark in marks {
-                if let pdf = mark.anchor?.pdf, pdf.pageIndex != NSNotFound,
-                   let page = document.page(at: pdf.pageIndex) {
-                    let pageIndex = pdf.pageIndex
-                    for lineBounds in pdf.lineRects.map(\.cgRect) {
-                        addAskUnderline(page: page, pageIndex: pageIndex, lineBounds: lineBounds, threadID: mark.id, cinnabar: cinnabar)
+                if let pdf = mark.anchor?.pdf {
+                    for (pageIndex, rects) in pdf.rectsByPage {
+                        guard let page = document.page(at: pageIndex) else { continue }
+                        for lineBounds in rects.map(\.cgRect) {
+                            addAskUnderline(page: page, pageIndex: pageIndex, lineBounds: lineBounds, threadID: mark.id, cinnabar: cinnabar)
+                        }
                     }
                     continue
                 }
                 let needle = mark.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard needle.count >= 4 else { continue }
                 let matches = document.findString(needle, withOptions: [.caseInsensitive])
-                for selection in matches.prefix(2) {
+                guard matches.count == 1 else { continue }
+                for selection in matches {
                     for line in selection.selectionsByLine() {
                         for page in line.pages {
                             let lineBounds = line.bounds(for: page)
@@ -2112,10 +2125,10 @@ private final class PDFOCRPageOverlayView: NSView {
     private let page: PDFOCRPage
     private let highlightedLineIndexes: Set<Int>
     private let appearanceMode: WeiBeiAppearanceMode
-    private let onSelectionChange: (String, CGPoint?) -> Void
+    private let onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
     private var lineViews: [PDFOCRLineTextView] = []
 
-    init(page: PDFOCRPage, highlightedLineIndexes: Set<Int>, appearanceMode: WeiBeiAppearanceMode, onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+    init(page: PDFOCRPage, highlightedLineIndexes: Set<Int>, appearanceMode: WeiBeiAppearanceMode, onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void) {
         self.page = page
         self.highlightedLineIndexes = highlightedLineIndexes
         self.appearanceMode = appearanceMode
@@ -2167,14 +2180,14 @@ private final class PDFOCRPageOverlayView: NSView {
 
 private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDelegate {
     let normalizedBoundingBox: CGRect
-    private let selectionCallback: (String, CGPoint?) -> Void
+    private let selectionCallback: (String, SelectionPopoverAnchor?) -> Void
 
     init(
         text: String,
         normalizedBoundingBox: CGRect,
         isSearchHighlighted: Bool,
         appearanceMode: WeiBeiAppearanceMode,
-        onSelectionChange: @escaping (String, CGPoint?) -> Void
+        onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.normalizedBoundingBox = normalizedBoundingBox
         self.selectionCallback = onSelectionChange
@@ -2212,7 +2225,7 @@ private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDele
         selectionCallback(String(string[textRange]), Self.anchor(for: range, in: self))
     }
 
-    private static func anchor(for range: NSRange, in textView: NSTextView) -> CGPoint? {
+    private static func anchor(for range: NSRange, in textView: NSTextView) -> SelectionPopoverAnchor? {
         guard let window = textView.window else { return nil }
         let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
         guard !rect.isEmpty else { return nil }
@@ -2364,10 +2377,10 @@ struct WebReaderRepresentable: NSViewRepresentable {
     var selectionAskMarks: String = "[]"
     var onContentRailChange: ([WebReaderContentRailSection]) -> Void
     var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
-    var onSelectionChange: (String, CGPoint?) -> Void
-    var onSelectionAskMark: (String) -> Void = { _ in }
+    var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+    var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var selectionRemarkMarks: String = "[]"
-    var onSelectionRemarkMark: (String) -> Void = { _ in }
+    var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
 
     private static let scriptMessageNames = [
         "selection",
@@ -2387,9 +2400,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         selectionRemarkMarks: String = "[]",
         onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
-        onSelectionAskMark: @escaping (String) -> Void = { _ in },
-        onSelectionRemarkMark: @escaping (String) -> Void = { _ in },
-        onSelectionChange: @escaping (String, CGPoint?) -> Void
+        onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
+        onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
+        onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.html = html
         self.url = nil
@@ -2416,9 +2429,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         selectionRemarkMarks: String = "[]",
         onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
-        onSelectionAskMark: @escaping (String) -> Void = { _ in },
-        onSelectionRemarkMark: @escaping (String) -> Void = { _ in },
-        onSelectionChange: @escaping (String, CGPoint?) -> Void
+        onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
+        onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
+        onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.html = nil
         self.url = url
@@ -2454,7 +2467,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
             controller.add(context.coordinator, name: name)
         }
         controller.addUserScript(WKUserScript(
-            source: Self.selectionScript + Self.readerRemarkMarksScript,
+            source: Self.selectionRuntimeScript + Self.selectionScript + Self.readerRemarkMarksScript,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         ))
@@ -2545,6 +2558,14 @@ struct WebReaderRepresentable: NSViewRepresentable {
         }
     }
 
+    static let selectionRuntimeScript: String = {
+        guard let url = Bundle.module.url(forResource: "selection-runtime", withExtension: "js"),
+              let script = try? String(contentsOf: url, encoding: .utf8) else {
+            preconditionFailure("The bundled selection runtime is missing")
+        }
+        return script
+    }()
+
     static let selectionScript = """
     (() => {
       let frame = 0;
@@ -2570,12 +2591,13 @@ struct WebReaderRepresentable: NSViewRepresentable {
           if (Date.now() < scrollQuietUntil) return;
           const selection = window.getSelection();
           const text = selection ? selection.toString().trim() : "";
-          const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
-          const rect = range ? range.getBoundingClientRect() : null;
+          const rect = WeiBeiSelection.selectionEndpointRect(selection);
           const payload = {
             text,
-            x: rect && text ? rect.left + rect.width / 2 : null,
-            y: rect && text ? rect.bottom : null
+            x: rect?.x ?? null,
+            y: rect?.y ?? null,
+            prefersAbove: rect?.prefersAbove ?? false,
+            anchor: text ? WeiBeiSelection.domSelectionTextAnchor(selection, document.body) : null
           };
           if (
             payload.text === lastPayload.text &&
@@ -2608,49 +2630,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
       window.WeiBeiSelectionAskMarks = {
         apply: function(marks) {
           try {
-            document.querySelectorAll(".weibei-selection-ask-mark").forEach((el) => {
-              const parent = el.parentNode;
-              if (!parent) return;
-              while (el.firstChild) parent.insertBefore(el.firstChild, el);
-              parent.removeChild(el);
-              parent.normalize();
-            });
-            const list = Array.isArray(marks) ? marks : [];
-            list.forEach((mark) => {
-              const needle = String(mark.text || "").trim();
-              const id = String(mark.id || "");
-              if (!needle || !id || needle.length < 4) return;
-              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-                acceptNode: function(node) {
-                  if (!node.parentElement) return NodeFilter.FILTER_REJECT;
-                  if (node.parentElement.closest(".weibei-selection-ask-mark, script, style")) {
-                    return NodeFilter.FILTER_REJECT;
-                  }
-                  return node.nodeValue && node.nodeValue.indexOf(needle) >= 0
-                    ? NodeFilter.FILTER_ACCEPT
-                    : NodeFilter.FILTER_SKIP;
-                }
-              });
-              const hits = [];
-              while (walker.nextNode()) hits.push(walker.currentNode);
-              hits.slice(0, 3).forEach((textNode) => {
-                const value = textNode.nodeValue || "";
-                const idx = value.indexOf(needle);
-                if (idx < 0) return;
-                const range = document.createRange();
-                range.setStart(textNode, idx);
-                range.setEnd(textNode, idx + needle.length);
-                const span = document.createElement("span");
-                span.className = "weibei-selection-ask-mark";
-                span.dataset.threadId = id;
-                span.title = "打开当时的选区问答";
-                try {
-                  range.surroundContents(span);
-                } catch (e) {
-                  // ignore partial-node failures
-                }
-              });
-            });
+            WeiBeiSelection.applyDOMSelectionMarks(document.body, marks, "weibei-selection-ask-mark", "data-thread-id");
             document.querySelectorAll(".weibei-selection-ask-mark").forEach((el) => {
               el.onclick = function(ev) {
                 ev.preventDefault();
@@ -2659,7 +2639,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 if (window.webkit?.messageHandlers?.selectionAskMark) {
                   window.webkit.messageHandlers.selectionAskMark.postMessage({
                     threadId,
-                    text: el.textContent || ""
+                    rect: { x: el.getBoundingClientRect().right, y: el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2 }
                   });
                 }
               };
@@ -3011,8 +2991,8 @@ struct WebReaderRepresentable: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
-        var onSelectionChange: (String, CGPoint?) -> Void
-        var onSelectionAskMark: (String) -> Void
+        var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+        var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void
         var onContentRailChange: ([WebReaderContentRailSection]) -> Void
         var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
         var contentRailTarget: WebReaderContentRailTarget?
@@ -3022,7 +3002,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         var adaptsDocumentColors = true
         var selectionAskMarks = "[]"
         var selectionRemarkMarks = "[]"
-        var onSelectionRemarkMark: (String) -> Void = { _ in }
+        var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
         var lastAppliedSelectionRemarkMarks = ""
         var htmlReadTask: Task<Data?, Never>?
         var htmlLoadTask: Task<Void, Never>?
@@ -3040,8 +3020,8 @@ struct WebReaderRepresentable: NSViewRepresentable {
             contentRailTarget: WebReaderContentRailTarget?,
             onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void,
             onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void,
-            onSelectionChange: @escaping (String, CGPoint?) -> Void,
-            onSelectionAskMark: @escaping (String) -> Void
+            onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void,
+            onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void
         ) {
             self.appearanceMode = appearanceMode
             self.adaptsDocumentColors = adaptsDocumentColors
@@ -3139,24 +3119,18 @@ struct WebReaderRepresentable: NSViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            if message.name == "selectionAskMark" {
-                let threadID: String
-                if let body = message.body as? [String: Any] {
-                    threadID = (body["threadId"] as? String) ?? ""
-                } else if let body = message.body as? String {
-                    threadID = body
-                } else {
-                    return
-                }
-                Task { @MainActor in
-                    self.onSelectionAskMark(threadID)
-                }
+            if message.name == "selectionAskMark",
+               let body = message.body as? [String: Any],
+               let threadID = body["threadId"] as? String, !threadID.isEmpty {
+                let anchor = Self.anchor(from: body["rect"] as? [String: Any] ?? [:], in: webView)
+                Task { @MainActor in self.onSelectionAskMark(threadID, anchor) }
                 return
             }
             if message.name == "remarkMark",
                let body = message.body as? [String: Any],
                let recordID = body["recordId"] as? String, !recordID.isEmpty {
-                Task { @MainActor in self.onSelectionRemarkMark(recordID) }
+                let anchor = Self.anchor(from: body["rect"] as? [String: Any] ?? [:], in: webView)
+                Task { @MainActor in self.onSelectionRemarkMark(recordID, anchor) }
                 return
             }
 
@@ -3186,7 +3160,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
             }
 
             let text: String
-            let anchor: CGPoint?
+            let anchor: SelectionPopoverAnchor?
             if let body = message.body as? [String: Any],
                let bodyText = body["text"] as? String {
                 text = bodyText
@@ -3217,13 +3191,8 @@ struct WebReaderRepresentable: NSViewRepresentable {
             )
         }
 
-        private static func anchor(from body: [String: Any], in view: WKWebView?) -> CGPoint? {
-            guard let view,
-                  let x = body["x"] as? Double,
-                  let y = body["y"] as? Double else {
-                return nil
-            }
-            return SelectionAnchorContentPoint.fromWebPoint(x: x, y: y, in: view)
+        private static func anchor(from body: [String: Any], in view: WKWebView?) -> SelectionPopoverAnchor? {
+            SelectionAnchorContentPoint.fromWebPayload(body, in: view)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -3286,9 +3255,9 @@ private struct MarkdownDocumentReaderView: View {
     var selectionRemarkMarks: String = "[]"
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
-    var onSelectionAskMark: (String) -> Void = { _ in }
-    var onSelectionRemarkMark: (String) -> Void = { _ in }
-    var onSelectionChange: (String, CGPoint?) -> Void
+    var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+    var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+    var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
     @State private var command: NoteEditorCommand?
 
     var body: some View {
@@ -3414,7 +3383,7 @@ private struct PlainTextReaderView: View {
     var text: String
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
-    var onSelectionChange: (String, CGPoint?) -> Void
+    var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
 
     var body: some View {
         SelectablePlainTextReader(
@@ -3433,7 +3402,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
     var underlineSnippets: [String]
-    var onSelectionChange: (String, CGPoint?) -> Void
+    var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onSelectionChange: onSelectionChange)
@@ -3521,11 +3490,11 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
-        var onSelectionChange: (String, CGPoint?) -> Void
+        var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
         private var lastSearchQuery = ""
         private var suppressSelectionReport = false
 
-        init(onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+        init(onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void) {
             self.onSelectionChange = onSelectionChange
         }
 
@@ -3546,7 +3515,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
             onSelectionChange(String(textView.string[stringRange]), Self.anchor(for: range, in: textView))
         }
 
-        private static func anchor(for range: NSRange, in textView: NSTextView) -> CGPoint? {
+        private static func anchor(for range: NSRange, in textView: NSTextView) -> SelectionPopoverAnchor? {
             guard let window = textView.window else { return nil }
             let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
             guard !rect.isEmpty else { return nil }

@@ -4,6 +4,19 @@ import XCTest
 
 final class AgentComposerTextEditorTests: XCTestCase {
     @MainActor
+    func testComposerOpeningBeforeWindowAttachmentKeepsItsFocusRequest() {
+        let scrollView = AgentComposerNativeScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 88))
+        let textView = NSTextView()
+        scrollView.documentView = textView
+        scrollView.applyFocusRequest(1)
+
+        let window = NSWindow(contentRect: scrollView.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView?.addSubview(scrollView)
+
+        XCTAssertTrue(window.firstResponder === textView)
+    }
+
+    @MainActor
     func testComposerFocusRequestFocusesTheNativeTextEditor() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 88),
