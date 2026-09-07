@@ -266,6 +266,53 @@ final class SessionMessageExternalizationTests: XCTestCase {
         )
     }
 
+    /// 聊天保存失败后正文仍在，重试会把新增消息真正写进同一个会话文件。
+    func testFailedSaveRetriesNewMessagesToSessionFile() throws {
+        let root = try makeTempWorkspace()
+        let session = makeSession(title: "重试", texts: ["原问"])
+        try writeLegacyWorkspace(at: root, sessions: [session], activeID: session.id)
+        let failureFlag = root.appendingPathComponent("fail-workspace-save")
+        let store = WorkspaceStore(
+            workspaceDirectory: root,
+            workspaceSnapshotWriter: { data, url in
+                if FileManager.default.fileExists(atPath: failureFlag.path) {
+                    throw CocoaError(.fileWriteNoPermission)
+                }
+                WorkspaceSnapshotRecovery.rotateBackups(primary: url)
+                try data.write(to: url, options: .atomic)
+            },
+            startsCourseFileMaintenance: false
+        )
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        XCTAssertTrue(
+            store.activateStudySession(
+                session.id,
+                expectedCourseID: nil,
+                expectedScopeNeedsReview: false
+            )
+        )
+        let file = StudySessionMessageFile.fileURL(sessionID: session.id, in: root)
+        let savedBytes = try Data(contentsOf: file)
+        try Data().write(to: failureFlag)
+
+        store.appendAgentMessage(
+            AgentMessage(role: .user, text: "追加一句", source: nil)
+        )
+        XCTAssertFalse(store.flushPendingWorkspaceSave())
+        XCTAssertEqual(store.workspaceSaveFailure?.kind, .workspaceChangesUnwritten)
+        XCTAssertEqual(store.messages.map(\.text), ["原问", "追加一句"])
+        XCTAssertEqual(try Data(contentsOf: file), savedBytes)
+
+        try FileManager.default.removeItem(at: failureFlag)
+        XCTAssertTrue(store.retryWorkspaceSave())
+        XCTAssertNil(store.workspaceSaveFailure)
+        let persisted = try StudySessionMessageFile.decoder().decode(
+            PersistedStudySessionMessages.self,
+            from: Data(contentsOf: file)
+        )
+        XCTAssertEqual(persisted.messages.map(\.text), ["原问", "追加一句"])
+    }
+
     /// 重开后未点开的会话仍显示原来的条数；载入后能按正文搜到。
     func testReopenedInactiveSessionKeepsDisplayedCountAndSearchableBody() throws {
         let root = try makeTempWorkspace()
