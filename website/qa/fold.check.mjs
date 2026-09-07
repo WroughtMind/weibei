@@ -26,6 +26,12 @@ export async function checkFold() {
   }
   await seek(.97);
   for (let i = 0; i < 30; i++) await frame();
+  // 第四幕的固定背景附着会让原生滚动反复重画整页，rAF 间隔检查抓不到它。
+  for (const element of [document.documentElement, document.body, document.querySelector('.scene-four')]) {
+    if (getComputedStyle(element).backgroundAttachment.split(',').some(value => value.trim() === 'fixed')) {
+      throw new Error('第四幕仍使用导致整页滚动重绘的固定背景附着');
+    }
+  }
   if ([...document.querySelectorAll('.theme-world')].some(world => getComputedStyle(world).visibility !== 'hidden')) {
     throw new Error('离开第三幕后隐藏的背景仍参与绘制');
   }

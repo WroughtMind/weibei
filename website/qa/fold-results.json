@@ -1,40 +1,109 @@
 {
   "date": "2026-09-07",
   "browser": "Chrome 152.0.7977.76",
-  "measurement": "requestAnimationFrame intervals; not display presentation FPS",
   "viewport": {
-    "width": 1470,
+    "width": 1414,
     "height": 876,
     "devicePixelRatio": 2
   },
-  "result": {
+  "measurement": "Complete devtools.timeline trace of native wheel gestures; not display FPS",
+  "nativeScroll": {
+    "progressStart": 0.91,
+    "distanceEachDirectionPx": 280,
+    "speedPxPerSecond": 150,
+    "complete": true,
+    "truncated": false,
+    "oldBackground": {
+      "documentPaints": 225,
+      "scenePaints": 450,
+      "otherPaints": 2
+    },
+    "fixedBackgroundRuns": [
+      {
+        "documentPaints": 3,
+        "scenePaints": 6,
+        "otherPaints": 2
+      },
+      {
+        "documentPaints": 3,
+        "scenePaints": 6,
+        "otherPaints": 2
+      }
+    ]
+  },
+  "functionalChecks": {
     "unfolds": true,
     "hiddenHitArea": "passed",
     "themeBackground": "passed",
     "downloadMenu": "passed",
-    "runs": [
-      {
-        "maxMs": 17.7,
-        "over50": 0
-      },
-      {
-        "maxMs": 17.8,
-        "over50": 0
-      },
-      {
-        "maxMs": 17.8,
-        "over50": 0
-      }
+    "noFixedBackgroundAttachment": "passed"
+  },
+  "crossSceneCallbackCheck": {
+    "status": "failed",
+    "maxMs": [
+      116.6,
+      33.5,
+      50
+    ],
+    "over50": [
+      1,
+      0,
+      0
+    ],
+    "slowFrame": {
+      "progress": 0.9399874319229158,
+      "direction": "forward"
+    }
+  },
+  "limitations": [
+    "User reported visible jank on the previous CSS candidate despite passing callback checks.",
+    "Background repaint cause removed; occasional long frames remain unresolved.",
+    "Native trace paint counts do not prove smooth presentation or zero dropped frames."
+  ],
+  "previousCandidate": {
+    "date": "2026-09-07",
+    "browser": "Chrome 152.0.7977.76",
+    "measurement": "requestAnimationFrame intervals; not display presentation FPS",
+    "viewport": {
+      "width": 1470,
+      "height": 876,
+      "devicePixelRatio": 2
+    },
+    "result": {
+      "unfolds": true,
+      "hiddenHitArea": "passed",
+      "themeBackground": "passed",
+      "downloadMenu": "passed",
+      "runs": [
+        {
+          "maxMs": 17.7,
+          "over50": 0
+        },
+        {
+          "maxMs": 17.8,
+          "over50": 0
+        },
+        {
+          "maxMs": 17.8,
+          "over50": 0
+        }
+      ]
+    },
+    "sha256": {
+      "index.html": "05dd2b4d4ca69355b42f7e4d084b674ecee20655e91bb5e99431c2af3a982a22",
+      "style.css": "5852ec83e230eb198c469801cecc20c0b921d100a76c2b3d736343dafc14ab2b",
+      "paper-fold.css": "b37a854ec95b3213e1b124f81bb84682da05eb7be8e39bb791412cf31f2f78d3",
+      "qa/fold.check.mjs": "b9ce189a7572910fd5654d68cfe6089bb4a05e2a2c492b41fc8d768279359205"
+    },
+    "limitations": [
+      "User trackpad acceptance pending",
+      "Profiling native scroll also observed dropped frames; callback timing does not prove zero presented-frame drops"
     ]
   },
   "sha256": {
-    "index.html": "05dd2b4d4ca69355b42f7e4d084b674ecee20655e91bb5e99431c2af3a982a22",
-    "style.css": "5852ec83e230eb198c469801cecc20c0b921d100a76c2b3d736343dafc14ab2b",
+    "index.html": "376b1129352725b739d3e325f028bc7319148f05f4825db7d041321809689cc0",
+    "style.css": "19801b8da6c78e45edfe10be41e9ed1196cfa65566164c6b18fbda442ece34ee",
     "paper-fold.css": "b37a854ec95b3213e1b124f81bb84682da05eb7be8e39bb791412cf31f2f78d3",
-    "qa/fold.check.mjs": "b9ce189a7572910fd5654d68cfe6089bb4a05e2a2c492b41fc8d768279359205"
-  },
-  "limitations": [
-    "User trackpad acceptance pending",
-    "Profiling native scroll also observed dropped frames; callback timing does not prove zero presented-frame drops"
-  ]
+    "qa/fold.check.mjs": "cbc9b8f480e51c586671c861a0c2abf9f2fbb9c60c23aca73d00102fff733373"
+  }
 }

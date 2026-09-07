@@ -267,7 +267,19 @@ html[data-scene="3"][data-theme="mist-slate"] .scene-rail button.is-active::befo
 .mascot-one { left: 5vw; bottom: 1.5vh; }
 .mascot-two { left: 24vw; bottom: -1vh; width: 230px; height: 230px; }
 
-html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linear-gradient(180deg, #eedfcb 0%, #ebdbc7 100%) fixed; }
+/* 背景独立合成，避免 fixed 背景附着让整页在滚动时反复重绘。 */
+html[data-scene="4"], html[data-scene="4"] body { background: #eedfcb; }
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  visibility: hidden;
+  background: linear-gradient(180deg, #eedfcb 0%, #ebdbc7 100%);
+  transform: translateZ(0);
+}
+html[data-scene="4"] body::after { visibility: visible; }
 .download-act { position: absolute; z-index: 6; left: 50%; bottom: -2%; width: 38%; height: 54%; pointer-events: none; transform: translateX(-50%); }
 .download-act .mascot-four { position: absolute; z-index: 2; left: 50%; top: -4%; width: 88%; height: 88%; transform: translateX(-50%); }
 .download-control { position: absolute; z-index: 3; left: 50%; bottom: 4%; width: 330px; height: 92px; color: #2e2924; background: url("assets/第四幕-下载纸签-v4.webp") center / contain no-repeat; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); pointer-events: none; transform: translateX(-50%); transition: filter .24s ease, transform .24s ease; }
