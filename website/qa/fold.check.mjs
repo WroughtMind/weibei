@@ -9,8 +9,8 @@ const seek = async progress => {
 
 export async function checkFold() {
   await document.fonts.ready;
-  await seek(.4);
-  await Promise.all([...document.querySelectorAll('.release-layer img, .themes-layer img')].map(img => img.decode()));
+  await seek(.7);
+  await Promise.all([...document.querySelectorAll('.release-layer img, .themes-layer img')].map(img => { img.loading = 'eager'; return img.decode(); }));
   const faces = [...document.querySelectorAll('.paper-face')];
   if (faces.length !== 4) throw new Error('四块纸面未加载');
   await seek(.7);
@@ -18,6 +18,7 @@ export async function checkFold() {
   if (document.elementFromPoint(control.x + control.width / 2, control.y + control.height / 2)?.closest('.release-layer')) {
     throw new Error('隐藏的下载入口挡住第三幕');
   }
+  document.activeElement.blur();
   document.querySelector('.theme-paper').focus();
   await frame();
   if (getComputedStyle(document.querySelector('.world-paper-ink')).visibility !== 'visible') {
@@ -54,8 +55,9 @@ export async function checkFold() {
 
 export async function measureFoldScroll() {
   await document.fonts.ready;
-  await seek(.4);
-  await Promise.all([...document.querySelectorAll('.release-layer img, .themes-layer img')].map(img => img.decode()));
+  await seek(.7);
+  await Promise.all([...document.querySelectorAll('.release-layer img, .themes-layer img')].map(img => { img.loading = 'eager'; return img.decode(); }));
+  const viewport = [innerWidth, innerHeight, devicePixelRatio];
   const runs = [];
   for (let run = 0; run < 3; run++) {
     await seek(.7);
@@ -70,10 +72,13 @@ export async function measureFoldScroll() {
       const now = await frame();
       const ms = now - previous;
       intervals.push(ms);
-      if (ms > 50) slow.push({ ms, progress: scrollY / end });
+      if (ms > 50) slow.push({ ms, progress: scrollY / end, direction: step <= 120 ? 'forward' : 'backward' });
       previous = now;
     }
     runs.push({ max: Math.max(...intervals), over50: slow.length, slow });
   }
-  return { viewport: [innerWidth, innerHeight, devicePixelRatio], runs };
+  if (viewport.some((value, index) => value !== [innerWidth, innerHeight, devicePixelRatio][index])) {
+    throw new Error('测量期间窗口尺寸或缩放改变，本轮数据无效');
+  }
+  return { viewport, runs };
 }

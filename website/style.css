@@ -118,7 +118,7 @@ html[lang="en"] .language-toggle::after { transform: translateX(28px); }
   will-change: transform;
 }
 .journey-frame { position: absolute; inset: 0; border-radius: 18px; }
-.journey-layer { position: absolute; inset: 0; border-radius: 17px; opacity: 0; will-change: opacity, transform; }
+.journey-layer { position: absolute; inset: 0; border-radius: 17px; opacity: 0; visibility: hidden; will-change: opacity, transform; }
 .blank-layer, .experience-layer, .release-layer { border: 1px solid rgba(255,255,255,.74); }
 .blank-layer { overflow: hidden; opacity: 1; background: rgba(248,239,222,.98); box-shadow: var(--depth-calm), var(--edge-relief); }
 .blank-layer img { display: block; width: 100%; height: 100%; object-fit: contain; }
@@ -294,10 +294,10 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   .hero-tagline { animation: hero-tagline-journey 1s linear both; animation-timeline: scroll(root block); }
   .compact-brand { animation: brand-journey 1s linear both; animation-timeline: scroll(root block); }
   .journey-stage { animation: stage-journey 1s linear both; animation-timeline: scroll(root block); }
-  .blank-layer { animation: blank-journey 1s linear both; animation-timeline: scroll(root block); }
-  .experience-layer { animation: experience-journey 1s linear both; animation-timeline: scroll(root block); }
-  .themes-layer { animation: themes-journey 1s linear both; animation-timeline: scroll(root block); }
-  .release-layer { animation: release-journey 1s linear both; animation-timeline: scroll(root block); }
+  .blank-layer { animation: blank-journey 1s linear both, blank-visibility 1s linear both; animation-timeline: scroll(root block); }
+  .experience-layer { animation: experience-journey 1s linear both, experience-visibility 1s linear both; animation-timeline: scroll(root block); }
+  .themes-layer { animation: themes-journey 1s linear both, themes-visibility 1s linear both; animation-timeline: scroll(root block); }
+  .release-layer { animation: release-journey 1s linear both, release-visibility 1s linear both; animation-timeline: scroll(root block); }
   .release-destination { animation: map-destination-journey 1s linear both; animation-timeline: scroll(root block); }
 
   @keyframes hero-tagline-journey {
@@ -318,8 +318,13 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   }
   @keyframes blank-journey { 0%, 20% { opacity: 1; transform: scale(1); } 28%, 100% { opacity: 0; transform: scale(1.025); } }
   @keyframes experience-journey { 0%, 20% { opacity: 0; transform: scale(.985); } 28%, 49% { opacity: 1; transform: scale(1); } 57%, 100% { opacity: 0; transform: scale(.98); } }
-  @keyframes themes-journey { 0%, 50% { opacity: 0; transform: scale(.9); } 58% { opacity: 1; transform: scale(.97); } 63%, 78% { opacity: 1; transform: scale(1); } 85%, 100% { opacity: 0; transform: scale(.98); } }
+  @keyframes themes-journey { 0%, 50% { opacity: 0; transform: scale(.9); } 58% { opacity: 1; transform: scale(.97); } 63%, 78% { opacity: 1; transform: scale(1); } 85%, 100% { opacity: 0; transform: scale(1); } }
   @keyframes release-journey { 0%, 79% { opacity: 0; } 84%, 100% { opacity: 1; } }
+  /* 可见性单独管理，避免把变形与透明度动画拖回主线程。 */
+  @keyframes blank-visibility { 0%, 20% { visibility: visible; } 28%, 100% { visibility: hidden; } }
+  @keyframes experience-visibility { 0%, 20% { visibility: hidden; } 28%, 49% { visibility: visible; } 57%, 100% { visibility: hidden; } }
+  @keyframes themes-visibility { 0%, 50% { visibility: hidden; } 58%, 78% { visibility: visible; } 85%, 100% { visibility: hidden; } }
+  @keyframes release-visibility { 0%, 79% { visibility: hidden; } 84%, 100% { visibility: visible; } }
   @keyframes map-destination-journey {
     0%, 85% { opacity: 0; transform: translateY(22px) scale(.82); }
     91%, 100% { opacity: 1; transform: translateY(0) scale(1); }
@@ -333,7 +338,7 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   html[data-scene="2"] .journey-stage { transform: translate3d(-50%, calc(-50% - 1vh), 0) scale(.88) rotate(.5deg); }
   html[data-scene="3"] .journey-stage { transform: translate3d(-50%, -50%, 0) scale(.98) rotate(0deg); }
   html[data-scene="4"] .journey-stage { transform: translate3d(-50%, -50%, 0) scale(.98); }
-  html[data-scene="1"] .blank-layer, html[data-scene="2"] .experience-layer, html[data-scene="3"] .themes-layer, html[data-scene="4"] .release-layer { opacity: 1; }
+  html[data-scene="1"] .blank-layer, html[data-scene="2"] .experience-layer, html[data-scene="3"] .themes-layer, html[data-scene="4"] .release-layer { opacity: 1; visibility: visible; }
   .release-destination { opacity: 0; transform: translateY(22px) scale(.82); }
   html[data-scene="4"] .release-destination { animation: map-destination-open .46s var(--ease-smooth-out) .5s both; }
   @keyframes map-destination-open { to { opacity: 1; transform: translateY(0) scale(1); } }
@@ -440,6 +445,6 @@ html[data-scene="4"], html[data-scene="4"] body, .scene-four { background: linea
   html[data-scene="3"] .journey-stage { transform: translate3d(-50%, -50%, 0) scale(.98) rotate(0deg); }
   html[data-scene="4"] .journey-stage { transform: translate3d(-50%, -50%, 0) scale(.98); }
   .journey-layer { opacity: 0 !important; }
-  html[data-scene="1"] .blank-layer, html[data-scene="2"] .experience-layer, html[data-scene="3"] .themes-layer, html[data-scene="4"] .release-layer { opacity: 1 !important; }
+  html[data-scene="1"] .blank-layer, html[data-scene="2"] .experience-layer, html[data-scene="3"] .themes-layer, html[data-scene="4"] .release-layer { opacity: 1 !important; visibility: visible; }
   .release-destination { clip-path: none !important; opacity: 1 !important; transform: none !important; }
 }

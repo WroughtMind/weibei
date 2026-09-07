@@ -1,0 +1,40 @@
+{
+  "date": "2026-09-07",
+  "browser": "Chrome 152.0.7977.76",
+  "measurement": "requestAnimationFrame intervals; not display presentation FPS",
+  "viewport": {
+    "width": 1470,
+    "height": 876,
+    "devicePixelRatio": 2
+  },
+  "result": {
+    "unfolds": true,
+    "hiddenHitArea": "passed",
+    "themeBackground": "passed",
+    "downloadMenu": "passed",
+    "runs": [
+      {
+        "maxMs": 17.7,
+        "over50": 0
+      },
+      {
+        "maxMs": 17.8,
+        "over50": 0
+      },
+      {
+        "maxMs": 17.8,
+        "over50": 0
+      }
+    ]
+  },
+  "sha256": {
+    "index.html": "05dd2b4d4ca69355b42f7e4d084b674ecee20655e91bb5e99431c2af3a982a22",
+    "style.css": "5852ec83e230eb198c469801cecc20c0b921d100a76c2b3d736343dafc14ab2b",
+    "paper-fold.css": "b37a854ec95b3213e1b124f81bb84682da05eb7be8e39bb791412cf31f2f78d3",
+    "qa/fold.check.mjs": "b9ce189a7572910fd5654d68cfe6089bb4a05e2a2c492b41fc8d768279359205"
+  },
+  "limitations": [
+    "User trackpad acceptance pending",
+    "Profiling native scroll also observed dropped frames; callback timing does not prove zero presented-frame drops"
+  ]
+}
