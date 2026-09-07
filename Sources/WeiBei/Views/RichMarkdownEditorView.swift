@@ -521,6 +521,7 @@ private enum MarkdownWebNetworkGuard {
 
 final class MarkdownWebView: WKWebView {
     var pasteImageFromClipboard: (() -> Bool)?
+    var onWindowAttachment: (() -> Void)?
     var passesVerticalScrollToSuperview = false {
         didSet { updateScrollWheelMonitor() }
     }
@@ -552,6 +553,7 @@ final class MarkdownWebView: WKWebView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         updateScrollWheelMonitor()
+        if window != nil { onWindowAttachment?() }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -800,6 +802,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         view.pasteImageFromClipboard = { [weak coordinator = context.coordinator] in
             coordinator?.pasteImageFromClipboard() ?? false
+        }
+        view.onWindowAttachment = { [weak coordinator = context.coordinator] in
+            coordinator?.applyFocus()
         }
         view.navigationDelegate = context.coordinator
         context.coordinator.webView = view
@@ -1854,9 +1859,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func applyFocus() {
-            guard isFocused, focusRequest != lastAppliedFocusRequest else { return }
+            guard isReady, isFocused, focusRequest != lastAppliedFocusRequest,
+                  let webView, let window = webView.window,
+                  window.makeFirstResponder(webView) else { return }
             lastAppliedFocusRequest = focusRequest
-            webView?.window?.makeFirstResponder(webView)
             if let editingSession {
                 dispatchV2(NoteEditorCommandEnvelope(
                     documentID: editingSession.documentID,

@@ -29,13 +29,14 @@
 
 ## 当前自动检查证据
 
-- 编辑器类型、行为测试及资源一致性检查通过。
+- 编辑器类型检查、30 项行为测试及资源一致性检查通过。
 - 应用核心自检通过。
 - 完整 WebKit 自检通过，包含最新主线的笔记排版和打字机模式，以及新增原生输入、选区方向、跨段落标记与顶层追加检查。
 - 专项 Swift 检查通过：课程和文稿隔离、磁盘保存及重开恢复、失败保留批注、首次焦点、跨页 PDF 标记与坐标更新。
+- 补充验证笔记挂载前的焦点请求：旧实现可复现失败；修复后笔记桥接、输入框和选区摘抄共 14 项回归通过，窗口挂载后直接获得输入焦点。
 
 以下为实际 SwiftUI 摘抄本界面，使用公开诗词在隐藏窗口渲染。它用于检查界面布局，不代替候选包的完整使用体验。
 
 ![课程摘抄本实际界面](assets/2026-09-08-course-excerpts.png)
 
-全量本机安全检查另检出了主线已有的滚轮模拟测试失败：`AgentVisualizationSizingTests.testGenUIWheelInsideWebContentReachesConversationScroller` 在 macOS 27 上向 AppKit 发送默认初始化、仅覆盖属性的 NSEvent，系统拒绝事件类型 0。该测试与滚动实现未被本任务修改；本次选区、输入、PDF 和摘抄专项通过。完整检查的最终结果以合并请求中的实际记录为准。
+完整本机检查（提交 a56200a5）共 241 项：239 项通过、1 项按条件跳过、1 项失败。失败是主线已有的滚轮模拟测试：`AgentVisualizationSizingTests.testGenUIWheelInsideWebContentReachesConversationScroller` 在 macOS 27 上向 AppKit 发送默认初始化、仅覆盖属性的 NSEvent，系统拒绝事件类型 0。该测试与滚动实现未被本任务修改；本次选区、输入、PDF 和摘抄专项通过。各提交的云端检查及候选包状态以合并请求中的实际记录为准。

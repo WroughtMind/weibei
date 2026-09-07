@@ -7,6 +7,32 @@ import WeiBeiCore
 
 final class RichMarkdownEditorBridgeTests: XCTestCase {
     @MainActor
+    func testOpeningNoteBeforeWindowAttachmentKeepsItsFocusRequest() {
+        let editor = RichMarkdownEditorView(
+            markdown: "正文",
+            command: .constant(nil),
+            isFocused: true,
+            focusRequest: 1,
+            onSelectionChange: { _, _ in },
+            onAskAgentWithSelection: { _, _ in }
+        )
+        let coordinator = editor.makeCoordinator()
+        let webView = MarkdownWebView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+        coordinator.webView = webView
+        coordinator.isReady = true
+        coordinator.applyFocus()
+        webView.onWindowAttachment = { [weak coordinator] in coordinator?.applyFocus() }
+
+        let window = NSWindow(contentRect: webView.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        let previousInput = NSTextView(frame: webView.frame)
+        window.contentView?.addSubview(previousInput)
+        window.makeFirstResponder(previousInput)
+        window.contentView?.addSubview(webView)
+
+        XCTAssertTrue(window.firstResponder === webView)
+    }
+
+    @MainActor
     func testFinalizedStreamingHeightNeverShrinksTheLiveAnswer() {
         XCTAssertEqual(
             MarkdownPreviewView.resolvedContentHeight(
