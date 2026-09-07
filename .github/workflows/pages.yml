@@ -1,29 +1,31 @@
 name: Deploy marketing website
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "website/**"
-      - ".github/workflows/pages.yml"
   push:
     branches: [main]
     paths:
       - "website/**"
       - ".github/workflows/pages.yml"
+      - "script/check_website.sh"
   release:
     types: [published]
+  # 自动令牌创建 Release 不会触发 release 事件；监听正式发布流程成功完成。
+  workflow_run:
+    workflows: ["魏碑双架构正式发布"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pages-${{ github.event.pull_request.number || 'deploy' }}
+  group: pages-deploy
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,30 +33,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # 始终部署已通过合并检查的官网主线，不取发布标签或其他任务的源码。
+          ref: main
 
       - name: Configure Pages
-        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
-      - name: Validate website scripts and download selection
-        run: |
-          for file in website/*.js website/*.mjs website/qa/*.mjs; do
-            node --check "$file"
-          done
-          node --test website/download-selection.test.mjs
-
-      - name: Assemble static site
-        run: |
-          set -euo pipefail
-          mkdir -p _site
-          cp -R website/. _site/
-          rm -rf _site/qa
-          touch _site/.nojekyll
-          test -s _site/index.html
-          test -s _site/feedback.html
-          test -s _site/assets/WeiBeiStele.ttf
-          test -s _site/assets/第一幕-真实首页截图-去黑边.webp
-          test -s _site/paper-fold.css
+      - name: Validate and assemble website
+        run: bash script/check_website.sh
 
       - name: Add latest downloads
         env:
@@ -87,13 +74,11 @@ jobs:
             '{available:true,version:$version,published_at:$published_at,assets:$assets}' > _site/release.json
 
       - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
           path: _site
 
   deploy:
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     needs: build
     permissions:
