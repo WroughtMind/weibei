@@ -6,10 +6,16 @@ Thank you for helping improve WeiBei.
 
 1. Explain the learner problem and keep each pull request focused on one change.
    Link an existing issue when relevant; a separate issue is not required.
-2. For code changes, compile and run the checks relevant to the affected behavior.
-   For documentation or PR-template-only changes, review content and links and
-   run `git diff --check`; no App build or package is required. Wait for the CI
-   checks triggered by the change to pass.
+2. Validate the affected output: website scripts, assets, and relevant browser
+   behavior for website changes; syntax, types, and behavior for tools; compilation
+   and affected checks for App code; artifact checks for packaging inputs.
+   Documentation and PR templates need content, links, and `git diff --check` only.
+   Website, tool, and documentation changes do not require an App build or package.
+   Combine the relevant checks for mixed changes. Before merging, bring the branch
+   up to date and pass the required checks against its combination with the latest
+   `main`; do not disable this protection. App checks run before merge without a
+   duplicate post-merge run. Full candidate builds belong to an explicit App
+   integration or candidate-acceptance task, not every merge.
 3. Describe the problem solved, verification performed, and remaining risks.
    Record one focused real-App smoke check for user-visible App changes. Include
    a real-App screenshot for substantial layout changes, new screens, or visual
