@@ -4,9 +4,6 @@ on:
   pull_request:
     branches:
       - main
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       full_suite:
@@ -34,6 +31,7 @@ jobs:
       editor: ${{ steps.scope.outputs.editor }}
       data_safety: ${{ steps.scope.outputs.data_safety }}
       tools: ${{ steps.scope.outputs.tools }}
+      website: ${{ steps.scope.outputs.website }}
 
     steps:
       - name: 取出完整源码历史
@@ -46,14 +44,12 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           ./script/ci_changed_scopes.sh --self-check
-          base="$PUSH_BEFORE_SHA"
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             base="$(git merge-base "$PR_BASE_SHA" "$HEAD_SHA")"
-          elif [[ "$EVENT_NAME" == "workflow_dispatch" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+          else
             base="$(git rev-parse "$HEAD_SHA^")"
           fi
           scopes="$(./script/ci_changed_scopes.sh "$base" "$HEAD_SHA")"
@@ -64,11 +60,43 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
           python3 script/check_ci_routing.py
+          for file in script/*.sh DesignSystem/scripts/*.sh; do bash -n "$file"; done
+
+  website-check:
+    name: 官网检查
+    needs: scope
+    if: needs.scope.outputs.website == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 取出源码
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: 检查并组装官网
+        id: website
+        run: bash script/check_website.sh
+
+  tools-check:
+    name: 工具脚本检查
+    needs: scope
+    if: needs.scope.outputs.tools == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 取出源码
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: 安装工具依赖
+        id: dependencies
+        run: npm ci
+      - name: 工具类型检查与行为测试
+        id: tools
+        run: |
+          npm run typecheck:tools
+          npm run test:release-tools
 
   app-check:
     name: 应用编译与相关自检
     needs: scope
-    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.agent == 'true' || needs.scope.outputs.editor == 'true' || needs.scope.outputs.data_safety == 'true' || needs.scope.outputs.tools == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.agent == 'true' || needs.scope.outputs.editor == 'true' || needs.scope.outputs.data_safety == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -81,30 +109,29 @@ jobs:
           xcodebuild -version
 
       - name: 编译
+        id: compile
         if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true'
         run: swift build
 
       - name: 运行应用自检
+        id: core
         if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true'
         run: swift run WeiBeiSelfCheck
 
       - name: 运行开发工具子命令自检
+        id: dev
         if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true'
         run: |
           swift run WeiBeiDev selfcheck-assertions
           swift run WeiBeiDev nslog-scan
 
       - name: 安装 Node 依赖
-        if: (needs.scope.outputs.agent == 'true' || needs.scope.outputs.editor == 'true' || needs.scope.outputs.tools == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+        id: dependencies
+        if: needs.scope.outputs.editor == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: npm ci
 
-      - name: 运行 Node 工具脚本类型检查
-        if: needs.scope.outputs.tools == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: |
-          npm run typecheck:tools
-          npm run test:release-tools
-
       - name: 运行编辑器自检
+        id: editor
         if: needs.scope.outputs.editor == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: |
           npm run typecheck:editor
@@ -114,6 +141,7 @@ jobs:
           swift run WeiBeiWebEditorCheck
 
       - name: 运行课程目录、数据与 Agent 安全自检
+        id: safety
         if: (needs.scope.outputs.data_safety == 'true' || needs.scope.outputs.agent == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: stdbuf -oL -eL swift test --filter WeiBeiSafetyTests
 
@@ -137,9 +165,11 @@ jobs:
           fetch-depth: 0
 
       - name: 安装 Node 依赖（package 前置）
+        id: dependencies
         run: npm ci
 
       - name: 生成、启动并挂载验收 Apple Silicon DMG
+        id: package
         env:
           WEIBEI_TARGET_ARCH: arm64
           WEIBEI_VERIFY_LAUNCH: "1"
@@ -173,8 +203,8 @@ jobs:
 
   intel-check:
     name: Intel 编译、启动与安装包追溯
-    needs: [scope, app-check]
-    if: ${{ !cancelled() && needs.scope.result == 'success' && (needs.app-check.result == 'success' || needs.app-check.result == 'skipped') && (github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || (github.event_name == 'pull_request' && needs.scope.outputs.release == 'true')) }}
+    needs: scope
+    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.release == 'true'
     runs-on: macos-26-intel
     timeout-minutes: 60
 
@@ -191,6 +221,7 @@ jobs:
           xcodebuild -version
 
       - name: Intel 原生编译与核心自检
+        id: core
         if: ${{ github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' }}
         run: |
           swift build
@@ -199,10 +230,12 @@ jobs:
           swift run WeiBeiDev nslog-scan
 
       - name: 安装安装包前置依赖
+        id: dependencies
         if: ${{ (github.event_name == 'pull_request' && needs.scope.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
         run: npm ci
 
       - name: Intel 打包、启动并挂载验收 DMG
+        id: package
         if: ${{ (github.event_name == 'pull_request' && needs.scope.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
         env:
           WEIBEI_TARGET_ARCH: x86_64
@@ -236,7 +269,7 @@ jobs:
   # 保留分支保护要求的名称；分类失败或应用检查失败不能被跳过伪装成成功。
   fast-check:
     name: 快速编译与核心自检
-    needs: [scope, app-check, release-package, intel-check]
+    needs: [scope, website-check, tools-check, app-check, release-package, intel-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -244,10 +277,25 @@ jobs:
       - name: 汇总相关检查结果
         env:
           RESULTS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          FULL_SUITE: ${{ inputs.full_suite || false }}
         run: |
           python3 - <<'PYTHON'
           import json, os
           results = json.loads(os.environ['RESULTS'])
           assert results['scope']['result'] == 'success', '改动范围判断未通过'
-          assert all(job['result'] in ('success', 'skipped') for job in results.values()), '相关检查失败或取消'
+          scopes = results['scope']['outputs']
+          manual = os.environ['EVENT_NAME'] == 'workflow_dispatch'
+          full = manual and os.environ['FULL_SUITE'] == 'true'
+          enabled = lambda key: scopes[key] == 'true'
+          required = {
+              'website-check': enabled('website') or full,
+              'tools-check': enabled('tools') or full,
+              'app-check': manual or any(enabled(k) for k in ('code', 'agent', 'editor', 'data_safety')),
+              'intel-check': manual or enabled('code') or enabled('release'),
+              'release-package': (not manual and enabled('release')) or full,
+          }
+          for name, needed in required.items():
+              allowed = ('success',) if needed else ('success', 'skipped')
+              assert results[name]['result'] in allowed, f"{name}: {results[name]['result']}"
           PYTHON
