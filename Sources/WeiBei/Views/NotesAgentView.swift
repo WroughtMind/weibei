@@ -285,21 +285,6 @@ struct NotePaneView: View {
                     }
 
                     noteBody
-
-                    if hasNoteContent {
-                        HStack {
-                            Spacer(minLength: 0)
-                            Toggle(store.ui("打字机模式", "Typewriter Mode"), isOn: $notesTypewriterMode)
-                                .toggleStyle(.switch)
-                                .controlSize(.small)
-                                .fixedSize()
-                                .accessibilityIdentifier("notes-typewriter-toggle")
-                        }
-                        .weiBeiText(12)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                    }
                 }
                 .opacity(railOnly ? 0 : 1)
                 .allowsHitTesting(!railOnly)
@@ -376,6 +361,7 @@ struct NotePaneView: View {
                 reorderRole: reorderRole
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
+                writingModeMenu
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }
@@ -397,6 +383,7 @@ struct NotePaneView: View {
                 titleRename: noteTabRename
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
+                writingModeMenu
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }
@@ -409,6 +396,18 @@ struct NotePaneView: View {
                     .transition(WeiBeiTransition.floating)
             }
         }
+    }
+
+    private var writingModeMenu: some View {
+        Menu(store.ui("书写模式", "Writing Mode")) {
+            Toggle(store.ui("打字机模式", "Typewriter Mode"), isOn: $notesTypewriterMode)
+                .accessibilityIdentifier("notes-typewriter-toggle")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .weiBeiText(11, weight: .medium)
+        .foregroundStyle(WeiBeiTheme.secondaryInk)
+        .accessibilityIdentifier("notes-writing-menu")
     }
 
     private func notebookCreationPanel(draft: NotebookCreationDraft) -> some View {
