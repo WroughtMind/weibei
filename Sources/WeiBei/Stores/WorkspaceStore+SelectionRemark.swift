@@ -43,30 +43,25 @@ extension WorkspaceStore {
     }
 
     func excerpts(in courseID: UUID?) -> [SelectionRemarkRecord] {
-        selectionRemarkRecords.filter { record in
-            let owner = record.courseID ?? record.itemID.flatMap { id in
-                allItems.first { $0.id == id }?.storage.ownerCourseID
-            }
-            return owner == courseID
-        }.sorted { $0.createdAt < $1.createdAt }
+        selectionRemarkRecords.filter { excerptCourseID(for: $0) == courseID }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    func excerptCourseID(for record: SelectionRemarkRecord) -> UUID? {
+        record.courseID ?? record.itemID.flatMap { id in allItems.first { $0.id == id }?.storage.ownerCourseID }
+    }
+
+    func openExcerptBook(courseID: UUID?, at recordID: UUID? = nil) {
+        excerptBookCourseID = courseID
+        excerptBookTargetRecordID = recordID
+        dismissFloatingSelectionAgent()
+        excerptBookPresented = true
     }
 
     func updateExcerptRemark(_ recordID: UUID, text: String) async -> Bool {
         guard let index = selectionRemarkRecords.firstIndex(where: { $0.id == recordID }) else { return false }
         selectionRemarkRecords[index].remarkText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return await persistWorkspaceNow()
-    }
-
-    /// Explicit insertion always appends at document level, independent of the writing cursor.
-    func appendExcerptToNote(_ record: SelectionRemarkRecord) {
-        guard activeNoteItem != nil else { return }
-        let plain = { (text: String) in
-            text.map { "\\`*_{}[]<>#+-!|".contains($0) ? "\\\($0)" : String($0) }.joined()
-        }
-        var markdown = "**\(plain(record.ownerTitle))**\n\n\(plain(record.selectionText))"
-        if !record.remarkText.isEmpty { markdown += "\n\n\(plain(record.remarkText))" }
-        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: markdown)
-        focus(.notes)
     }
 
     /// 当前材料的记留痕(第三/四刀渲染原文朱砂标记用)。
@@ -76,9 +71,10 @@ extension WorkspaceStore {
         return selectionRemarkRecords.filter { $0.itemID == itemID && ($0.courseID == nil || $0.courseID == courseID) }
     }
 
-    /// 点击原文朱砂短棒:以该记录回访,浮层进"记"模式并预填已有札记(续记)。
+    /// 点击原文标记先查看已存批注；只有主动编辑才请求输入焦点。
     func openSelectionRemarkRecord(_ recordID: String, anchor: SelectionPopoverAnchor?) {
         guard let record = selectionRemarkRecords.first(where: { $0.id.uuidString == recordID }) else { return }
+        excerptRevealRequest = nil
         keepFloatingSelectionForAnswer = true
         selectionContext = SelectionContext(
             id: record.id,
@@ -90,7 +86,6 @@ extension WorkspaceStore {
         )
         selectionAnchor = anchor
         interaction.floatingComposerMode = .remark
-        interaction.selectionNoteDraft = record.remarkText
         agentSurface = .selectionFloat
         keepFloatingSelectionForAnswer = true
     }

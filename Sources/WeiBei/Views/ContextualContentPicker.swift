@@ -106,8 +106,7 @@ struct ContextualContentPicker: View {
             }
             if kind == .note {
                 Button {
-                    store.excerptBookCourseID = group.course?.id
-                    store.excerptBookPresented = true
+                    store.openExcerptBook(courseID: group.course?.id)
                 } label: {
                     Label(store.ui("摘抄本", "Excerpts"), systemImage: "text.book.closed")
                         .weiBeiText(13).frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)

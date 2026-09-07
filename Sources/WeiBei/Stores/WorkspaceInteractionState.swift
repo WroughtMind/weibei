@@ -16,6 +16,11 @@ enum FloatingSelectionComposerMode {
     case remark
 }
 
+struct ExcerptRevealRequest: Equatable {
+    let id = UUID()
+    let recordID: UUID
+}
+
 /// Transient selection / floating-agent interaction chrome.
 /// Isolated from `WorkspaceStore` so selection drag does not rebuild the whole workspace tree.
 @MainActor

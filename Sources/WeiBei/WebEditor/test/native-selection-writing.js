@@ -36,13 +36,13 @@ for (const initial of ['', '\u200b']) {
   for (const character of '1. ') await native('insert', character);
   expect(document.querySelector('.ProseMirror > ol > li'), 'A visually empty line could not start a list');
 }
-window.webkit.messageHandlers.nativeInput.postMessage({ operation: 'checkpoint', text: 'append and selection' });
-// Explicit insertion must preserve a selection inside a quote and append outside it.
+window.webkit.messageHandlers.nativeInput.postMessage({ operation: 'checkpoint', text: 'selection and marks' });
+// Existing Agent append commands must preserve a selection inside a quote.
 await reset('> 原来的引用\n\n正文');
 editor.selectFirstTextForCheck('原来的引用');
-editor.applyAgentPatch('**摘抄来源**\n\n新的原文');
-expect(document.querySelector('.ProseMirror blockquote').textContent === '原来的引用', 'Append overwrote the selected quote');
-expect(document.querySelector('.ProseMirror > p:last-child').textContent === '新的原文', 'Append nested the excerpt at the cursor');
+editor.applyAgentPatch('补充的正文');
+expect(document.querySelector('.ProseMirror blockquote').textContent === '原来的引用', 'Agent append overwrote the selected quote');
+expect(document.querySelector('.ProseMirror > p:last-child').textContent === '补充的正文', 'Agent append entered the existing quote');
 // Forward and backward selection must use different ends of the same passage.
 await reset('第一段选择文字。\n\n第二段选择文字。');
 const paragraphs = document.querySelectorAll('.ProseMirror > p');
@@ -71,14 +71,43 @@ dot.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: bounds.right
 await pause();
 const mark = window.remarkEvents.at(-1);
 expect(mark?.recordId === 'remark-check' && Math.abs(mark.rect.y - (bounds.top + bounds.height / 2)) < 2, 'Remark popover lost the clicked passage coordinates');
+// Returning from the book reveals the exact occurrence once, without hijacking later scrolling.
+await reset('同一句\n\n' + Array(40).fill('阅读中的其他内容。').join('\n\n') + '\n\n同一句\n\n末尾');
+editor.setEditable(false);
+const textIndex = document.querySelector('.ProseMirror').textContent.replace(/\s/g, '');
+const repeatedStart = textIndex.lastIndexOf('同一句');
+const target = { id: 'return-check', text: '同一句', anchor: { startOffset: repeatedStart, endOffset: repeatedStart + 3 }, active: true, reveal: 'markdown-return' };
+editor.setSelectionRemarkMarks([target]);
+editor.setSelectionAskMarks([{ ...target, id: 'ask-return-check' }]);
+await pause();
+const revealed = document.querySelector('.weibei-remark-active');
+expect(revealed && revealed.getBoundingClientRect().top >= 0 && revealed.getBoundingClientRect().bottom < innerHeight, 'Markdown return did not reveal the anchored occurrence');
+window.scrollTo(0, 0);
+editor.setSelectionRemarkMarks([target]);
+expect(window.scrollY === 0, 'A remark refresh took over the reader scroll position');
+const markedText = document.querySelector('.weibei-remark-mark').firstChild;
+selection.setBaseAndExtent(markedText, 0, markedText, 1);
+const eventCount = window.remarkEvents.length;
+const askCount = window.askEvents.length;
+document.querySelector('.weibei-remark-mark').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+await pause();
+expect(window.remarkEvents.length === eventCount, 'Selecting a marked passage opened its remark instead');
+expect(window.askEvents.length === askCount, 'Selecting a marked passage opened its question instead');
+selection.removeAllRanges();
 // The same normalized anchor and wrapper implementation also runs in HTML documents.
 const html = document.createElement('article');
-html.innerHTML = '<p>同一句</p><p>第一段<b>加粗</b>文字。</p><p>第二段收尾。𠮷</p><p>同一句</p>';
+html.innerHTML = '<p>同一句</p><p>第一段<b>加粗</b>文字。</p><p>第二段收尾。𠮷</p><p style="margin-top:1500px">同一句</p>';
 document.body.appendChild(html);
 const index = window.WeiBeiSelection.indexDOMSelectionText(html);
 const startOffset = index.text.lastIndexOf('同一句');
-window.WeiBeiSelection.applyDOMSelectionMarks(html, [{ id: 'repeat', text: '同一句', anchor: { startOffset, endOffset: startOffset + 3 } }, { id: 'multi', text: passage }], 'remark', 'data-id');
-expect(html.querySelectorAll('[data-id="repeat"]').length === 1 && !html.firstChild.querySelector('.remark'), 'HTML marks confused repeated passages');
-expect(Array.from(html.querySelectorAll('[data-id="multi"]')).map(node => node.textContent).join('') === passage.replace(/\s/g, ''), 'HTML marks lost formatted or multi-paragraph text');
+const htmlMarks = [{ id: 'repeat', text: '同一句', anchor: { startOffset, endOffset: startOffset + 3 }, active: true, reveal: 'html-return' }, { id: 'multi', text: passage }];
+window.WeiBeiSelection.applyDOMSelectionMarks(html, htmlMarks, 'weibei-remark-mark', 'data-record-id');
+expect(html.querySelectorAll('[data-record-id="repeat"]').length === 1 && !html.firstChild.querySelector('.weibei-remark-mark'), 'HTML marks confused repeated passages');
+expect(Array.from(html.querySelectorAll('[data-record-id="multi"]')).map(node => node.textContent).join('') === passage.replace(/\s/g, ''), 'HTML marks lost formatted or multi-paragraph text');
+const htmlTarget = html.querySelector('.weibei-remark-active').getBoundingClientRect();
+expect(htmlTarget.top >= 0 && htmlTarget.bottom <= innerHeight, 'HTML return did not reveal the anchored occurrence');
+window.scrollTo(0, 0);
+window.WeiBeiSelection.applyDOMSelectionMarks(html, htmlMarks, 'weibei-remark-mark', 'data-record-id');
+expect(window.scrollY === 0, 'HTML mark refresh took over scrolling');
 html.remove();
-return { quotes: true, composition: true, lists: true, append: true, direction: true, markdownMarks: true, htmlMarks: true };
+return { quotes: true, composition: true, lists: true, direction: true, markdownMarks: true, htmlMarks: true, excerptReturn: true };

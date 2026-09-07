@@ -104,6 +104,21 @@ public struct SelectionRemarkRecord: Identifiable, Codable, Hashable, Sendable {
     public var documentAnchor: SelectionDocumentAnchor?
     public var createdAt: Date
 
+    public var excerptSourceKey: String { itemID ?? ownerTitle }
+
+    public static func inDocumentOrder(_ left: Self, _ right: Self) -> Bool {
+        func position(_ record: Self) -> (Int, Int, Double, Double) {
+            if let pdf = record.documentAnchor?.pdf {
+                return (0, pdf.pageIndex, -(pdf.lineRects.first?.y ?? 0), pdf.lineRects.first?.x ?? 0)
+            }
+            if let text = record.documentAnchor?.text { return (1, 0, Double(text.startOffset), 0) }
+            return (2, 0, 0, 0)
+        }
+        if position(left) != position(right) { return position(left) < position(right) }
+        if left.createdAt != right.createdAt { return left.createdAt < right.createdAt }
+        return left.id.uuidString < right.id.uuidString
+    }
+
     public init(
         id: UUID = UUID(),
         selectionText: String,

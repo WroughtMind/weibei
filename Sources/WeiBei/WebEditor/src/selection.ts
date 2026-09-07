@@ -22,7 +22,7 @@ export const selectionEndpointRect = (selection: Selection | null) => {
 };
 
 export type SelectionTextAnchor = { startOffset: number; endOffset: number };
-export type SelectionMark = { id: string; text: string; anchor?: SelectionTextAnchor };
+export type SelectionMark = { id: string; text: string; anchor?: SelectionTextAnchor; active?: boolean; reveal?: string };
 export type SelectionTextIndex<T> = { text: string; points: T[] };
 
 /** Whitespace has no stable layout across PDF/HTML/Markdown; anchors count visible characters. */
@@ -81,6 +81,17 @@ export const domSelectionTextAnchor = (selection: Selection | null, root: Node) 
   return endOffset > startOffset ? { startOffset, endOffset } : null;
 };
 
+let lastRevealRequest = '';
+export const revealSelectionMarks = (root: ParentNode, marks: SelectionMark[]) => {
+  const mark = marks.find(mark => mark.reveal && mark.reveal !== lastRevealRequest);
+  if (!mark) return;
+  const element = Array.from(root.querySelectorAll('.weibei-remark-mark[data-record-id]'))
+    .find(element => element.getAttribute('data-record-id') === mark.id);
+  if (!element) return;
+  element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+  lastRevealRequest = mark.reveal!;
+};
+
 export const applyDOMSelectionMarks = (root: HTMLElement, marks: SelectionMark[], className: string, idAttribute: string) => {
   root.querySelectorAll(`.${className}`).forEach(element => {
     const parent = element.parentNode;
@@ -105,10 +116,12 @@ export const applyDOMSelectionMarks = (root: HTMLElement, marks: SelectionMark[]
       fragment.setEnd(node, portion.to);
       const span = document.createElement('span');
       span.className = className;
+      if (mark.active && className === 'weibei-remark-mark') span.classList.add('weibei-remark-active');
       if (last && className === 'weibei-remark-mark') span.classList.add('weibei-remark-end');
       span.setAttribute(idAttribute, mark.id);
       fragment.surroundContents(span);
       last = false;
     }
   }
+  if (className === 'weibei-remark-mark') revealSelectionMarks(root, marks);
 };

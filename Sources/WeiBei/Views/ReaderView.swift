@@ -223,6 +223,7 @@ struct ReaderView: View {
 
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
+    @EnvironmentObject private var interaction: WorkspaceInteractionState
     @State private var pdfBrowseMode: PDFBrowseMode = .scroll
     @State private var pdfPageIndex = 0
     @State private var pdfPageCount = 0
@@ -314,6 +315,10 @@ struct ReaderView: View {
                     HStack(spacing: 8) {
                         ContextualContentListButton(kind: .material)
                         selectionAskThreadsMenu
+                        if let item = store.selectedMaterialItem,
+                           !store.selectionRemarkRecords(forItemID: item.id).isEmpty {
+                            ExcerptBookButton(itemID: item.id)
+                        }
                         importedDocumentAdaptationControl
                     }
                 }
@@ -402,6 +407,17 @@ struct ReaderView: View {
         .onChange(of: store.readerTargetLocationRequestID) { _, _ in
             applyPendingHTMLLocationIfReady()
         }
+    }
+
+    private var activeRemarkID: UUID? {
+        if interaction.floatingComposerMode == .remark, let id = interaction.selectionContext?.id,
+           store.selectionRemarkRecords.contains(where: { $0.id == id }) { return id }
+        return store.excerptRevealRequest?.recordID
+    }
+
+    private func remarkMarksJSON(for itemID: String) -> String {
+        selectionRemarkMarksJSON(store.selectionRemarkRecords(forItemID: itemID),
+            activeID: activeRemarkID, revealRequest: store.excerptRevealRequest)
     }
 
     private func selectionAskMarksJSON(for itemID: String) -> String {
@@ -1007,6 +1023,8 @@ struct ReaderView: View {
                         remarkMarks: store.selectionRemarkRecords(forItemID: item.id).map {
                             (id: $0.id.uuidString, anchor: $0.documentAnchor, text: $0.selectionText)
                         },
+                        activeRemarkID: activeRemarkID?.uuidString,
+                        excerptRevealRequest: store.excerptRevealRequest,
                         onRemarkMarkActivate: { recordID, anchor in
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
@@ -1036,7 +1054,7 @@ struct ReaderView: View {
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         contentRailTarget: htmlContentRailTarget,
                         selectionAskMarks: selectionAskMarksJSON(for: item.id),
-                        selectionRemarkMarks: selectionRemarkMarksJSON(store.selectionRemarkRecords(forItemID: item.id)),
+                        selectionRemarkMarks: remarkMarksJSON(for: item.id),
                         onContentRailChange: applyHTMLContentRailSections,
                         onContentRailActiveChange: applyHTMLContentRailActiveID,
                         onSelectionAskMark: { threadID, anchor in
@@ -1122,9 +1140,7 @@ struct ReaderView: View {
             appearanceMode: store.appearanceMode,
             interfaceLanguage: store.interfaceLanguage,
             selectionAskMarks: selectionAskMarksJSON(for: store.selectedMaterialItem?.id ?? ""),
-            selectionRemarkMarks: selectionRemarkMarksJSON(
-                store.selectionRemarkRecords(forItemID: store.selectedMaterialItem?.id ?? "")
-            ),
+            selectionRemarkMarks: remarkMarksJSON(for: store.selectedMaterialItem?.id ?? ""),
             onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
             onSourceReference: { reference in store.openSourceReference(reference) },
             onSelectionAskMark: { threadID, anchor in
@@ -1250,6 +1266,8 @@ struct PDFReaderRepresentable: NSViewRepresentable {
     var onAskUnderlineActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     /// 记过原文标记(句末朱砂短棒):数据来自 selectionRemarkRecords,渲染在 ReaderPDFRemarkMarks。
     var remarkMarks: [(id: String, anchor: SelectionDocumentAnchor?, text: String)] = []
+    var activeRemarkID: String?
+    var excerptRevealRequest: ExcerptRevealRequest?
     var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
@@ -1293,11 +1311,8 @@ struct PDFReaderRepresentable: NSViewRepresentable {
             coordinator?.handleRemarkMarkHover(at: point, in: view)
         }
         view.handleAskUnderlineClick = { [weak coordinator = context.coordinator, weak view] point in
-            guard let view else { return false }
-            // 朱砂短棒热区小,优先于下划线命中。
-            return coordinator?.handleRemarkMarkClick(at: point, in: view)
-                ?? coordinator?.handleAskUnderlineClick(at: point, in: view)
-                ?? false
+            guard let view, let coordinator else { return false }
+            return coordinator.handleSelectionMarkClick(at: point, in: view)
         }
         return view
     }
@@ -1362,6 +1377,8 @@ struct PDFReaderRepresentable: NSViewRepresentable {
             ? underlineSnippets.map { (id: "", text: $0, anchor: nil) }
             : askUnderlineMarks, in: view)
         context.coordinator.applyRemarkMarks(remarkMarks, in: view)
+        context.coordinator.setActiveRemark(activeRemarkID, in: view)
+        context.coordinator.revealRemark(excerptRevealRequest, in: view)
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
                 in: view,
@@ -1407,6 +1424,8 @@ struct PDFReaderRepresentable: NSViewRepresentable {
         var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
         var remarkHits: [PDFRemarkMarkHit] = []
         var hoveredRemarkRecordID: String?
+        var activeRemarkRecordID: String?
+        var lastExcerptRevealRequestID: UUID?
         var lastAppliedRemarkMarkSignature: String?
         private var selectionReportGate = PDFSelectionReportGate()
         private var lastPointerInView: CGPoint?
@@ -2651,6 +2670,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
             WeiBeiSelection.applyDOMSelectionMarks(document.body, marks, "weibei-selection-ask-mark", "data-thread-id");
             document.querySelectorAll(".weibei-selection-ask-mark").forEach((el) => {
               el.onclick = function(ev) {
+                if (window.getSelection()?.toString().trim()) return;
                 ev.preventDefault();
                 ev.stopPropagation();
                 const threadId = el.dataset.threadId || "";

@@ -2,12 +2,14 @@ import Foundation
 import WeiBeiCore
 
 /// 记过标记 JSON:`[{id, text}]`(与 selectionAskMarksJSON 同构,排序稳定防 WebKit IPC 抖动)。
-func selectionRemarkMarksJSON(_ records: [SelectionRemarkRecord]) -> String {
+func selectionRemarkMarksJSON(_ records: [SelectionRemarkRecord], activeID: UUID? = nil, revealRequest: ExcerptRevealRequest? = nil) -> String {
     let marks = records.map { record -> [String: Any] in
         var mark: [String: Any] = [
             "id": record.id.uuidString,
             "text": record.selectionText,
+            "active": record.id == activeID,
         ]
+        if revealRequest?.recordID == record.id { mark["reveal"] = revealRequest?.id.uuidString }
         if let anchor = record.documentAnchor?.text {
             mark["anchor"] = ["startOffset": anchor.startOffset, "endOffset": anchor.endOffset]
         }
@@ -34,7 +36,8 @@ extension WebReaderRepresentable {
           transition: background-color 120ms ease;
         }
         .weibei-remark-mark:hover,
-        .weibei-remark-mark.weibei-remark-hover {
+        .weibei-remark-mark.weibei-remark-hover,
+        .weibei-remark-mark.weibei-remark-active {
           background-color: rgba(145, 38, 27, 0.14);
         }
         .weibei-remark-dot {
@@ -108,6 +111,7 @@ extension WebReaderRepresentable {
             WeiBeiSelection.applyDOMSelectionMarks(document.body, marks, "weibei-remark-mark", "data-record-id");
             document.querySelectorAll(".weibei-remark-mark").forEach((el) => {
               el.onclick = function(ev) {
+                if (window.getSelection()?.toString().trim()) return;
                 ev.preventDefault();
                 ev.stopPropagation();
                 const recordId = el.dataset.recordId || "";

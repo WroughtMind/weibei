@@ -537,6 +537,8 @@ final class WorkspaceStore: ObservableObject {
     /// 选区"记"留痕(原文标记渲染与回访;管理逻辑在 WorkspaceStore+SelectionRemark)。
     @Published var excerptBookPresented = false
     @Published var excerptBookCourseID: UUID?
+    @Published var excerptBookTargetRecordID: UUID?
+    @Published var excerptRevealRequest: ExcerptRevealRequest?
     @Published var selectionRemarkRecords: [SelectionRemarkRecord] = []
     /// Thread currently shown in the floating selection agent (full answer surface).
     var activeSelectionAskThreadID: UUID? {
@@ -5003,9 +5005,7 @@ final class WorkspaceStore: ObservableObject {
         guard let id = record.itemID, let item = item(withID: id) else { return }
         excerptBookPresented = false
         openContextualItem(id, kind: item.isNotebookNote ? .note : .material)
-        if item.kind == .pdf {
-            requestReaderPDFPage(record.documentAnchor?.pdf?.pageIndex, recordsLocation: true)
-        }
+        excerptRevealRequest = ExcerptRevealRequest(recordID: record.id)
     }
 
     func openSelectedSourceReference() {
@@ -6207,6 +6207,7 @@ final class WorkspaceStore: ObservableObject {
             clearUnpinnedFloatingSelection(keepContext: false)
             return
         }
+        excerptRevealRequest = nil
         lastSelectionUpdateDate = Date()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)

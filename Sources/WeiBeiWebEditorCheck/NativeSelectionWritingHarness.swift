@@ -21,8 +21,10 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
         window.weiBeiEditorCheckMode = true;
         window.selectionEvents = [];
         window.remarkEvents = [];
+        window.askEvents = [];
         window.webkit.messageHandlers.selectionChanged = { postMessage: body => window.selectionEvents.push(body) };
         window.webkit.messageHandlers.remarkMark = { postMessage: body => window.remarkEvents.push(body) };
+        window.webkit.messageHandlers.selectionAskMark = { postMessage: body => window.askEvents.push(body) };
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         web = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: config)
         window = NSWindow(contentRect: web.frame, styleMask: .borderless, backing: .buffered, defer: false)

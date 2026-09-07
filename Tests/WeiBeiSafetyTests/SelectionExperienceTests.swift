@@ -53,6 +53,54 @@ final class SelectionExperienceTests: XCTestCase {
         }
     }
 
+    func testExcerptsFollowDocumentPositionsInsteadOfCaptureTime() {
+        let later = SelectionRemarkRecord(selectionText: "后段", remarkText: "", source: .document, ownerTitle: "文稿",
+            documentAnchor: SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 20, endOffset: 22)))
+        var earlier = later
+        earlier.id = UUID()
+        earlier.documentAnchor = SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 0, endOffset: 2))
+        earlier.createdAt = later.createdAt.addingTimeInterval(10)
+        var unlocated = later
+        unlocated.id = UUID()
+        unlocated.documentAnchor = nil
+        XCTAssertEqual([later, unlocated, earlier].sorted(by: SelectionRemarkRecord.inDocumentOrder).map(\.id), [earlier.id, later.id, unlocated.id])
+        earlier.documentAnchor = SelectionDocumentAnchor(pdf: PDFSelectionAnchor(pageIndex: 1, lineRects: [SelectionRect(x: 20, y: 500, width: 50, height: 16)]))
+        var lower = later
+        lower.documentAnchor = SelectionDocumentAnchor(pdf: PDFSelectionAnchor(pageIndex: 1, lineRects: [SelectionRect(x: 20, y: 100, width: 50, height: 16)]))
+        var nextPage = unlocated
+        nextPage.documentAnchor = SelectionDocumentAnchor(pdf: PDFSelectionAnchor(pageIndex: 2, lineRects: [SelectionRect(x: 20, y: 600, width: 50, height: 16)]))
+        XCTAssertEqual([nextPage, lower, earlier].sorted(by: SelectionRemarkRecord.inDocumentOrder).map(\.id), [earlier.id, lower.id, nextPage.id])
+    }
+
+    @MainActor
+    func testReturningFromBookOpensSourceAndCarriesItsExactAnchor() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("source.md")
+        try "同一句\n\n第二处同一句".write(to: file, atomically: true, encoding: .utf8)
+        let item = StudyItem(id: "source", title: "文稿", subtitle: "", kind: .markdown, urlPath: file.path, isSample: false)
+        store.importedItems = [item]
+        let record = SelectionRemarkRecord(selectionText: "同一句", remarkText: "批注", source: .document, ownerTitle: item.title, itemID: item.id,
+            documentAnchor: SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 6, endOffset: 9)))
+        store.selectionRemarkRecords = [record]
+        store.openExcerptBook(courseID: nil, at: record.id)
+        store.openExcerptSource(record)
+        XCTAssertFalse(store.excerptBookPresented)
+        XCTAssertEqual(store.selectedMaterialItem?.id, item.id)
+        let request = try XCTUnwrap(store.excerptRevealRequest)
+        XCTAssertEqual(request.recordID, record.id)
+        let json = selectionRemarkMarksJSON([record], activeID: record.id, revealRequest: request)
+        let marks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
+        XCTAssertEqual(marks.first?["reveal"] as? String, request.id.uuidString)
+        XCTAssertEqual((marks.first?["anchor"] as? [String: Int])?["startOffset"], 6)
+        XCTAssertEqual(marks.first?["active"] as? Bool, true)
+        XCTAssertNil(store.noteEditorCommand, "Returning to a source must not insert anything into a note")
+        store.openExcerptSource(record)
+        XCTAssertNotEqual(store.excerptRevealRequest?.id, request.id, "Returning again must issue a fresh scroll request")
+    }
+
     @MainActor
     func testPendingRemarkKeepsTheSubmittedPassageWhenSelectionChanges() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -93,12 +141,19 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertEqual(store.interaction.selectionNoteDraft, "还没写入的批注")
         XCTAssertNil(store.noteEditorCommand)
         let record = store.selectionRemarkRecords[0]
+        let focusRequest = store.paneState.focusRequest
         store.openSelectionRemarkRecord(record.id.uuidString, anchor: SelectionPopoverAnchor(x: 300, y: 180))
         XCTAssertEqual(store.selectionContext?.id, record.id)
         XCTAssertEqual(store.selectionAnchor?.y, 180)
         XCTAssertTrue(store.keepFloatingSelectionForAnswer)
+        XCTAssertEqual(store.interaction.selectionNoteDraft, "还没写入的批注", "Viewing a saved remark must preserve the unsubmitted draft")
+        XCTAssertEqual(store.paneState.focusRequest, focusRequest, "Viewing a remark must not request input focus")
         store.updateSelection("", source: .note)
         XCTAssertEqual(store.selectionContext?.id, record.id, "An unrelated pane losing selection must not dismiss the open remark")
+        store.openExcerptBook(courseID: store.excerptCourseID(for: record), at: record.id)
+        XCTAssertTrue(store.excerptBookPresented)
+        XCTAssertEqual(store.excerptBookTargetRecordID, record.id)
+        XCTAssertFalse(store.keepFloatingSelectionForAnswer)
     }
 }
 

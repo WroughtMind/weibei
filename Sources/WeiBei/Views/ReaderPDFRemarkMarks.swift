@@ -119,6 +119,7 @@ extension PDFReaderRepresentable.Coordinator {
                 )
             }
         }
+        applyRemarkHoverHighlight(in: view)
     }
 
     /// 整页文本按行分解,取"句子末行所在整行"的右缘(同列判定:行起点最接近)。
@@ -178,10 +179,30 @@ extension PDFReaderRepresentable.Coordinator {
         }
     }
 
+    func setActiveRemark(_ recordID: String?, in view: PDFView) {
+        guard activeRemarkRecordID != recordID else { return }
+        activeRemarkRecordID = recordID
+        applyRemarkHoverHighlight(in: view)
+    }
+
+    func revealRemark(_ request: ExcerptRevealRequest?, in view: PDFView) {
+        guard let request, request.id != lastExcerptRevealRequestID,
+              let hit = remarkHits.first(where: { $0.recordID == request.recordID.uuidString }),
+              let pageIndex = hit.highlightRectsByPage.keys.min(),
+              let rect = hit.highlightRectsByPage[pageIndex]?.first,
+              let page = view.document?.page(at: pageIndex) else { return }
+        view.go(to: rect.insetBy(dx: -12, dy: -24), on: page)
+        lastExcerptRevealRequestID = request.id
+    }
+
+    func handleSelectionMarkClick(at point: CGPoint, in view: PDFView) -> Bool {
+        handleRemarkMarkClick(at: point, in: view) || handleAskUnderlineClick(at: point, in: view)
+    }
+
     private func applyRemarkHoverHighlight(in view: PDFView) {
         guard let document = view.document else { return }
         clearRemarkAnnotations(in: document, includingHover: true, bars: false)
-        guard let recordID = hoveredRemarkRecordID else { return }
+        guard let recordID = hoveredRemarkRecordID ?? activeRemarkRecordID else { return }
         let fill = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.14)
         for hit in remarkHits where hit.recordID == recordID {
             for (pageIndex, rects) in hit.highlightRectsByPage {

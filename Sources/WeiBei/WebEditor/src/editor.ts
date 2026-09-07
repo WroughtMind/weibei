@@ -16,7 +16,7 @@ import {
 import { streamingAppearancePlugin } from './streaming-appearance';
 import { createTypewriterPlugin, setTypewriterMode } from './typewriter';
 import { createSyntaxMarksPlugin } from './syntax-marks';
-import { indexSelectionText, selectionEndpointRect, selectionMarkRange } from './selection';
+import { indexSelectionText, revealSelectionMarks, selectionEndpointRect, selectionMarkRange } from './selection';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
@@ -1416,7 +1416,8 @@ const addRangeDecoration = (decorations: any, from: any, to: any, className: any
 };
 
 const normalizeSelectionMarks = (marks: any) => (Array.isArray(marks) ? marks : [])
-  .map((mark) => ({ id: String(mark?.id || ''), text: String(mark?.text || '').trim(), anchor: mark?.anchor }))
+  .map((mark) => ({ id: String(mark?.id || ''), text: String(mark?.text || '').trim(), anchor: mark?.anchor,
+    active: mark?.active === true, reveal: typeof mark?.reveal === 'string' ? mark.reveal : undefined }))
   .filter((mark) => mark.id && mark.text.length > 0);
 
 const documentSelectionTextIndex = (doc: any) => {
@@ -1439,7 +1440,9 @@ const decorateSelectionMarks = (decorations: any[], doc: any) => {
       if (!range) continue;
       const from = index.points[range.startOffset];
       const to = index.points[range.endOffset - 1] + 1;
-      addRangeDecoration(decorations, from, to, className, { [idAttribute]: mark.id });
+      addRangeDecoration(decorations, from, to,
+        className + (mark.active && idAttribute === 'data-record-id' ? ' weibei-remark-active' : ''),
+        { [idAttribute]: mark.id });
       if (idAttribute === 'data-record-id') {
         const lastCharacter = Array.from(index.text.slice(range.startOffset, range.endOffset)).at(-1)!;
         addRangeDecoration(decorations, to - lastCharacter.length, to, 'weibei-remark-end', { [idAttribute]: mark.id });
@@ -1655,6 +1658,7 @@ const activateSourceReference = (target: any) => {
 };
 
 const activateSelectionAskMark = (target: any, event?: MouseEvent) => {
+  if (window.getSelection()?.toString().trim()) return false;
   const mark = target instanceof Element
     ? target.closest('.weibei-selection-ask-mark[data-thread-id]')
     : null;
@@ -1666,6 +1670,7 @@ const activateSelectionAskMark = (target: any, event?: MouseEvent) => {
 };
 
 const activateSelectionRemarkMark = (target: any, event?: MouseEvent) => {
+  if (window.getSelection()?.toString().trim()) return false;
   const mark = target instanceof Element
     ? target.closest('.weibei-remark-mark[data-record-id]')
     : null;
@@ -2936,6 +2941,7 @@ const setSelectionRemarkMarksInternal = (marks: any) => {
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     view.dispatch(view.state.tr.setMeta('weibeiSelectionAskMarksChanged', true));
+    revealSelectionMarks(view.dom, selectionRemarkMarks);
   });
 };
 
@@ -3313,8 +3319,8 @@ const appendMarkdownInternal = (markdown: any) => {
   ensureEditor();
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const parsed = ctx.get(parserCtx)(normalizeMarkdownSource(markdown, 'internalFragment'));
-    if (!parsed) throw new Error('The excerpt could not be parsed');
+    const parsed = ctx.get(parserCtx)(normalizeMarkdownSource(markdown, 'agentGenerated'));
+    if (!parsed) throw new Error('The Markdown fragment could not be parsed');
     const tr = closeHistory(view.state.tr.insert(view.state.doc.content.size, parsed.content));
     tr.setSelection(Selection.atEnd(tr.doc));
     view.dispatch(tr.scrollIntoView());

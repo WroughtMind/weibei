@@ -47,7 +47,7 @@ struct FloatingAgentModeSwitch: View {
 /// 与问的 agentDraft 互不覆盖。
 struct SelectionRemarkField: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @Binding var text: String
     var submit: () -> Void
     @FocusState private var focused: Bool
     @State private var editorHeight: CGFloat = 0
@@ -58,7 +58,7 @@ struct SelectionRemarkField: View {
         HStack(alignment: .bottom, spacing: 8) {
             ZStack(alignment: .topLeading) {
                 AgentComposerTextEditor(
-                    text: $interaction.selectionNoteDraft,
+                    text: $text,
                     measuredHeight: $editorHeight,
                     active: $active,
                     focused: $focused,
@@ -70,8 +70,8 @@ struct SelectionRemarkField: View {
                     submit: submit
                 )
                 .frame(height: max(20, editorHeight))
-                if interaction.selectionNoteDraft.isEmpty && !active {
-                    Text(store.ui("记一句…（留空只存原文）", "Add a remark…"))
+                if text.isEmpty && !active {
+                    Text(store.ui("写下批注…", "Add a remark…"))
                         .weiBeiText(15)
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                         .allowsHitTesting(false)

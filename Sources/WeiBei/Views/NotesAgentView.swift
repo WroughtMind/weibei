@@ -2369,7 +2369,11 @@ struct FloatingSelectionAgentView: View {
 
     var body: some View {
         Group {
-            if showsExpandedBody {
+            if interaction.floatingComposerMode == .remark,
+               let record = store.selectionRemarkRecords.first(where: { $0.id == interaction.selectionContext?.id }) {
+                ExcerptRemarkPopover(record: record, close: closeFloatingAgent)
+                    .id(record.id)
+            } else if showsExpandedBody {
                 expandedBody
             } else {
                 promptBody
@@ -2448,7 +2452,10 @@ struct FloatingSelectionAgentView: View {
         }
         .onExitCommand {
             // 两段式 Esc:先收成胶囊,再按才整体关闭;流式/固定状态下保持直接关闭。
-            if showsExpandedBody && !store.isAgentRunningInActiveChat && !interaction.pinnedFloatingAgent {
+            if interaction.floatingComposerMode == .remark,
+               store.selectionRemarkRecords.contains(where: { $0.id == interaction.selectionContext?.id }) {
+                closeFloatingAgent()
+            } else if showsExpandedBody && !store.isAgentRunningInActiveChat && !interaction.pinnedFloatingAgent {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = false
                     store.keepFloatingSelectionForAnswer = false
@@ -2771,7 +2778,7 @@ struct FloatingSelectionAgentView: View {
     /// 问/记共用同一浮层,底部输入框按模式切换;两种草稿互不覆盖。
     @ViewBuilder private var composerField: some View {
         if interaction.floatingComposerMode == .remark {
-            SelectionRemarkField {
+            SelectionRemarkField(text: $interaction.selectionNoteDraft) {
                 submitRemark()
             }
             .disabled(savingRemark)
