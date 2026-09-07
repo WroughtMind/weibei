@@ -511,7 +511,7 @@ private struct WorkspaceChromeBackdrop: View {
                 mode: store.appearanceMode,
                 isFullScreen: isFullScreen
             )
-            if empty {
+            if empty && store.appearanceMode != .glassMist && store.appearanceMode != .glassSlate {
                 EmptyWorkspacePaperField(mode: store.appearanceMode, compact: false)
             }
         }

@@ -58,10 +58,10 @@ enum WeiBeiAppearanceStyle: String, CaseIterable, Identifiable {
 
     func label(ui: (String, String) -> String) -> String {
         switch self {
-        case .paperInk: return ui("纸面 · 墨石", "Paper · Inkstone")
-        case .xuanStele: return ui("宣纸 · 石碑", "Xuan · Stele")
-        case .clearGlass: return ui("晴璃 · 夜璃", "Clear · Dark Glass")
-        case .mistGlass: return ui("雾璃 · 玄璃", "Mist · Slate Glass")
+        case .paperInk: return ui("吊桥", "The Drawbridge")
+        case .xuanStele: return ui("大桥骤雨", "Sudden Shower over the Bridge")
+        case .clearGlass: return ui("圣拉扎尔车站", "Saint-Lazare Station")
+        case .mistGlass: return ui("蓝与银的夜曲", "Nocturne in Blue and Silver")
         }
     }
 }
