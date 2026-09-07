@@ -46,7 +46,6 @@ struct NativeChatMarkdownView: NSViewRepresentable {
     var appearanceKey: String = ""
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var onOpenURL: (URL) -> Void
-    var onHeightChange: (CGFloat) -> Void
     var visualizationView: NativeChatVisualizationView? = nil
     var imageLoader: ((String, @escaping (Data?) -> Void) -> Void)? = nil
 
@@ -61,12 +60,12 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.widthTracksTextView = true
         view.isHorizontallyResizable = false
-        view.isVerticallyResizable = true
-        view.autoresizingMask = [.width]
+        // SwiftUI assigns the height returned by sizeThatFits; TextKit must not resize it again.
+        view.isVerticallyResizable = false
+        view.autoresizingMask = []
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.delegate = context.coordinator
         context.coordinator.view = view
-        view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.measure() }
         context.coordinator.pipeline.onApply = { [weak coordinator = context.coordinator] document, edit in coordinator?.apply(document, edit: edit) }
         updateNSView(view, context: context)
         return view
@@ -74,7 +73,6 @@ struct NativeChatMarkdownView: NSViewRepresentable {
     func updateNSView(_ view: NativeChatTextView, context: Context) {
         let coordinator = context.coordinator
         coordinator.onOpenURL = onOpenURL
-        coordinator.onHeightChange = onHeightChange
         coordinator.visualizationView = visualizationView
         coordinator.imageLoader = imageLoader
         let restyle = coordinator.fontSize != fontSize || coordinator.isDark != isDark || coordinator.appearanceKey != appearanceKey || coordinator.interfaceLanguage != interfaceLanguage
@@ -87,10 +85,9 @@ struct NativeChatMarkdownView: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeChatTextView, context: Context) -> CGSize? {
         // An infinite proposal asks for flexibility; it must not resize the live text container.
         guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
-        if abs(nsView.frame.width - width) > 0.5 { nsView.setFrameSize(NSSize(width: width, height: max(1, nsView.frame.height))) }
-        return CGSize(width: width, height: context.coordinator.measuredHeight())
+        return CGSize(width: width, height: context.coordinator.measuredHeight(width: width))
     }
-    static func dismantleNSView(_ nsView: NativeChatTextView, coordinator: Coordinator) { coordinator.pipeline.invalidate(); nsView.onLayout = nil }
+    static func dismantleNSView(_ nsView: NativeChatTextView, coordinator: Coordinator) { coordinator.pipeline.invalidate() }
 
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
         weak var view: NativeChatTextView?
@@ -101,11 +98,8 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         var appearanceKey = ""
         var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
         var onOpenURL: (URL) -> Void = { _ in }
-        var onHeightChange: (CGFloat) -> Void = { _ in }
         var visualizationView: NativeChatVisualizationView?
         var imageLoader: ((String, @escaping (Data?) -> Void) -> Void)?
-        private var reportedHeight: CGFloat = 0
-        private var measuring = false
         private var applying = false
         private var heightCache: (width: CGFloat, height: CGFloat)?
         private var snapshot: NativeChatMarkdownPipeline.Snapshot?
@@ -141,7 +135,7 @@ struct NativeChatMarkdownView: NSViewRepresentable {
             heightCache = nil
             guard edit.range.length > 0 || !edit.replacement.isEmpty else { return }
             applying = true
-            defer { applying = false; heightCache = nil; measure() }
+            defer { applying = false; heightCache = nil }
             let selected = view.selectedRanges.map(\.rangeValue).map(edit.mapSelection)
             // Reuse unchanged attachments inside an otherwise changed span as well.
             var reusable: [NativeChatTextAttachment] = []
@@ -164,7 +158,7 @@ struct NativeChatMarkdownView: NSViewRepresentable {
             heightCache = nil
             guard let storage = view?.textStorage, storage.length > 0 else { return }
             applying = true
-            defer { applying = false; heightCache = nil; measure() }
+            defer { applying = false; heightCache = nil; view?.invalidateIntrinsicContentSize() }
             var location = 0
             storage.beginEditing()
             for run in document.runs {
@@ -191,35 +185,29 @@ struct NativeChatMarkdownView: NSViewRepresentable {
                     manager.invalidateLayout(for: textRange)
                 }
             }
-            view?.needsLayout = true; view?.invalidateIntrinsicContentSize(); measure()
+            view?.needsLayout = true; view?.invalidateIntrinsicContentSize()
         }
-        func measuredHeight() -> CGFloat {
-            guard let view, view.frame.width > 0, let manager = view.textLayoutManager, let content = manager.textContentManager else { return max(1, fontSize * 1.5) }
-            if let cached = heightCache, abs(cached.width - view.frame.width) < 0.5 { return cached.height }
+        func measuredHeight(width: CGFloat? = nil) -> CGFloat {
+            guard let view, let container = view.textContainer,
+                  let manager = view.textLayoutManager, let content = manager.textContentManager else { return max(1, fontSize * 1.5) }
+            let width = width ?? view.frame.width
+            guard width > 0 else { return max(1, fontSize * 1.5) }
+            // Measure the proposed line width without moving the live view during SwiftUI's sizing pass.
+            if abs(container.size.width - width) > 0.5 { container.size.width = width }
+            if let cached = heightCache, abs(cached.width - width) < 0.5 { return cached.height }
             manager.ensureLayout(for: content.documentRange)
             var height: CGFloat = 0
             manager.enumerateTextLayoutFragments(from: content.documentRange.endLocation, options: [.reverse, .ensuresLayout]) { fragment in
                 height = fragment.layoutFragmentFrame.maxY; return false
             }
             let measured = max(1, ceil(height + view.textContainerInset.height * 2))
-            heightCache = (view.frame.width, measured)
+            heightCache = (width, measured)
             return measured
-        }
-        func measure() {
-            guard !measuring else { return }
-            measuring = true
-            let height = measuredHeight()
-            measuring = false
-            guard abs(height - reportedHeight) > 0.5 else { return }
-            reportedHeight = height
-            DispatchQueue.main.async { [weak self] in self?.onHeightChange(height) }
         }
     }
 }
 
 final class NativeChatTextView: NSTextView {
-    var onLayout: (() -> Void)?
-    override func layout() { super.layout(); onLayout?() }
     override func copy(_ sender: Any?) {
         _ = writeSelection(to: .general, type: .string)
     }

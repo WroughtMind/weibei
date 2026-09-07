@@ -4464,7 +4464,6 @@ private struct AgentMessageMarkdownText: View {
     @State private var expandedSourceURL: String?
     @State private var markdownMemo = AgentMessageMarkdownMemo()
     @State private var imageHandler = MarkdownImageSchemeHandler()
-    @State private var measuredHeight: CGFloat?
 
     private var sourcePresentation: AgentReplySourceInlinePresentation {
         AgentReplySourceInlinePresentation(text: text, sources: sources, language: store.interfaceLanguage)
@@ -4485,9 +4484,6 @@ private struct AgentMessageMarkdownText: View {
                     appearanceKey: store.appearanceMode.rawValue,
                     interfaceLanguage: store.interfaceLanguage,
                     onOpenURL: openLink,
-                    onHeightChange: { height in
-                        measuredHeight = height
-                    },
                     visualizationView: { identifier, width, onHeight in
                         guard let messageID else { return nil }
                         let host = NSHostingView(rootView: AgentNativeContentAttachment(
@@ -4510,7 +4506,7 @@ private struct AgentMessageMarkdownText: View {
                         imageHandler.loadImage(source: source, completion: completion)
                     }
                 )
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: measuredHeight ?? initialBodyHeight, alignment: .leading)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: initialBodyHeight, alignment: .leading)
             } else {
                 Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
                     .weiBeiText(compact ? 13.2 : 14.5)
