@@ -345,7 +345,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var learningMemoryStates: [ScopedLearningMemoryState] = []
     var courseKnowledgeProfiles: [CourseKnowledgeProfile] = []
     @Published var studySessions: [StudySession] = []
-    let sessionMessagePersistence = StudySessionMessagePersistence()
+    let sessionMessagePersistence: StudySessionMessagePersistence
     @Published var activeStudySessionID: UUID? {
         didSet {
             if let chatID = agentStreaming.displayingChatID,
@@ -969,6 +969,7 @@ final class WorkspaceStore: ObservableObject {
     ) {
         workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
+        sessionMessagePersistence = StudySessionMessagePersistence(storageURL: storageURL)
         self.importedFileIdentityResolver = importedFileIdentityResolver
         self.courseRootBookmarkMaker = courseRootBookmarkMaker
         self.courseRootBookmarkResolver = courseRootBookmarkResolver
@@ -1751,7 +1752,7 @@ final class WorkspaceStore: ObservableObject {
             title: ui("新对话", "New Chat")
         )
         studySessions.append(session)
-        markStudySessionMessagesLoaded(session.id)
+        sessionMessagePersistence.markLoaded(session.id)
         activeStudySessionID = session.id
         freshlyCreatedEmptyStudySessionID = session.id
         messages = []
@@ -1866,7 +1867,7 @@ final class WorkspaceStore: ObservableObject {
             freshlyCreatedEmptyStudySessionID = nil
         }
         agentDraftsBySessionID.removeValue(forKey: id)
-        forgetStudySessionMessages(id)
+        sessionMessagePersistence.forget(id)
         studySessions.remove(at: index)
         if deletingActiveSession {
             activeStudySessionID = nil
@@ -1918,7 +1919,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let session = StudySession(title: ui("新学习会话", "New Study Session"))
         studySessions.append(session)
-        markStudySessionMessagesLoaded(session.id)
+        sessionMessagePersistence.markLoaded(session.id)
         activeStudySessionID = session.id
         freshlyCreatedEmptyStudySessionID = session.id
         messages = []
@@ -11705,7 +11706,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let removingCourseIDs = workspacePersistenceRemovingCourseID
             .map { Set([$0]) } ?? []
-        let sessionPayloads = try sessionMessageWrites(
+        let sessionPayloads = try sessionMessagePersistence.writes(
             for: persisted.snapshot.studySessions ?? []
         )
         return (
@@ -12072,7 +12073,7 @@ final class WorkspaceStore: ObservableObject {
             return true
         }
         courseResumePoints = prepared.resumePoints
-        noteSuccessfulSessionMessagePersist(writes: prepared.request.sessionMessageWrites, deletions: prepared.request.sessionMessageDeletions)
+        sessionMessagePersistence.noteSuccessfulPersist(writes: prepared.request.sessionMessageWrites, deletions: prepared.request.sessionMessageDeletions)
         if !oversizedPortableCourseIDs.isEmpty {
             reportWorkspaceSaveFailure(.coursePortableStateOversized, ui(
                 "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",

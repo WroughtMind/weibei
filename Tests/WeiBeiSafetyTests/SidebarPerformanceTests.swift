@@ -268,8 +268,13 @@ final class SidebarPerformanceTests: XCTestCase {
             "editing below the title line must not rebuild the course directory"
         )
 
+        let titleChanged = expectation(description: "sidebar rebuilt for the new title")
+        let titleObservation = model.objectWillChange.prefix(1).sink {
+            titleChanged.fulfill()
+        }
+        defer { titleObservation.cancel() }
         fixture.store.noteText = "# 利率原理\n\n第一章 正文改了，标题没变"
-        try await Task.sleep(nanoseconds: 250_000_000)
+        await fulfillment(of: [titleChanged], timeout: 3)
         XCTAssertGreaterThan(
             model.projectionBuildCountForTesting,
             buildsAfterOpen,
@@ -280,11 +285,16 @@ final class SidebarPerformanceTests: XCTestCase {
         XCTAssertEqual(expectedTitle, "利率原理")
         let row = try XCTUnwrap(model.unassignedNotes.first)
         let request = try XCTUnwrap(row.tagRequest)
+        let metadataApplied = expectation(description: "sidebar applied the loaded title")
+        let metadataObservation = model.objectWillChange.prefix(1).sink {
+            metadataApplied.fulfill()
+        }
+        defer { metadataObservation.cancel() }
         model.acceptLoadedNoteMeta([(
             request,
             CourseSidebarNoteMeta(tags: [], resolvedTitle: expectedTitle)
         )])
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await fulfillment(of: [metadataApplied], timeout: 3)
         XCTAssertEqual(
             model.unassignedNotes.first?.resolvedTitle,
             expectedTitle,
