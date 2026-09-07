@@ -55,6 +55,8 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         let view = NativeChatTextView(usingTextLayoutManager: true)
         view.isEditable = false; view.isSelectable = true
         view.drawsBackground = false
+        // Keep TextKit's viewport inside this answer, including while it is offscreen.
+        view.clipsToBounds = true
         view.textContainerInset = .zero
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.widthTracksTextView = true

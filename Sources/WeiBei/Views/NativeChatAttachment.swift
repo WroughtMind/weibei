@@ -324,6 +324,7 @@ private final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
         text.isEditable = false
         text.isSelectable = true
         text.drawsBackground = false
+        text.clipsToBounds = true
         text.textContainerInset = .zero
         text.textContainer?.lineFragmentPadding = 0
         text.textStorage?.setAttributedString(value)
