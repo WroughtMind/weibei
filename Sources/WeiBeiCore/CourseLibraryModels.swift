@@ -11,10 +11,15 @@ public enum CourseLibraryLayout {
         workspaceDirectory: String? = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"]
     ) -> URL {
         let override = workspaceDirectory?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let base = override.isEmpty
-            ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents", isDirectory: true)
-            : URL(fileURLWithPath: override, isDirectory: true)
-        return base.appendingPathComponent(defaultFolderName, isDirectory: true)
+        if !override.isEmpty {
+            let workspace = URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL
+            // Library roots must not overlap the workspace's internal state directory.
+            return workspace.deletingLastPathComponent()
+                .appendingPathComponent(workspace.lastPathComponent + "-" + defaultFolderName, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent(defaultFolderName, isDirectory: true)
     }
 }
 
