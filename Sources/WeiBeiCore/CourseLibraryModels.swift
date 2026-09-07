@@ -7,10 +7,14 @@ public enum CourseLibraryLayout {
     public static let courseMaterialsDirectoryName = "文稿"
     public static let courseNotesDirectoryName = "笔记"
 
-    public static func defaultRootURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent(defaultFolderName, isDirectory: true)
+    public static func defaultRootURL(
+        workspaceDirectory: String? = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"]
+    ) -> URL {
+        let override = workspaceDirectory?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let base = override.isEmpty
+            ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents", isDirectory: true)
+            : URL(fileURLWithPath: override, isDirectory: true)
+        return base.appendingPathComponent(defaultFolderName, isDirectory: true)
     }
 }
 
