@@ -503,7 +503,8 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         }
         window.contentView?.wantsLayer = appearanceMode.isGlass
         window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
-        window.isMovableByWindowBackground = true
+        // Use the native title bar; background dragging rescans every pane's focus tree on scroll.
+        window.isMovableByWindowBackground = false
     }
 
     @MainActor
