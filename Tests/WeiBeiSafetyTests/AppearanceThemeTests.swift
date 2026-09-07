@@ -49,6 +49,23 @@ final class AppearanceThemeTests: XCTestCase {
         }
     }
 
+    func testFrostedIntensityChangesTintAcrossTheSliderWithoutChangingInk() {
+        let original = WeiBeiThemeRuntime.glassIntensity
+        defer { WeiBeiThemeRuntime.glassIntensity = original }
+        for mode in [WeiBeiAppearanceMode.glassMist, .glassSlate] {
+            let ink = WeiBeiNativePalette.ink(for: mode)
+            var previousAlpha: CGFloat = -1
+            for intensity in [0.0, 0.2, 0.4, 0.7, 1.0] {
+                WeiBeiThemeRuntime.glassIntensity = intensity
+                let alpha = WeiBeiNativePalette.glassBaseTint(for: mode).alphaComponent
+                XCTAssertGreaterThan(alpha, previousAlpha)
+                XCTAssertLessThan(alpha, 1)
+                XCTAssertEqual(WeiBeiNativePalette.ink(for: mode), ink)
+                previousAlpha = alpha
+            }
+        }
+    }
+
     func testThemeTokensTrackRuntimeModeChanges() {
         assertThemeObservation(from: .paper, to: .xuan) {
             _ = WeiBeiTheme.ink

@@ -448,7 +448,8 @@ struct WeiBeiThemeBackdrop: View {
                 )
                 // 浓度调整轻微调色，不降低磨砂材质的 alpha，以免混回清晰背景。
                 Color(nsColor: WeiBeiNativePalette.glassBaseTint(for: mode))
-                    .opacity(max(0.35, WeiBeiThemeRuntime.appliedGlassIntensity))
+                    .opacity(mode == .glassMist || mode == .glassSlate
+                        ? 1 : max(0.35, WeiBeiThemeRuntime.appliedGlassIntensity))
             }
         } else {
             Color(nsColor: WeiBeiNativePalette.paper(for: mode))
@@ -592,6 +593,7 @@ enum WeiBeiNativePalette {
         }
     }
 
+    // 磨砂保留约 40% 浓度的轻染，向两端连续展开；系统模糊层始终完整。
     static func glassBaseTint(for mode: WeiBeiAppearanceMode = current) -> NSColor {
         switch mode {
         case .glassLight:
@@ -599,9 +601,9 @@ enum WeiBeiNativePalette {
         case .glassDark:
             return NSColor(calibratedRed: 0.025, green: 0.040, blue: 0.065, alpha: 0.28)
         case .glassMist:
-            return NSColor(calibratedRed: 0.965, green: 0.961, blue: 0.949, alpha: 0.08)
+            return NSColor(calibratedRed: 0.965, green: 0.961, blue: 0.949, alpha: 0.20 * pow(WeiBeiThemeRuntime.glassIntensity, 2))
         case .glassSlate:
-            return NSColor(calibratedRed: 0.157, green: 0.157, blue: 0.149, alpha: 0.10)
+            return NSColor(calibratedRed: 0.157, green: 0.157, blue: 0.149, alpha: 0.25 * pow(WeiBeiThemeRuntime.glassIntensity, 2))
         default:
             return .clear
         }
