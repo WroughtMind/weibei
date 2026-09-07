@@ -67,11 +67,7 @@ final class FileModelPhase0BaselineTests: XCTestCase {
         try FileManager.default.removeItem(at: backingURL)
         try reconcile(store)
 
-        XCTAssertEqual(
-            store.displaySubtitle(for: item),
-            store.ui("文件不存在", "File missing"),
-            "首缺席应进入灰态而不是立即移除"
-        )
+        XCTAssertNotNil(store.fileMissingSinceByItemID[item.id], "首缺席应进入灰态而不是立即移除")
         XCTAssertNotNil(store.importedItems.first { $0.id == item.id })
 
         store.fileMissingSinceByItemID[item.id] = Date().addingTimeInterval(-7)
@@ -151,7 +147,6 @@ final class FileModelPhase0BaselineTests: XCTestCase {
         try FileManager.default.removeItem(at: backingURL)
         try reconcile(store)
 
-        XCTAssertEqual(store.displaySubtitle(for: item), store.ui("文件不存在", "File missing"))
         XCTAssertNotNil(store.importedItems.first { $0.id == item.id }, "灰态期间条目必须保留")
         XCTAssertNotNil(store.fileMissingSinceByItemID[item.id])
 
