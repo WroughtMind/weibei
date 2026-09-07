@@ -281,8 +281,7 @@ private struct GlobalFloatingSelectionLayer: View {
         Group {
             if showsGlobalFloatingAgent {
                 FloatingSelectionAgentView(
-                    expanded: $expanded,
-                    routesToConversation: store.isConversationSurfaceVisible
+                    expanded: $expanded
                 )
                 .onGeometryChange(for: CGSize.self) { $0.size } action: { surfaceSize = $0 }
                 .position(floatingAgentPosition)
@@ -309,9 +308,7 @@ private struct GlobalFloatingSelectionLayer: View {
     }
 
     private var showsGlobalFloatingAgent: Bool {
-        // Show the selection capsule in multi-pane as well as immersive reading.
-        // When the chat pane is open, the float still appears; "问" routes into the
-        // conversation via `routesToConversation` (do not hide the capsule).
+        // The selection composer stays beside the passage in every reading layout.
         !store.courseWorkspacePresented
             && store.canShowSelectionPromptSurface
             && SelectionFloatingAgentPlacement.isVisible(

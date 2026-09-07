@@ -1502,10 +1502,13 @@ struct AgentPaneView: View {
                 .allowsHitTesting(false)
         }
         .onChange(of: paneState.focusRequest) { _, _ in
-            draftFocused = paneState.focusedPane == .agent
+            draftFocused = paneState.focusedPane == .agent && !interaction.keepFloatingSelectionForAnswer
+        }
+        .onChange(of: interaction.keepFloatingSelectionForAnswer) { _, keep in
+            if keep { draftFocused = false }
         }
         .onAppear {
-            draftFocused = paneState.focusedPane == .agent
+            draftFocused = paneState.focusedPane == .agent && !interaction.keepFloatingSelectionForAnswer
             if usesWideChatLayout, measuredPaneWidth < 700 {
                 measuredPaneWidth = max(measuredPaneWidth, 1100)
             }
@@ -2347,7 +2350,6 @@ struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Binding var expanded: Bool
-    var routesToConversation = false
     @State private var dragOffset = CGSize.zero
     @State private var settledOffset = CGSize.zero
     @State private var panelWidth = CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2)
@@ -2976,15 +2978,16 @@ struct FloatingSelectionAgentView: View {
 
     /// 提交札记:空输入=纯摘录;保存后收浮层,草稿清空。
     private func submitRemark() {
-        guard !savingRemark else { return }
+        guard !savingRemark, let selection = interaction.selectionContext else { return }
         savingRemark = true
         remarkSaveFailed = false
         let draft = interaction.selectionNoteDraft
+        let courseID = store.activeCourseID
         Task { @MainActor in
-            let saved = await store.saveSelectionRemark(draft)
+            let saved = await store.saveSelectionRemark(draft, for: selection, courseID: courseID)
             savingRemark = false
             guard saved else { remarkSaveFailed = true; return }
-            if interaction.selectionNoteDraft == draft {
+            if interaction.selectionContext?.id == selection.id, interaction.selectionNoteDraft == draft {
                 interaction.selectionNoteDraft = ""
                 closeFloatingAgent()
             }

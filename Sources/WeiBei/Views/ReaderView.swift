@@ -2106,7 +2106,7 @@ extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
             page: ocrPage,
             highlightedLineIndexes: ocrHighlightedLinesByPageIndex[index] ?? [],
             appearanceMode: appearanceMode
-        ) { [weak self] text, anchor in
+        ) { [weak self] text, anchor, normalizedRect in
             guard let self else { return }
             let now = ProcessInfo.processInfo.systemUptime
             guard self.selectionReportGate.shouldPublish(text: text, now: now) else { return }
@@ -2115,8 +2115,16 @@ extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
                 self.onSelectionChange("", nil, index, nil)
                 return
             }
-            // OCR 页没有原生选区,锚点缺省 nil,回访沿用文字匹配兜底。
-            self.reportSelectionAfterDragSettles(text: text, anchor: anchor, pageIndex: index, documentAnchor: nil)
+            let pageBounds = page.bounds(for: .cropBox)
+            let documentAnchor = normalizedRect.map { rect in
+                PDFSelectionAnchor(pageIndex: index, lineRects: [SelectionRect(CGRect(
+                    x: pageBounds.minX + rect.minX * pageBounds.width,
+                    y: pageBounds.minY + rect.minY * pageBounds.height,
+                    width: rect.width * pageBounds.width,
+                    height: rect.height * pageBounds.height
+                ))])
+            }
+            self.reportSelectionAfterDragSettles(text: text, anchor: anchor, pageIndex: index, documentAnchor: documentAnchor)
         }
     }
 }
@@ -2125,10 +2133,10 @@ private final class PDFOCRPageOverlayView: NSView {
     private let page: PDFOCRPage
     private let highlightedLineIndexes: Set<Int>
     private let appearanceMode: WeiBeiAppearanceMode
-    private let onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+    private let onSelectionChange: (String, SelectionPopoverAnchor?, CGRect?) -> Void
     private var lineViews: [PDFOCRLineTextView] = []
 
-    init(page: PDFOCRPage, highlightedLineIndexes: Set<Int>, appearanceMode: WeiBeiAppearanceMode, onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void) {
+    init(page: PDFOCRPage, highlightedLineIndexes: Set<Int>, appearanceMode: WeiBeiAppearanceMode, onSelectionChange: @escaping (String, SelectionPopoverAnchor?, CGRect?) -> Void) {
         self.page = page
         self.highlightedLineIndexes = highlightedLineIndexes
         self.appearanceMode = appearanceMode
@@ -2180,14 +2188,14 @@ private final class PDFOCRPageOverlayView: NSView {
 
 private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDelegate {
     let normalizedBoundingBox: CGRect
-    private let selectionCallback: (String, SelectionPopoverAnchor?) -> Void
+    private let selectionCallback: (String, SelectionPopoverAnchor?, CGRect?) -> Void
 
     init(
         text: String,
         normalizedBoundingBox: CGRect,
         isSearchHighlighted: Bool,
         appearanceMode: WeiBeiAppearanceMode,
-        onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
+        onSelectionChange: @escaping (String, SelectionPopoverAnchor?, CGRect?) -> Void
     ) {
         self.normalizedBoundingBox = normalizedBoundingBox
         self.selectionCallback = onSelectionChange
@@ -2219,10 +2227,20 @@ private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDele
     func textViewDidChangeSelection(_ notification: Notification) {
         let range = selectedRange()
         guard range.length > 0, let textRange = Range(range, in: string) else {
-            selectionCallback("", nil)
+            selectionCallback("", nil, nil)
             return
         }
-        selectionCallback(String(string[textRange]), Self.anchor(for: range, in: self))
+        var normalizedRect: CGRect?
+        if let manager = layoutManager, let container = textContainer, let overlay = superview,
+           overlay.bounds.width > 0, overlay.bounds.height > 0 {
+            let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let glyphRect = manager.boundingRect(forGlyphRange: glyphs, in: container)
+                .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            let rect = convert(glyphRect, to: overlay)
+            normalizedRect = CGRect(x: rect.minX / overlay.bounds.width, y: rect.minY / overlay.bounds.height,
+                                    width: rect.width / overlay.bounds.width, height: rect.height / overlay.bounds.height)
+        }
+        selectionCallback(String(string[textRange]), Self.anchor(for: range, in: self), normalizedRect)
     }
 
     private static func anchor(for range: NSRange, in textView: NSTextView) -> SelectionPopoverAnchor? {

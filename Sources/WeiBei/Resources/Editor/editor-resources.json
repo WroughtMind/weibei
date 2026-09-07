@@ -3,8 +3,8 @@
   "assets": [
     {
       "name": "editor-entry.js",
-      "bytes": 613143,
-      "sha256": "39bbea02d9bcb0d6f2d15c92790d39d0199c8b1060e23d0242c5c8cf3ef26b72"
+      "bytes": 613235,
+      "sha256": "c4d84adc57e831b0251dd36d4baeb2d74b2cded771a321dcd242a1b1acd2a8bf"
     },
     {
       "name": "editor.css",
@@ -348,8 +348,8 @@
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 523273,
-      "sha256": "9cdb52a4588574e046ac030c74fc4b88f5c38373279a68fd5c4bb6bf5bb6b593"
+      "bytes": 523349,
+      "sha256": "89d27b0662b9cf5ace11eb4cbe0e5b83a4bb4fa194b711e77c835fb51e07ca7b"
     }
   ]
 }

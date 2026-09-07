@@ -10,7 +10,7 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testExcerptBooksPersistByCourseWithoutChangingTheNote() async throws {
+    func testExcerptBooksPersistByCourseWithoutChangingTheNote() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
@@ -21,7 +21,7 @@ final class SelectionExperienceTests: XCTestCase {
             store.activeCourseID = course
             store.selectionContext = SelectionContext(text: "相同原文", source: .document, ownerTitle: item, itemID: item, documentAnchor: anchor)
             _ = store.beginOrReuseSelectionAskThread(for: store.selectionContext!)
-            let saved = await store.saveSelectionRemark("我的批注")
+            let saved = saveRemark("我的批注", in: store)
             XCTAssertTrue(saved)
         }
         XCTAssertEqual(store.selectionAskThreads.count, 3, "Same PDF coordinates in different documents must not share a question")
@@ -36,7 +36,46 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testRepeatedPassagesStayIndependentAndRemarkFailureKeepsDraft() async {
+    func testAskKeepsThePassageAndFloatingInputInEveryReadingLayout() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        for layout in [WorkspaceLayout.immersiveReading, .documentAgentNotes] {
+            store.layout = layout
+            store.showAgent = true
+            let anchor = SelectionPopoverAnchor(x: 320, y: 210)
+            store.updateSelection("原处提问", source: .document, anchor: anchor)
+            store.askSelection()
+            XCTAssertEqual(store.layout, layout)
+            XCTAssertEqual(store.agentSurface, .selectionFloat)
+            XCTAssertEqual(store.selectionAnchor, anchor)
+            XCTAssertTrue(store.keepFloatingSelectionForAnswer)
+        }
+    }
+
+    @MainActor
+    func testPendingRemarkKeepsTheSubmittedPassageWhenSelectionChanges() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let courseID = UUID()
+        let submitted = SelectionContext(text: "提交时的文段", source: .document, ownerTitle: "文稿 A", itemID: "a")
+        let newer = SelectionContext(text: "随后选中的文段", source: .document, ownerTitle: "文稿 B", itemID: "b")
+        store.selectionContext = newer
+        store.activeCourseID = UUID()
+        let completed = expectation(description: "submitted excerpt saved")
+        Task { @MainActor in
+            let saved = await store.saveSelectionRemark("批注", for: submitted, courseID: courseID)
+            XCTAssertTrue(saved)
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 5)
+        XCTAssertEqual(store.excerpts(in: courseID).first?.itemID, "a")
+        XCTAssertEqual(store.selectionContext?.id, newer.id)
+    }
+
+    @MainActor
+    func testRepeatedPassagesStayIndependentAndRemarkFailureKeepsDraft() {
         struct CannotWrite: Error {}
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -46,7 +85,7 @@ final class SelectionExperienceTests: XCTestCase {
             let selection = SelectionContext(text: "同一句", source: .document, ownerTitle: "一篇文稿", itemID: "same.md", documentAnchor: SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: start, endOffset: start + 3)))
             store.selectionContext = selection
             _ = store.beginOrReuseSelectionAskThread(for: selection)
-            let saved = await store.saveSelectionRemark(store.interaction.selectionNoteDraft)
+            let saved = saveRemark(store.interaction.selectionNoteDraft, in: store)
             XCTAssertFalse(saved)
         }
         XCTAssertEqual(store.selectionAskThreads.count, 2)
@@ -60,5 +99,22 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertTrue(store.keepFloatingSelectionForAnswer)
         store.updateSelection("", source: .note)
         XCTAssertEqual(store.selectionContext?.id, record.id, "An unrelated pane losing selection must not dismiss the open remark")
+    }
+}
+
+@MainActor
+extension XCTestCase {
+    // WorkspaceStore has synchronous startup file operations; construct it outside an async task.
+    func saveRemark(_ text: String, in store: WorkspaceStore) -> Bool {
+        guard let selection = store.selectionContext else { return false }
+        let courseID = store.activeCourseID
+        let completed = expectation(description: "remark persistence completed")
+        var saved = false
+        Task { @MainActor in
+            saved = await store.saveSelectionRemark(text, for: selection, courseID: courseID)
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 5)
+        return saved
     }
 }

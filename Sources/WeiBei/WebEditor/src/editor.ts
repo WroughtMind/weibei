@@ -1441,7 +1441,8 @@ const decorateSelectionMarks = (decorations: any[], doc: any) => {
       const to = index.points[range.endOffset - 1] + 1;
       addRangeDecoration(decorations, from, to, className, { [idAttribute]: mark.id });
       if (idAttribute === 'data-record-id') {
-        addRangeDecoration(decorations, to - 1, to, 'weibei-remark-end', { [idAttribute]: mark.id });
+        const lastCharacter = Array.from(index.text.slice(range.startOffset, range.endOffset)).at(-1)!;
+        addRangeDecoration(decorations, to - lastCharacter.length, to, 'weibei-remark-end', { [idAttribute]: mark.id });
       }
     }
   }
@@ -2631,7 +2632,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       const incoming = String(text || '');
       if (!incoming) return false;
       const { $from } = view.state.selection;
-      if (!view.composing && $from.parent.isTextblock && /^[\u200B\uFEFF]+$/.test($from.parent.textContent)) {
+      if (!view.composing && $from.parent.type.name === 'paragraph' && /^[\u200B\uFEFF]+$/.test($from.parent.textContent)) {
         view.dispatch(view.state.tr.insertText(incoming, $from.start(), $from.end()));
         return true;
       }
@@ -3314,7 +3315,7 @@ const appendMarkdownInternal = (markdown: any) => {
     const view = ctx.get(editorViewCtx);
     const parsed = ctx.get(parserCtx)(normalizeMarkdownSource(markdown, 'internalFragment'));
     if (!parsed) throw new Error('The excerpt could not be parsed');
-    const tr = view.state.tr.insert(view.state.doc.content.size, parsed.content);
+    const tr = closeHistory(view.state.tr.insert(view.state.doc.content.size, parsed.content));
     tr.setSelection(Selection.atEnd(tr.doc));
     view.dispatch(tr.scrollIntoView());
   });

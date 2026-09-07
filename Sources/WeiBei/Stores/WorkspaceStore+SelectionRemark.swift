@@ -7,14 +7,13 @@ extension WorkspaceStore {
 
     /// Saves the excerpt independently. The caller keeps its draft until persistence succeeds.
     @discardableResult
-    func saveSelectionRemark(_ remark: String) async -> Bool {
-        guard let selection = selectionContext else { return false }
+    func saveSelectionRemark(_ remark: String, for selection: SelectionContext, courseID requestedCourseID: UUID?) async -> Bool {
         let itemID = selection.itemID
             ?? (selection.source == .note ? activeNotebookItemID : selectedItemID)
         let existingRecord = selectionRemarkRecords.first { $0.id == selection.id }
         let courseID: UUID?
         if let existingRecord { courseID = existingRecord.courseID }
-        else { courseID = itemID.flatMap { id in allItems.first { $0.id == id }?.storage.ownerCourseID } ?? activeCourseID }
+        else { courseID = itemID.flatMap { id in allItems.first { $0.id == id }?.storage.ownerCourseID } ?? requestedCourseID }
         let note = remark.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = SelectionAttachmentMerge.normalized(selection.text)
         if let index = selectionRemarkRecords.firstIndex(where: {

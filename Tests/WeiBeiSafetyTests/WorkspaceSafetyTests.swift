@@ -277,7 +277,7 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectionRemarkHistoryKeepsOlderRecordsAndPersistsThem() async throws {
+    func testSelectionRemarkHistoryKeepsOlderRecordsAndPersistsThem() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiSelectionRemarks-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -297,13 +297,12 @@ final class WorkspaceSafetyTests: XCTestCase {
             ownerTitle: "课堂资料"
         )
 
-        let saved = await store.saveSelectionRemark("新札记")
+        let saved = saveRemark("新札记", in: store)
         XCTAssertTrue(saved)
 
         XCTAssertEqual(store.selectionRemarkRecords.count, 201)
         XCTAssertEqual(store.selectionRemarkRecords.last?.id, existing.last?.id)
         XCTAssertTrue(selectionRemarkMarksJSON(store.selectionRemarkRecords).contains(existing.last!.id.uuidString))
-        XCTAssertTrue(store.flushPendingWorkspaceSave())
         let reopened = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
         XCTAssertEqual(reopened.selectionRemarkRecords.map(\.id), store.selectionRemarkRecords.map(\.id))
     }

@@ -57,15 +57,15 @@ await pause();
 const backward = window.selectionEvents.at(-1)?.rect;
 expect(forward && backward && backward.y < forward.y && backward.prefersAbove && !forward.prefersAbove, 'Selection popover ignored drag direction');
 // Reading marks span formatting boundaries, survive refresh, and report their live location.
-await reset('第一段**加粗**文字。\n\n第二段收尾。');
+await reset('第一段**加粗**文字。\n\n第二段收尾。𠮷');
 editor.setEditable(false);
-const passage = '第一段加粗文字。\n第二段收尾。';
+const passage = '第一段加粗文字。\n第二段收尾。𠮷';
 editor.setSelectionAskMarks([{ id: 'ask-check', text: passage }]);
 editor.setSelectionRemarkMarks([{ id: 'remark-check', text: passage }]);
 await pause();
 expect(document.querySelectorAll('.weibei-selection-ask-mark').length > 1, 'Cross-paragraph ask underline is missing');
 const dot = document.querySelector('.weibei-remark-end');
-expect(dot && getComputedStyle(dot, '::after').content !== 'none', 'Remark dot is missing');
+expect(dot && dot.textContent === '𠮷' && getComputedStyle(dot, '::after').content !== 'none', 'Remark dot is missing or split the final character');
 const bounds = dot.getBoundingClientRect();
 dot.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: bounds.right, clientY: bounds.top + bounds.height / 2 }));
 await pause();
@@ -73,7 +73,7 @@ const mark = window.remarkEvents.at(-1);
 expect(mark?.recordId === 'remark-check' && Math.abs(mark.rect.y - (bounds.top + bounds.height / 2)) < 2, 'Remark popover lost the clicked passage coordinates');
 // The same normalized anchor and wrapper implementation also runs in HTML documents.
 const html = document.createElement('article');
-html.innerHTML = '<p>同一句</p><p>第一段<b>加粗</b>文字。</p><p>第二段收尾。</p><p>同一句</p>';
+html.innerHTML = '<p>同一句</p><p>第一段<b>加粗</b>文字。</p><p>第二段收尾。𠮷</p><p>同一句</p>';
 document.body.appendChild(html);
 const index = window.WeiBeiSelection.indexDOMSelectionText(html);
 const startOffset = index.text.lastIndexOf('同一句');

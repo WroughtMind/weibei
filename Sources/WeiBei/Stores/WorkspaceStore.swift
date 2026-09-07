@@ -8907,19 +8907,11 @@ final class WorkspaceStore: ObservableObject {
                 // Record underline mark when the user opens “问” on this selection.
                 let thread = beginOrReuseSelectionAskThread(for: selectionContext)
                 activeSelectionAskThreadID = thread.id
-                if isConversationSurfaceVisible {
-                    // Conversation pane already owns Q&A — keep selection as chat context only.
-                    agentSurface = .hidden
-                    pinnedFloatingAgent = false
-                    keepFloatingSelectionForAnswer = false
-                    selectionAnchor = nil
-                    focusedPane = .agent
-                    focusRequest += 1
-                } else {
-                    agentSurface = .selectionFloat
-                    keepFloatingSelectionForAnswer = true
-                    focus(.agent)
-                }
+                agentSurface = .selectionFloat
+                keepFloatingSelectionForAnswer = true
+                // Focusing a floating composer must not navigate away from the passage.
+                focusedPane = .agent
+                focusRequest += 1
             }
         } else {
             withAnimation(WeiBeiMotion.panel) {
@@ -9566,9 +9558,7 @@ final class WorkspaceStore: ObservableObject {
                         latestAgentStreamingText = ""
                         agentStreamingDisplayPump.stopAndReset()
                     }
-                    // Answer finished: keep float pinned so the user can scroll the reply.
-                    if activeStudySessionID == target.sessionID, keepFloatingSelectionForAnswer, !isConversationSurfaceVisible {
-                        pinnedFloatingAgent = true
+                    if activeStudySessionID == target.sessionID, keepFloatingSelectionForAnswer {
                         agentSurface = .selectionFloat
                     }
                 }
@@ -9657,23 +9647,11 @@ final class WorkspaceStore: ObservableObject {
                         lastSelectionUpdateDate = nil
                     }
                 }
-                // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
-                if isConversationSurfaceVisible {
-                    agentSurface = .hidden
-                    keepFloatingSelectionForAnswer = false
-                    if shouldClearSentDocumentSelection, !pinnedFloatingAgent {
-                        clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
-                    }
-                } else if shouldClearSentDocumentSelection,
-                          !keepFloatingSelectionForAnswer,
-                          !pinnedFloatingAgent {
-                    clearUnpinnedFloatingSelection(
-                        keepContext: false,
-                        invalidatesAgentContext: false
-                    )
-                } else if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
+                // Opening another conversation pane does not dismiss the user's floating answer.
+                if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
                     agentSurface = .selectionFloat
-                    pinnedFloatingAgent = true
+                } else if shouldClearSentDocumentSelection {
+                    clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
                 }
 
                 }
