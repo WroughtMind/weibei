@@ -3922,6 +3922,11 @@ if ProcessInfo.processInfo.environment["WEIBEI_HTML_READER_SELF_CHECK_ONLY"] == 
     print("WeiBei HTML reader check passed")
     exit(0)
 }
+if CommandLine.arguments.contains("--notes-typography") {
+    NotesTypographyHarness().run()
+    exit(0)
+}
+NotesTypographyHarness().run()
 verifyAgentChatMarkdownSourceContract()
 UTF8HTMLReaderHarness().run()
 EditorHarness().run()

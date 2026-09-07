@@ -922,6 +922,7 @@ final class WorkspaceStore: ObservableObject {
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
         self.init(
             workspaceDirectory: folder,
+            noteBackupRootURL: folder.appendingPathComponent(NoteBackupRing.subdirectoryName, isDirectory: true),
             startsAtBlankEntries: true
         )
     }

@@ -649,6 +649,7 @@ final class MarkdownWebView: WKWebView {
 }
 
 struct RichMarkdownEditorView: NSViewRepresentable {
+    @AppStorage("weibei.notes.typewriterMode") private var notesTypewriterMode = false
     /// Resolved by WeiBeiMotionScope — pushed into the page before first paint and
     /// synced live on preference changes (never reloads the note).
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -762,6 +763,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiChatWideTypography = \(isChatWideTypography ? "true" : "false");
             window.weiBeiReduceMotion = \(reduceMotion ? "true" : "false");
             document.documentElement.dataset.weibeiReduceMotion = window.weiBeiReduceMotion;
+            window.weiBeiTypewriterMode = \(notesTypewriterMode ? "true" : "false");
             window.weiBeiTextScale = \(textScale);
             document.documentElement.style.setProperty('--weibei-text-scale', String(window.weiBeiTextScale));
             document.documentElement.dataset.weibeiTheme = window.weiBeiTheme === "glassLight" || window.weiBeiTheme === "glassMist"
@@ -897,6 +899,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             context.coordinator.textScale = textScale
             if context.coordinator.isReady {
                 context.coordinator.setTextScale(textScale)
+            }
+        }
+        if context.coordinator.notesTypewriterMode != notesTypewriterMode {
+            context.coordinator.notesTypewriterMode = notesTypewriterMode
+            if context.coordinator.isReady {
+                context.coordinator.setTypewriterMode(notesTypewriterMode)
             }
         }
         context.coordinator.isFocused = isFocused
@@ -1119,6 +1127,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var appearanceMode: WeiBeiAppearanceMode
         var interfaceLanguage: WeiBeiInterfaceLanguage
         var reduceMotion = false
+        var notesTypewriterMode = false
         var textScale: CGFloat = 1
         var webMarkdown = ""
         var pendingStreamingCompletion = false
@@ -1414,6 +1423,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 setTheme(appearanceMode)
                 setChatWideTypography(isChatWideTypography)
                 setTextScale(textScale)
+                setTypewriterMode(notesTypewriterMode)
                 applyFocus()
                 applySelectionAskMarks(force: true)
                 applySelectionRemarkMarks(force: true)
@@ -1651,6 +1661,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         /// Live text-scale sync into the existing page — same contract as the
         /// page-side `--weibei-text-scale` variable, no reload involved.
+        func setTypewriterMode(_ enabled: Bool) {
+            evaluate("window.WeiBeiEditor?.setTypewriterMode?.(\(enabled ? "true" : "false"))")
+        }
+
         func setTextScale(_ scale: CGFloat) {
             evaluate("window.WeiBeiEditor?.setTextScale?.(\(scale))")
         }

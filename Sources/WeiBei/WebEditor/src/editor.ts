@@ -14,6 +14,7 @@ import {
   streamingPluginKey,
 } from '@milkdown/plugin-streaming';
 import { streamingAppearancePlugin } from './streaming-appearance';
+import { createTypewriterPlugin, setTypewriterMode } from './typewriter';
 import { createSyntaxMarksPlugin } from './syntax-marks';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
@@ -65,6 +66,7 @@ declare global {
       messageHandlers?: any;
     };
     weiBeiMarkdownEditable?: boolean;
+    weiBeiTypewriterMode?: boolean;
     weiBeiMarkdownCompactPreview?: boolean;
     weiBeiDocumentID?: string;
     weiBeiDocumentGeneration?: number;
@@ -1240,6 +1242,7 @@ const resolveMarkdownURL = (src: any) => {
 
 const syncEditableState = () => {
   document.body.dataset.editable = isEditable ? 'true' : 'false';
+  if (WEIBEI_EDITOR_RUNTIME) setTypewriterMode(window.weiBeiTypewriterMode === true && isEditable);
   document.querySelectorAll('.weibei-code-language-input').forEach((input) => {
     if (!(input instanceof HTMLInputElement)) return;
     input.readOnly = !isEditable;
@@ -2802,12 +2805,12 @@ const reportSelection = () => {
     let mixedFont = false;
     if (writingFont) state.doc.nodesBetween(selection.from, selection.to, (node: any) => {
       if (!node.isText) return true;
-      const font = writingFont.isInSet(node.marks || [])?.attrs.font || 'serif';
+      const font = writingFont.isInSet(node.marks || [])?.attrs.font || 'default';
       if (selectedFont === undefined) selectedFont = font;
       else if (selectedFont !== font) mixedFont = true;
       return true;
     });
-    if (selectedFont && !mixedFont) activeMarks.push(`font:${selectedFont}`);
+    if (selectedFont && selectedFont !== 'default' && !mixedFont) activeMarks.push(`font:${selectedFont}`);
     const isInlineMath = selection instanceof NodeSelection && selection.node.type.name === 'math_inline';
     if (isInlineMath) activeMarks.push('inlineMath');
     let blockType = selection.$from.parent.type.name;
@@ -3712,6 +3715,10 @@ window.WeiBeiEditor = {
   setTheme: setThemeInternal,
   setInterfaceLanguage: setLanguageInternal,
   setReduceMotion: setReduceMotionInternal,
+  setTypewriterMode: (enabled: unknown) => {
+    window.weiBeiTypewriterMode = enabled === true;
+    setTypewriterMode(window.weiBeiTypewriterMode && isEditable);
+  },
   setTextScale: setTextScaleInternal,
   focus: focusInternal,
   scrollToHeading: scrollToHeadingInternal,
@@ -3923,6 +3930,7 @@ if (WEIBEI_EDITOR_RUNTIME) {
       mathLanding: () => mathTypedLandingPosition,
       clearMathLanding: () => { mathTypedLandingPosition = null; },
     })))
+    .use($prose(createTypewriterPlugin))
     .use($prose(() => columnResizing()))
     .use(weiBeiSlash)
     .use(history)

@@ -3,8 +3,8 @@
   "assets": [
     {
       "name": "editor-entry.js",
-      "bytes": 609889,
-      "sha256": "66827e8826fb863d934eed31814614565ad2e347309f46c3386b3b5fe2d7c832"
+      "bytes": 611592,
+      "sha256": "bbc3d437bbf1f6f8cae8ec0c6fe88ebbaa70816cee7970b74ec2791f694b2a0f"
     },
     {
       "name": "editor.css",
@@ -13,8 +13,8 @@
     },
     {
       "name": "index.html",
-      "bytes": 52326,
-      "sha256": "200b518f0d008ad0949863d31d5ecc0e3247ce2bc2b665056e40f5a3102f7878"
+      "bytes": 57887,
+      "sha256": "4371ce462be14b46a94917bfd4eede6d28a106832a91594e4fc04b6d46d08390"
     },
     {
       "name": "KaTeX_AMS-Regular.ttf",
@@ -327,14 +327,24 @@
       "sha256": "e82547b3e2dbc64cd91ee67f45b17d142b9ca60341acf8619b0a6d09fa356c3a"
     },
     {
+      "name": "Mplus1p-Light.ttf",
+      "bytes": 1767352,
+      "sha256": "1452047ac8cb749b2c3a8012bedf4f54e12c26f2288e093f2c8da1e91d97ed4b"
+    },
+    {
+      "name": "Mplus1p-Regular.ttf",
+      "bytes": 1758820,
+      "sha256": "44ff34017bea6bfcf3542be0f9072b7c1c53eb03967f00cddb1ec933b1e17356"
+    },
+    {
       "name": "prism-runtime.js",
       "bytes": 57564,
       "sha256": "24e3f8b3cd68966f4a70e62b6b878cc5030b38a17fee1feba0dc346501e62304"
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 521823,
-      "sha256": "afa2ee6d71f084c4a1af3ed92929b5eae1e44072225923bde9a7d0c9a2f3d2ce"
+      "bytes": 522052,
+      "sha256": "bfe747a319b8b123c34e3acd903a98151c22da46b7e7eae5c367c0cd7b680d11"
     }
   ]
 }
