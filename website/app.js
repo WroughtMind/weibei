@@ -25,6 +25,9 @@ let activeMode = 0;
 let experiencePaused = false;
 let experienceTimer;
 let activeThemePreview;
+let themePointer;
+let dismissedTheme;
+let lastThemePointer;
 let themeGesture;
 let suppressThemeClick = false;
 let matchedDownloads = matchDownloadAssets([]);
@@ -165,28 +168,77 @@ const resetThemePreview = () => {
   else if (activeThemePreview) delete activeThemePreview.dataset.variant;
   delete document.documentElement.dataset.theme;
   activeThemePreview = undefined;
+  themePointer = undefined;
+  dismissedTheme = undefined;
+  themesLayer.style.cursor = '';
 };
 const enteringSceneFour = () => scrollY + innerHeight >= chapters[3].offsetTop;
+
+// object-fit 的图片盒子含留白；只有实际截图算作悬停区域。
+const themePictureBounds = preview => {
+  const box = preview.querySelector('.theme-window').getBoundingClientRect();
+  const img = preview.querySelector('.theme-track img');
+  if (!img.naturalWidth || !img.naturalHeight) return;
+  const scale = Math.min(box.width / img.naturalWidth, box.height / img.naturalHeight);
+  const width = img.naturalWidth * scale, height = img.naturalHeight * scale;
+  return { left: box.left + (box.width - width) / 2, top: box.top + (box.height - height) / 2, width, height };
+};
+const containsPointer = (bounds, event) => bounds && event.clientX >= bounds.left && event.clientX <= bounds.left + bounds.width && event.clientY >= bounds.top && event.clientY <= bounds.top + bounds.height;
+const themeResizing = preview => preview.getAnimations().some(animation => animation instanceof CSSTransition && ['left', 'top', 'width', 'height'].includes(animation.transitionProperty) && animation.playState === 'running');
+
+const updateThemeHover = event => {
+  if (mobileLayout.matches || event.pointerType === 'touch' || document.documentElement.dataset.scene !== '3' || enteringSceneFour()) return;
+  lastThemePointer = event;
+  if (activeThemePreview) {
+    // 放大过程中分界线会移动；不把它误判成用户切换主题或离开截图。
+    if (themeResizing(activeThemePreview)) {
+      if (!containsPointer(themesLayer.getBoundingClientRect(), event)) resetThemePreview();
+      return;
+    }
+    if (themePointer && Math.hypot(event.clientX - themePointer.x, event.clientY - themePointer.y) < 12) return;
+    const bounds = themePictureBounds(activeThemePreview);
+    if (!containsPointer(bounds, event)) {
+      const dismissed = themePointer && { preview: activeThemePreview, bounds: themePointer.entryBounds };
+      resetThemePreview();
+      dismissedTheme = dismissed;
+      return;
+    }
+    themesLayer.style.cursor = 'ew-resize';
+    if (!themePointer) { themePointer = { x: event.clientX, y: event.clientY, entryBounds: bounds }; return; }
+    // 进入时保留原来的浅/深色；微小手抖不触发横向切换。
+    if (Math.abs(event.clientX - themePointer.x) < 12) return;
+    const middle = bounds.left + bounds.width / 2;
+    const deadZone = bounds.width * .06;
+    if (event.clientX < middle - deadZone) activeThemePreview.dataset.variant = 'light';
+    if (event.clientX > middle + deadZone) activeThemePreview.dataset.variant = 'dark';
+    return;
+  }
+  // 缩回后必须重新进入截图，避免同一个指针位置把卡片反复打开。
+  if (dismissedTheme) {
+    if (containsPointer(dismissedTheme.bounds, event)) return;
+    dismissedTheme = undefined;
+  }
+  if (themePreviews.some(themeResizing)) return;
+  const preview = themePreviews.find(preview => containsPointer(themePictureBounds(preview), event));
+  themesLayer.style.cursor = preview ? 'zoom-in' : '';
+  if (!preview) return;
+  const entryBounds = themePictureBounds(preview);
+  activateThemePreview(preview);
+  themePointer = { x: event.clientX, y: event.clientY, entryBounds };
+};
+document.addEventListener('pointermove', updateThemeHover);
+themesLayer.addEventListener('transitionend', event => {
+  // 缩回途中已经移到另一张截图时，动画结束后接上这次进入，不要求再晃一下鼠标。
+  if (event.propertyName === 'width' && event.target.matches('.theme-preview') && !activeThemePreview && lastThemePointer) updateThemeHover(lastThemePointer);
+});
+document.addEventListener('pointerout', event => {
+  if (!mobileLayout.matches && !event.relatedTarget) { lastThemePointer = undefined; resetThemePreview(); }
+});
 
 themePreviews.forEach(preview => {
   preview.addEventListener('focus', () => {
     if (mobileLayout.matches) return;
     if (!activeThemePreview || activeThemePreview === preview) activateThemePreview(preview);
-  });
-  preview.addEventListener('pointermove', event => {
-    // A scene moving under a stationary pointer is not a request to expand it.
-    if (!mobileLayout.matches && !activeThemePreview) activateThemePreview(preview);
-    if (mobileLayout.matches || activeThemePreview !== preview) return;
-    const bounds = preview.getBoundingClientRect();
-    const middle = bounds.left + bounds.width / 2;
-    const deadZone = bounds.width * .06;
-    if (event.clientX < middle - deadZone) preview.dataset.variant = 'light';
-    if (event.clientX > middle + deadZone) preview.dataset.variant = 'dark';
-  });
-  preview.addEventListener('mouseleave', () => {
-    if (mobileLayout.matches) return;
-    if (preview.dataset.defaultVariant) preview.dataset.variant = preview.dataset.defaultVariant;
-    else delete preview.dataset.variant;
   });
   preview.addEventListener('pointerdown', event => {
     if (mobileLayout.matches && activeThemePreview === preview) themeGesture = { x: event.clientX, y: event.clientY };
@@ -219,7 +271,6 @@ themePreviews.forEach(preview => {
     if (event.key === 'Escape') resetThemePreview();
   });
 });
-themesLayer.addEventListener('pointerleave', () => { if (!mobileLayout.matches && document.documentElement.dataset.scene === '3' && !enteringSceneFour()) resetThemePreview(); });
 themesLayer.addEventListener('focusout', event => {
   if (document.documentElement.dataset.scene === '3' && !enteringSceneFour() && !themesLayer.contains(event.relatedTarget)) resetThemePreview();
 });

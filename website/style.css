@@ -186,7 +186,7 @@ html[data-scene="2"] .window-pager button:hover, html[data-scene="2"] .window-pa
 
 .themes-layer { inset: -5% -9%; overflow: hidden; padding: 6px; pointer-events: none; }
 html[data-scene="3"] .themes-layer { pointer-events: auto; }
-.theme-preview { position: absolute; z-index: 1; width: calc((100% - 18px) / 2); height: calc((100% - 18px) / 2); overflow: hidden; border: 0; border-radius: 11px; cursor: zoom-in; opacity: 1; background: #b9aa94; transition: left .62s var(--ease-smooth-out), top .62s var(--ease-smooth-out), width .62s var(--ease-smooth-out), height .62s var(--ease-smooth-out), border-radius .48s ease, opacity .3s ease, transform .62s var(--ease-smooth-out); }
+.theme-preview { position: absolute; z-index: 1; width: calc((100% - 18px) / 2); height: calc((100% - 18px) / 2); overflow: hidden; border: 0; border-radius: 11px; cursor: inherit; opacity: 1; background: #b9aa94; transition: left .62s var(--ease-smooth-out), top .62s var(--ease-smooth-out), width .62s var(--ease-smooth-out), height .62s var(--ease-smooth-out), border-radius .48s ease, opacity .3s ease, transform .62s var(--ease-smooth-out); }
 .theme-preview:hover, .theme-preview:focus-visible { z-index: 5; outline: 0; }
 .theme-preview::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(180deg, rgba(20,17,15,.08), rgba(20,17,15,.24)); transition: opacity .4s ease; }
 .theme-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: opacity .42s ease, transform .68s var(--ease-smooth-out); }
@@ -209,7 +209,7 @@ html[data-theme] .theme-preview { opacity: 0; pointer-events: none; transform: s
 html[data-theme="paper-ink"] .theme-paper,
 html[data-theme="xuan-stone"] .theme-ink,
 html[data-theme="clear-glass"] .theme-sand,
-html[data-theme="mist-slate"] .theme-blue { z-index: 45; left: 0; top: 0; width: 100%; height: 100%; border-color: transparent; border-radius: 17px; opacity: 1; cursor: ew-resize; background: transparent; box-shadow: none; pointer-events: auto; transform: scale(1); }
+html[data-theme="mist-slate"] .theme-blue { z-index: 45; left: 0; top: 0; width: 100%; height: 100%; border-color: transparent; border-radius: 17px; opacity: 1; cursor: inherit; background: transparent; box-shadow: none; pointer-events: auto; transform: scale(1); }
 html[data-theme] .theme-preview .theme-art { opacity: 0; transform: scale(1.08); }
 html[data-theme] .theme-preview::after { opacity: 0; }
 html[data-theme] .theme-name { opacity: 0; transform: translateY(5px); }
