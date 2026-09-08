@@ -1,26 +1,52 @@
 {
-  "fill" : {
-    "solid" : "display-p3:0.94902,0.88627,0.79216,1.00000"
+  "fill": {
+    "solid": "display-p3:0.94902,0.88627,0.79216,1.00000"
   },
-  "groups" : [
+  "groups": [
     {
-      "layers" : [
+      "name": "拓印字标",
+      "layers": [
         {
-          "image-name" : "01-Artwork.png",
-          "name" : "Artwork"
+          "image-name": "01-Mark.png",
+          "name": "W 与朱砂",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "display-p3:0.94902,0.88627,0.79216,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ]
         }
       ],
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.08
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
       },
-      "translucency" : {
-        "enabled" : false,
-        "value" : 0
+      "translucency": {
+        "enabled": false,
+        "value": 0
       }
     }
   ],
-  "supported-platforms" : {
-    "squares" : "shared"
-  }
+  "supported-platforms": {
+    "squares": "shared"
+  },
+  "fill-specializations": [
+    {
+      "appearance": "dark",
+      "value": "system-dark"
+    },
+    {
+      "appearance": "tinted",
+      "value": "automatic"
+    }
+  ]
 }

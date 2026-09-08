@@ -10,7 +10,7 @@
 
 - `weibei-app-icon-1024.png`：完整拓印母版，透明外框；
 - `weibei-app-icon-small-optical-1024.png`：低纹理、小尺寸专用；
-- `AppIcon.icon/`：保留原米纸、拓印和朱砂的 macOS 27 动态图标源；
+- `AppIcon.icon/`：独立拓印字标与系统玻璃底板的 macOS 27 动态图标源；
 - `AppIcon.iconset/`：macOS 十个标准槽位；
 - `AppIcon.appiconset/`：Xcode 资产目录与 Contents.json；
 - `AppIcon.icns`：DMG、Finder 和其他传统场景的静态导出；
@@ -18,7 +18,9 @@
 
 ## macOS 27 处理
 
-`AppIcon.icon` 不把 W 内部的每个拓印缺口当成独立玻璃边缘。米纸、墨色 W 和朱砂作为一个保真画面，系统只对整个图标外壳施加高光、圆角和外观变化，避免把拓印变成塑料浮雕。
+`AppIcon.icon` 使用系统底板与透明拓印字标两个独立部分。底板由系统处理玻璃外壳；W 与朱砂来自原拓印素材，关闭字标层的 Liquid Glass 效果，避免每个拓印缺口变成玻璃边缘。
+
+默认外观保留暖纸色底板和原墨色、朱砂；深色外观使用系统深色底板和浅色字标；单色外观使用系统自动底板和不透明字标，颜色由系统着色决定，不绑定某一种颜色。底板不再叠加整张不透明纸纹图片。
 
 ## 尺寸策略
 

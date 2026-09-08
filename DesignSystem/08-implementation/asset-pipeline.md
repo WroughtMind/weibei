@@ -10,7 +10,7 @@
 
 ## 输出
 
-`scripts/build-assets.sh` 生成透明、单色、反白、真实字体英文组合标、App Icon、Web、GitHub、Social 和预览图。它同时把批准的米纸与拓印生成为 `AppIcon.icon` 的保真画面；应用打包时再由 Xcode 编译动态资源与传统 ICNS。`scripts/build-manifest.ts` 记录路径、体积与 SHA-256。
+`scripts/build-assets.sh` 生成透明、单色、反白、真实字体英文组合标、App Icon、Web、GitHub、Social 和预览图。它同时将批准的透明拓印生成为 `AppIcon.icon` 的独立字标层，玻璃底板由图标配置交给系统处理；应用打包时再由 Xcode 编译动态资源与传统 ICNS。`scripts/build-manifest.ts` 记录路径、体积与 SHA-256。
 
 ## 重建
 

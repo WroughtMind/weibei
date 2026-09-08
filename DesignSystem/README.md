@@ -71,4 +71,4 @@ DesignSystem/scripts/verify-assets.sh
 
 ## 当前接入状态
 
-`AppIcon.icon` 已接入手工打包脚本。构建时由 Xcode 编译出 macOS 27 使用的 `Assets.car` 和 macOS 14–26 使用的 `AppIcon.icns`，两者来自同一份纹理保真画面。
+`AppIcon.icon` 已接入手工打包脚本。构建时由 Xcode 编译出 macOS 27 使用的 `Assets.car` 和 macOS 14–26 使用的 `AppIcon.icns`，两者来自同一份分层图标：系统底板与关闭玻璃效果的拓印字标。

@@ -94,14 +94,11 @@ convert -size 920x920 xc:none -fill white -draw 'roundrectangle 0,0 919,919 184,
 convert "$TMP/icon-content.png" "$TMP/icon-mask.png" -alpha on -channel A -fx 'v' +channel \
   -bordercolor none -border 52 -strip "$ICON/weibei-app-icon-1024.png"
 
-# Preserve the approved paper and rubbing as one opaque artwork layer. macOS
-# applies Liquid Glass only to the outer icon shell, not to each ink void.
-convert "$LOGO/source/paper-texture-2048.png" -filter Lanczos -resize 1024x1024! \
-  "$TMP/icon-composer-paper.png"
+# Keep the textured mark separate from the system-rendered glass background.
+# Disabling glass on this layer also prevents each rubbing void becoming a bevel.
 convert "$TMP/weibei-mark-textured-transparent.png" -filter Lanczos -resize 920x920 \
-  -background none -gravity center -extent 1024x1024 "$TMP/icon-composer-mark.png"
-convert "$TMP/icon-composer-paper.png" "$TMP/icon-composer-mark.png" -compose over -composite \
-  -strip "$ICON/AppIcon.icon/Assets/01-Artwork.png"
+  -background none -gravity center -extent 1024x1024 -strip \
+  "$ICON/AppIcon.icon/Assets/01-Mark.png"
 
 # Small-size optical master: flat ink, calmer paper, deliberately enlarged cinnabar anchor.
 convert -size 1254x1254 xc:none -fill '#231F1C' -draw "path '$MARK_PATH'" \
