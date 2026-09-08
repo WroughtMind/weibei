@@ -12,6 +12,7 @@ final class BlockView: UIView, UITextViewDelegate {
     private let fold = UIButton(type: .system)
     private let save = UIButton(type: .system)
     private var diagram: DiagramView?
+    var diagramRendered: Bool { diagram?.renderSucceeded == true }
     private(set) var record: PreparedBlock?
     var onChange: (() -> Void)?
     var onLink: ((URL) -> Void)?
@@ -128,7 +129,7 @@ final class BlockView: UIView, UITextViewDelegate {
             markdown.contentWidth = width
             lastHeight = max(24, ceil(markdown.boundingSize(for: width).height))
             markdown.frame = CGRect(x: 0, y: 0, width: width, height: lastHeight)
-            markdown.layoutIfNeeded()
+            layoutMarkdown()
         case .card:
             lastHeight = record.collapsed ? 48 : 204
             draft.isHidden = record.collapsed; save.isHidden = record.collapsed
@@ -164,7 +165,7 @@ final class BlockView: UIView, UITextViewDelegate {
         if preparedLabel.isHidden {
             markdown.contentWidth = width
             markdown.frame = bounds
-            markdown.layoutIfNeeded()
+            layoutMarkdown()
         } else {
             preparedLabel.frame = bounds
             preparedLabel.preferredMaxLayoutWidth = width
@@ -188,7 +189,7 @@ final class BlockView: UIView, UITextViewDelegate {
     }
     func restoreInteractionState() {
         guard let record else { return }
-        markdown.layoutIfNeeded()
+        layoutMarkdown()
         for (view, offset) in zip(scrollViews(in: markdown), record.horizontalOffsets) {
             view.contentOffset.x = offset
         }
@@ -202,6 +203,12 @@ final class BlockView: UIView, UITextViewDelegate {
             }
         }
         return labels(in: markdown)
+    }
+    private func layoutMarkdown() {
+        markdown.layoutIfNeeded()
+        // Upstream positions its context views at the end of the parent pass.
+        // Complete their native layout before restoring an inner scroll offset.
+        for child in markdown.subviews { child.layoutIfNeeded() }
     }
     func scrollViews(in view: UIView) -> [UIScrollView] {
         view.subviews.flatMap { child in

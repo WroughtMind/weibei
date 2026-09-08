@@ -16,16 +16,18 @@ mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:matchMedia('(
 let current=0;
 async function renderDiagram(source,generation) {
   current=generation;
+  let rendered=false;
   try {
     const result=await mermaid.render('diagram-'+generation,source);
     if(current!==generation)return;
     document.querySelector('#diagram').innerHTML=result.svg;
+    rendered=document.querySelector('#diagram svg')!==null;
     document.querySelector('#error').textContent='';
   } catch(error) {
     if(current!==generation)return;
     document.querySelector('#diagram').replaceChildren();
     document.querySelector('#error').textContent='关系图内容无效：'+error.message;
   }
-  window.webkit.messageHandlers.size.postMessage({generation,height:Math.ceil(document.body.getBoundingClientRect().height)+16});
+  window.webkit.messageHandlers.size.postMessage({generation,rendered,height:Math.ceil(document.body.getBoundingClientRect().height)+16});
 }
 </script></html>

@@ -531,6 +531,15 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 try expect(blocks.contains { $0.content.rendered.values.contains { $0.image != nil } }, "数学资源没有生成真实公式")
                 try expect(LabImages.shared.images["lab-image://landscape"] != nil, "图片没有解码成功")
                 guard blocks.count > 3 else { throw Failure(message: "富内容样本不完整") }
+                guard let diagram = blocks.first(where: { if case .diagram = $0.kind { return true }; return false }) else {
+                    throw Failure(message: "没有关系图内容")
+                }
+                let diagramView = store.view(for: diagram, width: bodyWidth)
+                let diagramDeadline = ContinuousClock.now + .seconds(8)
+                while !diagramView.diagramRendered {
+                    if ContinuousClock.now >= diagramDeadline { throw Failure(message: "离线关系图没有生成真实 SVG") }
+                    try await Task.sleep(for: .milliseconds(20))
+                }
 
                 guard let imageIndex = blocks.firstIndex(where: { $0.imageSources.contains("lab-image://landscape") }) else {
                     throw Failure(message: "没有实际图片正文")
@@ -547,6 +556,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 // Drop the prepared view pool before the real asynchronous
                 // decoder returns; the content record must still be updated.
                 store.reset()
+                collection.reloadData(); collection.layoutIfNeeded()
                 let imageDeadline = ContinuousClock.now + .seconds(8)
                 while imageBlock.height == pendingHeight || changeScheduled {
                     if ContinuousClock.now >= imageDeadline { throw Failure(message: "图片到达后缓存行高没有更新") }
@@ -577,6 +587,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 foldButton.sendActions(for: .touchUpInside)
                 while changeScheduled { await Task.yield() }
                 store.reset()
+                collection.reloadData(); collection.layoutIfNeeded()
                 let restoredCard = store.view(for: card, width: bodyWidth)
                 let restoredDraft = restoredCard.subviews.compactMap { $0 as? UITextView }.first!
                 try expect(restoredDraft.text == draftView.text && restoredDraft.isHidden && card.collapsed, "摘记草稿或折叠后的显示状态丢失")
@@ -592,10 +603,11 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let highlighted = codeLabel.attributedText.copy() as! NSAttributedString
                 codeLabel.selectionRange = NSRange(location: 3, length: 16)
                 scroller.contentOffset.x = min(80, max(0, scroller.contentSize.width - scroller.bounds.width))
-                try expect(scroller.contentOffset.x > 0, "长代码没有可横向阅读的完整宽度")
+                try expect(scroller.contentOffset.x > 0, "长代码没有可横向阅读的完整宽度（正文 \(codeLabel.intrinsicContentSize.width)，内容 \(scroller.contentSize.width)，视口 \(scroller.bounds.width)）")
                 codeView.saveInteractionState()
                 let offset = scroller.contentOffset.x
                 store.reset(); CodeHighlighter.current.renderCache.removeAll()
+                collection.reloadData(); collection.layoutIfNeeded()
                 let restoredCode = store.view(for: code, width: bodyWidth)
                 restoredCode.restoreInteractionState()
                 try expect(restoredCode.attachmentLabels.first?.selectionRange == NSRange(location: 3, length: 16) && restoredCode.scrollViews(in: restoredCode.markdown).first?.contentOffset.x == offset,
@@ -603,7 +615,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 try expect(restoredCode.attachmentLabels.first?.attributedText.isEqual(to: highlighted) == true && !code.content.highlightMaps.isEmpty,
                            "视图和全局缓存淘汰后没有保留代码高亮")
                 metrics.checks["code_highlight_selection_and_scroll_persist"] = "passed"
-                metrics.checks["math_and_image_resources"] = "passed"
+                metrics.checks["math_image_and_diagram_resources"] = "passed"
                 selection.clear()
 
                 loadScenario("long")

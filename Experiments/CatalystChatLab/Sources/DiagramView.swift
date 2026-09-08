@@ -7,6 +7,7 @@ final class DiagramView: UIView, WKNavigationDelegate {
     private var generation = 0
     private var ready = false
     private(set) var measuredHeight: CGFloat = 200
+    private(set) var renderSucceeded = false
     var heightChanged: (() -> Void)?
 
     override init(frame: CGRect) {
@@ -31,6 +32,7 @@ final class DiagramView: UIView, WKNavigationDelegate {
     func display(_ value: String) {
         guard value != source else { return }
         source = value
+        renderSucceeded = false
         generation += 1
         render()
     }
@@ -47,6 +49,7 @@ final class DiagramView: UIView, WKNavigationDelegate {
     fileprivate func receive(_ body: Any) {
         guard let result = body as? [String: Any], result["generation"] as? Int == generation,
               let height = result["height"] as? Double, height.isFinite, height > 0 else { return }
+        renderSucceeded = result["rendered"] as? Bool == true
         if abs(measuredHeight - height) > 1 { measuredHeight = height; heightChanged?() }
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
