@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import MarkdownView
 
 @MainActor
@@ -140,6 +141,8 @@ final class CandidateHost: NSView {
 
     func saveViewport(to url: URL) throws {
         layoutSubtreeIfNeeded()
+        displayIfNeeded()
+        CATransaction.flush()
         guard let bitmap = bitmapImageRepForCachingDisplay(in: bounds) else {
             throw LabFailure.message("Could not allocate the viewport bitmap")
         }
@@ -148,5 +151,45 @@ final class CandidateHost: NSView {
             throw LabFailure.message("Could not encode the viewport bitmap")
         }
         try data.write(to: url, options: .atomic)
+    }
+
+    /// Narrow diagnosis for the first CI capture's blank code block. Inspect
+    /// frames/layers and capture the affected component without changing its
+    /// renderer or changing what constitutes a successful behavior check.
+    func saveRenderingDiagnostics(to directory: URL) throws {
+        var lines: [String] = []
+        var codeViews: [NSView] = []
+        func visit(_ view: NSView, depth: Int) {
+            let typeName = String(describing: type(of: view))
+            let background = view.layer?.backgroundColor.map { String(describing: $0) } ?? "nil"
+            lines.append(String(repeating: "  ", count: depth) +
+                "\(typeName) frame=\(view.frame) visible=\(view.visibleRect) hidden=\(view.isHidden) " +
+                "opaque=\(view.isOpaque) layer=\(String(describing: view.layer)) background=\(background)")
+            if typeName == "CodeView" { codeViews.append(view) }
+            for child in view.subviews { visit(child, depth: depth + 1) }
+        }
+        visit(self, depth: 0)
+        try lines.joined(separator: "\n").write(to: directory.appendingPathComponent("view-tree.txt"),
+                                               atomically: true, encoding: .utf8)
+        for (index, code) in codeViews.enumerated() {
+            code.layoutSubtreeIfNeeded()
+            code.displayIfNeeded()
+            guard let bitmap = code.bitmapImageRepForCachingDisplay(in: code.bounds) else { continue }
+            code.cacheDisplay(in: code.bounds, to: bitmap)
+            if let data = bitmap.representation(using: .png, properties: [:]) {
+                try data.write(to: directory.appendingPathComponent("code-\(index)-appkit.png"))
+            }
+            guard let layer = code.layer,
+                  let context = CGContext(data: nil, width: max(1, Int(code.bounds.width)),
+                    height: max(1, Int(code.bounds.height)), bitsPerComponent: 8, bytesPerRow: 0,
+                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { continue }
+            layer.displayIfNeeded()
+            layer.render(in: context)
+            if let image = context.makeImage(),
+               let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+                try data.write(to: directory.appendingPathComponent("code-\(index)-layer.png"))
+            }
+        }
     }
 }

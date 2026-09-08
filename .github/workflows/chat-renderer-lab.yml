@@ -48,3 +48,31 @@ jobs:
             Experiments/ChatRendererLab/.artifacts/Package.resolved
             Experiments/ChatRendererLab/.artifacts/*.zip
             Experiments/ChatRendererLab/.artifacts/verification/**
+
+  compatibility-macos:
+    name: Verify candidate links with WeiBei dependency constraints
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Resolve and link both renderer dependency families
+        shell: bash
+        run: |
+          set -o pipefail
+          cd Experiments/ChatRendererLab/Compatibility
+          mkdir -p .artifacts
+          swift package resolve 2>&1 | tee .artifacts/resolve.log
+          cp Package.resolved .artifacts/Package.resolved
+          swift package show-dependencies --format json > .artifacts/dependencies.json
+          swift build -c release --product LinkedRenderersProbe 2>&1 | tee .artifacts/build.log
+          # Link validation only: do not execute a raw SwiftPM GUI product.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: renderer-link-compatibility-${{ runner.arch }}-${{ github.run_id }}
+          include-hidden-files: true
+          retention-days: 7
+          path: Experiments/ChatRendererLab/Compatibility/.artifacts/**

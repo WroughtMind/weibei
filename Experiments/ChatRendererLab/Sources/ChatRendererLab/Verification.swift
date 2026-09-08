@@ -12,7 +12,7 @@ struct LabCheck: Codable {
     let detail: String
 }
 
-struct LabReport: Codable {
+struct LabReport: Encodable {
     let scope = "stage-A-candidate-component-only"
     let isProductionComparison = false
     let isFPSMeasurement = false
@@ -84,7 +84,20 @@ enum CandidateVerification {
             guard let content = document.content else { throw LabFailure.message("No prepared document") }
             try require(!content.rendered.isEmpty && content.rendered.values.allSatisfy { $0.image != nil },
                         "Math image creation failed; verify bundled fonts/resources")
+            // Drawing probes are diagnostic only, outside all timing measurements.
+            // A readable copied string alone does not prove visible code is drawn.
             try host.saveViewport(to: directory.appendingPathComponent("rich-top.png"))
+            try host.saveRenderingDiagnostics(to: directory)
+            if ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true", let window = host.window {
+                // A hosted CI runner is an isolated desktop, not the user's Mac.
+                // Compare hidden-window capture with an ordered window; never do
+                // this in local verification or claim it measures touchpad FPS.
+                window.orderBack(nil)
+                try await Task.sleep(for: .milliseconds(150))
+                try await settle(host)
+                try host.saveViewport(to: directory.appendingPathComponent("rich-ordered-window.png"))
+                window.orderOut(nil)
+            }
             host.scrollToBottom()
             try host.saveViewport(to: directory.appendingPathComponent("rich-bottom.png"))
             return "Read-only copy includes code, table text and final marker; math resources loaded. Visual placement is not asserted by copy."

@@ -61,6 +61,7 @@ cd "$ROOT"
   git status --porcelain
 } > "$OUT/environment.txt" 2>&1
 swift package resolve 2>&1 | tee "$OUT/resolve.log"
+cp Package.resolved "$OUT/Package.resolved"
 python3 script/prepare_app_resources.py "$ROOT/.build/checkouts" | tee "$OUT/resource-patch.log"
 swift build -c release --product "$NAME" 2>&1 | tee "$OUT/build.log"
 BIN="$(swift build -c release --show-bin-path)"
@@ -119,7 +120,10 @@ if [[ "$MODE" == verify ]]; then
   python3 - "$APP" "$VERIFY" <<'PY'
 import json, pathlib, subprocess, sys
 app, output = sys.argv[1:]
-subprocess.run(['/usr/bin/open', '-n', '-g', '-W', app, '--args', '--verify', output], check=True, timeout=180)
+subprocess.run(['/usr/bin/open', '-n', '-g', '-W',
+                '--stdout', str(pathlib.Path(output) / 'app-stdout.log'),
+                '--stderr', str(pathlib.Path(output) / 'app-stderr.log'),
+                app, '--args', '--verify', output], check=True, timeout=180)
 path = pathlib.Path(output) / 'report.json'
 if not path.exists():
     failure = pathlib.Path(output) / 'fatal.json'
