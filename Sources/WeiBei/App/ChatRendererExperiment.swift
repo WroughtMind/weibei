@@ -120,7 +120,7 @@ enum ChatRendererExperiment {
             revealInWorkspace: false, conflictResolution: .keepBoth(preferredFileName: nil), presentsError: false)
         else { throw CocoaError(.fileWriteUnknown) }
         let source = AgentReplySource(itemID: noteID, courseID: courseID, kind: .note,
-            title: "阅读位置实验笔记", label: "实验笔记", excerpt: "合成内容；图片、操作和写入均位于独立实验资料库。")
+            title: "阅读位置实验笔记", label: "[笔记：阅读位置实验笔记]", excerpt: "合成内容；图片、操作和写入均位于独立实验资料库。")
         for (scenario, title) in scenarioTitles.enumerated() {
             guard let chat = store.createStudySession(courseID: courseID) else { throw CocoaError(.coderInvalidValue) }
             _ = store.renameStudySession(chat.id, title: title)
