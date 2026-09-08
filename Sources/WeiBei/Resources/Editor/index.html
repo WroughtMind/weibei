@@ -1591,6 +1591,7 @@
           || (event.target instanceof Element && event.target.closest('.ProseMirror'))) return;
       var editor = document.querySelector('.ProseMirror');
       if (!editor) return;
+      event.preventDefault();
       editor.focus();
       var range = document.createRange();
       range.selectNodeContents(editor);
