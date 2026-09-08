@@ -187,7 +187,7 @@ final class NativeChatMarkdownTests: XCTestCase {
             XCTAssertTrue(checked)
         }
         checkCodeAttachmentSize()
-        let firstLaidOutHeight = manager.usageBoundsForTextContainer.maxY
+        let firstParagraphLines = try XCTUnwrap(manager.textLayoutFragment(for: manager.textContentManager!.documentRange.location)).textLineFragments.count
         var originalAttachments: [NativeChatTextAttachment] = []
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
             if let attachment = value as? NativeChatTextAttachment { originalAttachments.append(attachment) }
@@ -199,8 +199,10 @@ final class NativeChatMarkdownTests: XCTestCase {
         XCTAssertTrue(narrowHeight.isFinite && narrowHeight > 0)
         textView.layoutSubtreeIfNeeded()
         checkCodeAttachmentSize()
-        // The synchronous size is an estimate; compare completed layouts after inspecting all attachments.
-        XCTAssertGreaterThanOrEqual(manager.usageBoundsForTextContainer.maxY, firstLaidOutHeight)
+        // Attachments prepare asynchronously, so their estimates can shrink while
+        // the text reflows. Verify actual wrapping rather than monotonic total estimates.
+        let narrowParagraphLines = try XCTUnwrap(manager.textLayoutFragment(for: manager.textContentManager!.documentRange.location)).textLineFragments.count
+        XCTAssertGreaterThan(narrowParagraphLines, firstParagraphLines)
         coordinator.submit(markdown: markdownMemo.outputs(text: source + "\n\n回答结束。", sources: [], language: .chinese).finalized, messageID: messageID)
         await fulfillment(of: [completed], timeout: 5)
         XCTAssertTrue(coordinator.view === textView)
@@ -284,9 +286,6 @@ final class NativeChatMarkdownTests: XCTestCase {
         }
         message.completionState = .completed
         store.messages = [message]
-        // A history estimate must not leave extra blank space after the real body is ready.
-        AgentFinalizedMarkdownHeightCache.store(before * 2, for: AgentFinalizedMarkdownHeightCache.cacheKey(
-            messageID: message.id, text: source, widthBucket: 0, wideTypography: false))
         host.rootView = bubble(message)
         let after = try await settledHeight()
         XCTAssertEqual(after, before, accuracy: 0.5)
@@ -424,6 +423,7 @@ final class NativeChatMarkdownTests: XCTestCase {
             let y = fragment.layoutFragmentFrame.minY + line.typographicBounds.minY
             return (NSRange(location: index, length: line.characterRange.length), text.convert(CGPoint(x: 0, y: y), to: clip).y - clip.bounds.minY)
         }
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
         clip.scroll(to: CGPoint(x: 0, y: 1800))
         try await settle()
         let before = try readingPosition()
@@ -434,6 +434,11 @@ final class NativeChatMarkdownTests: XCTestCase {
             XCTAssertTrue(NSLocationInRange(before.0.location, after.0))
             XCTAssertEqual(after.1, before.1, accuracy: 1)
         }
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+        let manualTarget = clip.bounds.minY + 120
+        clip.scroll(to: CGPoint(x: 0, y: manualTarget))
+        try await settle()
+        XCTAssertEqual(clip.bounds.minY, manualTarget, accuracy: 1)
         for _ in 0..<3 {
             let document = try XCTUnwrap(scroll.documentView)
             clip.scroll(to: CGPoint(x: 0, y: max(0, document.frame.height - clip.bounds.height)))

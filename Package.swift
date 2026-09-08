@@ -1,5 +1,6 @@
 // swift-tools-version: 5.9
 import PackageDescription
+import Foundation
 
 let package = Package(
     name: "WeiBei",
@@ -82,7 +83,11 @@ let package = Package(
         ),
         .testTarget(
             name: "WeiBeiSafetyTests",
-            dependencies: ["WeiBei"]
+            dependencies: ["WeiBei"],
+            // The Release performance run uses the real app without DEBUG-only safety hooks.
+            // Ordinary test and CI invocations still compile the complete safety suite.
+            sources: ProcessInfo.processInfo.environment["WEIBEI_CHAT_PERFORMANCE_CHECK"] == "1"
+                ? ["NativeConversationPerformanceTests.swift"] : nil
         )
     ]
 )

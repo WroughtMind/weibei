@@ -854,6 +854,10 @@ struct MarkdownPreviewView: View {
     var onRenderFailure: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var onContentHeightChange: () -> Void = {}
+    private static func previewWidthBucket(_ width: CGFloat) -> Int {
+        max(Int((width / 24).rounded(.down)) * 24, 0)
+    }
+
     private static let compactPreviewLoadingHeight: CGFloat = 44
     private static let compactPreviewMaximumHeight: CGFloat = 20_000
 
@@ -1050,10 +1054,10 @@ struct MarkdownPreviewView: View {
             guard widthKey != lastLayoutWidthKey else { return }
             // Only unfreeze across coarse width buckets. Sub-bucket jitter from
             // scrollbar / split remasure must not restart every chat WKWebView.
-            let previousBucket = AgentFinalizedMarkdownHeightCache.widthBucket(
+            let previousBucket = Self.previewWidthBucket(
                 CGFloat(lastLayoutWidthKey)
             )
-            let nextBucket = AgentFinalizedMarkdownHeightCache.widthBucket(
+            let nextBucket = Self.previewWidthBucket(
                 CGFloat(widthKey)
             )
             lastLayoutWidthKey = widthKey
@@ -1110,26 +1114,6 @@ struct MarkdownPreviewView: View {
     }
 }
 
-private struct AgentRailTurn {
-    var id: UUID
-    var startMessageID: UUID
-    var startIndex: Int
-    var question: String
-    var answer: String
-}
-
-/// Keeps the last frame-level probe value without publishing it through SwiftUI state.
-/// The real parent proposal lays out visible content; sampled width settles render caches.
-private final class AgentPaneWidthRelay {
-    var pendingWidth: CGFloat?
-    var structureTransitionActive = false
-    var dividerDragActive = false
-
-    var isActive: Bool {
-        structureTransitionActive || dividerDragActive
-    }
-}
-
 /// Standard chat column metrics — one centered axis shared by messages and composer.
 /// Compact = three-pane agent strip; wide = immersive conversation (Codex-like full chat).
 ///
@@ -1173,322 +1157,72 @@ struct AgentPaneView: View {
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
-    @State private var activeAgentRailID: String?
-    @State private var agentFollowsLatest = true
+    @StateObject private var conversation = NativeConversationNavigation()
     @State private var sessionPendingDeletion: StudySession?
     @State private var sessionRenameDraft = ""
     @State private var isRenamingSession = false
-    /// Settled pane width for renderer caches. 0 until first real measurement.
-    @State private var measuredPaneWidth: CGFloat = 0
-    @State private var paneWidthRelay = AgentPaneWidthRelay()
-    /// Structural pane show/hide animates the AppKit slot every frame. Visible
-    /// finalized Markdown follows the live column; offscreen web views hold one
-    /// width and settle once at the destination instead of all reflowing per frame.
-    @State private var heldPaneLayoutWidth: CGFloat?
-    @State private var isPaneWidthMotionActive = false
-    @State private var lastReadablePaneWidth: CGFloat = 360
-    @State private var paneStructureTransitionSequence = 0
-    /// Driven by the AppKit scroll probe — true when the viewport sits well
-    /// above the newest message, revealing the jump-to-latest pill.
-    @State private var showsJumpToLatest = false
-    /// History grows one page at a time; measured distant rows may release their views.
-    @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
-    @State private var isRevealingEarlierAgentHistory = false
-    @State private var isAgentHistoryRevealButtonHovered = false
-    /// Turn-start rows report reading-line crossings here at scroll rate. A
-    /// reference type on purpose: per-event dictionary writes must not publish
-    /// SwiftUI state; only the derived activeAgentRailID write renders.
-    @State private var turnReadingPositions = AgentTurnReadingPositionModel()
-    /// Far-row IDs represented by their measured row heights. Empty unless the
-    /// unload flag is on; published only when the set changes, not per scroll pixel.
-    @State private var offscreenPlaceholderIDs: Set<UUID> = []
-
-    private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
-    private static let paneStructureTransitionDuration: TimeInterval = 0.24
-
-    private let agentBottomAnchorID = "agentConversationBottom"
-
-    private var hiddenAgentHistoryCount: Int {
-        max(store.messages.count - agentVisibleMessageLimit, 0)
-    }
-
-    private var visibleAgentMessages: ArraySlice<AgentMessage> {
-        store.messages.suffix(max(agentVisibleMessageLimit, 0))
-    }
-
-    private var isImmersiveConversation: Bool {
-        store.layout == .immersiveConversation
-    }
 
     private var usesWideChatLayout: Bool {
         AgentChatLayoutMetrics.isWide(layout: store.layout)
     }
 
-    /// Semantic renderer width; the GeometryReader proposal owns visible layout.
-    /// Hidden resident hosts retain their last readable width for the next open.
-    private var agentPaneWidth: CGFloat {
-        if measuredPaneWidth > ContentRailMetrics.railOnlyThreshold {
-            return measuredPaneWidth
-        }
-        return usesWideChatLayout ? 1100 : lastReadablePaneWidth
-    }
-
     var body: some View {
-        let wide = AgentChatLayoutMetrics.isWide(layout: store.layout)
-        let showsContentRail = !wide && store.layout.allowsRailOnlyPanes
-        let railItems = showsContentRail ? agentRailItems : []
-        // One O(n) set per render — row backgrounds only do Set.contains.
-        let railTurnStartMessageIDs = showsContentRail ? agentRailTurnStartMessageIDs : []
-        // The native split host changes this proposal on every divider frame.
-        // Read it locally so visible content and the rail follow continuously;
-        // never publish those frame-level values into the eager message tree.
-        GeometryReader { paneGeometry in
-            let liveAvailableWidth = max(paneGeometry.size.width, 1)
-            let railOnly = ContentRailMetrics.isRailOnly(
-                availableWidth: liveAvailableWidth,
-                allowed: store.layout.allowsRailOnlyPanes
-            )
-            let contentWidth = AgentChatLayoutMetrics.contentWidth(
-                availableWidth: liveAvailableWidth,
-                wide: wide
-            )
-            let markdownContentWidth = AgentChatLayoutMetrics.contentWidth(
-                availableWidth: heldPaneLayoutWidth ?? agentPaneWidth,
-                wide: wide
-            )
-            let comfy = wide
-                || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
-            let composerHeight = AgentChatLayoutMetrics.composerHeight
-            let headerHeight: CGFloat = showsPaneHeader
-                ? (liveAvailableWidth < 420 ? 44 : 54)
-                : 0
-
-            ScrollViewReader { proxy in
-                ZStack(alignment: .topLeading) {
-                    VStack(spacing: 0) {
-                        if showsPaneHeader {
-                            WeiBeiPaneHeader(
-                                title: store.ui("对话", "Chat"),
-                                latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
-                                subtitle: store.agentConversationSubtitle,
-                                appearanceMode: store.appearanceMode,
-                                reorderRole: reorderRole,
-                                availableWidth: liveAvailableWidth
-                            ) {
-                                sessionMenu
-                            }
-                        }
-
-                        ScrollView(showsIndicators: true) {
-                            // No scrollTargetLayout / scrollPosition / viewport minHeight
-                            // feedback — those all thrash sizeThatFits on the chat stack.
-                            // Stable native rows; history expands on demand. Only measured
-                            // rows well beyond the viewport release their rendering views.
-                            VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
-                                if hiddenAgentHistoryCount > 0 {
-                                    agentHistoryRevealButton(proxy: proxy)
-                                        .transition(WeiBeiTransition.message)
-                                }
-                                ForEach(visibleAgentMessages) { message in
-                                    AgentMessageViewportGatedRow(
-                                        isPlaceholder: offscreenPlaceholderIDs.contains(message.id),
-                                        placeholderHeight: AgentMessageViewportWindow.cachedHeight(
-                                            message: message,
-                                            layoutWidth: markdownContentWidth,
-                                            wideTypography: comfy,
-                                            textScale: textScale
-                                        )
-                                    ) {
-                                        agentMessageRow(
-                                            message: message,
-                                            contentWidth: contentWidth,
-                                            wide: wide
-                                        )
-                                        .background {
-                                            GeometryReader { geometry in
-                                                Color.clear
-                                                    .onAppear { cacheMessageHeight(geometry.size.height, message: message, width: markdownContentWidth, wide: comfy) }
-                                                    .onChange(of: geometry.size.height) { _, height in
-                                                        cacheMessageHeight(height, message: message, width: markdownContentWidth, wide: comfy)
-                                                    }
-                                            }
-                                        }
-                                    }
-                                    .background {
-                                        if railTurnStartMessageIDs.contains(message.id) {
-                                            AgentTurnReadingPositionProbe(messageID: message.id) {
-                                                handleTurnReadingPosition(messageID: $0, passed: $1)
-                                            }
-                                        }
-                                    }
-                                }
-                                if store.isAgentRunningInActiveChat
-                                    && !store.hasPersistedGeneratingAgentReply
-                                {
-                                    agentReadingColumn(
-                                        alignment: .leading
-                                    ) {
-                                        AgentLiveResponse(
-                                            streaming: store.agentStreaming,
-                                            isChatWideTypography: comfy
-                                        )
-                                    }
-                                    .transition(WeiBeiTransition.message)
-                                }
-                                Color.clear
-                                    .frame(height: agentScrollBottomInset)
-                                    .id(agentBottomAnchorID)
-                                    .background {
-                                        AgentScrollDistanceProbe { metrics in
-                                            handleScrollMetrics(metrics, proxy: proxy)
-                                        }
-                                    }
-                            }
-                            .padding(.horizontal, wide ? 8 : 10)
-                            .padding(.vertical, wide ? 14 : 10)
-                            .environment(\.agentChatLayoutWidth, markdownContentWidth)
-                            .padding(.top, store.messages.isEmpty ? 22 : 0)
-                            // A held offscreen renderer may be wider than the pane,
-                            // but it must never establish the scroll document width.
-                            .frame(
-                                width: railOnly ? ContentRailMetrics.readableWidth : liveAvailableWidth,
-                                alignment: .topLeading
-                            )
-                        }
+        let wide = usesWideChatLayout
+        GeometryReader { geometry in
+            let width = max(geometry.size.width, 1)
+            let railOnly = ContentRailMetrics.isRailOnly(availableWidth: width, allowed: store.layout.allowsRailOnlyPanes)
+            let headerHeight: CGFloat = showsPaneHeader ? (width < 420 ? 44 : 54) : 0
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 0) {
+                    if showsPaneHeader {
+                        WeiBeiPaneHeader(title: store.ui("对话", "Chat"),
+                            latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
+                            subtitle: store.agentConversationSubtitle, appearanceMode: store.appearanceMode,
+                            reorderRole: reorderRole, availableWidth: width) { sessionMenu }
+                    }
+                    NativeConversationView(navigation: conversation, wide: wide,
+                        isVisible: !railOnly && store.isPaneVisible(.agent))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
-                        .zIndex(0)
-
-                        agentInputTray(wide: wide)
-                            .zIndex(1)
-                            .offset(y: initialComposerOffset(
-                                paneHeight: paneGeometry.size.height,
-                                headerHeight: headerHeight,
-                                composerHeight: composerHeight
-                            ))
-                            .animation(
-                                reduceMotion ? nil : .smooth(duration: 0.42),
-                                value: paneState.centersInitialAgentComposer
-                            )
-                            .animation(WeiBeiMotion.panel, value: store.layout)
-                            .animation(WeiBeiMotion.panel, value: wide)
+                    agentInputTray(wide: wide)
+                        .offset(y: initialComposerOffset(paneHeight: geometry.size.height,
+                            headerHeight: headerHeight, composerHeight: AgentChatLayoutMetrics.composerHeight))
+                        .animation(reduceMotion ? nil : .smooth(duration: 0.42), value: paneState.centersInitialAgentComposer)
+                        .animation(WeiBeiMotion.panel, value: store.layout)
+                }
+                .overlay(alignment: .bottom) {
+                    if conversation.showsJumpToLatest {
+                        jumpToLatestButton
+                            .padding(.bottom, AgentChatLayoutMetrics.composerHeight + 34)
+                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
                     }
-                    .overlay(alignment: .bottom) {
-                        if showsJumpToLatest {
-                            jumpToLatestButton(proxy: proxy)
-                                .padding(.bottom, composerHeight + 34)
-                                .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                        }
-                    }
-                    // Once the rail owns the pane, keep the invisible resident chat
-                    // at one readable proposal instead of laying WebKit out at 1–38pt.
-                    .frame(
-                        minWidth: railOnly ? ContentRailMetrics.readableWidth : nil,
-                        maxWidth: .infinity,
-                        maxHeight: .infinity,
-                        alignment: .topLeading
-                    )
-                    .opacity(railOnly ? 0 : 1)
-                    .allowsHitTesting(!railOnly)
-
-                    if showsContentRail {
-                        ContentRailView(
-                            label: store.ui("对话轨道", "Conversation rail"),
-                            items: railItems,
-                            activeID: activeAgentRailID ?? railItems.first?.id,
-                            appearanceMode: store.appearanceMode,
-                            isRailOnly: railOnly,
-                            availableWidth: liveAvailableWidth,
-                            topInset: railOnly ? 0 : headerHeight,
-                            bottomInset: railOnly ? 0 : agentRailBottomInset,
-                            onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) },
-                            motionPreference: store.motionPreference
-                        )
+                }
+                .frame(minWidth: railOnly ? ContentRailMetrics.readableWidth : nil,
+                    maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .opacity(railOnly ? 0 : 1)
+                .allowsHitTesting(!railOnly)
+                if !wide && store.layout.allowsRailOnlyPanes {
+                    ContentRailView(label: store.ui("对话轨道", "Conversation rail"), items: conversation.items,
+                        activeID: conversation.activeID ?? conversation.items.first?.id,
+                        appearanceMode: store.appearanceMode, isRailOnly: railOnly, availableWidth: width,
+                        topInset: railOnly ? 0 : headerHeight, bottomInset: railOnly ? 0 : agentRailBottomInset,
+                        onActivate: { item in
+                            if railOnly { store.requestPaneExpansion(.agent) { conversation.activate(item) } }
+                            else { conversation.activate(item) }
+                        }, motionPreference: store.motionPreference)
                         .zIndex(4)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .clipped()
-                .overlay(alignment: .top) {
-                    if showsPaneHeader {
-                        LinearGradient(
-                            colors: [
-                                WeiBeiTheme.glassHighlight.opacity(0.18),
-                                .clear
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 10)
-                        .allowsHitTesting(false)
-                    } else if !railOnly {
-                        // Match notes: floating slip overlay only — no extra clear ZStack.
-                        ImmersiveHoverTitleView(
-                            mark: "CHAT",
-                            title: store.agentConversationSubtitle,
-                            appearanceMode: store.appearanceMode,
-                            reorderRole: reorderRole
-                        ) {
-                            sessionMenu
-                        }
-                    }
-                }
-                .onChange(of: store.messages.map(\.id)) { oldIDs, newIDs in
-                    if oldIDs.isEmpty, !newIDs.isEmpty {
-                        paneState.dockInitialAgentComposer()
-                    }
-                    // Only a true append to this conversation widens the mounted window.
-                    // Initial restore used to look like a 0 -> N append and mounted the
-                    // entire rich history, defeating paging and stalling pane toggles.
-                    if let appendedCount = AgentHistoryRevealPolicy.appendedMessageCount(
-                        previousMessageIDs: oldIDs,
-                        currentMessageIDs: newIDs
-                    ) {
-                        agentVisibleMessageLimit += appendedCount
-                    } else {
-                        agentVisibleMessageLimit = Self.agentHistoryPageSize
-                        isRevealingEarlierAgentHistory = false
-                    }
-                    if showsContentRail, let lastID = store.messages.last?.id {
-                        updateAgentRailPosition(for: lastID)
-                    }
-                    scrollAgentToBottom(proxy)
-                }
-                .onChange(of: store.activeStudySessionID) { _, _ in
-                    agentVisibleMessageLimit = Self.agentHistoryPageSize
-                    isRevealingEarlierAgentHistory = false
-                    turnReadingPositions.passedByMessageID.removeAll()
-                    activeAgentRailID = nil
                 }
             }
-            .preference(
-                key: AgentPaneWidthKey.self,
-                value: liveAvailableWidth
-            )
-        }
-        .onPreferenceChange(AgentPaneWidthKey.self) { width in
-            applyMeasuredPaneWidth(width)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiDocumentDividerDragBegan)) { _ in
-            beginPaneDividerDrag()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiDocumentDividerDragEnded)) { _ in
-            endPaneDividerDrag()
-        }
-        .onChange(of: Set(store.visibleDocumentPaneOrder)) { _, _ in
-            beginPaneStructureTransition()
-        }
-        .onChange(of: store.layout) { _, layout in
-            // Entering immersive: seed wide so we never flash the last three-pane strip width.
-            // Leaving immersive: drop to 0 so the next probe owns the multi-pane strip.
-            if layout == .immersiveConversation {
-                if measuredPaneWidth < 700 {
-                    measuredPaneWidth = max(measuredPaneWidth, 1100)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .clipped()
+            .overlay(alignment: .top) {
+                if showsPaneHeader {
+                    LinearGradient(colors: [WeiBeiTheme.glassHighlight.opacity(0.18), .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 10).allowsHitTesting(false)
+                } else if !railOnly {
+                    ImmersiveHoverTitleView(mark: "CHAT", title: store.agentConversationSubtitle,
+                        appearanceMode: store.appearanceMode, reorderRole: reorderRole) { sessionMenu }
                 }
-            } else if measuredPaneWidth > 700 {
-                // Restore the last real compact width; the next probe refines it.
-                // Immersive measurements never overwrite this compact seed.
-                measuredPaneWidth = lastReadablePaneWidth
             }
         }
         .frame(minHeight: 260)
@@ -1509,9 +1243,6 @@ struct AgentPaneView: View {
         }
         .onAppear {
             draftFocused = paneState.focusedPane == .agent && !interaction.keepFloatingSelectionForAnswer
-            if usesWideChatLayout, measuredPaneWidth < 700 {
-                measuredPaneWidth = max(measuredPaneWidth, 1100)
-            }
         }
         .alert(
             store.ui("重命名会话", "Rename Chat"),
@@ -1550,271 +1281,8 @@ struct AgentPaneView: View {
         .accessibilityLabel(Text("agent chat pane"))
     }
 
-    /// AppKit owns live frames. SwiftUI state receives only the final semantic width so
-    /// the eager message tree is not invalidated for every divider pixel.
-    private func applyMeasuredPaneWidth(_ width: CGFloat) {
-        guard width > 1 else { return }
-        if paneWidthRelay.isActive {
-            paneWidthRelay.pendingWidth = width
-            return
-        }
-        commitMeasuredPaneWidth(width)
-    }
-
-    private func beginPaneDividerDrag() {
-        guard !paneWidthRelay.dividerDragActive else { return }
-        paneWidthRelay.dividerDragActive = true
-        if !isPaneWidthMotionActive {
-            heldPaneLayoutWidth = agentPaneWidth
-            isPaneWidthMotionActive = true
-        }
-    }
-
-    private func endPaneDividerDrag() {
-        guard paneWidthRelay.dividerDragActive else { return }
-        paneWidthRelay.dividerDragActive = false
-        guard !paneWidthRelay.structureTransitionActive else { return }
-        finishPaneWidthMotion()
-    }
-
-    private func commitMeasuredPaneWidth(_ width: CGFloat) {
-        if usesWideChatLayout {
-            // PersistentPaneHost re-attach can briefly report the old strip width — do not keep it.
-            if width < 520, measuredPaneWidth >= 700 {
-                return
-            }
-        }
-        guard abs(measuredPaneWidth - width) > 2 else { return }
-        measuredPaneWidth = width
-        if !usesWideChatLayout,
-           store.isPaneVisible(.agent),
-           width >= ContentRailMetrics.readableWidth {
-            lastReadablePaneWidth = width
-        }
-    }
-
-    private func beginPaneStructureTransition() {
-        paneStructureTransitionSequence &+= 1
-        paneWidthRelay.structureTransitionActive = true
-        paneWidthRelay.pendingWidth = nil
-        if !isPaneWidthMotionActive {
-            heldPaneLayoutWidth = agentPaneWidth
-            isPaneWidthMotionActive = true
-        }
-        if reduceMotion {
-            paneWidthRelay.structureTransitionActive = false
-            if !paneWidthRelay.dividerDragActive {
-                finishPaneWidthMotion()
-            }
-            return
-        }
-        let sequence = paneStructureTransitionSequence
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.paneStructureTransitionDuration) {
-            // AppKit's completion handler shares the same 0.24s deadline. One
-            // additional main turn lets it land before the single final reflow.
-            DispatchQueue.main.async {
-                guard sequence == paneStructureTransitionSequence else { return }
-                paneWidthRelay.structureTransitionActive = false
-                if !paneWidthRelay.dividerDragActive {
-                    finishPaneWidthMotion()
-                }
-            }
-        }
-    }
-
-    private func finishPaneWidthMotion() {
-        let finalWidth = paneWidthRelay.pendingWidth
-        paneWidthRelay.pendingWidth = nil
-        heldPaneLayoutWidth = nil
-        isPaneWidthMotionActive = false
-        // Closing ends at a collapsed resident host. Restore its last readable
-        // seed after it is hidden so the next opening has no 2pt layout flash.
-        if !store.isPaneVisible(.agent) {
-            measuredPaneWidth = lastReadablePaneWidth
-        } else if let finalWidth {
-            commitMeasuredPaneWidth(finalWidth)
-        }
-    }
-
-    private func agentMessageRow(
-        message: AgentMessage,
-        contentWidth: CGFloat,
-        wide: Bool
-    ) -> some View {
-        let isUser = message.role == .user
-
-        // Native text rows: no per-message WKWebView height callbacks that thrash scroll.
-        return agentReadingColumn(
-            alignment: isUser ? .trailing : .leading
-        ) {
-            // One view type owns the row across the generating → completed flip,
-            // so the markdown surface is never torn down at completion. Only the
-            // generating row observes the live streaming state; completed rows
-            // observe a state that never publishes.
-            AgentMessageBubble(
-                message: message,
-                streaming: message.completionState == .generating
-                    || store.agentStreaming.isDisplaying(message.id)
-                    ? store.agentStreaming
-                    : inertAgentStreamingState,
-                // Typography follows the real column width, not the layout enum.
-                isChatWideTypography: wide
-                    || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
-            )
-        }
-        .id(message.id)
-        .transition(WeiBeiTransition.message)
-    }
-
-    /// One centered reading column for messages, streaming, and loading.
-    /// The parent proposal is the source of truth: it shrinks this flexible cap
-    /// with the real pane instead of applying an offset derived from sampled width.
-    private func agentReadingColumn<Content: View>(
-        alignment: HorizontalAlignment,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        let readingWidth = AgentChatLayoutMetrics.wideMaxWidth
-        return content()
-            .frame(maxWidth: readingWidth, alignment: Alignment(horizontal: alignment, vertical: .center))
-            .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    private var agentRailTurns: [AgentRailTurn] {
-        var turns: [AgentRailTurn] = []
-        for (index, message) in store.messages.enumerated() {
-            switch message.role {
-            case .user:
-                turns.append(AgentRailTurn(
-                    id: message.id,
-                    startMessageID: message.id,
-                    startIndex: index,
-                    question: message.text,
-                    answer: ""
-                ))
-            case .assistant:
-                if turns.isEmpty {
-                    turns.append(AgentRailTurn(
-                        id: message.id,
-                        startMessageID: message.id,
-                        startIndex: index,
-                        question: store.ui("对话回复", "Response"),
-                        answer: message.text
-                    ))
-                } else if turns[turns.count - 1].answer.isEmpty {
-                    turns[turns.count - 1].answer = message.text
-                } else {
-                    turns[turns.count - 1].answer += "\n\n" + message.text
-                }
-            }
-        }
-        return turns
-    }
-
-    private var agentRailItems: [ContentRailItem] {
-        let turns = agentRailTurns
-        return turns.enumerated().map { index, turn in
-            ContentRailItem(
-                id: "chat-turn-\(turn.id.uuidString)",
-                position: turns.count > 1 ? CGFloat(index) / CGFloat(turns.count - 1) : 0,
-                title: railText(turn.question, fallback: store.ui("第 \(index + 1) 轮对话", "Conversation \(index + 1)")),
-                excerpt: railText(turn.answer, fallback: store.ui("等待回复", "Waiting for response")),
-                metadata: store.ui("第 \(index + 1) / \(turns.count) 轮", "Turn \(index + 1) / \(turns.count)")
-            )
-        }
-    }
-
-    /// Rows whose message starts a rail turn — the only rows that need a
-    /// reading-position probe. Rail ticks are turns, not messages.
-    private var agentRailTurnStartMessageIDs: Set<UUID> {
-        Set(agentRailTurns.map(\.startMessageID))
-    }
-
-    private func activateAgentRailItem(_ item: ContentRailItem, railOnly: Bool, proxy: ScrollViewProxy) {
-        guard let turn = agentRailTurns.first(where: { "chat-turn-\($0.id.uuidString)" == item.id }) else { return }
-        activeAgentRailID = item.id
-        agentFollowsLatest = false
-        // Folded turns must mount before scrollTo can find their row.
-        revealAgentHistory(throughMessageID: turn.startMessageID)
-        let navigate = {
-            withAnimation(WeiBeiMotion.panel) {
-                proxy.scrollTo(turn.startMessageID, anchor: .center)
-            }
-        }
-        if railOnly {
-            store.requestPaneExpansion(.agent, onCompleted: navigate)
-        } else {
-            navigate()
-        }
-    }
-
-    private func updateAgentRailPosition(for messageID: UUID?) {
-        guard let messageID,
-              let visibleIndex = store.messages.firstIndex(where: { $0.id == messageID }) else { return }
-        agentFollowsLatest = messageID == store.messages.last?.id
-        if let turn = agentRailTurns.last(where: { $0.startIndex <= visibleIndex }) {
-            activeAgentRailID = "chat-turn-\(turn.id.uuidString)"
-        }
-    }
-
-    /// Mirrors the web editors' reading-line rule: the rail marks the last
-    /// turn whose question row top has crossed the upper third of the viewport.
-    private func handleTurnReadingPosition(messageID: UUID, passed: Bool) {
-        guard turnReadingPositions.passedByMessageID[messageID] != passed else { return }
-        turnReadingPositions.passedByMessageID[messageID] = passed
-        let turns = agentRailTurns
-        guard let activeTurn = turns.last(where: {
-            turnReadingPositions.passedByMessageID[$0.startMessageID] == true
-        }) ?? turns.first else { return }
-        let id = "chat-turn-\(activeTurn.id.uuidString)"
-        if activeAgentRailID != id {
-            activeAgentRailID = id
-        }
-    }
-
-    private func handleScrollMetrics(_ metrics: AgentScrollMetrics, proxy: ScrollViewProxy) {
-        refreshOffscreenPlaceholders(
-            viewportMinY: metrics.distanceFromTop,
-            viewportHeight: metrics.visibleHeight
-        )
-        // Hysteresis: reveal well above the bottom, hide near it — a boolean
-        // flip at 8pt deadband keeps SwiftUI updates off the scroll hot path.
-        let shouldShow = metrics.distanceFromBottom > 160
-        if shouldShow != showsJumpToLatest {
-            withAnimation(WeiBeiMotion.reveal) {
-                showsJumpToLatest = shouldShow
-            }
-        }
-        if metrics.distanceFromBottom < 40 {
-            agentFollowsLatest = true
-        } else if metrics.distanceFromBottom > 160 {
-            agentFollowsLatest = false
-        }
-
-        if isRevealingEarlierAgentHistory {
-            if AgentHistoryRevealPolicy.shouldReleaseRevealLock(
-                isUserScrolling: metrics.isUserScrolling
-            ) {
-                isRevealingEarlierAgentHistory = false
-            }
-            return
-        }
-        guard AgentHistoryRevealPolicy.shouldRevealEarlierPage(
-            distanceFromTop: metrics.distanceFromTop,
-            isUserScrolling: metrics.isUserScrolling,
-            isScrollingTowardTop: metrics.isScrollingTowardTop,
-            hiddenMessageCount: hiddenAgentHistoryCount,
-            revealInFlight: isRevealingEarlierAgentHistory
-        ) else { return }
-        revealEarlierAgentHistory(proxy: proxy)
-    }
-
-    private func jumpToLatestButton(proxy: ScrollViewProxy) -> some View {
-        Button {
-            agentFollowsLatest = true
-            withAnimation(WeiBeiMotion.panel) {
-                proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
-            }
-        } label: {
+    private var jumpToLatestButton: some View {
+        Button { conversation.jumpToLatest() } label: {
             Image(systemName: "arrow.down")
                 .weiBeiText(13, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink.opacity(0.85))
@@ -1825,94 +1293,6 @@ struct AgentPaneView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(store.ui("回到最新消息", "Jump to latest"))
-    }
-
-    private func cacheMessageHeight(_ height: CGFloat, message: AgentMessage, width: CGFloat, wide: Bool) {
-        AgentFinalizedMarkdownHeightCache.store(height, for: AgentFinalizedMarkdownHeightCache.cacheKey(
-            messageID: message.id, text: message.text,
-            widthBucket: AgentFinalizedMarkdownHeightCache.widthBucket(width),
-            wideTypography: wide, textScale: textScale
-        ))
-    }
-
-    private func refreshOffscreenPlaceholders(viewportMinY: CGFloat, viewportHeight: CGFloat) {
-        let width = AgentChatLayoutMetrics.contentWidth(availableWidth: heldPaneLayoutWidth ?? agentPaneWidth, wide: usesWideChatLayout)
-        let next = AgentMessageViewportWindow.placeholderIDs(
-            enabled: AgentChatOffscreenUnloadFlag.isEnabled,
-            messages: Array(visibleAgentMessages),
-            layoutWidth: width,
-            wideTypography: usesWideChatLayout
-                || width >= AgentChatLayoutMetrics.wideTypographyMinContentWidth,
-            textScale: textScale,
-            viewportMinY: viewportMinY,
-            viewportHeight: viewportHeight,
-            spacing: usesWideChatLayout ? 22 : 12
-        )
-        if next != offscreenPlaceholderIDs {
-            offscreenPlaceholderIDs = next
-        }
-    }
-
-    private func revealAgentHistory(throughMessageID messageID: UUID) {
-        guard let index = store.messages.firstIndex(where: { $0.id == messageID }) else { return }
-        let needed = store.messages.count - index
-        if needed > agentVisibleMessageLimit {
-            agentVisibleMessageLimit = needed
-        }
-    }
-
-    private func revealEarlierAgentHistory(proxy: ScrollViewProxy) {
-        guard hiddenAgentHistoryCount > 0, !isRevealingEarlierAgentHistory else { return }
-        let anchorID = visibleAgentMessages.first?.id
-        isRevealingEarlierAgentHistory = true
-        agentFollowsLatest = false
-        agentVisibleMessageLimit = AgentHistoryRevealPolicy.expandedVisibleLimit(
-            currentLimit: agentVisibleMessageLimit,
-            totalMessageCount: store.messages.count
-        )
-        // Newly mounted rows land above; re-anchor the reader's previous top row.
-        if let anchorID {
-            DispatchQueue.main.async {
-                proxy.scrollTo(anchorID, anchor: .top)
-            }
-        } else {
-            isRevealingEarlierAgentHistory = false
-        }
-    }
-
-    private func agentHistoryRevealButton(proxy: ScrollViewProxy) -> some View {
-        let revealCount = min(Self.agentHistoryPageSize, hiddenAgentHistoryCount)
-        return Button {
-            revealEarlierAgentHistory(proxy: proxy)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.up")
-                    .weiBeiText(9.5, weight: .semibold)
-                Text(store.ui("查看更早的 \(revealCount) 条消息", "Show \(revealCount) earlier messages"))
-                    .weiBeiText(12, weight: .medium)
-            }
-                .foregroundStyle(isAgentHistoryRevealButtonHovered ? WeiBeiTheme.link : WeiBeiTheme.secondaryInk)
-                .padding(.vertical, 6)
-                .padding(.horizontal, 12)
-                .weibeiEtchedCapsuleBackground(
-                    fill: WeiBeiTheme.paperInset.opacity(isAgentHistoryRevealButtonHovered ? 0.42 : 0.24),
-                    stroke: WeiBeiTheme.hairline.opacity(isAgentHistoryRevealButtonHovered ? 0.72 : 0.44),
-                    contactShadow: isAgentHistoryRevealButtonHovered
-                )
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(isAgentHistoryRevealButtonHovered ? 1.015 : 1)
-        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: isAgentHistoryRevealButtonHovered)
-        .onHover { isAgentHistoryRevealButtonHovered = $0 }
-        .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    private func railText(_ value: String, fallback: String) -> String {
-        let collapsed = value
-            .replacingOccurrences(of: #"[`*_>#\[\]()]"#, with: "", options: .regularExpression)
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: " ")
-        return collapsed.isEmpty ? fallback : String(collapsed.prefix(180))
     }
 
     private var agentPrompt: String {
@@ -1976,25 +1356,6 @@ struct AgentPaneView: View {
             paneState.dockInitialAgentComposer()
         }
         store.submitAgentDraft()
-    }
-
-    private var agentInputMaxWidth: CGFloat? {
-        AgentChatLayoutMetrics.contentWidth(
-            availableWidth: max(agentPaneWidth, 1),
-            wide: usesWideChatLayout
-        )
-    }
-
-    private var agentContentMaxWidth: CGFloat? {
-        agentInputMaxWidth
-    }
-
-    private var agentScrollBottomInset: CGFloat {
-        // Fixed inset only — tray GeometryReader preference → LazyVStack height feedback
-        // re-entered sizeThatFits every scroll frame and froze the app.
-        // Tray already sits outside the ScrollView (VStack), so keep this small;
-        // large fixed insets stole message viewport height and made immersive feel tiny.
-        usesWideChatLayout ? 16 : 12
     }
 
     private var agentRailBottomInset: CGFloat {
@@ -2112,39 +1473,6 @@ struct AgentPaneView: View {
         )
     }
 
-    private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {
-        guard agentFollowsLatest else { return }
-        let chatID = store.activeStudySessionID
-        DispatchQueue.main.async {
-            guard agentFollowsLatest, store.activeStudySessionID == chatID else { return }
-            withAnimation(WeiBeiMotion.panel) {
-                proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
-            }
-        }
-        // WebView rows publish height on a ~100ms cadence, so the animated
-        // pass targets a bottom anchor that is already stale once the next
-        // measurement lands — the viewport then gets shoved again. A silent
-        // re-anchor after the reporting window keeps the follow settled.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            guard agentFollowsLatest, store.activeStudySessionID == chatID else { return }
-            proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
-        }
-    }
-
-}
-
-private struct AgentPaneWidthKey: PreferenceKey {
-    /// 0 = unmeasured. Must NOT default to 960: reduce used to max with 960 and
-    /// multi-pane strips (e.g. 360pt) were forever treated as full-window wide,
-    /// so messages/input centered off-canvas and "didn't adapt".
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        let next = nextValue()
-        if next > 1 {
-            value = next
-        }
-    }
 }
 
 private struct AgentSelectionAttachmentPill: View {
@@ -2730,7 +2058,6 @@ struct FloatingSelectionAgentView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
-                    .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
                     .background {
                         GeometryReader { proxy in
                             Color.clear.preference(
@@ -3190,34 +2517,6 @@ private struct FloatingSelectionMessageRow: View {
 
 /// Bubble row for one assistant/user message. A single type across the
 /// generating → completed flip keeps the native body alive at completion.
-private struct AgentMessageBubble: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.weibeiReduceMotion) private var reduceMotion
-    var message: AgentMessage
-    @ObservedObject var streaming: AgentStreamingState
-    var isChatWideTypography = false
-
-    var body: some View {
-        let isStreaming = streaming.isDisplaying(message.id)
-        AgentBubble(
-            message: message,
-            liveStreamingText: isStreaming ? streaming.text : nil,
-            liveActivityText: message.completionState == .generating ? streaming.activityText : nil,
-            isStreaming: isStreaming,
-            isChatWideTypography: isChatWideTypography
-        )
-        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
-        .onDisappear {
-            if streaming.isDisplaying(message.id) {
-                store.landAgentStreamingDisplayImmediately()
-            }
-        }
-        .onChange(of: reduceMotion) { _, enabled in
-            store.setAgentStreamingReduceMotion(enabled)
-        }
-    }
-}
-
 struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.openWindow) private var openSettingsWindow
@@ -3419,110 +2718,8 @@ struct AgentBubble: View {
                     )
                 }
             }
-            if !availableSources.isEmpty {
-                AgentReplySourceTagRow(sources: availableSources) { source in
-                    activateSource(source)
-                }
-            }
+            AgentMessageSupplement(message: message, citations: legacyCitations)
 
-            if !legacyCitations.isEmpty {
-                AgentCitationTagRow(citations: legacyCitations) { citation in
-                    activateCitation(citation)
-                }
-            }
-
-            if !message.actions.isEmpty {
-                ForEach(message.actions) { action in
-                    AgentReplyActionCard(
-                        messageID: message.id,
-                        action: action
-                    )
-                }
-            }
-
-            if message.origin?.courseID != nil,
-               let memoryUpdate = message.memoryUpdate,
-               !memoryUpdate.memoryIDs.isEmpty {
-                AgentReplyMemoryUpdateTag(
-                    message: message,
-                    update: memoryUpdate
-                )
-                .transition(WeiBeiTransition.floating)
-            }
-
-            if message.origin?.courseID != nil,
-               let profileUpdate = message.profileUpdate,
-               !profileUpdate.entryIDs.isEmpty {
-                AgentReplyProfileUpdateTag(update: profileUpdate)
-                    .transition(WeiBeiTransition.floating)
-            }
-
-            if message.completionState == .interrupted && !isFailureMessage {
-                HStack(spacing: 6) {
-                    Text(store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept"))
-                        .weiBeiText(10.5)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    if store.canRetryAgentRequest(
-                        question: message.retryQuestion,
-                        failureKind: message.failureKind
-                    ), let question = message.retryQuestion {
-                        Button(store.ui("重试", "Retry")) {
-                            store.retryAgentRequest(
-                                question,
-                                targetCourseID: message.origin?.courseID
-                            )
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    }
-                }
-                .padding(.top, 2)
-            } else if isFailureMessage {
-                HStack(spacing: 6) {
-                    if store.canRetryAgentRequest(
-                        question: message.retryQuestion,
-                        failureKind: message.failureKind
-                    ), let question = message.retryQuestion {
-                        Button(store.ui("重试", "Retry")) {
-                            store.retryAgentRequest(
-                                question,
-                                targetCourseID: message.origin?.courseID
-                            )
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    }
-                    if let question = message.retryQuestion, !question.isEmpty {
-                        Button(store.ui("回填问题", "Restore question")) {
-                            store.agentDraft = question
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                    }
-                    if message.failureKind == .unauthorized
-                        || !AgentProviderReadiness.isConfigured(for: store) {
-                        Button(store.ui("去设置", "Open Settings")) {
-                            openSettingsWindow(id: "weibei-settings")
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                    }
-                }
-                .padding(.top, 2)
-            } else if message.id == store.lastUsableAgentAnswerID,
-                      store.selectionContext != nil || store.canReplaceNoteSelection {
-                HStack(spacing: 6) {
-                    if store.selectionContext != nil {
-                        Button(store.ui("摘录", "Excerpt")) {
-                            store.appendSelectionToNote()
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                    }
-                    if store.canReplaceNoteSelection {
-                        Button(store.ui("替换", "Replace")) {
-                            store.replaceSelectionWithLastAgentAnswer()
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                    }
-                }
-                .padding(.top, 2)
-            }
         }
         .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.memoryUpdate)
         .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.profileUpdate)
@@ -3573,7 +2770,7 @@ struct AgentBubble: View {
 // MARK: - Agent citation tags (materials / learning / selection)
 
 /// Bracket citations Agent emits in answers, e.g. `[材料：…]`, `[学习记录：上次位置]`.
-private enum AgentCitationKind: String, Equatable {
+enum AgentCitationKind: String, Equatable {
     case material
     case note
     case selection
@@ -3604,7 +2801,7 @@ private enum AgentCitationKind: String, Equatable {
     }
 }
 
-private struct AgentCitation: Identifiable, Equatable {
+struct AgentCitation: Identifiable, Equatable {
     let id: String
     let kind: AgentCitationKind
     let raw: String
@@ -3616,22 +2813,23 @@ private struct AgentCitation: Identifiable, Equatable {
     }
 }
 
-private struct AgentReplyActionCard: View {
+struct AgentReplyActionCard: View {
     @EnvironmentObject private var store: WorkspaceStore
     let messageID: UUID
     let action: AgentReplyAction
-    private let headingPrefix: String
-    @State private var title: String
-    @State private var bodyText: String
-    @State private var isWorking = false
+    @StateObject private var draft: AgentReplyActionDraft
+    private var headingPrefix: String { draft.headingPrefix }
+    private var title: String { draft.title }
+    private var bodyText: String { draft.bodyText }
+    private var isWorking: Bool {
+        get { draft.isWorking }
+        nonmutating set { draft.isWorking = newValue }
+    }
 
-    init(messageID: UUID, action: AgentReplyAction) {
+    init(messageID: UUID, action: AgentReplyAction, draft: AgentReplyActionDraft? = nil) {
         self.messageID = messageID
         self.action = action
-        let draft = Self.noteDraft(from: action.proposedMarkdown ?? "")
-        headingPrefix = draft.headingPrefix
-        _title = State(initialValue: draft.title)
-        _bodyText = State(initialValue: draft.body)
+        _draft = StateObject(wrappedValue: draft ?? AgentReplyActionDraft(action: action))
     }
 
     var body: some View {
@@ -3673,11 +2871,11 @@ private struct AgentReplyActionCard: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
-            TextField(store.ui("笔记小标题", "Note heading"), text: $title)
+            TextField(store.ui("笔记小标题", "Note heading"), text: $draft.title)
                 .textFieldStyle(.plain)
                 .weibeiInputSurface(height: 32)
 
-            TextEditor(text: $bodyText)
+            TextEditor(text: $draft.bodyText)
                 .weiBeiText(12)
                 .scrollContentBackground(.hidden)
                 .scrollDisabled(true)
@@ -3881,33 +3079,7 @@ private struct AgentReplyActionCard: View {
         return "\(headingPrefix) \(title)\n\n\(body)"
     }
 
-    private static func noteDraft(
-        from markdown: String
-    ) -> (headingPrefix: String, title: String, body: String) {
-        var lines = markdown.components(separatedBy: .newlines)
-        if let index = lines.firstIndex(where: {
-            $0.trimmingCharacters(in: .whitespaces).hasPrefix("#")
-        }) {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            let prefix = String(line.prefix(while: { $0 == "#" }))
-            let title = line.dropFirst(prefix.count)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !title.isEmpty {
-                lines.remove(at: index)
-                return (
-                    prefix.isEmpty ? "##" : prefix,
-                    title,
-                    lines.joined(separator: "\n")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-            }
-        }
-        return (
-            "##",
-            "整理建议",
-            markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-    }
+
 }
 
 /// Memoizes display-only source and formula normalization for one message row.
@@ -3937,7 +3109,7 @@ final class AgentMessageMarkdownMemo {
     }
 }
 
-private enum AgentCitationParser {
+enum AgentCitationParser {
     /// Matches `[材料：…]` / `[学习记录：上次位置]` style Agent citation labels.
     private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话)[：:]\s*([^\]\n]{1,300})\]"#
     private static let regex = try? NSRegularExpression(pattern: pattern)
@@ -4008,7 +3180,7 @@ private enum AgentCitationParser {
     }
 }
 
-private struct AgentReplySourceTagRow: View {
+struct AgentReplySourceTagRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     let sources: [AgentReplySource]
     var onActivate: (AgentReplySource) -> Void
@@ -4136,7 +3308,7 @@ private struct AgentReplySourceTag: View {
     }
 }
 
-private struct AgentReplySourceDetail: View {
+struct AgentReplySourceDetail: View {
     @EnvironmentObject private var store: WorkspaceStore
     let source: AgentReplySource
 
@@ -4186,7 +3358,7 @@ private extension AgentReplySourceKind {
     }
 }
 
-private struct AgentCitationTagRow: View {
+struct AgentCitationTagRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     let citations: [AgentCitation]
     var onActivate: (AgentCitation) -> Void
@@ -4242,7 +3414,7 @@ private struct FlexibleCitationWrap: View {
     }
 }
 
-private struct AgentCitationTag: View {
+struct AgentCitationTag: View {
     @EnvironmentObject private var store: WorkspaceStore
     let citation: AgentCitation
     var action: () -> Void
@@ -4353,146 +3525,8 @@ private struct AgentCitationTag: View {
     }
 }
 
-private struct AgentChatLayoutWidthKey: EnvironmentKey {
-    static let defaultValue: CGFloat = 0
-}
-
-private extension EnvironmentValues {
-    var agentChatLayoutWidth: CGFloat {
-        get { self[AgentChatLayoutWidthKey.self] }
-        set { self[AgentChatLayoutWidthKey.self] = newValue }
-    }
-}
-
-private struct AgentScrollMetrics: Equatable {
-    let distanceFromTop: CGFloat
-    let distanceFromBottom: CGFloat
-    let visibleHeight: CGFloat
-    let isUserScrolling: Bool
-    let isScrollingTowardTop: Bool
-}
-
-/// Reads the enclosing scroll view's position and user scroll direction.
-private struct AgentScrollDistanceProbe: NSViewRepresentable {
-    var onChange: (AgentScrollMetrics) -> Void
-
-    func makeNSView(context: Context) -> ProbeView {
-        let view = ProbeView()
-        view.onChange = onChange
-        return view
-    }
-
-    func updateNSView(_ nsView: ProbeView, context: Context) {
-        nsView.onChange = onChange
-    }
-
-    final class ProbeView: NSView {
-        var onChange: ((AgentScrollMetrics) -> Void)?
-        private var observers: [NSObjectProtocol] = []
-        private var lastReported: AgentScrollMetrics?
-        private var isUserScrolling = false
-        private var isScrollingTowardTop = false
-        private var previousDistanceFromTop: CGFloat?
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            installObservers()
-        }
-
-        override func viewDidMoveToSuperview() {
-            super.viewDidMoveToSuperview()
-            installObservers()
-        }
-
-        private func installObservers() {
-            removeObservers()
-            guard window != nil, let scrollView = enclosingScrollView else { return }
-            let clipView = scrollView.contentView
-            clipView.postsBoundsChangedNotifications = true
-            observers.append(NotificationCenter.default.addObserver(
-                forName: NSView.boundsDidChangeNotification,
-                object: clipView,
-                queue: .main
-            ) { [weak self] _ in
-                self?.report()
-            })
-            observers.append(NotificationCenter.default.addObserver(
-                forName: NSScrollView.willStartLiveScrollNotification,
-                object: scrollView,
-                queue: .main
-            ) { [weak self] _ in
-                self?.isUserScrolling = true
-                self?.isScrollingTowardTop = false
-                self?.report()
-            })
-            observers.append(NotificationCenter.default.addObserver(
-                forName: NSScrollView.didEndLiveScrollNotification,
-                object: scrollView,
-                queue: .main
-            ) { [weak self] _ in
-                // The clip view may stop sending bounds changes exactly at its
-                // top edge. Flush that final user-directed position first.
-                self?.report(force: true)
-                self?.isUserScrolling = false
-                self?.isScrollingTowardTop = false
-                self?.report(force: true)
-            })
-            report()
-        }
-
-        private func report(force: Bool = false) {
-            guard let scrollView = enclosingScrollView,
-                  let documentView = scrollView.documentView else { return }
-            let visible = scrollView.documentVisibleRect
-            let distanceFromTop: CGFloat = documentView.isFlipped
-                ? max(visible.minY - documentView.bounds.minY, 0)
-                : max(documentView.bounds.maxY - visible.maxY, 0)
-            let distanceFromBottom: CGFloat = documentView.isFlipped
-                ? max(documentView.bounds.maxY - visible.maxY, 0)
-                : max(visible.minY - documentView.bounds.minY, 0)
-            if isUserScrolling, let previousDistanceFromTop,
-               abs(distanceFromTop - previousDistanceFromTop) > 0.5 {
-                isScrollingTowardTop = distanceFromTop < previousDistanceFromTop
-            }
-            previousDistanceFromTop = distanceFromTop
-            let metrics = AgentScrollMetrics(
-                distanceFromTop: distanceFromTop,
-                distanceFromBottom: distanceFromBottom,
-                visibleHeight: visible.height,
-                isUserScrolling: isUserScrolling,
-                isScrollingTowardTop: isScrollingTowardTop
-            )
-            if !force, let lastReported,
-               abs(metrics.distanceFromTop - lastReported.distanceFromTop) <= 8,
-               abs(metrics.distanceFromBottom - lastReported.distanceFromBottom) <= 8,
-               abs(metrics.visibleHeight - lastReported.visibleHeight) <= 8,
-               metrics.isUserScrolling == lastReported.isUserScrolling,
-               metrics.isScrollingTowardTop == lastReported.isScrollingTowardTop {
-                return
-            }
-            lastReported = metrics
-            onChange?(metrics)
-        }
-
-        private func removeObservers() {
-            observers.forEach(NotificationCenter.default.removeObserver)
-            observers.removeAll()
-            isUserScrolling = false
-            isScrollingTowardTop = false
-            previousDistanceFromTop = nil
-            lastReported = nil
-        }
-
-        deinit {
-            removeObservers()
-        }
-    }
-}
-
-/// Assistant text shares one native document across live, saved and floating conversations.
 private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.agentChatLayoutWidth) private var layoutWidth
     @Environment(\.weiBeiTextScale) private var textScale
     var text: String
     var rendersRichMarkdown: Bool
@@ -4525,7 +3559,7 @@ private struct AgentMessageMarkdownText: View {
                     isDark: store.appearanceMode.isDark,
                     appearanceKey: store.appearanceMode.rawValue,
                     interfaceLanguage: store.interfaceLanguage,
-                    placeholderHeight: initialBodyHeight,
+                    placeholderHeight: 1,
                     onOpenURL: openLink,
                     visualizationView: { identifier, width, onHeight in
                         guard let messageID else { return nil }
@@ -4580,16 +3614,6 @@ private struct AgentMessageMarkdownText: View {
             imageHandler.invalidate()
             imageHandler = MarkdownImageSchemeHandler()
         }
-    }
-
-    private var initialBodyHeight: CGFloat {
-        guard !compact, !isStreaming, sources.isEmpty else { return 1 }
-        let key = AgentFinalizedMarkdownHeightCache.cacheKey(
-            messageID: messageID, text: text,
-            widthBucket: AgentFinalizedMarkdownHeightCache.widthBucket(layoutWidth),
-            wideTypography: isChatWideTypography, textScale: textScale
-        )
-        return max(1, (AgentFinalizedMarkdownHeightCache.height(for: key) ?? 21) - 20)
     }
 
     private var expandedSources: [AgentReplySource] {
@@ -4680,7 +3704,7 @@ private struct AgentLiveResponse: View {
 /// `orbitPadding` is the clear gap from the line-box edge to the stroke *centerline*
 /// on every side. Half the stroke width sits outside that centerline, so the view
 /// grows by `lineWidth` total to avoid clipping.
-private struct AgentThinkingIndicator: View {
+struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
     var activityText: String?
     /// Match the native answer text in wide and compact conversation surfaces.
