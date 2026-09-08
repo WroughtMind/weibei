@@ -11,6 +11,26 @@ const reset = async (markdown = '') => {
   editor.selectDocumentEndForCheck();
   await pause();
 };
+// Inserting from an unfocused note also changes focus. That second update must
+// not cancel the slash menu triggered by the first one.
+await reset();
+// Exercise production menu behavior; the check stylesheet still disables motion.
+window.weiBeiEditorCheckMode = false;
+document.querySelector('.ProseMirror').blur();
+await pause();
+document.querySelector('.weibei-line-plus').click();
+await pause();
+expect(editor.slashStateForCheck().show, 'The empty-line insert button did not open its slash menu after focus changed');
+const slashMenu = document.querySelector('.weibei-slash-menu');
+const menuVisible = () => slashMenu.getAttribute('aria-hidden') !== 'true'
+  && getComputedStyle(slashMenu).visibility === 'visible' && getComputedStyle(slashMenu).opacity === '1';
+expect(menuVisible(), 'The slash menu stayed invisible after opening');
+document.querySelector('#weibei-slash-command-heading1 button').click();
+await native('insert', '标题');
+document.querySelector('.ProseMirror').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+await native('insert', '/');
+expect(editor.getMarkdown().startsWith('# 标题\n') && menuVisible(), 'The next slash menu did not reopen after creating a heading');
+window.weiBeiEditorCheckMode = true;
 // Native NSTextInputClient input is essential: the editor's scripted typing helper
 // bypasses the WebKit substitutions that caused repeated closing quotes.
 window.webkit.messageHandlers.nativeInput.postMessage({ operation: 'checkpoint', text: 'quotes' });
