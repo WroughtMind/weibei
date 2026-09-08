@@ -141,6 +141,15 @@ enum ChatRendererConversationChecks {
             try await settle(list)
         }
         await runCase("rebind_selection_and_attachment_release") {
+            let surfaceSession = ChatRendererSession(), surfaceID = UUID(), conversationID = UUID()
+            let original = surfaceSession.surface(for: surfaceID, in: conversationID)
+            let originalHost = NSView()
+            originalHost.addSubview(original)
+            let replacement = surfaceSession.surface(for: surfaceID, in: conversationID)
+            try require(replacement !== original && original.superview === originalHost,
+                "Replacing a row stole its still-mounted body from the previous host")
+            try require(surfaceSession.surface(for: surfaceID, in: conversationID) === replacement,
+                "Detached body was not available for reuse")
             weak var retained: TextLabel.Attachment?
             autoreleasepool {
                 let attachment = TextLabel.Attachment(); retained = attachment

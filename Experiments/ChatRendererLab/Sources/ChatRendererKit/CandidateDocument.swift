@@ -54,7 +54,8 @@ public final class CandidateDocument {
     public func record(_ timing: LabTiming) { timings.append(timing) }
     public var onApply: ((MarkdownContent, Int) -> Void)?
 
-    public func configure(fontSize: CGFloat, ink: NSColor, secondaryInk: NSColor, accent: NSColor) {
+    public func configure(fontSize: CGFloat, ink: NSColor, secondaryInk: NSColor, accent: NSColor,
+                          paper: NSColor, separator: NSColor, selection: NSColor) {
         var next = theme
         next.fonts.body = .systemFont(ofSize: fontSize)
         next.fonts.bold = .boldSystemFont(ofSize: fontSize)
@@ -67,6 +68,10 @@ public final class CandidateDocument {
         next.colors.code = ink
         next.colors.highlight = accent
         next.colors.emphasis = secondaryInk
+        next.colors.selectionBackground = selection
+        next.table.headerBackgroundColor = paper
+        next.table.borderColor = separator
+        next.table.stripeCellBackgroundColor = paper.withAlphaComponent(0.35)
         guard next != theme else { return }
         theme = next
         if let parsed { prepare(parsed, revision: displayedRevision) }

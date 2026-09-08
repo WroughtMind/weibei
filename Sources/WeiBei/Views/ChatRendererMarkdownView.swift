@@ -66,7 +66,9 @@ struct ChatRendererMarkdownView: NSViewRepresentable {
             if let messageID, session?.activeSessionID == conversationID { session?.list?.enqueueHeightChange(messageID) }
         }
         document.configure(fontSize: fontSize, ink: WeiBeiNativePalette.ink(),
-            secondaryInk: WeiBeiNativePalette.secondaryInk(), accent: WeiBeiNativePalette.link())
+            secondaryInk: WeiBeiNativePalette.secondaryInk(), accent: WeiBeiNativePalette.link(),
+            paper: WeiBeiNativePalette.paperRaised(), separator: WeiBeiNativePalette.hairline(),
+            selection: WeiBeiNativePalette.selectionFill())
         view.bind(document)
         document.submit(markdown)
     }

@@ -30,7 +30,9 @@ final class ChatRendererSession {
     }
     func surface(for id: UUID, in conversationID: UUID?) -> CandidateTextView {
         let key = surfaceKey(id, in: conversationID)
-        if let view = surfaces.object(forKey: key) { return view }
+        // SwiftUI can create the replacement host before dismantling the old
+        // one. A mounted NSView must never be handed to both hosts.
+        if let view = surfaces.object(forKey: key), view.superview == nil { return view }
         let view = CandidateTextView()
         surfaces.setObject(view, forKey: key)
         return view
