@@ -103,9 +103,15 @@ jobs:
           root = pathlib.Path('Experiments/ChatRendererLab/.artifacts/conversation-candidate').resolve()
           output = root / 'normal-window'
           output.mkdir()
-          subprocess.run(['/usr/bin/open', '-n', '-g', '-W', '--stdout', str(output / 'stdout.log'),
-                          '--stderr', str(output / 'stderr.log'), str(root / '魏碑-会话实验-451.app'),
-                          '--args', '--chat-renderer-smoke', str(output)], check=True, timeout=90)
+          try:
+              subprocess.run(['/usr/bin/open', '-n', '-g', '-W', '--stdout', str(output / 'stdout.log'),
+                              '--stderr', str(output / 'stderr.log'), str(root / '魏碑-会话实验-451.app'),
+                              '--args', '--chat-renderer-smoke', str(output)], check=True, timeout=90)
+          except subprocess.TimeoutExpired:
+              report = json.loads((output / 'normal-window.json').read_text())
+              subprocess.run(['/usr/bin/sample', str(report['process_id']), '3', '-file',
+                              str(output / 'termination-sample.log')], timeout=10)
+              raise
           report = json.loads((output / 'normal-window.json').read_text())
           assert report['normal_entry'] and report['visible_body_characters'] > 0, report
           print(report)

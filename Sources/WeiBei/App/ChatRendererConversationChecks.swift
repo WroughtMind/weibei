@@ -78,6 +78,16 @@ enum ChatRendererConversationChecks {
             try require(session.messages.values.contains { $0.document.content != nil }, "No real message body was prepared")
             try require(session.messages.values.filter { $0.document.content != nil }.count < store.messages.count,
                 "First open eagerly prepared the entire history")
+            // Keyboard and accessibility scrolling changes the clip position
+            // without a scroll-wheel event. Later layout must not undo it.
+            let readingY = list.scroll.contentView.bounds.minY - 180
+            list.scroll.contentView.scroll(to: CGPoint(x: 0, y: readingY))
+            list.scroll.reflectScrolledClipView(list.scroll.contentView)
+            try require(!list.followsLatest, "Reading history without a wheel event still followed the tail")
+            if let last = store.messages.last { list.enqueueHeightChange(last.id) }
+            try await settle(list)
+            try require(abs(list.scroll.contentView.bounds.minY - readingY) <= 1,
+                "Layout pulled keyboard/accessibility scrolling back to the tail")
             let ids = Array(store.messages.suffix(40).map(\.id))
             for id in ids.reversed().prefix(12) { list.reveal(id); try await settle(list) }
             let prepared = session.messages.mapValues { $0.document.parseCount }

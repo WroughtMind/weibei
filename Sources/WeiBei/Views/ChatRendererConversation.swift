@@ -118,6 +118,7 @@ final class ChatRendererListView: NSView, NSTableViewDataSource, NSTableViewDele
     private var lastWidth: CGFloat = 0
     private var lastReportedID: UUID?
     private var lastReportedFollowing: Bool?
+    private var lastScrollOrigin: CGPoint = .zero
     private(set) var followsLatest = true
     private(set) var fullReloadCount = 0
     private(set) var updatedRowCount = 0
@@ -409,9 +410,13 @@ final class ChatRendererListView: NSView, NSTableViewDataSource, NSTableViewDele
     }
     private func didScroll() {
         if lastWidth != rowWidth { needsLayout = true }
+        let origin = scroll.contentView.bounds.origin
+        let moved = origin != lastScrollOrigin
+        lastScrollOrigin = origin
         guard !updatingGeometry else { return }
-        // A fresh user scroll supersedes an anchor captured before the gesture.
-        if scroll.isHandlingUserScroll || NSApp.currentEvent?.type == .leftMouseDragged {
+        // Scrolling outside our layout transaction includes keyboard and
+        // accessibility actions, which do not deliver scroll-wheel events.
+        if moved {
             pendingAnchor = nil; followsLatest = distanceFromBottom < 48
         }
         reportReading()
@@ -447,12 +452,9 @@ final class ChatRendererListView: NSView, NSTableViewDataSource, NSTableViewDele
 @MainActor
 final class ChatRendererScrollView: NSScrollView {
     var onUserScroll: (() -> Void)?
-    private(set) var isHandlingUserScroll = false
     override func scrollWheel(with event: NSEvent) {
-        isHandlingUserScroll = true
         onUserScroll?()
         super.scrollWheel(with: event)
-        isHandlingUserScroll = false
     }
 }
 

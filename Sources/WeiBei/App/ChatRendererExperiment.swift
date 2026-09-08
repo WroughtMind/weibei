@@ -94,6 +94,7 @@ enum ChatRendererExperiment {
                 capture.arguments = ["-x", "-l", String(window.windowNumber), directory.appendingPathComponent("normal-window.png").path]
                 try capture.run(); capture.waitUntilExit()
                 try JSONSerialization.data(withJSONObject: ["normal_entry": true, "visible_body_characters": count,
+                    "process_id": ProcessInfo.processInfo.processIdentifier,
                     "window_capture_exit": capture.terminationStatus], options: [.prettyPrinted, .sortedKeys])
                     .write(to: directory.appendingPathComponent("normal-window.json"))
                 return
