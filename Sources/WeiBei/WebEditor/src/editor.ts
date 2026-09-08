@@ -1,6 +1,6 @@
 import { commandsCtx, Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, parserCtx, rootCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
-import { gfm } from '@milkdown/kit/preset/gfm';
+import { autoInsertSpanPlugin, gfm } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 import { history } from '@milkdown/kit/plugin/history';
 import { clipboard } from '@milkdown/kit/plugin/clipboard';
@@ -3851,7 +3851,9 @@ if (WEIBEI_EDITOR_RUNTIME) {
 editorBuilder = editorBuilder
   .use(weiBeiDialectPlugin)
   .use(commonmark)
-  .use(gfm)
+  // The old Safari IME widget interrupts native composition when its caret is at
+  // the end, leaving compositionend missing and all input commands disabled.
+  .use(gfm.filter((plugin) => plugin !== autoInsertSpanPlugin))
   .use(structuredMarkdown)
   .use(weiBeiMath)
   .use(streaming)

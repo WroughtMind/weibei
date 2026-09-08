@@ -81,6 +81,30 @@ for (const initial of ['', '\u200b']) {
   await native('insert', '拼');
   expect(!editor.compositionStateForCheck().composing && editor.getMarkdown().replace(/\u200b/g, '').trim() === '拼', 'Composition did not commit once');
 }
+// An IME that leaves its caret after the pinyin must release ordinary Markdown
+// commands when the candidate is committed, including in typewriter mode.
+editor.setTypewriterMode(true);
+await reset();
+await native('marked', 'pin', { caretAtEnd: true });
+await native('insert', '拼');
+expect(!editor.compositionStateForCheck().composing && editor.getMarkdown().trim() === '拼', 'Committed pinyin left the editor composing');
+// The first Return may still confirm the IME; the next starts the new paragraph.
+await native('key', '\r', { keyCode: 36 });
+await native('key', '\r', { keyCode: 36 });
+await native('key', '#', { keyCode: 20, shift: true });
+await native('key', ' ', { keyCode: 49 });
+await waitFor(() => document.querySelector('.ProseMirror h1'), 'Chinese input disabled the next heading command');
+await native('insert', '标题');
+await native('key', '\r', { keyCode: 36 });
+await native('key', '/', { keyCode: 44 });
+await waitFor(menuVisible, 'Chinese input disabled the next slash menu');
+editor.setTypewriterMode(false);
+// Keep the table structure intact without the obsolete Safari IME widget.
+await reset('| A | B |\n| --- | --- |\n| | |');
+await native('marked', 'pin', { caretAtEnd: true });
+await native('insert', '拼');
+expect(!editor.compositionStateForCheck().composing && document.querySelectorAll('.ProseMirror tr').length === 2
+  && document.querySelectorAll('.ProseMirror td').length === 2 && document.querySelector('.ProseMirror td:last-child').textContent === '拼', 'Chinese input damaged the empty table cell');
 for (const initial of ['', '\u200b']) {
   await reset(initial);
   for (const character of '1. ') await native('insert', character);
