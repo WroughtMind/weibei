@@ -50,8 +50,9 @@ check_size "$ICON/icon_256x256.png" 256
 check_size "$ICON/icon_256x256@2x.png" 512
 check_size "$ICON/icon_512x512.png" 512
 check_size "$ICON/icon_512x512@2x.png" 1024
-check_size "$ICON_COMPOSER/Assets/01-Artwork.png" 1024
+check_size "$ICON_COMPOSER/Assets/01-Mark.png" 1024
 
+has_alpha "$ICON_COMPOSER/Assets/01-Mark.png"
 jq empty "$ICON_COMPOSER/icon.json"
 
 COMPILED_ICON="$(mktemp -d "${TMPDIR:-/tmp}/weibei-icon-verify.XXXXXX")"
