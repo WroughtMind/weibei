@@ -4,7 +4,11 @@ import WeiBeiCore
 
 @MainActor private let sharedWorkspaceStore: WorkspaceStore = {
     WeiBeiPerf.beginLaunch()
+#if CHAT_RENDERER_LAB || CHAT_RENDERER_BASELINE
+    return ChatRendererExperiment.makeStore()
+#else
     return WorkspaceStore()
+#endif
 }()
 
 @MainActor
@@ -18,7 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         WeiBeiTypography.registerBundledFonts()
         NSApp.setActivationPolicy(.regular)
+#if CHAT_RENDERER_LAB || CHAT_RENDERER_BASELINE
+        // The experiment is launched through the isolated desktop surface.
+        // Automated checks keep their windows hidden.
+        ChatRendererExperiment.didLaunch(store: sharedWorkspaceStore)
+#else
         NSApp.activate(ignoringOtherApps: true)
+#endif
         installTerminationSignalSaves()
     }
 
@@ -119,7 +129,9 @@ extension Notification.Name {
     static let weibeiOpenSettings = Notification.Name("WeiBeiOpenSettings")
 }
 
+#if !CHAT_RENDERER_LAB && !CHAT_RENDERER_BASELINE
 @main
+#endif
 struct WeiBeiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = sharedWorkspaceStore
@@ -157,6 +169,16 @@ struct WeiBeiApp: App {
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
+#if CHAT_RENDERER_LAB || CHAT_RENDERER_BASELINE
+            CommandMenu("会话实验") {
+                Button("重放流式回答") { ChatRendererExperiment.replay(store: store) }
+                Button("停止重放") { store.cancelAgentRequest(restoreDraft: false) }
+                Divider()
+                ForEach(ChatRendererExperiment.scenarioTitles, id: \.self) { title in
+                    Button(title) { ChatRendererExperiment.open(title, store: store) }
+                }
+            }
+#endif
             CommandGroup(replacing: .appSettings) {
                 Button(store.ui("设置…", "Settings…")) {
                     NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)

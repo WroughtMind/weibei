@@ -1,62 +1,81 @@
-# ChatRendererLab — 阶段 A：候选资格验证
+# 魏碑独立会话候选 · PR #451
 
-这是 PR #451 的实际 AppKit 候选接线，不是迁移决定，也不是 #449 的主会话列表实现。
+本分支把 MarkdownView／Litext 正文接入魏碑原有会话入口。使用自己实现的 macOS 消息列表，不获取、不迁入、不等待 #449 或 #452 的代码、宿主、源码快照和构建产物。正式 App、模型请求、资料库与笔记写入流程继续使用主线已有实现；实验身份和数据独立。
 
-**2026-09-09 要求修订：#451 与 #449 独立推进。后续在本分支自主完成消息列表、正文接入、验证和候选交付；不等待、不迁入、不依赖 #449 的未合并实现。完整要求见 `Docs/plans/2026-09-09-chat-renderer-lab.md` 第 2、4 节。以下阶段 A 的能力说明不是整个任务已经完成的声明。**
+尚不能把“编译通过”解释为已经适合替换正式版。运行记录区分完整候选、隐藏窗口行为、组件成本和用户体验；没有触控板或帧率数据就不作这类结论。
 
-## 做了什么
+## 构建和体验入口
 
-固定 `Lakr233/MarkdownView@757b6fcc4b3095e84f4c0613f4b98147f49dcd09`，直接调用它的 macOS `MarkdownTextView` / Litext 正文，不创建简化 TextKit 替身。候选有基础富文本、单条长文、长代码表格、能力缺口四类合成样本，以及合成流式重放。最后一类明确不计作功能已通过。
-
-`CandidateDocument` 串行解析、合并待处理快照，在主线程准备数学/高亮上下文；可回收显示宿主不持有唯一的准备结果。`CandidateHost` 实际使用候选的测量和显示对象；允许一次完整测量后复用，不把“不是 TextKit 视口排版”当失败理由。这里没有生产历史分页、动作卡或列表复用。
-
-`background_parse`、`main_prepare`、`main_apply_and_layout`、`main_measure`、`submitted_to_apply` 分别记录。它们是候选组件数据，不是屏幕 FPS、完整高亮完成时延或与魏碑的速度比。自动验证中的等待与截图也不计作真实滚动基准。
-
-## 运行
-
-需要 macOS 14+、支持 Swift 6 的 Xcode 工具链和网络解析依赖。
+需要 macOS 14+、支持 Swift 6 的 Xcode、Node.js 22 和已锁定的依赖。构建脚本使用本仓库原有编辑器资源入口，保留数学字体、代码高亮、图示资源、PDF helper 和签名校验，不修改正式打包脚本。
 
 ```sh
-# 在仓库根目录；三个模式共用同一构建/装配入口。
-bash Experiments/ChatRendererLab/script/build_and_run.sh package
-bash Experiments/ChatRendererLab/script/build_and_run.sh verify
-bash Experiments/ChatRendererLab/script/build_and_run.sh run
+# 完整会话候选：原有魏碑工作区、会话、来源、动作卡和输入框。
+bash Experiments/ChatRendererLab/script/build_conversation.sh package
+# 隐藏窗口检查同一个消息列表和原有气泡、流式与动作入口。
+bash Experiments/ChatRendererLab/script/build_conversation.sh verify
+# 同一份合成内容，编译主线原有列表/正文路径，用于端到端比较。
+bash Experiments/ChatRendererLab/script/build_conversation.sh package baseline
+# 三组真实会话入口取证，两个包顺序运行，结果不是 FPS。
+bash Experiments/ChatRendererLab/script/build_conversation.sh benchmark candidate
+bash Experiments/ChatRendererLab/script/build_conversation.sh benchmark baseline
 ```
 
-候选位于本目录 `.artifacts/WeiBeiChatRendererLab.app`。Bundle ID 独立，不读资料库、Keychain 或模型配置，不替换魏碑。`run` 仅在用户主动运行时打开实验窗口；`verify` 从 App bundle 启动隐藏窗口，不抢前台。不要直接从 `.build` 执行 GUI 二进制。
+完整候选输出为 `.artifacts/conversation-candidate/魏碑-会话实验-451.app`，标识 `com.weibei.experiments.conversation451`。基线为 `.artifacts/conversation-baseline/魏碑-会话基线-451.app`，使用另一标识。两个包均不安装到 Applications，也不进入正式更新通道。
 
-`verify` 暂时移动**本实验自己的** `.build`，结束后恢复，防止字体/资源从编译目录加载而掩盖缺包。资源放在 `Contents/Resources`。首次真实 macOS 编译后发现 app 根符号链接会被签名拒绝，已移除；现在仅对本实验解析的 SwiftMath / Highlightr checkout 做明确的资源查找补丁（`script/prepare_app_resources.py`），优先从标准资源目录读取，再保留命令行回退。补丁不改渲染算法，不写入生产依赖，也不使用未签名根目录绕过验证。此装配方式只用于实验，不修改魏碑的正式打包脚本。候选只做本机 ad-hoc 签名，不是公证/正式发布产物。
+候选首次启动创建三份合成会话：“长历史 · 384 条”“少量消息 · 长正文与代码”“富内容 · 来源与动作”。菜单“会话实验”可以切换样本、重放和停止合成流式回答。重放明确标为合成输入，通过魏碑已有的会话流式和停止入口运行。正常提问入口仍在；真实模型需在实验 App 中单独配置，不读取已安装魏碑的凭据。
 
-独立工作流生成真实解析出的 `Package.resolved`、依赖树、环境/源码状态、构建日志、隐藏窗口行为报告与合成截图。传递依赖首次解析后须以该锁文件保持后续 A/B 一致；在锁文件取回之前，不宣称整个依赖图已固定。
+普通运行的数据在 `~/Library/Application Support/com.weibei.experiments.conversation451/`，资料库与工作区分开放置。验证模式每次使用自身结果目录里的全新合成资料。不要向实验版导入生产资料来替代脱敏样本。
 
-## 自动检查说明
+每个包的 `Contents/Resources/environment.txt` 和 `Info.plist` 记录提交、工作区是否有改动、构建模式和系统；同目录包含实际 `Package.resolved`。结果目录保留编译、资源、签名及行为记录。最终体验应使用记录为干净提交构建的包。
 
-| 检查 | 证明什么 | 不证明什么 |
-|---|---|---|
-| 富内容复制与数学资源 | 已显示文档的可读内容有代码、表格文字和尾段；数学图像可生成 | 所有字形/公式视觉正确，或图片/GenUI 已适配 |
-| 长文改宽与重复测量 | 改宽重排、恢复宽度得到一致高度、不重复解析原文 | 生产列表锚点、实际触控板 FPS |
-| 流式与会话切换 | 中间结果可应用、尾部不遗漏、旧任务不覆盖新文档 | 高亮最终完成延迟、所有选择范围更新规则 |
-| 重挂准备结果 | 新宿主能使用已有正文，未再次解析 | NSTableView 行复用与卡片草稿完整性 |
+## 实现边界
 
-检查失败保持失败，不删样本、不靠退回纯文本通过。源码语法检查不等于 macOS 类型检查，单架构 CI 不等于 Intel/全部系统验收。
+| 环节 | 本分支的接线 |
+|---|---|
+| 消息与列表 | 原有 `AgentMessage` 和消息气泡；本分支的 `NSTableView` 宿主按主线原有每页 30 条策略前插历史，只更新变化的已挂载消息。 |
+| 正文准备 | `ChatRendererKit` 保存解析结果、数学上下文、代码高亮索引、图片和按宽度测量的高度；结果不只保存在行视图中；系统缓存额外保留最近的八个正文显示面。 |
+| 显示绑定 | 新绑定先安装完整匹配正文，再接后续版本；已换消息的视图拒绝旧文档结果。 |
+| 流式 | 复用原有显示节奏和停止流程；待解析内容保留最新快照，完成后不清空重建正文。 |
+| 阅读位置 | 每个会话显示面各有一个外层滚动入口；记录消息与文字位置，协调前插、改宽和附件到达。 |
+| 富内容 | 原生代码、可选中文字的表格、数学；实际图片；笔记链接和提示块；Mermaid、互动内容、来源及笔记动作复用魏碑现有入口。 |
+| 编辑状态 | 操作卡草稿和折叠状态离开可回收行后保留；写入与撤销仍经过原有存储入口。 |
 
-## 后续阶段：独立会话接入与完整候选
+上游 MarkdownView 固定在 `757b6fcc4b3095e84f4c0613f4b98147f49dcd09`，Litext 为 `2.2.1`。完整 App 继续使用魏碑锁定的 `WroughtMind/SwiftMath@b6d15610552aa04a54c36bf205efaf34409dc335`，没有删除中文数学字体修复。
 
-不再以 #449 推送或完成为前提。基于计划记录的主线基线，在 #451 自己的分支完成消息列表宿主、正文接入和真实会话路径，保留准备结果复用、流式、阅读位置和必要交互；不能把当前孤立查看器当作最终交付。允许复用已合并主线与公共库，不迁入 #449 未合并代码、冻结快照或其工作目录。
+实验脚本仅补丁处理本分支解析的 checkout：让资源从签名 App 的 `Contents/Resources` 加载，以及修复 Litext 2.2.1 中附件与其 CoreText delegate 相互强持有的问题。附件的实际释放由运行检查保护。所有字体和许可证保留；验证时临时移开本次构建目录，防止缺失资源被开发缓存掩盖。
 
-先完成自身功能验证和同条件主线对照；#449 候选可用后可追加端到端比较，但不是本分支施工、打包或自身验收的依赖。比较统一正文宽度、字号、内容、流式输入和操作要求，不强制共用宿主实现。冷启动和回看都要计入，并记录回弹等正确性差异；不同列表与正文的整套结果不能叫作纯正文 A/B。需要隔离正文影响时，使用本分支独立宿主及真实主线正文作窄范围归因检查，不建立全组合测试平台。
+## 原有组件入口
 
-仍需补齐或验证的功能：图片、来源/wiki/callout、Mermaid/GenUI、动作卡草稿、流式选区、主会话与浮窗位置维护，以及与魏碑现有 SwiftMath fork 的依赖兼容。缺功能的版本不能作为最终赢家。
+阶段 A 的独立查看器继续保留，供快速定位正文问题，不当作完整会话交付。
 
-工作流待办：现有 `chat-renderer-lab.yml` 仍有抓取 #449 源码的 `Freeze reviewed list sources for the next integration step` 步骤。本次仅修订要求，尚未修改工作流；实施者应在 #451 移除此跨实验输入，不继续把快照当作宿主来源。只读抓取不等于修改 #449，但也不满足这里要求的自主接入。
+```sh
+bash Experiments/ChatRendererLab/script/build_and_run.sh package
+bash Experiments/ChatRendererLab/script/build_and_run.sh verify
+```
 
-## 许可证与取证
+它输出 `.artifacts/WeiBeiChatRendererLab.app`。五项检查保护富文本复制和数学资源、长文改宽复用、流式尾字和旧结果隔离、准备结果重挂、图片／笔记链接／折叠状态。查看器内“能力缺口”历史样本仍明确标为组件范围外，完整能力以会话候选为准。
 
-代码为本实验新写，没有复制 lody-ios 的实现。上游直接依赖 MarkdownView 及其传递依赖；构建把解析到的 checkout 中许可证文件随候选包含。没有把 README 的性能描述当成结果。参考入口：
+## 验证和判读
 
-- https://github.com/Lakr233/MarkdownView/tree/757b6fcc4b3095e84f4c0613f4b98147f49dcd09
-- https://github.com/Lakr233/Litext
-- https://github.com/Innei/lody-ios
-- https://developer.apple.com/documentation/AppKit/NSTableViewDelegate/tableView(_:heightOfRow:)
+当前构建来源、原始结果与性能判读集中记录在 [PR #451](https://github.com/WroughtMind/weibei/pull/451)。
 
-未运行的 macOS 验证与真实会话 A/B 只能写“未验证”。没有合并或正式发布授权。
+完整候选检查使用原有消息气泡、真实动作和独立笔记文件，覆盖长历史首次准备与重复回看、历史前插、长回答改宽、视图复用和选择、停止与自然结束的最终尾字、动作草稿与写入撤销。失败保持失败，不通过缩短内容、默认折叠长回答、关闭检查或删除功能变绿。
+
+工程记录分别包含后台解析、主线程准备／显示／测量、列表布局、输入到应用的延迟和进程内存。隐藏窗口的布局和定时器延迟不等于 FPS；组件应用完成也不等于屏幕合成完成。首次与回看应分别记录，包含图片、高亮和首次准备，不能仅报告缓存命中后的成绩。
+
+记录清楚的主线来源为 `429a86fc91a147f43a6f3be8d45d8db6d8e23673`。本分支的基线构建使用该主线的原有列表与正文路径，加上相同实验身份、样本入口。它和候选属于端到端方案比较，不能把整套差异全归给 Litext。实际对比时同机、Release、同样内容、字号与正文宽度，依次运行，避免两个包同时高负载。
+
+真实 App 操作必须通过画中画。触控板手感、实际选择拖拽与视觉呈现由候选实测和用户清单确认；没有取得的项目写“未验证”。不合并、不发布、不替换已安装 App。
+
+## 用户验收清单
+
+| 用户怎么操作 | 应该看到什么 | 是否通过 | 问题备注 |
+|---|---|---|---|
+| 打开“长历史”，上下滚动并再次回看同一段 | 正文完整，回看没有反复出现空白或明显停顿 | | |
+| 滚到顶部，查看更早的消息 | 历史加入后仍能接着读原处 | | |
+| 打开“少量消息”，阅读长段、公式、代码和表格 | 末尾可达，代码和表格能横向查看及复制 | | |
+| 在长回答中途改窄、改宽或调整字号 | 继续看到刚才正在读的文字附近 | | |
+| 重放流式回答，阅读中途滚回历史，再停止、再次重放 | 历史不会被拉到底部；停止保留收到的字，完成保留最后一句 | | |
+| 打开“富内容”，试图片、折叠提示、笔记链接、来源和互动内容 | 内容真实显示，展开状态保留，入口能完成原有操作 | | |
+| 编辑动作卡草稿，滚走后回来，再确认和撤销 | 草稿保留；写入实验笔记后可以撤销 | | |
+| 切换三栏、沉浸会话，在实验笔记中选字打开浮动问答 | 输入焦点、选择复制与会话内容正常，两个显示面各自保住阅读位置 | | |

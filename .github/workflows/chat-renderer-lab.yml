@@ -5,6 +5,10 @@ on:
     paths:
       - 'Experiments/ChatRendererLab/**'
       - '.github/workflows/chat-renderer-lab.yml'
+      - 'Sources/WeiBei/**'
+      - 'Sources/WeiBeiCore/**'
+      - 'Package.swift'
+      - 'Package.resolved'
   workflow_dispatch:
 
 permissions:
@@ -69,27 +73,6 @@ jobs:
           swift package show-dependencies --format json > .artifacts/dependencies.json
           swift build -c release --product LinkedRenderersProbe 2>&1 | tee .artifacts/build.log
           # Link validation only: do not execute a raw SwiftPM GUI product.
-      - name: Freeze reviewed list sources for the next integration step
-        if: always()
-        shell: bash
-        run: |
-          # Read-only source acquisition: no merging, rebasing or writes to #449.
-          BASELINE=d457675fe1badcd56b4e7256223ef37282fcb9ac
-          git fetch --no-tags --depth=1 origin "$BASELINE"
-          mkdir -p Experiments/ChatRendererLab/Compatibility/.artifacts
-          echo "$BASELINE" > Experiments/ChatRendererLab/Compatibility/.artifacts/list-baseline.txt
-          python3 - "$BASELINE" <<'PY'
-          import pathlib, subprocess, sys, zipfile
-          ref = sys.argv[1]
-          names = subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', ref], text=True).splitlines()
-          # Source text only: never archive fonts, user data, credentials or build caches.
-          chosen = [n for n in names if n.endswith('.swift') and n.startswith(('Sources/WeiBei/', 'Sources/WeiBeiCore/', 'Tests/WeiBeiSafetyTests/'))]
-          chosen += ['AGENTS.md', 'Package.swift', 'Package.resolved', 'script/native-bundle-resources.patch']
-          output = pathlib.Path('Experiments/ChatRendererLab/Compatibility/.artifacts/list-baseline-sources.zip')
-          with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
-              for name in chosen:
-                  archive.writestr(name, subprocess.check_output(['git', 'show', f'{ref}:{name}']))
-          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -97,3 +80,37 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           path: Experiments/ChatRendererLab/Compatibility/.artifacts/**
+
+  conversation-macos:
+    name: Independent real conversation Release candidate
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build and verify the real conversation candidate
+        run: bash Experiments/ChatRendererLab/script/build_conversation.sh verify
+      - name: Archive independent candidate
+        if: success()
+        run: |
+          cd Experiments/ChatRendererLab/.artifacts/conversation-candidate
+          ditto -c -k --sequesterRsrc --keepParent '魏碑-会话实验-451.app' '魏碑-会话实验-451.zip'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conversation-451-${{ runner.arch }}-${{ github.run_id }}
+          include-hidden-files: true
+          retention-days: 14
+          path: |
+            Experiments/ChatRendererLab/.artifacts/conversation-candidate/*.txt
+            Experiments/ChatRendererLab/.artifacts/conversation-candidate/*.log
+            Experiments/ChatRendererLab/.artifacts/conversation-candidate/*.zip
+            Experiments/ChatRendererLab/.artifacts/conversation-candidate/Package.resolved
+            Experiments/ChatRendererLab/.artifacts/conversation-candidate/check-*/*.json
+            Experiments/ChatRendererLab/.artifacts/conversation-candidate/check-*/*.log

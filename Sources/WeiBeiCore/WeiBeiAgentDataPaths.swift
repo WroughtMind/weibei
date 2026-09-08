@@ -9,7 +9,11 @@ public enum WeiBeiAgentDataPaths {
     public static var applicationSupportRoot: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+#if CHAT_RENDERER_LAB || CHAT_RENDERER_BASELINE
+        return base.appendingPathComponent(Bundle.main.bundleIdentifier ?? "com.weibei.experiments.conversation", isDirectory: true)
+#else
         return base.appendingPathComponent("com.changfenhuang.weibei", isDirectory: true)
+#endif
     }
 
     public static var nativeAgentDirectory: URL {

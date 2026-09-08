@@ -126,7 +126,7 @@ private final class NativeChatAttachmentProvider: NSTextAttachmentViewProvider {
 }
 
 @MainActor
-private final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
+final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
     let attachment: NativeChatTextAttachment
     private let scroll = NativeChatHorizontalScrollView()
     private let document = NativeChatFlippedView()

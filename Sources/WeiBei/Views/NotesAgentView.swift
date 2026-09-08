@@ -1135,7 +1135,7 @@ private final class AgentPaneWidthRelay {
 ///
 /// Critical: content width must always fit the measured pane. Never invent a floor larger
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
-private enum AgentChatLayoutMetrics {
+enum AgentChatLayoutMetrics {
     /// ChatGPT-like fixed comfortable column in every layout: narrow panes fill
     /// outright, wide windows cap at ChatGPT's measured column (~960pt, 65% of a
     /// 1470pt window) — user-calibrated against side-by-side screenshots.
@@ -1202,6 +1202,9 @@ struct AgentPaneView: View {
     /// Far-row IDs represented by their measured row heights. Empty unless the
     /// unload flag is on; published only when the set changes, not per scroll pixel.
     @State private var offscreenPlaceholderIDs: Set<UUID> = []
+#if CHAT_RENDERER_LAB
+    @State private var rendererSession = ChatRendererSession()
+#endif
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
@@ -1215,6 +1218,16 @@ struct AgentPaneView: View {
     private var visibleAgentMessages: ArraySlice<AgentMessage> {
         store.messages.suffix(max(agentVisibleMessageLimit, 0))
     }
+
+#if CHAT_RENDERER_LAB
+    private var rendererMessages: [AgentMessage] {
+        if store.isAgentRunningInActiveChat && !store.hasPersistedGeneratingAgentReply,
+           let id = store.agentStreaming.displayingMessageID {
+            return store.messages + [AgentMessage(id: id, role: .assistant, text: "", source: nil, completionState: .generating)]
+        }
+        return store.messages
+    }
+#endif
 
     private var isImmersiveConversation: Bool {
         store.layout == .immersiveConversation
@@ -1279,6 +1292,32 @@ struct AgentPaneView: View {
                             }
                         }
 
+#if CHAT_RENDERER_LAB
+                        ChatRendererConversation(
+                            sessionID: store.activeStudySessionID,
+                            messages: rendererMessages,
+                            session: rendererSession,
+                            presentationID: "\(textScale)|\(comfy)",
+                            columnWidth: min(max(1, liveAvailableWidth - (wide ? 16 : 20)), AgentChatLayoutMetrics.wideMaxWidth),
+                            makeRow: { message in
+                                AnyView(AgentMessageBubble(message: message,
+                                    streaming: message.completionState == .generating || store.agentStreaming.isDisplaying(message.id)
+                                        ? store.agentStreaming : inertAgentStreamingState,
+                                    isChatWideTypography: comfy)
+                                    .environmentObject(store)
+                                    .environment(\.weiBeiTextScale, textScale)
+                                    .environment(\.agentChatLayoutWidth, contentWidth)
+                                    .id(message.id))
+                            }, onReading: { id, following in
+                                showsJumpToLatest = !following
+                                agentFollowsLatest = following
+                                if let id, showsContentRail { updateAgentRailPosition(for: id) }
+                            }
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .zIndex(0)
+#else
                         ScrollView(showsIndicators: true) {
                             // No scrollTargetLayout / scrollPosition / viewport minHeight
                             // feedback — those all thrash sizeThatFits on the chat stack.
@@ -1358,6 +1397,8 @@ struct AgentPaneView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                         .zIndex(0)
+
+#endif
 
                         agentInputTray(wide: wide)
                             .zIndex(1)
@@ -1735,10 +1776,14 @@ struct AgentPaneView: View {
         agentFollowsLatest = false
         // Folded turns must mount before scrollTo can find their row.
         revealAgentHistory(throughMessageID: turn.startMessageID)
-        let navigate = {
+        let navigate: () -> Void = {
+#if CHAT_RENDERER_LAB
+            rendererSession.list?.reveal(turn.startMessageID)
+#else
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(turn.startMessageID, anchor: .center)
             }
+#endif
         }
         if railOnly {
             store.requestPaneExpansion(.agent, onCompleted: navigate)
@@ -1811,9 +1856,13 @@ struct AgentPaneView: View {
     private func jumpToLatestButton(proxy: ScrollViewProxy) -> some View {
         Button {
             agentFollowsLatest = true
+#if CHAT_RENDERER_LAB
+            rendererSession.list?.scrollToBottom()
+#else
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
             }
+#endif
         } label: {
             Image(systemName: "arrow.down")
                 .weiBeiText(13, weight: .semibold)
@@ -2113,6 +2162,9 @@ struct AgentPaneView: View {
     }
 
     private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {
+#if CHAT_RENDERER_LAB
+        // Content changes are coordinated by the native list itself.
+#else
         guard agentFollowsLatest else { return }
         let chatID = store.activeStudySessionID
         DispatchQueue.main.async {
@@ -2129,6 +2181,7 @@ struct AgentPaneView: View {
             guard agentFollowsLatest, store.activeStudySessionID == chatID else { return }
             proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
         }
+#endif
     }
 
 }
@@ -2366,6 +2419,18 @@ struct FloatingSelectionAgentView: View {
     @FocusState private var draftFocused: Bool
     @FocusState private var linkFocused: Bool
     @Namespace private var floatingNamespace
+
+#if CHAT_RENDERER_LAB
+    @State private var rendererSession = ChatRendererSession()
+    private var rendererMessages: [AgentMessage] {
+        var result = visibleFloatingMessages
+        if store.isAgentRunningInActiveChat, !store.hasPersistedGeneratingAgentReply,
+           let id = store.agentStreaming.displayingMessageID {
+            result.append(AgentMessage(id: id, role: .assistant, text: "", source: nil, completionState: .generating))
+        }
+        return result
+    }
+#endif
 
     var body: some View {
         Group {
@@ -2707,6 +2772,26 @@ struct FloatingSelectionAgentView: View {
                 .padding(.horizontal, 12)
 
             if showsFloatingFeed {
+#if CHAT_RENDERER_LAB
+                ChatRendererConversation(sessionID: store.activeSelectionAskThreadID,
+                    messages: rendererMessages, session: rendererSession,
+                    presentationID: String(describing: store.interfaceTextScale),
+                    columnWidth: max(panelWidth - 28, 1),
+                    makeRow: { message in
+                        AnyView(FloatingSelectionMessageRow(message: message,
+                            streaming: message.completionState == .generating || store.agentStreaming.isDisplaying(message.id)
+                                ? store.agentStreaming : inertAgentStreamingState)
+                            .environmentObject(store)
+                            .environment(\.weiBeiTextScale, store.interfaceTextScale.multiplier)
+                            .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
+                            .id(message.id))
+                    }, onContentHeight: { height in
+                        if userFeedHeight == nil, abs(height - measuredFeedContentHeight) > 1 {
+                            measuredFeedContentHeight = height
+                        }
+                    })
+                    .frame(height: resolvedFloatingFeedHeight)
+#else
                 ScrollView(showsIndicators: false) {
                     // Same order as immersive chat: messages → streaming → thinking.
                     LazyVStack(alignment: .leading, spacing: 12) {
@@ -2756,6 +2841,7 @@ struct FloatingSelectionAgentView: View {
                     previousFeedContentHeight = measuredFeedContentHeight
                     measuredFeedContentHeight = height
                 }
+#endif
             }
 
             composerField
@@ -3171,9 +3257,11 @@ private struct FloatingSelectionMessageRow: View {
         }
         .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
         .onDisappear {
+#if !CHAT_RENDERER_LAB
             if streaming.isDisplaying(message.id) {
                 store.landAgentStreamingDisplayImmediately()
             }
+#endif
         }
         .onChange(of: reduceMotion) { _, enabled in
             store.setAgentStreamingReduceMotion(enabled)
@@ -3190,7 +3278,7 @@ private struct FloatingSelectionMessageRow: View {
 
 /// Bubble row for one assistant/user message. A single type across the
 /// generating → completed flip keeps the native body alive at completion.
-private struct AgentMessageBubble: View {
+struct AgentMessageBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
@@ -3208,9 +3296,11 @@ private struct AgentMessageBubble: View {
         )
         .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
         .onDisappear {
+#if !CHAT_RENDERER_LAB
             if streaming.isDisplaying(message.id) {
                 store.landAgentStreamingDisplayImmediately()
             }
+#endif
         }
         .onChange(of: reduceMotion) { _, enabled in
             store.setAgentStreamingReduceMotion(enabled)
@@ -3227,6 +3317,10 @@ struct AgentBubble: View {
     var liveActivityText: String? = nil
     var isStreaming = false
     var isChatWideTypography = false
+#if CHAT_RENDERER_LAB
+    @Environment(\.chatRendererSession) private var rendererSession
+    @Environment(\.chatRendererConversationID) private var rendererConversationID
+#endif
     @State private var hovering = false
     @State private var copiedMessage = false
     /// Copy feedback identity: a second copy within the 1.2s window re-arms the
@@ -3435,7 +3529,8 @@ struct AgentBubble: View {
                 ForEach(message.actions) { action in
                     AgentReplyActionCard(
                         messageID: message.id,
-                        action: action
+                        action: action,
+                        draft: retainedActionDraft(action)
                     )
                 }
             }
@@ -3526,6 +3621,18 @@ struct AgentBubble: View {
         }
         .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.memoryUpdate)
         .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.profileUpdate)
+    }
+
+    private func retainedActionDraft(_ action: AgentReplyAction) -> AgentReplyActionDraft? {
+#if CHAT_RENDERER_LAB
+        guard let state = rendererSession?.state(for: message.id, in: rendererConversationID) else { return nil }
+        if let draft = state.actionDrafts[action.id] { return draft }
+        let draft = AgentReplyActionCard.makeDraft(action)
+        state.actionDrafts[action.id] = draft
+        return draft
+#else
+        return nil
+#endif
     }
 
     private func activateSource(_ source: AgentReplySource) {
@@ -3621,17 +3728,18 @@ private struct AgentReplyActionCard: View {
     let messageID: UUID
     let action: AgentReplyAction
     private let headingPrefix: String
-    @State private var title: String
-    @State private var bodyText: String
-    @State private var isWorking = false
+    @StateObject private var draft: AgentReplyActionDraft
+    private var isWorking: Bool {
+        get { draft.isWorking }
+        nonmutating set { draft.isWorking = newValue }
+    }
 
-    init(messageID: UUID, action: AgentReplyAction) {
+    init(messageID: UUID, action: AgentReplyAction, draft: AgentReplyActionDraft? = nil) {
         self.messageID = messageID
         self.action = action
-        let draft = Self.noteDraft(from: action.proposedMarkdown ?? "")
-        headingPrefix = draft.headingPrefix
-        _title = State(initialValue: draft.title)
-        _bodyText = State(initialValue: draft.body)
+        let parsed = Self.noteDraft(from: action.proposedMarkdown ?? "")
+        headingPrefix = parsed.headingPrefix
+        _draft = StateObject(wrappedValue: draft ?? Self.makeDraft(action))
     }
 
     var body: some View {
@@ -3673,11 +3781,11 @@ private struct AgentReplyActionCard: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
-            TextField(store.ui("笔记小标题", "Note heading"), text: $title)
+            TextField(store.ui("笔记小标题", "Note heading"), text: $draft.title)
                 .textFieldStyle(.plain)
                 .weibeiInputSurface(height: 32)
 
-            TextEditor(text: $bodyText)
+            TextEditor(text: $draft.bodyText)
                 .weiBeiText(12)
                 .scrollContentBackground(.hidden)
                 .scrollDisabled(true)
@@ -3874,11 +3982,16 @@ private struct AgentReplyActionCard: View {
     }
 
     private var composedMarkdown: String {
-        let body = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = draft.bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return body }
         guard !body.isEmpty else { return "\(headingPrefix) \(title)" }
         return "\(headingPrefix) \(title)\n\n\(body)"
+    }
+
+    static func makeDraft(_ action: AgentReplyAction) -> AgentReplyActionDraft {
+        let parsed = noteDraft(from: action.proposedMarkdown ?? "")
+        return AgentReplyActionDraft(title: parsed.title, bodyText: parsed.body)
     }
 
     private static func noteDraft(
@@ -4357,7 +4470,7 @@ private struct AgentChatLayoutWidthKey: EnvironmentKey {
     static let defaultValue: CGFloat = 0
 }
 
-private extension EnvironmentValues {
+extension EnvironmentValues {
     var agentChatLayoutWidth: CGFloat {
         get { self[AgentChatLayoutWidthKey.self] }
         set { self[AgentChatLayoutWidthKey.self] = newValue }
@@ -4506,19 +4619,32 @@ private struct AgentMessageMarkdownText: View {
     @State private var expandedSourceURL: String?
     @State private var markdownMemo = AgentMessageMarkdownMemo()
     @State private var imageHandler = MarkdownImageSchemeHandler()
+#if CHAT_RENDERER_LAB
+    @Environment(\.chatRendererSession) private var rendererSession
+    @Environment(\.chatRendererConversationID) private var rendererConversationID
+    private var retainedMemo: AgentMessageMarkdownMemo {
+        messageID.flatMap { rendererSession?.state(for: $0, in: rendererConversationID).markdownMemo } ?? markdownMemo
+    }
+    private var retainedImageHandler: MarkdownImageSchemeHandler {
+        messageID.flatMap { rendererSession?.state(for: $0, in: rendererConversationID).imageHandler } ?? imageHandler
+    }
+#else
+    private var retainedMemo: AgentMessageMarkdownMemo { markdownMemo }
+    private var retainedImageHandler: MarkdownImageSchemeHandler { imageHandler }
+#endif
 
     private var sourcePresentation: AgentReplySourceInlinePresentation {
         AgentReplySourceInlinePresentation(text: text, sources: sources, language: store.interfaceLanguage)
     }
 
     private var preparedMarkdown: String {
-        markdownMemo.outputs(text: text, sources: sources, language: store.interfaceLanguage).finalized
+        retainedMemo.outputs(text: text, sources: sources, language: store.interfaceLanguage).finalized
     }
 
     var body: some View {
         Group {
             if rendersRichMarkdown {
-                NativeChatMarkdownView(
+                AgentConversationMarkdownView(
                     markdown: preparedMarkdown,
                     messageID: messageID,
                     fontSize: (isChatWideTypography && !compact ? 16 : 14) * textScale,
@@ -4540,13 +4666,13 @@ private struct AgentMessageMarkdownText: View {
                         return host
                     },
                     imageLoader: { source, completion in
-                        imageHandler.update(
+                        retainedImageHandler.update(
                             markdownBaseURLString: store.currentMarkdownBaseURL?.absoluteString ?? "",
                             attachmentDirectory: store.currentAttachmentDirectory,
                             appearanceMode: store.appearanceMode,
                             interfaceLanguage: store.interfaceLanguage
                         )
-                        imageHandler.loadImage(source: source, completion: completion)
+                        retainedImageHandler.loadImage(source: source, completion: completion)
                     }
                 )
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -4577,8 +4703,10 @@ private struct AgentMessageMarkdownText: View {
             .padding(.vertical, 6)
         }
         .onDisappear {
+#if !CHAT_RENDERER_LAB
             imageHandler.invalidate()
             imageHandler = MarkdownImageSchemeHandler()
+#endif
         }
     }
 
@@ -4608,10 +4736,10 @@ private struct AgentMessageMarkdownText: View {
         } else if ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
             NSWorkspace.shared.open(url)
         } else {
-            imageHandler.update(markdownBaseURLString: store.currentMarkdownBaseURL?.absoluteString ?? "",
+            retainedImageHandler.update(markdownBaseURLString: store.currentMarkdownBaseURL?.absoluteString ?? "",
                 attachmentDirectory: store.currentAttachmentDirectory,
                 appearanceMode: store.appearanceMode, interfaceLanguage: store.interfaceLanguage)
-            if let imageURL = imageHandler.validatedLocalImageURL(source: url.absoluteString) {
+            if let imageURL = retainedImageHandler.validatedLocalImageURL(source: url.absoluteString) {
                 NSWorkspace.shared.open(imageURL)
             }
         }

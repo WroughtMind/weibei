@@ -1,3 +1,4 @@
+import ChatRendererKit
 import AppKit
 import Foundation
 
@@ -185,12 +186,44 @@ enum CandidateVerification {
             return "A new AppKit host can bind the existing prepared document; actual table reuse is stage B."
         }
 
+        await runCase("native_extensions_images_wiki_and_callout_state") {
+            let prepared = CandidateDocument()
+            let view = CandidateTextView()
+            var loadedImage = false
+            view.imageLoader = { _, completion in
+                loadedImage = true
+                let image = NSImage(size: NSSize(width: 80, height: 40), flipped: false) { rect in
+                    NSColor.red.setFill(); rect.fill(); return true
+                }
+                completion(image.tiffRepresentation)
+            }
+            view.bind(prepared)
+            let source = "[[实验笔记|别名]]\n\n> [!note]- 提示\n> 展开后保留的文字\n\n![说明图](fixture-image)"
+            try await waitForDisplay(prepared, revision: prepared.submit(source))
+            view.frame = NSRect(x: 0, y: 0, width: 500, height: view.measuredHeight(for: 500))
+            view.layoutSubtreeIfNeeded()
+            let initial = view.textLabelView.attributedText.string
+            try require(initial.contains("别名") && !initial.contains("[["), "Wiki alias did not become a link")
+            try require(!initial.contains("展开后保留的文字"), "Collapsed callout displayed its body")
+            try require(loadedImage && prepared.images["fixture-image"] != nil, "Image was not decoded into an actual native image")
+            let parseCount = prepared.parseCount
+            prepared.toggleCallout(0)
+            try require(view.textLabelView.attributedText.string.contains("展开后保留的文字"), "Callout did not expand")
+            try require(prepared.parseCount == parseCount, "Callout reparsed the source")
+            view.unbind()
+            let revisit = CandidateTextView()
+            revisit.bind(prepared)
+            try require(revisit.textLabelView.attributedText.string.contains("展开后保留的文字"), "Recycled callout lost expansion state")
+            revisit.unbind()
+            return "Native image decoded; wiki alias and retained callout expansion use the real candidate document."
+        }
+
         let report = LabReport(timestamp: ISO8601DateFormatter().string(from: Date()),
             operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
             checks: checks, timings: timings, unverified: [
                 "No TextKit baseline or production AgentPaneView comparison",
                 "No claim about screen FPS, touchpad smoothness or reading-anchor stability",
-                "Inline images, wiki/callout/source actions, Mermaid and GenUI not integrated",
+                "Standalone viewer does not exercise the full source/action/Mermaid/GenUI workflow",
                 "Actions/card drafts and selection during streaming/reuse not verified",
                 "Compatibility with WeiBei's SwiftMath fork and root package not verified",
                 "No minimum-OS, Intel/Apple-Silicon matrix claim"

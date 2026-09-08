@@ -1,3 +1,4 @@
+import ChatRendererKit
 import AppKit
 import QuartzCore
 import MarkdownView

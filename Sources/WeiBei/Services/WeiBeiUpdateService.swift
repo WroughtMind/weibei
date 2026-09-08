@@ -127,6 +127,9 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
 
     override init() {
         super.init()
+#if CHAT_RENDERER_LAB || CHAT_RENDERER_BASELINE
+        return // Independent candidates never enter the production update channel.
+#endif
         do {
             try updater.start()
         } catch {
@@ -138,6 +141,9 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
     }
 
     func checkForUpdates() {
+#if CHAT_RENDERER_LAB || CHAT_RENDERER_BASELINE
+        return
+#endif
         guard !isBusy else { return }
         status = .checking
         updater.checkForUpdates()

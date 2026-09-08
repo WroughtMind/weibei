@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Patch only the resolved lab checkout's resource lookups for a macOS .app.
+"""Patch resolved checkouts' app resources and Litext attachment ownership.
 
 SwiftPM CLI accessors look at the app root, which cannot contain resources in a
 valid signed macOS bundle. Prefer Contents/Resources through Bundle.main's
-resource API, retaining Bundle.module for command-line use. No rendering changes.
+resource API, retaining Bundle.module for command-line use.
 """
 import pathlib
 import stat
@@ -40,3 +40,29 @@ for identity, relative, bundle, needle, count in patches:
     finally:
         path.chmod(mode)
     print(f'app-resource lookup: {identity}/{relative} ({count} sites)')
+
+# Litext 2.2.1 stores a delegate that retains its owning Attachment. Let the
+# attributed string own the delegate instead, so recycled rows release it.
+path = checkouts['litext'] / 'Sources/Litext/TextLabelView/Attachments/TextLabel+Attachment.swift'
+original = path.read_text()
+changes = [
+    ('        private var cachedRunDelegate: CTRunDelegate?\n', ''),
+    ('            if let cachedRunDelegate {\n                return cachedRunDelegate\n            }\n\n', ''),
+    ('            cachedRunDelegate = delegate\n', ''),
+    ('        /// The delegate is cached so repeated reads do not allocate additional delegates or retain\n        /// the attachment more than once.\n',
+     '        /// The attributed string owns the delegate; caching it here would retain self forever.\n'),
+]
+if 'cachedRunDelegate' not in original:
+    print('already applied: Litext attachment ownership')
+else:
+    for before, after in changes:
+        if original.count(before) != 1:
+            raise SystemExit('Unexpected Litext attachment implementation; review the locked dependency.')
+        original = original.replace(before, after)
+    mode = stat.S_IMODE(path.stat().st_mode)
+    try:
+        path.chmod(mode | stat.S_IWUSR)
+        path.write_text(original)
+    finally:
+        path.chmod(mode)
+    print('Litext attachment delegate no longer retains its owner in a cycle')
