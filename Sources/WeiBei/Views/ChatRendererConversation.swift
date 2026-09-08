@@ -411,7 +411,9 @@ final class ChatRendererListView: NSView, NSTableViewDataSource, NSTableViewDele
         if lastWidth != rowWidth { needsLayout = true }
         guard !updatingGeometry else { return }
         // A fresh user scroll supersedes an anchor captured before the gesture.
-        if scroll.isHandlingUserScroll { pendingAnchor = nil; followsLatest = distanceFromBottom < 48 }
+        if scroll.isHandlingUserScroll || NSApp.currentEvent?.type == .leftMouseDragged {
+            pendingAnchor = nil; followsLatest = distanceFromBottom < 48
+        }
         reportReading()
     }
     private func reportReading() {

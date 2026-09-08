@@ -69,7 +69,6 @@ struct ChatRendererMarkdownView: NSViewRepresentable {
             secondaryInk: WeiBeiNativePalette.secondaryInk(), accent: WeiBeiNativePalette.link())
         view.bind(document)
         document.submit(markdown)
-        view.trackedScrollView = view.enclosingScrollView
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: CandidateTextView, context: Context) -> CGSize? {
         guard let width = proposal.width, width.isFinite, width > 0 else { return nil }

@@ -156,6 +156,17 @@ enum ChatRendererConversationChecks {
             b.submit("新的消息：甲乙丙丁，末尾🙂")
             while b.displayedRevision != b.requestedRevision { try await Task.sleep(for: .milliseconds(10)) }
             try require(view.textLabelView.selectionRange == NSRange(location: 6, length: 2), "Append lost the existing selection")
+            view.bind(a)
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 640, height: 300))
+            view.frame = NSRect(x: 0, y: 0, width: 640, height: view.measuredHeight(for: 640))
+            scroll.documentView = view
+            let selectionWindow = NSWindow(contentRect: scroll.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            selectionWindow.contentView = scroll
+            view.layoutSubtreeIfNeeded()
+            let edge = view.textLabelView.convert(CGPoint(x: 10, y: scroll.documentVisibleRect.maxY + 40), from: view)
+            view.textLabelView(view.textLabelView, didDragSelectionAt: edge)
+            try require(scroll.documentVisibleRect.minY > 0, "Dragging selection beyond the viewport did not scroll the enclosing conversation")
+            selectionWindow.contentView = nil
             view.unbind()
         }
         await runCase("stream_stop_and_final_tail_use_real_store") {

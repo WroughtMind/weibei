@@ -145,6 +145,7 @@ public final class CandidateTextView: MarkdownTextView {
     }
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        trackedScrollView = enclosingScrollView
         if window != nil { selectionToRestore = preparedDocument?.selectedRange; needsLayout = true }
     }
 
