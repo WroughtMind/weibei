@@ -222,7 +222,6 @@ final class NativeChatTableView: NSView {
             if let text = visibleCells.removeValue(forKey: key) {
                 text.onLayout = nil
                 text.delegate = nil
-                text.removeFromSuperview()
                 reusable.append(text)
             }
         }
@@ -251,11 +250,12 @@ final class NativeChatTableView: NSView {
                     self.report(row: row, content: content)
                 }
                 visibleCells[key] = text
-                addSubview(text)
+                if text.superview !== self { addSubview(text) }
             }
             text.conversationClipView = clip
             text.frame = frame
         }
+        reusable.forEach { $0.removeFromSuperview() }
     }
 
     private func report(row: Int, content: NativeChatTableContent) {
