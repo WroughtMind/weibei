@@ -29,6 +29,7 @@ final class DiagramView: UIView, WKNavigationDelegate {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func layoutSubviews() { super.layoutSubviews(); web.frame = bounds }
+    func snapshot() async throws -> UIImage { try await web.takeSnapshot(configuration: nil) }
     func display(_ value: String) {
         guard value != source else { return }
         source = value

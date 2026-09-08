@@ -21,7 +21,14 @@ async function renderDiagram(source,generation) {
     const result=await mermaid.render('diagram-'+generation,source);
     if(current!==generation)return;
     document.querySelector('#diagram').innerHTML=result.svg;
-    rendered=document.querySelector('#diagram svg')!==null;
+    const svg=document.querySelector('#diagram svg');
+    // Mermaid's percentage width collapses inside a max-content scroller.
+    // Keep its actual diagram dimensions so horizontal reading stays available.
+    svg.setAttribute('width',svg.viewBox.baseVal.width);
+    svg.setAttribute('height',svg.viewBox.baseVal.height);
+    const bounds=svg.getBoundingClientRect();
+    if(!(bounds.width>0&&bounds.height>0))throw new Error('图形没有可见尺寸');
+    rendered=true;
     document.querySelector('#error').textContent='';
   } catch(error) {
     if(current!==generation)return;

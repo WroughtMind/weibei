@@ -13,6 +13,7 @@ final class BlockView: UIView, UITextViewDelegate {
     private lazy var save = UIButton(type: .system)
     private var diagram: DiagramView?
     var diagramRendered: Bool { diagram?.renderSucceeded == true }
+    func diagramSnapshot() async throws -> UIImage? { try await diagram?.snapshot() }
     private(set) var record: PreparedBlock?
     var onChange: (() -> Void)?
     var onLink: ((URL) -> Void)?

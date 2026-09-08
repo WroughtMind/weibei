@@ -544,6 +544,16 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     if ContinuousClock.now >= diagramDeadline { throw Failure(message: "离线关系图没有生成真实 SVG") }
                     try await Task.sleep(for: .milliseconds(20))
                 }
+                if CommandLine.arguments.contains("--self-check") {
+                    let diagramIndex = blocks.firstIndex(where: { $0 === diagram })!
+                    collection.scrollToItem(at: IndexPath(item: diagramIndex + 1, section: 0), at: .centeredVertically, animated: false)
+                    collection.layoutIfNeeded()
+                    guard let image = try await diagramView.diagramSnapshot(), let data = image.pngData() else {
+                        throw Failure(message: "关系图没有生成实际渲染快照")
+                    }
+                    try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
+                    try data.write(to: LabMetrics.directory.appendingPathComponent("diagram.png"))
+                }
 
                 guard let imageIndex = blocks.firstIndex(where: { $0.imageSources.contains("lab-image://landscape") }) else {
                     throw Failure(message: "没有实际图片正文")
