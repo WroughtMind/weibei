@@ -85,6 +85,7 @@ for (const initial of ['', '\u200b']) {
 // commands when the candidate is committed, including in typewriter mode.
 editor.setTypewriterMode(true);
 await reset();
+await native('marked', 'p', { caretAtEnd: true });
 await native('marked', 'pin', { caretAtEnd: true });
 await native('insert', '拼');
 expect(!editor.compositionStateForCheck().composing && editor.getMarkdown().trim() === '拼', 'Committed pinyin left the editor composing');
@@ -101,6 +102,7 @@ await waitFor(menuVisible, 'Chinese input disabled the next slash menu');
 editor.setTypewriterMode(false);
 // Keep the table structure intact without the obsolete Safari IME widget.
 await reset('| A | B |\n| --- | --- |\n| | |');
+await native('marked', 'p', { caretAtEnd: true });
 await native('marked', 'pin', { caretAtEnd: true });
 await native('insert', '拼');
 expect(!editor.compositionStateForCheck().composing && document.querySelectorAll('.ProseMirror tr').length === 2
