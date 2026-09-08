@@ -21,20 +21,23 @@ struct FloatingAgentModeSwitch: View {
 
     private func modeButton(_ label: String, mode: FloatingSelectionComposerMode, help: String) -> some View {
         let active = interaction.floatingComposerMode == mode
-        return Button(label) {
+        return Button {
             withAnimation(WeiBeiMotion.micro) { interaction.floatingComposerMode = mode }
-        }
+        } label: {
+            Text(label)
         .weiBeiText(12, weight: .semibold)
         .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
         .padding(.horizontal, 9)
-        .frame(height: 20)
+        .frame(minWidth: 30, minHeight: 28)
+        .contentShape(Rectangle())
         .background {
             if active {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(WeiBeiTheme.paper.opacity(0.92))
             }
         }
-        .buttonStyle(.plain)
+        }
+        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28))
         .help(help)
         .accessibilityLabel(Text(help))
     }
@@ -44,22 +47,39 @@ struct FloatingAgentModeSwitch: View {
 /// 与问的 agentDraft 互不覆盖。
 struct SelectionRemarkField: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @Binding var text: String
     var submit: () -> Void
     @FocusState private var focused: Bool
+    @State private var editorHeight: CGFloat = 0
+    @State private var active = false
+    @State private var focusRequest = 1
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField(
-                store.ui("记一句…(留空只存原文)", "Add a remark… (empty saves excerpt only)"),
-                text: $interaction.selectionNoteDraft,
-                axis: .vertical
-            )
-            .textFieldStyle(.plain)
-            .weiBeiText(15)
-            .lineLimit(1...3)
-            .focused($focused)
-            .onSubmit { submit() }
+            ZStack(alignment: .topLeading) {
+                AgentComposerTextEditor(
+                    text: $text,
+                    measuredHeight: $editorHeight,
+                    active: $active,
+                    focused: $focused,
+                    fontSize: 15,
+                    lineLimit: 1...3,
+                    focusRequest: focusRequest,
+                    appearanceMode: store.appearanceMode,
+                    accessibilityLabel: store.ui("记一句，留空只存原文", "Add a remark; empty saves the passage"),
+                    submit: submit
+                )
+                .frame(height: max(20, editorHeight))
+                if text.isEmpty && !active {
+                    Text(store.ui("写下批注…", "Add a remark…"))
+                        .weiBeiText(15)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { focusRequest &+= 1 }
 
             Button {
                 submit()
@@ -72,8 +92,8 @@ struct SelectionRemarkField: View {
                 cornerRadius: 13
             ))
             .keyboardShortcut(.return, modifiers: [.command])
-            .accessibilityLabel(Text(store.ui("记入笔记", "Save to note")))
-            .help(store.ui("记入笔记(⌘↩,留空只存原文)", "Save to note (⌘↩; empty saves excerpt only)"))
+            .accessibilityLabel(Text(store.ui("保存到摘抄本", "Save excerpt")))
+            .help(store.ui("保存到摘抄本（⌘↩，留空只存原文）", "Save excerpt (⌘↩; empty saves the passage)"))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -82,15 +102,6 @@ struct SelectionRemarkField: View {
             focused: focused,
             showsChrome: false
         )
-        .onAppear { focusUntilFocused(attempt: 0) }
-    }
-
-    /// 展开动画/挂载时序竞态会让单次设焦点丢失;分次重试直到真正聚焦。
-    private func focusUntilFocused(attempt: Int) {
-        guard attempt < 5 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            if focused != true { focused = true }
-            focusUntilFocused(attempt: attempt + 1)
-        }
+        .onAppear { focused = true }
     }
 }

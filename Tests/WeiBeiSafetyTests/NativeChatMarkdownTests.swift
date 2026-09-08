@@ -294,6 +294,93 @@ final class NativeChatMarkdownTests: XCTestCase {
         XCTAssertFalse(window.isVisible)
     }
 
+    // Scrolling a conversation to its bottom must reveal all of the last answer before its footer.
+    @MainActor func testConversationBottomDoesNotClipLastAnswer() async throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let paragraph = "运行中的组件需要保存状态，也需要在变化后继续工作。" + String(repeating: "这段正文应当完整显示，继续向下滚动可以读到末尾。", count: 6)
+        let ending = "回答结束。"
+        let sources = [8, 5].map { count in
+            (0..<count).map { "## 第 \($0 + 1) 节\n\n\(String(repeating: paragraph, count: $0 % 3 + 1))\n\n1. **保留状态**\n   - 更新依赖。\n   - \(paragraph)\n2. **恢复运行**\n   - 继续阅读。\n" }.joined(separator: "\n") + "\n\(ending)"
+        }
+        let messages = sources.map { AgentMessage(role: .assistant, text: $0, source: nil) }
+        func conversation(lastAnswer: String, streaming: Bool = true) -> some View { ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                ForEach(sources.indices, id: \.self) { index in
+                    let isLast = index == sources.count - 1
+                    let message = { () -> AgentMessage in
+                        var value = messages[index]
+                        value.text = isLast ? lastAnswer : sources[index]
+                        value.completionState = isLast && streaming ? .generating : .completed
+                        value.sources = [AgentReplySource(itemID: nil, kind: .material, title: "资料", label: "资料", excerpt: paragraph)]
+                        return value
+                    }()
+                    AgentBubble(message: message, liveStreamingText: isLast && streaming ? lastAnswer : nil, isStreaming: isLast && streaming)
+                        .environmentObject(store)
+                }
+            }.padding(20)
+        }.background(WeiBeiTheme.paper).preferredColorScheme(store.appearanceMode.colorScheme) }
+        let host = NSHostingView(rootView: conversation(lastAnswer: "正在回答。"))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 700),
+                              styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        func texts(in view: NSView) -> [NativeChatTextView] {
+            if let text = view as? NativeChatTextView { return [text] }
+            return view.subviews.flatMap { texts(in: $0) }
+        }
+        func settle() async throws {
+            for _ in 0..<15 {
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        for _ in 0..<15 {
+            try await settle()
+            if texts(in: host).count == 2, texts(in: host).allSatisfy({ !$0.string.isEmpty }) { break }
+        }
+        let last = try XCTUnwrap(texts(in: host).last)
+        let scroll = try XCTUnwrap(last.enclosingScrollView)
+        for length in stride(from: 100, through: sources[1].count, by: 100) {
+            host.rootView = conversation(lastAnswer: String(sources[1].prefix(length)))
+            try await settle()
+        }
+        host.rootView = conversation(lastAnswer: sources[1], streaming: false)
+        try await settle()
+        XCTAssertTrue(last.string.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix(ending))
+        for _ in 0..<4 {
+            let document = try XCTUnwrap(scroll.documentView)
+            scroll.contentView.scroll(to: CGPoint(x: 0, y: max(0, document.frame.height - scroll.contentView.bounds.height)))
+            try await settle()
+        }
+        let manager = try XCTUnwrap(last.textLayoutManager)
+        let content = try XCTUnwrap(manager.textContentManager)
+        func checkVisibleEnd() throws {
+            let viewport = try XCTUnwrap(manager.textViewportLayoutController.viewportRange)
+            XCTAssertEqual(viewport.endLocation.compare(content.documentRange.endLocation), .orderedSame)
+            // Unvisited paragraphs have estimated heights. Check the final rendered line,
+            // not the full-document height from a separate, completely laid-out text view.
+            let finalCharacter = (last.string as NSString).rangeOfCharacter(from: .whitespacesAndNewlines.inverted, options: .backwards)
+            let location = try XCTUnwrap(content.location(content.documentRange.location, offsetBy: finalCharacter.location))
+            let fragment = try XCTUnwrap(manager.textLayoutFragment(for: location))
+            let line = try XCTUnwrap(fragment.textLineFragment(for: location, isUpstreamAffinity: false))
+            let bottom = fragment.layoutFragmentFrame.minY + line.typographicBounds.maxY
+            XCTAssertGreaterThanOrEqual(last.visibleRect.maxY + 1, bottom, "The last line is clipped at the conversation bottom")
+        }
+        try checkVisibleEnd()
+        if let path = ProcessInfo.processInfo.environment["WEIBEI_CHAT_SNAPSHOT"] {
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: path))
+        }
+        XCTAssertFalse(window.isVisible)
+    }
+
     // A long answer must keep the reader's line on resize and still expose its final paragraph.
     @MainActor func testLongAnswerKeepsReadingPositionAndReachableEnd() async throws {
         _ = NSApplication.shared

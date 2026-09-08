@@ -1,4 +1,4 @@
-import { commandsCtx, Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, rootCtx } from '@milkdown/kit/core';
+import { commandsCtx, Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, parserCtx, rootCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
@@ -16,6 +16,7 @@ import {
 import { streamingAppearancePlugin } from './streaming-appearance';
 import { createTypewriterPlugin, setTypewriterMode } from './typewriter';
 import { createSyntaxMarksPlugin } from './syntax-marks';
+import { indexSelectionText, revealSelectionMarks, selectionEndpointRect, selectionMarkRange } from './selection';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
@@ -1055,18 +1056,7 @@ const installContentHeightObserver = () => {
   document.fonts?.ready?.then(scheduleContentHeightReports).catch(() => {});
 };
 
-const rectFromSelection = () => {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return null;
-  const rect = selection.getRangeAt(0).getBoundingClientRect();
-  if (!rect || rect.width + rect.height === 0) return null;
-  return {
-    x: rect.left + rect.width / 2,
-    y: rect.bottom,
-    width: rect.width,
-    height: rect.height,
-  };
-};
+const rectFromSelection = () => selectionEndpointRect(window.getSelection());
 
 const withFrontmatter = (markdown: any) => joinFrontmatter(frontmatterBlock, markdown);
 
@@ -1425,69 +1415,40 @@ const addRangeDecoration = (decorations: any, from: any, to: any, className: any
   decorations.push(Decoration.inline(from, to, { ...attrs, class: className }));
 };
 
-const normalizeSelectionAskMarks = (marks: any) => (Array.isArray(marks) ? marks : [])
-  .map((mark) => ({
-    id: String(mark?.id || ''),
-    text: String(mark?.text || '').trim(),
-  }))
-  .filter((mark) => mark.id && mark.text.length >= 4);
+const normalizeSelectionMarks = (marks: any) => (Array.isArray(marks) ? marks : [])
+  .map((mark) => ({ id: String(mark?.id || ''), text: String(mark?.text || '').trim(), anchor: mark?.anchor,
+    active: mark?.active === true, reveal: typeof mark?.reveal === 'string' ? mark.reveal : undefined }))
+  .filter((mark) => mark.id && mark.text.length > 0);
 
-// 记过原文标记:句末朱砂短棒(样式由原生 bootstrap 注入),点击回访续记。
-const normalizeSelectionRemarkMarks = (marks: any) => (Array.isArray(marks) ? marks : [])
-  .map((mark) => ({
-    id: String(mark?.id || ''),
-    text: String(mark?.text || '').trim(),
-  }))
-  .filter((mark) => mark.id && mark.text.length >= 2);
-
-const decorateSelectionRemarkMarks = (decorations: any, text: any, pos: any, counts: any) => {
-  if (isEditable || selectionRemarkMarks.length === 0) return;
-  selectionRemarkMarks.forEach((mark) => {
-    let start = 0;
-    let count = counts.get(mark.id) || 0;
-    while (count < 3) {
-      const index = text.indexOf(mark.text, start);
-      if (index < 0) break;
-      addRangeDecoration(
-        decorations,
-        pos + index,
-        pos + index + mark.text.length,
-        'weibei-remark-mark',
-        {
-          'data-record-id': mark.id,
-          title: '回访这句的札记',
-        },
-      );
-      count += 1;
-      start = index + mark.text.length;
-    }
-    counts.set(mark.id, count);
+const documentSelectionTextIndex = (doc: any) => {
+  const runs: Array<{ text: string; point: (offset: number) => number }> = [];
+  doc.descendants((node: any, pos: number) => {
+    if (node.isText) runs.push({ text: node.text || '', point: offset => pos + offset });
   });
+  return indexSelectionText(runs);
 };
 
-const decorateSelectionAskMarks = (decorations: any, text: any, pos: any, counts: any) => {
-  if (isEditable || selectionAskMarks.length === 0) return;
-  selectionAskMarks.forEach((mark) => {
-    let start = 0;
-    let count = counts.get(mark.id) || 0;
-    while (count < 3) {
-      const index = text.indexOf(mark.text, start);
-      if (index < 0) break;
-      addRangeDecoration(
-        decorations,
-        pos + index,
-        pos + index + mark.text.length,
-        'weibei-selection-ask-mark',
-        {
-          'data-thread-id': mark.id,
-          title: '打开当时的选区问答',
-        },
-      );
-      count += 1;
-      start = index + mark.text.length;
+const decorateSelectionMarks = (decorations: any[], doc: any) => {
+  if (isEditable || (!selectionAskMarks.length && !selectionRemarkMarks.length)) return;
+  const index = documentSelectionTextIndex(doc);
+  for (const [marks, className, idAttribute] of [
+    [selectionAskMarks, 'weibei-selection-ask-mark', 'data-thread-id'],
+    [selectionRemarkMarks, 'weibei-remark-mark', 'data-record-id'],
+  ] as const) {
+    for (const mark of marks) {
+      const range = selectionMarkRange(index.text, mark);
+      if (!range) continue;
+      const from = index.points[range.startOffset];
+      const to = index.points[range.endOffset - 1] + 1;
+      addRangeDecoration(decorations, from, to,
+        className + (mark.active && idAttribute === 'data-record-id' ? ' weibei-remark-active' : ''),
+        { [idAttribute]: mark.id });
+      if (idAttribute === 'data-record-id') {
+        const lastCharacter = Array.from(index.text.slice(range.startOffset, range.endOffset)).at(-1)!;
+        addRangeDecoration(decorations, to - lastCharacter.length, to, 'weibei-remark-end', { [idAttribute]: mark.id });
+      }
     }
-    counts.set(mark.id, count);
-  });
+  }
 };
 
 const isInsideNode = (state: any, pos: any, typeName: any) => {
@@ -1696,23 +1657,27 @@ const activateSourceReference = (target: any) => {
   return true;
 };
 
-const activateSelectionAskMark = (target: any) => {
+const activateSelectionAskMark = (target: any, event?: MouseEvent) => {
+  if (window.getSelection()?.toString().trim()) return false;
   const mark = target instanceof Element
     ? target.closest('.weibei-selection-ask-mark[data-thread-id]')
     : null;
   const threadId = mark?.getAttribute('data-thread-id') || '';
   if (!threadId) return false;
-  post('selectionAskMark', { threadId, text: mark!.textContent || '' });
+  const bounds = mark!.getBoundingClientRect();
+  post('selectionAskMark', { threadId, rect: { x: event?.clientX ?? bounds.right, y: event?.clientY ?? bounds.top + bounds.height / 2 } });
   return true;
 };
 
-const activateSelectionRemarkMark = (target: any) => {
+const activateSelectionRemarkMark = (target: any, event?: MouseEvent) => {
+  if (window.getSelection()?.toString().trim()) return false;
   const mark = target instanceof Element
     ? target.closest('.weibei-remark-mark[data-record-id]')
     : null;
   const recordId = mark?.getAttribute('data-record-id') || '';
   if (!recordId) return false;
-  post('remarkMark', { recordId, text: mark!.textContent || '' });
+  const bounds = mark!.getBoundingClientRect();
+  post('remarkMark', { recordId, rect: { x: event?.clientX ?? bounds.right, y: event?.clientY ?? bounds.top + bounds.height / 2 } });
   return true;
 };
 
@@ -2401,11 +2366,18 @@ const insertLiteralCodeBlockCharacter = (view: any, event: any) => {
   return true;
 };
 
-/** Rejects spell checking, text replacement, and writing suggestion edits in code blocks. */
-const preventCodeBlockAutomaticReplacement = (view: any, event: any) => {
+/** Keeps typed quotes literal; code blocks also reject other automatic replacements. */
+const preventUnwantedAutomaticReplacement = (view: any, event: any) => {
   if (!isEditable || event.inputType !== 'insertReplacementText' || event.isComposing || !event.cancelable) return false;
   const { selection } = view.state;
-  if (!(selection instanceof TextSelection) || selection.$from.parent !== selection.$to.parent || selection.$from.parent.type.spec.code !== true) return false;
+  const inCode = selection instanceof TextSelection && selection.$from.parent === selection.$to.parent && selection.$from.parent.type.spec.code === true;
+  const replacesQuote = Array.from(event.getTargetRanges?.() || []).some((target: any) => {
+    const range = document.createRange();
+    range.setStart(target.startContainer, target.startOffset);
+    range.setEnd(target.endContainer, target.endOffset);
+    return /^["'‘’“”]$/.test(range.toString());
+  });
+  if (!inCode && !replacesQuote) return false;
   event.preventDefault();
   event.stopImmediatePropagation();
   return true;
@@ -2542,6 +2514,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     const handleEditorFocus = (event: any) => setMermaidSourceFocus(event.target === view.dom);
     const handleEditorBlur = (event: any) => { if (event.target === view.dom) setMermaidSourceFocus(false); };
     const handleCompositionStart = () => {
+      view.dom.classList.add('weibei-composing');
       compositionStartMarkdown = lastMarkdown;
       compositionEndPending = false;
       const { $from } = view.state.selection;
@@ -2549,6 +2522,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       reportSelection();
     };
     const handleCompositionEnd = () => {
+      view.dom.classList.remove('weibei-composing');
       compositionEndPending = true;
       setTimeout(publishCompletedCompositionMarkdown);
     };
@@ -2565,7 +2539,8 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     };
     /** Cancels automatic replacement events without affecting composition or paste input. */
     const handleBeforeInput = (event: any) => {
-      if (event.target === view.dom) preventCodeBlockAutomaticReplacement(view, event);
+      if (event.target !== view.dom) return;
+      preventUnwantedAutomaticReplacement(view, event);
     };
     const keepTableSelection = (event: MouseEvent) => event.preventDefault();
     const handleTableToolbarClick = (event: MouseEvent) => {
@@ -2661,6 +2636,11 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       if (!isEditable) return false;
       const incoming = String(text || '');
       if (!incoming) return false;
+      const { $from } = view.state.selection;
+      if (!view.composing && $from.parent.type.name === 'paragraph' && /^[\u200B\uFEFF]+$/.test($from.parent.textContent)) {
+        view.dispatch(view.state.tr.insertText(incoming, $from.start(), $from.end()));
+        return true;
+      }
       const lookBehindSize = Math.min(12, from);
       const before = view.state.doc.textBetween(from - lookBehindSize, from, '\n', '\n');
       const match = `${before}${incoming}`.match(/<br\s*\/?>$/i);
@@ -2674,8 +2654,8 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       return true;
     } : () => false,
     handleClick(view, pos, event) {
-      return activateSelectionRemarkMark(event.target)
-        || activateSelectionAskMark(event.target)
+      return activateSelectionRemarkMark(event.target, event)
+        || activateSelectionAskMark(event.target, event)
         || activateWikiLink(event.target)
         || activateSourceReference(event.target)
         || toggleFoldedCallout(event.target);
@@ -2740,8 +2720,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
 
       const decorations: any[] = [];
       const commentState = { open: false };
-      const selectionAskCounts = new Map();
-      const selectionRemarkCounts = new Map();
+      decorateSelectionMarks(decorations, state.doc);
 
       state.doc.descendants((node, pos, parent) => {
         addEditorMetric(checkMetrics, 'decorationNodes');
@@ -2771,8 +2750,6 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateComments(decorations, text, textPos, commentState);
           decorateSourceReferences(decorations, text, textPos);
           decorateTagsAndBlocks(decorations, text, textPos);
-          decorateSelectionAskMarks(decorations, text, textPos, selectionAskCounts);
-          decorateSelectionRemarkMarks(decorations, text, textPos, selectionRemarkCounts);
 
         }
 
@@ -2795,6 +2772,17 @@ const reportSelection = () => {
   if (window.weiBeiSuppressSelectionReport) return;
   const text = compositionStartMarkdown === null ? selectedText() : '';
   const rect = text ? rectFromSelection() : null;
+  if (text && !rect) return; // A blurred DOM selection must not erase its last usable anchor.
+  if (rect && editor) {
+    editor.action((ctx) => {
+      const { state } = ctx.get(editorViewCtx);
+      const index = documentSelectionTextIndex(state.doc);
+      const startOffset = index.points.findIndex(pos => pos >= state.selection.from);
+      let endOffset = startOffset;
+      while (endOffset >= 0 && endOffset < index.points.length && index.points[endOffset] < state.selection.to) endOffset += 1;
+      if (startOffset >= 0 && endOffset > startOffset) Object.assign(rect, { anchor: { startOffset, endOffset } });
+    });
+  }
   const details = text && editor ? editor.action((ctx) => {
     const { state } = ctx.get(editorViewCtx);
     const { selection } = state;
@@ -2937,7 +2925,7 @@ const ensureEditor = () => {
 };
 
 const setSelectionAskMarksInternal = (marks: any) => {
-  selectionAskMarks = normalizeSelectionAskMarks(marks);
+  selectionAskMarks = normalizeSelectionMarks(marks);
   decorationGeneration += 1;
   if (!editor) return;
   editor.action((ctx) => {
@@ -2947,12 +2935,13 @@ const setSelectionAskMarksInternal = (marks: any) => {
 };
 
 const setSelectionRemarkMarksInternal = (marks: any) => {
-  selectionRemarkMarks = normalizeSelectionRemarkMarks(marks);
+  selectionRemarkMarks = normalizeSelectionMarks(marks);
   decorationGeneration += 1;
   if (!editor) return;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     view.dispatch(view.state.tr.setMeta('weibeiSelectionAskMarksChanged', true));
+    revealSelectionMarks(view.dom, selectionRemarkMarks);
   });
 };
 
@@ -3330,9 +3319,13 @@ const appendMarkdownInternal = (markdown: any) => {
   ensureEditor();
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    view.dispatch(view.state.tr.setSelection(Selection.atEnd(view.state.doc)));
+    const parsed = ctx.get(parserCtx)(normalizeMarkdownSource(markdown, 'agentGenerated'));
+    if (!parsed) throw new Error('The Markdown fragment could not be parsed');
+    const tr = closeHistory(view.state.tr.insert(view.state.doc.content.size, parsed.content));
+    tr.setSelection(Selection.atEnd(tr.doc));
+    view.dispatch(tr.scrollIntoView());
   });
-  insertMarkdownInternal(markdown, 'agentGenerated');
+  lastSelectionRange = null;
 };
 
 const selectFirstTextForCheck = (needle: any) => {
@@ -3961,8 +3954,8 @@ editorBuilder
     }, true);
     document.addEventListener('click', (event) => {
       if (isEditable && event.target instanceof Element && event.target.closest('.weibei-structured-node')) return;
-      if (!activateSelectionRemarkMark(event.target)
-          && !activateSelectionAskMark(event.target)
+      if (!activateSelectionRemarkMark(event.target, event)
+          && !activateSelectionAskMark(event.target, event)
           && !activateWikiLink(event.target)
           && !activateSourceReference(event.target)
           && !toggleFoldedCallout(event.target)) return;

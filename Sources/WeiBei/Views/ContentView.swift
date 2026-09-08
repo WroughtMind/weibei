@@ -132,6 +132,10 @@ struct ContentView: View {
                 )
             }
         }
+        .sheet(isPresented: $store.excerptBookPresented) {
+            ExcerptBookView(courseID: store.excerptBookCourseID)
+                .environmentObject(store)
+        }
         .background(WindowFullScreenReader(isFullScreen: $windowIsFullScreen))
         .background {
             // Focus / reader-search sync observes paneState so ContentView does not.
@@ -270,15 +274,16 @@ private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.weiBeiTextScale) private var textScale
     @Binding var expanded: Bool
+    @State private var surfaceSize = CGSize.zero
     let canvasSize: CGSize
 
     var body: some View {
         Group {
             if showsGlobalFloatingAgent {
                 FloatingSelectionAgentView(
-                    expanded: $expanded,
-                    routesToConversation: store.isConversationSurfaceVisible
+                    expanded: $expanded
                 )
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { surfaceSize = $0 }
                 .position(floatingAgentPosition)
                 .transition(WeiBeiTransition.floating)
                 .onChange(of: interaction.keepFloatingSelectionForAnswer) { _, keep in
@@ -303,9 +308,7 @@ private struct GlobalFloatingSelectionLayer: View {
     }
 
     private var showsGlobalFloatingAgent: Bool {
-        // Show the selection capsule in multi-pane as well as immersive reading.
-        // When the chat pane is open, the float still appears; "问" routes into the
-        // conversation via `routesToConversation` (do not hide the capsule).
+        // The selection composer stays beside the passage in every reading layout.
         !store.courseWorkspacePresented
             && store.canShowSelectionPromptSurface
             && SelectionFloatingAgentPlacement.isVisible(
@@ -322,11 +325,13 @@ private struct GlobalFloatingSelectionLayer: View {
             anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
             topInset: Double(WeiBeiMetric.topBarHeight * textScale),
-            surfaceHalfWidth: expanded
+            surfaceHalfWidth: surfaceSize.width > 0 ? Double(surfaceSize.width / 2) : expanded
                 ? SelectionFloatingAgentPlacement.expandedHalfWidth
                 : (store.selectionContext?.isReplaceableNoteSelection == true
                     ? 144
                     : SelectionFloatingAgentPlacement.compactHalfWidth),
+            measuredHalfHeight: surfaceSize.height > 0 ? Double(surfaceSize.height / 2) : nil,
+            prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
             prefersAnchorCenter: !expanded
         )
         return CGPoint(x: point.x, y: point.y)

@@ -297,12 +297,12 @@ final class WorkspaceSafetyTests: XCTestCase {
             ownerTitle: "课堂资料"
         )
 
-        store.saveSelectionRemark("新札记")
+        let saved = saveRemark("新札记", in: store)
+        XCTAssertTrue(saved)
 
         XCTAssertEqual(store.selectionRemarkRecords.count, 201)
         XCTAssertEqual(store.selectionRemarkRecords.last?.id, existing.last?.id)
         XCTAssertTrue(selectionRemarkMarksJSON(store.selectionRemarkRecords).contains(existing.last!.id.uuidString))
-        XCTAssertTrue(store.flushPendingWorkspaceSave())
         let reopened = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
         XCTAssertEqual(reopened.selectionRemarkRecords.map(\.id), store.selectionRemarkRecords.map(\.id))
     }
@@ -672,7 +672,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         store.pinnedFloatingAgent = true
         store.keepFloatingSelectionForAnswer = true
         store.agentSurface = .selectionFloat
-        store.selectionAnchor = CGPoint(x: 12, y: 24)
+        store.selectionAnchor = SelectionPopoverAnchor(x: 12, y: 24)
 
         XCTAssertEqual(workspaceChanges, 0, "pane/interaction chrome must not forward to WorkspaceStore")
         XCTAssertGreaterThan(paneChanges, 0)

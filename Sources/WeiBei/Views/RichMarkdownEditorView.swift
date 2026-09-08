@@ -521,6 +521,7 @@ private enum MarkdownWebNetworkGuard {
 
 final class MarkdownWebView: WKWebView {
     var pasteImageFromClipboard: (() -> Bool)?
+    var onWindowAttachment: (() -> Void)?
     var passesVerticalScrollToSuperview = false {
         didSet { updateScrollWheelMonitor() }
     }
@@ -552,6 +553,7 @@ final class MarkdownWebView: WKWebView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         updateScrollWheelMonitor()
+        if window != nil { onWindowAttachment?() }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -674,10 +676,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     /// diff. Completion ends that same session and reports its finalized height
     /// back through the existing WebKit message bridge.
     var streamsMarkdownUpdates = false
-    var onSelectionChange: (String, CGPoint?) -> Void
+    var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
     var onSelectionFormattingChange: (NoteSelectionFormatting?) -> Void = { _ in }
     var onLinkEditorRequest: () -> Void = {}
-    var onAskAgentWithSelection: (String, CGPoint?) -> Void
+    var onAskAgentWithSelection: (String, SelectionPopoverAnchor?) -> Void
     var onContentHeightChange: (CGFloat) -> Void = { _ in }
     var onActiveHeadingChange: (Int?) -> Void = { _ in }
     var onOutlineChange: ([NoteEditorOutlineItem]) -> Void = { _ in }
@@ -692,10 +694,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onSearchResult: (String, Bool) -> Void = { _, _ in }
     /// JSON array of `{id,text}` for selection-ask underline marks (read-only surfaces).
     var selectionAskMarks: String = "[]"
-    var onSelectionAskMark: (String) -> Void = { _ in }
+    var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     /// JSON array of `{id,text}` for remark marks — 句末朱砂短棒(记过)。
     var selectionRemarkMarks: String = "[]"
-    var onSelectionRemarkMark: (String) -> Void = { _ in }
+    var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     private static let localImageScheme = "weibeiimage"
 
     func makeCoordinator() -> Coordinator {
@@ -800,6 +802,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         view.pasteImageFromClipboard = { [weak coordinator = context.coordinator] in
             coordinator?.pasteImageFromClipboard() ?? false
+        }
+        view.onWindowAttachment = { [weak coordinator = context.coordinator] in
+            coordinator?.applyFocus()
         }
         view.navigationDelegate = context.coordinator
         context.coordinator.webView = view
@@ -1010,28 +1015,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     private static let selectionAskMarksBootstrapScript = """
     (() => {
       if (window.WeiBeiSelectionAskMarks) return;
-      const style = document.createElement("style");
-      style.textContent = `
-        .weibei-selection-ask-mark {
-          text-decoration-line: underline;
-          text-decoration-color: rgba(145, 38, 27, 0.72);
-          text-decoration-thickness: 1.5px;
-          text-underline-offset: 3px;
-          cursor: pointer;
-          border-radius: 2px;
-          transition: background-color 120ms ease;
-        }
-        .weibei-selection-ask-mark:hover {
-          background-color: rgba(145, 38, 27, 0.12);
-        }
-        [data-weibei-theme="inkstone"] .weibei-selection-ask-mark {
-          text-decoration-color: rgba(200, 120, 100, 0.85);
-        }
-        [data-weibei-theme="inkstone"] .weibei-selection-ask-mark:hover {
-          background-color: rgba(200, 120, 100, 0.16);
-        }
-      `;
-      document.documentElement.appendChild(style);
       window.WeiBeiSelectionAskMarks = {
         apply: function(marks) {
           window.WeiBeiEditor?.setSelectionAskMarks(marks);
@@ -1043,34 +1026,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     private static let selectionRemarkMarksBootstrapScript = """
     (() => {
       if (window.WeiBeiSelectionRemarkMarks) return;
-      const style = document.createElement("style");
-      style.textContent = `
-        .weibei-remark-mark {
-          cursor: pointer;
-          border-radius: 2px;
-          transition: background-color 120ms ease;
-        }
-        .weibei-remark-mark::after {
-          content: "";
-          display: inline-block;
-          width: 9px;
-          height: 9px;
-          margin-left: 5px;
-          vertical-align: -0.06em;
-          border-radius: 50%;
-          background-color: rgba(145, 38, 27, 1.0);
-        }
-        .weibei-remark-mark:hover {
-          background-color: rgba(145, 38, 27, 0.14);
-        }
-        [data-weibei-theme="inkstone"] .weibei-remark-mark::after {
-          background-color: rgba(200, 120, 100, 1.0);
-        }
-        [data-weibei-theme="inkstone"] .weibei-remark-mark:hover {
-          background-color: rgba(200, 120, 100, 0.18);
-        }
-      `;
-      document.documentElement.appendChild(style);
       window.WeiBeiSelectionRemarkMarks = {
         apply: function(marks) {
           window.WeiBeiEditor?.setSelectionRemarkMarks(marks);
@@ -1094,10 +1049,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var command: Binding<NoteEditorCommand?>
         var editingSession: NoteEditingSession?
         var documentID: String
-        var onSelectionChange: (String, CGPoint?) -> Void
+        var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
         var onSelectionFormattingChange: (NoteSelectionFormatting?) -> Void
         var onLinkEditorRequest: () -> Void
-        var onAskAgentWithSelection: (String, CGPoint?) -> Void
+        var onAskAgentWithSelection: (String, SelectionPopoverAnchor?) -> Void
         var onContentHeightChange: (CGFloat) -> Void
         var onActiveHeadingChange: (Int?) -> Void
         var onOutlineChange: ([NoteEditorOutlineItem]) -> Void
@@ -1110,9 +1065,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onContentCommandApplied: (String, NoteEditorCommand) -> Void
         var onCommandRejected: (String, NoteEditorCommand) -> Void
         var onSearchResult: (String, Bool) -> Void
-        var onSelectionAskMark: (String) -> Void
+        var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void
         var selectionAskMarks: String
-        var onSelectionRemarkMark: (String) -> Void
+        var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void
         var selectionRemarkMarks: String
         var isChatWideTypography = false
         var streamsMarkdownUpdates: Bool
@@ -1172,10 +1127,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onContentHeightChange: @escaping (CGFloat) -> Void,
             onActiveHeadingChange: @escaping (Int?) -> Void,
             onOutlineChange: @escaping ([NoteEditorOutlineItem]) -> Void,
-            onSelectionChange: @escaping (String, CGPoint?) -> Void,
+            onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void,
             onSelectionFormattingChange: @escaping (NoteSelectionFormatting?) -> Void,
             onLinkEditorRequest: @escaping () -> Void,
-            onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
+            onAskAgentWithSelection: @escaping (String, SelectionPopoverAnchor?) -> Void,
             onWikiLink: @escaping (String) -> Void,
             onSourceReference: @escaping (String) -> Void,
             onRenderReady: @escaping () -> Void,
@@ -1185,8 +1140,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onContentCommandApplied: @escaping (String, NoteEditorCommand) -> Void,
             onCommandRejected: @escaping (String, NoteEditorCommand) -> Void,
             onSearchResult: @escaping (String, Bool) -> Void,
-            onSelectionAskMark: @escaping (String) -> Void,
-            onSelectionRemarkMark: @escaping (String) -> Void
+            onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void,
+            onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void
         ) {
             self.documentID = documentID
             self.markdown = markdown
@@ -1484,12 +1439,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let threadID = body["threadId"] as? String,
                       !threadID.isEmpty else { return }
-                onSelectionAskMark(threadID)
+                onSelectionAskMark(threadID, anchor(from: body["rect"] as? [String: Any]))
             case "remarkMark":
                 guard let body = message.body as? [String: Any],
                       let recordID = body["recordId"] as? String,
                       !recordID.isEmpty else { return }
-                onSelectionRemarkMark(recordID)
+                onSelectionRemarkMark(recordID, anchor(from: body["rect"] as? [String: Any]))
             case "wikiLinkActivated":
                 guard let body = message.body as? [String: Any],
                       let title = body["title"] as? String else { return }
@@ -1904,9 +1859,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func applyFocus() {
-            guard isFocused, focusRequest != lastAppliedFocusRequest else { return }
+            guard isReady, isFocused, focusRequest != lastAppliedFocusRequest,
+                  let webView, let window = webView.window,
+                  window.makeFirstResponder(webView) else { return }
             lastAppliedFocusRequest = focusRequest
-            webView?.window?.makeFirstResponder(webView)
             if let editingSession {
                 dispatchV2(NoteEditorCommandEnvelope(
                     documentID: editingSession.documentID,
@@ -2053,14 +2009,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             )
         }
 
-        private func anchor(from rect: [String: Any]?) -> CGPoint? {
-            guard let view = webView,
-                  let rect,
-                  let x = rect["x"] as? Double,
-                  let y = rect["y"] as? Double else {
-                return nil
-            }
-            return SelectionAnchorContentPoint.fromWebPoint(x: x, y: y, in: view)
+        private func anchor(from rect: [String: Any]?) -> SelectionPopoverAnchor? {
+            SelectionAnchorContentPoint.fromWebPayload(rect, in: webView)
         }
 
         private static func json(_ value: String) -> String {

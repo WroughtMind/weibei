@@ -363,6 +363,7 @@ struct NotePaneView: View {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
                 typewriterButton
                 ContextualContentListButton(kind: .note)
+                ExcerptBookButton()
                 newNoteControl
             }
             .transition(.asymmetric(
@@ -385,6 +386,7 @@ struct NotePaneView: View {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
                 typewriterButton
                 ContextualContentListButton(kind: .note)
+                ExcerptBookButton()
                 newNoteControl
             }
 
@@ -850,7 +852,7 @@ struct MarkdownPreviewView: View {
     var onRenderReady: () -> Void = {}
     var onFinalizedSnapshotReady: (CGFloat) -> Void = { _ in }
     var onRenderFailure: () -> Void = {}
-    var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
+    var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var onContentHeightChange: () -> Void = {}
     private static let compactPreviewLoadingHeight: CGFloat = 44
     private static let compactPreviewMaximumHeight: CGFloat = 20_000
@@ -1500,10 +1502,13 @@ struct AgentPaneView: View {
                 .allowsHitTesting(false)
         }
         .onChange(of: paneState.focusRequest) { _, _ in
-            draftFocused = paneState.focusedPane == .agent
+            draftFocused = paneState.focusedPane == .agent && !interaction.keepFloatingSelectionForAnswer
+        }
+        .onChange(of: interaction.keepFloatingSelectionForAnswer) { _, keep in
+            if keep { draftFocused = false }
         }
         .onAppear {
-            draftFocused = paneState.focusedPane == .agent
+            draftFocused = paneState.focusedPane == .agent && !interaction.keepFloatingSelectionForAnswer
             if usesWideChatLayout, measuredPaneWidth < 700 {
                 measuredPaneWidth = max(measuredPaneWidth, 1100)
             }
@@ -2345,7 +2350,6 @@ struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Binding var expanded: Bool
-    var routesToConversation = false
     @State private var dragOffset = CGSize.zero
     @State private var settledOffset = CGSize.zero
     @State private var panelWidth = CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2)
@@ -2357,13 +2361,19 @@ struct FloatingSelectionAgentView: View {
     @State private var resizeOriginOffset: CGSize?
     @State private var linkDraft = ""
     @State private var showsLinkEditor = false
+    @State private var savingRemark = false
+    @State private var remarkSaveFailed = false
     @FocusState private var draftFocused: Bool
     @FocusState private var linkFocused: Bool
     @Namespace private var floatingNamespace
 
     var body: some View {
         Group {
-            if showsExpandedBody {
+            if interaction.floatingComposerMode == .remark,
+               let record = store.selectionRemarkRecords.first(where: { $0.id == interaction.selectionContext?.id }) {
+                ExcerptRemarkPopover(record: record, close: closeFloatingAgent)
+                    .id(record.id)
+            } else if showsExpandedBody {
                 expandedBody
             } else {
                 promptBody
@@ -2378,7 +2388,7 @@ struct FloatingSelectionAgentView: View {
         .animation(WeiBeiMotion.panel, value: store.isAgentRunningInActiveChat)
         .offset(
             x: dragOffset.width + settledOffset.width,
-            y: dragOffset.height + settledOffset.height + floatingFeedGrowthOffset
+            y: dragOffset.height + settledOffset.height
         )
         .onChange(of: interaction.selectionContext) { previous, next in
             guard !interaction.pinnedFloatingAgent, !store.isAgentRunningInActiveChat else { return }
@@ -2387,9 +2397,11 @@ struct FloatingSelectionAgentView: View {
                 && previous?.ownerTitle == next?.ownerTitle
                 && previous?.isEditable == next?.isEditable
             guard !sameContent else { return }
-            // Reopen uses SelectionContext.id == thread.id — expand beside the mark.
-            let isThreadReopen = next.map { interaction.activeSelectionAskThreadID == $0.id } ?? false
-            if isThreadReopen, interaction.keepFloatingSelectionForAnswer {
+            let isReopen = next.map { context in
+                interaction.activeSelectionAskThreadID == context.id
+                    || store.selectionRemarkRecords.contains { $0.id == context.id }
+            } ?? false
+            if isReopen, interaction.keepFloatingSelectionForAnswer {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
                     dragOffset = .zero
@@ -2440,7 +2452,10 @@ struct FloatingSelectionAgentView: View {
         }
         .onExitCommand {
             // 两段式 Esc:先收成胶囊,再按才整体关闭;流式/固定状态下保持直接关闭。
-            if showsExpandedBody && !store.isAgentRunningInActiveChat && !interaction.pinnedFloatingAgent {
+            if interaction.floatingComposerMode == .remark,
+               store.selectionRemarkRecords.contains(where: { $0.id == interaction.selectionContext?.id }) {
+                closeFloatingAgent()
+            } else if showsExpandedBody && !store.isAgentRunningInActiveChat && !interaction.pinnedFloatingAgent {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = false
                     store.keepFloatingSelectionForAnswer = false
@@ -2450,7 +2465,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .onChange(of: interaction.floatingComposerMode) { _, mode in
-            if mode == .ask { focusAskComposerUntilFocused() }
+            if mode == .ask { focusAskComposer() }
         }
     }
 
@@ -2496,8 +2511,8 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .weiBeiText(12, weight: .semibold)
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12)
+        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 30))
+        .padding(.horizontal, 4)
         .frame(height: 34)
         .fixedSize()
     }
@@ -2763,11 +2778,17 @@ struct FloatingSelectionAgentView: View {
     /// 问/记共用同一浮层,底部输入框按模式切换;两种草稿互不覆盖。
     @ViewBuilder private var composerField: some View {
         if interaction.floatingComposerMode == .remark {
-            SelectionRemarkField {
+            SelectionRemarkField(text: $interaction.selectionNoteDraft) {
                 submitRemark()
             }
+            .disabled(savingRemark)
             .padding(.horizontal, 14)
             .padding(.bottom, 5)
+            if remarkSaveFailed {
+                Text(store.ui("摘抄尚未保存，内容仍在这里，请重试。", "The excerpt is not saved. Your draft is kept here; retry."))
+                    .weiBeiText(11).foregroundStyle(WeiBeiTheme.cinnabar)
+                    .padding(.horizontal, 14)
+            }
         } else {
             ComposerView(
                 prompt: showsFloatingFeed
@@ -2822,10 +2843,6 @@ struct FloatingSelectionAgentView: View {
                 measuredContentHeight: Double(measuredFeedContentHeight)
             )
         )
-    }
-
-    private var floatingFeedGrowthOffset: CGFloat {
-        showsFloatingFeed ? resolvedFloatingFeedHeight / 2 : 0
     }
 
     private var moveFloatingAgentGesture: some Gesture {
@@ -2949,17 +2966,12 @@ struct FloatingSelectionAgentView: View {
             store.askSelection()
             draftFocused = true
         }
-        focusAskComposerUntilFocused()
+        focusAskComposer()
     }
 
-    /// 展开动画/挂载时序竞态会让单次设焦点丢失;分次重试直到浮层仍在问模式。
-    private func focusAskComposerUntilFocused(attempt: Int = 0) {
-        guard attempt < 5 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            guard showsExpandedBody, interaction.floatingComposerMode == .ask else { return }
-            draftFocused = true
-            focusAskComposerUntilFocused(attempt: attempt + 1)
-        }
+    private func focusAskComposer() {
+        guard showsExpandedBody, interaction.floatingComposerMode == .ask else { return }
+        draftFocused = true
     }
 
     /// 胶囊"记":展开共用浮层进入札记模式,不建提问线程、不带附件。
@@ -2973,9 +2985,20 @@ struct FloatingSelectionAgentView: View {
 
     /// 提交札记:空输入=纯摘录;保存后收浮层,草稿清空。
     private func submitRemark() {
-        store.saveSelectionRemark(interaction.selectionNoteDraft)
-        interaction.selectionNoteDraft = ""
-        closeFloatingAgent()
+        guard !savingRemark, let selection = interaction.selectionContext else { return }
+        savingRemark = true
+        remarkSaveFailed = false
+        let draft = interaction.selectionNoteDraft
+        let courseID = store.activeCourseID
+        Task { @MainActor in
+            let saved = await store.saveSelectionRemark(draft, for: selection, courseID: courseID)
+            savingRemark = false
+            guard saved else { remarkSaveFailed = true; return }
+            if interaction.selectionContext?.id == selection.id, interaction.selectionNoteDraft == draft {
+                interaction.selectionNoteDraft = ""
+                closeFloatingAgent()
+            }
+        }
     }
 
     private func openSourceReference() {

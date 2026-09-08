@@ -33,39 +33,60 @@ public struct SelectionRect: Codable, Hashable, Sendable {
 public struct PDFSelectionAnchor: Codable, Hashable, Sendable {
     public var pageIndex: Int
     public var lineRects: [SelectionRect]
+    public var additionalPageRects: [Int: [SelectionRect]]?
 
-    public init(pageIndex: Int, lineRects: [SelectionRect]) {
+    public init(pageIndex: Int, lineRects: [SelectionRect], additionalPageRects: [Int: [SelectionRect]]? = nil) {
         self.pageIndex = pageIndex
         self.lineRects = lineRects
+        self.additionalPageRects = additionalPageRects
+    }
+
+    public var rectsByPage: [Int: [SelectionRect]] {
+        var pages = additionalPageRects ?? [:]
+        pages[pageIndex] = lineRects
+        return pages
     }
 
     /// 两个锚是否指向同一处文本(同页且行矩形有显著重叠)。
     public func overlaps(_ other: PDFSelectionAnchor, tolerance: Double = 2) -> Bool {
-        guard pageIndex == other.pageIndex else { return false }
-        let mine = lineRects.map(\.cgRect)
-        let theirs = other.lineRects.map(\.cgRect)
-        return mine.contains { a in
-            theirs.contains { b in
-                abs(a.minY - b.minY) <= tolerance + max(a.height, b.height) * 0.5
-                    && a.minX < b.maxX + tolerance
-                    && b.minX < a.maxX + tolerance
+        rectsByPage.contains { pageIndex, rects in
+            rects.contains { a in
+                (other.rectsByPage[pageIndex] ?? []).contains { b in
+                    abs(a.cgRect.minY - b.cgRect.minY) <= tolerance + max(a.height, b.height) * 0.5
+                        && a.cgRect.minX < b.cgRect.maxX + tolerance
+                        && b.cgRect.minX < a.cgRect.maxX + tolerance
+                }
             }
         }
     }
 }
 
 /// 选区在原文档中的位置锚。字段全部可选:旧数据解码后为 nil,
-/// 匹配回访时锚点优先、文字匹配兜底。网页/Markdown 锚点后续按需扩展。
+/// PDF 保存页面矩形；HTML/Markdown 保存完整文档中的文字位置。
 public struct SelectionDocumentAnchor: Codable, Hashable, Sendable {
     public var pdf: PDFSelectionAnchor?
+    public var text: SelectionTextAnchor?
 
-    public init(pdf: PDFSelectionAnchor? = nil) {
+    public init(pdf: PDFSelectionAnchor? = nil, text: SelectionTextAnchor? = nil) {
         self.pdf = pdf
+        self.text = text
     }
 
     public func matches(_ other: SelectionDocumentAnchor?) -> Bool {
+        if let text, let otherText = other?.text { return text == otherText }
         guard let other, let pdf, let otherPDF = other.pdf else { return false }
         return pdf.overlaps(otherPDF)
+    }
+}
+
+/// Offsets in the document's non-whitespace text identify repeated passages independently.
+public struct SelectionTextAnchor: Codable, Hashable, Sendable {
+    public var startOffset: Int
+    public var endOffset: Int
+
+    public init(startOffset: Int, endOffset: Int) {
+        self.startOffset = startOffset
+        self.endOffset = endOffset
     }
 }
 
@@ -76,16 +97,33 @@ public struct SelectionRemarkRecord: Identifiable, Codable, Hashable, Sendable {
     public var selectionText: String
     /// 用户附的一句话;纯摘录时为空字符串。
     public var remarkText: String
+    public var courseID: UUID?
     public var source: SelectionSource
     public var ownerTitle: String
     public var itemID: String?
     public var documentAnchor: SelectionDocumentAnchor?
     public var createdAt: Date
 
+    public var excerptSourceKey: String { itemID ?? ownerTitle }
+
+    public static func inDocumentOrder(_ left: Self, _ right: Self) -> Bool {
+        func position(_ record: Self) -> (Int, Int, Double, Double) {
+            if let pdf = record.documentAnchor?.pdf {
+                return (0, pdf.pageIndex, -(pdf.lineRects.first?.y ?? 0), pdf.lineRects.first?.x ?? 0)
+            }
+            if let text = record.documentAnchor?.text { return (1, 0, Double(text.startOffset), 0) }
+            return (2, 0, 0, 0)
+        }
+        if position(left) != position(right) { return position(left) < position(right) }
+        if left.createdAt != right.createdAt { return left.createdAt < right.createdAt }
+        return left.id.uuidString < right.id.uuidString
+    }
+
     public init(
         id: UUID = UUID(),
         selectionText: String,
         remarkText: String,
+        courseID: UUID? = nil,
         source: SelectionSource,
         ownerTitle: String,
         itemID: String? = nil,
@@ -95,6 +133,7 @@ public struct SelectionRemarkRecord: Identifiable, Codable, Hashable, Sendable {
         self.id = id
         self.selectionText = selectionText
         self.remarkText = remarkText
+        self.courseID = courseID
         self.source = source
         self.ownerTitle = ownerTitle
         self.itemID = itemID

@@ -104,6 +104,17 @@ struct ContextualContentPicker: View {
                 .accessibilityLabel(kind == .note ? store.ui("新建笔记", "New Note") : store.ui("导入资料", "Import Materials"))
                 Spacer(minLength: 0)
             }
+            if kind == .note {
+                Button {
+                    store.openExcerptBook(courseID: group.course?.id)
+                } label: {
+                    Label(store.ui("摘抄本", "Excerpts"), systemImage: "text.book.closed")
+                        .weiBeiText(13).frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+            }
             if group.items.isEmpty {
                 Text(kind == .note ? store.ui("还没有笔记", "No notes yet") : store.ui("还没有资料", "No materials yet"))
                     .weiBeiText(12).foregroundStyle(WeiBeiTheme.tertiaryInk)

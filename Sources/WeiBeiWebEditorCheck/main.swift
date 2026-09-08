@@ -3917,6 +3917,10 @@ if benchmarkMode {
     exit(1)
 }
 NSApplication.shared.setActivationPolicy(.prohibited)
+if CommandLine.arguments.contains("--selection-writing") {
+    NativeSelectionWritingHarness().run()
+    exit(0)
+}
 if ProcessInfo.processInfo.environment["WEIBEI_HTML_READER_SELF_CHECK_ONLY"] == "1" {
     UTF8HTMLReaderHarness().run()
     print("WeiBei HTML reader check passed")
@@ -3930,5 +3934,6 @@ NotesTypographyHarness().run()
 verifyAgentChatMarkdownSourceContract()
 UTF8HTMLReaderHarness().run()
 EditorHarness().run()
+NativeSelectionWritingHarness().run()
 FinalizedAgentMarkdownHarness().run()
 print("WeiBei web editor check passed")

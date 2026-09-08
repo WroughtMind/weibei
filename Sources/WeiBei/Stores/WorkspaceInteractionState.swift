@@ -16,6 +16,11 @@ enum FloatingSelectionComposerMode {
     case remark
 }
 
+struct ExcerptRevealRequest: Equatable {
+    let id = UUID()
+    let recordID: UUID
+}
+
 /// Transient selection / floating-agent interaction chrome.
 /// Isolated from `WorkspaceStore` so selection drag does not rebuild the whole workspace tree.
 @MainActor
@@ -36,11 +41,11 @@ final class WorkspaceInteractionState: ObservableObject {
 
     /// Selection capsule position. Anchor-only drag/scroll updates can suppress
     /// publish so agent chat SelectionOverlay is not remasured every pixel.
-    private var selectionAnchorValue: CGPoint?
+    private var selectionAnchorValue: SelectionPopoverAnchor?
     private var suppressSelectionAnchorPublish = false
     private var lastSelectionAnchorPublishAt: CFAbsoluteTime = 0
 
-    var selectionAnchor: CGPoint? {
+    var selectionAnchor: SelectionPopoverAnchor? {
         get { selectionAnchorValue }
         set {
             guard !Self.anchorsApproximatelyEqual(selectionAnchorValue, newValue) else { return }
@@ -52,7 +57,7 @@ final class WorkspaceInteractionState: ObservableObject {
     }
 
     /// Write anchor without publishing (drag stream); caller may throttle a later publish.
-    func setSelectionAnchorSilently(_ anchor: CGPoint?) {
+    func setSelectionAnchorSilently(_ anchor: SelectionPopoverAnchor?) {
         guard !Self.anchorsApproximatelyEqual(selectionAnchorValue, anchor) else { return }
         selectionAnchorValue = anchor
     }
@@ -72,12 +77,13 @@ final class WorkspaceInteractionState: ObservableObject {
         set { suppressSelectionAnchorPublish = newValue }
     }
 
-    static func anchorsApproximatelyEqual(_ lhs: CGPoint?, _ rhs: CGPoint?, epsilon: CGFloat = 0.5) -> Bool {
+    static func anchorsApproximatelyEqual(_ lhs: SelectionPopoverAnchor?, _ rhs: SelectionPopoverAnchor?, epsilon: CGFloat = 0.5) -> Bool {
         switch (lhs, rhs) {
         case (nil, nil):
             return true
         case let (left?, right?):
-            return abs(left.x - right.x) < epsilon && abs(left.y - right.y) < epsilon
+            return left.prefersAbove == right.prefersAbove && left.textAnchor == right.textAnchor
+                && abs(left.x - right.x) < epsilon && abs(left.y - right.y) < epsilon
         default:
             return false
         }

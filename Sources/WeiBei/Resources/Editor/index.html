@@ -435,7 +435,35 @@
       line-height: 1.8;
     }
 
-    .ProseMirror::selection,
+    .weibei-selection-ask-mark {
+      text-decoration: underline solid var(--cinnabar) 1.5px;
+      text-underline-offset: 3px;
+    }
+    .weibei-selection-ask-mark, .weibei-remark-mark {
+      cursor: pointer;
+      border-radius: 2px;
+    }
+    .weibei-selection-ask-mark:hover, .weibei-remark-mark:hover, .weibei-remark-active {
+      background: color-mix(in srgb, var(--cinnabar) 14%, transparent);
+    }
+    .weibei-remark-end { position: relative; }
+    .weibei-remark-end::after {
+      content: "";
+      position: absolute;
+      left: 100%;
+      top: 50%;
+      width: 24px;
+      height: 24px;
+      transform: translate(1px, -50%);
+      background: radial-gradient(circle, var(--cinnabar) 4.5px, transparent 5px);
+      cursor: pointer;
+    }
+
+    .ProseMirror.weibei-composing ::selection, .ProseMirror.weibei-composing::selection {
+      background: transparent;
+      color: inherit;
+    }
+    ::selection,
     .ProseMirror ::selection {
       background: var(--selection);
     }

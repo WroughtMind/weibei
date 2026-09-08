@@ -1539,6 +1539,7 @@ private struct WeiBeiIconButtonBody: View {
         configuration.label
             .weiBeiText(13, weight: .semibold)
             .frame(width: size * textScale, height: size * textScale)
+            .contentShape(Rectangle())
             .foregroundStyle(foreground(isPressed: configuration.isPressed))
             .background { chromeBackground }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
@@ -1631,17 +1632,24 @@ private struct WeiBeiIconButtonBody: View {
 struct WeiBeiTextActionButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     var active = false
+    var fontSize: CGFloat = 11
+    var height: CGFloat = 24
+    @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .weiBeiText(11, weight: .medium)
+            .weiBeiText(fontSize, weight: .medium)
             .foregroundStyle(foreground)
             .padding(.horizontal, 8)
-            .frame(height: 24)
+            .frame(minWidth: height)
+            .frame(height: height)
+            .contentShape(Rectangle())
             .background(background(isPressed: configuration.isPressed))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
+            .shadow(color: WeiBeiTheme.ink.opacity(hovering ? 0.08 : 0), radius: 2, y: 1)
+            .onHover { hovering = isEnabled && $0 }
     }
 
     private var foreground: Color {
@@ -1650,6 +1658,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     }
 
     private func background(isPressed: Bool) -> Color {
+        if hovering || isPressed { return WeiBeiTheme.cinnabarSoft }
         if active { return WeiBeiTheme.cinnabarSoft }
         return isPressed ? WeiBeiTheme.paperInset.opacity(0.40) : WeiBeiTheme.paperInset.opacity(0.20)
     }

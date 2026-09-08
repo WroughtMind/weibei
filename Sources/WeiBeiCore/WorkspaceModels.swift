@@ -1069,6 +1069,8 @@ public enum SelectionFloatingAgentPlacement {
         canvas: FloatingAgentCoordinate,
         topInset: Double = 0,
         surfaceHalfWidth: Double = expandedHalfWidth,
+        measuredHalfHeight: Double? = nil,
+        prefersAbove: Bool = false,
         prefersAnchorCenter: Bool = false
     ) -> FloatingAgentCoordinate {
         let edgePadding = 18.0
@@ -1076,7 +1078,7 @@ public enum SelectionFloatingAgentPlacement {
         let verticalGap = prefersAnchorCenter ? 10.0 : 14.0
         let contentCanvas = FloatingAgentCoordinate(x: canvas.x, y: max(1, canvas.y - topInset))
         let isExpanded = surfaceHalfWidth >= expandedHalfWidth - 0.5
-        let surfaceHalfHeight = isExpanded ? expandedHalfHeight : compactHalfHeight
+        let surfaceHalfHeight = measuredHalfHeight ?? (isExpanded ? expandedHalfHeight : compactHalfHeight)
         let fallback = FloatingAgentCoordinate(
             x: contentCanvas.x - surfaceHalfWidth - edgePadding,
             y: min(contentCanvas.y - surfaceHalfHeight - edgePadding, contentCanvas.y * 0.42)
@@ -1098,11 +1100,14 @@ public enum SelectionFloatingAgentPlacement {
         }
         let minimumY = surfaceHalfHeight + edgePadding
         let maximumY = contentCanvas.y - surfaceHalfHeight - edgePadding
-        // Prefer just below the mark; if that clips, sit above it.
-        let belowY = anchor.y + verticalGap + (prefersAnchorCenter ? 0 : surfaceHalfHeight * 0.15)
-        let aboveY = anchor.y - verticalGap - (prefersAnchorCenter ? 0 : surfaceHalfHeight * 0.15)
+        let besideText = !prefersAnchorCenter && (rightSideX <= maximumX || leftSideX >= minimumX)
+        let distance = besideText ? max(0, surfaceHalfHeight - 38) : surfaceHalfHeight + verticalGap
+        let belowY = anchor.y + distance
+        let aboveY = anchor.y - distance
         let preferredY: Double
-        if belowY <= maximumY {
+        if prefersAbove, aboveY >= minimumY {
+            preferredY = aboveY
+        } else if belowY <= maximumY {
             preferredY = belowY
         } else if aboveY >= minimumY {
             preferredY = aboveY

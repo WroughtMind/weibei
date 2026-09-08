@@ -408,7 +408,7 @@ enum ImportedIdentitySelfCheck {
         store.pinnedFloatingAgent = true
         store.keepFloatingSelectionForAnswer = true
         store.agentSurface = .selectionFloat
-        store.selectionAnchor = CGPoint(x: 8, y: 16)
+        store.selectionAnchor = SelectionPopoverAnchor(x: 8, y: 16)
 
         try check(workspaceChanges == 0, "pane/interaction 变更错误触发了 WorkspaceStore.objectWillChange")
         try check(paneChanges > 0, "paneState 未发布可见性/焦点变更")

@@ -1291,8 +1291,10 @@ let topInsetFloatingPoint = SelectionFloatingAgentPlacement.position(
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
     topInset: 42
 )
-expect(floatingPoint.x == 522 && floatingPoint.y == 248.5, "selection agent opens close beside the text anchor")
-expect(topInsetFloatingPoint.x == 522 && topInsetFloatingPoint.y == 248, "selection agent compensates top bar coordinate space")
+expect(floatingPoint.x - SelectionFloatingAgentPlacement.expandedHalfWidth > 320,
+    "expanded selection agent opens beside the passage without covering it")
+expect(topInsetFloatingPoint.x == floatingPoint.x && topInsetFloatingPoint.y == floatingPoint.y - 42,
+    "selection agent compensates top bar coordinate space")
 let compactEdgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 12, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
@@ -1305,8 +1307,19 @@ let compactCenterFloatingPoint = SelectionFloatingAgentPlacement.position(
     surfaceHalfWidth: SelectionFloatingAgentPlacement.compactHalfWidth,
     prefersAnchorCenter: true
 )
-expect(compactCenterFloatingPoint.x == 320 && compactCenterFloatingPoint.y == 210, "selection prompt centers on the text anchor when compact")
-expect(compactEdgeFloatingPoint.x == 100 && compactEdgeFloatingPoint.y == 210, "selection prompt clamps only at the edge when compact")
+expect(compactCenterFloatingPoint.x == 320 && compactCenterFloatingPoint.y - SelectionFloatingAgentPlacement.compactHalfHeight > 200,
+    "compact selection prompt remains outside the selected text")
+expect(compactEdgeFloatingPoint.x >= SelectionFloatingAgentPlacement.compactHalfWidth && compactEdgeFloatingPoint.y == compactCenterFloatingPoint.y,
+    "compact selection prompt remains completely visible at the window edge")
+let reverseSelectionPoint = SelectionFloatingAgentPlacement.position(
+    anchor: FloatingAgentCoordinate(x: 320, y: 400),
+    canvas: FloatingAgentCoordinate(x: 1200, y: 800),
+    surfaceHalfWidth: 180,
+    measuredHalfHeight: 22,
+    prefersAbove: true,
+    prefersAnchorCenter: true
+)
+expect(reverseSelectionPoint.y + 22 < 400, "backward selection opens above its final line")
 let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)

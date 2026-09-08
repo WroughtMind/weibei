@@ -68,6 +68,7 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         view.delegate = context.coordinator
         context.coordinator.view = view
         view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.layoutDidChange() }
+        view.onWidthChange = { [weak coordinator = context.coordinator] width in coordinator?.willResize(to: width) }
         context.coordinator.pipeline.onApply = { [weak coordinator = context.coordinator] document, edit in coordinator?.apply(document, edit: edit) }
         updateNSView(view, context: context)
         return view
@@ -87,12 +88,15 @@ struct NativeChatMarkdownView: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeChatTextView, context: Context) -> CGSize? {
         // An infinite proposal asks for flexibility; it must not resize the live text container.
         guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        // SwiftUI also probes unused finite widths. Reflow only at the assigned view
+        // width; layoutDidChange requests another sizing pass after an actual resize.
         let height = context.coordinator.document.runs.isEmpty
-            ? placeholderHeight : context.coordinator.measuredHeight(width: width)
+            ? placeholderHeight : context.coordinator.measuredHeight()
         return CGSize(width: width, height: max(1, height))
     }
     static func dismantleNSView(_ nsView: NativeChatTextView, coordinator: Coordinator) {
         nsView.onLayout = nil
+        nsView.onWidthChange = nil
         coordinator.pipeline.invalidate()
         coordinator.view = nil
     }
@@ -116,6 +120,11 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         private var readingAnchor: (location: any NSTextLocation, offset: CGFloat, width: CGFloat)?
         private var pendingAnchor: (location: any NSTextLocation, offset: CGFloat, width: CGFloat)?
 
+        func willResize(to width: CGFloat) {
+            guard let anchor = readingAnchor else { return }
+            pendingAnchor = (anchor.location, anchor.offset, width)
+        }
+
         func layoutDidChange() {
             guard !pendingLayoutUpdate else { return }
             pendingLayoutUpdate = true
@@ -128,7 +137,6 @@ struct NativeChatMarkdownView: NSViewRepresentable {
                     self.lastLayoutHeight = height
                     self.heightCache = (container.size.width, max(1, ceil(height)))
                     view.invalidateIntrinsicContentSize()
-                    return
                 }
                 // Restore only after SwiftUI has applied the new height. Earlier coordinates
                 // still belong to the previous row frame and move the reader to another paragraph.
@@ -257,15 +265,12 @@ struct NativeChatMarkdownView: NSViewRepresentable {
             }
             view?.needsLayout = true; view?.invalidateIntrinsicContentSize()
         }
-        func measuredHeight(width: CGFloat? = nil) -> CGFloat {
+        func measuredHeight() -> CGFloat {
             guard let view, let container = view.textContainer,
                   let manager = view.textLayoutManager, let content = manager.textContentManager else { return max(1, fontSize * 1.5) }
-            let width = width ?? view.frame.width
+            let width = view.frame.width
             guard width > 0 else { return max(1, fontSize * 1.5) }
-            if let anchor = readingAnchor, abs(anchor.width - width) > 0.5 {
-                pendingAnchor = (anchor.location, anchor.offset, width)
-            }
-            // Measure the proposed line width without moving the live view during SwiftUI's sizing pass.
+            // The actual view width is the only width allowed to reflow this document.
             if abs(container.size.width - width) > 0.5 { container.size.width = width }
             if let cached = heightCache, abs(cached.width - width) < 0.5 { return cached.height }
             if let anchor = pendingAnchor { manager.ensureLayout(for: NSTextRange(location: anchor.location)) }
@@ -285,6 +290,12 @@ struct NativeChatMarkdownView: NSViewRepresentable {
 
 final class NativeChatTextView: NSTextView {
     var onLayout: (() -> Void)?
+    var onWidthChange: ((CGFloat) -> Void)?
+
+    override func setFrameSize(_ newSize: NSSize) {
+        if abs(newSize.width - frame.width) > 0.5 { onWidthChange?(newSize.width) }
+        super.setFrameSize(newSize)
+    }
 
     override func layout() {
         super.layout()
