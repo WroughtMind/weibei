@@ -96,6 +96,21 @@ enum CandidateVerification {
                 try await Task.sleep(for: .milliseconds(150))
                 try await settle(host)
                 try host.saveViewport(to: directory.appendingPathComponent("rich-ordered-window.png"))
+                // Capture only our synthetic window on the isolated CI desktop.
+                // Failure (e.g. recording permission) is recorded, not hidden.
+                let capture = Process()
+                capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                capture.arguments = ["-x", "-l", String(window.windowNumber),
+                    directory.appendingPathComponent("rich-windowserver.png").path]
+                do {
+                    try capture.run()
+                    capture.waitUntilExit()
+                    try "exit=\(capture.terminationStatus)\n".write(
+                        to: directory.appendingPathComponent("window-capture.txt"), atomically: true, encoding: .utf8)
+                } catch {
+                    try String(describing: error).write(to: directory.appendingPathComponent("window-capture.txt"),
+                                                       atomically: true, encoding: .utf8)
+                }
                 window.orderOut(nil)
             }
             host.scrollToBottom()

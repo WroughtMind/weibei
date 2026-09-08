@@ -106,7 +106,11 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Ordering the CI diagnostic window out must not terminate the suite
+        // before its long-document checks and JSON report finish.
+        verificationDirectory == nil
+    }
 }
 
 @main
