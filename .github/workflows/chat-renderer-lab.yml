@@ -1,0 +1,49 @@
+name: Chat renderer lab (candidate qualification)
+
+on:
+  pull_request:
+    paths:
+      - 'Experiments/ChatRendererLab/**'
+      - '.github/workflows/chat-renderer-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chat-renderer-lab-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate-macos:
+    name: Candidate AppKit build and component checks
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Build isolated Release app and verify bundled resources
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p Experiments/ChatRendererLab/.artifacts
+          bash Experiments/ChatRendererLab/script/build_and_run.sh verify 2>&1 | tee Experiments/ChatRendererLab/.artifacts/run.log
+      - name: Archive ad-hoc-signed lab app (not a release)
+        if: success()
+        run: |
+          cd Experiments/ChatRendererLab/.artifacts
+          ditto -c -k --sequesterRsrc --keepParent WeiBeiChatRendererLab.app WeiBeiChatRendererLab.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chat-renderer-lab-${{ runner.arch }}-${{ github.run_id }}
+          retention-days: 7
+          path: |
+            Experiments/ChatRendererLab/.artifacts/*.txt
+            Experiments/ChatRendererLab/.artifacts/*.log
+            Experiments/ChatRendererLab/.artifacts/*.json
+            Experiments/ChatRendererLab/.artifacts/Package.resolved
+            Experiments/ChatRendererLab/.artifacts/*.zip
+            Experiments/ChatRendererLab/.artifacts/verification/**
