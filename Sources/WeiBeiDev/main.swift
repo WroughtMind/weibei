@@ -131,9 +131,6 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     if fileManager.fileExists(atPath: legalDirectory.appendingPathComponent("v1.0.0.md").path) {
         fail("packaged Legal must not include future v1.0.0 release notes", exitCode: 11)
     }
-    if runGit(["rev-parse", "--is-shallow-repository"], in: repositoryRoot) == "true" {
-        fail("full Git history is required for a stable build number", exitCode: 5)
-    }
 
     let expectedVersion = readText(versionFile)
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -142,9 +139,6 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     }
     guard let expectedCommit = runGit(["rev-parse", "--verify", "HEAD"], in: repositoryRoot) else {
         fail("cannot resolve HEAD", exitCode: 6)
-    }
-    guard let expectedBuild = runGit(["rev-list", "--count", expectedCommit], in: repositoryRoot) else {
-        fail("cannot count commits", exitCode: 6)
     }
     let statusOutput = runGit(["status", "--porcelain=v1", "--untracked-files=normal"], in: repositoryRoot) ?? ""
     let expectedDirty = !statusOutput.isEmpty
@@ -178,7 +172,14 @@ func runVerifyReleaseMetadata(arguments: [String]) {
         }
     }
     assertEqual("version", expectedVersion, actualVersion)
-    assertEqual("build", expectedBuild, actualBuild)
+    guard runCommand("/usr/bin/env", arguments: [
+        "python3", repositoryRoot.appendingPathComponent("script/build_number.py").path, actualBuild
+    ]) == actualBuild else {
+        fail("invalid UTC build number", exitCode: 8)
+    }
+    if let expectedBuild = ProcessInfo.processInfo.environment["WEIBEI_BUILD_NUMBER"] {
+        assertEqual("build", expectedBuild, actualBuild)
+    }
     assertEqual("commit", expectedCommit, actualCommit)
     assertEqual("source dirty state", expectedDirty ? "true" : "false", actualDirty)
     assertEqual("bundle identifier", "com.changfenhuang.weibei", actualBundleID)

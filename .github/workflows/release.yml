@@ -20,6 +20,7 @@ jobs:
     name: 校验发布来源与版本
     runs-on: ubuntu-latest
     outputs:
+      build_number: ${{ steps.version.outputs.build_number }}
       version: ${{ steps.version.outputs.value }}
       tag: ${{ steps.version.outputs.tag }}
 
@@ -40,6 +41,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
+          build_number="$(python3 script/build_number.py)"
+          previous_tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          if [[ -n "$previous_tag" ]]; then
+            gh release download "$previous_tag" --repo "$GITHUB_REPOSITORY" --pattern 'appcast*.xml' --dir "$RUNNER_TEMP/previous-feeds"
+            for feed in "$RUNNER_TEMP"/previous-feeds/appcast*.xml; do
+              python3 script/build_number.py "$build_number" --after-feed "$feed"
+            done
+          fi
+          printf 'build_number=%s\n' "$build_number" >> "$GITHUB_OUTPUT"
           [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$(tr -d '\r\n' < VERSION)" = "$RELEASE_VERSION"
           test "$(node -p 'require("./package.json").version')" = "$RELEASE_VERSION"
@@ -50,6 +60,8 @@ jobs:
           printf 'tag=v%s\n' "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
   build:
+    env:
+      WEIBEI_BUILD_NUMBER: ${{ needs.authorize.outputs.build_number }}
     name: 构建 ${{ matrix.arch }} 正式资产
     needs: authorize
     strategy:
@@ -134,6 +146,8 @@ jobs:
         run: /bin/rm -f "$RUNNER_TEMP/weibei-sparkle-private-key"
 
   publish:
+    env:
+      WEIBEI_BUILD_NUMBER: ${{ needs.authorize.outputs.build_number }}
     name: 汇总后原子公开双架构 Release
     needs: [authorize, build]
     runs-on: macos-26
@@ -166,6 +180,8 @@ jobs:
             test -s "dist/publish/appcast-$arch.xml"
             (cd dist/publish && shasum -a 256 -c "$dmg.sha256")
             grep -Fq "$dmg" "dist/publish/appcast-$arch.xml"
+            feed_build="$(xmllint --xpath 'string((/rss/channel/item/*[local-name()="version"] | /rss/channel/item/enclosure/@*[local-name()="version"])[1])' "dist/publish/appcast-$arch.xml")"
+            test "$feed_build" = "$WEIBEI_BUILD_NUMBER"
           done
           cmp dist/publish/appcast-arm64.xml dist/publish/appcast.xml
           arm_sha="$(awk '{print $1}' "dist/publish/WeiBei-$RELEASE_VERSION-macOS-arm64.dmg.sha256")"

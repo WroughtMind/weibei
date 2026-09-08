@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      build_number: ${{ steps.scope.outputs.build_number }}
       code: ${{ steps.scope.outputs.code }}
       release: ${{ steps.scope.outputs.release }}
       agent: ${{ steps.scope.outputs.agent }}
@@ -46,6 +47,7 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
+          printf 'build_number=%s\n' "$(python3 script/build_number.py)" >> "$GITHUB_OUTPUT"
           ./script/ci_changed_scopes.sh --self-check
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             base="$(git merge-base "$PR_BASE_SHA" "$HEAD_SHA")"
@@ -60,6 +62,7 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
           python3 script/check_ci_routing.py
+          python3 script/check_build_number.py
           for file in script/*.sh DesignSystem/scripts/*.sh; do bash -n "$file"; done
 
   website-check:
@@ -102,6 +105,11 @@ jobs:
     steps:
       - name: 取出源码
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: 验证构建时间显示
+        run: |
+          swiftc Sources/WeiBeiCore/WeiBeiAppBuildInfo.swift script/check_build_info.swift -o "$RUNNER_TEMP/check-build-info"
+          "$RUNNER_TEMP/check-build-info"
 
       - name: 记录构建工具链
         run: |
@@ -151,6 +159,8 @@ jobs:
           test -z "$(git status --porcelain=v1)"
 
   release-package:
+    env:
+      WEIBEI_BUILD_NUMBER: ${{ needs.scope.outputs.build_number }}
     name: 完整候选构建与安装包追溯
     needs: [scope, app-check]
     if: ${{ !cancelled() && needs.scope.result == 'success' && (needs.app-check.result == 'success' || needs.app-check.result == 'skipped') && ((github.event_name == 'pull_request' && needs.scope.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)) }}
@@ -201,6 +211,8 @@ jobs:
           if-no-files-found: error
 
   intel-check:
+    env:
+      WEIBEI_BUILD_NUMBER: ${{ needs.scope.outputs.build_number }}
     name: Intel 编译、启动与安装包追溯
     needs: scope
     if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.release == 'true'

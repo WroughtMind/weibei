@@ -400,7 +400,7 @@ const tableToolbarElement = (WEIBEI_EDITOR_RUNTIME ? document.createElement('div
 if (WEIBEI_EDITOR_RUNTIME) {
   slashMenuElement.className = 'weibei-slash-menu';
   slashMenuElement.dataset.show = 'false';
-  slashMenuElement.dataset.state = 'closed';
+  slashMenuElement.setAttribute('aria-hidden', 'true');
   slashMenuElement.setAttribute('role', 'listbox');
   slashMenuElement.setAttribute('aria-label', 'Slash commands');
   slashStatusElement.className = 'weibei-visually-hidden';
@@ -473,9 +473,6 @@ const slashRuntime: {
   error: string;
 } = { provider: null, view: null, context: null, commands: [], activeIndex: 0, dismissedContext: '', activationContext: '', tableOpen: false, tableFocus: 'rows', tableRows: 3, tableColumns: 3, tableMenuBaseLeft: '', error: '' };
 const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 'table_row', 'table_header_row', 'table_cell', 'table_header', 'code_block', 'math_block']);
-
-/** Slash menu visual phase + the generation that guards every deferred cleanup. */
-const slashMenuPhase: { state: 'closed' | 'opening' | 'open' | 'closing'; generation: number; timer: number; frame: number } = { state: 'closed', generation: 0, timer: 0, frame: 0 };
 
 const isEditorReduceMotion = () => document.documentElement.dataset.weibeiReduceMotion === 'true';
 
@@ -3839,68 +3836,13 @@ if (WEIBEI_EDITOR_RUNTIME) {
         document.body.append(slashStatusElement, linePlusElement);
         const provider = new SlashProvider({ content: slashMenuElement, debounce: 0, offset: 6, root: document.body, shouldShow: (updatedView) => { const context = slashContextForView(updatedView); return Boolean(context && slashRuntime.dismissedContext !== context.key); } });
         slashRuntime.provider = provider; slashRuntime.view = view;
-        // Visual state machine (closed → opening → open → closing → closed) wraps the
-        // provider's raw show/hide: open fades ~250ms, close fades ~150ms and blocks
-        // hit testing + assistive tech immediately. Every open or close bumps a
-        // generation; cleanup callbacks (transitionend + a missed-event fallback)
-        // only run while their generation is still current, so a fast close → reopen
-        // can never be torn down by the stale close.
-        const providerShow = provider.show.bind(provider);
-        const providerHide = provider.hide.bind(provider);
-        const finishSlashMenuHide = (generation: number) => {
-          if (slashMenuPhase.generation !== generation) return;
-          slashMenuPhase.state = 'closed';
-          slashMenuElement.dataset.state = 'closed';
-          providerHide();
-        };
-        provider.show = () => {
-          slashMenuPhase.generation += 1;
-          window.clearTimeout(slashMenuPhase.timer);
-          if (window.weiBeiEditorCheckMode || isEditorReduceMotion()) {
-            slashMenuPhase.state = 'open';
-            slashMenuElement.dataset.state = 'open';
-            providerShow();
-            return;
-          }
-          providerShow();
-          slashMenuPhase.state = 'opening';
-          slashMenuElement.dataset.state = 'opening';
-          const generation = slashMenuPhase.generation;
-          slashMenuPhase.frame = window.requestAnimationFrame(() => {
-            if (slashMenuPhase.generation !== generation) return;
-            slashMenuPhase.state = 'open';
-            slashMenuElement.dataset.state = 'open';
-          });
-        };
-        provider.hide = () => {
-          slashMenuPhase.generation += 1;
-          window.clearTimeout(slashMenuPhase.timer);
-          window.cancelAnimationFrame(slashMenuPhase.frame);
-          if (slashMenuElement.dataset.show !== 'true' || window.weiBeiEditorCheckMode || isEditorReduceMotion()) {
-            finishSlashMenuHide(slashMenuPhase.generation);
-            return;
-          }
-          slashMenuPhase.state = 'closing';
-          slashMenuElement.dataset.state = 'closing';
-          slashMenuElement.setAttribute('aria-hidden', 'true');
-          const generation = slashMenuPhase.generation;
-          const finish = () => {
-            if (slashMenuPhase.generation !== generation) return;
-            slashMenuElement.removeAttribute('aria-hidden');
-            finishSlashMenuHide(generation);
-          };
-          slashMenuElement.addEventListener('transitionend', function onSlashMenuTransitionEnd(event) {
-            if (event.target !== slashMenuElement || event.propertyName !== 'opacity') return;
-            slashMenuElement.removeEventListener('transitionend', onSlashMenuTransitionEnd);
-            finish();
-          });
-          slashMenuPhase.timer = window.setTimeout(finish, 200);
-        };
-        provider.onShow = () => { slashRuntime.view = view; renderSlashMenu(); };
-        provider.onHide = () => { slashRuntime.context = null; slashRuntime.tableOpen = false; dismissSlashTablePanel(); syncSlashAccessibility(); };
+        provider.onShow = () => { slashMenuElement.removeAttribute('aria-hidden'); slashRuntime.view = view; renderSlashMenu(); };
+        provider.onHide = () => { slashMenuElement.setAttribute('aria-hidden', 'true'); slashRuntime.context = null; slashRuntime.tableOpen = false; dismissSlashTablePanel(); syncSlashAccessibility(); };
         provider.update(view);
         syncLinePlus(view);
-        return { update(updatedView: any, previousState: any) { slashRuntime.view = updatedView; const context = slashContextForView(updatedView); if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) slashRuntime.dismissedContext = ''; provider.update(updatedView, previousState); syncLinePlus(updatedView); }, destroy() { provider.destroy(); linePlusElement.removeEventListener('mousedown', preventLinePlusBlur); linePlusElement.removeEventListener('click', openLineMenu); slashMenuElement.remove(); slashStatusElement.remove(); linePlusElement.remove(); slashTablePanelElement?.remove(); slashRuntime.provider = null; slashRuntime.view = null; } };
+        // The provider debounces updates: a focus-only transaction can replace the
+        // typing update, so always evaluate the current state without a stale baseline.
+        return { update(updatedView: any) { slashRuntime.view = updatedView; const context = slashContextForView(updatedView); if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) slashRuntime.dismissedContext = ''; provider.update(updatedView); syncLinePlus(updatedView); }, destroy() { provider.destroy(); linePlusElement.removeEventListener('mousedown', preventLinePlusBlur); linePlusElement.removeEventListener('click', openLineMenu); slashMenuElement.remove(); slashStatusElement.remove(); linePlusElement.remove(); slashTablePanelElement?.remove(); slashRuntime.provider = null; slashRuntime.view = null; } };
       },
     });
   });
