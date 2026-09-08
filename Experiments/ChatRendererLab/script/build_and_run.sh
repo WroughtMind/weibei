@@ -61,6 +61,7 @@ cd "$ROOT"
   git status --porcelain
 } > "$OUT/environment.txt" 2>&1
 swift package resolve 2>&1 | tee "$OUT/resolve.log"
+python3 script/prepare_app_resources.py "$ROOT/.build/checkouts" | tee "$OUT/resource-patch.log"
 swift build -c release --product "$NAME" 2>&1 | tee "$OUT/build.log"
 BIN="$(swift build -c release --show-bin-path)"
 swift package show-dependencies --format json > "$OUT/dependencies.json"
@@ -70,13 +71,12 @@ STAGING="$(mktemp -d "$OUT/.bundle-XXXXXX")"
 BUNDLE="$STAGING/$NAME.app"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources/ThirdPartyLicenses"
 cp "$BIN/$NAME" "$BUNDLE/Contents/MacOS/$NAME"
-# Keep resources in the standard location, with root aliases for SwiftPM's
-# Bundle.main.bundleURL candidate. Verification hides .build to rule out a
-# successful launch accidentally reading an absolute development path.
+# Resources belong only in Contents/Resources. The narrow checkout patch
+# makes SwiftPM CLI consumers look there before their development fallback.
+# Verification hides .build so that fallback cannot mask missing resources.
 shopt -s nullglob
 for resource in "$BIN"/*.bundle; do
   cp -R "$resource" "$BUNDLE/Contents/Resources/"
-  ln -s "Contents/Resources/$(basename "$resource")" "$BUNDLE/$(basename "$resource")"
 done
 for checkout in "$ROOT/.build/checkouts/"*; do
   [[ -d "$checkout" ]] || continue

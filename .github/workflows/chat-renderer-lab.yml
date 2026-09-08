@@ -40,6 +40,7 @@ jobs:
         with:
           name: chat-renderer-lab-${{ runner.arch }}-${{ github.run_id }}
           retention-days: 7
+          include-hidden-files: true
           path: |
             Experiments/ChatRendererLab/.artifacts/*.txt
             Experiments/ChatRendererLab/.artifacts/*.log

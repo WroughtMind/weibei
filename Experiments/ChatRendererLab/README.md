@@ -6,7 +6,7 @@
 
 固定 `Lakr233/MarkdownView@757b6fcc4b3095e84f4c0613f4b98147f49dcd09`，直接调用它的 macOS `MarkdownTextView` / Litext 正文，不创建简化 TextKit 替身。候选有基础富文本、单条长文、长代码表格、能力缺口四类合成样本，以及合成流式重放。最后一类明确不计作功能已通过。
 
-`CandidateDocument` 串行解析、合并待处理快照，在主线程准备数学/高亮上下文；可回收显示宿主不持有唯一的准备结果。`CandidateHost` 实際使用候选的测量和显示对象；允许一次完整测量后复用，不把“不是 TextKit 视口排版”当失败理由。这里没有生产历史分页、动作卡或列表复用。
+`CandidateDocument` 串行解析、合并待处理快照，在主线程准备数学/高亮上下文；可回收显示宿主不持有唯一的准备结果。`CandidateHost` 实际使用候选的测量和显示对象；允许一次完整测量后复用，不把“不是 TextKit 视口排版”当失败理由。这里没有生产历史分页、动作卡或列表复用。
 
 `background_parse`、`main_prepare`、`main_apply_and_layout`、`main_measure`、`submitted_to_apply` 分别记录。它们是候选组件数据，不是屏幕 FPS、完整高亮完成时延或与魏碑的速度比。自动验证中的等待与截图也不计作真实滚动基准。
 
@@ -23,7 +23,7 @@ bash Experiments/ChatRendererLab/script/build_and_run.sh run
 
 候选位于本目录 `.artifacts/WeiBeiChatRendererLab.app`。Bundle ID 独立，不读资料库、Keychain 或模型配置，不替换魏碑。`run` 仅在用户主动运行时打开实验窗口；`verify` 从 App bundle 启动隐藏窗口，不抢前台。不要直接从 `.build` 执行 GUI 二进制。
 
-`verify` 暂时移动**本实验自己的** `.build`，结束后恢复，防止字体/资源从编译目录加载而掩盖缺包。资源放在 `Contents/Resources`，SwiftPM bundle 查找所需的 app 根符号链接一并包含。此装配方式只用于实验，不修改魏碑的正式打包脚本。候选只做本机 ad-hoc 签名，不是公证/正式发布产物。
+`verify` 暂时移动**本实验自己的** `.build`，结束后恢复，防止字体/资源从编译目录加载而掩盖缺包。资源放在 `Contents/Resources`。首次真实 macOS 编译后发现 app 根符号链接会被签名拒绝，已移除；现在仅对本实验解析的 SwiftMath / Highlightr checkout 做明确的资源查找补丁（`script/prepare_app_resources.py`），优先从标准资源目录读取，再保留命令行回退。补丁不改渲染算法，不写入生产依赖，也不使用未签名根目录绕过验证。此装配方式只用于实验，不修改魏碑的正式打包脚本。候选只做本机 ad-hoc 签名，不是公证/正式发布产物。
 
 独立工作流生成真实解析出的 `Package.resolved`、依赖树、环境/源码状态、构建日志、隐藏窗口行为报告与合成截图。传递依赖首次解析后须以该锁文件保持后续 A/B 一致；在锁文件取回之前，不宣称整个依赖图已固定。
 
