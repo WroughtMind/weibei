@@ -22,6 +22,9 @@ final class NativeConversationMessageRow: NSTableCellView {
     private var controlsHeight: CGFloat = 0
     private var tracking: NSTrackingArea?
     private var sourcePopover: NSPopover?
+    private var copyFeedback: Task<Void, Never>?
+    private var copied = false
+    private var hovering = false
     private lazy var userCopyGesture = NSClickGestureRecognizer(target: self, action: #selector(copyMessage))
     override var isFlipped: Bool { true }
 
@@ -81,6 +84,10 @@ final class NativeConversationMessageRow: NSTableCellView {
     }
 
     func unbind() {
+        copyFeedback?.cancel()
+        copyFeedback = nil
+        copied = false
+        hovering = false
         sourcePopover?.close()
         sourcePopover = nil
         if state?.renderer.view === textView {
@@ -131,10 +138,8 @@ final class NativeConversationMessageRow: NSTableCellView {
         textView.isSelectable = state.message.role != .user
         userCopyGesture.isEnabled = state.message.role == .user
         textView.toolTip = state.message.role == .user ? store.ui("点击复制消息", "Click to copy message") : nil
-        bubble.layer?.backgroundColor = WeiBeiNativePalette.paperRaised().cgColor
         bubble.layer?.borderWidth = 1
-        bubble.layer?.borderColor = WeiBeiNativePalette.hairline().withAlphaComponent(0.4).cgColor
-        copyButton.toolTip = store.ui("复制消息", "Copy message")
+        updateCopyAppearance()
         copyButton.isHidden = state.message.role == .user
         retryButton.toolTip = store.ui("重新生成最后一条回答", "Regenerate last response")
         retryButton.isHidden = state.message.id != store.lastRegeneratableAgentReplyID
@@ -238,13 +243,37 @@ final class NativeConversationMessageRow: NSTableCellView {
         self.tracking = tracking
         addTrackingArea(tracking)
     }
-    override func mouseEntered(with event: NSEvent) { copyButton.alphaValue = 1; retryButton.alphaValue = 1 }
-    override func mouseExited(with event: NSEvent) { copyButton.alphaValue = 0; retryButton.alphaValue = 0 }
+    override func mouseEntered(with event: NSEvent) { hovering = true; updateCopyAppearance() }
+    override func mouseExited(with event: NSEvent) { hovering = false; updateCopyAppearance() }
+    private func updateCopyAppearance() {
+        guard let store else { return }
+        let label = store.ui(copied ? "已复制" : "复制消息", copied ? "Copied" : "Copy message")
+        copyButton.image = NSImage(systemSymbolName: copied ? "checkmark" : "doc.on.doc", accessibilityDescription: label)
+        copyButton.contentTintColor = copied ? WeiBeiNativePalette.cinnabar() : WeiBeiNativePalette.secondaryInk()
+        copyButton.toolTip = label
+        copyButton.setAccessibilityLabel(label)
+        copyButton.alphaValue = hovering ? 1 : 0
+        retryButton.alphaValue = hovering ? 1 : 0
+        let dark = store.appearanceMode.isDark
+        bubble.layer?.backgroundColor = WeiBeiNativePalette.paperRaised().withAlphaComponent(dark ? (hovering ? 0.58 : 0.46) : (hovering ? 1 : 0.96)).cgColor
+        bubble.layer?.borderColor = copied ? WeiBeiNativePalette.cinnabar().withAlphaComponent(0.52).cgColor
+            : WeiBeiNativePalette.hairline().withAlphaComponent(dark ? (hovering ? 0.58 : 0.42) : (hovering ? 0.52 : 0.38)).cgColor
+    }
     @objc private func copyMessage() {
         guard let state else { return }
+        let markdown = state.message.role == .user ? state.displayedText : AgentCitationParser.parse(state.displayedText).displayText
+        guard !markdown.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(state.markdownMemo.outputs(text: state.displayedText,
-            sources: state.message.sources, language: state.renderer.interfaceLanguage).display, forType: .string)
+        guard NSPasteboard.general.setString(markdown, forType: .string) else { return }
+        copied = true
+        updateCopyAppearance()
+        copyFeedback?.cancel()
+        copyFeedback = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            self?.copied = false
+            self?.updateCopyAppearance()
+        }
     }
     @objc private func regenerate() { store?.regenerateLastAssistantReply() }
 

@@ -10,10 +10,11 @@ final class NativeChatMarkdownPipeline {
         var messageID: UUID?
         var toggledCallouts: Set<Int> = []
         var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+        var plainText = false
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.markdown.utf16.elementsEqual(rhs.markdown.utf16) && lhs.messageID == rhs.messageID
-                && lhs.toggledCallouts == rhs.toggledCallouts && lhs.interfaceLanguage == rhs.interfaceLanguage
+                && lhs.toggledCallouts == rhs.toggledCallouts && lhs.interfaceLanguage == rhs.interfaceLanguage && lhs.plainText == rhs.plainText
         }
     }
     private var latest: Snapshot?
@@ -22,11 +23,14 @@ final class NativeChatMarkdownPipeline {
     private var working = false
     private var displayed = NativeChatMarkdownDocument()
     var onApply: ((NativeChatMarkdownDocument, NativeChatMarkdownEdit) -> Void)?
-    var parse: @Sendable (Snapshot) -> NativeChatMarkdownDocument = { NativeChatMarkdownParser.parse($0.markdown, toggledCallouts: $0.toggledCallouts, interfaceLanguage: $0.interfaceLanguage) }
+    var parse: @Sendable (Snapshot) -> NativeChatMarkdownDocument = {
+        $0.plainText ? .init(runs: [.init(text: $0.markdown)])
+            : NativeChatMarkdownParser.parse($0.markdown, toggledCallouts: $0.toggledCallouts, interfaceLanguage: $0.interfaceLanguage)
+    }
 
     func submit(_ snapshot: Snapshot) {
         guard latest != snapshot else { return }
-        if let latest, latest.messageID != snapshot.messageID || latest.toggledCallouts != snapshot.toggledCallouts || latest.interfaceLanguage != snapshot.interfaceLanguage || !snapshot.markdown.utf16.starts(with: latest.markdown.utf16) { epoch += 1 }
+        if let latest, latest.messageID != snapshot.messageID || latest.toggledCallouts != snapshot.toggledCallouts || latest.interfaceLanguage != snapshot.interfaceLanguage || latest.plainText != snapshot.plainText || !snapshot.markdown.utf16.starts(with: latest.markdown.utf16) { epoch += 1 }
         latest = snapshot
         pending = snapshot
         drain()

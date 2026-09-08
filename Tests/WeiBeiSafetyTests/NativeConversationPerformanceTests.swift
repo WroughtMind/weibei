@@ -213,7 +213,7 @@ final class NativeConversationPerformanceTests: XCTestCase {
         formerState.renderer.submit(markdown: "旧会话的延迟结果。", messageID: message.id)
         wait(for: [started], timeout: 5)
         defer { release.signal() }
-        let next = AgentMessage(id: message.id, role: .assistant, text: "新会话自己的正文。", source: nil)
+        let next = AgentMessage(id: message.id, role: .user, text: "# 新会话 **用户输入** $x^2$ 应原样保留。", source: nil)
         store.activeStudySessionID = UUID()
         store.messages = [next]
         try settle(controller.view) { controller.states[next.id]?.renderer.view?.string == next.text }
@@ -307,6 +307,10 @@ final class NativeConversationPerformanceTests: XCTestCase {
                           let line = fragment.textLineFragment(for: location, isUpstreamAffinity: false) else { return false }
                     let bottom = fragment.layoutFragmentFrame.minY + line.typographicBounds.maxY
                     return bottom <= body.visibleRect.maxY + 1 && bottom >= body.visibleRect.minY
+                }
+                if name == "rich-content", let path = ProcessInfo.processInfo.environment["WEIBEI_CHAT_SNAPSHOT"] {
+                    let end = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("end.png")
+                    try XCTUnwrap(canvas.representation(using: .png, properties: [:])).write(to: end)
                 }
             }
         }

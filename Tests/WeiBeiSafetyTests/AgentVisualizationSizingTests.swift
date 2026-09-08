@@ -191,7 +191,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIWheelInsideWebContentReachesConversationScroller() {
+    func testGenUIWheelInsideWebContentReachesConversationScroller() throws {
         let conversationScroller = ConversationScrollProbe()
         let documentView = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 1_200))
         conversationScroller.documentView = documentView
@@ -211,11 +211,16 @@ final class AgentVisualizationSizingTests: XCTestCase {
         container.layoutSubtreeIfNeeded()
         XCTAssertEqual(container.webView.frame, container.bounds)
 
+        let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+            wheelCount: 2, wheel1: 24, wheel2: 0, wheel3: 0))
+        let event = try XCTUnwrap(NSEvent(cgEvent: cg))
+        XCTAssertEqual(event.type, .scrollWheel)
+
         let visiblePoint = container.convert(
             CGPoint(x: visibleHost.bounds.midX, y: container.bounds.midY),
             to: nil
         )
-        NSApp.sendEvent(ConversationScrollWheelEvent(window: window, location: visiblePoint))
+        XCTAssertTrue(container.forwardVerticalScroll(event, in: window, at: visiblePoint))
 
         XCTAssertEqual(conversationScroller.receivedWheelEventCount, 1)
 
@@ -223,7 +228,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
             CGPoint(x: container.bounds.midX, y: container.bounds.midY),
             to: nil
         )
-        NSApp.sendEvent(ConversationScrollWheelEvent(window: window, location: clippedPoint))
+        XCTAssertFalse(container.forwardVerticalScroll(event, in: window, at: clippedPoint))
 
         XCTAssertEqual(conversationScroller.receivedWheelEventCount, 1)
         withExtendedLifetime(window) {}
@@ -336,27 +341,6 @@ private final class GenUIActionProbe: NSObject, WKScriptMessageHandler {
         self.requestID = requestID.intValue
         self.action = action
     }
-}
-
-private final class ConversationScrollWheelEvent: NSEvent {
-    private weak var eventWindow: NSWindow?
-    private let eventLocation: NSPoint
-
-    init(window: NSWindow, location: NSPoint) {
-        eventWindow = window
-        eventLocation = location
-        super.init()
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override var type: NSEvent.EventType { .scrollWheel }
-    override weak var window: NSWindow? { eventWindow }
-    override var locationInWindow: NSPoint { eventLocation }
-    override var scrollingDeltaX: CGFloat { 0 }
-    override var scrollingDeltaY: CGFloat { 24 }
 }
 
 private final class ConversationScrollProbe: NSScrollView {

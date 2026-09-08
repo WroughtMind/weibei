@@ -68,7 +68,7 @@ final class NativeConversationMessageState {
 
     func update(_ message: AgentMessage, displayedText: String) {
         let contentChanged = !rawText.utf16.elementsEqual(displayedText.utf16)
-            || self.message.sources != message.sources || self.message.contentBlocks != message.contentBlocks
+            || self.message.sources != message.sources || self.message.contentBlocks != message.contentBlocks || self.message.role != message.role
         self.message = message
         rawText = displayedText
         updateDrafts()
@@ -84,6 +84,13 @@ final class NativeConversationMessageState {
     func prepare() {
         let language = renderer.interfaceLanguage
         guard submittedText == nil || submittedLanguage != language else { return }
+        if message.role == .user {
+            submittedText = rawText
+            submittedLanguage = language
+            renderer.pipeline.submit(.init(markdown: rawText, messageID: message.id,
+                interfaceLanguage: language, plainText: true))
+            return
+        }
         let text = AgentNativeMessageContent.markdown(text: rawText, blocks: message.contentBlocks)
         sourcePresentation = AgentReplySourceInlinePresentation(text: text, sources: message.sources, language: language)
         citations = AgentCitationParser.parse(rawText).citations.filter {
