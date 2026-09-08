@@ -20,7 +20,7 @@ final class NativeChatMarkdownPipeline {
     private var latest: Snapshot?
     private var pending: Snapshot?
     private var epoch = 0
-    private var working = false
+    private(set) var working = false
     private var displayed = NativeChatMarkdownDocument()
     var onApply: ((NativeChatMarkdownDocument, NativeChatMarkdownEdit) -> Void)?
     var parse: @Sendable (Snapshot) -> NativeChatMarkdownDocument = {

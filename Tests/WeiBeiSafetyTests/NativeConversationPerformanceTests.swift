@@ -91,7 +91,7 @@ final class NativeConversationPerformanceTests: XCTestCase {
         let table = try XCTUnwrap(tables.first)
         let data = try XCTUnwrap(table.attachment.tableContent)
         XCTAssertEqual(data.documents.count, 121)
-        XCTAssertLessThan(table.visibleCellCount, data.documents.count * data.columnWidths.count)
+        try assertTableCellsStayInViewport(table)
         let horizontal = try XCTUnwrap(table.enclosingScrollView)
         let horizontalLimit = max(0, horizontal.documentView!.frame.width - horizontal.contentView.bounds.width)
         XCTAssertGreaterThan(horizontalLimit, 0)
@@ -110,7 +110,7 @@ final class NativeConversationPerformanceTests: XCTestCase {
                 return current.contains { $0.attachment === table.attachment && $0.visibleCellCount > 0 }
             }
             let current: [NativeChatTableView] = descendants(controller.view)
-            XCTAssertTrue(current.allSatisfy { $0.visibleCellCount < data.documents.count * data.columnWidths.count })
+            for table in current { try assertTableCellsStayInViewport(table) }
         }
         XCTAssertTrue(table.attachment.tableContent === data)
         XCTAssertEqual(table.attachment.preparationCount, preparedCount)
@@ -231,10 +231,33 @@ final class NativeConversationPerformanceTests: XCTestCase {
         store.messages = [next]
         try settle(controller.view) { controller.states[next.id]?.renderer.view?.string == next.text }
         release.signal()
-        try settle(controller.view) { formerState.renderer.view == nil }
+        // Observe completion after the old result's main-actor continuation has run.
+        try settle(controller.view) { !formerState.renderer.pipeline.working }
+        XCTAssertNil(formerState.renderer.view)
         XCTAssertEqual(controller.states[next.id]?.renderer.view?.string, next.text)
         XCTAssertFalse(controller.states[message.id] === formerState)
         XCTAssertFalse(window.isVisible)
+    }
+
+    @MainActor private func assertTableCellsStayInViewport(_ table: NativeChatTableView,
+        file: StaticString = #filePath, line: UInt = #line) throws {
+        let data = try XCTUnwrap(table.attachment.tableContent, file: file, line: line)
+        let viewport = table.visibleRect
+        let minimumRowHeight = try XCTUnwrap(data.rowHeights.min(), file: file, line: line)
+        // At most one partially visible row beyond the viewport's full-row capacity.
+        let maximumRows = Int(ceil(viewport.height / minimumRowHeight)) + 1
+        let views = table.subviews.compactMap { $0 as? NativeChatTextView }
+        XCTAssertLessThanOrEqual(views.count, maximumRows * data.columnWidths.count, file: file, line: line)
+        for (key, cell) in data.cells where cell.renderer.view?.superview === table {
+            let row = key / data.columnWidths.count, column = key % data.columnWidths.count
+            let x = data.columnWidths.prefix(column).reduce(0, +)
+            let cellBounds = NSRect(x: x, y: data.rowOffsets[row],
+                width: data.columnWidths[column], height: data.rowHeights[row])
+            // Include an exact row boundary, but no cells from distant rows or columns.
+            XCTAssertTrue(cellBounds.maxY >= viewport.minY && cellBounds.minY <= viewport.maxY
+                && cellBounds.maxX > viewport.minX && cellBounds.minX < viewport.maxX,
+                "Mounted table cells must intersect the conversation viewport", file: file, line: line)
+        }
     }
 
     @MainActor func testMainConversationScrollWorkload() throws {
