@@ -6,6 +6,7 @@ valid signed macOS bundle. Prefer Contents/Resources through Bundle.main's
 resource API, retaining Bundle.module for command-line use. No rendering changes.
 """
 import pathlib
+import stat
 import sys
 
 root = pathlib.Path(sys.argv[1]).resolve()
@@ -27,5 +28,12 @@ for identity, relative, bundle, count in patches:
         continue
     if original.count('Bundle.module') != count or replacement in original:
         raise SystemExit(f'Unexpected resource lookup in {path}; review the resolved version, do not guess.')
-    path.write_text(original.replace('Bundle.module', replacement))
+    # SwiftPM makes checkout sources read-only. Grant owner-write only for
+    # these reviewed local files, then restore their original mode.
+    mode = stat.S_IMODE(path.stat().st_mode)
+    try:
+        path.chmod(mode | stat.S_IWUSR)
+        path.write_text(original.replace('Bundle.module', replacement))
+    finally:
+        path.chmod(mode)
     print(f'app-resource lookup: {identity}/{relative} ({count} sites)')
