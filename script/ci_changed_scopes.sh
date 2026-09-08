@@ -54,7 +54,7 @@ classify_path() {
   esac
 
   case "$path" in
-    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
+    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|script/build_number.py|script/check_build_number.py|script/check_build_info.swift|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
