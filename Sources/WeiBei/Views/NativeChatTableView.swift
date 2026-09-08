@@ -203,18 +203,37 @@ final class NativeChatTableView: NSView {
         guard !visible.isEmpty else { detachCells(); return }
         let first = content.row(at: max(0, visible.minY))
         let last = content.row(at: visible.maxY)
-        var required = Set<Int>()
+        var frames: [Int: NSRect] = [:]
         for row in first...last {
             var x: CGFloat = 0
             for column in content.columnWidths.indices {
                 let width = content.columnWidths[column]
                 defer { x += width }
                 guard x < visible.maxX && x + width > visible.minX else { continue }
-                let key = row * content.columnWidths.count + column
-                required.insert(key)
+                frames[row * content.columnWidths.count + column] = NSRect(x: x + 12,
+                    y: content.rowOffsets[row] + 8, width: max(1, width - 24), height: max(1, content.rowHeights[row] - 16))
+            }
+        }
+        // Reuse cells leaving this viewport before creating cells entering it.
+        // Only this pass's spare views survive; offscreen tables keep data, not heavy views.
+        var reusable: [NativeChatTextView] = []
+        for key in Array(visibleCells.keys) where frames[key] == nil {
+            content.cells[key]?.renderer.view = nil
+            if let text = visibleCells.removeValue(forKey: key) {
+                text.onLayout = nil
+                text.delegate = nil
+                text.removeFromSuperview()
+                reusable.append(text)
+            }
+        }
+        for (key, frame) in frames {
+            let row = key / content.columnWidths.count
+            let column = key % content.columnWidths.count
+            let text: NativeChatTextView
+            if let existing = visibleCells[key] { text = existing }
+            else {
                 let cell = content.cell(row: row, column: column, attachment: attachment)
-                let text: NativeChatTextView
-                if let existing = visibleCells[key] { text = existing }
+                if let recycled = reusable.popLast() { text = recycled }
                 else {
                     text = NativeChatTextView(usingTextLayoutManager: true)
                     text.isEditable = false; text.isSelectable = true; text.drawsBackground = false
@@ -223,24 +242,19 @@ final class NativeChatTableView: NSView {
                     text.textContainerInset = .zero
                     text.textContainer?.lineFragmentPadding = 0
                     text.textContainer?.widthTracksTextView = true
-                    cell.renderer.view = text
-                    text.delegate = cell.renderer
-                    text.onLayout = { [weak self, weak cell, weak content] in
-                        guard let self, let cell, let content, self.content === content else { return }
-                        cell.renderer.layoutDidChange()
-                        self.report(row: row, content: content)
-                    }
-                    visibleCells[key] = text
-                    addSubview(text)
                 }
-                text.conversationClipView = clip
-                text.frame = NSRect(x: x + 12, y: content.rowOffsets[row] + 8, width: max(1, width - 24), height: max(1, content.rowHeights[row] - 16))
-                text.layoutSubtreeIfNeeded()
+                cell.renderer.view = text
+                text.delegate = cell.renderer
+                text.onLayout = { [weak self, weak cell, weak content] in
+                    guard let self, let cell, let content, self.content === content else { return }
+                    cell.renderer.layoutDidChange()
+                    self.report(row: row, content: content)
+                }
+                visibleCells[key] = text
+                addSubview(text)
             }
-        }
-        for key in Array(visibleCells.keys) where !required.contains(key) {
-            content.cells[key]?.renderer.view = nil
-            visibleCells.removeValue(forKey: key)?.removeFromSuperview()
+            text.conversationClipView = clip
+            text.frame = frame
         }
     }
 

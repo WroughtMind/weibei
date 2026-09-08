@@ -114,6 +114,19 @@ final class NativeConversationPerformanceTests: XCTestCase {
         }
         XCTAssertTrue(table.attachment.tableContent === data)
         XCTAssertEqual(table.attachment.preparationCount, preparedCount)
+        let selectedCell = try XCTUnwrap(data.cells.values.first {
+            $0.renderer.view?.visibleRect.isEmpty == false && $0.renderer.preparedStorage.string.contains("最右侧的结果")
+        })
+        let selectedText = selectedCell.renderer.preparedStorage.string
+        let cellSelection = NSRange(location: 5, length: 8)
+        selectedCell.renderer.view?.setSelectedRange(cellSelection)
+        controller.userWillScroll()
+        controller.scrollView.contentView.scroll(to: CGPoint(x: 0, y: 3000))
+        try settle(controller.view) { selectedCell.renderer.view == nil }
+        controller.scrollView.contentView.scroll(to: .zero)
+        try settle(controller.view) { selectedCell.renderer.view != nil }
+        XCTAssertEqual(selectedCell.renderer.view?.string, selectedText)
+        XCTAssertEqual(selectedCell.renderer.view?.selectedRange(), cellSelection)
         let text = try XCTUnwrap(controller.states[message.id]?.renderer.view)
         text.setSelectedRange(NSRange(location: 0, length: text.string.utf16.count))
         let pasteboard = NSPasteboard.withUniqueName()

@@ -52,7 +52,7 @@ final class SidebarPerformanceTests: XCTestCase {
         )
 
         drawer.apply(isOpen: false, store: fixture.store, animated: true)
-        pumpMainRunLoop(for: 0.30)
+        waitForDrawerRelease(drawer)
 
         XCTAssertEqual(drawer.activeSidebarHostCountForTesting, 0)
         XCTAssertNil(drawer.sidebarModelForTesting)
@@ -102,7 +102,7 @@ final class SidebarPerformanceTests: XCTestCase {
         }
 
         drawer.apply(isOpen: false, store: fixture.store, animated: true)
-        pumpMainRunLoop(for: 0.30)
+        waitForDrawerRelease(drawer)
 
         XCTAssertEqual(drawer.activeSidebarHostCountForTesting, 0)
         XCTAssertNil(drawer.sidebarModelForTesting)
@@ -360,6 +360,14 @@ final class SidebarPerformanceTests: XCTestCase {
         )
         window.contentView = drawer
         return (drawer, window)
+    }
+
+    @MainActor
+    private func waitForDrawerRelease(_ drawer: CourseDrawerContainerView) {
+        let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            MainActor.assumeIsolated { drawer.sidebarModelForTesting == nil }
+        }, object: nil)
+        wait(for: [released], timeout: 5)
     }
 
     @MainActor
