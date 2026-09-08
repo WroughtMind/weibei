@@ -177,6 +177,7 @@ struct NativeChatMarkdownView: NSViewRepresentable {
             let rect = CGRect(x: clip.bounds.minX, y: target, width: clip.bounds.width, height: clip.bounds.height)
             let origin = clip.constrainBoundsRect(rect).origin
             if abs(origin.y - clip.bounds.minY) < 0.5 { pendingAnchor = nil; return }
+            pendingAnchor = nil
             clip.scroll(to: origin)
             scroll.reflectScrolledClipView(clip)
         }

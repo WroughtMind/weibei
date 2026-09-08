@@ -444,4 +444,52 @@ final class NativeChatMarkdownTests: XCTestCase {
         XCTAssertEqual(text.frame.height, ceil(manager.usageBoundsForTextContainer.maxY), accuracy: 1)
         XCTAssertFalse(window.isVisible)
     }
+
+    // Once resize restoration finishes, later manual scrolling must not be undone by layout.
+    @MainActor func testManualScrollingAfterResizeDoesNotRebound() async throws {
+        _ = NSApplication.shared
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
+        let text = NativeChatTextView(usingTextLayoutManager: true)
+        text.isVerticallyResizable = false
+        text.textContainerInset = .zero
+        text.textContainer?.lineFragmentPadding = 0
+        text.textContainer?.widthTracksTextView = false
+        text.string = (0..<80).map { "第 \($0) 段 " + String(repeating: "连续阅读不能被拉回原位。", count: 12) }.joined(separator: "\n\n")
+        scroll.documentView = text
+        let window = NSWindow(contentRect: scroll.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = scroll
+        defer { window.close() }
+        let manager = text.textLayoutManager!
+        let probe = NativeChatMarkdownView.Coordinator(); probe.view = text
+        probe.document = NativeChatMarkdownParser.parse(text.string)
+        func layout(width: CGFloat) {
+            text.textContainer!.size.width = width
+            manager.ensureLayout(for: manager.textContentManager!.documentRange)
+            text.setFrameSize(NSSize(width: width, height: ceil(manager.usageBoundsForTextContainer.maxY)))
+        }
+        layout(width: 700)
+        scroll.contentView.scroll(to: CGPoint(x: 0, y: 800))
+        probe.layoutDidChange()
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        probe.willResize(to: 380)
+        layout(width: 380)
+        probe.layoutDidChange()
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        let restored = scroll.contentView.bounds.minY
+        let target = restored + 120
+        scroll.contentView.scroll(to: CGPoint(x: 0, y: target))
+        probe.layoutDidChange()
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        let actual = scroll.contentView.bounds.minY
+        XCTAssertGreaterThan(restored, 0)
+        XCTAssertEqual(actual, target, accuracy: 2)
+        XCTAssertFalse(window.isVisible)
+    }
 }
