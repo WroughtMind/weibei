@@ -426,6 +426,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         let distance = max(0, collection.contentSize.height - collection.bounds.height)
         status.text = "正在采样连续滚动与回看…"
         let name = scenario
+        metrics.record("\(name)_scroll_message_count", Double(messages.count))
+        metrics.record("\(name)_scroll_source_utf16_count", Double(messages.reduce(0) { $0 + $1.markdown.utf16.count }))
+        metrics.record("\(name)_scroll_distance_pt", Double(distance))
         metrics.scrollSample(name: name, step: { [weak self] elapsed in
             guard let self else { return }
             // Forward pass followed by a return pass over the same content.
@@ -528,7 +531,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 loadScenario("rich")
                 await preparation?.value
                 let blocks = messages[0].blocks
-                try expect(blocks.contains { $0.content.rendered.values.contains { $0.image != nil } }, "数学资源没有生成真实公式")
+                let formulas = blocks.flatMap { $0.content.rendered.values }
+                try expect(!formulas.isEmpty && formulas.allSatisfy { $0.image != nil }, "数学资源没有完整生成真实公式")
                 try expect(LabImages.shared.images["lab-image://landscape"] != nil, "图片没有解码成功")
                 guard blocks.count > 3 else { throw Failure(message: "富内容样本不完整") }
                 guard let diagram = blocks.first(where: { if case .diagram = $0.kind { return true }; return false }) else {
