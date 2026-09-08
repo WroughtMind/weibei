@@ -7,6 +7,123 @@ import XCTest
 /// Replays the actual main conversation, with synthetic content and a hidden window.
 /// Samples measure main-thread scroll/layout work, not display FPS or user acceptance.
 final class NativeConversationPerformanceTests: XCTestCase {
+    @MainActor func testFastScrollKeepsVisibleBodyAfterStopping() throws {
+        setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiFastScroll-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.messages = (0..<120).map { index in
+            if index.isMultiple(of: 2) {
+                return AgentMessage(role: .user, text: "问题" + String(repeating: "？", count: index % 9), source: nil)
+            }
+            let paragraphs = index == 91 ? 467 : index % 13 + 1
+            let text = (0..<paragraphs).map { paragraph in
+                "第 \(paragraph) 段：" + String(repeating: "快速滑动后，完整正文和阅读位置都应保留。", count: index % 3 + 1)
+            }.joined(separator: "\n\n")
+            return AgentMessage(role: .assistant, text: text, source: nil)
+        }
+        let navigation = NativeConversationNavigation()
+        let host = NSHostingView(rootView: NativeConversationView(navigation: navigation, wide: false, isVisible: true).environmentObject(store))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 710, height: 1010),
+            styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setContentSize(NSSize(width: 710, height: 1010))
+        try settle(host) { navigation.controller != nil }
+        let controller = try XCTUnwrap(navigation.controller)
+        defer { controller.disconnect(); window.close() }
+        let clip = controller.scrollView.contentView
+        let canvas = try XCTUnwrap(controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds))
+        try settle(controller.view) { controller.states.values.contains { $0.preparationCount > 0 } }
+        for pass in 0..<8 {
+            for step in 0..<40 {
+                let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                    wheelCount: 1, wheel1: step < 20 ? 650 : -600, wheel2: 0, wheel3: 0))
+                cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64((step == 0 ? CGScrollPhase.began : CGScrollPhase.changed).rawValue))
+                controller.scrollView.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: cg)))
+                controller.view.layoutSubtreeIfNeeded()
+                controller.view.cacheDisplay(in: controller.view.bounds, to: canvas)
+                CFRunLoopRunInMode(.defaultMode, 0.001, true)
+            }
+            let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                wheelCount: 1, wheel1: 0, wheel2: 0, wheel3: 0))
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(CGScrollPhase.ended.rawValue))
+            controller.scrollView.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: cg)))
+            try settle(controller.view) {
+                // Native rubber-banding is still part of the gesture, not a reading-position correction.
+                guard abs(clip.constrainBoundsRect(clip.bounds).minY - clip.bounds.minY) < 0.5 else { return false }
+                controller.view.cacheDisplay(in: controller.view.bounds, to: canvas)
+                let cells: [NativeConversationMessageRow] = self.descendants(controller.view)
+                let visible = cells.filter { !$0.textView.string.isEmpty && !$0.textView.visibleRect.isEmpty }
+                return !visible.isEmpty && visible.allSatisfy { cell in
+                    let text = cell.textView, rect = text.visibleRect
+                    // A sliver of the last line's padding can legitimately contain no ink.
+                    guard rect.height > (cell.state?.renderer.fontSize ?? 0) else { return true }
+                    guard let manager = text.textLayoutManager,
+                          let range = manager.textViewportLayoutController.viewportRange else { return false }
+                    var hasVisibleLine = false
+                    manager.enumerateTextLayoutFragments(from: range.location) { fragment in
+                        hasVisibleLine = fragment.textLineFragments.contains {
+                            $0.typographicBounds.offsetBy(dx: fragment.layoutFragmentFrame.minX,
+                                dy: fragment.layoutFragmentFrame.minY).intersects(rect)
+                        }
+                        return !hasVisibleLine && fragment.layoutFragmentFrame.minY < rect.maxY
+                    }
+                    return hasVisibleLine
+                }
+            }
+            let anchor = controller.captureReadingAnchor()
+            drain(controller.view, duration: 0.2)
+            if let anchor, let offset = anchor.characterOffset,
+               let text = controller.states[anchor.messageID]?.renderer.view,
+               let manager = text.textLayoutManager, let content = manager.textContentManager {
+                let after: CGFloat
+                if let position = anchor.attachmentPosition,
+                   let attachment = text.textStorage?.attribute(.attachment, at: offset, effectiveRange: nil) as? NativeChatTextAttachment {
+                    after = try XCTUnwrap(attachment.readingY(for: position, in: clip)) - clip.bounds.minY
+                } else {
+                    let location = try XCTUnwrap(content.location(content.documentRange.location, offsetBy: offset))
+                    let fragment = try XCTUnwrap(manager.textLayoutFragment(for: location))
+                    let line = try XCTUnwrap(fragment.textLineFragment(for: location, isUpstreamAffinity: false))
+                    after = text.convert(CGPoint(x: 0, y: fragment.layoutFragmentFrame.minY + line.typographicBounds.minY), to: clip).y - clip.bounds.minY
+                }
+                XCTAssertEqual(after, anchor.viewportOffset, accuracy: 1, "Stopped scrolling must preserve visible content (pass \(pass))")
+            }
+        }
+        XCTAssertFalse(window.isVisible)
+    }
+
+    @MainActor func testRevealingHistoryKeepsPreparedRowHeight() throws {
+        setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiHeight-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.messages = (0..<31).map { _ in AgentMessage(role: .user, text: "问题", source: nil) }
+        let controller = NativeConversationController(store: store, navigation: NativeConversationNavigation())
+        controller.configure(wide: false, textScale: 1, isVisible: true)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 710, height: 1010),
+            styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.setContentSize(NSSize(width: 710, height: 1010))
+        defer { controller.disconnect(); window.close() }
+        let id = try XCTUnwrap(store.messages.last?.id)
+        try settle(controller.view) { controller.states[id]?.userNaturalWidth != nil }
+        let state = try XCTUnwrap(controller.states[id])
+        let before = state.bodyHeight
+        controller.revealEarlierHistory()
+        try settle(controller.view) { controller.tableView.numberOfRows == 31 }
+        XCTAssertEqual(state.bodyHeight, before, accuracy: 1,
+            "Loading earlier messages must not replace a prepared row's height with an estimate")
+        for state in controller.states.values {
+            guard let text = state.renderer.view, !text.visibleRect.isEmpty, let manager = text.textLayoutManager else { continue }
+            XCTAssertEqual(text.frame.height, max(state.renderer.fontSize * 1.5, ceil(manager.usageBoundsForTextContainer.height)), accuracy: 1)
+        }
+        XCTAssertFalse(window.isVisible)
+    }
+
     @MainActor func testRecycledRowsKeepPreparedContentSelectionAndDrafts() throws {
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
         _ = NSApplication.shared
@@ -352,7 +469,8 @@ final class NativeConversationPerformanceTests: XCTestCase {
         }
     }
 
-    // The fixed interval here is a profiling warmup, never a correctness completion signal.
+    // A profiling warmup or observation period after a visible state has been reached.
+    // Completion itself is checked by settle, not by elapsed time.
     @MainActor private func drain(_ view: NSView, duration: TimeInterval) {
         let end = Date().addingTimeInterval(duration)
         while Date() < end {

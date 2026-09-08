@@ -103,15 +103,33 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         coordinator.view = nil
     }
 
-    @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
-        // The attributed document outlives a reusable view. Binding installs a complete
-        // storage, so a delta is never applied to a different message's NSTextStorage.
+    @MainActor final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
+        // Prepared attributes outlive the row. Keep each NSTextView's own text system:
+        // replacing its content manager retains stale extent estimates across messages.
+        // Binding is a complete storage edit; subsequent edits share the same base.
         let preparedStorage = NSTextStorage()
-        private lazy var preparedContent: NSTextContentStorage = {
-            let content = NSTextContentStorage()
-            content.textStorage = preparedStorage
-            return content
-        }()
+        override init() {
+            super.init()
+            preparedStorage.delegate = self
+        }
+
+        nonisolated func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
+                                     range editedRange: NSRange, changeInLength delta: Int) {
+            // Prepared storage is owned and edited exclusively by this main-actor coordinator.
+            MainActor.assumeIsolated {
+                guard let target = view?.textStorage, target !== textStorage else { return }
+                target.beginEditing()
+                if editedMask.contains(.editedCharacters) {
+                    target.replaceCharacters(in: NSRange(location: editedRange.location, length: editedRange.length - delta),
+                        with: textStorage.attributedSubstring(from: editedRange))
+                } else {
+                    textStorage.enumerateAttributes(in: editedRange) { attributes, range, _ in
+                        target.setAttributes(attributes, range: range)
+                    }
+                }
+                target.endEditing()
+            }
+        }
         private var extentObservation: NSKeyValueObservation?
         private weak var observedScroll: NSScrollView?
         private var scrollObserver: NSObjectProtocol?
@@ -123,13 +141,14 @@ struct NativeChatMarkdownView: NSViewRepresentable {
                 if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
                 scrollObserver = nil; observedScroll = nil
                 if let view, view !== newValue {
-                    savedSelection = view.selectedRanges
-                    view.textLayoutManager?.replace(NSTextContentStorage())
+                    let selection = view.selectedRanges
+                    view.textStorage?.setAttributedString(NSAttributedString())
+                    savedSelection = selection
                 }
             }
             didSet {
                 guard let view else { return }
-                view.textLayoutManager?.replace(preparedContent)
+                view.textStorage?.setAttributedString(preparedStorage)
                 view.selectedRanges = savedSelection
                 extentObservation = view.textLayoutManager?.observe(\.usageBoundsForTextContainer, options: [.initial, .new]) { [weak self] _, _ in
                     MainActor.assumeIsolated { self?.layoutDidChange() }
@@ -201,8 +220,10 @@ struct NativeChatMarkdownView: NSViewRepresentable {
                     self.lastLayoutHeight = height
                     self.heightCache = (container.size.width, max(1, ceil(height)))
                     view.invalidateIntrinsicContentSize()
-                    self.onHeightChange?(max(1, ceil(height)))
                 }
+                // A reusable row may have acquired an estimate since the last report.
+                // Its owner compares this result with the current row record.
+                self.onHeightChange?(max(1, ceil(height)))
                 self.onViewportLayout?()
                 guard self.managesReadingPosition else { return }
                 // Restore only after SwiftUI has applied the new height. Earlier coordinates

@@ -71,7 +71,8 @@ final class NativeConversationMessageRow: NSTableCellView {
             state.renderer.layoutDidChange()
         }
         state.renderer.onHeightChange = { [weak self, weak state] height in
-            guard let self, let state, self.state === state else { return }
+            guard let self, let state, self.state === state,
+                  abs(state.bodyHeight - height) > 0.5 else { return }
             state.bodyHeight = height
             self.needsLayout = true
         }

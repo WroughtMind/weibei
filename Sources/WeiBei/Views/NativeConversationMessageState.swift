@@ -31,14 +31,19 @@ final class NativeConversationMessageState {
 
     func invalidateLayout(width: CGFloat, fontSize: CGFloat) -> CGFloat? {
         guard requestedWidth != width || requestedFontSize != fontSize else { return nil }
+        let oldWidth = measuredWidth ?? requestedWidth
+        let oldFont = measuredFontSize ?? requestedFontSize
+        requestedWidth = width
+        requestedFontSize = fontSize
+        // Learning a user bubble's natural width is not another reflow. A history
+        // insertion must preserve the height already measured at that exact width.
+        if measuredWidth == width, measuredFontSize == fontSize, measuredVersion == version { return nil }
         let previousBody = bodyHeight
-        if let oldWidth = requestedWidth, let oldFont = requestedFontSize {
+        if let oldWidth, let oldFont {
             bodyHeight = max(fontSize * 1.5, bodyHeight * oldWidth / width * pow(fontSize / oldFont, 2))
         } else {
             bodyHeight = max(fontSize * 1.5, ceil(CGFloat(rawText.utf16.count) * fontSize * 0.75 / width) * fontSize * 1.6)
         }
-        requestedWidth = width
-        requestedFontSize = fontSize
         measuredWidth = nil
         measuredFontSize = nil
         measuredVersion = nil

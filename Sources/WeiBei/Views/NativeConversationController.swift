@@ -422,8 +422,11 @@ final class NativeConversationController: NSViewController, NSTableViewDataSourc
         guard isSurfaceVisible else { return }
         let heights = pendingHeights
         pendingHeights.removeAll()
-        let anchor = pendingAnchor
+        // A wheel event can invalidate the earlier anchor while measured heights
+        // are still queued. Capture the user's new position before applying them.
+        let anchor = followsLatest ? nil : (pendingAnchor ?? readingAnchor ?? captureReadingAnchor())
         pendingAnchor = nil
+        readingAnchor = anchor
         inTransaction = true
         defer { inTransaction = false }
         let indexes = IndexSet(heights.keys.compactMap { rowByID[$0] })
