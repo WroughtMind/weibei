@@ -113,8 +113,12 @@ enum LabFixture {
     static var longAnswer: String {
         (0..<140).map { index in
             history(index) + (index % 28 == 0 ? "\n\n" + rich : "")
-        }.joined(separator: "\n\n") + "\n\n【长回答结束：全部 140 节】"
+        }.joined(separator: "\n\n") + "\n\n```swift\n" + longCode + "\n```\n\n【长回答结束：全部 140 节】"
     }
+
+    static let longCode = "let readings: [Int] = [\n" + (0..<240).map {
+        "    \($0 * 17 + 23), // 第 \($0 + 1) 个观测：保留完整的长代码和原始换行，横向滚动应能读到这一行末尾的内容。"
+    }.joined(separator: "\n") + "\n]\nprint(readings.count)"
 
     static let replay = """
     ## 固定重放：阅读与理解

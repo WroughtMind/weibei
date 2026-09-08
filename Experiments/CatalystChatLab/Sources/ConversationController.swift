@@ -1,5 +1,6 @@
 import UIKit
 import Litext
+import MarkdownView
 import QuartzCore
 
 final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UITextViewDelegate {
@@ -14,6 +15,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private var preparation: Task<Void, Never>?
     private var replay: Task<Void, Never>?
     private var scenarioGeneration = 0
+    private var scenario = "rich"
     private var earlier = 480
     private var layoutTransaction = false
     private var laidOutWidth: CGFloat = 0
@@ -80,6 +82,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         store.openLink = { [weak self] url in self?.open(url) }
         store.saveNote = { [weak self] text in self?.saveNote?(text) }
         store.interaction = { [weak self] body in self?.selection.bind(body) }
+        NotificationCenter.default.addObserver(self, selector: #selector(imageDidLoad(_:)), name: LabImages.didLoad, object: nil)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -166,6 +169,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         send.setImage(UIImage(systemName: "arrow.up.circle.fill"), for: .normal)
         preparation?.cancel()
         scenarioGeneration += 1
+        scenario = name
         let generation = scenarioGeneration
         selection.clear()
         messages = []
@@ -193,6 +197,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             if name == "history" { scrollToLatest() } else { collection.contentOffset = .zero; followsLatest = false }
             layoutTransaction = false
             metrics.record("\(name)_first_prepare_and_layout_ms", (CACurrentMediaTime() - started) * 1000)
+            metrics.record("\(name)_message_count", Double(messages.count))
+            metrics.record("\(name)_body_block_count", Double(messages.reduce(0) { $0 + $1.blocks.count }))
+            metrics.record("\(name)_source_utf16_count", Double(messages.reduce(0) { $0 + $1.markdown.utf16.count }))
+            if let memory = LabMetrics.residentMemory() { metrics.record("\(name)_resident_memory_bytes", Double(memory)) }
             status.text = "\(messages.count) 条会话 · 固定重放，未接通模型"
             send.isEnabled = true
             preparation = nil
@@ -214,7 +222,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             let anchor = captureAnchor()
             layoutTransaction = true
             messages.insert(contentsOf: incoming, at: 0)
-            collection.performBatchUpdates { collection.insertSections(IndexSet(integersIn: 0..<incoming.count)) }
+            UIView.performWithoutAnimation {
+                collection.performBatchUpdates { collection.insertSections(IndexSet(integersIn: 0..<incoming.count)) }
+            }
             collection.layoutIfNeeded()
             if let anchor { restore(anchor) }
             layoutTransaction = false
@@ -237,13 +247,16 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             guard let self else { return }
             let question = LabMessage(author: "你", markdown: question)
             _ = await store.prepare(question, width: bodyWidth)
-            guard generation == scenarioGeneration, !Task.isCancelled else { replay = nil; return }
+            guard generation == scenarioGeneration else { return }
+            guard !Task.isCancelled else { replay = nil; return }
             let answer = LabMessage(author: "魏碑 · 固定事件重放", markdown: "")
             answer.state = .streaming
             layoutTransaction = true
             let first = messages.count
             messages.append(contentsOf: [question, answer])
-            collection.performBatchUpdates { collection.insertSections(IndexSet(integersIn: first..<messages.count)) }
+            UIView.performWithoutAnimation {
+                collection.performBatchUpdates { collection.insertSections(IndexSet(integersIn: first..<messages.count)) }
+            }
             collection.layoutIfNeeded(); scrollToLatest()
             layoutTransaction = false
             send.setImage(UIImage(systemName: "stop.circle.fill"), for: .normal)
@@ -284,10 +297,12 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         let follow = followsLatest
         layoutTransaction = true
         let old = previous.count, new = message.blocks.count
-        collection.performBatchUpdates {
-            if new > old { collection.insertItems(at: (old+1...new).map { IndexPath(item: $0, section: section) }) }
-            if old > new { collection.deleteItems(at: (new+1...old).map { IndexPath(item: $0, section: section) }) }
-            flow.invalidateLayout()
+        UIView.performWithoutAnimation {
+            collection.performBatchUpdates {
+                if new > old { collection.insertItems(at: (old+1...new).map { IndexPath(item: $0, section: section) }) }
+                if old > new { collection.deleteItems(at: (new+1...old).map { IndexPath(item: $0, section: section) }) }
+                flow.invalidateLayout()
+            }
         }
         for index in 0..<new where index >= old || previous[index] !== message.blocks[index] {
             let path = IndexPath(item: index + 1, section: section)
@@ -304,6 +319,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
     private func contentChanged(_ block: PreparedBlock) {
+        guard messages.contains(where: { $0.blocks.contains(where: { $0 === block }) }) else { return }
         pendingChanges[block.id] = block
         guard !changeScheduled else { return }
         changeScheduled = true
@@ -322,6 +338,15 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             flow.invalidateLayout(); collection.layoutIfNeeded()
             if follow { scrollToLatest() } else if let anchor { restore(anchor) }
             layoutTransaction = false
+        }
+    }
+
+    @objc private func imageDidLoad(_ notification: Notification) {
+        guard let source = notification.object as? String else { return }
+        // Image readiness belongs to content, even if the original cell/view
+        // has already left the bounded pool.
+        for message in messages {
+            for block in message.blocks where block.imageSources.contains(source) { contentChanged(block) }
         }
     }
 
@@ -357,11 +382,12 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         collection.contentOffset.y = min(max(0, frame.minY + textY - anchor.offset), max(0, collection.contentSize.height - collection.bounds.height))
     }
     func scrollToLatest() {
+        let wasUpdating = layoutTransaction
         layoutTransaction = true
+        defer { layoutTransaction = wasUpdating }
         collection.layoutIfNeeded()
         collection.contentOffset.y = max(0, collection.contentSize.height - collection.bounds.height)
         followsLatest = true; latest.isHidden = true
-        layoutTransaction = false
     }
     func selectionScroll(by distance: CGFloat) {
         collection.contentOffset.y = min(max(0, collection.contentOffset.y + distance), max(0, collection.contentSize.height - collection.bounds.height))
@@ -392,27 +418,29 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         return button
     }
 
-    func sampleScroll() {
+    func sampleScroll(completed: (() -> Void)? = nil) {
         guard preparation == nil, replay == nil else { return }
         let beforeParse = store.parseCount
         let beforeMeasure = store.measureCount
         let beforeRender = store.renderedCount
         let distance = max(0, collection.contentSize.height - collection.bounds.height)
         status.text = "正在采样连续滚动与回看…"
-        metrics.scrollSample(step: { [weak self] elapsed in
+        let name = scenario
+        metrics.scrollSample(name: name, step: { [weak self] elapsed in
             guard let self else { return }
             // Forward pass followed by a return pass over the same content.
             let fraction = elapsed < 6 ? elapsed / 6 : 1 - (elapsed - 6) / 6
             collection.contentOffset.y = distance * min(1, max(0, fraction))
         }, completed: { [weak self] in
             guard let self else { return }
-            metrics.record("scroll_new_parses", Double(store.parseCount - beforeParse))
-            metrics.record("scroll_new_measurements", Double(store.measureCount - beforeMeasure))
-            metrics.record("scroll_view_reconstructions", Double(store.renderedCount - beforeRender))
+            metrics.record("\(name)_scroll_new_parses", Double(store.parseCount - beforeParse))
+            metrics.record("\(name)_scroll_new_measurements", Double(store.measureCount - beforeMeasure))
+            metrics.record("\(name)_scroll_view_reconstructions", Double(store.renderedCount - beforeRender))
             do {
                 _ = try metrics.write(controller: self)
                 status.text = "采样已保存 · 显示回调间隔，不等同于 FPS"
             } catch { status.text = "记录写入失败：\(error.localizedDescription)" }
+            completed?()
         })
     }
 
@@ -458,6 +486,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 metrics.checks["resize_preserves_reading_paragraph"] = "passed"
                 maximumBodyWidth = 760
                 view.setNeedsLayout(); view.layoutIfNeeded()
+                await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
 
                 let message = LabMessage(author: "检查样本", markdown: "第一段：中文与 emoji 👩🏽‍💻。\n\n第二段尚在增长")
                 _ = await store.prepare(message, width: bodyWidth)
@@ -502,6 +531,32 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 try expect(blocks.contains { $0.content.rendered.values.contains { $0.image != nil } }, "数学资源没有生成真实公式")
                 try expect(LabImages.shared.images["lab-image://landscape"] != nil, "图片没有解码成功")
                 guard blocks.count > 3 else { throw Failure(message: "富内容样本不完整") }
+
+                guard let imageIndex = blocks.firstIndex(where: { $0.imageSources.contains("lab-image://landscape") }) else {
+                    throw Failure(message: "没有实际图片正文")
+                }
+                let imageBlock = blocks[imageIndex]
+                LabImages.shared.images.removeValue(forKey: "lab-image://landscape")
+                store.reset(); imageBlock.width = 0
+                _ = store.measure(imageBlock, width: bodyWidth)
+                let pendingHeight = imageBlock.height
+                collection.reloadData(); collection.layoutIfNeeded()
+                collection.scrollToItem(at: IndexPath(item: imageIndex + 2, section: 0), at: .top, animated: false)
+                collection.layoutIfNeeded()
+                let beforeImage = captureAnchor()
+                // Drop the prepared view pool before the real asynchronous
+                // decoder returns; the content record must still be updated.
+                store.reset()
+                let imageDeadline = ContinuousClock.now + .seconds(8)
+                while imageBlock.height == pendingHeight || changeScheduled {
+                    if ContinuousClock.now >= imageDeadline { throw Failure(message: "图片到达后缓存行高没有更新") }
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                let afterImage = captureAnchor()
+                try expect(beforeImage != nil && afterImage?.messageID == beforeImage?.messageID && afterImage?.item == beforeImage?.item && abs((afterImage?.offset ?? 0) - (beforeImage?.offset ?? 0)) <= 1,
+                           "图片到达使正在阅读的正文跳位")
+                metrics.checks["image_arrival_preserves_reading_text"] = "passed"
+
                 selection.select(from: .init(blockID: blocks[1].id, character: 3), to: .init(blockID: blocks[2].id, character: 18))
                 let selected = selection.text()
                 try expect(selected.contains("\n\n") && !selected.isEmpty, "跨段复制没有包含两个段落")
@@ -514,20 +569,77 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 guard let card = blocks.first(where: { if case .card = $0.kind { return true }; return false }) else {
                     throw Failure(message: "未找到摘记卡")
                 }
-                card.draft = "用户的摘记草稿"; card.collapsed = true
                 let cardView = store.view(for: card, width: bodyWidth)
-                try expect(cardView.record?.draft == "用户的摘记草稿" && cardView.record?.collapsed == true, "摘记草稿或折叠状态丢失")
+                let draftView = cardView.subviews.compactMap { $0 as? UITextView }.first!
+                draftView.text = "用户的摘记草稿"
+                cardView.textViewDidChange(draftView)
+                let foldButton = cardView.subviews.first { $0.accessibilityIdentifier == "toggle-card" } as! UIButton
+                foldButton.sendActions(for: .touchUpInside)
+                while changeScheduled { await Task.yield() }
+                store.reset()
+                let restoredCard = store.view(for: card, width: bodyWidth)
+                let restoredDraft = restoredCard.subviews.compactMap { $0 as? UITextView }.first!
+                try expect(restoredDraft.text == draftView.text && restoredDraft.isHidden && card.collapsed, "摘记草稿或折叠后的显示状态丢失")
                 metrics.checks["card_draft_and_fold_persist"] = "passed"
+
+                guard let code = blocks.first(where: { if case let .codeBlock(language, _) = $0.node { return language == "swift" }; return false }) else {
+                    throw Failure(message: "没有代码附件")
+                }
+                let codeView = store.view(for: code, width: bodyWidth)
+                guard let codeLabel = codeView.attachmentLabels.first, let scroller = codeView.scrollViews(in: codeView.markdown).first else {
+                    throw Failure(message: "代码没有可选择文字和横向滚动控件")
+                }
+                let highlighted = codeLabel.attributedText.copy() as! NSAttributedString
+                codeLabel.selectionRange = NSRange(location: 3, length: 16)
+                scroller.contentOffset.x = min(80, max(0, scroller.contentSize.width - scroller.bounds.width))
+                try expect(scroller.contentOffset.x > 0, "长代码没有可横向阅读的完整宽度")
+                codeView.saveInteractionState()
+                let offset = scroller.contentOffset.x
+                store.reset(); CodeHighlighter.current.renderCache.removeAll()
+                let restoredCode = store.view(for: code, width: bodyWidth)
+                restoredCode.restoreInteractionState()
+                try expect(restoredCode.attachmentLabels.first?.selectionRange == NSRange(location: 3, length: 16) && restoredCode.scrollViews(in: restoredCode.markdown).first?.contentOffset.x == offset,
+                           "代码附件复用丢失选区或横向位置")
+                try expect(restoredCode.attachmentLabels.first?.attributedText.isEqual(to: highlighted) == true && !code.content.highlightMaps.isEmpty,
+                           "视图和全局缓存淘汰后没有保留代码高亮")
+                metrics.checks["code_highlight_selection_and_scroll_persist"] = "passed"
                 metrics.checks["math_and_image_resources"] = "passed"
                 selection.clear()
-                status.text = "7 项必要行为检查通过 · 桌面手感仍需单独体验"
+
+                loadScenario("long")
+                await preparation?.value
+                try expect(messages.count == 1 && collection.numberOfSections == 1 && messages[0].markdown == LabFixture.longAnswer,
+                           "单条长回答被拆成假消息或截断")
+                scrollToLatest()
+                let answer = messages[0]
+                let tailPath = IndexPath(item: answer.blocks.count, section: 0)
+                collection.scrollToItem(at: tailPath, at: .bottom, animated: false)
+                collection.layoutIfNeeded()
+                let tail = (collection.cellForItem(at: tailPath) as? MessageCell)?.body?.copyText()
+                try expect(tail == LabFixture.longAnswer.components(separatedBy: "\n\n").last, "长回答最后一段未真实显示")
+                guard let longCode = answer.blocks.first(where: { if case let .codeBlock(_, text) = $0.node { return text.trimmingCharacters(in: .whitespacesAndNewlines) == LabFixture.longCode }; return false }) else {
+                    throw Failure(message: "长代码缺失")
+                }
+                try expect(store.view(for: longCode, width: bodyWidth).copyText().contains(LabFixture.longCode), "长代码正文被截断")
+                await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
+                metrics.checks["single_long_answer_complete_and_revisitable"] = "passed"
+                selection.clear()
+                status.text = "10 项必要行为检查通过 · 桌面手感仍需单独体验"
             } catch {
                 metrics.checks["failure"] = error.localizedDescription
                 status.text = "行为检查未通过：\(error.localizedDescription)"
             }
-            do { _ = try metrics.write(controller: self) }
+            do {
+                _ = try metrics.write(controller: self)
+                if CommandLine.arguments.contains("--self-check"), let window = view.window {
+                    let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                    }
+                    try image.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("window.png"))
+                }
+            }
             catch { status.text = "检查记录写入失败：\(error.localizedDescription)" }
-            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 7)
+            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 10)
         }
     }
 }

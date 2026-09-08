@@ -17,6 +17,8 @@ jobs:
         working-directory: Experiments/CatalystChatLab
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: 记录工具链
         run: xcodebuild -version
       - name: 构建真实 Mac Catalyst Release
@@ -33,3 +35,4 @@ jobs:
             Experiments/CatalystChatLab/.build/build.log
             Experiments/CatalystChatLab/Dependencies.json
             Experiments/CatalystChatLab/Evidence/ci.json
+            Experiments/CatalystChatLab/Evidence/ci-window.png

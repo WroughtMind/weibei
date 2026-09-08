@@ -8,11 +8,12 @@ cd "$lab_dir"
 open -W "$lab_dir/dist/魏碑-Catalyst会话实验.app" --args --self-check
 mkdir -p Evidence
 cp "$HOME/Library/Application Support/org.weibei.CatalystChatLab/Results/latest.json" Evidence/ci.json
+cp "$HOME/Library/Application Support/org.weibei.CatalystChatLab/Results/window.png" Evidence/ci-window.png
 python3 - <<'PY'
 import json
 from pathlib import Path
 result = json.loads(Path('Evidence/ci.json').read_text())
 assert result['platform'] == 'Mac Catalyst' and result['idiom'] == 'mac'
-assert len(result['checks']) == 7 and all(value == 'passed' for value in result['checks'].values()), result['checks']
-print('7 项实际 Catalyst 进程内的会话行为检查通过。CI 不代表鼠标、输入法或用户手感验收。')
+assert len(result['checks']) == 10 and all(value == 'passed' for value in result['checks'].values()), result['checks']
+print('10 项实际 Catalyst 进程内的会话行为检查通过。CI 不代表鼠标、输入法或用户手感验收。')
 PY

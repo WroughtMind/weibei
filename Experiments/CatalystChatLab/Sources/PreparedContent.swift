@@ -15,8 +15,10 @@ final class PreparedBlock {
     var draft = ""
     var collapsed = false
     var horizontalOffsets: [CGFloat] = []
+    var attachmentSelections: [NSRange?] = []
     var preparedText: NSAttributedString?
     var preparedLayout: TextLabel.Layout?
+    var imageSources: Set<String> = []
     enum Kind { case markdown, card(String), diagram(String) }
 
     init(id: String, messageID: String, node: MarkdownBlockNode, content: MarkdownContent) {
@@ -40,6 +42,7 @@ final class ContentStore {
     }()
     private var views: [String: BlockView] = [:]
     private var recent: [String] = []
+    private var generation = 0
     var changed: ((PreparedBlock) -> Void)?
     var interaction: ((BlockView) -> Void)?
     var openLink: ((URL) -> Void)?
@@ -51,29 +54,53 @@ final class ContentStore {
     var peakViewCount = 0
 
     func prepare(_ message: LabMessage, width: CGFloat) async -> Bool {
+        let generation = self.generation
         let revision = message.revision
         let text = message.markdown
         // ponytail: full source parsing preserves late reference definitions;
         // unchanged parsed blocks keep their content and layout. Use parser-owned
         // incremental invalidation only if this measured cost dominates.
         let parsed = await Task.detached(priority: .userInitiated) { MarkdownParser().parse(text) }.value
+        guard generation == self.generation, revision == message.revision else { return false }
         parseCount += 1
-        let context = MarkdownContent(parserResult: parsed, theme: theme)
+        let rendered = parsed.renderedContent(theme: theme)
         message.blocks = parsed.document.enumerated().map { index, node in
             if index < message.blocks.count, message.blocks[index].node == node {
                 return message.blocks[index]
             }
+            var imageSources: Set<String> = []
+            let isCallout: Bool
+            if case .blockquote = node { isCallout = true } else { isCallout = false }
             let transformed = [node].rewrite { (inline: MarkdownInlineNode) -> [MarkdownInlineNode] in
-                if case let .image(source, _) = inline { return [.text("\u{E000}IMAGE:" + source + "\u{E001}")] }
+                if case let .image(source, _) = inline {
+                    imageSources.insert(source)
+                    return [.text("\u{E000}IMAGE:" + source + "\u{E001}")]
+                }
+                if isCallout, case let .text(value) = inline, value.hasPrefix("[!NOTE]") {
+                    return [.strong(children: [.text("提示")]), .text(String(value.dropFirst(7)))]
+                }
                 return [inline]
             }
-            let content = MarkdownContent(blocks: transformed, rendered: context.rendered,
-                                          highlightMaps: context.highlightMaps)
+            var highlights: [Int: CodeHighlighter.HighlightMap] = [:]
+            @MainActor func prepareCode(_ node: MarkdownBlockNode) {
+                if case let .codeBlock(language, source) = node, language != "genui", language != "mermaid" {
+                    let key = CodeHighlighter.current.key(for: source, language: language)
+                    highlights[key] = CodeHighlighter.current.highlight(key: key, content: source, language: language, theme: theme)
+                }
+                node.children.forEach(prepareCode)
+            }
+            // Retain the public upstream highlighter's result with the block;
+            // eviction of its global cache must not re-highlight old history.
+            prepareCode(node)
+            let content = MarkdownContent(blocks: transformed, rendered: rendered, highlightMaps: highlights)
             let block = PreparedBlock(id: "\(message.id)/\(index)", messageID: message.id, node: node, content: content)
+            block.imageSources = imageSources
             if index < message.blocks.count {
+                views[message.blocks[index].id]?.saveInteractionState()
                 block.draft = message.blocks[index].draft
                 block.collapsed = message.blocks[index].collapsed
                 block.horizontalOffsets = message.blocks[index].horizontalOffsets
+                block.attachmentSelections = message.blocks[index].attachmentSelections
             }
             return block
         }
@@ -131,5 +158,5 @@ final class ContentStore {
         return block.height
     }
 
-    func reset() { views.removeAll(); recent.removeAll() }
+    func reset() { generation += 1; views.removeAll(); recent.removeAll() }
 }

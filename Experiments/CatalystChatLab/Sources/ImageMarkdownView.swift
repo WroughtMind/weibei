@@ -6,13 +6,13 @@ import MarkdownView
 @MainActor
 final class LabImages {
     static let shared = LabImages()
+    static let didLoad = Notification.Name("org.weibei.CatalystChatLab.imageLoaded")
     var images: [String: UIImage] = [:]
     var errors: [String: String] = [:]
-    private var waiting: [String: [() -> Void]] = [:]
-    func load(_ source: String, completion: @escaping () -> Void) {
+    private var loading: Set<String> = []
+    func load(_ source: String) {
         if images[source] != nil || errors[source] != nil { return }
-        if waiting[source] != nil { waiting[source]?.append(completion); return }
-        waiting[source] = [completion]
+        guard loading.insert(source).inserted else { return }
         Task {
             do {
                 let data: Data
@@ -46,14 +46,13 @@ final class LabImages {
                 }.value
                 images[source] = UIImage(cgImage: decoded.image)
             } catch { errors[source] = error.localizedDescription }
-            let callbacks = waiting.removeValue(forKey: source) ?? []
-            callbacks.forEach { $0() }
+            loading.remove(source)
+            NotificationCenter.default.post(name: Self.didLoad, object: source)
         }
     }
 }
 
 final class ImageMarkdownView: MarkdownTextView {
-    var imageChanged: (() -> Void)?
     var contentWidth: CGFloat = 680 {
         didSet { if contentWidth != oldValue { invalidateInlineDecoration() } }
     }
@@ -103,7 +102,7 @@ final class ImageMarkdownView: MarkdownTextView {
             status.textColor = .secondaryLabel
             status.text = LabImages.shared.errors[source].map { "图片读取失败：" + $0 } ?? "图片准备中…"
             container.addSubview(status)
-            LabImages.shared.load(source) { [weak self] in self?.imageChanged?() }
+            LabImages.shared.load(source)
         }
         container.frame.size = holder.size
         holder.view = container

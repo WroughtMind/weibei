@@ -32,7 +32,6 @@ final class BlockView: UIView, UITextViewDelegate {
             case let .string(value): if let url = URL(string: value) { self?.onLink?(url) }
             }
         }
-        markdown.imageChanged = { [weak self] in self?.onChange?() }
         cardTitle.font = .systemFont(ofSize: 15, weight: .semibold)
         cardTitle.numberOfLines = 2
         draft.font = .systemFont(ofSize: 16)
@@ -40,6 +39,7 @@ final class BlockView: UIView, UITextViewDelegate {
         draft.delegate = self
         draft.accessibilityLabel = "摘记卡草稿"
         fold.setTitle("收起", for: .normal)
+        fold.accessibilityIdentifier = "toggle-card"
         fold.addTarget(self, action: #selector(toggleCard), for: .touchUpInside)
         save.setTitle("收录到实验笔记", for: .normal)
         save.addTarget(self, action: #selector(saveCard), for: .touchUpInside)
@@ -87,6 +87,8 @@ final class BlockView: UIView, UITextViewDelegate {
             } else { markdown.isHidden = false }
         case let .card(source):
             for child in [cardTitle, draft, fold, save] { child.isHidden = false }
+            draft.isHidden = block.collapsed; save.isHidden = block.collapsed
+            fold.setTitle(block.collapsed ? "展开" : "收起", for: .normal)
             struct Card: Decodable { let title: String; let prompt: String }
             do {
                 let card = try JSONDecoder().decode(Card.self, from: Data(source.utf8))
@@ -180,8 +182,9 @@ final class BlockView: UIView, UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) { record?.draft = textView.text }
 
     func saveInteractionState() {
-        guard let record else { return }
+        guard let record, case .markdown = record.kind, preparedLabel.isHidden else { return }
         record.horizontalOffsets = scrollViews(in: markdown).map { $0.contentOffset.x }
+        record.attachmentSelections = attachmentLabels.map(\.selectionRange)
     }
     func restoreInteractionState() {
         guard let record else { return }
@@ -189,8 +192,18 @@ final class BlockView: UIView, UITextViewDelegate {
         for (view, offset) in zip(scrollViews(in: markdown), record.horizontalOffsets) {
             view.contentOffset.x = offset
         }
+        for (label, range) in zip(attachmentLabels, record.attachmentSelections) { label.selectionRange = range }
     }
-    private func scrollViews(in view: UIView) -> [UIScrollView] {
+    var attachmentLabels: [TextLabelView] {
+        func labels(in view: UIView) -> [TextLabelView] {
+            view.subviews.flatMap { child in
+                let own = (child as? TextLabelView).map { $0 === markdown.textLabelView ? [] : [$0] } ?? []
+                return own + labels(in: child)
+            }
+        }
+        return labels(in: markdown)
+    }
+    func scrollViews(in view: UIView) -> [UIScrollView] {
         view.subviews.flatMap { child in
             if let scroll = child as? UIScrollView { return [scroll] }
             return scrollViews(in: child)
@@ -233,9 +246,11 @@ final class BlockView: UIView, UITextViewDelegate {
         case .markdown:
             let label = self.label
             let old = label.selectionRange
+            let delegate = label.delegate
+            label.delegate = nil
+            defer { label.selectionRange = old; label.delegate = delegate }
             label.selectionRange = range ?? NSRange(location: 0, length: label.attributedText.length)
             let text = label.selectedPlainText() ?? ""
-            label.selectionRange = old
             return text
         case let .card(source): return record.draft.isEmpty ? source : record.draft
         case let .diagram(source): return source

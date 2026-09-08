@@ -9,12 +9,14 @@ final class LabMetrics: NSObject {
     private var displayLink: CADisplayLink?
     private var previous: CFTimeInterval?
     private var started: CFTimeInterval = 0
+    private var sampleName = ""
     private var step: ((Double) -> Void)?
     private var completed: (() -> Void)?
     func record(_ name: String, _ value: Double) { samples[name, default: []].append(value) }
-    func scrollSample(step: @escaping (Double) -> Void, completed: @escaping () -> Void) {
+    func scrollSample(name: String, step: @escaping (Double) -> Void, completed: @escaping () -> Void) {
         displayLink?.invalidate()
         self.step = step; self.completed = completed
+        sampleName = name
         previous = nil; started = CACurrentMediaTime()
         let link = CADisplayLink(target: self, selector: #selector(frame(_:)))
         displayLink = link
@@ -22,9 +24,9 @@ final class LabMetrics: NSObject {
     }
     @objc private func frame(_ link: CADisplayLink) {
         let now = CACurrentMediaTime()
-        if let previous { record("display_callback_interval_ms", (now - previous) * 1000) }
-        previous = now
         let elapsed = now - started
+        if let previous { record("\(sampleName)_\(elapsed < 6 ? "outbound" : "return")_display_callback_interval_ms", (now - previous) * 1000) }
+        previous = now
         step?(elapsed)
         if elapsed >= 12 {
             displayLink?.invalidate(); displayLink = nil
@@ -34,12 +36,15 @@ final class LabMetrics: NSObject {
     }
     static let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("org.weibei.CatalystChatLab/Results", isDirectory: true)
-    func write(controller: ConversationController) throws -> URL {
+    static func residentMemory() -> UInt64? {
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
         let memory = withUnsafeMutablePointer(to: &info) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count) }
         }
+        return memory == KERN_SUCCESS ? info.resident_size : nil
+    }
+    func write(controller: ConversationController) throws -> URL {
         var output: [String: Any] = [
             "recorded_at": ISO8601DateFormatter().string(from: Date()),
             "system": ProcessInfo.processInfo.operatingSystemVersionString,
@@ -61,7 +66,7 @@ final class LabMetrics: NSObject {
             "samples": samples,
             "frame_evidence_boundary": "CADisplayLink callback delivery intervals during programmatic scrolling; these are not GPU presentation timestamps and are not FPS or human trackpad acceptance."
         ]
-        if memory == KERN_SUCCESS { output["resident_memory_bytes"] = info.resident_size }
+        if let memory = Self.residentMemory() { output["resident_memory_bytes"] = memory }
         #if targetEnvironment(macCatalyst)
         output["platform"] = "Mac Catalyst"
         #endif
