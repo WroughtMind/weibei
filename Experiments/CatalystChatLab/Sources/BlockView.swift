@@ -7,10 +7,10 @@ final class BlockView: UIView, UITextViewDelegate {
     let markdown = ImageMarkdownView()
     private let preparedLabel = TextLabelView()
     var label: TextLabelView { preparedLabel.isHidden ? markdown.textLabelView : preparedLabel }
-    private let cardTitle = UILabel()
-    private let draft = UITextView()
-    private let fold = UIButton(type: .system)
-    private let save = UIButton(type: .system)
+    private lazy var cardTitle = UILabel()
+    private lazy var draft = UITextView()
+    private lazy var fold = UIButton(type: .system)
+    private lazy var save = UIButton(type: .system)
     private var diagram: DiagramView?
     var diagramRendered: Bool { diagram?.renderSucceeded == true }
     private(set) var record: PreparedBlock?
@@ -24,7 +24,7 @@ final class BlockView: UIView, UITextViewDelegate {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        for child in [markdown, preparedLabel, cardTitle, draft, fold, save] { addSubview(child) }
+        for child in [markdown, preparedLabel] { addSubview(child) }
         preparedLabel.isSelectable = true
         markdown.throttleInterval = nil
         markdown.linkHandler = { [weak self] payload, _, _ in
@@ -33,23 +33,27 @@ final class BlockView: UIView, UITextViewDelegate {
             case let .string(value): if let url = URL(string: value) { self?.onLink?(url) }
             }
         }
-        cardTitle.font = .systemFont(ofSize: 15, weight: .semibold)
-        cardTitle.numberOfLines = 2
-        draft.font = .systemFont(ofSize: 16)
-        draft.backgroundColor = .secondarySystemBackground
-        draft.delegate = self
-        draft.accessibilityLabel = "摘记卡草稿"
-        fold.setTitle("收起", for: .normal)
-        fold.accessibilityIdentifier = "toggle-card"
-        fold.addTarget(self, action: #selector(toggleCard), for: .touchUpInside)
-        save.setTitle("收录到实验笔记", for: .normal)
-        save.addTarget(self, action: #selector(saveCard), for: .touchUpInside)
         selectionOverlay.fillColor = UIColor.systemOrange.withAlphaComponent(0.23).cgColor
         selectionOverlay.zPosition = 20
         selectionOverlay.actions = ["path": NSNull()]
         layer.addSublayer(selectionOverlay)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private func installCardControls() {
+        guard cardTitle.superview == nil else { return }
+        for child in [cardTitle, draft, fold, save] { addSubview(child) }
+        cardTitle.font = .systemFont(ofSize: 15, weight: .semibold)
+        cardTitle.numberOfLines = 2
+        draft.font = .systemFont(ofSize: 16)
+        draft.backgroundColor = .secondarySystemBackground
+        draft.delegate = self
+        draft.accessibilityLabel = "摘记卡草稿"
+        fold.accessibilityIdentifier = "toggle-card"
+        fold.addTarget(self, action: #selector(toggleCard), for: .touchUpInside)
+        save.setTitle("收录到实验笔记", for: .normal)
+        save.addTarget(self, action: #selector(saveCard), for: .touchUpInside)
+    }
 
     func configure(_ block: PreparedBlock, theme: MarkdownTheme) {
         saveInteractionState()
@@ -87,6 +91,7 @@ final class BlockView: UIView, UITextViewDelegate {
                 preparedLabel.isHidden = false
             } else { markdown.isHidden = false }
         case let .card(source):
+            installCardControls()
             for child in [cardTitle, draft, fold, save] { child.isHidden = false }
             draft.isHidden = block.collapsed; save.isHidden = block.collapsed
             fold.setTitle(block.collapsed ? "展开" : "收起", for: .normal)
