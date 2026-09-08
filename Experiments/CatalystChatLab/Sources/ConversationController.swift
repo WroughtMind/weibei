@@ -632,7 +632,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 collection.scrollToItem(at: tailPath, at: .bottom, animated: false)
                 collection.layoutIfNeeded()
                 let tail = (collection.cellForItem(at: tailPath) as? MessageCell)?.body?.copyText()
-                try expect(tail == LabFixture.longAnswer.components(separatedBy: "\n\n").last, "长回答最后一段未真实显示")
+                // MarkdownView appends a paragraph terminator; compare every
+                // content character without treating that layout newline as text.
+                try expect(tail?.trimmingCharacters(in: .newlines) == LabFixture.longAnswer.components(separatedBy: "\n\n").last,
+                           "长回答最后一段未真实显示")
                 guard let longCode = answer.blocks.first(where: { if case let .codeBlock(_, text) = $0.node { return text.trimmingCharacters(in: .whitespacesAndNewlines) == LabFixture.longCode }; return false }) else {
                     throw Failure(message: "长代码缺失")
                 }
