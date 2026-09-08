@@ -55,14 +55,16 @@ enum ChatRendererExperiment {
                 if let directory = verificationDirectory {
                     if ProcessInfo.processInfo.arguments.contains("--chat-renderer-smoke") {
                         try await verifyNormalWindow(directory: directory)
-                        NSApp.terminate(nil)
+                        // AppDelegate saves asynchronously before quitting. Leave
+                        // this Swift task before AppKit enters its termination loop.
+                        DispatchQueue.main.async { NSApp.terminate(nil) }
                     } else { await ChatRendererConversationChecks.run(store: store, directory: directory) }
                 }
 #endif
             } catch {
                 if let directory = verificationDirectory {
                     try? String(describing: error).write(to: directory.appendingPathComponent("fatal.txt"), atomically: true, encoding: .utf8)
-                    NSApp.terminate(nil)
+                    DispatchQueue.main.async { NSApp.terminate(nil) }
                 } else {
                     WeiBeiLog.workspace.error("code=chat_renderer_seed_failed underlying=\(WeiBeiLog.code(error), privacy: .public)")
                 }
@@ -84,6 +86,9 @@ enum ChatRendererExperiment {
                 content.layoutSubtreeIfNeeded()
                 let count = bodyLength(content)
                 guard count > 0 else { continue }
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                window.displayIfNeeded()
                 let capture = Process()
                 capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
                 capture.arguments = ["-x", "-l", String(window.windowNumber), directory.appendingPathComponent("normal-window.png").path]
