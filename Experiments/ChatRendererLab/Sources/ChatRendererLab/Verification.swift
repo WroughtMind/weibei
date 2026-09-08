@@ -1,6 +1,7 @@
 import ChatRendererKit
 import AppKit
 import Foundation
+import MarkdownView
 
 enum LabFailure: Error, CustomStringConvertible {
     case message(String)
@@ -73,6 +74,7 @@ enum CandidateVerification {
         }
 
         await runCase("rich_content_readable_copy_and_math_resources") {
+            let began = ProcessInfo.processInfo.systemUptime
             document.reset(); host.reset()
             try await waitForDisplay(document, revision: document.submit(LabSamples.rich))
             try await settle(host)
@@ -83,6 +85,16 @@ enum CandidateVerification {
             try require(!copied.contains("\u{fffc}"), "Copy leaked an object replacement character")
             try require(host.measurementIsValid && host.contentHeight.isFinite && host.contentHeight > 1, "Invalid rich content height")
             guard let content = document.content else { throw LabFailure.message("No prepared document") }
+            let codeKeys = content.blocks.compactMap { block -> Int? in
+                guard case let .codeBlock(language, source) = block else { return nil }
+                return CodeHighlighter.current.key(for: source, language: language)
+            }
+            while !codeKeys.allSatisfy({ CodeHighlighter.current.renderCache.value(forKey: $0)?.isEmpty == false }) {
+                try require(ProcessInfo.processInfo.systemUptime - began < 10, "Asynchronous code highlighting did not finish")
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            timings.append(.init(operation: "cold_content_and_code_highlight_ready", milliseconds:
+                (ProcessInfo.processInfo.systemUptime - began) * 1_000, revision: document.displayedRevision))
             try require(!content.rendered.isEmpty && content.rendered.values.allSatisfy { $0.image != nil },
                         "Math image creation failed; verify bundled fonts/resources")
             // Drawing probes are diagnostic only, outside all timing measurements.

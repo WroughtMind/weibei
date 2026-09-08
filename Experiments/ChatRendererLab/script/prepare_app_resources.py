@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch resolved checkouts' app resources and Litext attachment ownership.
+"""Patch resolved checkouts' resources, attachment ownership and cold highlighting.
 
 SwiftPM CLI accessors look at the app root, which cannot contain resources in a
 valid signed macOS bundle. Prefer Contents/Resources through Bundle.main's
@@ -66,3 +66,28 @@ else:
     finally:
         path.chmod(mode)
     print('Litext attachment delegate no longer retains its owner in a cycle')
+
+# MarkdownView already highlights on its worker. Its separate synchronous API
+# must not create an unused JavaScript engine on the first main-thread cache read.
+path = checkouts['markdownview'] / 'Sources/MarkdownView/Components/CodeView/CodeHighlighter.swift'
+original = path.read_text()
+before = '    private let highlightr = Highlightr()\n'
+after = '''    private lazy var highlightr: Highlightr? = {
+        let value = Highlightr()
+        value?.setTheme(to: "xcode")
+        return value
+    }()
+'''
+initializer = '    private init() {\n        highlightr?.setTheme(to: "xcode")\n    }'
+if after in original:
+    print('already applied: lazy synchronous code highlighter')
+else:
+    if original.count(before) != 1 or original.count(initializer) != 1:
+        raise SystemExit('Unexpected MarkdownView highlighter; review the locked dependency.')
+    mode = stat.S_IMODE(path.stat().st_mode)
+    try:
+        path.chmod(mode | stat.S_IWUSR)
+        path.write_text(original.replace(before, after).replace(initializer, '    private init() {}'))
+    finally:
+        path.chmod(mode)
+    print('Unused synchronous highlighter no longer initializes during async rendering')

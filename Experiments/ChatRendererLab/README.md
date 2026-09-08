@@ -42,7 +42,7 @@ bash Experiments/ChatRendererLab/script/build_conversation.sh benchmark baseline
 
 上游 MarkdownView 固定在 `757b6fcc4b3095e84f4c0613f4b98147f49dcd09`，Litext 为 `2.2.1`。完整 App 继续使用魏碑锁定的 `WroughtMind/SwiftMath@b6d15610552aa04a54c36bf205efaf34409dc335`，没有删除中文数学字体修复。
 
-实验脚本仅补丁处理本分支解析的 checkout：让资源从签名 App 的 `Contents/Resources` 加载，以及修复 Litext 2.2.1 中附件与其 CoreText delegate 相互强持有的问题。附件的实际释放由运行检查保护。所有字体和许可证保留；验证时临时移开本次构建目录，防止缺失资源被开发缓存掩盖。
+实验脚本仅补丁处理本分支解析的 checkout：让资源从签名 App 的 `Contents/Resources` 加载，修复 Litext 2.2.1 的附件强引用环，并把后台高亮路径没有使用的同步高亮器改为按需创建，消除首开主线程上的额外 JavaScript 初始化。附件释放与实际后台高亮完成均有运行检查。所有字体和许可证保留；验证时临时移开本次构建目录，防止缺失资源被开发缓存掩盖。
 
 ## 原有组件入口
 
