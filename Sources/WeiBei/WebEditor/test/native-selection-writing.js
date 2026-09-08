@@ -1,8 +1,8 @@
 const editor = window.WeiBeiEditor;
 const pause = () => new Promise(resolve => setTimeout(resolve, 80));
 const expect = (condition, reason) => { if (!condition) throw new Error(reason); };
-const native = async (operation, text) => {
-  window.webkit.messageHandlers.nativeInput.postMessage({ operation, text });
+const native = async (operation, text, key = {}) => {
+  window.webkit.messageHandlers.nativeInput.postMessage({ operation, text, ...key });
   await pause();
 };
 const reset = async (markdown = '') => {
@@ -11,6 +11,56 @@ const reset = async (markdown = '') => {
   editor.selectDocumentEndForCheck();
   await pause();
 };
+// Inserting from an unfocused note also changes focus. That second update must
+// not cancel the slash menu triggered by the first one.
+const waitFor = (condition, reason) => new Promise((resolve, reject) => {
+  const observer = new MutationObserver(check);
+  const timeout = setTimeout(() => { observer.disconnect(); reject(new Error(reason)); }, 2000);
+  function check() {
+    if (!condition()) return;
+    clearTimeout(timeout);
+    observer.disconnect();
+    resolve();
+  }
+  observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+  check();
+});
+await reset();
+// Exercise production menu behavior; the check stylesheet still disables motion.
+window.weiBeiEditorCheckMode = false;
+document.querySelector('.ProseMirror').blur();
+document.querySelector('.weibei-line-plus').click();
+const slashMenu = document.querySelector('.weibei-slash-menu');
+const menuVisible = () => slashMenu.dataset.show === 'true' && slashMenu.getAttribute('aria-hidden') !== 'true'
+  && getComputedStyle(slashMenu).visibility === 'visible' && getComputedStyle(slashMenu).opacity === '1';
+await waitFor(menuVisible, 'The empty-line insert button did not open its slash menu after focus changed');
+document.querySelector('#weibei-slash-command-heading1 button').click();
+await native('insert', '标题');
+await waitFor(() => document.querySelector('.ProseMirror h1')?.textContent === '标题', 'Native input did not reach the heading');
+document.querySelector('.ProseMirror').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+await native('insert', '/');
+await waitFor(() => editor.getMarkdown().startsWith('# 标题\n') && menuVisible(), 'The next slash menu did not reopen after creating a heading');
+// A real padding click must keep the caret inside the editor after WebKit's
+// default pointer handling, so heading input and the next slash still work.
+editor.setTypewriterMode(true);
+await reset();
+document.querySelector('.ProseMirror').blur();
+const writingArea = document.querySelector('#editor');
+const writingBounds = writingArea.getBoundingClientRect();
+const paddingClick = new Promise(resolve => writingArea.addEventListener('pointerup', resolve, { once: true }));
+window.webkit.messageHandlers.nativeInput.postMessage({ operation: 'click',
+  x: writingBounds.left + writingBounds.width / 2,
+  y: writingBounds.bottom - parseFloat(getComputedStyle(writingArea).paddingBottom) / 2 });
+await paddingClick;
+await waitFor(() => document.activeElement === document.querySelector('.ProseMirror'), 'A typewriter padding click lost editor focus');
+await native('key', '#', { keyCode: 20, shift: true });
+await native('key', ' ', { keyCode: 49 });
+await waitFor(() => document.querySelector('.ProseMirror h1'), 'A typewriter padding click prevented heading input');
+document.querySelector('.ProseMirror').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+await native('key', '/', { keyCode: 44 });
+await waitFor(menuVisible, 'Slash input did not open its menu after a typewriter padding click');
+editor.setTypewriterMode(false);
+window.weiBeiEditorCheckMode = true;
 // Native NSTextInputClient input is essential: the editor's scripted typing helper
 // bypasses the WebKit substitutions that caused repeated closing quotes.
 window.webkit.messageHandlers.nativeInput.postMessage({ operation: 'checkpoint', text: 'quotes' });
