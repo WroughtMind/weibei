@@ -59,7 +59,9 @@ enum ChatRendererExperiment {
                 if let directory = verificationDirectory {
                     try? String(describing: error).write(to: directory.appendingPathComponent("fatal.txt"), atomically: true, encoding: .utf8)
                     NSApp.terminate(nil)
-                } else { NSLog("实验内容初始化失败：%@", error.localizedDescription) }
+                } else {
+                    WeiBeiLog.workspace.error("code=chat_renderer_seed_failed underlying=\(WeiBeiLog.code(error), privacy: .public)")
+                }
             }
         }
     }

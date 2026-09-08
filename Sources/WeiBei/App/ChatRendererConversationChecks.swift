@@ -244,7 +244,9 @@ enum ChatRendererConversationChecks {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 .write(to: directory.appendingPathComponent("conversation-report.json"))
-        } catch { NSLog("Conversation verification report failed: %@", String(describing: error)) }
+        } catch {
+            WeiBeiLog.workspace.error("code=chat_renderer_report_failed underlying=\(WeiBeiLog.code(error), privacy: .public)")
+        }
         window.contentView = nil
         NSApp.terminate(nil)
     }
