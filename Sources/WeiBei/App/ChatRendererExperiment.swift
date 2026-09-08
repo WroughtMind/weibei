@@ -8,7 +8,8 @@ import WeiBeiCore
 @MainActor
 enum ChatRendererEntry {
     static func main() {
-        guard ChatRendererExperiment.verificationDirectory != nil else { WeiBeiApp.main(); return }
+        guard ChatRendererExperiment.verificationDirectory != nil,
+              !ProcessInfo.processInfo.arguments.contains("--chat-renderer-smoke") else { WeiBeiApp.main(); return }
         let app = NSApplication.shared
         let delegate = VerificationDelegate()
         app.delegate = delegate
@@ -30,7 +31,7 @@ enum ChatRendererExperiment {
     static let scenarioTitles = ["长历史 · 384 条", "少量消息 · 长正文与代码", "富内容 · 来源与动作"]
     static var verificationDirectory: URL? {
         let args = ProcessInfo.processInfo.arguments
-        guard let index = args.firstIndex(where: { $0 == "--chat-renderer-verify" || $0 == "--chat-renderer-benchmark" }), args.indices.contains(index + 1) else { return nil }
+        guard let index = args.firstIndex(where: { $0 == "--chat-renderer-verify" || $0 == "--chat-renderer-benchmark" || $0 == "--chat-renderer-smoke" }), args.indices.contains(index + 1) else { return nil }
         return URL(fileURLWithPath: args[index + 1], isDirectory: true)
     }
     static func makeStore() -> WorkspaceStore {
@@ -52,7 +53,10 @@ enum ChatRendererExperiment {
                 }
 #if CHAT_RENDERER_LAB
                 if let directory = verificationDirectory {
-                    await ChatRendererConversationChecks.run(store: store, directory: directory)
+                    if ProcessInfo.processInfo.arguments.contains("--chat-renderer-smoke") {
+                        try await verifyNormalWindow(directory: directory)
+                        NSApp.terminate(nil)
+                    } else { await ChatRendererConversationChecks.run(store: store, directory: directory) }
                 }
 #endif
             } catch {
@@ -65,6 +69,35 @@ enum ChatRendererExperiment {
             }
         }
     }
+#if CHAT_RENDERER_LAB
+    /// Used only on the isolated CI desktop. Local GUI operation stays in PiP.
+    private static func verifyNormalWindow(directory: URL) async throws {
+        guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" else { throw CocoaError(.featureUnsupported) }
+        func bodyLength(_ view: NSView) -> Int {
+            if let text = view as? CandidateTextView { return text.textLabelView.attributedText.length }
+            return view.subviews.reduce(0) { $0 + bodyLength($1) }
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 30
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            for window in NSApp.windows where window.isVisible {
+                guard let content = window.contentView else { continue }
+                content.layoutSubtreeIfNeeded()
+                let count = bodyLength(content)
+                guard count > 0 else { continue }
+                let capture = Process()
+                capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                capture.arguments = ["-x", "-l", String(window.windowNumber), directory.appendingPathComponent("normal-window.png").path]
+                try capture.run(); capture.waitUntilExit()
+                try JSONSerialization.data(withJSONObject: ["normal_entry": true, "visible_body_characters": count,
+                    "window_capture_exit": capture.terminationStatus], options: [.prettyPrinted, .sortedKeys])
+                    .write(to: directory.appendingPathComponent("normal-window.json"))
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw CocoaError(.coderValueNotFound)
+    }
+#endif
     static func open(_ title: String, store: WorkspaceStore) {
         guard let session = store.studySessions.first(where: { $0.title == title }) else { return }
         _ = store.activateStudySession(session.id, expectedCourseID: nil, expectedScopeNeedsReview: false)

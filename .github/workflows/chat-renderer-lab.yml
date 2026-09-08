@@ -96,6 +96,20 @@ jobs:
           cache: npm
       - name: Build and verify the real conversation candidate
         run: bash Experiments/ChatRendererLab/script/build_conversation.sh verify
+      - name: Open the normal conversation window on the isolated CI desktop
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          root = pathlib.Path('Experiments/ChatRendererLab/.artifacts/conversation-candidate').resolve()
+          output = root / 'normal-window'
+          output.mkdir()
+          subprocess.run(['/usr/bin/open', '-n', '-g', '-W', '--stdout', str(output / 'stdout.log'),
+                          '--stderr', str(output / 'stderr.log'), str(root / '魏碑-会话实验-451.app'),
+                          '--args', '--chat-renderer-smoke', str(output)], check=True, timeout=90)
+          report = json.loads((output / 'normal-window.json').read_text())
+          assert report['normal_entry'] and report['visible_body_characters'] > 0, report
+          print(report)
+          PY
       - name: Archive independent candidate
         if: success()
         run: |
@@ -114,3 +128,6 @@ jobs:
             Experiments/ChatRendererLab/.artifacts/conversation-candidate/Package.resolved
             Experiments/ChatRendererLab/.artifacts/conversation-candidate/check-*/*.json
             Experiments/ChatRendererLab/.artifacts/conversation-candidate/check-*/*.log
+            Experiments/ChatRendererLab/.artifacts/conversation-candidate/normal-window/*.json
+            Experiments/ChatRendererLab/.artifacts/conversation-candidate/normal-window/*.log
+            Experiments/ChatRendererLab/.artifacts/conversation-candidate/normal-window/*.png
