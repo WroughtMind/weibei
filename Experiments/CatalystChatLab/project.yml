@@ -1,0 +1,64 @@
+name: CatalystChatLab
+options:
+  deploymentTarget:
+    iOS: '16.0'
+  createIntermediateGroups: true
+packages:
+  MarkdownView:
+    url: https://github.com/Lakr233/MarkdownView
+    revision: 757b6fcc4b3095e84f4c0613f4b98147f49dcd09
+targets:
+  CatalystChatLab:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - path: Resources
+        excludes: [Web]
+        buildPhase: resources
+      - path: Resources/Web
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: MarkdownView
+        product: MarkdownView
+      - package: MarkdownView
+        product: MarkdownParser
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.weibei.CatalystChatLab
+        PRODUCT_NAME: CatalystChatLab
+        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        TARGETED_DEVICE_FAMILY: '2,6'
+        SWIFT_VERSION: '6.0'
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: 魏碑·Catalyst会话实验
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: '-'
+        ENABLE_HARDENED_RUNTIME: YES
+        CURRENT_PROJECT_VERSION: '1'
+        MARKETING_VERSION: '0.1'
+    scheme:
+      gatherCoverageData: false
+      run:
+        config: Release
+      archive:
+        config: Release
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: 魏碑·Catalyst会话实验
+        LSApplicationCategoryType: public.app-category.productivity
+        UIApplicationSupportsIndirectInputEvents: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations: {}
+        UILaunchScreen: {}
+        LabSourceRevision: $(LAB_SOURCE_REVISION)
+        LabSourceDirty: $(LAB_SOURCE_DIRTY)

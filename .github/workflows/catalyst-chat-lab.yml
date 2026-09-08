@@ -1,0 +1,35 @@
+name: 独立 Catalyst 会话实验
+on:
+  pull_request:
+    paths:
+      - 'Experiments/CatalystChatLab/**'
+      - '.github/workflows/catalyst-chat-lab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  catalyst:
+    name: Catalyst 构建、签名和会话行为
+    runs-on: macos-26
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: Experiments/CatalystChatLab
+    steps:
+      - uses: actions/checkout@v4
+      - name: 记录工具链
+        run: xcodebuild -version
+      - name: 构建真实 Mac Catalyst Release
+        run: ./script/build.sh
+      - name: 在独立 CI 桌面运行同一套应用内行为检查
+        run: ./script/check-ci.sh
+      - name: 保存候选、来源和检查记录
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalyst-chat-lab
+          path: |
+            Experiments/CatalystChatLab/dist/
+            Experiments/CatalystChatLab/.build/build.log
+            Experiments/CatalystChatLab/Dependencies.json
+            Experiments/CatalystChatLab/Evidence/ci.json
