@@ -180,6 +180,24 @@ enum ChatRendererConversationChecks {
             view.unbind()
         }
         await runCase("stream_stop_and_final_tail_use_real_store") {
+            // Keep the real SwiftUI message projection mounted while the request
+            // and display pump change state; the bare list cannot catch a reply
+            // accidentally added twice by its parent.
+            let pane = NSHostingView(rootView: AgentPaneView(showsPaneHeader: false)
+                .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction))
+            let paneWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 741, height: 640),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            paneWindow.contentView = pane
+            defer { paneWindow.contentView = nil }
+            pane.layoutSubtreeIfNeeded()
+            func findList(_ view: NSView) -> ChatRendererListView? {
+                if let list = view as? ChatRendererListView { return list }
+                for child in view.subviews { if let list = findList(child) { return list } }
+                return nil
+            }
+            guard let paneList = findList(pane) else { throw Failure(message: "Real conversation pane did not mount its list") }
+            paneList.reveal(store.messages[1].id); try await settle(paneList)
+            let paneReading = paneList.captureAnchor(), paneReloads = paneList.fullReloadCount
             let reading = list.captureAnchor()
             ChatRendererExperiment.replay(store: store)
             let run = store.agentRun
@@ -206,6 +224,11 @@ enum ChatRendererConversationChecks {
                 (ProcessInfo.processInfo.systemUptime - inputFinished) * 1_000])
             list.update(sessionID: store.activeStudySessionID, messages: store.messages)
             try await settle(list)
+            try await settle(paneList)
+            try require(paneList.numberOfRows(in: paneList.table) == store.messages.count + 1,
+                "The real pane duplicated or dropped the displayed reply")
+            try require(paneList.fullReloadCount == paneReloads && paneList.captureAnchor()?.id == paneReading?.id,
+                "The real pane reloaded or left history during streaming")
             try require(store.messages.last?.text == LabSamples.rich && store.messages.last?.completionState == .completed,
                 "Completed stream lost the authoritative final snapshot")
             try require(list.fullReloadCount == reloads, "Streaming replaced the whole message list")

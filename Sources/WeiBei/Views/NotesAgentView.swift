@@ -1221,8 +1221,9 @@ struct AgentPaneView: View {
 
 #if CHAT_RENDERER_LAB
     private var rendererMessages: [AgentMessage] {
-        if store.isAgentRunningInActiveChat && !store.hasPersistedGeneratingAgentReply,
-           let id = store.agentStreaming.displayingMessageID {
+        if store.isAgentRunningInActiveChat,
+           let id = store.agentStreaming.displayingMessageID,
+           !store.messages.contains(where: { $0.id == id }) {
             return store.messages + [AgentMessage(id: id, role: .assistant, text: "", source: nil, completionState: .generating)]
         }
         return store.messages
@@ -2424,8 +2425,9 @@ struct FloatingSelectionAgentView: View {
     @State private var rendererSession = ChatRendererSession()
     private var rendererMessages: [AgentMessage] {
         var result = visibleFloatingMessages
-        if store.isAgentRunningInActiveChat, !store.hasPersistedGeneratingAgentReply,
-           let id = store.agentStreaming.displayingMessageID {
+        if store.isAgentRunningInActiveChat,
+           let id = store.agentStreaming.displayingMessageID,
+           !result.contains(where: { $0.id == id }) {
             result.append(AgentMessage(id: id, role: .assistant, text: "", source: nil, completionState: .generating))
         }
         return result

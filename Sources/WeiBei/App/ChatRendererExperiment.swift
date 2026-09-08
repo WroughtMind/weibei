@@ -55,16 +55,17 @@ enum ChatRendererExperiment {
                 if let directory = verificationDirectory {
                     if ProcessInfo.processInfo.arguments.contains("--chat-renderer-smoke") {
                         try await verifyNormalWindow(directory: directory)
-                        // AppDelegate saves asynchronously before quitting. Leave
-                        // this Swift task before AppKit enters its termination loop.
-                        DispatchQueue.main.async { NSApp.terminate(nil) }
+                        // terminateLater enters a nested AppKit loop. Starting it
+                        // inside a main-queue block prevents the delegate's async
+                        // save from running on that same queue (confirmed by sample).
+                        NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
                     } else { await ChatRendererConversationChecks.run(store: store, directory: directory) }
                 }
 #endif
             } catch {
                 if let directory = verificationDirectory {
                     try? String(describing: error).write(to: directory.appendingPathComponent("fatal.txt"), atomically: true, encoding: .utf8)
-                    DispatchQueue.main.async { NSApp.terminate(nil) }
+                    NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
                 } else {
                     WeiBeiLog.workspace.error("code=chat_renderer_seed_failed underlying=\(WeiBeiLog.code(error), privacy: .public)")
                 }
@@ -195,7 +196,9 @@ enum ChatRendererExperiment {
         store.agentRuns[chatID] = run
         store.appendAgentMessage(.init(role: .user, text: "合成流式重放", source: nil))
         store.appendAgentMessage(.init(id: replyID, role: .assistant, text: "", source: nil,
-            completionState: .generating, retryQuestion: "合成流式重放"))
+            completionState: .generating,
+            origin: .init(requestID: requestID, chatID: chatID, courseID: store.activeCourseID),
+            retryQuestion: "合成流式重放"))
         run.streaming.begin(messageID: replyID, chatID: chatID)
         store.objectWillChange.send()
         run.agentRequestTask = Task { @MainActor in
