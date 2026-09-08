@@ -180,7 +180,7 @@ jobs:
             test -s "dist/publish/appcast-$arch.xml"
             (cd dist/publish && shasum -a 256 -c "$dmg.sha256")
             grep -Fq "$dmg" "dist/publish/appcast-$arch.xml"
-            feed_build="$(xmllint --xpath 'string(//*[local-name()="enclosure"]/@*[local-name()="version"])' "dist/publish/appcast-$arch.xml")"
+            feed_build="$(xmllint --xpath 'string((/rss/channel/item/*[local-name()="version"] | /rss/channel/item/enclosure/@*[local-name()="version"])[1])' "dist/publish/appcast-$arch.xml")"
             test "$feed_build" = "$WEIBEI_BUILD_NUMBER"
           done
           cmp dist/publish/appcast-arm64.xml dist/publish/appcast.xml

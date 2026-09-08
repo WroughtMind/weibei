@@ -32,3 +32,10 @@ with tempfile.TemporaryDirectory() as directory:
         feed.write_text(f'<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item><enclosure sparkle:version="{version}"/></item></channel></rss>')
         result = subprocess.run(["python3", script, "--after-feed", str(feed)], env=env, capture_output=True)
         assert (result.returncode == 0) == succeeds
+
+    feed.write_text('<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item><sparkle:version>1806</sparkle:version><enclosure/></item><item><sparkle:version>20260910.0000.00</sparkle:version><enclosure/></item></channel></rss>')
+    result = subprocess.run(["python3", script, "--after-feed", str(feed)], env=env, capture_output=True)
+    assert result.returncode != 0
+    feed.write_text(feed.read_text().replace("20260910.0000.00", "1802"))
+    result = subprocess.run(["python3", script, "--after-feed", str(feed)], env=env, capture_output=True)
+    assert result.returncode == 0

@@ -28,8 +28,14 @@ if __name__ == "__main__":
         value = validate(args.value if args.value is not None else
                          os.environ.get("WEIBEI_BUILD_NUMBER", datetime.now(timezone.utc).strftime(FORMAT)))
         if args.after_feed:
-            versions = [node.get("{http://www.andymatuschak.org/xml-namespaces/sparkle}version")
-                        for node in ET.parse(args.after_feed).iter("enclosure")]
+            version_key = "{http://www.andymatuschak.org/xml-namespaces/sparkle}version"
+            versions = []
+            for item in ET.parse(args.after_feed).findall("./channel/item"):
+                version = item.findtext(version_key)
+                enclosure = item.find("enclosure")
+                if version is None and enclosure is not None:
+                    version = enclosure.get(version_key)
+                versions.append(version)
             if not versions or any(v is None or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,2}", v) for v in versions):
                 raise ValueError("previous appcast has no valid build versions")
             args.after = max(versions, key=lambda v: tuple(map(int, v.split("."))))
