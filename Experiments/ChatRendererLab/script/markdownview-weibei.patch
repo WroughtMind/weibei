@@ -158,10 +158,49 @@ index 7cfc9ed..77617f0 100644
                  lockedToVertical = nil
              }
 diff --git a/Sources/MarkdownView/MarkdownTextBuilder/BlockFragmentCache.swift b/Sources/MarkdownView/MarkdownTextBuilder/BlockFragmentCache.swift
-index feaac25..f7fa945 100644
+index feaac25..1a06c82 100644
 --- a/Sources/MarkdownView/MarkdownTextBuilder/BlockFragmentCache.swift
 +++ b/Sources/MarkdownView/MarkdownTextBuilder/BlockFragmentCache.swift
-@@ -85,7 +85,7 @@ private extension MarkdownBlockNode {
+@@ -35,29 +35,27 @@ struct BlockFragmentCache {
+     private var entries: [Entry?] = []
+     /// The theme these fragments were built against.
+     private let theme: MarkdownTheme?
+-    /// Whether the content carried rendered math when these were built.
+-    ///
+-    /// A math run draws from an image map owned by the content rather than by
+-    /// the node, so the same node can mean a different picture in a different
+-    /// document. Rather than search every block for math, a document that has
+-    /// any math at all opts out wholesale — it is the rare case, and this keeps
+-    /// the common one free.
+-    private let carriesMath: Bool
++    /// Reuse math-bearing fragments only while their text and rendered images match.
++    /// Highlight completion keeps these images; a changed formula must not reuse them.
++    private let rendered: RenderedTextContent.Map
+
+     init() {
+         theme = nil
+-        carriesMath = false
++        rendered = [:]
+     }
+
+     init(theme: MarkdownTheme, content: MarkdownContent) {
+         self.theme = theme
+-        carriesMath = !content.rendered.isEmpty
++        rendered = content.rendered
+         entries.reserveCapacity(content.blocks.count)
+     }
+
+     /// Whether anything in this cache may be reused for the coming build.
+     func isUsable(with theme: MarkdownTheme, for content: MarkdownContent) -> Bool {
+-        self.theme == theme && !carriesMath && content.rendered.isEmpty
++        self.theme == theme && rendered.count == content.rendered.count && rendered.allSatisfy { key, value in
++            guard let next = content.rendered[key] else { return false }
++            return value.text == next.text && value.image === next.image
++        }
+     }
+
+     /// The fragment built for this block last time.
+@@ -85,7 +83,7 @@ private extension MarkdownBlockNode {
      var isFragmentCacheable: Bool {
          switch self {
          case .codeBlock, .table: false
@@ -171,7 +210,7 @@ index feaac25..f7fa945 100644
      }
  }
 diff --git a/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift b/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift
-index b13b063..e9a04bf 100644
+index b13b063..f91bf21 100644
 --- a/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift
 +++ b/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift
 @@ -36,18 +36,24 @@ final class BlockProcessor {
@@ -196,7 +235,7 @@ index b13b063..e9a04bf 100644
 +            string.enumerateAttribute(.font, in: NSRange(location: 0, length: string.length)) { value, range, _ in
 +                let base = (value as? PlatformFont) ?? theme.fonts.body
 +                #if canImport(AppKit)
-+                    let font = NSFont(descriptor: base.fontDescriptor, size: size)?.bold ?? theme.fonts.title
++                    let font = (CTFontCreateCopyWithAttributes(base as CTFont, size, nil, nil) as NSFont).bold
 +                #else
 +                    let font = UIFont(descriptor: base.fontDescriptor, size: size).bold
 +                #endif
@@ -499,3 +538,25 @@ index 3441a99..4d1a8d7 100644
 -        return result
 -    }
 -}
+diff --git a/Sources/MarkdownView/Supplements+Extension/UIFont+Extension.swift b/Sources/MarkdownView/Supplements+Extension/UIFont+Extension.swift
+index f3a7f5c..c07a81e 100644
+--- a/Sources/MarkdownView/Supplements+Extension/UIFont+Extension.swift
++++ b/Sources/MarkdownView/Supplements+Extension/UIFont+Extension.swift
+@@ -33,14 +33,15 @@
+
+ #elseif canImport(AppKit)
+     import AppKit
++    import CoreText
+
+     public extension NSFont {
+         var bold: NSFont {
+-            NSFontManager.shared.convert(self, toHaveTrait: .boldFontMask)
++            (CTFontCreateCopyWithSymbolicTraits(self as CTFont, 0, nil, .traitBold, .traitBold) ?? self as CTFont) as NSFont
+         }
+
+         var italic: NSFont {
+-            NSFontManager.shared.convert(self, toHaveTrait: .italicFontMask)
++            (CTFontCreateCopyWithSymbolicTraits(self as CTFont, 0, nil, .traitItalic, .traitItalic) ?? self as CTFont) as NSFont
+         }
+
+         var monospaced: NSFont {

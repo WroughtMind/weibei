@@ -69,7 +69,7 @@ struct AgentComposerTextEditor: NSViewRepresentable {
             width: 0,
             height: CGFloat.greatestFiniteMagnitude
         )
-        textView.string = text
+        if textView.string != text { textView.string = text }
         textView.setAccessibilityIdentifier("agent-composer-input")
         scrollView.documentView = textView
         applyPresentation(to: textView)

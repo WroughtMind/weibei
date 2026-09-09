@@ -152,6 +152,15 @@ enum ChatRendererConversationChecks {
                 "Width change did not preserve the anchored text")
             try require(session.state(for: id).document.parseCount == parseCount, "Width change reparsed the long source")
             list.setFrameSize(NSSize(width: 680, height: 560)); try await settle(list)
+            let sweepAnchor = list.captureAnchor()
+            for width in Array(stride(from: 656, through: 440, by: -24)) + Array(stride(from: 464, through: 680, by: 24)) {
+                list.setFrameSize(NSSize(width: CGFloat(width), height: 560))
+                list.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try await settle(list)
+            try require(list.captureAnchor()?.id == sweepAnchor?.id && list.captureAnchor()?.character == sweepAnchor?.character,
+                "Continuous width changes lost the reading text")
             let fontAnchor = list.captureAnchor()
             let regularHeight = session.state(for: id).lastHeight
             fontScale = 1.15
@@ -385,6 +394,11 @@ enum ChatRendererConversationChecks {
             }
             try require(zip(headings, headings.dropFirst()).allSatisfy { $0 > $1 } && headings.last == 16,
                 "Heading levels did not keep the body-relative hierarchy")
+            let bodyFont = try attributes("正文")[.font] as! NSFont
+            let headingFont = try attributes("一层")[.font] as! NSFont
+            try require(CTFontCopyFamilyName(headingFont as CTFont) == CTFontCopyFamilyName(bodyFont as CTFont)
+                && CTFontGetSymbolicTraits(headingFont as CTFont).contains(.traitBold),
+                "Heading resize substituted a different Chinese typeface or lost bold")
             let italic = try attributes("Italic"), boldItalic = try attributes("Bold italic")
             try require((italic[.font] as? NSFont)?.fontDescriptor.symbolicTraits.contains(.italic) == true
                 && italic[.underlineStyle] == nil, "Emphasis is not italic")
@@ -394,7 +408,8 @@ enum ChatRendererConversationChecks {
             try require(chineseRuns.allSatisfy { run in
                 let attributes = CTRunGetAttributes(run) as! [String: Any]
                 let font = attributes[kCTFontAttributeName as String] as! CTFont
-                return CTFontGetSymbolicTraits(font).contains(.traitItalic) || CTRunGetTextMatrix(run).c > 0
+                return CTFontCopyFamilyName(font) == CTFontCopyFamilyName(bodyFont as CTFont)
+                    && (CTFontGetSymbolicTraits(font).contains(.traitItalic) || CTRunGetTextMatrix(run).c > 0)
             }, "Font substitution removed the actual Chinese italic glyph slant")
             try require((boldItalic[.font] as? NSFont)?.fontDescriptor.symbolicTraits.contains([.italic, .bold]) == true,
                 "Nested emphasis lost bold or italic")
@@ -440,6 +455,59 @@ enum ChatRendererConversationChecks {
             let emptyList = ChatRendererListView(session: ChatRendererSession())
             let emptyHistory = emptyList.tableView(emptyList.table, viewFor: nil, row: 0)
             try require(emptyHistory?.isHidden == true, "Empty conversation drew a history button")
+        }
+        await runCase("math_highlight_reuses_unchanged_body") {
+            let document = CandidateDocument(), surface = CandidateTextView()
+            surface.bind(document)
+            let apply = document.onApply
+            var preparations = 0
+            var before = NSAttributedString()
+            document.onApply = { content, revision in
+                apply?(content, revision)
+                preparations = document.inlinePreparationCount
+                before = surface.textLabelView.attributedText.copy() as! NSAttributedString
+            }
+            defer { document.onApply = apply }
+            let source = "## 缓存标题\n\n*斜体* 正文 $x$\n\n```swift\nlet value = 451\n```"
+            @MainActor func display(_ source: String) async throws {
+                let revision = document.submit(source)
+                let deadline = ProcessInfo.processInfo.systemUptime + 10
+                while document.displayedRevision < revision {
+                    try require(ProcessInfo.processInfo.systemUptime < deadline, "Math body did not prepare")
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+            }
+            try await display(source)
+            let formula = document.content?.rendered.values.first?.image
+            guard let key = document.content?.blocks.compactMap({ block -> Int? in
+                if case let .codeBlock(language, code) = block {
+                    return CodeHighlighter.current.key(for: code, language: language)
+                }
+                return nil
+            }).first else { throw Failure(message: "No code highlight to check") }
+            let deadline = ProcessInfo.processInfo.systemUptime + 10
+            while CodeHighlighter.current.renderCache.value(forKey: key)?.isEmpty != false {
+                try require(ProcessInfo.processInfo.systemUptime < deadline, "Code highlighting did not finish")
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try require(document.inlinePreparationCount == preparations,
+                "Highlight completion prepared unchanged math-bearing prose again")
+            // The code block replaces its attachment when colors arrive. Compare the
+            // entire prose, including its inline formula, without that code attachment.
+            let prose = NSRange(location: 0, length: (before.string as NSString)
+                .range(of: TextLabel.Attachment.replacementText, options: .backwards).location)
+            let after = surface.textLabelView.attributedText
+            try require(after.string == before.string
+                && after.attributedSubstring(from: prose).isEqual(to: before.attributedSubstring(from: prose)),
+                "Reusing math-bearing prose changed its text or style")
+            try await display(source.replacingOccurrences(of: "$x$", with: "$y^2$"))
+            try require(document.content?.rendered.values.first?.image !== formula,
+                "Changed formula reused an outdated rendered image")
+            surface.textLabelView.selectAll()
+            let copied = surface.textLabelView.selectedPlainText() ?? ""
+            try require(copied.contains("y^2") && copied.contains("let value = 451"),
+                "Changed formula or highlighted code lost copied content")
+            surface.textLabelView.clearSelection()
         }
         var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
         let documents = session.preparedDocuments

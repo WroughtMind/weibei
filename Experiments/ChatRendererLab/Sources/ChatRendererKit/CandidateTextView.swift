@@ -182,6 +182,7 @@ public final class CandidateTextView: MarkdownTextView {
 
     public override func decorate(inlineText text: NSAttributedString, theme: MarkdownTheme) -> NSAttributedString {
         guard let document = preparedDocument else { return text }
+        document.inlinePreparationCount += 1
         guard text.string.contains("\u{F0000}") || text.string.contains("==") || text.string.contains("^[") else { return text }
         let result = NSMutableAttributedString(attributedString: text)
         // This hook only receives parsed text nodes: code keeps its literal markers.

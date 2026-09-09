@@ -48,10 +48,19 @@ enum ChatRendererPaneEvidence {
         guard let scroll = outerScroll(view), let document = scroll.documentView else { throw CocoaError(.coderValueNotFound) }
         func phase(_ name: String, since began: Double, from sample: Int) -> [String: Any] {
             let delays = Array(lateness.dropFirst(sample))
-            return ["phase": name, "ms": (ProcessInfo.processInfo.systemUptime - began) * 1_000,
+            var result: [String: Any] = ["phase": name, "ms": (ProcessInfo.processInfo.systemUptime - began) * 1_000,
                     "main_timer_max_ms": delays.max() ?? 0,
                     "main_timer_over_16_count": delays.filter { $0 > 16 }.count,
                     "main_timer_over_50_count": delays.filter { $0 > 50 }.count]
+            #if CHAT_RENDERER_LAB
+            if let list = scroll.superview as? ChatRendererListView {
+                let documents = list.session.preparedDocuments
+                result["renderer_totals"] = [
+                    "parses": documents.reduce(0) { $0 + $1.parseCount },
+                    "inline_preparations": documents.reduce(0) { $0 + $1.inlinePreparationCount }]
+            }
+            #endif
+            return result
         }
         var phases = [phase("first_open_to_settled_geometry", since: start, from: 0)]
         for name in ["first_pass", "warm_revisit"] {
@@ -83,12 +92,37 @@ enum ChatRendererPaneEvidence {
         }
         inspect(view)
         var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
+        let readingPeakRSS = usage.ru_maxrss
+        func composer(in node: NSView) -> NSTextView? {
+            if let text = node as? NSTextView, text.enclosingScrollView is AgentComposerNativeScrollView { return text }
+            for child in node.subviews { if let text = composer(in: child) { return text } }
+            return nil
+        }
+        guard let input = composer(in: view) else { throw CocoaError(.coderValueNotFound) }
+        let firstInput = ProcessInfo.processInfo.systemUptime
+        let inputSample = lateness.count
+        guard window.makeFirstResponder(input) else { throw CocoaError(.coderInvalidValue) }
+        input.insertText("首个输入", replacementRange: NSRange(location: 0, length: input.string.utf16.count))
+        try await settle()
+        guard input.string == "首个输入", store.pendingComposerDraft == input.string else { throw CocoaError(.coderInvalidValue) }
+        phases.append(phase("first_focus_and_text_input", since: firstInput, from: inputSample))
+        let sweep = ProcessInfo.processInfo.systemUptime
+        let sweepSample = lateness.count
+        for width in Array(stride(from: 714, through: 480, by: -26)) + Array(stride(from: 506, through: 740, by: 26)) {
+            window.setContentSize(NSSize(width: CGFloat(width), height: 640))
+            view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await settle()
+        phases.append(phase("continuous_window_width_740_480_740", since: sweep, from: sweepSample))
+        getrusage(RUSAGE_SELF, &usage)
         let report: [String: Any] = [
             "scope": "real AgentPane, Release, hidden window, programmatic viewport replay; not FPS",
             "variant": Bundle.main.object(forInfoDictionaryKey: "WeiBeiExperimentVariant") ?? "unknown",
             "scenario": ChatRendererExperiment.scenarioTitles[scenario], "font_size": 16,
             "window_width": windowWidth, "body_widths": Array(Set(bodyWidths)).sorted(),
             "messages": store.messages.count, "phases": phases, "peak_rss_bytes": usage.ru_maxrss,
+            "peak_reading_rss_bytes": readingPeakRSS,
             "main_timer_lateness_ms": ["max": lateness.max() ?? 0, "over_16_count": lateness.filter { $0 > 16 }.count,
                                         "over_50_count": lateness.filter { $0 > 50 }.count],
             "unverified": ["Compositor/presentation completion", "Trackpad momentum", "FPS"]]

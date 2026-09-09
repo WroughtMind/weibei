@@ -47,6 +47,7 @@ public final class CandidateDocument {
     public private(set) var requestedRevision = 0
     public private(set) var displayedRevision = 0
     public private(set) var parseCount = 0
+    public internal(set) var inlinePreparationCount = 0
     public private(set) var content: MarkdownContent?
     public private(set) var timings: [LabTiming] = []
     public private(set) var appliedRevisions: [Int] = []
@@ -128,6 +129,7 @@ public final class CandidateDocument {
         requestedRevision = 0
         displayedRevision = 0
         parseCount = 0
+        inlinePreparationCount = 0
         timings.removeAll()
         appliedRevisions.removeAll()
     }
