@@ -46,15 +46,17 @@ final class WorkspaceSearchSafetyTests: XCTestCase {
             base: root,
             courseID: otherCourseID,
             fileName: "BetaOtherNoteToken.md",
-            content: "另一课笔记 BetaOtherNoteToken"
+            content: (0..<92).map { "# 第 \($0 + 1) 节\n\n正文\n" }.joined(separator: "\n") + "\nBetaOtherNoteToken"
         )
 
-        let currentHit = await store.searchWorkspaceForAgent(
+        let handler = try store.agentHostToolHandlerForSelfCheck(courseID: currentCourseID)
+        let currentHit = try await handler(.workspaceSearch(
             query: "AlphaCurrentHitToken",
-            limit: 1,
-            crossLibrary: false,
-            currentCourseID: currentCourseID
-        )
+            scope: .course,
+            scopeID: currentCourseID.uuidString.lowercased(),
+            cursor: nil,
+            limit: 1
+        ))
         XCTAssertEqual(currentHit.items.count, 1)
         XCTAssertEqual(currentHit.items.first?.item.id, currentNote.id)
         XCTAssertEqual(currentHit.total, 2)
@@ -64,53 +66,78 @@ final class WorkspaceSearchSafetyTests: XCTestCase {
         XCTAssertFalse(currentHit.items.contains { $0.item.id == otherNote.id })
         XCTAssertNotEqual(currentHit.items.first?.item.id, secondCurrentNote.id)
 
-        let nextCurrentHit = await store.searchWorkspaceForAgent(
+        let nextCurrentHit = try await handler(.workspaceSearch(
             query: "AlphaCurrentHitToken",
-            cursor: 1,
-            limit: 1,
-            crossLibrary: false,
-            currentCourseID: currentCourseID
-        )
+            scope: .course,
+            scopeID: currentCourseID.uuidString.lowercased(),
+            cursor: "1",
+            limit: 1
+        ))
         XCTAssertEqual(nextCurrentHit.items.first?.item.id, secondCurrentNote.id)
         XCTAssertEqual(nextCurrentHit.total, 2)
         XCTAssertNil(nextCurrentHit.nextCursor)
 
-        let isolated = await store.searchWorkspaceForAgent(
+        let isolated = try await handler(.workspaceSearch(
             query: "BetaOtherNoteToken",
-            limit: 8,
-            crossLibrary: false,
-            currentCourseID: currentCourseID
-        )
+            scope: .course,
+            scopeID: currentCourseID.uuidString.lowercased(),
+            cursor: nil,
+            limit: 8
+        ))
         XCTAssertTrue(isolated.items.isEmpty)
 
-        let broadcast = await store.searchWorkspaceForAgent(
+        let broadcast = try await handler(.workspaceSearch(
             query: "BetaOtherNoteToken",
-            limit: 8,
-            crossLibrary: true,
-            currentCourseID: currentCourseID
-        )
+            scope: .library,
+            scopeID: nil,
+            cursor: nil,
+            limit: 8
+        ))
         XCTAssertEqual(broadcast.items.count, 1)
         XCTAssertEqual(broadcast.items.first?.item.id, otherNote.id)
         XCTAssertEqual(broadcast.items.first?.courseTitles, ["另一课"])
         XCTAssertEqual(broadcast.items.first?.item.role, "note")
 
-        let blank = await store.searchWorkspaceForAgent(
+        let blank = try await handler(.workspaceSearch(
             query: "   ",
-            limit: 8,
-            crossLibrary: true,
-            currentCourseID: currentCourseID
-        )
+            scope: .library,
+            scopeID: nil,
+            cursor: nil,
+            limit: 8
+        ))
         XCTAssertTrue(blank.items.isEmpty)
         XCTAssertTrue(blank.webPages.isEmpty)
 
-        let miss = await store.searchWorkspaceForAgent(
+        let miss = try await handler(.workspaceSearch(
             query: "NoSuchWorkspaceTokenZZZ",
-            limit: 8,
-            crossLibrary: true,
-            currentCourseID: currentCourseID
-        )
+            scope: .library,
+            scopeID: nil,
+            cursor: nil,
+            limit: 8
+        ))
         XCTAssertTrue(miss.items.isEmpty)
         XCTAssertTrue(miss.webPages.isEmpty)
+
+        let map = try await handler(.courseMap(scope: .material, scopeID: otherNote.id, name: nil, cursor: "80", limit: 20))
+        let position = try XCTUnwrap(map.items.last?.source?.sectionLocationID)
+        let read = try await handler(.courseRead(itemID: otherNote.id, page: nil, location: position, cursor: nil, maximumCharacters: 37))
+        var citation = try XCTUnwrap(read.items.first?.source)
+        citation.label = "[笔记：r1.1]"
+        XCTAssertEqual(position, "markdown-heading-91")
+        XCTAssertTrue(citation.excerpt.contains("BetaOtherNoteToken"))
+        let chat = try XCTUnwrap(store.createStudySession(courseID: nil))
+        store.appendAgentMessage(AgentMessage(role: .assistant, text: "末节" + citation.label, source: nil, sources: [citation]))
+        XCTAssertTrue(store.openAgentReplySource(citation))
+        XCTAssertEqual(store.noteEditorCommand?.markdown, "91")
+        XCTAssertEqual(store.noteEditorCommand?.value, otherNote.id)
+        let saved = await store.persistWorkspaceNow()
+        XCTAssertTrue(saved)
+        let reopened = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("workspace"), startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let reopenedCitation = try XCTUnwrap(reopened.studySessions.first { $0.id == chat.id }?.messages.last?.sources.first)
+        XCTAssertTrue(reopened.openAgentReplySource(reopenedCitation))
+        XCTAssertEqual(reopened.noteEditorCommand?.markdown, "91")
+        XCTAssertEqual(reopened.noteEditorCommand?.value, otherNote.id)
+
     }
 
     private func importMarkdown(

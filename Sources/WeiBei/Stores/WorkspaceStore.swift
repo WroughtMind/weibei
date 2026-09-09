@@ -5061,6 +5061,12 @@ final class WorkspaceStore: ObservableObject {
             revealDocumentPane(.agent, clearSelection: false)
             revealDocumentPane(.notes, clearSelection: false)
             focus(.notes)
+            let headingIndex = source.sectionLocationID.flatMap { id in
+                id.hasPrefix("markdown-heading-") ? Int(id.dropFirst("markdown-heading-".count)) : nil
+            } ?? source.sectionOrdinal.map { $0 - 1 }
+            if let headingIndex, headingIndex >= 0 {
+                noteEditorCommand = NoteEditorCommand(kind: .scrollToHeading, markdown: String(headingIndex), value: item.id)
+            }
             return activeStudySessionID == chatID
         }
 
@@ -7874,18 +7880,22 @@ final class WorkspaceStore: ObservableObject {
         ).scope
     }
 
+    func agentHostToolHandlerForSelfCheck(courseID: UUID?) throws -> StudyAgentHostToolHandler {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
+        let access = makeAgentProjectAccessSnapshot(target: target)
+        return makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+    }
+
     func agentHostSearchForSelfCheck(
         courseID: UUID?,
         query: String,
         beforeSearch: (() throws -> Void)? = nil
     ) throws -> StudyAgentHostToolResult {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+        let handler = try agentHostToolHandlerForSelfCheck(courseID: courseID)
         try beforeSearch?()
         return try waitForCourseFileOperation {
-            try await handler(.courseSearch(query: query, offset: 0, limit: 8))
+            try await handler(.workspaceSearch(query: query, scope: .library, scopeID: nil, cursor: nil, limit: 8))
         }
     }
 
@@ -7894,30 +7904,23 @@ final class WorkspaceStore: ObservableObject {
         itemID: String? = nil,
         offset: Int = 0
     ) throws -> StudyAgentHostToolResult {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+        let handler = try agentHostToolHandlerForSelfCheck(courseID: courseID)
         return try waitForCourseFileOperation {
-            try await handler(.courseMap(itemID: itemID, offset: offset, limit: 40))
+            try await handler(.courseMap(scope: itemID == nil ? .library : .material, scopeID: itemID, name: nil, cursor: String(offset), limit: 40))
         }
     }
 
     func agentHostReadForSelfCheck(
         courseID: UUID?,
         itemID: String,
-        query: String = "",
         location: String? = nil
     ) throws -> StudyAgentHostToolResult {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+        let handler = try agentHostToolHandlerForSelfCheck(courseID: courseID)
         return try waitForCourseFileOperation {
             try await handler(
                 .courseRead(
                     itemID: itemID,
-                    query: query,
+                    page: nil,
                     location: location,
                     cursor: nil,
                     maximumCharacters: 6_000
@@ -8025,15 +8028,6 @@ final class WorkspaceStore: ObservableObject {
         let searchIndex = courseDocumentSearchIndex
 
         return { request in
-            if case let .workspaceSearch(query, offset, limit, crossLibrary) = request {
-                return await self.searchWorkspaceForAgent(
-                    query: query,
-                    cursor: offset,
-                    limit: limit,
-                    crossLibrary: crossLibrary,
-                    currentCourseID: target.courseID
-                )
-            }
             let task = Task.detached(priority: .userInitiated) {
                 try await Self.executeAgentHostTool(
                     request,
@@ -9684,6 +9678,7 @@ final class WorkspaceStore: ObservableObject {
                     selectionTitle: sentSelectionTitle,
                     selectionText: sentSelectionText,
                     selectionSources: sentSelectionSources,
+                    knownSources: studySessions.first(where: { $0.id == target.sessionID })?.messages.flatMap(\.sources) ?? [],
                     courseContext: courseBuild.context,
                     projectScope: projectAccess.scope,
                     focus: StudyAgentFocus(
@@ -10129,7 +10124,7 @@ final class WorkspaceStore: ObservableObject {
         case let .usingTool(name, detail):
             let base: String
             switch name {
-            case "weibei_course_search", "weibei_search_workspace":
+            case "weibei_search_workspace":
                 base = ui("正在搜索", "Searching")
             case "weibei_course_read":
                 base = ui("正在读取", "Reading")
@@ -10153,7 +10148,10 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 agentStreaming.activityText = base
             }
-        case let .text(text, blocks):
+        case let .text(text, blocks, sources):
+            if studySessions.first(where: { $0.id == chatID })?.messages.first(where: { $0.id == replyMessageID })?.sources != sources {
+                _ = updateAgentMessage(replyMessageID, in: chatID) { $0.sources = sources }
+            }
             latestAgentStreamingText = text
             if agentStreaming.isDisplaying(replyMessageID) {
                 let canPaceVisibleReply = !agentStreamingUsesReducedMotion

@@ -19,12 +19,12 @@ enum NativeScenarioPair {
         rows.append(try await row(id: "01-plain-qa", tools: [], textMustContain: "4", chunks: [
             [.textDelta(index: 0, text: "4"), .finish(reason: .stop, replayState: nil)],
         ]))
-        rows.append(try await row(id: "02-course-search", tools: ["weibei_course_search"], textMustContain: "资金", expectSources: true, chunks: [
+        rows.append(try await row(id: "02-course-search", tools: ["weibei_search_workspace"], textMustContain: "资金", expectSources: true, chunks: [
             [
-                .toolCallDelta(index: 0, id: "c1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"利率\"}"),
+                .toolCallDelta(index: 0, id: "c1", name: "weibei_search_workspace", argumentsDelta: "{\"query\":\"利率\",\"scope\":\"library\"}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
-            [.textDelta(index: 0, text: "利率是资金使用价格。"), .finish(reason: .stop, replayState: nil)],
+            [.textDelta(index: 0, text: "利率是资金使用价格。[材料：r1.1]"), .finish(reason: .stop, replayState: nil)],
         ], host: courseHost))
         rows.append(try await row(
             id: "15-workspace-search",
@@ -37,20 +37,20 @@ enum NativeScenarioPair {
                         index: 0,
                         id: "w1",
                         name: "weibei_search_workspace",
-                        argumentsDelta: "{\"query\":\"利率\",\"crossLibrary\":true}"
+                        argumentsDelta: "{\"query\":\"利率\",\"scope\":\"library\"}"
                     ),
                     .finish(reason: .toolCalls, replayState: nil),
                 ],
-                [.textDelta(index: 0, text: "笔记写过：利率是资金使用价格。"), .finish(reason: .stop, replayState: nil)],
+                [.textDelta(index: 0, text: "笔记写过：利率是资金使用价格。[笔记：r1.1]"), .finish(reason: .stop, replayState: nil)],
             ],
             host: workspaceHost
         ))
         rows.append(try await row(id: "03-course-read", tools: ["weibei_course_read"], textMustContain: "资金", expectSources: true, chunks: [
             [
-                .toolCallDelta(index: 0, id: "c1", name: "weibei_course_read", argumentsDelta: "{\"itemID\":\"material-rates\",\"query\":\"利率\"}"),
+                .toolCallDelta(index: 0, id: "c1", name: "weibei_course_read", argumentsDelta: "{\"itemID\":\"material-rates\"}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
-            [.textDelta(index: 0, text: "原文：利率是资金使用价格的表达。"), .finish(reason: .stop, replayState: nil)],
+            [.textDelta(index: 0, text: "原文：利率是资金使用价格的表达。[材料：r1.1]"), .finish(reason: .stop, replayState: nil)],
         ], host: courseHost))
         rows.append(try await row(id: "04-learning-memory", tools: ["weibei_read_learning_memory"], textMustContain: "记忆", chunks: [
             [.toolCallDelta(index: 0, id: "c1", name: "weibei_read_learning_memory", argumentsDelta: "{}"), .finish(reason: .toolCalls, replayState: nil)],
@@ -121,11 +121,11 @@ enum NativeScenarioPair {
         let session = UUID().uuidString.lowercased()
         rows.append(try await row(
             id: "11-resume-a",
-            tools: ["weibei_course_search"],
+            tools: ["weibei_search_workspace"],
             textMustContain: "资金",
             chunks: [
                 [
-                    .toolCallDelta(index: 0, id: "c1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"资金价格\"}"),
+                    .toolCallDelta(index: 0, id: "c1", name: "weibei_search_workspace", argumentsDelta: "{\"query\":\"资金价格\",\"scope\":\"library\"}"),
                     .finish(reason: .toolCalls, replayState: nil),
                 ],
                 [.textDelta(index: 0, text: "已记住关键词是资金价格。"), .finish(reason: .stop, replayState: nil)],
@@ -144,11 +144,11 @@ enum NativeScenarioPair {
         ))
         rows.append(try await row(
             id: "13-multi-tool",
-            tools: ["weibei_course_search", "weibei_course_read"],
+            tools: ["weibei_search_workspace", "weibei_course_read"],
             chunks: [
                 [
-                    .toolCallDelta(index: 0, id: "s1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"通货膨胀\"}"),
-                    .toolCallDelta(index: 1, id: "r1", name: "weibei_course_read", argumentsDelta: "{\"itemID\":\"material-rates\",\"query\":\"通胀\"}"),
+                    .toolCallDelta(index: 0, id: "s1", name: "weibei_search_workspace", argumentsDelta: "{\"query\":\"通货膨胀\",\"scope\":\"library\"}"),
+                    .toolCallDelta(index: 1, id: "r1", name: "weibei_course_read", argumentsDelta: "{\"itemID\":\"material-rates\"}"),
                     .finish(reason: .toolCalls, replayState: nil),
                 ],
                 [.textDelta(index: 0, text: "用了搜索和正文读取。"), .finish(reason: .stop, replayState: nil)],
@@ -177,12 +177,12 @@ enum NativeScenarioPair {
         )
         return StudyAgentHostToolResult(
             query: "利率",
-            items: [StudyAgentHostToolItem(item: item, sourceRevision: "rev-1")]
+            items: [StudyAgentHostToolItem(item: item, sourceRevision: "rev-1", source: AgentReplySource(itemID: item.id, kind: .material, title: item.title, label: "", excerpt: item.searchText))]
         )
     }
 
     private static func workspaceHost(_ request: StudyAgentHostToolRequest) async throws -> StudyAgentHostToolResult {
-        guard case let .workspaceSearch(query, _, _, crossLibrary) = request, crossLibrary else {
+        guard case let .workspaceSearch(query, scope, _, _, _) = request, scope == .library else {
             return StudyAgentHostToolResult(query: "", items: [])
         }
         let item = StudyAgentCourseItem(
@@ -200,7 +200,8 @@ enum NativeScenarioPair {
                     item: item,
                     courseIDs: ["course-macro"],
                     courseTitles: ["宏观课"],
-                    sourceRevision: "rev-note"
+                    sourceRevision: "rev-note",
+                    source: AgentReplySource(itemID: item.id, kind: .note, title: item.title, label: "", excerpt: item.searchText)
                 ),
             ]
         )

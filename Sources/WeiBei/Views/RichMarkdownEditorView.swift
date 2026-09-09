@@ -1704,6 +1704,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                       $0.command.id == pending.id
                   }),
                   let editingSession else { return }
+            if pending.kind == .scrollToHeading, let target = pending.value, target != editingSession.documentID { return }
             let source = InFlightCommand(
                 command: pending,
                 documentID: editingSession.documentID,

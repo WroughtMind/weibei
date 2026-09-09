@@ -7,7 +7,8 @@ public enum NativeTurnLocation {
         if let focus = request.focus {
             if let title = trimmed(focus.materialTitle) {
                 lines.append(request.language.text("材料：\(title)", "Material: \(title)"))
-            } else if let id = trimmed(focus.materialItemID) {
+            }
+            if let id = trimmed(focus.materialItemID) {
                 lines.append(request.language.text("材料 ID：\(id)", "Material ID: \(id)"))
             }
             if let page = focus.pageIndex {
@@ -18,7 +19,10 @@ public enum NativeTurnLocation {
                 lines.append(request.language.text("章节：\(section)", "Section: \(section)"))
             }
         }
+        if let id = request.projectScope.courseID { lines.append("课程 ID：" + id) }
+        if let id = request.focus?.sectionLocationID { lines.append("章节位置：" + id) }
         if let note = request.courseContext.items.first(where: \.isCurrentNote) {
+            lines.append("笔记 ID：" + note.id)
             lines.append(request.language.text("笔记：\(note.title)", "Note: \(note.title)"))
         }
         for asset in request.visualAssets {

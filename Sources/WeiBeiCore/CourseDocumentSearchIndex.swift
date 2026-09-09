@@ -17,6 +17,7 @@ private final class CourseIndexCancellationProbe {
 
 public struct CourseDocumentIndexResult: Sendable {
     public var text: String?
+    public var passages: [CourseDocumentPassage]
     public var isTruncated: Bool
     public var rank: Double?
     public var availability: CourseDocumentIndexAvailability
@@ -39,9 +40,11 @@ public struct CourseDocumentIndexResult: Sendable {
         totalPageCount: Int? = nil,
         uncoveredPageIndexes: [Int] = [],
         failedPageIndexes: [Int] = [],
-        failedPageReasons: [Int: String] = [:]
+        failedPageReasons: [Int: String] = [:],
+        passages: [CourseDocumentPassage] = []
     ) {
         self.text = text
+        self.passages = passages
         self.isTruncated = isTruncated
         self.rank = rank
         self.availability = availability
@@ -574,233 +577,154 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         }
     }
 
+    /// 扫描同一份缓存，按页/节拼回技术分块；回调可在取得所需正文后停止。
+    private func scanPassages(
+        item: StudyItem,
+        visit: (CourseDocumentPassage, Int) -> Bool
+    ) -> CourseDocumentIndexResult {
+        guard let scheduled = Self.scheduledItem(item) else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        refreshChangedItemsForLookup([item])
+        waitForInitialIndexing([scheduled])
+        guard !Task.isCancelled, let database = borrowDatabase() else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        defer { returnDatabase() }
+        guard Self.fileSignature(for: item) == scheduled.signature,
+              let state = fileState(for: scheduled.storageID, in: database),
+              state.signature == scheduled.signature,
+              let statement = prepare(
+                "SELECT sort_order, location, text FROM chunks WHERE item_id = ? ORDER BY sort_order",
+                in: database
+              ) else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .indexing)
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(scheduled.storageID, at: 1, in: statement)
+        var location: String?
+        var text = ""
+        var order = 0
+        var stopped = false
+        while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
+            let nextLocation = columnText(statement, at: 1) ?? ""
+            if let previous = location, previous != nextLocation {
+                if !visit(CourseDocumentPassage(storedLocation: previous, text: text), order) {
+                    stopped = true
+                    break
+                }
+                text = ""
+            }
+            if location != nextLocation {
+                order = Int(sqlite3_column_int64(statement, 0))
+                location = nextLocation
+            }
+            var body = columnText(statement, at: 2) ?? ""
+            if item.kind == .pdf, body.hasPrefix(nextLocation + "\n") {
+                body.removeFirst(nextLocation.count + 1)
+            } else if item.kind == .html, !text.isEmpty, let newline = body.firstIndex(of: "\n") {
+                // HTML 缓存为每个技术分块重复写了同一节标题，只保留第一份。
+                body = String(body[body.index(after: newline)...])
+            }
+            text += body
+        }
+        if !stopped, let location { _ = visit(CourseDocumentPassage(storedLocation: location, text: text), order) }
+        let status = pdfIndexStatus(for: scheduled.storageID, in: database)
+        return CourseDocumentIndexResult(
+            text: nil,
+            isTruncated: !state.isComplete || state.hasPartialExtraction,
+            availability: state.isComplete ? .ready : .indexing,
+            sourceRevision: scheduled.signature,
+            indexedPageCount: status?.indexedPageIndexes.count,
+            totalPageCount: status?.pageCount,
+            uncoveredPageIndexes: status?.uncoveredPageIndexes ?? [],
+            failedPageIndexes: status?.failedPageIndexes.sorted() ?? [],
+            failedPageReasons: status?.failedPageReasons ?? [:]
+        )
+    }
+
+    public func searchPassages(item: StudyItem, query: String) -> CourseDocumentIndexResult {
+        var passages: [CourseDocumentPassage] = []
+        // ponytail: 所选原文线性扫描；只有实际资料量导致延迟时才调整索引。
+        var result = scanPassages(item: item) { passage, _ in
+            if let excerpt = passage.excerpt(matching: query) { passages.append(excerpt) }
+            return true
+        }
+        result.passages = passages
+        return result
+    }
+
     public func read(
         item: StudyItem,
-        query: String,
+        page: Int? = nil,
         location: String?,
         cursor: String? = nil,
         maximumCharacters: Int = 24_000
     ) -> CourseDocumentIndexResult {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rawLocation = location?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedLocation = rawLocation?.isEmpty == false ? rawLocation : nil
-        if !trimmedQuery.isEmpty, trimmedLocation?.isEmpty ?? true {
-            guard cursor == nil else {
-                return CourseDocumentIndexResult(
-                    text: nil,
-                    isTruncated: false,
-                    availability: .unavailable
-                )
-            }
-            return lookup(
-                items: [item],
-                query: trimmedQuery,
-                maximumCharactersPerItem: maximumCharacters
-            )[item.id] ?? CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable
-            )
+        let scope = page.map { "page-\($0)" } ?? location
+        let revision = Self.fileSignature(for: item)
+        let decoded = cursor.flatMap(Self.decodeCursor)
+        if cursor != nil, decoded.map({
+            $0.version == 1 && $0.itemID == Self.storageID(for: item.id)
+                && $0.sourceRevision == revision && $0.location == scope
+                && $0.sortOrder >= 0 && $0.characterOffset >= 0
+        }) != true {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
         }
-
-        guard let scheduled = Self.scheduledItem(item) else {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable
-            )
-        }
-        refreshChangedItemsForLookup([item])
-        waitForInitialIndexing([scheduled])
-        guard !Task.isCancelled,
-              let database = borrowDatabase() else {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable
-            )
-        }
-        defer { returnDatabase() }
-        schedulingLock.lock()
-        let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
-        let isScheduled = scheduledSignatures.contains(
-            "\(scheduled.storageID)#\(scheduled.signature)"
-        )
-        schedulingLock.unlock()
-        guard expectedSignature == scheduled.signature,
-              Self.fileSignature(for: item) == scheduled.signature,
-              let state = fileState(for: scheduled.storageID, in: database),
-              state.signature == scheduled.signature else {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: isScheduled ? .indexing : .unavailable
-            )
-        }
-
-        let decodedCursor = cursor.flatMap(Self.decodeCursor)
-        if cursor != nil,
-           decodedCursor.map({
-               $0.version == 1
-                   && $0.itemID == scheduled.storageID
-                   && $0.sourceRevision == scheduled.signature
-                   && $0.location == trimmedLocation
-                   && $0.sortOrder >= 0
-                   && $0.characterOffset >= 0
-           }) != true {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable,
-                sourceRevision: scheduled.signature
-            )
-        }
-
-        let hasLocation = trimmedLocation != nil
-        let sql = hasLocation
-            ? """
-              SELECT sort_order, location, text
-              FROM chunks
-              WHERE item_id = ? AND (location = ? OR instr(location, ?) > 0)
-                AND sort_order >= ?
-              ORDER BY sort_order
-              """
-            : """
-              SELECT sort_order, location, text
-              FROM chunks
-              WHERE item_id = ? AND sort_order >= ?
-              ORDER BY sort_order
-              """
-        guard let statement = prepare(sql, in: database) else {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable
-            )
-        }
-        defer { sqlite3_finalize(statement) }
-        bind(scheduled.storageID, at: 1, in: statement)
-        if hasLocation, let trimmedLocation {
-            bind(trimmedLocation, at: 2, in: statement)
-            bind(trimmedLocation, at: 3, in: statement)
-            sqlite3_bind_int64(
-                statement,
-                4,
-                sqlite3_int64(decodedCursor?.sortOrder ?? 0)
-            )
-        } else {
-            sqlite3_bind_int64(
-                statement,
-                2,
-                sqlite3_int64(decodedCursor?.sortOrder ?? 0)
-            )
-        }
-
-        let characterLimit = max(maximumCharacters, 1)
-        var output = ""
+        var passages: [CourseDocumentPassage] = []
+        var remaining = maximumCharacters
         var nextCursor: String?
-        while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
-            let sortOrder = Int(sqlite3_column_int64(statement, 0))
-            guard let text = columnText(statement, at: 2), !text.isEmpty else { continue }
-            let chunkLocation = columnText(statement, at: 1) ?? ""
-            let chunk = chunkLocation.isEmpty || text.hasPrefix(chunkLocation)
-                ? text
-                : "\(chunkLocation)\n\(text)"
-            let offset = decodedCursor?.sortOrder == sortOrder
-                ? decodedCursor?.characterOffset ?? 0
-                : 0
-            guard offset <= chunk.count else {
-                return CourseDocumentIndexResult(
-                    text: nil,
-                    isTruncated: false,
-                    availability: .unavailable,
-                    sourceRevision: scheduled.signature
-                )
+        var invalidOffset = false
+        var result = scanPassages(item: item) { passage, order in
+            guard passage.matches(page: page, location: location), order >= (decoded?.sortOrder ?? 0) else { return true }
+            let offset = order == decoded?.sortOrder ? decoded!.characterOffset : 0
+            guard offset <= passage.text.count else { invalidOffset = true; return false }
+            let unread = passage.text.dropFirst(offset)
+            let consumed = min(unread.count, max(remaining, 0))
+            if consumed > 0 {
+                var part = passage
+                part.text = String(unread.prefix(consumed))
+                passages.append(part)
+                remaining -= consumed
             }
-            let separator = output.isEmpty ? "" : "\n\n"
-            let remaining = characterLimit - output.count
-            guard remaining > separator.count else {
-                nextCursor = Self.encodeCursor(
-                    itemID: scheduled.storageID,
-                    sourceRevision: scheduled.signature,
-                    location: trimmedLocation,
-                    sortOrder: sortOrder,
-                    characterOffset: offset
-                )
-                break
+            if consumed < unread.count, let revision {
+                nextCursor = Self.encodeCursor(itemID: Self.storageID(for: item.id), sourceRevision: revision,
+                    location: scope, sortOrder: order, characterOffset: offset + consumed)
+                return false
             }
-            output += separator
-            let unread = chunk.dropFirst(offset)
-            let consumed = min(unread.count, characterLimit - output.count)
-            output += unread.prefix(consumed)
-            if consumed < unread.count {
-                nextCursor = Self.encodeCursor(
-                    itemID: scheduled.storageID,
-                    sourceRevision: scheduled.signature,
-                    location: trimmedLocation,
-                    sortOrder: sortOrder,
-                    characterOffset: offset + consumed
-                )
-                break
-            }
+            return true
         }
-        let pdfStatus = pdfIndexStatus(for: scheduled.storageID, in: database)
-        return CourseDocumentIndexResult(
-            text: output.isEmpty ? nil : output,
-            isTruncated: state.isComplete != true
-                || state.hasPartialExtraction
-                || nextCursor != nil,
-            availability: state.isComplete
-                ? .ready
-                : (isScheduled ? .indexing : .unavailable),
-            nextCursor: nextCursor,
-            sourceRevision: scheduled.signature,
-            indexedPageCount: pdfStatus?.indexedPageIndexes.count,
-            totalPageCount: pdfStatus?.pageCount,
-            uncoveredPageIndexes: pdfStatus?.uncoveredPageIndexes ?? [],
-            failedPageIndexes: pdfStatus?.failedPageIndexes.sorted() ?? [],
-            failedPageReasons: pdfStatus?.failedPageReasons ?? [:]
-        )
+        if invalidOffset { return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable) }
+        result.passages = passages
+        result.text = passages.isEmpty ? nil : passages.map(\.text).joined()
+        result.nextCursor = nextCursor
+        result.isTruncated = result.isTruncated || nextCursor != nil
+        return result
     }
 
-    public func outline(
-        item: StudyItem,
-        maximumEntries: Int = 24
-    ) -> [String] {
-        guard maximumEntries > 0,
-              let scheduled = Self.scheduledItem(item) else { return [] }
-        refreshChangedItemsForLookup([item])
-        waitForInitialIndexing([scheduled])
-        guard !Task.isCancelled,
-              let database = borrowDatabase() else { return [] }
-        defer { returnDatabase() }
-        schedulingLock.lock()
-        let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
-        schedulingLock.unlock()
-        guard expectedSignature == scheduled.signature,
-              Self.fileSignature(for: item) == scheduled.signature,
-              fileState(for: scheduled.storageID, in: database)?.signature
-                == scheduled.signature,
-              let statement = prepare(
-                  """
-                  SELECT location
-                  FROM chunks
-                  WHERE item_id = ? AND location <> ''
-                  GROUP BY location
-                  ORDER BY MIN(sort_order)
-                  LIMIT ?
-                  """,
-                  in: database
-              ) else { return [] }
-        defer { sqlite3_finalize(statement) }
-        bind(scheduled.storageID, at: 1, in: statement)
-        sqlite3_bind_int64(statement, 2, sqlite3_int64(min(maximumEntries, 80)))
-        var entries: [String] = []
-        while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
-            guard let value = columnText(statement, at: 0), !value.isEmpty else { continue }
-            entries.append(String(value.prefix(300)))
+    public func outlinePassages(item: StudyItem, offset: Int, limit: Int) -> CourseDocumentIndexResult {
+        var count = 0
+        var entries: [CourseDocumentPassage] = []
+        var more = false
+        var result = scanPassages(item: item) { passage, _ in
+            guard !passage.location.isEmpty else { return true }
+            defer { count += 1 }
+            guard count >= offset else { return true }
+            guard entries.count < limit else { more = true; return false }
+            var entry = passage
+            entry.text = ""
+            entries.append(entry)
+            return true
         }
-        return entries
+        result.passages = entries
+        result.nextCursor = more ? String(offset + entries.count) : nil
+        return result
+    }
+
+    public func outline(item: StudyItem, maximumEntries: Int = 24) -> [String] {
+        outlinePassages(item: item, offset: 0, limit: maximumEntries).passages.map {
+            [$0.location, $0.title].compactMap { $0 }.joined(separator: " ")
+        }
     }
 
     private static func encodeCursor(
@@ -1004,7 +928,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         switch item.kind {
         case .pdf:
             guard let file = VerifiedRegularFile(item: item),
-                  "v6#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+                  "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                     == signature,
                   let snapshotURL = temporarySnapshot(of: file) else {
                 return false
@@ -1062,7 +986,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                         indexedAllChunks = false
                         break
                     }
-                    let chunk = section.heading.map { "# \($0)\n\(body)" } ?? body
+                    let chunk = item.kind == .markdown ? body : (section.heading.map { "# \($0)\n\(body)" } ?? body)
                     guard insertChunk(
                         itemID: storageID,
                         sortOrder: indexedChunkCount,
@@ -1213,7 +1137,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         guard isExpected(signature: signature, for: storageID),
               Self.fileSignature(for: item) == signature,
               let file = VerifiedRegularFile(item: item),
-              "v6#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+              "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                 == signature,
               let snapshotURL = temporarySnapshot(of: file) else { return }
         defer { try? FileManager.default.removeItem(at: snapshotURL) }
@@ -1903,7 +1827,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
     private static func fileSignature(for item: StudyItem) -> String? {
         guard let metadata = VerifiedRegularFile(item: item)?.metadata else { return nil }
-        return "v6#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+        return "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
     }
 
     private static func scheduledItem(_ item: StudyItem) -> ScheduledItem? {
@@ -1913,7 +1837,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         return ScheduledItem(
             item: item,
             storageID: storageID(for: item.id),
-            signature: "v6#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+            signature: "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
         )
     }
 
@@ -1927,7 +1851,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         expectedSignature: String
     ) -> [TextSection]? {
         guard let file = VerifiedRegularFile(item: item),
-              "v6#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+              "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                 == expectedSignature,
               let data = file.readData(afterOpen: verifiedFileDidOpen) else {
             return nil
@@ -2004,44 +1928,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     }
 
     private static func markdownSections(in text: String) -> [TextSection] {
-        let lines = text.components(separatedBy: .newlines)
-        var sections: [TextSection] = []
-        var body: [String] = []
-        var heading: String?
-        var location = ""
-        var ordinal = 0
-        func appendSection() {
-            let sectionText = body.joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !sectionText.isEmpty || heading != nil else { return }
-            sections.append(
-                TextSection(
-                    location: location,
-                    heading: heading,
-                    text: sectionText
-                )
-            )
+        CourseMarkdownSections.parse(text).map {
+            TextSection(location: [$0.location, $0.title].compactMap { $0 }.joined(separator: " "),
+                        heading: $0.title, text: $0.text)
         }
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if let range = trimmed.range(
-                of: #"^#{1,6}\s+(.+?)\s*#*$"#,
-                options: .regularExpression
-            ) {
-                appendSection()
-                body.removeAll(keepingCapacity: true)
-                let rawHeading = String(trimmed[range])
-                let title = rawHeading
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "# "))
-                heading = String(title.prefix(300))
-                location = "markdown-heading-\(ordinal) \(title.prefix(300))"
-                ordinal += 1
-            } else {
-                body.append(line)
-            }
-        }
-        appendSection()
-        return sections
     }
 
     private static func htmlPlainText(_ fragment: String) -> String {
@@ -2119,70 +2009,50 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         searchTerms(in: query).contains { text.localizedCaseInsensitiveContains($0) }
     }
 
+    public static func markdownPassages(_ markdown: String) -> [CourseDocumentPassage] {
+        markdownSections(in: markdown).map { CourseDocumentPassage(storedLocation: $0.location, text: $0.text) }
+    }
+
     public static func readMarkdown(
         _ markdown: String,
-        query: String,
         location: String?,
         cursor: String? = nil,
         sourceID: String = "markdown",
         maximumCharacters: Int = 24_000
     ) -> CourseDocumentIndexResult {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedLocation = location?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let sections = markdownSections(in: markdown).filter { section in
-            if !trimmedLocation.isEmpty {
-                return section.location == trimmedLocation
-                    || section.location.localizedCaseInsensitiveContains(trimmedLocation)
+        let revision = sourceRevision(forMarkdown: markdown)
+        let decoded = cursor.flatMap(Self.decodeCursor)
+        if cursor != nil, decoded.map({
+            $0.version == 1 && $0.itemID == sourceID && $0.sourceRevision == revision
+                && $0.location == location && $0.sortOrder >= 0 && $0.characterOffset >= 0
+        }) != true {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        var output: [CourseDocumentPassage] = []
+        var remaining = maximumCharacters
+        var nextCursor: String?
+        for (order, passage) in markdownPassages(markdown).enumerated() {
+            guard passage.matches(page: nil, location: location), order >= (decoded?.sortOrder ?? 0) else { continue }
+            let offset = order == decoded?.sortOrder ? decoded!.characterOffset : 0
+            guard offset <= passage.text.count else {
+                return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
             }
-            guard !trimmedQuery.isEmpty else { return true }
-            return text(
-                [section.heading, section.text].compactMap { $0 }.joined(separator: "\n"),
-                matchesAnyTermIn: trimmedQuery
-            )
+            let unread = passage.text.dropFirst(offset)
+            let consumed = min(unread.count, max(remaining, 0))
+            if consumed > 0 {
+                var part = passage
+                part.text = String(unread.prefix(consumed))
+                output.append(part)
+                remaining -= consumed
+            }
+            if consumed < unread.count {
+                nextCursor = encodeCursor(itemID: sourceID, sourceRevision: revision, location: location,
+                                          sortOrder: order, characterOffset: offset + consumed)
+                break
+            }
         }
-        let joined = sections.map { section in
-            section.heading.map { "# \($0)\n\(section.text)" } ?? section.text
-        }.joined(separator: "\n\n")
-        let limit = max(maximumCharacters, 1)
-        let sourceRevision = sourceRevision(forMarkdown: markdown)
-        let scope = [trimmedQuery, trimmedLocation].joined(separator: "\u{1f}")
-        let decodedCursor = cursor.flatMap(Self.decodeCursor)
-        if cursor != nil,
-           decodedCursor.map({
-               $0.version == 1
-                   && $0.itemID == sourceID
-                   && $0.sourceRevision == sourceRevision
-                   && $0.location == scope
-                   && $0.sortOrder == 0
-                   && $0.characterOffset >= 0
-                   && $0.characterOffset <= joined.count
-           }) != true {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable,
-                sourceRevision: sourceRevision
-            )
-        }
-        let offset = decodedCursor?.characterOffset ?? 0
-        let unread = joined.dropFirst(offset)
-        let pageText = String(unread.prefix(limit))
-        let nextOffset = offset + pageText.count
-        let nextCursor = nextOffset < joined.count
-            ? Self.encodeCursor(
-                itemID: sourceID,
-                sourceRevision: sourceRevision,
-                location: scope,
-                sortOrder: 0,
-                characterOffset: nextOffset
-            )
-            : nil
-        return CourseDocumentIndexResult(
-            text: pageText.isEmpty ? nil : pageText,
-            isTruncated: nextCursor != nil,
-            nextCursor: nextCursor,
-            sourceRevision: sourceRevision
-        )
+        return CourseDocumentIndexResult(text: output.isEmpty ? nil : output.map(\.text).joined(),
+            isTruncated: nextCursor != nil, nextCursor: nextCursor, sourceRevision: revision, passages: output)
     }
 
     public static func sourceRevision(for item: StudyItem) -> String? {

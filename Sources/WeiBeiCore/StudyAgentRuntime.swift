@@ -319,16 +319,9 @@ public struct StudyAgentFocus: Codable, Equatable, Sendable {
 }
 
 public enum StudyAgentHostToolRequest: Equatable, Sendable {
-    case courseMap(itemID: String?, offset: Int, limit: Int)
-    case courseSearch(query: String, offset: Int, limit: Int)
-    case workspaceSearch(query: String, offset: Int, limit: Int, crossLibrary: Bool)
-    case courseRead(
-        itemID: String,
-        query: String,
-        location: String?,
-        cursor: String?,
-        maximumCharacters: Int
-    )
+    case courseMap(scope: StudyAgentSourceScope, scopeID: String?, name: String?, cursor: String?, limit: Int)
+    case workspaceSearch(query: String, scope: StudyAgentSourceScope, scopeID: String?, cursor: String?, limit: Int)
+    case courseRead(itemID: String, page: Int?, location: String?, cursor: String?, maximumCharacters: Int)
     case retryFailedPDFPages(itemID: String)
     case webOpen(url: String, cursor: String?, maximumCharacters: Int)
 }
@@ -361,23 +354,35 @@ public struct StudyAgentHostToolItem: Codable, Equatable, Sendable {
     public var courseIDs: [String]
     public var courseTitles: [String]
     public var sourceRevision: String?
+    /// 工具参数使用的页码从 1 开始；source.pageIndex 留给界面定位。
+    public var page: Int?
+    public var source: AgentReplySource?
+    public var availability: String?
 
     public init(
         item: StudyAgentCourseItem,
         relativePath: String? = nil,
         courseIDs: [String] = [],
         courseTitles: [String] = [],
-        sourceRevision: String? = nil
+        sourceRevision: String? = nil,
+        source: AgentReplySource? = nil,
+        availability: String? = nil
     ) {
         self.item = item
         self.relativePath = relativePath
         self.courseIDs = courseIDs
         self.courseTitles = courseTitles
         self.sourceRevision = sourceRevision
+        self.page = source?.pageIndex.map { $0 + 1 }
+        self.source = source
+        self.availability = availability
     }
 }
 
 public struct StudyAgentHostToolResult: Codable, Equatable, Sendable {
+    public var scope: StudyAgentSourceScope?
+    public var scopeID: String?
+    public var coverage: [StudyAgentHostToolItem]?
     public var query: String
     public var items: [StudyAgentHostToolItem]
     public var webPages: [StudyAgentWebPage]
@@ -391,8 +396,14 @@ public struct StudyAgentHostToolResult: Codable, Equatable, Sendable {
         webPages: [StudyAgentWebPage] = [],
         total: Int? = nil,
         nextCursor: String? = nil,
-        sourceRevision: String? = nil
+        sourceRevision: String? = nil,
+        scope: StudyAgentSourceScope? = nil,
+        scopeID: String? = nil,
+        coverage: [StudyAgentHostToolItem]? = nil
     ) {
+        self.scope = scope
+        self.scopeID = scopeID
+        self.coverage = coverage
         self.query = query
         self.items = items
         self.webPages = webPages
@@ -508,6 +519,7 @@ public struct StudyAgentRequest: Sendable {
     public var selectionTitle: String?
     public var selectionText: String?
     public var selectionSources: [AgentReplySource]
+    public var knownSources: [AgentReplySource]
     public var courseContext: StudyAgentCourseContext
     public var projectScope: StudyAgentProjectScope
     public var focus: StudyAgentFocus?
@@ -532,6 +544,7 @@ public struct StudyAgentRequest: Sendable {
         selectionTitle: String? = nil,
         selectionText: String? = nil,
         selectionSources: [AgentReplySource] = [],
+        knownSources: [AgentReplySource] = [],
         courseContext: StudyAgentCourseContext = .empty,
         projectScope: StudyAgentProjectScope = .empty,
         focus: StudyAgentFocus? = nil,
@@ -554,6 +567,7 @@ public struct StudyAgentRequest: Sendable {
         self.selectionTitle = selectionTitle
         self.selectionText = selectionText
         self.selectionSources = selectionSources
+        self.knownSources = knownSources
         self.courseContext = courseContext
         self.projectScope = projectScope
         self.focus = focus
@@ -790,7 +804,7 @@ public enum StudyAgentProgress: Equatable, Sendable {
     /// Tool name plus an optional human-readable argument excerpt
     /// (search query, file title…) surfaced in the chat status line.
     case usingTool(String, String?)
-    case text(String, [AgentMessageContentBlock])
+    case text(String, [AgentMessageContentBlock], [AgentReplySource])
     case visualization(AgentVisualization, [AgentMessageContentBlock])
 }
 

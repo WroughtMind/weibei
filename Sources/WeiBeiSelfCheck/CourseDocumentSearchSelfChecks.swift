@@ -81,7 +81,7 @@ func checkCourseDocumentSearchReadiness() throws {
         "无法读取的资料被伪装成普通空结果"
     )
 
-    let progressiveBody = (0..<18).map { section in
+    let progressiveBody = (0..<92).map { section in
         "# 第 \(section + 1) 节\n段落-\(section)-" + String(repeating: "课程正文", count: 30)
     }.joined(separator: "\n\n") + "\n\nFULL_ARTICLE_TAIL_TOKEN"
     let progressive = try makeSearchItem(
@@ -91,10 +91,10 @@ func checkCourseDocumentSearchReadiness() throws {
     )
     var cursor: String?
     var pages: [String] = []
+    var cursors = Set<String>()
     repeat {
         let page = index.read(
             item: progressive,
-            query: "",
             location: nil,
             cursor: cursor,
             maximumCharacters: 240
@@ -105,22 +105,36 @@ func checkCourseDocumentSearchReadiness() throws {
         )
         pages.append(page.text ?? "")
         cursor = page.nextCursor
-        try requireSearchCheck(pages.count < 100, "渐进读取游标没有收敛")
+        try requireSearchCheck((page.text?.count ?? 0) <= 240, "读取擅自扩大了请求的字数")
+        if let cursor { try requireSearchCheck(cursors.insert(cursor).inserted, "渐进读取游标重复") }
     } while cursor != nil
     try requireSearchCheck(
         pages.count > 1
-            && pages.joined(separator: "").contains("FULL_ARTICLE_TAIL_TOKEN"),
+            && pages.joined() == progressiveBody,
         "渐进读取无法续读到长文末尾"
     )
+    var outlineOffset = 0
+    var outline: [CourseDocumentPassage] = []
+    repeat {
+        let page = index.outlinePassages(item: progressive, offset: outlineOffset, limit: 17)
+        outline += page.passages
+        guard let next = page.nextCursor, let offset = Int(next) else { break }
+        try requireSearchCheck(offset > outlineOffset, "目录游标没有前进")
+        outlineOffset = offset
+    } while true
+    try requireSearchCheck(outline.count == 92, "目录无法翻到后半段")
+    let lateSection = index.read(item: progressive, location: outline.last?.location, maximumCharacters: 240)
+    try requireSearchCheck(lateSection.text?.contains("FULL_ARTICLE_TAIL_TOKEN") == true, "后半段目录位置不能读取")
+    let exactSection = index.read(item: progressive, location: "markdown-heading-1", maximumCharacters: 240)
+    try requireSearchCheck(exactSection.passages.count == 1 && exactSection.passages.first?.location == "markdown-heading-1", "章节 1 混入章节 10")
+    try requireSearchCheck(index.searchPassages(item: progressive, query: "课程正文 不存在").passages.isEmpty, "搜索擅自拆词匹配")
     let markdownPage = CourseDocumentSearchIndex.readMarkdown(
         progressiveBody,
-        query: "",
         location: nil,
         maximumCharacters: 240
     )
     let staleMarkdownPage = CourseDocumentSearchIndex.readMarkdown(
         progressiveBody + "\n新增内容",
-        query: "",
         location: nil,
         cursor: markdownPage.nextCursor,
         maximumCharacters: 240
