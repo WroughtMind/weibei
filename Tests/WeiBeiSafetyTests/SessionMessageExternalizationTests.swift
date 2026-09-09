@@ -241,6 +241,15 @@ final class SessionMessageExternalizationTests: XCTestCase {
         let fileB = StudySessionMessageFile.fileURL(sessionID: sessionB.id, in: root)
         let bytesB = try Data(contentsOf: fileB)
 
+        // Opening a file picker saves its visibility, but must not re-encode
+        // unchanged chat bodies or rescan the chat directory on the UI thread.
+        store.toggleReader()
+        store.toggleNotes()
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        XCTAssertEqual(store.sessionMessagePersistence.lastPreparationEncodedSessionIDs, [])
+        XCTAssertFalse(store.sessionMessagePersistence.lastPreparationScannedDirectory)
+        XCTAssertFalse(store.sessionMessagePersistence.lastPreparationRanOnMainThread)
+
         XCTAssertTrue(
             store.activateStudySession(
                 sessionA.id,
@@ -253,6 +262,8 @@ final class SessionMessageExternalizationTests: XCTestCase {
         )
         XCTAssertTrue(store.flushPendingWorkspaceSave())
 
+        XCTAssertEqual(store.sessionMessagePersistence.lastPreparationEncodedSessionIDs, [sessionA.id])
+        XCTAssertFalse(store.sessionMessagePersistence.lastPreparationRanOnMainThread)
         XCTAssertEqual(try Data(contentsOf: fileB), bytesB)
         let updatedA = try StudySessionMessageFile.decoder()
             .decode(

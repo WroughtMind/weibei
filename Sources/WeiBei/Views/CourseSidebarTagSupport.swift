@@ -16,6 +16,9 @@ final class CourseSidebarTagState {
         meta: CourseSidebarNoteMeta
     )] = [:]
     private let parser = CourseSidebarTagParser()
+#if DEBUG
+    fileprivate(set) var metadataReadCountForTesting = 0
+#endif
 
     func request(
         for item: StudyItem,
@@ -65,10 +68,6 @@ final class CourseSidebarTagState {
         metaByItemID = metaByItemID.filter { itemIDs.contains($0.key) }
     }
 
-    func clearCache() {
-        metaByItemID.removeAll()
-    }
-
     func tags(in markdown: String) async -> [String]? {
         await parser.tags(in: markdown)
     }
@@ -94,19 +93,18 @@ extension WorkspaceStore {
         courseSidebarTags.pruneCache(keeping: itemIDs)
     }
 
-    func clearSidebarTagCache() {
-        courseSidebarTags.clearCache()
-    }
-
     /// 加载一条笔记的侧边栏元信息：标签 + 与浮动 tab 同口径的显示名。
     /// 正文经 `sidebarTagMarkdown` 异步获取（内存草稿 / 活动笔记 / 读盘），
     /// 显示名用 `NoteTabDisplayTitle.resolve` 解析，绝不回退同步读盘。
     func loadSidebarNoteMeta(for request: CourseSidebarTagRequest) async -> CourseSidebarNoteMeta? {
-        if let cached = cachedSidebarNoteMeta(for: request) { return cached }
         guard let item = importedItems.first(where: { $0.id == request.itemID }),
               sidebarTagRequest(for: item, draftToken: request.draftToken) == request,
-              (request.draftToken != nil) == (request.itemID == activeNoteItemID),
-              let markdown = await sidebarTagMarkdown(itemID: request.itemID),
+              (request.draftToken != nil) == (request.itemID == activeNoteItemID) else { return nil }
+        if let cached = cachedSidebarNoteMeta(for: request) { return cached }
+#if DEBUG
+        courseSidebarTags.metadataReadCountForTesting += 1
+#endif
+        guard let markdown = await sidebarTagMarkdown(itemID: request.itemID),
               !Task.isCancelled,
               let tags = await courseSidebarTags.tags(in: markdown),
               !Task.isCancelled,

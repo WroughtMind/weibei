@@ -111,7 +111,7 @@ final class CourseSidebarModel: ObservableObject {
         rebuildTask?.cancel()
         rebuildTask = nil
         transientNoteMeta.removeAll()
-        store?.clearSidebarTagCache()
+        // Prepared metadata is shared with file pickers and lives with the store.
         store = nil
     }
 

@@ -3224,20 +3224,6 @@ final class WorkspaceStore: ObservableObject {
         item.title
     }
 
-    /// "选择其他笔记"列表的显示名，与浮动 tab 同口径：
-    /// 自定义名 > 正文抬头 > 文件名 > 正文前几个字。
-    /// 仅用于笔记列表展示；`displayTitle(for:)` 保持原名语义，
-    /// 引用匹配、排序、重命名草稿等仍按文件标题走。
-    func noteListDisplayTitle(for item: StudyItem) -> String {
-        guard item.isNotebookNote else { return item.title }
-        let resolved = NoteTabDisplayTitle.resolve(
-            customTitle: item.customDisplayTitle,
-            noteTitle: item.title,
-            body: noteMarkdownText(for: item)
-        )
-        return resolved.isEmpty ? item.title : resolved
-    }
-
     func displaySubtitle(for item: StudyItem) -> String {
         if fileMissingSinceByItemID[item.id] != nil {
             return ui("文件不存在", "File missing")
@@ -4605,11 +4591,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleReader() {
-        let isOpening = !isPaneToggleActive(.reader)
         toggleDocumentPane(.reader)
-        if isOpening {
-            save()
-        }
     }
 
     func toggleAgent() {
@@ -4624,11 +4606,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleNotes() {
-        let isOpening = !isPaneToggleActive(.notes)
         toggleDocumentPane(.notes)
-        if isOpening {
-            save()
-        }
     }
 
     func showContextualBrowser(_ kind: ContextualContentKind) {
@@ -11703,9 +11681,6 @@ final class WorkspaceStore: ObservableObject {
         }
         let removingCourseIDs = workspacePersistenceRemovingCourseID
             .map { Set([$0]) } ?? []
-        let sessionPayloads = try sessionMessagePersistence.writes(
-            for: persisted.snapshot.studySessions ?? []
-        )
         return (
             WorkspacePersistenceRequest(
                 generation: generation,
@@ -11725,8 +11700,8 @@ final class WorkspaceStore: ObservableObject {
                         removingCourseIDs
                     ),
                 needsPortableBootstrap: needsPortableCourseStateBootstrap,
-                sessionMessageWrites: sessionPayloads.writes,
-                sessionMessageDeletions: sessionPayloads.deletions
+                sessionMessageWrites: [],
+                sessionMessageDeletions: []
             ),
             persisted.resumePoints
         )
@@ -11884,7 +11859,7 @@ final class WorkspaceStore: ObservableObject {
                     "outcome=\(publishOutcome) generation=\(generation)"
             )
         }
-        let prepared: (
+        var prepared: (
             request: WorkspacePersistenceRequest,
             resumePoints: [CourseResumePoint]
         )
@@ -11896,6 +11871,13 @@ final class WorkspaceStore: ObservableObject {
                 generation: generation,
                 skippingPortableCourseIDs: skippingPortableCourseIDs
             )
+            // Capture the complete workspace transaction before awaiting. A pane
+            // change must never encode chat bodies or enumerate files on the UI actor.
+            let payloads = try await sessionMessagePersistence.writes(
+                for: prepared.request.workspace.studySessions ?? []
+            )
+            prepared.request.sessionMessageWrites = payloads.writes
+            prepared.request.sessionMessageDeletions = payloads.deletions
             WeiBeiPerf.end(
                 snapshotSpan,
                 extra: "outcome=completed generation=\(generation)"
@@ -12070,7 +12052,11 @@ final class WorkspaceStore: ObservableObject {
             return true
         }
         courseResumePoints = prepared.resumePoints
-        sessionMessagePersistence.noteSuccessfulPersist(writes: prepared.request.sessionMessageWrites, deletions: prepared.request.sessionMessageDeletions)
+        sessionMessagePersistence.noteSuccessfulPersist(
+            sessions: prepared.request.workspace.studySessions ?? [],
+            writes: prepared.request.sessionMessageWrites,
+            deletions: prepared.request.sessionMessageDeletions
+        )
         if !oversizedPortableCourseIDs.isEmpty {
             reportWorkspaceSaveFailure(.coursePortableStateOversized, ui(
                 "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",

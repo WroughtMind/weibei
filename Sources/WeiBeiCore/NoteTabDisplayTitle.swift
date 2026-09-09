@@ -29,16 +29,18 @@ public enum NoteTabDisplayTitle {
     /// 纯 `<br />` 等）跳过继续往下找。结果按 `fallbackCharacterLimit` 截断，
     /// 避免长标题撑爆 tab 和文件名。
     public static func bodyTitleLine(from body: String) -> String? {
-        for rawLine in body.components(separatedBy: .newlines) {
+        var title: String?
+        body.enumerateLines { rawLine, stop in
             var line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty else { continue }
+            guard !line.isEmpty else { return }
             line = String(line.drop(while: { $0 == "#" }))
                 .trimmingCharacters(in: .whitespaces)
             let text = strippedLine(line)
-            guard !text.isEmpty else { continue }
-            return String(text.prefix(fallbackCharacterLimit))
+            guard !text.isEmpty else { return }
+            title = String(text.prefix(fallbackCharacterLimit))
+            stop = true
         }
-        return nil
+        return title
     }
 
     /// 严格抬头：仅认第一个非空行是 ATX 标题（`# …`，井号+空格）的情况。
@@ -46,31 +48,33 @@ public enum NoteTabDisplayTitle {
     /// 普通首行文字只影响显示（见 `bodyTitleLine`），不改名，避免把
     /// 无标题草稿/首句正文误当标题把文件改飞。
     public static func bodyStrictHeading(from body: String) -> String? {
-        for rawLine in body.components(separatedBy: .newlines) {
+        var title: String?
+        body.enumerateLines { rawLine, stop in
             let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty else { continue }
+            guard !line.isEmpty else { return }
+            stop = true
             let headingMarks = line.prefix { $0 == "#" }.count
             guard headingMarks > 0,
-                  line.dropFirst(headingMarks).first?.isWhitespace == true else { return nil }
+                  line.dropFirst(headingMarks).first?.isWhitespace == true else { return }
             let text = strippedLine(line)
-            guard !text.isEmpty else { return nil }
-            return String(text.prefix(fallbackCharacterLimit))
+            guard !text.isEmpty else { return }
+            title = String(text.prefix(fallbackCharacterLimit))
         }
-        return nil
+        return title
     }
 
     /// 正文回退：去掉空白与 Markdown 标记后取前 `limit` 个字符。
     public static func bodyExcerpt(from body: String, limit: Int = fallbackCharacterLimit) -> String {
         var excerpt = ""
-        for rawLine in body.components(separatedBy: .newlines) {
+        body.enumerateLines { rawLine, stop in
             let line = strippedLine(rawLine)
-            guard !line.isEmpty else { continue }
+            guard !line.isEmpty else { return }
             if !excerpt.isEmpty {
                 excerpt.append(" ")
             }
             excerpt.append(line)
             if excerpt.count >= limit {
-                break
+                stop = true
             }
         }
         return String(excerpt.prefix(limit))
