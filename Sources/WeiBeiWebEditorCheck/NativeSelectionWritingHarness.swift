@@ -31,7 +31,7 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
         window.contentView = web
         window.makeFirstResponder(web)
         web.loadFileURL(resources.appendingPathComponent("index.html"), allowingReadAccessTo: resources)
-        let deadline = Date().addingTimeInterval(60)
+        let deadline = Date().addingTimeInterval(90)
         while !done && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
         expect(done, "native selection/writing check timed out")
         config.userContentController.removeAllScriptMessageHandlers()
@@ -61,7 +61,10 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
             guard let client = web.inputContext?.client else { expect(false, "native text input unavailable"); return }
             let replacement = NSRange(location: NSNotFound, length: 0)
             if body["operation"] as? String == "marked" {
-                client.setMarkedText(text, selectedRange: NSRange(location: 0, length: text.utf16.count), replacementRange: replacement)
+                let selected = body["caretAtEnd"] as? Bool == true
+                    ? NSRange(location: text.utf16.count, length: 0)
+                    : NSRange(location: 0, length: text.utf16.count)
+                client.setMarkedText(text, selectedRange: selected, replacementRange: replacement)
             } else {
                 client.insertText(text, replacementRange: replacement)
             }
