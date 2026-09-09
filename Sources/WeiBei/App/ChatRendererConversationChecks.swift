@@ -1,9 +1,11 @@
 #if CHAT_RENDERER_LAB
 import AppKit
 import ChatRendererKit
+import CoreText
 import Litext
 import MarkdownView
 import SwiftUI
+import WebKit
 import WeiBeiCore
 
 /// Checks the same host and bubbles shipped in the candidate. Hidden windows
@@ -279,11 +281,36 @@ enum ChatRendererConversationChecks {
                 return nil
             }
             guard let diagram = mermaid(in: list) else { throw Failure(message: "No mounted Mermaid attachment") }
+            @MainActor func webView(in view: NSView) -> WKWebView? {
+                if let web = view as? WKWebView { return web }
+                return view.subviews.lazy.compactMap { webView(in: $0) }.first
+            }
+            @MainActor func checkDiagramTheme() async throws {
+                guard let web = webView(in: diagram) else { throw Failure(message: "Mermaid has no web presentation") }
+                let deadline = ProcessInfo.processInfo.systemUptime + 20
+                while true {
+                    let result = try? await web.evaluateJavaScript("""
+                        (() => {
+                          const render = document.querySelector('.weibei-mermaid-render[data-rendered="true"]');
+                          const svg = render?.querySelector('svg');
+                          if (!svg) return false;
+                          return getComputedStyle(render).backgroundColor === 'rgba(0, 0, 0, 0)'
+                            && getComputedStyle(svg).backgroundColor === 'rgba(0, 0, 0, 0)'
+                            && getComputedStyle(render).opacity === '1';
+                        })()
+                        """)
+                    if result as? Bool == true { return }
+                    try require(ProcessInfo.processInfo.systemUptime < deadline, "Rendered Mermaid retained an opaque or dimmed preview")
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+            }
+            try await checkDiagramTheme()
             let previousAppearance = store.appearanceMode
             store.setAppearanceMode(previousAppearance.isDark ? .paper : .inkstone)
             try await settle(list)
             try require(mermaid(in: list) === diagram && diagram.attachment.isDark == store.appearanceMode.isDark,
                 "Mermaid appearance: retained=\(mermaid(in: list) === diagram), actualDark=\(diagram.attachment.isDark), expectedDark=\(store.appearanceMode.isDark)")
+            try await checkDiagramTheme()
             store.setAppearanceMode(previousAppearance)
             try await settle(list)
             guard let targetID = action.targetItemID, let notePath = store.item(withID: targetID)?.urlPath else {
@@ -307,6 +334,113 @@ enum ChatRendererConversationChecks {
             try require(restored == beforeNote, "Undo did not restore the original note file")
         }
         timer.invalidate()
+        await runCase("conversation_styles_preserve_content") {
+            let source = #"""
+            # 一层标题
+            ## 二层标题
+            ### 三层标题
+            #### 四层标题
+            ##### 五层标题
+            ###### 六层标题
+
+            正文 *Italic 斜体*、***Bold italic***、==高亮文字==、^[脚注文字]。
+
+            $$\boxed{\sum_{i=1}^{n} i = \frac{n(n+1)}{2}}\quad\text{中文}$$
+
+            > ## 引用标题
+            >
+            > ```swift
+            > let quotedCode = 1
+            > ```
+            >
+            > | 表头 | 数值 |
+            > | --- | --- |
+            > | 内容 | 42 |
+
+            ![[style-image.png|图片说明]]
+            """# + "\n\n$$" + (1...80).map { "a_{\($0)}" }.joined(separator: " + ") + "$$\n\n$$\\unsupportedStyleProbe{x}$$"
+            let document = CandidateDocument(), surface = CandidateTextView()
+            document.configure(fontSize: 16, ink: WeiBeiNativePalette.ink(), secondaryInk: WeiBeiNativePalette.secondaryInk(),
+                accent: WeiBeiNativePalette.link(), paper: WeiBeiNativePalette.paperRaised(), separator: WeiBeiNativePalette.hairline(),
+                selection: WeiBeiNativePalette.selectionFill())
+            surface.bind(document)
+            let revision = document.submit(source)
+            let deadline = ProcessInfo.processInfo.systemUptime + 20
+            while document.displayedRevision < revision {
+                try require(ProcessInfo.processInfo.systemUptime < deadline, "Style content did not prepare")
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let height = surface.measuredHeight(for: 640)
+            surface.frame = NSRect(x: 0, y: 0, width: 640, height: height)
+            window.contentView = surface
+            surface.layoutSubtreeIfNeeded()
+            let text = surface.textLabelView.attributedText
+            @MainActor func attributes(_ sample: String) throws -> [NSAttributedString.Key: Any] {
+                let range = (text.string as NSString).range(of: sample)
+                try require(range.location != NSNotFound, "Rendered style content missing: \(sample)")
+                return text.attributes(at: range.location, effectiveRange: nil)
+            }
+            let headings = try ["一层", "二层", "三层", "四层", "五层", "六层"].map {
+                (try attributes($0)[.font] as? NSFont)?.pointSize ?? 0
+            }
+            try require(zip(headings, headings.dropFirst()).allSatisfy { $0 > $1 } && headings.last == 16,
+                "Heading levels did not keep the body-relative hierarchy")
+            let italic = try attributes("Italic"), boldItalic = try attributes("Bold italic")
+            try require((italic[.font] as? NSFont)?.fontDescriptor.symbolicTraits.contains(.italic) == true
+                && italic[.underlineStyle] == nil, "Emphasis is not italic")
+            let chineseRange = (text.string as NSString).range(of: "斜体")
+            let chineseLine = CTLineCreateWithAttributedString(text.attributedSubstring(from: chineseRange))
+            let chineseRuns = CTLineGetGlyphRuns(chineseLine) as! [CTRun]
+            try require(chineseRuns.allSatisfy { run in
+                let attributes = CTRunGetAttributes(run) as! [String: Any]
+                let font = attributes[kCTFontAttributeName as String] as! CTFont
+                return CTFontGetSymbolicTraits(font).contains(.traitItalic) || CTRunGetTextMatrix(run).c > 0
+            }, "Font substitution removed the actual Chinese italic glyph slant")
+            try require((boldItalic[.font] as? NSFont)?.fontDescriptor.symbolicTraits.contains([.italic, .bold]) == true,
+                "Nested emphasis lost bold or italic")
+            try require(try attributes("高亮文字")[.backgroundColor] != nil, "Highlight lost its background")
+            try require(!text.string.contains("^[") && !text.string.contains("=="), "Extension markers leaked into prose")
+            var embedded: [NSView] = []
+            text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, _, _ in
+                for case let view as NSView in attributes.values where !embedded.contains(where: { $0 === view }) {
+                    embedded.append(view)
+                }
+            }
+            try require(embedded.count == 2,
+                "Quoted code or table was flattened")
+            try require(embedded.allSatisfy {
+                $0.convert($0.bounds, to: surface).maxX <= surface.bounds.maxX + 1
+            }, "Quoted rich content extends past the text column")
+            try require(document.attachments.values.contains(.image(source: "style-image.png", alt: "图片说明")),
+                "Wiki image turned into a note link")
+            try require(document.attachments.values.contains { if case .math = $0 { return true }; return false },
+                "Display math lost its block presentation")
+            @MainActor func pictures(in view: NSView) -> [NSImageView] {
+                (view as? NSImageView).map { [$0] } ?? view.subviews.flatMap { pictures(in: $0) }
+            }
+            guard let wideFormula = pictures(in: surface).first(where: { ($0.image?.size.width ?? 0) > surface.bounds.width }),
+                  let horizontal = wideFormula.enclosingScrollView else { throw Failure(message: "Long formula lost horizontal viewing") }
+            try require(wideFormula.imageScaling == .scaleNone && horizontal.hasHorizontalScroller,
+                "Long formula was shrunk or clipped instead of horizontally scrollable")
+            horizontal.contentView.scroll(to: NSPoint(x: 80, y: 0))
+            try require(horizontal.contentView.bounds.minX > 0, "Long formula could not scroll horizontally")
+            let failedFormula = pictures(in: surface).first { $0.image == nil && $0.enclosingScrollView != nil }
+            let failureCaption = failedFormula?.enclosingScrollView?.superview?.subviews.compactMap { $0 as? NSTextField }.first
+            try require(failureCaption?.isHidden == false && failureCaption?.stringValue.contains(#"\unsupportedStyleProbe"#) == true,
+                "Unsupported formula silently disappeared instead of keeping readable source")
+            surface.textLabelView.selectAll()
+            let copied = surface.textLabelView.selectedPlainText() ?? ""
+            try require(copied.contains(#"\boxed"#) && copied.contains("quotedCode") && copied.contains("42"),
+                "Selecting and copying lost formula, quoted code or table content")
+            surface.textLabelView.clearSelection()
+            if let bitmap = surface.bitmapImageRepForCachingDisplay(in: surface.bounds) {
+                surface.cacheDisplay(in: surface.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("style-content.png"))
+            }
+            let emptyList = ChatRendererListView(session: ChatRendererSession())
+            let emptyHistory = emptyList.tableView(emptyList.table, viewFor: nil, row: 0)
+            try require(emptyHistory?.isHidden == true, "Empty conversation drew a history button")
+        }
         var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
         let documents = session.preparedDocuments
         let timings = documents.flatMap(\.timings) + list.timings

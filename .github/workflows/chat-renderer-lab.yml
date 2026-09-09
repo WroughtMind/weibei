@@ -69,6 +69,7 @@ jobs:
           cd Experiments/ChatRendererLab/Compatibility
           mkdir -p .artifacts
           swift package resolve 2>&1 | tee .artifacts/resolve.log
+          python3 ../script/prepare_app_resources.py .build/checkouts
           cp Package.resolved .artifacts/Package.resolved
           swift package show-dependencies --format json > .artifacts/dependencies.json
           swift build -c release --product LinkedRenderersProbe 2>&1 | tee .artifacts/build.log

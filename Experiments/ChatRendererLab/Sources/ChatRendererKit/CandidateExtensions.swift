@@ -5,6 +5,7 @@ public enum CandidateAttachment: Hashable, Sendable {
     case image(source: String, alt: String)
     case visualization(id: String)
     case mermaid(source: String)
+    case math(source: String, identifier: String)
 }
 
 /// Rewrites only the extensions the upstream renderer does not display.
@@ -13,6 +14,7 @@ struct CandidateExtensions {
     var attachments: [Int: CandidateAttachment] = [:]
     var calloutIndex = 0
     let toggledCallouts: Set<Int>
+    let displayMath: Set<String>
 
     mutating func blocks(_ input: [MarkdownBlockNode]) -> [MarkdownBlockNode] {
         input.flatMap { block -> [MarkdownBlockNode] in
@@ -56,20 +58,28 @@ struct CandidateExtensions {
 
     private mutating func inline(_ node: MarkdownInlineNode) -> [MarkdownInlineNode] {
         switch node {
+        case let .math(source, identifier) where displayMath.contains(identifier):
+            return [attachment(.math(source: source, identifier: identifier))]
         case let .image(source, children):
             if source.hasPrefix("weibei-visualization:") {
                 return [attachment(.visualization(id: String(source.dropFirst("weibei-visualization:".count))))]
             }
             return [attachment(.image(source: source, alt: plain(children)))]
         case let .text(value):
-            let expression = /\[\[([^\]\n]+)\]\]/
+            let expression = /(!?)\[\[([^\]\n]+)\]\]/
             var result: [MarkdownInlineNode] = []
             var cursor = value.startIndex
             for match in value.matches(of: expression) {
                 result.append(.text(String(value[cursor..<match.range.lowerBound])))
-                let parts = match.1.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
-                let target = String(parts[0]).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String(parts[0])
-                result.append(.link(destination: "weibei-note:\(target)", children: [.text(String(parts.last!))]))
+                let parts = match.2.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+                let source = String(parts[0]).trimmingCharacters(in: .whitespaces)
+                let label = String(parts.last!).trimmingCharacters(in: .whitespaces)
+                let target = source.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? source
+                if match.1 == "!", source.range(of: #"\.(png|jpe?g|gif|webp|svg|heic)(?:[?#].*)?$"#, options: .regularExpression) != nil {
+                    result.append(attachment(.image(source: source, alt: label)))
+                } else {
+                    result.append(.link(destination: "weibei-note:\(target)", children: [.text(label)]))
+                }
                 cursor = match.range.upperBound
             }
             result.append(.text(String(value[cursor...])))

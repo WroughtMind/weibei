@@ -65,6 +65,7 @@ done
 cp Package.resolved "$OUT/Package.resolved"
 cp "$OUT/Package.resolved" "$OUT/environment.txt" "$BUNDLE/Contents/Resources/"
 cp "$LAB/script/prepare_app_resources.py" "$BUNDLE/Contents/Resources/"
+cp "$LAB/script/markdownview-weibei.patch" "$BUNDLE/Contents/Resources/"
 python3 - "$BUNDLE" "$NAME" "$ID" "$VARIANT" <<'PY'
 import pathlib, plistlib, subprocess, sys
 app, name, identity, variant = sys.argv[1:]

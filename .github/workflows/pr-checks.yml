@@ -111,7 +111,10 @@ jobs:
       - name: 编译
         id: compile
         if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true'
-        run: swift build
+        run: |
+          swift package resolve
+          python3 Experiments/ChatRendererLab/script/prepare_app_resources.py .build/checkouts
+          swift build
 
       - name: 运行应用自检
         id: core
@@ -223,6 +226,8 @@ jobs:
         id: core
         if: ${{ github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' }}
         run: |
+          swift package resolve
+          python3 Experiments/ChatRendererLab/script/prepare_app_resources.py .build/checkouts
           swift build
           swift run WeiBeiSelfCheck
           swift run WeiBeiDev nslog-scan

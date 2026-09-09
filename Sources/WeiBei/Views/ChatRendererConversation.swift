@@ -266,6 +266,7 @@ final class ChatRendererListView: NSView, NSTableViewDataSource, NSTableViewDele
         return view
     }
     private func configureHistory(_ button: NSButton) {
+        button.isHidden = hiddenCount == 0
         button.title = hiddenCount > 0 ? "查看更早的 \(min(AgentHistoryRevealPolicy.pageSize, hiddenCount)) 条消息" : ""
         button.isEnabled = hiddenCount > 0
     }

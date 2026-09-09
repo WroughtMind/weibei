@@ -341,11 +341,18 @@ const mermaidThemeVariables = () => {
 };
 
 const initializeMermaid = (mermaid: any) => {
+  const themeVariables = mermaidThemeVariables();
+  if (isCompactPreview) {
+    const style = getComputedStyle(document.documentElement);
+    themeVariables.background = 'transparent';
+    themeVariables.primaryColor = style.getPropertyValue('--paper-raised').trim();
+    themeVariables.primaryTextColor = style.getPropertyValue('--ink').trim();
+  }
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
     theme: 'base',
-    themeVariables: mermaidThemeVariables(),
+    themeVariables,
   });
 };
 

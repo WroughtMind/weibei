@@ -223,7 +223,7 @@ final class NativeChatAttachmentView: NSView, NSTextViewDelegate {
         copyButton.title = attachment.interfaceLanguage.text("复制", "Copy")
         caption.textColor = WeiBeiNativePalette.secondaryInk()
         wantsLayer = true
-        if case .code = attachment.descriptor { layer?.backgroundColor = WeiBeiNativePalette.codePaper().cgColor }
+        if case .code = attachment.descriptor, !isMermaid { layer?.backgroundColor = WeiBeiNativePalette.codePaper().cgColor }
         else { layer?.backgroundColor = NSColor.clear.cgColor }
     }
 

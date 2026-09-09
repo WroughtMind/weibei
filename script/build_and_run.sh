@@ -165,6 +165,7 @@ swift package resolve
 git apply --directory=.build/checkouts --check script/native-bundle-resources.patch 2>/dev/null && {
   git apply --directory=.build/checkouts script/native-bundle-resources.patch
 } || git apply --directory=.build/checkouts --reverse --check script/native-bundle-resources.patch
+python3 Experiments/ChatRendererLab/script/prepare_app_resources.py .build/checkouts
 
 swift build -c "$BUILD_CONFIGURATION"
 

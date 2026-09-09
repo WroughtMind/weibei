@@ -47,7 +47,7 @@ struct ChatRendererMarkdownView: NSViewRepresentable {
             switch descriptor {
             case let .mermaid(source): nativeDescriptor = .code(source: source, language: "mermaid")
             case let .visualization(id): nativeDescriptor = .visualization(id: id)
-            case .image: return nil
+            case .image, .math: return nil
             }
             weak var retainedView: NativeChatAttachmentView?
             let attachment = NativeChatTextAttachment(descriptor: nativeDescriptor,

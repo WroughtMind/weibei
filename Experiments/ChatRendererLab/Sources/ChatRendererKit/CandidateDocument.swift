@@ -84,7 +84,10 @@ public final class CandidateDocument {
 
     private func prepare(_ parsed: MarkdownParser.ParseResult, revision: Int) {
         let start = ProcessInfo.processInfo.systemUptime
-        var extensions = CandidateExtensions(toggledCallouts: toggledCallouts)
+        var extensions = CandidateExtensions(toggledCallouts: toggledCallouts,
+            displayMath: Set(parsed.displayMath.map {
+                MarkdownParser.replacementText(for: .math, identifier: String($0))
+            }))
         let blocks = extensions.blocks(parsed.document)
         attachments = extensions.attachments
         let prepared = MarkdownContent(blocks: blocks, rendered: parsed.renderedContent(theme: theme),

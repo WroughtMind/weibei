@@ -1290,6 +1290,17 @@
       height: auto;
     }
 
+    :root[data-weibei-compact-preview="true"] body[data-editable="false"] .weibei-mermaid-render {
+      margin: 0;
+      border: 0;
+      background: transparent;
+      opacity: 1;
+    }
+
+    :root[data-weibei-compact-preview="true"] body[data-editable="false"] .weibei-mermaid-render svg {
+      background: transparent !important;
+    }
+
     .weibei-mermaid-error {
       color: var(--cinnabar);
       background: var(--cinnabar-soft);

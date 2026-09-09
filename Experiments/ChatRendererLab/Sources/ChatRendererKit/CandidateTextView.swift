@@ -182,17 +182,32 @@ public final class CandidateTextView: MarkdownTextView {
 
     public override func decorate(inlineText text: NSAttributedString, theme: MarkdownTheme) -> NSAttributedString {
         guard let document = preparedDocument else { return text }
-        let source = text.string
-        let matches = source.matches(of: /\u{F0000}([0-9]+)\u{F0001}/)
-        guard !matches.isEmpty else { return text }
+        guard text.string.contains("\u{F0000}") || text.string.contains("==") || text.string.contains("^[") else { return text }
         let result = NSMutableAttributedString(attributedString: text)
+        // This hook only receives parsed text nodes: code keeps its literal markers.
+        for match in text.string.matches(of: /==([^=\n]+)==|\^\[([^\]\n]+)\]/).reversed() {
+            let range = NSRange(match.range, in: text.string)
+            let value = NSMutableAttributedString(string: String(match.1 ?? match.2!),
+                attributes: text.attributes(at: range.location, effectiveRange: nil))
+            let full = NSRange(location: 0, length: value.length)
+            if match.1 != nil {
+                value.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.22), range: full)
+            } else {
+                value.addAttribute(.foregroundColor, value: theme.colors.emphasis, range: full)
+                value.addAttribute(.toolTip, value: String(match.2!), range: full)
+            }
+            result.replaceCharacters(in: range, with: value)
+        }
+        let source = result.string
+        let matches = source.matches(of: /\u{F0000}([0-9]+)\u{F0001}/)
         for match in matches.reversed() {
             guard let id = Int(match.1), let descriptor = document.attachments[id] else { continue }
             let item: CandidateInlineView
             if let cached = embedded[id] { item = cached }
             else {
                 item = CandidateInlineView(descriptor: descriptor, document: document, width: contentWidth,
-                    imageLoader: imageLoader, extensionView: extensionView)
+                    imageLoader: imageLoader, onOpenURL: { [weak self] in self?.onOpenURL?($0) },
+                    extensionView: extensionView)
                 embedded[id] = item
                 embeddedDescriptors[id] = descriptor
                 item.onResize = { [weak self, weak document] in
@@ -203,6 +218,7 @@ public final class CandidateTextView: MarkdownTextView {
                     self.onHeightChange?()
                 }
             }
+            item.updateMath(document: document)
             result.replaceCharacters(in: NSRange(match.range, in: source),
                 with: item.attachment.attributedString(attributes: [.font: theme.fonts.body]))
         }
@@ -227,19 +243,41 @@ private final class CandidateInlineView: NSView, TextLabel.AttachmentRepresentab
     fileprivate var external: NSView?
     private let caption = NSTextField(wrappingLabelWithString: "")
     private let picture = NSImageView()
+    private lazy var mathScroll = HorizontalScrollView()
+    private lazy var copyButton = NSButton(title: "复制", target: nil, action: nil)
+    private var onOpenURL: ((URL) -> Void)?
     override var isFlipped: Bool { true }
 
     init(descriptor: CandidateAttachment, document: CandidateDocument, width: CGFloat,
          imageLoader: ((String, @escaping (Data?) -> Void) -> Void)?,
+         onOpenURL: @escaping (URL) -> Void,
          extensionView: ((CandidateAttachment, CGFloat, @escaping (CGFloat) -> Void) -> NSView?)?) {
         self.descriptor = descriptor
+        self.onOpenURL = onOpenURL
         super.init(frame: .zero)
         switch descriptor {
+        case let .math(source, _):
+            setAccessibilityLabel(source)
+            caption.stringValue = "公式无法显示：\(source)"
+            caption.isHidden = true
+            picture.imageScaling = .scaleNone
+            mathScroll.drawsBackground = false
+            mathScroll.hasHorizontalScroller = true
+            mathScroll.autohidesScrollers = true
+            mathScroll.documentView = picture
+            copyButton.target = self
+            copyButton.action = #selector(copyMath)
+            copyButton.bezelStyle = .inline
+            copyButton.font = .systemFont(ofSize: 11)
+            addSubview(mathScroll); addSubview(copyButton); addSubview(caption)
+            updateMath(document: document)
         case let .image(source, alt):
+            setAccessibilityLabel(alt.isEmpty ? source : alt)
             caption.stringValue = alt
             caption.textColor = .secondaryLabelColor
             caption.font = .systemFont(ofSize: 11)
             picture.imageScaling = .scaleProportionallyUpOrDown
+            picture.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(openImage)))
             addSubview(picture); addSubview(caption)
             if let image = document.images[source] { install(image) }
             else {
@@ -267,6 +305,28 @@ private final class CandidateInlineView: NSView, TextLabel.AttachmentRepresentab
     }
     required init?(coder: NSCoder) { nil }
 
+    func updateMath(document: CandidateDocument) {
+        guard case let .math(_, identifier) = descriptor else { return }
+        let image = document.content?.rendered[identifier]?.image
+        guard picture.image !== image || image == nil else { return }
+        picture.image = image
+        naturalSize = image?.size ?? NSSize(width: 640, height: 44)
+        caption.isHidden = image != nil
+        resize(width: max(1, frame.width))
+    }
+
+    @objc private func copyMath() {
+        guard case let .math(source, _) = descriptor else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(source, forType: .string)
+    }
+
+    @objc private func openImage() {
+        guard case let .image(source, _) = descriptor,
+              let url = URL(string: source) else { return }
+        onOpenURL?(url)
+    }
+
     private func install(_ image: NSImage) {
         picture.image = image
         naturalSize = image.size
@@ -278,6 +338,8 @@ private final class CandidateInlineView: NSView, TextLabel.AttachmentRepresentab
         let height: CGFloat
         if case .image = descriptor {
             height = min(1, width / max(1, naturalSize.width)) * naturalSize.height + 24
+        } else if case .math = descriptor {
+            height = naturalSize.height + 32
         } else { height = naturalSize.height }
         let size = NSSize(width: width, height: max(24, height))
         currentAttachment?.size = size
@@ -287,6 +349,13 @@ private final class CandidateInlineView: NSView, TextLabel.AttachmentRepresentab
     }
     override func layout() {
         super.layout()
+        if case .math = descriptor {
+            mathScroll.frame = NSRect(x: 0, y: 28, width: bounds.width, height: naturalSize.height + 4)
+            picture.frame = NSRect(x: 0, y: 0, width: max(bounds.width, naturalSize.width), height: naturalSize.height)
+            copyButton.frame = NSRect(x: max(0, bounds.width - 44), y: 0, width: 44, height: 24)
+            caption.frame = mathScroll.frame
+            return
+        }
         picture.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(1, bounds.height - 24))
         caption.frame = NSRect(x: 0, y: max(0, bounds.height - 22), width: bounds.width, height: 22)
         external?.frame = bounds
@@ -295,6 +364,7 @@ private final class CandidateInlineView: NSView, TextLabel.AttachmentRepresentab
         switch descriptor {
         case let .image(source, alt): return .init(string: "![\(alt)](\(source))")
         case let .mermaid(source): return .init(string: source)
+        case let .math(source, _): return .init(string: source)
         case let .visualization(id): return .init(string: "图示：\(id)")
         }
     }
