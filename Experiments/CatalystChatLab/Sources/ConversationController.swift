@@ -412,6 +412,11 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             guard await store.prepare(message, width: bodyWidth), generation == scenarioGeneration else { return }
         }
         layoutTransaction = true
+        // A theme change can cancel the first preparation while its rows are
+        // still empty. Publish recovered blocks as well as refreshing styles.
+        if messages.enumerated().contains(where: { collection.numberOfItems(inSection: $0.offset) != $0.element.blocks.count + 2 }) {
+            collection.reloadData()
+        }
         for path in collection.indexPathsForVisibleItems {
             if let cell = collection.cellForItem(at: path) as? MessageCell { configure(cell, at: path) }
         }
@@ -761,6 +766,21 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 await replay?.value
                 try expect(stopping.state == .stopped && stopping.markdown == received && stopping.displayedRevision == stopping.revision, "停止丢失了已经收到的内容")
                 metrics.checks["replay_stop_complete_and_history_reading"] = "passed"
+
+                // Reproduce the empty rows left when a theme change cancels
+                // initial parsing; the appearance refresh must publish every row.
+                let appearanceProbe = ConversationController(fixtureMode: false)
+                appearanceProbe.loadViewIfNeeded()
+                appearanceProbe.view.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+                appearanceProbe.messages = [LabMessage(author: "恢复检查", markdown: "# 标题\n\n*斜体正文*\n\n结束标记")]
+                appearanceProbe.collection.reloadData()
+                appearanceProbe.view.layoutIfNeeded()
+                try expect(appearanceProbe.collection.numberOfItems(inSection: 0) == 2, "未准备正文的初始状态没有建立")
+                _ = appearanceProbe.store.setTheme(.weiBei(fontSize: 14, appearance: .paper))
+                await appearanceProbe.refreshAppearance()
+                try expect(appearanceProbe.messages[0].blocks.count == 3
+                    && appearanceProbe.collection.numberOfItems(inSection: 0) == 5,
+                           "切换字号后正文已恢复，但列表仍只显示首个标题")
 
                 loadScenario("rich")
                 await preparation?.value
