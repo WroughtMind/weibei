@@ -1,0 +1,44 @@
+diff --git a/Sources/Litext/TextLabelView/Layout/TextLabel+Layout.swift b/Sources/Litext/TextLabelView/Layout/TextLabel+Layout.swift
+index 3d64bbc..fde9027 100644
+--- a/Sources/Litext/TextLabelView/Layout/TextLabel+Layout.swift
++++ b/Sources/Litext/TextLabelView/Layout/TextLabel+Layout.swift
+@@ -233,7 +233,9 @@ extension TextLabel {
+         ///
+         /// Rects are in the same CoreText layout space returned by `rects(for:)`:
+         /// lower-left origin, before a `TextLabelView` converts them to view space.
+-        open func layoutRuns(matching key: NSAttributedString.Key) -> [TextLabel.LayoutRun] {
++        /// When only line geometry is needed, `rect` uses the line bounds and skips
++        /// glyph image bounds; character ranges and line rectangles are unchanged.
++        open func layoutRuns(matching key: NSAttributedString.Key, includesGlyphBounds: Bool = true) -> [TextLabel.LayoutRun] {
+             guard let lines, let lineOrigins, let lineMetrics else { return [] }
+
+             let runKey = key.rawValue as CFString
+@@ -261,11 +263,11 @@ extension TextLabel {
+                             location: cfStringRange.location,
+                             length: cfStringRange.length
+                         ),
+-                        rect: runBoundingRect(
++                        rect: includesGlyphBounds ? runBoundingRect(
+                             glyphRun,
+                             attributes: attributes,
+                             lineOrigin: lineOrigin
+-                        ),
++                        ) : lineRect,
+                         lineRect: lineRect
+                     ))
+                 }
+diff --git a/Sources/Litext/TextLabelView/Layout/TextLabelView+Layout.swift b/Sources/Litext/TextLabelView/Layout/TextLabelView+Layout.swift
+index 487c9b3..68786b7 100644
+--- a/Sources/Litext/TextLabelView/Layout/TextLabelView+Layout.swift
++++ b/Sources/Litext/TextLabelView/Layout/TextLabelView+Layout.swift
+@@ -57,8 +57,8 @@ import QuartzCore
+             )
+         }
+
+-        func layoutRuns(matching key: NSAttributedString.Key) -> [TextLabel.LayoutRun] {
+-            textLayout.layoutRuns(matching: key)
++        func layoutRuns(matching key: NSAttributedString.Key, includesGlyphBounds: Bool = true) -> [TextLabel.LayoutRun] {
++            textLayout.layoutRuns(matching: key, includesGlyphBounds: includesGlyphBounds)
+         }
+
+         #if canImport(UIKit)

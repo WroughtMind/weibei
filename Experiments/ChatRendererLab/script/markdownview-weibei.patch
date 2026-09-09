@@ -339,9 +339,18 @@ index f152cc8..07fc960 100644
              let result = blockProcessor.processTable(
                  columnAlignments: columnAlignments,
 diff --git a/Sources/MarkdownView/MarkdownTextView/MarkdownTextView+ContextViewLayout.swift b/Sources/MarkdownView/MarkdownTextView/MarkdownTextView+ContextViewLayout.swift
-index db8ed8d..866c3d7 100644
+index db8ed8d..8199649 100644
 --- a/Sources/MarkdownView/MarkdownTextView/MarkdownTextView+ContextViewLayout.swift
 +++ b/Sources/MarkdownView/MarkdownTextView/MarkdownTextView+ContextViewLayout.swift
+@@ -15,7 +15,7 @@ import Litext
+         func syncContextViewLayout() {
+             var placed: Set<PlatformView> = []
+
+-            for run in textLabelView.layoutRuns(matching: .contextView) {
++            for run in textLabelView.layoutRuns(matching: .contextView, includesGlyphBounds: false) {
+                 if let codeView = run.attributes[.contextView] as? CodeView {
+                     syncCodeView(codeView, with: run)
+                     placed.insert(codeView)
 @@ -89,7 +89,7 @@ import Litext
          private func contextViewFrame(for run: TextLabel.LayoutRun, height: CGFloat) -> CGRect {
              let leftIndent = paragraphHeadIndent(in: run.attributes)
@@ -351,6 +360,15 @@ index db8ed8d..866c3d7 100644
                  y: textLabelView.frame.minY + textLabelView.bounds.height - run.lineRect.maxY,
                  width: max(0, textLabelView.bounds.width - leftIndent),
                  height: height
+@@ -116,7 +116,7 @@ import Litext
+         func syncContextViewLayout() {
+             var placed: Set<PlatformView> = []
+
+-            for run in textLabelView.layoutRuns(matching: .contextView) {
++            for run in textLabelView.layoutRuns(matching: .contextView, includesGlyphBounds: false) {
+                 if let codeView = run.attributes[.contextView] as? CodeView {
+                     syncCodeView(codeView, with: run)
+                     placed.insert(codeView)
 @@ -190,7 +190,7 @@ import Litext
          private func contextViewFrame(for run: TextLabel.LayoutRun, height: CGFloat) -> CGRect {
              let leftIndent = paragraphHeadIndent(in: run.attributes)
@@ -360,6 +378,19 @@ index db8ed8d..866c3d7 100644
                  y: textLabelView.frame.minY + textLabelView.bounds.height - run.lineRect.maxY,
                  width: max(0, textLabelView.bounds.width - leftIndent),
                  height: height
+diff --git a/Sources/MarkdownView/MarkdownTextView/MarkdownTextView+Geometry.swift b/Sources/MarkdownView/MarkdownTextView/MarkdownTextView+Geometry.swift
+index 49ad4e0..239f77f 100644
+--- a/Sources/MarkdownView/MarkdownTextView/MarkdownTextView+Geometry.swift
++++ b/Sources/MarkdownView/MarkdownTextView/MarkdownTextView+Geometry.swift
+@@ -30,7 +30,7 @@ extension MarkdownTextView {
+     func blockquoteLineSpans() -> [CGRect] {
+         var spansByGroup: [BlockquoteGroup: CGRect] = [:]
+
+-        for run in textLabelView.layoutRuns(matching: .blockquoteGroup) {
++        for run in textLabelView.layoutRuns(matching: .blockquoteGroup, includesGlyphBounds: false) {
+             guard let group = run.attributes[.blockquoteGroup] as? BlockquoteGroup else { continue }
+             let lineRect = convertFromTextLayout(run.lineRect)
+             spansByGroup[group] = spansByGroup[group]?.union(lineRect) ?? lineRect
 diff --git a/Sources/MarkdownView/Supplements/InlineNode+Render.swift b/Sources/MarkdownView/Supplements/InlineNode+Render.swift
 index 3c11d8a..dd9bb2f 100644
 --- a/Sources/MarkdownView/Supplements/InlineNode+Render.swift

@@ -384,6 +384,12 @@ enum ChatRendererConversationChecks {
             window.contentView = surface
             surface.layoutSubtreeIfNeeded()
             let text = surface.textLabelView.attributedText
+            let glyphRuns = surface.textLabelView.layoutRuns(matching: .font)
+            let lineRuns = surface.textLabelView.layoutRuns(matching: .font, includesGlyphBounds: false)
+            try require(!lineRuns.isEmpty && lineRuns.count == glyphRuns.count
+                && zip(lineRuns, glyphRuns).allSatisfy {
+                    $0.stringRange == $1.stringRange && $0.lineRect == $1.lineRect
+                }, "Reading positions changed when skipping unused glyph bounds")
             @MainActor func attributes(_ sample: String) throws -> [NSAttributedString.Key: Any] {
                 let range = (text.string as NSString).range(of: sample)
                 try require(range.location != NSNotFound, "Rendered style content missing: \(sample)")

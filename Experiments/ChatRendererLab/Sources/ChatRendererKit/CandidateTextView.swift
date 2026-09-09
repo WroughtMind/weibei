@@ -163,7 +163,7 @@ public final class CandidateTextView: MarkdownTextView {
         guard lineIndexDirty else { return }
         lineIndexDirty = false
         // Built once per layout change. Scrolling consults this index, not the source.
-        readingLines = textLabelView.layoutRuns(matching: .font).map {
+        readingLines = textLabelView.layoutRuns(matching: .font, includesGlyphBounds: false).map {
             ($0.stringRange, textLabelView.bounds.height - $0.lineRect.maxY)
         }.sorted { $0.y < $1.y }
     }

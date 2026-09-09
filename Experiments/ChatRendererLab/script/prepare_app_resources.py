@@ -14,15 +14,17 @@ root = pathlib.Path(sys.argv[1]).resolve()
 checkouts = {path.name.casefold(): path for path in root.iterdir() if path.is_dir()}
 # Keep the locked upstream typography/content corrections reviewable and apply
 # exactly the same patch in the standalone lab and the full conversation App.
-markdownview = checkouts['markdownview']
-patch = pathlib.Path(__file__).with_name('markdownview-weibei.patch')
-if subprocess.run(['git', 'apply', '--reverse', '--check', str(patch)], cwd=markdownview,
-                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-    print('already applied: MarkdownView conversation styles')
-else:
-    subprocess.run(['git', 'apply', '--check', str(patch)], cwd=markdownview, check=True)
-    subprocess.run(['git', 'apply', str(patch)], cwd=markdownview, check=True)
-    print('MarkdownView conversation styles applied')
+for identity, filename in [('litext', 'litext-line-geometry.patch'),
+                           ('markdownview', 'markdownview-weibei.patch')]:
+    checkout = checkouts[identity]
+    patch = pathlib.Path(__file__).with_name(filename)
+    if subprocess.run(['git', 'apply', '--reverse', '--check', str(patch)], cwd=checkout,
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+        print(f'already applied: {filename}')
+    else:
+        subprocess.run(['git', 'apply', '--check', str(patch)], cwd=checkout, check=True)
+        subprocess.run(['git', 'apply', str(patch)], cwd=checkout, check=True)
+        print(f'applied: {filename}')
 patches = [
     ('swiftmath', 'Sources/SwiftMath/MathBundle/MathFont.swift', 'SwiftMath_SwiftMath', 'Bundle.module', 2),
     ('swiftmath', 'Sources/SwiftMath/MathRender/MTFont.swift', 'SwiftMath_SwiftMath', 'Bundle.module', 1),
