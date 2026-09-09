@@ -145,12 +145,12 @@ if [[ "$CHECK_ONLY" != true ]]; then
     echo "build failed: VERSION must use numeric major.minor.patch" >&2
     exit 20
   fi
-  if [[ "$(git -C "$ROOT_DIR" rev-parse --is-shallow-repository)" == "true" ]]; then
-    echo "build failed: full Git history is required for a stable build number" >&2
-    exit 21
-  fi
   GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)"
-  BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count "$GIT_COMMIT")"
+  BUILD_NUMBER="$(python3 "$ROOT_DIR/script/build_number.py")"
+  if [[ -f "$FINAL_APP_BUNDLE/Contents/Info.plist" ]]; then
+    PREVIOUS_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$FINAL_APP_BUNDLE/Contents/Info.plist")"
+    python3 "$ROOT_DIR/script/build_number.py" "$BUILD_NUMBER" --after "$PREVIOUS_BUILD" >/dev/null
+  fi
   DSYM_NAME="$PRODUCT_NAME-$APP_VERSION-$TARGET_ARCH-build-$BUILD_NUMBER-$GIT_COMMIT.dSYM"
   DSYM_PATH="$FINAL_DIST_DIR/$DSYM_NAME"
   SOURCE_DIRTY=false
