@@ -207,12 +207,7 @@ final class BlockView: UIView, UITextViewDelegate {
         // Only its current view may write interaction state back to the record.
         guard let record, record.renderedView === self, case .markdown = record.kind, preparedLabel.isHidden else { return }
         record.horizontalOffsets = scrollViews(in: markdown).map { $0.contentOffset.x }
-        let selections = attachmentLabels.map(\.selectionRange)
-        if AppDelegate.checksConversation,
-           record.attachmentSelections.contains(where: { $0 != nil }), !selections.contains(where: { $0 != nil }) {
-            try? Thread.callStackSymbols.joined(separator: "\n").write(to: LabMetrics.directory.appendingPathComponent("state-loss.txt"), atomically: true, encoding: .utf8)
-        }
-        record.attachmentSelections = selections
+        record.attachmentSelections = attachmentLabels.map(\.selectionRange)
     }
     func restoreInteractionState() {
         guard let record else { return }

@@ -189,5 +189,12 @@ final class ContentStore {
         return block.height
     }
 
-    func reset() { generation += 1; views.removeAll(); recent.removeAll() }
+    func reset() {
+        generation += 1
+        for view in views.values {
+            view.saveInteractionState()
+            if view.record?.renderedView === view { view.record?.renderedView = nil }
+        }
+        views.removeAll(); recent.removeAll()
+    }
 }

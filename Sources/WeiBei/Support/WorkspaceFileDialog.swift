@@ -96,7 +96,12 @@ enum WorkspaceFileDialog {
         private func finish(_ urls: [URL]) {
             let pending = completion
             completion = nil
-            pending?.resume(returning: urls)
+            // A following confirmation must wait until the picker releases its presenter.
+            if presentingViewController != nil {
+                dismiss(animated: true) { pending?.resume(returning: urls) }
+            } else {
+                pending?.resume(returning: urls)
+            }
         }
     }
 #endif

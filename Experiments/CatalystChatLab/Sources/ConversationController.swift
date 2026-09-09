@@ -851,14 +851,12 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 try expect(scroller.contentOffset.x > 0, "长代码没有可横向阅读的完整宽度（正文 \(codeLabel.intrinsicContentSize.width)，内容 \(scroller.contentSize.width)，视口 \(scroller.bounds.width)）")
                 codeView.saveInteractionState()
                 let offset = scroller.contentOffset.x
-                let savedSelections = code.attachmentSelections
                 store.reset(); CodeHighlighter.current.renderCache.removeAll()
                 collection.reloadData(); collection.layoutIfNeeded()
                 let restoredCode = store.view(for: code, width: bodyWidth)
-                let beforeRestore = code.attachmentSelections
                 restoredCode.restoreInteractionState()
                 try expect(restoredCode.attachmentLabels.first?.selectionRange == NSRange(location: 3, length: 16) && restoredCode.scrollViews(in: restoredCode.markdown).first?.contentOffset.x == offset,
-                           "代码附件复用丢失选区或横向位置：\(String(describing: restoredCode.attachmentLabels.first?.selectionRange)) / \(restoredCode.scrollViews(in: restoredCode.markdown).first?.contentOffset.x ?? -1)，预期 \(offset)，保存 \(savedSelections)，恢复前 \(beforeRestore)，模型 \(code.attachmentSelections)\n\((try? String(contentsOf: LabMetrics.directory.appendingPathComponent("state-loss.txt"))) ?? "")")
+                           "代码附件复用丢失选区或横向位置")
                 try expect(restoredCode.attachmentLabels.first?.attributedText.isEqual(to: highlighted) == true && !code.content.highlightMaps.isEmpty,
                            "视图和全局缓存淘汰后没有保留代码高亮")
                 metrics.checks["code_highlight_selection_and_scroll_persist"] = "passed"
