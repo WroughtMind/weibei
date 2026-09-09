@@ -28,7 +28,7 @@ bash Experiments/ChatRendererLab/script/build_conversation.sh benchmark baseline
 
 每个包的 `Contents/Resources/environment.txt` 和 `Info.plist` 记录提交、工作区是否有改动、构建模式和系统；同目录包含实际 `Package.resolved`。结果目录保留编译、资源、签名及行为记录。最终体验应使用记录为干净提交构建的包。
 
-打包沿用正式版的 `strip -x` 清理可执行文件中的本地符号，再签名；完整调试符号单独保存在结果目录的 `WeiBei.dSYM`，校验构建身份一致。公式字体、代码高亮和其他显示资源保持完整。
+打包沿用正式版的 `strip -x` 清理可执行文件中的本地符号，再签名；完整调试符号单独保存在结果目录的 `WeiBei.dSYM`，校验构建身份一致。两条正文路径都只使用 Latin Modern，保留其完整字体、数学表及全部许可证，不打包另外 11 套未使用的公式字体。高亮保留全部语言、初始化必需的 pojoaque 配色和当前使用的 xcode 配色；深浅外观仍由原有动态颜色映射处理。
 
 ## 实现边界
 
@@ -45,7 +45,7 @@ bash Experiments/ChatRendererLab/script/build_conversation.sh benchmark baseline
 
 上游 MarkdownView 固定在 `757b6fcc4b3095e84f4c0613f4b98147f49dcd09`，Litext 为 `2.2.1`。完整 App 继续使用魏碑锁定的 `WroughtMind/SwiftMath@b6d15610552aa04a54c36bf205efaf34409dc335`，没有删除中文数学字体修复。
 
-实验脚本仅补丁处理本分支解析的 checkout：让资源从签名 App 的 `Contents/Resources` 加载，修复 Litext 2.2.1 的附件强引用环，并把后台高亮路径没有使用的同步高亮器改为按需创建，消除首开主线程上的额外 JavaScript 初始化。附件释放与实际后台高亮完成均有运行检查。所有字体和许可证保留；验证时临时移开本次构建目录，防止缺失资源被开发缓存掩盖。
+实验脚本仅补丁处理本分支解析的 checkout：让资源从签名 App 的 `Contents/Resources` 加载，修复 Litext 2.2.1 的附件强引用环，并把后台高亮路径没有使用的同步高亮器改为按需创建，消除首开主线程上的额外 JavaScript 初始化。附件释放与实际后台高亮完成均有运行检查。实际使用的完整字体和全部许可证保留；验证时临时移开本次构建目录，防止缺失资源被开发缓存掩盖。
 
 ## 原有组件入口
 

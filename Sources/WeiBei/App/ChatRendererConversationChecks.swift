@@ -2,6 +2,7 @@
 import AppKit
 import ChatRendererKit
 import Litext
+import MarkdownView
 import SwiftUI
 import WeiBeiCore
 
@@ -117,6 +118,19 @@ enum ChatRendererConversationChecks {
             list.update(sessionID: store.activeStudySessionID, messages: store.messages)
             let id = store.messages[1].id
             list.reveal(id); try await settle(list)
+            guard let content = session.state(for: id).document.content else { throw Failure(message: "Long answer body missing") }
+            try require(!content.rendered.isEmpty && content.rendered.values.allSatisfy { $0.image != nil },
+                "Packaged formula resources did not produce rendered images")
+            let codeKeys = content.blocks.compactMap { block -> Int? in
+                guard case let .codeBlock(language, source) = block else { return nil }
+                return CodeHighlighter.current.key(for: source, language: language)
+            }
+            try require(!codeKeys.isEmpty, "Long answer has no code to verify highlighting")
+            let highlightDeadline = ProcessInfo.processInfo.systemUptime + 10
+            while !codeKeys.allSatisfy({ CodeHighlighter.current.renderCache.value(forKey: $0)?.isEmpty == false }) {
+                try require(ProcessInfo.processInfo.systemUptime < highlightDeadline, "Packaged code highlighting did not finish")
+                try await Task.sleep(for: .milliseconds(20))
+            }
             list.scroll.contentView.scroll(to: NSPoint(x: 0, y: list.scroll.contentView.bounds.minY + 2_000))
             list.scroll.reflectScrolledClipView(list.scroll.contentView)
             try await settle(list)

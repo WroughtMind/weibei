@@ -93,6 +93,13 @@ STRIPPED_UUID="$(dwarfdump --uuid "$BUNDLE/Contents/MacOS/WeiBei" | awk 'NR == 1
 }
 printf 'before_bytes=%s\nafter_bytes=%s\nuuid=%s\n' "$PRE_STRIP_BYTES" "$POST_STRIP_BYTES" "$BUILD_UUID" > "$OUT/binary-size.txt"
 chmod -R u+w "$BUNDLE/Contents/Resources"
+# Both MarkdownView's MTMathImage and native chat use the complete Latin Modern font.
+find "$BUNDLE/Contents/Resources/SwiftMath_SwiftMath.bundle/mathFonts.bundle" -type f \
+  \( -name '*.otf' -o -name '*.plist' -o -name 'math_table_to_plist.py' \) \
+  ! -name 'latinmodern-math.otf' ! -name 'latinmodern-math.plist' -delete
+# Highlightr initializes with pojoaque, then MarkdownView selects xcode for both appearances.
+find "$BUNDLE/Contents/Resources/Highlightr_Highlightr.bundle" -type f -name '*.css' \
+  ! -name 'pojoaque.min.css' ! -name 'xcode.min.css' -delete
 xattr -cr "$BUNDLE"
 codesign --force --deep --sign - --timestamp=none "$BUNDLE/Contents/Frameworks/Sparkle.framework"
 codesign --force --sign - --timestamp=none "$BUNDLE/Contents/Helpers/WeiBeiPDFTextWorker"
