@@ -15,7 +15,7 @@ struct CatalystConversationView: View {
     var onReadingMessage: (UUID?) -> Void
     var body: some View { Bridge(workspace: store, streaming: store.agentStreaming, wideTypography: wideTypography, bodyWidth: bodyWidth,
         displayedMessages: displayedMessages, floatingThreadID: floatingThreadID, onContentHeight: onContentHeight,
-        onReadingMessage: onReadingMessage) }
+        onReadingMessage: onReadingMessage).contentShape(Rectangle()) }
     private struct Bridge: UIViewControllerRepresentable {
         @ObservedObject var workspace: WorkspaceStore
         @ObservedObject var streaming: AgentStreamingState
@@ -50,6 +50,7 @@ struct CatalystConversationView: View {
             let fontSize = (wideTypography ? 16.0 : 14.0) * workspace.interfaceTextScale.multiplier
             let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: workspace.appearanceMode)
             let appearanceChanged = controller.store.setTheme(theme)
+            if appearanceChanged { controller.updateJumpToLatestAppearance(workspace.appearanceMode) }
             controller.interfaceLanguage = workspace.interfaceLanguage
             let imageContext = (workspace.currentMarkdownBaseURL?.absoluteString ?? "") + "|" + (workspace.currentAttachmentDirectory?.path ?? "")
             if coordinator.imageContext != imageContext {
@@ -108,9 +109,14 @@ struct CatalystConversationView: View {
             messageSubscription = workspace.$messages.sink { [weak self] _ in self?.messageRevision += 1 }
             controller.auxiliaryView = { [weak self, weak workspace, weak controller] message in
                 guard let self, let workspace, let original = message.original else { return UIView() }
-                let root = CatalystMessageFooter(initial: original, wideTypography: wideTypography, onHeight: { [weak controller, weak message] height in
-                    guard let message else { return }
-                    controller?.updateAuxiliaryHeight(height, for: message)
+                let root = CatalystMessageFooter(initial: original,
+                    streaming: original.completionState == .generating ? workspace.agentStreaming : inertAgentStreamingState,
+                    wideTypography: wideTypography, onHeight: { [weak controller, weak message] height in
+                    // Geometry arrives during SwiftUI layout; resize the collection after that pass.
+                    DispatchQueue.main.async {
+                        guard let message else { return }
+                        controller?.updateAuxiliaryHeight(height, for: message)
+                    }
                 }).environmentObject(workspace).environment(\.weiBeiTextScale, workspace.interfaceTextScale.multiplier)
                 if let host = auxiliaryHosts[message.id] {
                     host.controller.rootView = AnyView(root)
@@ -201,16 +207,18 @@ struct CatalystConversationView: View {
 private struct CatalystMessageFooter: View {
     @EnvironmentObject var store: WorkspaceStore
     let initial: AgentMessage
+    @ObservedObject var streaming: AgentStreamingState
     let wideTypography: Bool
     let onHeight: (CGFloat) -> Void
     private var message: AgentMessage { store.messages.first { $0.id == initial.id } ?? initial }
     var body: some View {
+        let text = streaming.isDisplaying(message.id) ? streaming.text : message.text
         VStack(alignment: .leading, spacing: 8) {
             if message.role == .user {
                 AgentBubble(message: message, isChatWideTypography: wideTypography)
             } else {
-                if message.completionState == .generating && message.text.isEmpty {
-                    AgentThinkingIndicator(activityText: store.agentStreaming.activityText, chatWideTypography: wideTypography)
+                if message.completionState == .generating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    AgentThinkingIndicator(activityText: streaming.activityText, chatWideTypography: wideTypography)
                 }
                 AgentBubble(message: message, isChatWideTypography: wideTypography, showsBody: false)
             }

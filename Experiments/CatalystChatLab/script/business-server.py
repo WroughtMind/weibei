@@ -66,6 +66,7 @@ class Handler(BaseHTTPRequestHandler):
                     answer = "## 停止验证\n\n" + "正在输出的正文应完整保留。中文 café 👩🏽‍💻。\n\n" * 400
                     step, delay = 30, 0.06
                 elif item:
+                    time.sleep(2)
                     image = re.search(r"WB452_IMAGE=(\S+)", user)
                     answer = "## 资料与阅读位置\n\n这是通过原 HTTP 客户端、Agent 和资料读取工具收到的独立测试回答。\n\n"
                     answer += "保留第一段的显示对象，后续内容增长时继续读取同一段。\n\n"

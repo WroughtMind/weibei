@@ -9,7 +9,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     var usesWorkspaceChrome = false
     var auxiliaryView: ((LabMessage) -> UIView)?
     var messageLink: ((URL, AgentMessage) -> Void)?
-    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese {
+        didSet { latest.accessibilityLabel = interfaceLanguage == .chinese ? "回到最新消息" : "Jump to latest" }
+    }
     private var loadingSession = false
     private var lastReadingMessageID: UUID?
     var quoteText: ((String) -> Void)?
@@ -36,7 +38,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private let toolbar = UIStackView()
     private let status = UILabel()
     private let send = UIButton(type: .system)
-    private let latest = UIButton(type: .system)
+    private let latest = UIButton(type: .custom)
     private var preparation: Task<Void, Never>?
     private var replay: Task<Void, Never>?
     private var scenarioGeneration = 0
@@ -111,9 +113,14 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         send.accessibilityLabel = "发送并重放固定回答"
         if !fixtureMode { send.accessibilityLabel = "发送问题" }
         send.addTarget(self, action: #selector(sendPressed), for: .touchUpInside)
-        latest.setTitle("回到最新", for: .normal)
-        latest.backgroundColor = .secondarySystemBackground
-        latest.layer.cornerRadius = 6
+        latest.setImage(UIImage(systemName: "arrow.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)), for: .normal)
+        latest.accessibilityLabel = "回到最新消息"
+        latest.layer.cornerRadius = 17
+        latest.layer.borderWidth = 1
+        latest.layer.shadowOpacity = 0.14
+        latest.layer.shadowRadius = 9
+        latest.layer.shadowOffset = CGSize(width: 0, height: 2)
+        updateJumpToLatestAppearance(.paper)
         latest.addAction(UIAction { [weak self] _ in self?.scrollToLatest() }, for: .touchUpInside)
         latest.isHidden = true
         if usesWorkspaceChrome { for view in [toolbar, status, input, send] { view.isHidden = true } }
@@ -160,7 +167,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         send.frame = CGRect(x: width - 56, y: view.bounds.height - 90, width: 40, height: 40)
         collection.frame = CGRect(x: 0, y: 78, width: width, height: max(100, view.bounds.height - 202))
         if usesWorkspaceChrome { collection.frame = view.bounds }
-        latest.frame = CGRect(x: width - 120, y: collection.frame.maxY - 38, width: 96, height: 28)
+        latest.frame = CGRect(x: (width - 34) / 2, y: collection.frame.maxY - 68, width: 34, height: 34)
         if nextWidth != bodyWidth || laidOutWidth == 0 {
             let started = CACurrentMediaTime()
             layoutTransaction = true
@@ -386,6 +393,14 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         send.setImage(UIImage(systemName: value ? "stop.circle.fill" : "arrow.up.circle.fill"), for: .normal)
         send.accessibilityLabel = value ? "停止回答并保留正文" : "发送问题"
         status.text = text
+    }
+
+    func updateJumpToLatestAppearance(_ appearance: WeiBeiAppearanceMode) {
+        let ink = WeiBeiNativePalette.ink(for: appearance)
+        latest.tintColor = ink.withAlphaComponent(0.85)
+        latest.backgroundColor = WeiBeiNativePalette.paperRaised(for: appearance)
+        latest.layer.borderColor = WeiBeiNativePalette.hairline(for: appearance).withAlphaComponent(0.6).cgColor
+        latest.layer.shadowColor = ink.cgColor
     }
 
     func updateSavedHistory(_ values: [AgentMessage]) {

@@ -3244,7 +3244,7 @@ private struct FloatingSelectionMessageRow: View {
 /// body reads the object, so pointing finished rows at the shared live state
 /// would re-broadcast every token to every mounted bubble (what e058c61
 /// removed). Only the generating row observes the real streaming state.
-@MainActor private let inertAgentStreamingState = AgentStreamingState()
+@MainActor let inertAgentStreamingState = AgentStreamingState()
 
 /// Bubble row for one assistant/user message. A single type across the
 /// generating → completed flip keeps the native body alive at completion.

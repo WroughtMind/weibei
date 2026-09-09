@@ -120,15 +120,44 @@ enum CatalystBusinessCheck {
             store.setAgentProviderID(.custom); store.updateAgentBaseURL(endpoint); store.updateModelName("catalyst-local-check")
             AgentAccountService.shared.startAPIKeyLogin("catalyst-test-only", provider: .custom, baseURL: endpoint)
             store.select(itemID: material.id)
-            store.agentDraft = "读取这份候选资料，解释阅读位置。WB452_ITEM=\(material.id) WB452_IMAGE=\(imageURL.absoluteString)"
-            store.pendingComposerDraft = store.agentDraft
-            store.submitAgentDraft()
+            try await until("original composer mounted") {
+                AgentProviderReadiness.isConfigured(for: store)
+                    && conversation()?.view.window.map { descendants($0).contains { $0 is AgentComposerTextEditor.ComposerTextView } } == true
+            }
+            let composer = descendants(conversation()!.view.window!).compactMap { $0 as? AgentComposerTextEditor.ComposerTextView }.first!
+            composer.text = "读取这份候选资料，解释阅读位置。WB452_ITEM=\(material.id) WB452_IMAGE=\(imageURL.absoluteString)"
+            composer.delegate?.textViewDidChange?(composer)
+            try await until("local composer draft published") { store.pendingComposerDraft == composer.text }
+            let question = composer.text!
+            // A fast send can publish the draft and its clearing before SwiftUI draws another frame.
+            store.agentDraft = question; store.agentDraft = ""
+            try await until("composer receives same-frame clearing") { composer.text.isEmpty }
+            composer.text = question
+            composer.delegate?.textViewDidChange?(composer)
+            try await until("next local draft published") { store.pendingComposerDraft == question }
+            _ = composer.delegate?.textView?(composer, shouldChangeTextIn: NSRange(location: composer.text.utf16.count, length: 0), replacementText: "\n")
+            try await until("waiting indicator mounted") {
+                conversation()?.view.window.map { descendants($0).contains { $0 is AgentThinkingOrbitNSView } } == true
+            }
+            try await until("waiting status fits its row", seconds: 1.5) {
+                guard let indicator = descendants(conversation()!.view).first(where: { $0 is AgentThinkingOrbitNSView }) else { return false }
+                var parent = indicator.superview
+                while let view = parent {
+                    let frame = indicator.convert(indicator.bounds, to: view)
+                    if view.clipsToBounds && (frame.minY < view.bounds.minY - 1 || frame.maxY > view.bounds.maxY + 1) { return false }
+                    parent = view.superview
+                }
+                return true
+            }
+            try check("waiting_status_not_clipped", true)
             try await until("real HTTP stream began") {
                 store.isAgentRunningInActiveChat && store.agentStreaming.displayingChatID == store.activeStudySessionID
                     && store.agentStreaming.text.count > 80
             }
             try await until("UIKit received real message") { conversation()?.messages.last?.original?.role == .assistant && conversation()?.messages.last?.blocks.isEmpty == false }
             let controller = conversation()!
+            try check("return_clears_original_composer", composer.text.isEmpty)
+            try check("status_disappears_at_first_text", !descendants(controller.view).contains { $0 is AgentThinkingOrbitNSView })
             let originalFirstBlock = controller.messages.last!.blocks.first!
             try await until("real HTTP stream completed", seconds: 60) { !store.isAgentRunningInActiveChat && store.messages.last?.text.contains(finalMarker) == true }
             try await until("UIKit final tail") { controller.messages.last?.markdown.contains(finalMarker) == true }
@@ -219,6 +248,24 @@ enum CatalystBusinessCheck {
         await controller.revealMessage(history.first!.id)
         guard controller.messages.count == 720 else { throw Failure("original saved history incomplete") }
         let parses = controller.store.parseCount, measurements = controller.store.measureCount
+        controller.scrollToLatest()
+        controller.collection.contentOffset.y -= 240
+        guard let jump = descendants(controller.view).compactMap({ $0 as? UIButton }).first(where: { $0.accessibilityLabel == "回到最新消息" }),
+              !jump.isHidden, jump.currentTitle == nil, jump.currentImage != nil,
+              jump.bounds.size == CGSize(width: 34, height: 34) else { throw Failure("circular jump-to-latest control") }
+        jump.sendActions(for: .touchUpInside)
+        guard controller.followsLatest, jump.isHidden else { throw Failure("jump-to-latest action") }
+        guard controller.collection.panGestureRecognizer.allowedScrollTypesMask == .all else { throw Failure("trackpad or mouse scrolling disabled") }
+        if let window = controller.view.window {
+            for x in [CGFloat(24), controller.collection.bounds.midX, controller.collection.bounds.maxX - 24] {
+                for y in stride(from: CGFloat(40), to: controller.collection.bounds.height - 80, by: 40) {
+                    let point = CGPoint(x: x, y: controller.collection.bounds.minY + y)
+                    let hit = window.hitTest(controller.collection.convert(point, to: window), with: nil)
+                    guard hit?.isDescendant(of: controller.collection) == true else { throw Failure("conversation margin outside scroll view: \(point)") }
+                }
+            }
+        }
+        measured["jump_control_and_scroll_hit_region"] = "passed; hit testing and native masks, not physical trackpad acceptance"
         await withCheckedContinuation { continuation in
             controller.sampleScroll(name: "workspace_history") { continuation.resume() }
         }
