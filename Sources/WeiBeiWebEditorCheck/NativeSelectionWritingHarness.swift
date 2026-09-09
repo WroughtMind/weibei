@@ -31,7 +31,7 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
         window.contentView = web
         window.makeFirstResponder(web)
         web.loadFileURL(resources.appendingPathComponent("index.html"), allowingReadAccessTo: resources)
-        let deadline = Date().addingTimeInterval(60)
+        let deadline = Date().addingTimeInterval(90)
         while !done && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
         expect(done, "native selection/writing check timed out")
         config.userContentController.removeAllScriptMessageHandlers()

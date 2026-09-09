@@ -107,6 +107,13 @@ await native('marked', 'pin', { caretAtEnd: true });
 await native('insert', '拼');
 expect(!editor.compositionStateForCheck().composing && document.querySelectorAll('.ProseMirror tr').length === 2
   && document.querySelectorAll('.ProseMirror td').length === 2 && document.querySelector('.ProseMirror td:last-child').textContent === '拼', 'Chinese input damaged the empty table cell');
+await reset('> ');
+await native('marked', 'p', { caretAtEnd: true });
+await native('marked', 'pin', { caretAtEnd: true });
+expect(document.querySelectorAll('.ProseMirror blockquote p').length === 1
+  && document.querySelectorAll('.ProseMirror blockquote br').length === 0, 'Pinyin added an empty line to the quote');
+await native('insert', '拼');
+expect(!editor.compositionStateForCheck().composing && editor.getMarkdown().trim() === '> 拼', 'Chinese input did not preserve the quote');
 for (const initial of ['', '\u200b']) {
   await reset(initial);
   for (const character of '1. ') await native('insert', character);

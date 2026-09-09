@@ -2312,13 +2312,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         }
     }
 
-    /// Verifies that IME submission removes WebKit line-break artifacts inside a new quote.
+    /// Verifies that IME transient content stays local and the final quote snapshot is intact.
     private func validateIMEQuoteComposition() {
         let initialSnapshotCount = snapshotCount
         let setupScript = """
         (() => {
           window.WeiBeiEditor.setDocumentID('ime-quote'); window.WeiBeiEditor.setMarkdown('/quote'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('quote');
-          const root = document.querySelector('.ProseMirror'); window.WeiBeiIMEQuoteInitialHeight = document.querySelector('.ProseMirror blockquote').getBoundingClientRect().height; root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); window.WeiBeiEditor.typeTextForCheck('引用内容');
+          const root = document.querySelector('.ProseMirror'); root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); window.WeiBeiEditor.typeTextForCheck('引用内容');
           return document.querySelector('.ProseMirror blockquote')?.textContent || '';
         })();
         """
@@ -2332,7 +2332,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                     self.fail("IME quote transient content crossed the snapshot bridge: \(String(describing: value))")
                     return
                 }
-                let completeScript = "const quote = document.querySelector('.ProseMirror blockquote'); const paragraph = quote.querySelector('p'); const marker = paragraph.querySelector('.ProseMirror-safari-ime-span'); if (!marker) throw new Error('missing Safari IME composition marker'); const beforeBreakHeight = quote.getBoundingClientRect().height; for (let index = 0; index < 3; index += 1) paragraph.appendChild(document.createElement('br')); const composingHeight = quote.getBoundingClientRect().height; if (composingHeight > window.WeiBeiIMEQuoteInitialHeight + 1) throw new Error('IME line breaks changed quote height: ' + window.WeiBeiIMEQuoteInitialHeight + ' -> ' + beforeBreakHeight + ' -> ' + composingHeight + '; html=' + paragraph.innerHTML + '; displays=' + Array.from(paragraph.querySelectorAll('br')).map((node) => getComputedStyle(node).display).join(',')); document.querySelector('.ProseMirror').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '引用内容' }));"
+                let completeScript = "document.querySelector('.ProseMirror').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '引用内容' }));"
                 self.webView.evaluateJavaScript(completeScript) { _, completionError in
                     guard completionError == nil else { self.fail("IME quote completion failed: \(String(describing: completionError))"); return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
