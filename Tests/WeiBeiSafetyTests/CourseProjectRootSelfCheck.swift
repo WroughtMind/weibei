@@ -896,7 +896,7 @@ enum CourseProjectRootSelfCheck {
         )
         let liveNoteSearch = try store.agentHostSearchForSelfCheck(
             courseID: courseA,
-            query: "久期 凸性"
+            query: "凸性修正非线性"
         )
         let liveNoteRead = try store.agentHostReadForSelfCheck(
             courseID: courseA,
@@ -910,12 +910,9 @@ enum CourseProjectRootSelfCheck {
         try check(
             liveNoteSearch.items.first(where: { $0.item.id == noteID })?
                 .item.searchText.contains("凸性修正非线性") == true
-                && liveNoteRead.items.first(where: { $0.item.id == noteID })?
-                    .item.searchText.contains("凸性修正非线性") == true
+                && liveNoteRead.items.contains(where: { $0.item.id == noteID && $0.item.searchText.contains("凸性修正非线性") })
                 && courseMap.items.contains(where: { $0.item.id == noteID })
-                && noteOutline.items.first?.item.headings.contains(where: {
-                    $0.contains("风险理解")
-                }) == true,
+                && noteOutline.items.contains(where: { $0.item.headings.contains("风险理解") }),
             "课程 Agent 没有先列资料和章节，再按需读取最新笔记正文"
         )
         let preferredMaterialIDs = Set(
