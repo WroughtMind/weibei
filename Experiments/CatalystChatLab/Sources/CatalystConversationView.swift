@@ -48,13 +48,7 @@ struct CatalystConversationView: View {
             let coordinator = context.coordinator
             coordinator.wideTypography = wideTypography
             let fontSize = (wideTypography ? 16.0 : 14.0) * workspace.interfaceTextScale.multiplier
-            var theme = controller.store.theme
-            theme.align(to: fontSize)
-            theme.colors.body = WeiBeiNativePalette.ink(for: workspace.appearanceMode)
-            theme.colors.code = theme.colors.body
-            theme.colors.codeBackground = WeiBeiNativePalette.paperInset(for: workspace.appearanceMode)
-            theme.colors.highlight = WeiBeiNativePalette.cinnabar(for: workspace.appearanceMode)
-            theme.colors.selectionBackground = theme.colors.highlight.withAlphaComponent(0.22)
+            let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: workspace.appearanceMode)
             let appearanceChanged = controller.store.setTheme(theme)
             controller.interfaceLanguage = workspace.interfaceLanguage
             let imageContext = (workspace.currentMarkdownBaseURL?.absoluteString ?? "") + "|" + (workspace.currentAttachmentDirectory?.path ?? "")
@@ -254,9 +248,7 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
         let coordinator = context.coordinator
         guard coordinator.markdown != markdown || coordinator.fontSize != fontSize || coordinator.appearance != appearanceMode else { return }
         coordinator.markdown = markdown; coordinator.fontSize = fontSize; coordinator.appearance = appearanceMode
-        var theme = MarkdownTheme()
-        theme.align(to: fontSize)
-        theme.colors.body = WeiBeiNativePalette.ink(for: appearanceMode)
+        let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: appearanceMode)
         let parsed = MarkdownParser().parse(markdown)
         let content = MarkdownContent(parserResult: parsed, theme: theme)
         view.setContentImmediately(content, theme: theme)

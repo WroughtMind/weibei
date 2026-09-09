@@ -8,6 +8,17 @@ if [[ -n "$(git status --porcelain)" ]]; then source_dirty=yes; fi
 signing_identity="${LAB_SIGNING_IDENTITY:-Apple Development}"
 if [[ "${CI:-}" == "true" ]]; then signing_identity=-; fi
 xcodebuild -project CatalystChatLab.xcodeproj -scheme CatalystChatLab \
+  -derivedDataPath "$lab_dir/.build/DerivedData" \
+  -clonedSourcePackagesDirPath "$lab_dir/.build/SourcePackages" \
+  -onlyUsePackageVersionsFromResolvedFile -resolvePackageDependencies \
+  > .build/dependencies.log 2>&1 || { tail -30 .build/dependencies.log; exit 1; }
+markdown_dir="$lab_dir/.build/SourcePackages/checkouts/MarkdownView"
+typography_patch="$lab_dir/script/markdown-typography.patch"
+if ! git -C "$markdown_dir" apply --reverse --check "$typography_patch" 2>/dev/null; then
+  git -C "$markdown_dir" apply --check "$typography_patch"
+  git -C "$markdown_dir" apply "$typography_patch"
+fi
+xcodebuild -project CatalystChatLab.xcodeproj -scheme CatalystChatLab \
   -configuration Release -destination 'platform=macOS,variant=Mac Catalyst,arch=arm64' \
   -derivedDataPath "$lab_dir/.build/DerivedData" \
   -clonedSourcePackagesDirPath "$lab_dir/.build/SourcePackages" \

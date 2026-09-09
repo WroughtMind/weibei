@@ -3,6 +3,27 @@ import MarkdownView
 import MarkdownParser
 import Litext
 
+extension MarkdownTheme {
+    static func weiBei(fontSize: CGFloat, appearance: WeiBeiAppearanceMode) -> Self {
+        var theme = Self()
+        theme.align(to: fontSize)
+        theme.colors.body = WeiBeiNativePalette.ink(for: appearance)
+        theme.colors.code = theme.colors.body
+        theme.colors.codeBackground = WeiBeiNativePalette.codePaper(for: appearance)
+        theme.colors.highlight = WeiBeiNativePalette.cinnabar(for: appearance)
+        theme.colors.emphasis = theme.colors.body
+        theme.colors.selectionBackground = WeiBeiNativePalette.selectionFill(for: appearance)
+        theme.spacings.paragraph = fontSize * 0.75
+        theme.spacings.headingBefore = fontSize
+        theme.table.headerBackgroundColor = WeiBeiNativePalette.paperInset(for: appearance)
+        theme.table.cellBackgroundColor = .clear
+        theme.table.stripeCellBackgroundColor = WeiBeiNativePalette.paperRaised(for: appearance).withAlphaComponent(0.35)
+        theme.table.borderColor = WeiBeiNativePalette.hairline(for: appearance)
+        theme.table.cornerRadius = 6
+        return theme
+    }
+}
+
 @MainActor
 final class PreparedBlock {
     let id: String
@@ -39,13 +60,7 @@ final class PreparedBlock {
 
 @MainActor
 final class ContentStore {
-    var theme: MarkdownTheme = {
-        var theme = MarkdownTheme()
-        theme.align(to: 16)
-        theme.colors.highlight = UIColor(red: 0.71, green: 0.28, blue: 0.18, alpha: 1)
-        theme.spacings.paragraph = 12
-        return theme
-    }()
+    var theme: MarkdownTheme = .weiBei(fontSize: 16, appearance: .paper)
     private var views: [String: BlockView] = [:]
     private var recent: [String] = []
     private var generation = 0

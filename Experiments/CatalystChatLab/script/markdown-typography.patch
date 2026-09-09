@@ -1,0 +1,27 @@
+diff --git a/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift b/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift
+--- a/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift
++++ b/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift
+@@ -36,8 +36,9 @@ final class BlockProcessor {
+         self.inlineTextDecoration = inlineTextDecoration
+     }
+ 
+-    func processHeading(level _: Int, contents: [MarkdownInlineNode]) -> NSAttributedString {
+-        let font: PlatformFont = theme.fonts.title
++    func processHeading(level: Int, contents: [MarkdownInlineNode]) -> NSAttributedString {
++        let scale: CGFloat = [1.7, 1.45, 1.25, 1.12, 1.05, 1][min(5, max(0, level - 1))]
++        let font = theme.fonts.title.withSize(theme.fonts.body.pointSize * scale)
+ 
+         return buildWithParagraphSync { paragraph in
+             paragraph.paragraphSpacing = theme.spacings.paragraph
+@@ -57,7 +58,10 @@ final class BlockProcessor {
+     func processParagraph(contents: [MarkdownInlineNode]) -> NSAttributedString {
+         buildWithParagraphSync { paragraph in
+             paragraph.paragraphSpacing = theme.spacings.paragraph
+-            paragraph.lineSpacing = 4
++            paragraph.lineSpacing = theme.fonts.body.pointSize * 0.3
++            if contents.count == 1, case .math = contents[0] {
++                paragraph.alignment = .center
++            }
+         } content: {
+             let rendered = contents.render(theme: theme, context: context, viewProvider: viewProvider, decoration: inlineTextDecoration)
+             if rendered.length == 0 {

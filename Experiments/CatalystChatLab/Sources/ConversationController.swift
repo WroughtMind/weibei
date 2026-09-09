@@ -206,7 +206,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                         sizeForItemAt path: IndexPath) -> CGSize {
         let message = messages[path.section]
         let height: CGFloat = path.item == 0 ? (usesWorkspaceChrome ? 12 : 30)
-            : (path.item > message.blocks.count ? (usesWorkspaceChrome ? message.auxiliaryHeight : 42) : message.blocks[path.item - 1].height + 14)
+            : (path.item > message.blocks.count ? (usesWorkspaceChrome ? message.auxiliaryHeight : 42) : message.blocks[path.item - 1].height + store.theme.spacings.paragraph)
         return CGSize(width: bodyWidth, height: height)
     }
     func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt path: IndexPath) {
@@ -767,6 +767,31 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let blocks = messages[0].blocks
                 let formulas = blocks.flatMap { $0.content.rendered.values }
                 try expect(!formulas.isEmpty && formulas.allSatisfy { $0.image != nil }, "数学资源没有完整生成真实公式")
+                // Protect visible heading hierarchy and display-math alignment,
+                // including the cached-layout path used after narrowing a pane.
+                let typographyStore = ContentStore()
+                let headings = LabMessage(author: "排版检查", markdown: (1...6).map {
+                    String(repeating: "#", count: $0) + " 中文标题 Heading \($0)"
+                }.joined(separator: "\n\n"))
+                _ = await typographyStore.prepare(headings, width: bodyWidth)
+                let headingSizes = headings.blocks.compactMap {
+                    (typographyStore.view(for: $0, width: bodyWidth).label.attributedText.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)?.pointSize
+                }
+                try expect(headingSizes.count == 6 && zip(headingSizes, headingSizes.dropFirst()).allSatisfy { $0 > $1 }
+                    && headingSizes.last == typographyStore.theme.fonts.body.pointSize, "六级标题没有保留可见的字号层级")
+                let math = LabMessage(author: "排版检查", markdown: "正文与 $E=mc^2$ 同行。\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$")
+                _ = await typographyStore.prepare(math, width: bodyWidth)
+                try expect(math.blocks.count == 2, "行内和独立公式没有保留各自段落")
+                for width in [bodyWidth, max(240, bodyWidth - 160)] {
+                    for (index, block) in math.blocks.enumerated() {
+                        let body = typographyStore.view(for: block, width: width)
+                        body.layoutIfNeeded()
+                        guard let rect = body.rect(for: 0) else { throw Failure(message: "公式段落没有实际文字布局") }
+                        try expect(index == 0 ? rect.minX < 1 : abs(rect.midX - width / 2) < 1,
+                                   "改宽后行内文字或独立公式的对齐错误")
+                        try expect(!body.copyText().isEmpty, "公式排版丢失了可复制正文")
+                    }
+                }
                 try expect(LabImages.shared.image(for: "lab-image://landscape") != nil, "图片没有解码成功")
                 guard blocks.count > 3 else { throw Failure(message: "富内容样本不完整") }
                 guard let diagram = blocks.first(where: { if case .diagram = $0.kind { return true }; return false }) else {

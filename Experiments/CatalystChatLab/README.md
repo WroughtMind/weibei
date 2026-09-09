@@ -38,7 +38,9 @@ cd Experiments/CatalystChatLab
 
 业务来源为已合并主线 `02555d8506504e9fd68374855d3cff87428c9eb6`，本分支合入记录 `7511383f`。保留 `930c6035` 会话实验及更早用户体验包的源代码和原始证据。
 
-直接与传递 Swift 依赖由共享 scheme 的 `Package.resolved` 锁定；`Dependencies.json` 记录公开提交、Mermaid 包完整性及浏览器产物哈希。许可证随包保留在 `ThirdPartyNotices.txt`。MarkdownView / Litext 上游源码未修改。lody-ios 和 FlowDown 仅作公开实现研究，不是依赖，也未复制其 AGPL 实现。
+直接与传递 Swift 依赖由共享 scheme 的 `Package.resolved` 锁定；`Dependencies.json` 记录公开提交、Mermaid 包完整性及浏览器产物哈希。许可证随包保留在 `ThirdPartyNotices.txt`。构建入口向锁定的 MarkdownView 应用 `script/markdown-typography.patch`：使用原魏碑的六级标题比例，让独立成段的公式居中，正文行距随字号缩放。Litext 上游源码未修改。lody-ios 和 FlowDown 仅作公开实现研究，不是依赖，也未复制其 AGPL 实现。
+
+主会话与浮动问答使用同一个魏碑正文主题，表格、代码和选区从原八主题取色。消息仍按块准备和复用，原会话检查同时保护六级标题及改宽后的公式对齐；没有迁入其他实验的实现。
 
 ## 验证入口与边界
 
