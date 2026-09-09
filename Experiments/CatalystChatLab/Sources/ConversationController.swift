@@ -779,6 +779,50 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
                 try expect(headingSizes.count == 6 && zip(headingSizes, headingSizes.dropFirst()).allSatisfy { $0 > $1 }
                     && headingSizes.last == typographyStore.theme.fonts.body.pointSize, "六级标题没有保留可见的字号层级")
+                let styles = LabMessage(author: "排版检查", markdown: """
+                普通 Plain **加粗 Bold** *斜体 Italic* ***粗斜 Both*** **外粗 *内斜 Nested* 结束** *外斜 **内粗 Reverse** 结束*
+
+                ## *标题 Heading*
+
+                | *表头 Header* |
+                | --- |
+                | ***单元 Cell*** |
+
+                > *引用 Quote*
+
+                - ***列表 List***
+                """)
+                _ = await typographyStore.prepare(styles, width: bodyWidth)
+                for width in [bodyWidth, max(240, bodyWidth - 160)] {
+                    typographyStore.reset()
+                    let texts = styles.blocks.flatMap { block -> [NSAttributedString] in
+                        let body = typographyStore.view(for: block, width: width)
+                        body.layoutIfNeeded()
+                        return ([body.label] + body.attachmentLabels).map(\.attributedText)
+                    }
+                    for (sample, bold, italic) in [
+                        ("普通 Plain", false, false), ("加粗 Bold", true, false),
+                        ("斜体 Italic", false, true), ("粗斜 Both", true, true),
+                        ("内斜 Nested", true, true), ("内粗 Reverse", true, true),
+                        ("标题 Heading", true, true), ("表头 Header", true, true),
+                        ("单元 Cell", true, true), ("引用 Quote", false, true), ("列表 List", true, true)
+                    ] {
+                        guard let text = texts.first(where: { $0.string.contains(sample) }) else {
+                            throw Failure(message: "样式正文缺失：\(sample)")
+                        }
+                        let part = text.attributedSubstring(from: (text.string as NSString).range(of: sample))
+                        let line = CTLineCreateWithAttributedString(part)
+                        for run in CTLineGetGlyphRuns(line) as! [CTRun] {
+                            let attributes = CTRunGetAttributes(run) as NSDictionary
+                            let font = attributes[kCTFontAttributeName] as! CTFont
+                            let slanted = abs(CTFontGetSlantAngle(font)) > 1 || abs(CTFontGetMatrix(font).c) > 0.1
+                            try expect(slanted == italic && CTFontGetSymbolicTraits(font).contains(.boldTrait) == bold,
+                                       "实际中英文字形丢失粗斜样式：\(sample)，字体 \(CTFontCopyPostScriptName(font))")
+                            try expect((attributes[NSAttributedString.Key.underlineStyle] as? NSNumber)?.intValue ?? 0 == 0,
+                                       "斜体被下划线替代：\(sample)")
+                        }
+                    }
+                }
                 let math = LabMessage(author: "排版检查", markdown: "正文与 $E=mc^2$ 同行。\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$")
                 _ = await typographyStore.prepare(math, width: bodyWidth)
                 try expect(math.blocks.count == 2, "行内和独立公式没有保留各自段落")

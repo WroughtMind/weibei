@@ -1,19 +1,97 @@
+diff --git a/Sources/MarkdownView/Components/TableView/TableViewCellManager.swift b/Sources/MarkdownView/Components/TableView/TableViewCellManager.swift
+index 173e8b1..6a5aef2 100644
+--- a/Sources/MarkdownView/Components/TableView/TableViewCellManager.swift
++++ b/Sources/MarkdownView/Components/TableView/TableViewCellManager.swift
+@@ -110,7 +110,6 @@ struct TableLayoutMetrics: Equatable {
+                         at: index,
+                         with: cellString,
+                         maximumTextWidth: metrics.maximumTextWidth,
+-                        isHeader: row == 0,
+                         alignment: columnAlignments[safe: column] ?? .none,
+                         in: containerView
+                     )
+@@ -144,7 +143,6 @@ struct TableLayoutMetrics: Equatable {
+             at index: Int,
+             with attributedText: NSAttributedString,
+             maximumTextWidth: CGFloat,
+-            isHeader: Bool,
+             alignment: RawTableColumnAlignment,
+             in containerView: PlatformView
+         ) -> TextLabelView {
+@@ -170,7 +168,6 @@ struct TableLayoutMetrics: Equatable {
+
+             let styledText = styledText(
+                 from: attributedText,
+-                isHeader: isHeader,
+                 alignment: alignment
+             )
+             let sourceChanged = index >= rawTexts.count
+@@ -230,7 +227,6 @@ struct TableLayoutMetrics: Equatable {
+
+         private func styledText(
+             from source: NSAttributedString,
+-            isHeader: Bool,
+             alignment: RawTableColumnAlignment
+         ) -> NSAttributedString {
+             guard let attributedText = source.mutableCopy() as? NSMutableAttributedString else {
+@@ -238,18 +234,6 @@ struct TableLayoutMetrics: Equatable {
+             }
+             let range = NSRange(location: 0, length: attributedText.length)
+
+-            if isHeader {
+-                attributedText.enumerateAttribute(.font, in: range, options: []) {
+-                    value, subRange, _ in
+-                    if let existingFont = value as? PlatformFont {
+-                        let boldFont = PlatformFont.boldSystemFont(ofSize: existingFont.pointSize)
+-                        attributedText.addAttribute(.font, value: boldFont, range: subRange)
+-                    } else {
+-                        attributedText.addAttribute(.font, value: theme.fonts.bold, range: subRange)
+-                    }
+-                }
+-            }
+-
+             attributedText.enumerateAttribute(.foregroundColor, in: range, options: []) {
+                 value, subRange, _ in
+                 guard value == nil else { return }
+@@ -304,7 +288,6 @@ struct TableLayoutMetrics: Equatable {
+                 let source = index < rawTexts.count ? rawTexts[index] : cell.attributedText
+                 let styled = styledText(
+                     from: source,
+-                    isHeader: index / numberOfColumns == 0,
+                     alignment: columnAlignments[safe: index % numberOfColumns] ?? .none
+                 )
+                 if !styled.isEqual(to: cell.attributedText) {
 diff --git a/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift b/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift
+index b13b063..f4791e8 100644
 --- a/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift
 +++ b/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift
-@@ -36,8 +36,9 @@ final class BlockProcessor {
+@@ -36,26 +36,28 @@ final class BlockProcessor {
          self.inlineTextDecoration = inlineTextDecoration
      }
- 
+
 -    func processHeading(level _: Int, contents: [MarkdownInlineNode]) -> NSAttributedString {
 -        let font: PlatformFont = theme.fonts.title
 +    func processHeading(level: Int, contents: [MarkdownInlineNode]) -> NSAttributedString {
 +        let scale: CGFloat = [1.7, 1.45, 1.25, 1.12, 1.05, 1][min(5, max(0, level - 1))]
 +        let font = theme.fonts.title.withSize(theme.fonts.body.pointSize * scale)
- 
++        var headingTheme = theme
++        headingTheme.align(to: font.pointSize)
++        headingTheme.fonts.body = font
+
          return buildWithParagraphSync { paragraph in
              paragraph.paragraphSpacing = theme.spacings.paragraph
-@@ -57,7 +58,10 @@ final class BlockProcessor {
+             paragraph.paragraphSpacingBefore = theme.spacings.headingBefore
+         } content: {
+-            let string = contents.render(theme: theme, context: context, viewProvider: viewProvider, decoration: inlineTextDecoration)
+-            string.addAttributes(
+-                [.font: font],
+-                range: NSRange(location: 0, length: string.length)
+-            )
+-            return string
++            contents.render(theme: headingTheme, context: context, viewProvider: viewProvider, decoration: inlineTextDecoration)
+         }
+     }
+
      func processParagraph(contents: [MarkdownInlineNode]) -> NSAttributedString {
          buildWithParagraphSync { paragraph in
              paragraph.paragraphSpacing = theme.spacings.paragraph
@@ -25,3 +103,105 @@ diff --git a/Sources/MarkdownView/MarkdownTextBuilder/BlockProcessor.swift b/Sou
          } content: {
              let rendered = contents.render(theme: theme, context: context, viewProvider: viewProvider, decoration: inlineTextDecoration)
              if rendered.length == 0 {
+@@ -165,9 +167,10 @@ final class BlockProcessor {
+         ) {
+             representedText = reused
+         } else {
+-            let contents = rows.map {
+-                $0.cells.map { rawCell in
+-                    rawCell.content.render(theme: theme, context: context, viewProvider: viewProvider, decoration: inlineTextDecoration)
++            let contents = rows.enumerated().map { row, source in
++                source.cells.map { rawCell in
++                    let nodes: [MarkdownInlineNode] = row == 0 ? [.strong(children: rawCell.content)] : rawCell.content
++                    return nodes.render(theme: theme, context: context, viewProvider: viewProvider, decoration: inlineTextDecoration)
+                 }
+             }
+             let allContent = contents
+diff --git a/Sources/MarkdownView/Supplements+Extension/UIFont+Extension.swift b/Sources/MarkdownView/Supplements+Extension/UIFont+Extension.swift
+index f3a7f5c..1490464 100644
+--- a/Sources/MarkdownView/Supplements+Extension/UIFont+Extension.swift
++++ b/Sources/MarkdownView/Supplements+Extension/UIFont+Extension.swift
+@@ -7,16 +7,24 @@
+
+ #if canImport(UIKit)
+     import UIKit
++    import CoreText
+
+     public extension UIFont {
+         var bold: UIFont {
+-            guard let descriptor = fontDescriptor.withSymbolicTraits(.traitBold) else { return self }
++            guard let descriptor = fontDescriptor.withSymbolicTraits(fontDescriptor.symbolicTraits.union(.traitBold)) else { return self }
+             return UIFont(descriptor: descriptor, size: 0)
+         }
+
+         var italic: UIFont {
+-            guard let descriptor = fontDescriptor.withSymbolicTraits(.traitItalic) else { return self }
+-            return UIFont(descriptor: descriptor, size: 0)
++            if let descriptor = fontDescriptor.withSymbolicTraits(fontDescriptor.symbolicTraits.union(.traitItalic)) {
++                let font = UIFont(descriptor: descriptor, size: 0)
++                if CTFontGetSymbolicTraits(font).contains(.italicTrait) { return font }
++            }
++            // CJK system fonts have no italic face. CoreText's font matrix
++            // slants the actual glyphs and survives text layout and reuse.
++            var matrix = CTFontGetMatrix(self)
++            matrix.c = 0.2
++            return CTFontCreateCopyWithAttributes(self, 0, &matrix, nil) as UIFont
+         }
+
+         var monospaced: UIFont {
+diff --git a/Sources/MarkdownView/Supplements/InlineNode+Render.swift b/Sources/MarkdownView/Supplements/InlineNode+Render.swift
+index 3c11d8a..86f6438 100644
+--- a/Sources/MarkdownView/Supplements/InlineNode+Render.swift
++++ b/Sources/MarkdownView/Supplements/InlineNode+Render.swift
+@@ -66,42 +66,22 @@ extension MarkdownInlineNode {
+             text.addAttributes(controlAttributes, range: .init(location: 0, length: text.length))
+             return text
+         case let .emphasis(children):
+-            let ans = NSMutableAttributedString()
+-            children
+-                .map { $0.render(theme: theme, context: context, viewProvider: viewProvider, decoration: decoration) }
+-                .forEach { ans.append($0) }
+-            ans.addAttributes(
+-                [
+-                    .underlineStyle: NSUnderlineStyle.thick.rawValue,
+-                    .underlineColor: theme.colors.emphasis,
+-                ],
+-                range: NSRange(location: 0, length: ans.length)
+-            )
+-            return ans
+-        case let .strong(children):
+             let ans = NSMutableAttributedString()
+             children
+                 .map { $0.render(theme: theme, context: context, viewProvider: viewProvider, decoration: decoration) }
+                 .forEach { ans.append($0) }
+             ans.enumerateAttribute(.font, in: NSRange(location: 0, length: ans.length)) { value, range, _ in
+-                #if canImport(UIKit)
+-                    guard let font = value as? UIFont, font != theme.fonts.body else {
+-                        ans.addAttribute(.font, value: theme.fonts.bold, range: range)
+-                        return
+-                    }
+-                    let traits = font.fontDescriptor.symbolicTraits.union(.traitBold)
+-                    let boldFont = font.fontDescriptor.withSymbolicTraits(traits)
+-                        .map { UIFont(descriptor: $0, size: 0) } ?? font
+-                    ans.addAttribute(.font, value: boldFont, range: range)
+-                #elseif canImport(AppKit)
+-                    guard let font = value as? NSFont, font != theme.fonts.body else {
+-                        ans.addAttribute(.font, value: theme.fonts.bold, range: range)
+-                        return
+-                    }
+-                    ans.addAttribute(.font, value: font.bold, range: range)
+-                #endif
++                let font = (value as? PlatformFont) ?? theme.fonts.body
++                ans.addAttribute(.font, value: font.italic, range: range)
+             }
+             return ans
++        case let .strong(children):
++            // Choose weight before resolving CJK fonts. Reconstructing a private
++            // system substitute by its name can select an unrelated typeface.
++            var strongTheme = theme
++            strongTheme.fonts.body = theme.fonts.bold
++            strongTheme.fonts.codeInline = theme.fonts.codeInline.bold
++            return children.render(theme: strongTheme, context: context, viewProvider: viewProvider, decoration: decoration)
+         case let .strikethrough(children):
+             let ans = NSMutableAttributedString()
+             children
