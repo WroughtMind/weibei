@@ -15,13 +15,8 @@ enum ChatRendererPaneEvidence {
             .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction)
             .environment(\.weiBeiTextScale, CGFloat(1)))
         view.sizingOptions = []
-        // The AppKit table reserves one more point beside its scroller on this
-        // Mac. These proposals give both renderers 696 pt of actual body width.
-#if CHAT_RENDERER_LAB
-        let windowWidth: CGFloat = 741
-#else
+        // Compare the same pane size; report the observed body widths below.
         let windowWidth: CGFloat = 740
-#endif
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: 640),
             styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         let start = ProcessInfo.processInfo.systemUptime
