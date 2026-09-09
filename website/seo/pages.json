@@ -1,0 +1,26 @@
+{
+  "index.html": {
+    "zh-CN": ["魏碑 weibei｜Mac PDF 阅读、AI 对话与 Markdown 笔记", "魏碑（weibei）是原生 macOS 阅读与笔记工作台，把 PDF、HTML、Markdown 阅读、带原文引用的 AI 对话和笔记编辑放在同一窗口。资料保存在本地，AI 按需接入，支持 Apple 芯片与 Intel Mac。"],
+    "en": ["WeiBei — PDF Reading, AI Chat & Markdown Notes for Mac", "Read PDFs, ask AI questions with source references, and write Markdown notes in one native Mac workspace. Local files, optional AI, Apple silicon and Intel support."]
+  },
+  "guide.html": {
+    "zh-CN": ["了解魏碑｜Mac 阅读、AI 提问、笔记与开始使用", "了解魏碑如何阅读 PDF、HTML 和 Markdown，针对原文选区提问、点击引用回看出处，并在旁边编辑笔记。查看本地存储、AI 接入、系统要求与源码运行方法。"],
+    "en": ["WeiBei Guide — Reading, AI Questions & Notes on macOS", "Explore PDF reading, source-linked AI conversations, and Markdown notes in WeiBei. Learn about local storage, optional models, Mac requirements, and getting started."]
+  },
+  "qa.html": {
+    "zh-CN": ["魏碑常见问题｜文件格式、AI 模型、隐私与 Mac 安装", "魏碑常见问题：支持哪些文件、是否必须使用 AI、如何选择模型、资料是否上传、引用如何回到原文，以及 macOS 系统要求、安装和开源许可。"],
+    "en": ["WeiBei FAQ — Files, AI Models, Privacy & Mac Installation", "Answers about supported files, optional AI models, local data, source references, Mac requirements, installation, and WeiBei's open-source licensing."]
+  },
+  "labs.html": {
+    "zh-CN": ["魏碑 Labs｜互动答案、语境回看与学习回顾探索", "看看魏碑正在探索的方向：可操作的互动答案、保留选区与来源的语境回看，以及围绕阅读难点的学习回顾。"],
+    "en": ["WeiBei Labs — Interactive Answers & Learning Experiments", "Explore directions in development at WeiBei: interactive answers, context rewind with source passages, and learning reviews built around your questions."]
+  },
+  "feedback.html": {
+    "zh-CN": ["反馈与建议｜魏碑 weibei", "向魏碑反馈阅读、对话或笔记体验问题，分享功能与内容建议。填写后前往 GitHub 表单确认，网站不会自动发布你的反馈。"],
+    "en": ["Feedback & Suggestions — WeiBei", "Report a reading, chat, or note-taking issue, or suggest an improvement to WeiBei. Review your feedback on GitHub before submitting it."]
+  },
+  "webi.html": {
+    "zh-CN": ["Webi 与小朱｜魏碑的动画、漫画与插画小伙伴", "认识魏碑的 W 形小伙伴 Webi 与红色小方块小朱，浏览它们的动画、表情、四格漫画、插画和周边概念。"],
+    "en": ["Webi & Xiaozhu — WeiBei's Animated Companions", "Meet Webi, WeiBei's W-shaped companion, and Xiaozhu, the little red square. Explore their animations, expressions, comics, illustrations, and merchandise concepts."]
+  }
+}

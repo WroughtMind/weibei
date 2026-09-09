@@ -8,7 +8,6 @@ const experienceLayer = document.querySelector('.experience-layer');
 const experiencePager = document.querySelector('.window-pager');
 const themePreviews = [...document.querySelectorAll('.theme-preview')];
 const themesLayer = document.querySelector('.themes-layer');
-const languageToggle = document.querySelector('[data-language-toggle]');
 const downloadLink = document.querySelector('[data-download-link]');
 const downloadTitle = document.querySelector('[data-download-title]');
 const downloadCaption = document.querySelector('[data-download-caption]');
@@ -17,8 +16,6 @@ const downloadControl = document.querySelector('[data-download-control]');
 const downloadToggle = document.querySelector('[data-download-toggle]');
 const downloadMenu = document.querySelector('[data-download-menu]');
 const downloadOptions = [...document.querySelectorAll('[data-download-target]')];
-const translatable = [...document.querySelectorAll('[data-en]')];
-const labelled = [...document.querySelectorAll('[data-en-label]')];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const mobileLayout = matchMedia('(max-width: 760px)');
 let activeMode = 0;
@@ -34,23 +31,7 @@ let matchedDownloads = matchDownloadAssets([]);
 let selectedDownloadId = 'mac-arm64';
 const downloadFallback = downloadLink?.href;
 
-translatable.forEach(element => { element.dataset.zh = element.textContent; });
-labelled.forEach(element => { element.dataset.zhLabel = element.getAttribute('aria-label'); });
-
-const setLanguage = language => {
-  const english = language === 'en';
-  document.documentElement.lang = english ? 'en' : 'zh-CN';
-  document.title = english ? 'WeiBei · Read, ask, and write in one workspace' : '魏碑 · 把读、问、写放回同一张桌面';
-  translatable.forEach(element => { element.textContent = english ? element.dataset.en : element.dataset.zh; });
-  labelled.forEach(element => { element.setAttribute('aria-label', english ? element.dataset.enLabel : element.dataset.zhLabel); });
-  languageToggle.setAttribute('aria-label', english ? '切换为中文' : 'Switch to English');
-  languageToggle.setAttribute('aria-pressed', String(english));
-  localStorage.setItem('weibei-language', language);
-  renderDownloadControl();
-};
-
-languageToggle.addEventListener('click', () => setLanguage(document.documentElement.lang === 'en' ? 'zh-CN' : 'en'));
-setLanguage(localStorage.getItem('weibei-language') === 'en' ? 'en' : 'zh-CN');
+renderDownloadControl();
 
 const detectDownloadEnvironment = async () => {
   const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || '';
@@ -117,7 +98,7 @@ detectDownloadEnvironment().then(async environment => {
   const preferredIds = preferredDownloadIds(environment);
   selectedDownloadId = preferredIds[0];
   try {
-    const response = await fetch('./release.json', { cache: 'no-store' });
+    const response = await fetch(new URL('./release.json', import.meta.url), { cache: 'no-store' });
     const release = response.ok ? await response.json() : { assets: [] };
     matchedDownloads = matchDownloadAssets(release.available && Array.isArray(release.assets) ? release.assets : []);
   } catch {}
@@ -304,3 +285,4 @@ const observer = new IntersectionObserver(entries => {
 }, { threshold: [.25, .5, .75] });
 
 chapters.forEach(chapter => observer.observe(chapter));
+
