@@ -84,10 +84,17 @@ enum ChatRendererConversationChecks {
             list.scroll.contentView.scroll(to: CGPoint(x: 0, y: readingY))
             list.scroll.reflectScrolledClipView(list.scroll.contentView)
             try require(!list.followsLatest, "Reading history without a wheel event still followed the tail")
+            guard let readingAnchor = list.captureAnchor() else { throw Failure(message: "No reading anchor after keyboard/accessibility scrolling") }
             if let last = store.messages.last { list.enqueueHeightChange(last.id) }
             try await settle(list)
-            try require(abs(list.scroll.contentView.bounds.minY - readingY) <= 1,
-                "Layout pulled keyboard/accessibility scrolling back to the tail")
+            guard let afterScroll = list.captureAnchor() else { throw Failure(message: "Layout lost the reading anchor") }
+            // Newly exposed rows can replace estimated heights above the viewport.
+            // Preserve the reading location, even when the document coordinate changes.
+            try require(!list.followsLatest && afterScroll.id == readingAnchor.id
+                && afterScroll.character == readingAnchor.character
+                && abs(afterScroll.rowOffset - readingAnchor.rowOffset) <= 1
+                && abs(afterScroll.characterOffset - readingAnchor.characterOffset) <= 1,
+                "Layout moved keyboard/accessibility reading: \(readingAnchor) -> \(afterScroll)")
             let ids = Array(store.messages.suffix(40).map(\.id))
             for id in ids.reversed().prefix(12) { list.reveal(id); try await settle(list) }
             let prepared = session.messages.mapValues { $0.document.parseCount }
