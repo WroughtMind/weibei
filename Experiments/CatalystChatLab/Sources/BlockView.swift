@@ -203,9 +203,16 @@ final class BlockView: UIView, UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) { record?.draft = textView.text }
 
     func saveInteractionState() {
-        guard let record, case .markdown = record.kind, preparedLabel.isHidden else { return }
+        // An old cell can detach after a replacement view has restored this block.
+        // Only its current view may write interaction state back to the record.
+        guard let record, record.renderedView === self, case .markdown = record.kind, preparedLabel.isHidden else { return }
         record.horizontalOffsets = scrollViews(in: markdown).map { $0.contentOffset.x }
-        record.attachmentSelections = attachmentLabels.map(\.selectionRange)
+        let selections = attachmentLabels.map(\.selectionRange)
+        if AppDelegate.checksConversation,
+           record.attachmentSelections.contains(where: { $0 != nil }), !selections.contains(where: { $0 != nil }) {
+            try? Thread.callStackSymbols.joined(separator: "\n").write(to: LabMetrics.directory.appendingPathComponent("state-loss.txt"), atomically: true, encoding: .utf8)
+        }
+        record.attachmentSelections = selections
     }
     func restoreInteractionState() {
         guard let record else { return }

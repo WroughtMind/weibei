@@ -64,7 +64,7 @@ enum WorkspaceFileDialog {
     }
 
     static func export(_ data: Data, name: String) async throws {
-        guard let presenter else { return }
+        guard let presenter else { throw CocoaError(.featureUnsupported) }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }

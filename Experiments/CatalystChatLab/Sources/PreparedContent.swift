@@ -16,6 +16,7 @@ final class PreparedBlock {
     var collapsed = false
     var horizontalOffsets: [CGFloat] = []
     var attachmentSelections: [NSRange?] = []
+    weak var renderedView: BlockView?
     var preparedText: NSAttributedString?
     var preparedLayout: TextLabel.Layout?
     var imageSources: Set<String> = []
@@ -63,10 +64,12 @@ final class ContentStore {
     private(set) var parseCount = 0
     private(set) var renderedCount = 0
     private(set) var measureCount = 0
+    private(set) var preparationMS: [String: Double] = [:]
     var retainedViewCount: Int { views.count }
     var peakViewCount = 0
 
     func prepare(_ message: LabMessage, width: CGFloat) async -> Bool {
+        let started = CACurrentMediaTime()
         let generation = self.generation
         let revision = message.revision
         let text = message.markdown
@@ -81,6 +84,8 @@ final class ContentStore {
             message.parsed = parsed; message.parsedRevision = revision
             parseCount += 1
         }
+        let parsedAt = CACurrentMediaTime()
+        preparationMS["parse_elapsed", default: 0] += (parsedAt - started) * 1000
         let preservesRendering = message.preparedTheme == themeRevision
         let rendered = parsed.renderedContent(theme: theme)
         message.blocks = parsed.document.enumerated().map { index, node in
@@ -123,9 +128,12 @@ final class ContentStore {
             }
             return block
         }
+        let renderedAt = CACurrentMediaTime()
+        preparationMS["render_and_highlight", default: 0] += (renderedAt - parsedAt) * 1000
         for block in message.blocks {
             if block.width != width { _ = measure(block, width: width) }
         }
+        preparationMS["measure", default: 0] += (CACurrentMediaTime() - renderedAt) * 1000
         message.preparedTheme = themeRevision
         message.displayedRevision = revision
         return true
@@ -134,6 +142,7 @@ final class ContentStore {
     func view(for block: PreparedBlock, width: CGFloat) -> BlockView {
         let body = views[block.id] ?? BlockView()
         views[block.id] = body
+        block.renderedView = body
         let changed = body.record !== block
         body.markdown.images = images
         body.makeWorkspaceAttachment = workspaceAttachment

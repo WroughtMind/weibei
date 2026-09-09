@@ -41,13 +41,22 @@ enum CatalystBusinessCheck {
                let saved = try JSONSerialization.jsonObject(with: previous) as? [String: Any],
                saved["status"] as? String == "awaiting_reopen" {
                 result = saved; checks = saved["checks"] as? [String: String] ?? [:]
-                store.resumePreviousStudy()
+                store.continueLastWork()
                 store.ensureAllStudySessionMessagesLoaded()
                 try await until("reopened note editor") { !store.activeNoteIsLoading && store.noteText.contains(noteMarker) }
                 let history = store.studySessions.flatMap(\.messages)
                 try check("reopen_original_note_and_session_files",
                     store.noteText.contains(finalMarker) && history.contains { $0.text.contains(finalMarker) && $0.completionState == .completed }
                     && history.contains { $0.role == .assistant && $0.completionState == .interrupted && !$0.text.isEmpty })
+                try await until("reopened conversation display") {
+                    conversation()?.messages.last?.original?.completionState == .interrupted
+                }
+                if let window = conversation()?.view.window {
+                    let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                    }
+                    try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("workspace.png"))
+                }
                 try write("passed")
                 if CommandLine.arguments.contains("--exit-after-check") { exit(0) }
                 return
@@ -61,7 +70,6 @@ enum CatalystBusinessCheck {
             let originalStyle = store.appearanceStyle
             store.appearanceStyle = .clearGlass
             try await until("native window material") {
-                result["native_window_diagnostics"] = CatalystDesktopWindow.shared.windowFacts()
                 return CatalystDesktopWindow.shared.materialWindowCount() > 0
             }
             try check("signed_native_window_material", CatalystDesktopWindow.shared.materialWindowCount() > 0)
@@ -115,7 +123,10 @@ enum CatalystBusinessCheck {
             store.agentDraft = "读取这份候选资料，解释阅读位置。WB452_ITEM=\(material.id) WB452_IMAGE=\(imageURL.absoluteString)"
             store.pendingComposerDraft = store.agentDraft
             store.submitAgentDraft()
-            try await until("real HTTP stream began") { store.isAgentRunningInActiveChat && store.messages.last?.role == .assistant && (store.messages.last?.text.count ?? 0) > 80 }
+            try await until("real HTTP stream began") {
+                store.isAgentRunningInActiveChat && store.agentStreaming.displayingChatID == store.activeStudySessionID
+                    && store.agentStreaming.text.count > 80
+            }
             try await until("UIKit received real message") { conversation()?.messages.last?.original?.role == .assistant && conversation()?.messages.last?.blocks.isEmpty == false }
             let controller = conversation()!
             let originalFirstBlock = controller.messages.last!.blocks.first!
@@ -124,7 +135,7 @@ enum CatalystBusinessCheck {
             let reply = store.messages.last!
             try check("original_http_agent_tools_and_uikit_stream", reply.completionState == .completed && !reply.sources.isEmpty
                 && controller.messages.last!.blocks.first === originalFirstBlock)
-            result["message_count"] = store.messages.count
+            result["first_round_message_count"] = store.messages.count
             result["parse_count"] = controller.store.parseCount
             try check("original_source_navigation", store.openAgentReplySource(reply.sources[0]) && store.selectedItemID == material.id)
             if let imageBlock = controller.messages.last?.blocks.firstIndex(where: { $0.imageSources.contains(imageURL.absoluteString) }) {
@@ -136,9 +147,6 @@ enum CatalystBusinessCheck {
             try await until("image visible in its actual cell") {
                 guard let body = controller.collection.visibleCells.compactMap({ ($0 as? MessageCell)?.body })
                     .first(where: { $0.record?.imageSources.contains(imageURL.absoluteString) == true }) else { return false }
-                result["image_view_diagnostics"] = "portable=\(body.record?.preparedText != nil) " + descendants(body).map {
-                    "\(type(of: $0)) frame=\($0.frame) hidden=\($0.isHidden)"
-                }.joined(separator: " | ")
                 return descendants(body).compactMap { $0 as? UIImageView }.contains {
                     $0.image != nil && $0.window != nil && !$0.isHidden && $0.bounds.width > 100 && $0.bounds.height > 50
                 }
@@ -158,16 +166,19 @@ enum CatalystBusinessCheck {
             store.pendingComposerDraft = store.agentDraft
             store.submitAgentDraft()
             try await until("stoppable stream") {
-                store.isAgentRunningInActiveChat && store.messages.last?.id != reply.id
-                    && store.messages.last?.role == .assistant && store.messages.last?.completionState == .generating
-                    && (store.messages.last?.text.count ?? 0) > 180
+                store.isAgentRunningInActiveChat && store.agentStreaming.displayingMessageID != nil
+                    && store.agentStreaming.displayingMessageID != reply.id
+                    && store.agentStreaming.displayingChatID == store.activeStudySessionID
+                    && store.agentStreaming.text.count > 180
             }
-            let received = store.messages.last!.text
+            let received = store.agentStreaming.text
             store.cancelAgentRequest(restoreDraft: false)
             await store.waitForAgentRequestsToStop()
             try await until("stopped message displayed") { !store.isAgentRunningInActiveChat && controller.messages.last?.state == .stopped }
             try check("stop_preserves_received_text", store.messages.last?.completionState == .interrupted
                 && store.messages.last?.text.hasPrefix(received) == true && controller.messages.last?.markdown.hasPrefix(received) == true)
+            result["workspace_history"] = try await measureWorkspaceHistory(store)
+            try check("history_and_long_answer_through_original_messages", true)
             guard await store.flushPendingWorkspaceSaveAsync() else { throw Failure("workspace save failed") }
             result["note_path"] = persistedNote.path
             result["resident_memory_bytes"] = LabMetrics.residentMemory()
@@ -179,6 +190,63 @@ enum CatalystBusinessCheck {
             store.showImportantOperationError("候选业务检查失败：\(error.localizedDescription)")
             if CommandLine.arguments.contains("--exit-after-check") { exit(1) }
         }
+    }
+
+    private static func measureWorkspaceHistory(_ store: WorkspaceStore) async throws -> [String: Any] {
+        guard let originalSession = store.activeStudySessionID else { throw Failure("missing original session") }
+        let originalLayout = store.layout
+        store.setLayout(.immersiveConversation)
+        guard store.createStudySession(courseID: nil) != nil else { throw Failure("history session creation") }
+        let beforeController = conversation()
+        let beforePreparation = beforeController?.store.preparationMS ?? [:]
+        let history = (0..<720).map { AgentMessage(role: .assistant, text: LabFixture.history($0), source: nil) }
+        let started = CACurrentMediaTime()
+        store.messages = history
+        try await until("original history first page", seconds: 60) {
+            conversation()?.messages.count == 240 && conversation()?.messages.last?.id == history.last?.id.uuidString
+        }
+        let controller = conversation()!
+        var measured: [String: Any] = [
+            "first_history_page_ms": (CACurrentMediaTime() - started) * 1000,
+            "first_page_messages": 240,
+            "body_width_pt": controller.bodyWidth,
+            "font_size_pt": controller.store.theme.fonts.body.pointSize,
+            "cache_state": "first entry to these fixtures in an App that has completed the business round trip; not cold App launch"
+        ]
+        measured["first_page_preparation_ms"] = controller.store.preparationMS.reduce(into: [String: Double]()) {
+            $0[$1.key] = $1.value - (controller === beforeController ? (beforePreparation[$1.key] ?? 0) : 0)
+        }
+        await controller.revealMessage(history.first!.id)
+        guard controller.messages.count == 720 else { throw Failure("original saved history incomplete") }
+        let parses = controller.store.parseCount, measurements = controller.store.measureCount
+        await withCheckedContinuation { continuation in
+            controller.sampleScroll(name: "workspace_history") { continuation.resume() }
+        }
+        guard controller.store.parseCount == parses, controller.store.measureCount == measurements else {
+            throw Failure("unchanged history processed during scrolling")
+        }
+        measured["scroll_new_parses"] = controller.store.parseCount - parses
+        measured["scroll_new_measurements"] = controller.store.measureCount - measurements
+        measured["scroll_messages"] = controller.messages.count
+        let long = AgentMessage(role: .assistant, text: LabFixture.longAnswer, source: nil)
+        let beforeLongPreparation = controller.store.preparationMS
+        let longStarted = CACurrentMediaTime()
+        store.messages = [long]
+        try await until("original long answer complete", seconds: 60) {
+            guard let value = conversation()?.messages.last else { return false }
+            return value.id == long.id.uuidString && value.displayedRevision == value.revision
+                && value.markdown.contains("【长回答结束：全部 140 节】") && value.blocks.count > 140
+        }
+        measured["first_long_answer_ms"] = (CACurrentMediaTime() - longStarted) * 1000
+        measured["long_answer_preparation_ms"] = controller.store.preparationMS.reduce(into: [String: Double]()) {
+            $0[$1.key] = $1.value - (beforeLongPreparation[$1.key] ?? 0)
+        }
+        measured["long_answer_utf16_count"] = long.text.utf16.count
+        measured["long_answer_blocks"] = controller.messages.last!.blocks.count
+        measured["resident_memory_bytes"] = LabMetrics.residentMemory()
+        _ = store.activateStudySession(originalSession, expectedCourseID: nil, expectedScopeNeedsReview: false)
+        store.setLayout(originalLayout)
+        return measured
     }
 
     private static func until(_ description: String, seconds: Double = 20, _ ready: () async -> Bool) async throws {

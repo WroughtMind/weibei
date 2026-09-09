@@ -87,10 +87,5 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     func open(_ url: URL) -> Bool { NSWorkspace.shared.open(url) }
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func materialWindowCount() -> Int { materials.count }
-    func windowFacts() -> String {
-        "mode=\(mode) windows=" + NSApp.windows.map {
-            "\(String(describing: type(of: $0))) style=\($0.styleMask.rawValue) visible=\($0.isVisible) content=\(String(describing: $0.contentView))"
-        }.joined(separator: " | ")
-    }
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 }

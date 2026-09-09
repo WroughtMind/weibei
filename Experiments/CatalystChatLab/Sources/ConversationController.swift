@@ -133,7 +133,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         super.viewDidAppear(animated)
         if fixtureMode, messages.isEmpty, preparation == nil {
             loadScenario("rich")
-            if CommandLine.arguments.contains("--self-check") {
+            if AppDelegate.checksConversation {
                 Task {
                     await preparation?.value
                     runChecks { success in exit(success ? 0 : 1) }
@@ -335,6 +335,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
     private func renderMessage(_ value: AgentMessage) -> LabMessage {
+        let started = CACurrentMediaTime()
+        defer { metrics.record("workspace_format_ms", (CACurrentMediaTime() - started) * 1000) }
         let message = LabMessage(id: value.id.uuidString, author: value.role == .user ? "你" : "魏碑", markdown: value.text)
         message.markdown = formattedMarkdown(value, memo: message.markdownMemo)
         message.original = value
@@ -629,13 +631,19 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
     override var keyCommands: [UIKeyCommand]? {
         let send = UIKeyCommand(title: "发送固定重放", action: #selector(sendPressed), input: "\r", modifierFlags: .command)
-        let copy = UIKeyCommand(title: "复制会话选区", action: #selector(copySelection), input: "c", modifierFlags: .command)
+        let copy = UIKeyCommand(title: "复制会话选区", action: #selector(copy(_:)), input: "c", modifierFlags: .command)
         copy.wantsPriorityOverSystemBehavior = true
         var commands = usesWorkspaceChrome ? [] : [send, UIKeyCommand(title: "聚焦输入框", action: #selector(focusInput), input: "l", modifierFlags: .command)]
         if selection.hasSelection && selection.ownsFirstResponder { commands.append(copy) }
         return commands
     }
-    @objc private func copySelection() { if selection.hasSelection { UIPasteboard.general.string = selection.text() } }
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(copy(_:)) { return selection.hasSelection && selection.ownsFirstResponder }
+        return super.canPerformAction(action, withSender: sender)
+    }
+    override func copy(_ sender: Any?) {
+        if selection.hasSelection { UIPasteboard.general.string = selection.text() }
+    }
     @objc private func focusInput() { input.becomeFirstResponder() }
     private func button(_ title: String, symbol: String, action: @escaping () -> Void) -> UIButton {
         let button = UIButton(type: .system)
@@ -644,14 +652,14 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         return button
     }
 
-    func sampleScroll(completed: (() -> Void)? = nil) {
+    func sampleScroll(name requestedName: String? = nil, completed: (() -> Void)? = nil) {
         guard preparation == nil, replay == nil else { return }
         let beforeParse = store.parseCount
         let beforeMeasure = store.measureCount
         let beforeRender = store.renderedCount
         let distance = max(0, collection.contentSize.height - collection.bounds.height)
         status.text = "正在采样连续滚动与回看…"
-        let name = scenario
+        let name = requestedName ?? scenario
         metrics.record("\(name)_scroll_message_count", Double(messages.count))
         metrics.record("\(name)_scroll_source_utf16_count", Double(messages.reduce(0) { $0 + $1.markdown.utf16.count }))
         metrics.record("\(name)_scroll_distance_pt", Double(distance))
@@ -770,16 +778,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     if ContinuousClock.now >= diagramDeadline { throw Failure(message: "离线关系图没有生成真实 SVG") }
                     try await Task.sleep(for: .milliseconds(20))
                 }
-                if CommandLine.arguments.contains("--self-check") {
-                    let diagramIndex = blocks.firstIndex(where: { $0 === diagram })!
-                    collection.scrollToItem(at: IndexPath(item: diagramIndex + 1, section: 0), at: .centeredVertically, animated: false)
-                    collection.layoutIfNeeded()
-                    guard let image = try await diagramView.diagramSnapshot(), let data = image.pngData() else {
-                        throw Failure(message: "关系图没有生成实际渲染快照")
-                    }
-                    try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
-                    try data.write(to: LabMetrics.directory.appendingPathComponent("diagram.png"))
-                }
+
 
                 guard let imageIndex = blocks.firstIndex(where: { $0.imageSources.contains("lab-image://landscape") }) else {
                     throw Failure(message: "没有实际图片正文")
@@ -807,9 +806,15 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                            "图片到达使正在阅读的正文跳位")
                 metrics.checks["image_arrival_preserves_reading_text"] = "passed"
 
+                collection.scrollToItem(at: IndexPath(item: 2, section: 0), at: .top, animated: false)
+                collection.layoutIfNeeded()
+                let selectionLabel = store.view(for: blocks[1], width: bodyWidth).label
+                try expect(selectionLabel.becomeFirstResponder(), "正文没有取得复制焦点")
                 selection.select(from: .init(blockID: blocks[1].id, character: 3), to: .init(blockID: blocks[2].id, character: 18))
                 let selected = selection.text()
                 try expect(selected.contains("\n\n") && !selected.isEmpty, "跨段复制没有包含两个段落")
+                try expect(UIApplication.shared.sendAction(#selector(copy(_:)), to: nil, from: nil, for: nil)
+                    && UIPasteboard.general.string == selected, "系统复制命令没有复制整个跨段选区")
                 for index in 0..<44 {
                     let probe = LabMessage(author: "复用检查", markdown: "复用样本 \(index)")
                     _ = await store.prepare(probe, width: bodyWidth)
@@ -846,15 +851,27 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 try expect(scroller.contentOffset.x > 0, "长代码没有可横向阅读的完整宽度（正文 \(codeLabel.intrinsicContentSize.width)，内容 \(scroller.contentSize.width)，视口 \(scroller.bounds.width)）")
                 codeView.saveInteractionState()
                 let offset = scroller.contentOffset.x
+                let savedSelections = code.attachmentSelections
                 store.reset(); CodeHighlighter.current.renderCache.removeAll()
                 collection.reloadData(); collection.layoutIfNeeded()
                 let restoredCode = store.view(for: code, width: bodyWidth)
+                let beforeRestore = code.attachmentSelections
                 restoredCode.restoreInteractionState()
                 try expect(restoredCode.attachmentLabels.first?.selectionRange == NSRange(location: 3, length: 16) && restoredCode.scrollViews(in: restoredCode.markdown).first?.contentOffset.x == offset,
-                           "代码附件复用丢失选区或横向位置")
+                           "代码附件复用丢失选区或横向位置：\(String(describing: restoredCode.attachmentLabels.first?.selectionRange)) / \(restoredCode.scrollViews(in: restoredCode.markdown).first?.contentOffset.x ?? -1)，预期 \(offset)，保存 \(savedSelections)，恢复前 \(beforeRestore)，模型 \(code.attachmentSelections)\n\((try? String(contentsOf: LabMetrics.directory.appendingPathComponent("state-loss.txt"))) ?? "")")
                 try expect(restoredCode.attachmentLabels.first?.attributedText.isEqual(to: highlighted) == true && !code.content.highlightMaps.isEmpty,
                            "视图和全局缓存淘汰后没有保留代码高亮")
                 metrics.checks["code_highlight_selection_and_scroll_persist"] = "passed"
+                if AppDelegate.checksConversation {
+                    let diagramIndex = blocks.firstIndex(where: { $0 === diagram })!
+                    collection.scrollToItem(at: IndexPath(item: diagramIndex + 1, section: 0), at: .centeredVertically, animated: false)
+                    collection.layoutIfNeeded()
+                    guard let image = try await diagramView.diagramSnapshot(), let data = image.pngData() else {
+                        throw Failure(message: "关系图没有生成实际渲染快照")
+                    }
+                    try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
+                    try data.write(to: LabMetrics.directory.appendingPathComponent("diagram.png"))
+                }
                 metrics.checks["math_image_and_diagram_resources"] = "passed"
                 selection.clear()
 
@@ -886,7 +903,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             }
             do {
                 _ = try metrics.write(controller: self)
-                if CommandLine.arguments.contains("--self-check"), let window = view.window {
+                if AppDelegate.checksConversation, let window = view.window {
                     let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                         window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
                     }

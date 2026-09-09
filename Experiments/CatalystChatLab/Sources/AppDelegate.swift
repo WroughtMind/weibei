@@ -3,7 +3,9 @@ import SwiftUI
 import WeiBeiCore
 
 final class AppDelegate: UIResponder, UIApplicationDelegate {
-    static let usesFixture = CommandLine.arguments.contains("--self-check") || CommandLine.arguments.contains("--fixtures")
+    static let checksConversation = CommandLine.arguments.contains("--self-check")
+        || Bundle.main.bundleIdentifier?.hasSuffix(".conversationcheck") == true
+    static let usesFixture = checksConversation || CommandLine.arguments.contains("--fixtures")
     static var businessCheckEndpoint: String? {
         guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
               let value = Bundle.main.object(forInfoDictionaryKey: "LabBusinessCheckEndpoint") as? String,

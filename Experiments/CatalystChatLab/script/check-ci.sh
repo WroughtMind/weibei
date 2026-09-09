@@ -7,9 +7,9 @@ lab_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$lab_dir"
 open -W "$lab_dir/dist/魏碑-Catalyst独立候选.app" --args --self-check
 mkdir -p Evidence
-cp "$HOME/Library/Application Support/org.weibei.CatalystChatLab/Results/latest.json" Evidence/ci.json
-cp "$HOME/Library/Application Support/org.weibei.CatalystChatLab/Results/window.png" Evidence/ci-window.png
-cp "$HOME/Library/Application Support/org.weibei.CatalystChatLab/Results/diagram.png" Evidence/ci-diagram.png
+cp "$HOME/Library/Application Support/org.weibei.CatalystCandidate452/Results/latest.json" Evidence/ci.json
+cp "$HOME/Library/Application Support/org.weibei.CatalystCandidate452/Results/window.png" Evidence/ci-window.png
+cp "$HOME/Library/Application Support/org.weibei.CatalystCandidate452/Results/diagram.png" Evidence/ci-diagram.png
 python3 - <<'PY'
 import json
 from pathlib import Path

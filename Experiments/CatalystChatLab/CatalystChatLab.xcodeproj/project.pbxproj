@@ -105,6 +105,7 @@
 		8154D6D262805548F185B188 /* genui.js in Resources */ = {isa = PBXBuildFile; fileRef = 6AD06B5E57FCC88A2E7596B6 /* genui.js */; };
 		81D0AABF04F475F8CE1E6C50 /* WebResearchClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7272FB7799ACD70C699EC812 /* WebResearchClient.swift */; };
 		8267BDAB7536562FDBF4AD51 /* AgentStreamingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41355C6D696052679D7F84A4 /* AgentStreamingState.swift */; };
+		82D665C93B74FC9990A8BA4C /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1EBFB232EAF25C152D80D0AF /* AppIcon.icns */; };
 		84AA29B3DAABD79152AFA7E1 /* WorkspaceStore+StatusFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 442C13C62E33015CFACB0293 /* WorkspaceStore+StatusFeedback.swift */; };
 		86E49500F97848E713B0837B /* WorkspaceStore+NotesPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24F3C537F90D60A08D4C71C1 /* WorkspaceStore+NotesPersistence.swift */; };
 		86EF338747EA6AC40B26127E /* libWeiBeiCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E88EACC45448D95F47EF3BC /* libWeiBeiCore.a */; };
@@ -288,6 +289,7 @@
 		1A621066D9DCFDD4AB3445A6 /* AgentHistoryRevealPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHistoryRevealPolicy.swift; sourceTree = "<group>"; };
 		1D9CF1C3E6776ED6D445BAAA /* WorkspaceStore+CourseLibraryVolatility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+CourseLibraryVolatility.swift"; sourceTree = "<group>"; };
 		1DCF8A3EEFA7070922BFC2EA /* NativeAgentCredentials.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentCredentials.swift; sourceTree = "<group>"; };
+		1EBFB232EAF25C152D80D0AF /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		1FD928F4E902A73F1CBDCC6A /* StudyAgentProposalDecoding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudyAgentProposalDecoding.swift; sourceTree = "<group>"; };
 		1FF97AC57C62579974BACE6B /* WorkspaceStore+LibraryRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+LibraryRoot.swift"; sourceTree = "<group>"; };
 		215A6DC0AAB900F0AB40B7FC /* AgentMessagePlaceholderRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMessagePlaceholderRow.swift; sourceTree = "<group>"; };
@@ -554,6 +556,14 @@
 			path = Providers;
 			sourceTree = "<group>";
 		};
+		2551B1B208F8AEC91D4CD578 /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				EBA4D7A58DA8A9E358977576 /* assets */,
+			);
+			path = DesignSystem;
+			sourceTree = "<group>";
+		};
 		258E074A09F531E5EA6B595D /* Calligraphy */ = {
 			isa = PBXGroup;
 			children = (
@@ -750,6 +760,14 @@
 			path = WeiBeiCore;
 			sourceTree = "<group>";
 		};
+		9526B316CD20F721FBD695B3 /* app-icon */ = {
+			isa = PBXGroup;
+			children = (
+				1EBFB232EAF25C152D80D0AF /* AppIcon.icns */,
+			);
+			path = "app-icon";
+			sourceTree = "<group>";
+		};
 		9A7B4C79F6FD97D393A71536 /* Support */ = {
 			isa = PBXGroup;
 			children = (
@@ -807,6 +825,7 @@
 		B7456D04087DA2DE6917BE93 /* weibei-catalyst-452 */ = {
 			isa = PBXGroup;
 			children = (
+				2551B1B208F8AEC91D4CD578 /* DesignSystem */,
 				487F204950A50187E1DD5391 /* Sources */,
 			);
 			name = "weibei-catalyst-452";
@@ -822,6 +841,14 @@
 				810A8079BBB755D152F8F310 /* WorkspaceStore+NoteEditing.swift */,
 			);
 			path = Editing;
+			sourceTree = "<group>";
+		};
+		EBA4D7A58DA8A9E358977576 /* assets */ = {
+			isa = PBXGroup;
+			children = (
+				9526B316CD20F721FBD695B3 /* app-icon */,
+			);
+			path = assets;
 			sourceTree = "<group>";
 		};
 		EEC4E286B474BE3F6DB06B55 /* Settings */ = {
@@ -996,6 +1023,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A4C1A01AF95A93F46ED38466 /* AgentResources in Resources */,
+				82D665C93B74FC9990A8BA4C /* AppIcon.icns in Resources */,
 				5B97F00F0705804E2743B7E8 /* Editor in Resources */,
 				0EE8161F1FAC7A8B76F84DA9 /* Fonts in Resources */,
 				8DE2C306679ADCCF17ADF67B /* Mermaid-LICENSE.txt in Resources */,
@@ -1402,11 +1430,12 @@
 				EXECUTABLE_NAME = "魏碑候选";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "魏碑·Catalyst独立候选";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(LAB_APP_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LAB_APP_NAME = "魏碑·Catalyst独立候选";
 				LAB_BUNDLE_IDENTIFIER = org.weibei.CatalystCandidate452;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1516,11 +1545,12 @@
 				EXECUTABLE_NAME = "魏碑候选";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "魏碑·Catalyst独立候选";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(LAB_APP_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LAB_APP_NAME = "魏碑·Catalyst独立候选";
 				LAB_BUNDLE_IDENTIFIER = org.weibei.CatalystCandidate452;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

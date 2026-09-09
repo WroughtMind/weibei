@@ -35,7 +35,7 @@ final class LabMetrics: NSObject {
         }
     }
     static let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("org.weibei.CatalystChatLab/Results", isDirectory: true)
+        .appendingPathComponent(Bundle.main.bundleIdentifier! + "/Results", isDirectory: true)
     static func residentMemory() -> UInt64? {
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
@@ -53,13 +53,14 @@ final class LabMetrics: NSObject {
             "source_revision": Bundle.main.object(forInfoDictionaryKey: "LabSourceRevision") as? String ?? "unrecorded",
             "source_dirty": Bundle.main.object(forInfoDictionaryKey: "LabSourceDirty") as? String ?? "unrecorded",
             "idiom": UIDevice.current.userInterfaceIdiom == .mac ? "mac" : "other",
-            "body_width_pt": controller.bodyWidth, "font_size_pt": 16,
+            "body_width_pt": controller.bodyWidth, "font_size_pt": controller.store.theme.fonts.body.pointSize,
             "message_count": controller.messages.count,
             "body_block_count": controller.messages.flatMap(\.blocks).count,
             "source_utf16_count": controller.messages.reduce(0) { $0 + $1.markdown.utf16.count },
             "parse_count": controller.store.parseCount,
             "render_count": controller.store.renderedCount,
             "measure_count": controller.store.measureCount,
+            "preparation_ms": controller.store.preparationMS,
             "retained_block_views": controller.store.retainedViewCount,
             "peak_block_views": controller.store.peakViewCount,
             "checks": checks,

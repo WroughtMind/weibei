@@ -10,5 +10,4 @@ import Foundation
     func open(_ url: URL) -> Bool
     func reveal(_ url: URL)
     func materialWindowCount() -> Int
-    func windowFacts() -> String
 }

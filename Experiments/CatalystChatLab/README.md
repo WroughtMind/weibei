@@ -17,7 +17,7 @@ cd Experiments/CatalystChatLab
 
 独立标识为 `org.weibei.CatalystCandidate452`。应用初始化原 store 之前设置原有工作区路径约定，使资料库、会话、备份和账号配置全部进入候选自己的目录。用户在候选设置中配置模型，不读取正式版凭据，不迁移生产资料。旧 `org.weibei.CatalystChatLab` 会话实验及已认可包保留。
 
-`project.yml` 是目标描述；生成的 Xcode 工程和共享 scheme 一并入库。应用内的 `LabSourceRevision`、`LabSourceDirty` 记录实际构建来源。独立检查身份可通过 `LAB_BUNDLE_IDENTIFIER` 设置，不改变嵌入组件身份。
+`project.yml` 是目标描述；生成的 Xcode 工程和共享 scheme 一并入库。应用内的 `LabSourceRevision`、`LabSourceDirty` 记录实际构建来源。独立检查身份可通过 `LAB_BUNDLE_IDENTIFIER` 设置，显示名称由 `LAB_APP_NAME` 设置；不改变嵌入组件身份。
 
 ## 复用与平台接点
 
@@ -49,3 +49,5 @@ cd Experiments/CatalystChatLab
 旧会话证据在 `Evidence/`。新完整候选的检查必须重新记录，旧 10/10 和性能数值不自动代表业务接入后的表现。首次准备、缓存后回看、改宽和内存分别报告；显示回调与组件耗时不能换算为 FPS。
 
 当前仍在修复和验证完整候选，尚不能宣称全部功能与真实手感验收通过。真实模型服务、鼠标拖选、中文输入法、焦点与附件横向滚动必须分别如实记录。会话路线验证成功不等于正式魏碑整体迁移成功。
+
+2026-09-09 接入检查：原笔记/恢复/隔离 40 项通过；独立原业务往返与重开 13 项通过。鼠标分栏拖动通过，系统复制路由已补检查。新增真实焦点步骤发现代码附件选区在回收中被清空，仍在定位；当前不能声明所有会话检查通过。旧提交 d2643572 的专用与原仓库 CI 均通过，后续修复以对应提交结果为准。

@@ -14,6 +14,8 @@ targets:
     sources:
       - Sources
       - WindowBridge/WindowBridgeContract.swift
+      - path: ../../DesignSystem/assets/app-icon/AppIcon.icns
+        buildPhase: resources
       - path: ../../Sources/WeiBei/Stores
       - path: ../../Sources/WeiBei/Editing
       - path: ../../Sources/WeiBei/Views
@@ -61,6 +63,7 @@ targets:
     settings:
       base:
         LAB_BUNDLE_IDENTIFIER: org.weibei.CatalystCandidate452
+        LAB_APP_NAME: 魏碑·Catalyst独立候选
         PRODUCT_BUNDLE_IDENTIFIER: $(LAB_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: 魏碑候选
         PRODUCT_MODULE_NAME: CatalystChatLab
@@ -71,7 +74,7 @@ targets:
         TARGETED_DEVICE_FAMILY: '2,6'
         SWIFT_VERSION: '5.0'
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: 魏碑·Catalyst独立候选
+        INFOPLIST_KEY_CFBundleDisplayName: $(LAB_APP_NAME)
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
@@ -90,8 +93,9 @@ targets:
     info:
       path: Config/Info.plist
       properties:
-        CFBundleName: 魏碑候选
-        CFBundleDisplayName: 魏碑·Catalyst独立候选
+        CFBundleName: $(LAB_APP_NAME)
+        CFBundleIconFile: AppIcon
+        CFBundleDisplayName: $(LAB_APP_NAME)
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations: [zh-Hans, en]
         LSApplicationCategoryType: public.app-category.productivity

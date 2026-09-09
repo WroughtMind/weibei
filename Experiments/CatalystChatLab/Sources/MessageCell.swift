@@ -19,21 +19,28 @@ final class MessageCell: UICollectionViewCell {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func prepareForReuse() { super.prepareForReuse(); unbind() }
     private func unbind() {
-        body?.saveInteractionState()
-        body?.removeFromSuperview()
+        // A prepared view may already belong to the replacement cell by the
+        // time UIKit recycles this one. Only detach views this cell still owns.
+        if body?.superview === contentView {
+            body?.saveInteractionState()
+            body?.removeFromSuperview()
+        }
         body = nil
-        auxiliary?.removeFromSuperview(); auxiliary = nil
+        if auxiliary?.superview === contentView { auxiliary?.removeFromSuperview() }
+        auxiliary = nil
         title.isHidden = true; actions.isHidden = true
         for view in actions.arrangedSubviews { actions.removeArrangedSubview(view); view.removeFromSuperview() }
     }
     func show(body: BlockView) {
-        if self.body !== body { unbind(); self.body = body; contentView.addSubview(body) }
+        if self.body !== body { unbind(); self.body = body }
+        if body.superview !== contentView { contentView.addSubview(body) }
         title.isHidden = true; actions.isHidden = true
         body.restoreInteractionState()
         setNeedsLayout()
     }
     func showAuxiliary(_ view: UIView) {
-        if auxiliary !== view { unbind(); auxiliary = view; contentView.addSubview(view) }
+        if auxiliary !== view { unbind(); auxiliary = view }
+        if view.superview !== contentView { contentView.addSubview(view) }
         view.frame = bounds
     }
     func showHeader(_ message: LabMessage) {
