@@ -4,10 +4,10 @@ index 4b78adb..f982be2 100644
 +++ b/Sources/MarkdownParser/MarkdownParser/MarkdownParser+MathContext.swift
 @@ -101,6 +101,7 @@ public extension MarkdownParser {
          private var sourceContents: [Int: String] = [:]
- 
+
          public fileprivate(set) var contents: [Int: String] = [:]
 +        private(set) var displayMath: Set<Int> = []
- 
+
          init(preprocessText: String) {
              document = preprocessText
 @@ -146,6 +147,9 @@ public extension MarkdownParser {
@@ -19,7 +19,7 @@ index 4b78adb..f982be2 100644
 +            }
              return MarkdownParser.replacementText(for: .math, identifier: String(identifier))
          }
- 
+
 diff --git a/Sources/MarkdownParser/MarkdownParser/MarkdownParser+SpecializeContext.swift b/Sources/MarkdownParser/MarkdownParser/MarkdownParser+SpecializeContext.swift
 index 594aad6..da0edfc 100644
 --- a/Sources/MarkdownParser/MarkdownParser/MarkdownParser+SpecializeContext.swift
@@ -118,7 +118,7 @@ index dcb06fc..0760520 100644
          public let mathContext: [Int: String]
 +        public let displayMath: Set<Int>
      }
- 
+
      public func parse(_ markdown: String) -> ParseResult {
 @@ -51,7 +52,7 @@ public final class MarkdownParser: Sendable {
          defer { if let nodes { cmark_node_free(nodes) } }
@@ -127,7 +127,7 @@ index dcb06fc..0760520 100644
 -        return .init(document: blocks, mathContext: math.contents)
 +        return .init(document: blocks, mathContext: math.contents, displayMath: math.displayMath)
      }
- 
+
      public struct RootBlockRange: Sendable {
 diff --git a/Sources/MarkdownView/Components/HorizontalScrollView.swift b/Sources/MarkdownView/Components/HorizontalScrollView.swift
 index 7cfc9ed..77617f0 100644
@@ -140,7 +140,7 @@ index 7cfc9ed..77617f0 100644
 -    final class HorizontalScrollView: NSScrollView {
 +    public final class HorizontalScrollView: NSScrollView {
          private var lockedToVertical: Bool?
- 
+
          /// A legacy scroller is laid out inside the scroll view and takes a strip of
 @@ -23,12 +23,12 @@
          /// Assigning the style once is not enough: AppKit follows the system's "show
@@ -151,7 +151,7 @@ index 7cfc9ed..77617f0 100644
              get { .overlay }
              set { _ = newValue }
          }
- 
+
 -        override func scrollWheel(with event: NSEvent) {
 +        public override func scrollWheel(with event: NSEvent) {
              if event.phase.isEmpty, event.momentumPhase.isEmpty {
@@ -177,13 +177,13 @@ index b13b063..e9a04bf 100644
 @@ -36,18 +36,24 @@ final class BlockProcessor {
          self.inlineTextDecoration = inlineTextDecoration
      }
- 
+
 -    func processHeading(level _: Int, contents: [MarkdownInlineNode]) -> NSAttributedString {
 -        let font: PlatformFont = theme.fonts.title
 +    func processHeading(level: Int, contents: [MarkdownInlineNode]) -> NSAttributedString {
 +        let scales: [CGFloat] = [1.7, 1.45, 1.25, 1.12, 1.05, 1]
 +        let size = theme.fonts.body.pointSize * scales[min(5, max(0, level - 1))]
- 
+
          return buildWithParagraphSync { paragraph in
              paragraph.paragraphSpacing = theme.spacings.paragraph
              paragraph.paragraphSpacingBefore = theme.spacings.headingBefore
@@ -208,7 +208,7 @@ index b13b063..e9a04bf 100644
 @@ -103,52 +109,17 @@ final class BlockProcessor {
          return (text, codeView)
      }
- 
+
 -    func processBlockquote(_ children: [MarkdownBlockNode]) -> NSAttributedString {
 -        guard !children.isEmpty else { return NSAttributedString() }
 -
@@ -267,7 +267,7 @@ index b13b063..e9a04bf 100644
 +        result.addAttribute(.blockquoteGroup, value: BlockquoteGroup(), range: range)
          return result
      }
- 
+
 diff --git a/Sources/MarkdownView/MarkdownTextBuilder/MarkdownContent.swift b/Sources/MarkdownView/MarkdownTextBuilder/MarkdownContent.swift
 index 54bf813..bb629e0 100644
 --- a/Sources/MarkdownView/MarkdownTextBuilder/MarkdownContent.swift
@@ -380,7 +380,7 @@ index 3c11d8a..dd9bb2f 100644
 +                        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
 +                        NSGraphicsContext.restoreGraphicsState()
                      #endif
- 
+
                      context.restoreGState()
 diff --git a/Sources/MarkdownView/Supplements/MathRenderer.swift b/Sources/MarkdownView/Supplements/MathRenderer.swift
 index 3441a99..4d1a8d7 100644
@@ -389,7 +389,7 @@ index 3441a99..4d1a8d7 100644
 @@ -20,32 +20,17 @@ import SwiftMath
  public enum MathRenderer {
      static let renderCache = LRUCache<String, PlatformImage>(countLimit: 256)
- 
+
 -    private static func preprocessLatex(_ latex: String) -> String {
 -        latex
 -            .replacingOccurrences(of: "\\dots", with: "\\ldots")
@@ -416,7 +416,7 @@ index 3441a99..4d1a8d7 100644
          if let cachedImage = renderCache.value(forKey: cacheKey) {
              return cachedImage
          }
- 
+
 -        let processedLatex = preprocessLatex(latex)
 -
          #if canImport(UIKit)
@@ -424,7 +424,7 @@ index 3441a99..4d1a8d7 100644
          #elseif canImport(AppKit)
 @@ -57,11 +42,19 @@ public enum MathRenderer {
          #endif
- 
+
          let mathImage = MTMathImage(
 -            latex: processedLatex,
 +            latex: latex
@@ -442,7 +442,7 @@ index 3441a99..4d1a8d7 100644
 +            mathImage.font?.fallbackFont = NSFont.systemFont(ofSize: fontSize)
 +        #endif
          let (error, image) = mathImage.asImage()
- 
+
          guard error == nil, let image else {
 @@ -72,7 +65,6 @@ public enum MathRenderer {
          #if canImport(UIKit)
@@ -451,7 +451,7 @@ index 3441a99..4d1a8d7 100644
 -            image.isTemplate = true
              let result = image
          #endif
- 
+
 @@ -95,46 +87,3 @@ public enum MathRenderer {
          return "\(latex)#\(fontSize)#\(r),\(g),\(b),\(a)"
      }
