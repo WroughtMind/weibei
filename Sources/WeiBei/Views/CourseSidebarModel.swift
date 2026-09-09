@@ -321,7 +321,7 @@ final class CourseSidebarModel: ObservableObject {
                   tagRequest(for: item, store: store) == request else {
                 continue
             }
-            if request.draftToken != nil, transientNoteMeta[request] != meta {
+            if store.cachedSidebarNoteMeta(for: request) == nil, transientNoteMeta[request] != meta {
                 transientNoteMeta[request] = meta
                 changed = true
             } else if request.draftToken == nil,

@@ -42,8 +42,11 @@ final class ContextualContentPerformanceTests: XCTestCase {
         let url = root.appendingPathComponent("note.md")
         try Data("# 正文标题\n\n笔记内容".utf8).write(to: url)
         let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        let file = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let note = StudyItem(id: "note", title: "note.md", subtitle: "", kind: .markdown,
-                             urlPath: url.path, isSample: false, isNotebookNote: true)
+                             urlPath: url.path, isSample: false, isNotebookNote: true,
+                             fileByteCount: UInt64(try XCTUnwrap(file.fileSize)),
+                             fileModificationTimeNanoseconds: Int64(try XCTUnwrap(file.contentModificationDate).timeIntervalSince1970 * 1_000_000_000))
         store.importedItems = [note]
         let request = store.sidebarTagRequest(for: note, draftToken: nil)
         XCTAssertNil(store.cachedSidebarNoteMeta(for: request))
@@ -70,9 +73,13 @@ final class ContextualContentPerformanceTests: XCTestCase {
         let url = root.appendingPathComponent("note.md")
         try Data("# 笔记标题\n正文".utf8).write(to: url)
         let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        let file = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let byteCount = UInt64(try XCTUnwrap(file.fileSize))
+        let modifiedAt = Int64(try XCTUnwrap(file.contentModificationDate).timeIntervalSince1970 * 1_000_000_000)
         store.importedItems = (0..<120).map { index in
             StudyItem(id: "note-\(index)", title: "笔记 \(index)", subtitle: "", kind: .markdown,
-                      urlPath: url.path, isSample: false, isNotebookNote: true)
+                      urlPath: url.path, isSample: false, isNotebookNote: true,
+                      fileByteCount: byteCount, fileModificationTimeNanoseconds: modifiedAt)
         }
         let frame = NSRect(x: 0, y: 0, width: 600, height: 360)
         let host = NSHostingView(rootView: ContextualContentPicker(kind: .note).environmentObject(store))

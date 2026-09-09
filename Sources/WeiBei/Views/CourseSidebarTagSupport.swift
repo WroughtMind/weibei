@@ -60,7 +60,11 @@ final class CourseSidebarTagState {
     }
 
     func cache(_ meta: CourseSidebarNoteMeta, for request: CourseSidebarTagRequest) {
-        guard request.draftToken == nil else { return }
+        // Unversioned external files can change without changing this request.
+        // Keep their result with the visible row, not across picker/sidebar lifetimes.
+        guard request.draftToken == nil,
+              request.memoryContentRevision != nil
+                || (request.fileByteCount != nil && request.fileModificationTimeNanoseconds != nil) else { return }
         metaByItemID[request.itemID] = (request, meta)
     }
 
