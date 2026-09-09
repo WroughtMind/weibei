@@ -24,6 +24,7 @@ struct ChatRendererMarkdownView: NSViewRepresentable {
     @MainActor final class Coordinator {
         lazy var localDocument = CandidateDocument()
         var retainsSurface = false
+        var extensionPresentation = ""
     }
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> CandidateTextView {
@@ -61,6 +62,19 @@ struct ChatRendererMarkdownView: NSViewRepresentable {
             native.frame.size = native.size(for: width)
             onHeight(native.frame.height)
             return native
+        }
+        // The shared document can already have this theme while a retained
+        // native attachment still needs its own presentation update.
+        let presentation = "\(fontSize)|\(isDark)|\(appearanceKey)|\(interfaceLanguage)"
+        if context.coordinator.extensionPresentation != presentation {
+            context.coordinator.extensionPresentation = presentation
+            view.updateExtensionViews { external in
+                guard let native = external as? NativeChatAttachmentView,
+                      case .code = native.attachment.descriptor else { return }
+                let previous = native.attachment.descriptor
+                native.attachment.update(fontSize: fontSize, isDark: isDark, interfaceLanguage: interfaceLanguage)
+                native.update(from: previous)
+            }
         }
         view.onHeightChange = { [weak session] in
             if let messageID, session?.activeSessionID == conversationID { session?.list?.enqueueHeightChange(messageID) }

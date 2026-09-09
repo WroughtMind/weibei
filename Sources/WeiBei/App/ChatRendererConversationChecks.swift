@@ -251,6 +251,20 @@ enum ChatRendererConversationChecks {
             list.update(sessionID: store.activeStudySessionID, messages: store.messages)
             try await settle(list)
             guard let message = store.messages.last, let action = message.actions.first else { throw Failure(message: "No real action card") }
+            @MainActor func mermaid(in view: NSView) -> NativeChatAttachmentView? {
+                if let native = view as? NativeChatAttachmentView,
+                   case .code(_, "mermaid") = native.attachment.descriptor { return native }
+                for child in view.subviews { if let native = mermaid(in: child) { return native } }
+                return nil
+            }
+            guard let diagram = mermaid(in: list) else { throw Failure(message: "No mounted Mermaid attachment") }
+            let previousAppearance = store.appearanceMode
+            store.setAppearanceMode(previousAppearance.isDark ? .paper : .inkstone)
+            try await settle(list)
+            try require(mermaid(in: list) === diagram && diagram.attachment.isDark == store.appearanceMode.isDark,
+                "Mermaid appearance: retained=\(mermaid(in: list) === diagram), actualDark=\(diagram.attachment.isDark), expectedDark=\(store.appearanceMode.isDark)")
+            store.setAppearanceMode(previousAppearance)
+            try await settle(list)
             guard let targetID = action.targetItemID, let notePath = store.item(withID: targetID)?.urlPath else {
                 throw Failure(message: "No actual note file for the action")
             }

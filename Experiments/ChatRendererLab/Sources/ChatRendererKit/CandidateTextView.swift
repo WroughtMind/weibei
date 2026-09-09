@@ -62,6 +62,12 @@ public final class CandidateTextView: MarkdownTextView {
         lastMeasured = nil
     }
 
+    public func updateExtensionViews(_ update: (NSView) -> Void) {
+        for item in embedded.values {
+            if let external = item.external { update(external) }
+        }
+    }
+
     private func apply(_ content: MarkdownContent, revision: Int, baseline: Bool = false) {
         guard let document = preparedDocument else { return }
         let start = ProcessInfo.processInfo.systemUptime
@@ -218,7 +224,7 @@ private final class CandidateInlineView: NSView, TextLabel.AttachmentRepresentab
     let descriptor: CandidateAttachment
     var onResize: (() -> Void)?
     private var naturalSize = NSSize(width: 640, height: 160)
-    private var external: NSView?
+    fileprivate var external: NSView?
     private let caption = NSTextField(wrappingLabelWithString: "")
     private let picture = NSImageView()
     override var isFlipped: Bool { true }
