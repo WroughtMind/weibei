@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -628,7 +632,13 @@ struct CourseProjectEntrySheet: View {
         }
     }
 
-    private func chooseLibrary() {
+    private func chooseLibrary() { Task { await chooseLibraryWithPicker() } }
+
+    private func chooseLibraryWithPicker() async {
+#if targetEnvironment(macCatalyst)
+        let urls = await WorkspaceFileDialog.pick(title: store.ui("选择魏碑资料库", "Choose WeiBei Library"), types: [.folder], multiple: false)
+        guard let url = urls.first else { return }
+#else
         let panel = NSOpenPanel()
         panel.title = libraryNeedsReauthorization
             ? store.ui("重新选择同一魏碑资料库", "Re-select the Same WeiBei Library")
@@ -650,6 +660,7 @@ struct CourseProjectEntrySheet: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
+#endif
         perform(
             failureMessage: libraryNeedsReauthorization
                 ? store.ui(
@@ -671,7 +682,13 @@ struct CourseProjectEntrySheet: View {
         }
     }
 
-    private func chooseAdoptionFolder() {
+    private func chooseAdoptionFolder() { Task { await chooseAdoptionFolderWithPicker() } }
+
+    private func chooseAdoptionFolderWithPicker() async {
+#if targetEnvironment(macCatalyst)
+        let urls = await WorkspaceFileDialog.pick(title: store.ui("选择课程文件夹", "Choose Course Folder"), types: [.folder], multiple: false)
+        guard let url = urls.first else { return }
+#else
         let panel = NSOpenPanel()
         panel.title = store.ui("选择课程文件夹", "Choose Course Folder")
         panel.message = store.ui(
@@ -683,6 +700,7 @@ struct CourseProjectEntrySheet: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
+#endif
         intent = .adopt
         selectedFolder = url.standardizedFileURL
         title = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -690,7 +708,12 @@ struct CourseProjectEntrySheet: View {
         rebindProposal = nil
     }
 
-    private func chooseImportContent() {
+    private func chooseImportContent() { Task { await chooseImportContentWithPicker() } }
+
+    private func chooseImportContentWithPicker() async {
+#if targetEnvironment(macCatalyst)
+        let urls = await WorkspaceFileDialog.pick(title: store.ui("选择课程内容", "Choose Course Content"), types: [.folder, .pdf, .html, .plainText], multiple: true)
+#else
         let panel = NSOpenPanel()
         panel.title = store.ui("选择课程内容", "Choose Course Content")
         panel.message = store.ui(
@@ -709,7 +732,10 @@ struct CourseProjectEntrySheet: View {
             UTType(filenameExtension: "markdown") ?? .plainText,
         ]
         guard panel.runModal() == .OK else { return }
-        selectedImportURLs = panel.urls
+        let urls = panel.urls
+#endif
+        selectedImportURLs = urls
+
     }
 
     private func submitCurrentIntent() {
@@ -821,6 +847,9 @@ struct CourseProjectEntrySheet: View {
     }
 
     private func announceError(_ message: String) {
+#if targetEnvironment(macCatalyst)
+        UIAccessibility.post(notification: .announcement, argument: store.ui("错误：\(message)", "Error: \(message)"))
+#else
         NSAccessibility.post(
             element: NSApplication.shared,
             notification: .announcementRequested,
@@ -829,6 +858,7 @@ struct CourseProjectEntrySheet: View {
                 .priority: NSAccessibilityPriorityLevel.high.rawValue,
             ]
         )
+#endif
     }
 
     private func updateFocus() {

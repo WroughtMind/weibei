@@ -7,31 +7,36 @@ import MarkdownView
 final class LabImages {
     static let shared = LabImages()
     static let didLoad = Notification.Name("org.weibei.CatalystChatLab.imageLoaded")
-    var images: [String: UIImage] = [:]
-    var errors: [String: String] = [:]
+    private let images = NSCache<NSString, UIImage>()
+    private let errors = NSCache<NSString, NSString>()
     private var loading: Set<String> = []
+    private let loader: MarkdownImageSchemeHandler
+    init(loader: MarkdownImageSchemeHandler = MarkdownImageSchemeHandler()) {
+        self.loader = loader
+        images.totalCostLimit = 32 * 1024 * 1024
+        errors.countLimit = 128
+    }
+    func image(for source: String) -> UIImage? { images.object(forKey: source as NSString) }
+    func error(for source: String) -> String? { errors.object(forKey: source as NSString).map(String.init) }
+    func remove(_ source: String) { images.removeObject(forKey: source as NSString); errors.removeObject(forKey: source as NSString) }
     func load(_ source: String) {
-        if images[source] != nil || errors[source] != nil { return }
+        if image(for: source) != nil || error(for: source) != nil { return }
         guard loading.insert(source).inserted else { return }
         Task {
             do {
                 let data: Data
                 if source == "lab-image://landscape" {
-                    guard let url = Bundle.main.url(forResource: "landscape", withExtension: "png") else {
-                        throw CocoaError(.fileNoSuchFile)
-                    }
+                    guard let url = Bundle.main.url(forResource: "landscape", withExtension: "png") else { throw CocoaError(.fileNoSuchFile) }
                     data = try await Task.detached { try Data(contentsOf: url) }.value
                 } else {
-                    guard let url = URL(string: source), url.scheme == "https" else { throw URLError(.unsupportedURL) }
-                    let configuration = URLSessionConfiguration.ephemeral
-                    configuration.httpShouldSetCookies = false
-                    let session = URLSession(configuration: configuration)
-                    defer { session.invalidateAndCancel() }
-                    let (bytes, response) = try await session.data(from: url)
-                    guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-                        throw URLError(.badServerResponse)
-                    }
-                    data = bytes
+                    // Same bounded local-file, redirect and remote-address policy as the original editor.
+                    let loader = self.loader
+                    guard let loaded = await Task.detached(priority: .utility, operation: {
+                        await withCheckedContinuation { continuation in
+                            loader.loadImage(source: source) { continuation.resume(returning: $0) }
+                        }
+                    }).value else { throw CocoaError(.fileReadUnknown) }
+                    data = loaded
                 }
                 struct Decoded: @unchecked Sendable { let image: CGImage }
                 let decoded = try await Task.detached {
@@ -44,15 +49,20 @@ final class LabImages {
                           ] as CFDictionary) else { throw CocoaError(.fileReadCorruptFile) }
                     return Decoded(image: image)
                 }.value
-                images[source] = UIImage(cgImage: decoded.image)
-            } catch { errors[source] = error.localizedDescription }
+                images.setObject(UIImage(cgImage: decoded.image), forKey: source as NSString,
+                                 cost: decoded.image.bytesPerRow * decoded.image.height)
+            } catch { errors.setObject(error.localizedDescription as NSString, forKey: source as NSString) }
             loading.remove(source)
-            NotificationCenter.default.post(name: Self.didLoad, object: source)
+            NotificationCenter.default.post(name: Self.didLoad, object: self, userInfo: ["source": source])
         }
     }
+    deinit { loader.invalidate() }
 }
 
 final class ImageMarkdownView: MarkdownTextView {
+    var images = LabImages.shared {
+        didSet { if oldValue !== images { invalidateInlineDecoration() } }
+    }
     var contentWidth: CGFloat = 680 {
         didSet { if contentWidth != oldValue { invalidateInlineDecoration() } }
     }
@@ -73,7 +83,7 @@ final class ImageMarkdownView: MarkdownTextView {
                 let title = (text.string as NSString).substring(with: match.range(at: 2))
                 result.append(NSAttributedString(string: title, attributes: [
                     .font: theme.fonts.body, .foregroundColor: theme.colors.highlight,
-                    .link: URL(string: "weibei-lab://notes")!
+                    .link: URL(string: "weibei-note:" + (title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""))!
                 ]))
             }
             cursor = NSMaxRange(match.range)
@@ -85,7 +95,7 @@ final class ImageMarkdownView: MarkdownTextView {
     private func imageAttachment(source: String) -> NSAttributedString {
         let holder = ImageAttachment(source: source)
         let container = UIView()
-        if let image = LabImages.shared.images[source] {
+        if let image = images.image(for: source) {
             let width = min(contentWidth, image.size.width)
             holder.size = CGSize(width: width, height: width * image.size.height / image.size.width)
             let view = UIImageView(image: image)
@@ -100,9 +110,9 @@ final class ImageMarkdownView: MarkdownTextView {
             status.numberOfLines = 0
             status.font = .systemFont(ofSize: 14)
             status.textColor = .secondaryLabel
-            status.text = LabImages.shared.errors[source].map { "图片读取失败：" + $0 } ?? "图片准备中…"
+            status.text = images.error(for: source).map { "图片读取失败：" + $0 } ?? "图片准备中…"
             container.addSubview(status)
-            LabImages.shared.load(source)
+            images.load(source)
         }
         container.frame.size = holder.size
         holder.view = container

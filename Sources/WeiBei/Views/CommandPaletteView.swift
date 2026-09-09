@@ -311,6 +311,7 @@ private struct PaletteCommand: Identifiable {
     var id: String { resultID ?? title }
 }
 
+#if !targetEnvironment(macCatalyst)
 private struct PaletteKeyboardBridge: NSViewRepresentable {
     var onUp: () -> Void
     var onDown: () -> Void
@@ -387,3 +388,5 @@ private struct PaletteKeyboardBridge: NSViewRepresentable {
         }
     }
 }
+
+#endif

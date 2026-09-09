@@ -2,6 +2,7 @@ import UIKit
 
 final class MessageCell: UICollectionViewCell {
     private(set) var body: BlockView?
+    private var auxiliary: UIView?
     private let title = UILabel()
     private let actions = UIStackView()
 
@@ -21,6 +22,7 @@ final class MessageCell: UICollectionViewCell {
         body?.saveInteractionState()
         body?.removeFromSuperview()
         body = nil
+        auxiliary?.removeFromSuperview(); auxiliary = nil
         title.isHidden = true; actions.isHidden = true
         for view in actions.arrangedSubviews { actions.removeArrangedSubview(view); view.removeFromSuperview() }
     }
@@ -30,9 +32,13 @@ final class MessageCell: UICollectionViewCell {
         body.restoreInteractionState()
         setNeedsLayout()
     }
+    func showAuxiliary(_ view: UIView) {
+        if auxiliary !== view { unbind(); auxiliary = view; contentView.addSubview(view) }
+        view.frame = bounds
+    }
     func showHeader(_ message: LabMessage) {
         unbind()
-        title.text = message.author
+        title.text = message.original == nil ? message.author : nil
         title.isHidden = false
     }
     func showActions(_ message: LabMessage, copy: @escaping () -> Void, quote: @escaping () -> Void,
@@ -56,6 +62,7 @@ final class MessageCell: UICollectionViewCell {
     override func layoutSubviews() {
         super.layoutSubviews()
         body?.frame = CGRect(x: 0, y: 0, width: bounds.width, height: body?.record?.height ?? 0)
+        auxiliary?.frame = bounds
         title.frame = bounds
         actions.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 34)
     }

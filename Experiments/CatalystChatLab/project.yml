@@ -1,7 +1,7 @@
 name: CatalystChatLab
 options:
   deploymentTarget:
-    iOS: '16.0'
+    iOS: '17.0'
   createIntermediateGroups: true
 packages:
   MarkdownView:
@@ -13,28 +13,65 @@ targets:
     platform: iOS
     sources:
       - Sources
+      - WindowBridge/WindowBridgeContract.swift
+      - path: ../../Sources/WeiBei/Stores
+      - path: ../../Sources/WeiBei/Editing
+      - path: ../../Sources/WeiBei/Views
+        excludes: [NativeChatMarkdownView.swift, NativeChatAttachment.swift, NativeChatCodeHighlighter.swift]
+      - path: ../../Sources/WeiBei/Support
+        excludes: [NativeChatMarkdownPipeline.swift, NativeChatMarkdownDocument.swift, QuietScrollers.swift]
+      - path: ../../Sources/WeiBei/Resources/Fonts
+        type: folder
+        buildPhase: resources
+      - path: ../../Sources/WeiBei/Resources/Editor
+        type: folder
+        buildPhase: resources
+      - path: ../../Sources/WeiBei/Resources
+        excludes: [Fonts, Editor]
+        buildPhase: resources
       - path: Resources
         excludes: [Web]
         buildPhase: resources
       - path: Resources/Web
         type: folder
         buildPhase: resources
+      - path: ../../Sources/WeiBeiCore/AgentResources
+        type: folder
+        buildPhase: resources
     dependencies:
+      - target: WeiBeiWindowBridge
+        link: false
+        embed: true
+        codeSign: true
+        copy:
+          destination: plugins
+      - target: WeiBeiCore
+        embed: false
+      - target: WeiBeiPDFTextWorker
+        link: false
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
       - package: MarkdownView
         product: MarkdownView
       - package: MarkdownView
         product: MarkdownParser
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.weibei.CatalystChatLab
-        PRODUCT_NAME: CatalystChatLab
+        LAB_BUNDLE_IDENTIFIER: org.weibei.CatalystCandidate452
+        PRODUCT_BUNDLE_IDENTIFIER: $(LAB_BUNDLE_IDENTIFIER)
+        PRODUCT_NAME: 魏碑候选
+        PRODUCT_MODULE_NAME: CatalystChatLab
+        EXECUTABLE_NAME: 魏碑候选
         SUPPORTS_MACCATALYST: YES
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
         TARGETED_DEVICE_FAMILY: '2,6'
-        SWIFT_VERSION: '6.0'
+        SWIFT_VERSION: '5.0'
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: 魏碑·Catalyst会话实验
+        INFOPLIST_KEY_CFBundleDisplayName: 魏碑·Catalyst独立候选
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
@@ -53,7 +90,10 @@ targets:
     info:
       path: Config/Info.plist
       properties:
-        CFBundleDisplayName: 魏碑·Catalyst会话实验
+        CFBundleName: 魏碑候选
+        CFBundleDisplayName: 魏碑·Catalyst独立候选
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
         LSApplicationCategoryType: public.app-category.productivity
         UIApplicationSupportsIndirectInputEvents: true
         UIApplicationSceneManifest:
@@ -62,3 +102,53 @@ targets:
         UILaunchScreen: {}
         LabSourceRevision: $(LAB_SOURCE_REVISION)
         LabSourceDirty: $(LAB_SOURCE_DIRTY)
+        LabBusinessCheckEndpoint: $(LAB_BUSINESS_CHECK_ENDPOINT)
+  WeiBeiWindowBridge:
+    type: bundle
+    platform: macOS
+    deploymentTarget: '14.0'
+    sources:
+      - WindowBridge
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.weibei.CatalystCandidate452.WindowBridge
+        SWIFT_VERSION: '5.0'
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSPrincipalClass: WeiBeiCatalystWindowBridge
+        CODE_SIGN_IDENTITY: '-'
+        ENABLE_HARDENED_RUNTIME: YES
+        SKIP_INSTALL: YES
+  WeiBeiCore:
+    type: library.static
+    platform: iOS
+    sources:
+      - path: ../../Sources/WeiBeiCore
+        excludes: [AgentResources]
+    settings:
+      base:
+        DEFINES_MODULE: YES
+        PRODUCT_MODULE_NAME: WeiBeiCore
+        PRODUCT_BUNDLE_IDENTIFIER: org.weibei.CatalystChatLab.Core
+        SUPPORTS_MACCATALYST: YES
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        TARGETED_DEVICE_FAMILY: '2,6'
+        SWIFT_VERSION: '5.0'
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: '-'
+        SKIP_INSTALL: YES
+    dependencies:
+      - sdk: libsqlite3.tbd
+  WeiBeiPDFTextWorker:
+    type: tool
+    platform: macOS
+    deploymentTarget: '14.0'
+    sources:
+      - ../../Sources/WeiBeiPDFTextWorker
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.weibei.CatalystChatLab.PDFTextWorker
+        SWIFT_VERSION: '5.0'
+        ARCHS: 'arm64 x86_64'
+        ONLY_ACTIVE_ARCH: NO
+        CODE_SIGN_IDENTITY: '-'
+        ENABLE_HARDENED_RUNTIME: YES

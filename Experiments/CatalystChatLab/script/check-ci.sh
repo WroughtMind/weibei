@@ -5,7 +5,7 @@ set -euo pipefail
 [[ "${CI:-}" == "true" ]] || { echo '请在画中画窗口使用“运行必要行为检查”。'; exit 1; }
 lab_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$lab_dir"
-open -W "$lab_dir/dist/魏碑-Catalyst会话实验.app" --args --self-check
+open -W "$lab_dir/dist/魏碑-Catalyst独立候选.app" --args --self-check
 mkdir -p Evidence
 cp "$HOME/Library/Application Support/org.weibei.CatalystChatLab/Results/latest.json" Evidence/ci.json
 cp "$HOME/Library/Application Support/org.weibei.CatalystChatLab/Results/window.png" Evidence/ci-window.png

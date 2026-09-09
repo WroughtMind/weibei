@@ -1,9 +1,34 @@
 import UIKit
+import WeiBeiCore
 import Litext
 import MarkdownView
 import QuartzCore
 
 final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UITextViewDelegate {
+    let fixtureMode: Bool
+    var usesWorkspaceChrome = false
+    var auxiliaryView: ((LabMessage) -> UIView)?
+    var messageLink: ((URL, AgentMessage) -> Void)?
+    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    private var loadingSession = false
+    private var lastReadingMessageID: UUID?
+    var quoteText: ((String) -> Void)?
+    var readingMessageChanged: ((UUID?) -> Void)?
+    var contentHeightChanged: ((CGFloat) -> Void)?
+    private var reportedContentHeight: CGFloat = 0
+    var submitQuestion: ((String) -> Bool)?
+    var stopAnswer: (() -> Void)?
+    var openSettings: (() -> Void)?
+    var createSession: (() -> Void)?
+    var openSource: ((AgentReplySource) -> Void)?
+    private var savedHistory: [AgentMessage] = []
+    private var answering = false
+
+    init(fixtureMode: Bool = true) {
+        self.fixtureMode = fixtureMode
+        super.init(nibName: nil, bundle: nil)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     let store = ContentStore()
     let flow = UICollectionViewFlowLayout()
     lazy var collection = UICollectionView(frame: .zero, collectionViewLayout: flow)
@@ -23,6 +48,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private(set) var followsLatest = true
     private(set) var bodyWidth: CGFloat = 680
     var maximumBodyWidth: CGFloat = 760
+    var workspaceBodyWidth: CGFloat? {
+        didSet { if workspaceBodyWidth != oldValue { viewIfLoaded?.setNeedsLayout() } }
+    }
     var openWorkspace: ((Int) -> Void)?
     var toggleWorkspace: (() -> Void)?
     var saveNote: ((String) -> Void)?
@@ -61,6 +89,14 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             UIAction(title: "采样连续滚动与热回看") { [weak self] _ in self?.sampleScroll() },
             UIAction(title: "导出本次性能记录") { [weak self] _ in self?.exportEvidence() }
         ])
+        if !fixtureMode {
+            title.text = "对话"
+            menu.accessibilityLabel = "会话操作"
+            menu.menu = UIMenu(children: [
+                UIAction(title: "新对话", image: UIImage(systemName: "square.and.pencil")) { [weak self] _ in self?.createSession?() },
+                UIAction(title: "模型设置", image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in self?.openSettings?() }
+            ])
+        }
         toolbar.addArrangedSubview(menu)
         status.font = .systemFont(ofSize: 12); status.textColor = .secondaryLabel
         status.text = "固定重放 · 未接通模型 · 独立合成资料"
@@ -70,16 +106,24 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         input.textContainerInset = UIEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
         input.delegate = self
         input.accessibilityLabel = "输入问题，⌘回车发送；当前使用固定重放"
+        if !fixtureMode { input.accessibilityLabel = "输入问题，⌘回车发送"; status.text = "选择资料或直接开始对话" }
         send.setImage(UIImage(systemName: "arrow.up.circle.fill"), for: .normal)
         send.accessibilityLabel = "发送并重放固定回答"
+        if !fixtureMode { send.accessibilityLabel = "发送问题" }
         send.addTarget(self, action: #selector(sendPressed), for: .touchUpInside)
         latest.setTitle("回到最新", for: .normal)
         latest.backgroundColor = .secondarySystemBackground
         latest.layer.cornerRadius = 6
         latest.addAction(UIAction { [weak self] _ in self?.scrollToLatest() }, for: .touchUpInside)
         latest.isHidden = true
+        if usesWorkspaceChrome { for view in [toolbar, status, input, send] { view.isHidden = true } }
         store.changed = { [weak self] in self?.contentChanged($0) }
-        store.openLink = { [weak self] url in self?.open(url) }
+        store.openLink = { [weak self] url, messageID in
+            guard let self else { return }
+            if let message = self.messages.first(where: { $0.id == messageID })?.original,
+               let handler = self.messageLink { handler(url, message) }
+            else { self.open(url) }
+        }
         store.saveNote = { [weak self] text in self?.saveNote?(text) }
         store.interaction = { [weak self] body in self?.selection.bind(body) }
         NotificationCenter.default.addObserver(self, selector: #selector(imageDidLoad(_:)), name: LabImages.didLoad, object: nil)
@@ -87,7 +131,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if messages.isEmpty, preparation == nil {
+        if fixtureMode, messages.isEmpty, preparation == nil {
             loadScenario("rich")
             if CommandLine.arguments.contains("--self-check") {
                 Task {
@@ -100,14 +144,22 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        let contentHeight = collection.contentSize.height
+        if abs(contentHeight - reportedContentHeight) > 1 {
+            reportedContentHeight = contentHeight
+            contentHeightChanged?(contentHeight)
+        }
         let width = view.bounds.width
-        let nextWidth = max(240, min(maximumBodyWidth, width - 56))
+        let nextWidth = usesWorkspaceChrome
+            ? (workspaceBodyWidth ?? max(1, min(960, width - 24)))
+            : max(240, min(maximumBodyWidth, width - 56))
         let anchor = laidOutWidth > 0 && nextWidth != bodyWidth ? captureAnchor() : nil
         toolbar.frame = CGRect(x: 28, y: 12, width: min(width - 56, 370), height: 34)
         status.frame = CGRect(x: 28, y: 48, width: width - 56, height: 24)
         input.frame = CGRect(x: 24, y: view.bounds.height - 112, width: width - 88, height: 88)
         send.frame = CGRect(x: width - 56, y: view.bounds.height - 90, width: 40, height: 40)
         collection.frame = CGRect(x: 0, y: 78, width: width, height: max(100, view.bounds.height - 202))
+        if usesWorkspaceChrome { collection.frame = view.bounds }
         latest.frame = CGRect(x: width - 120, y: collection.frame.maxY - 38, width: 96, height: 28)
         if nextWidth != bodyWidth || laidOutWidth == 0 {
             let started = CACurrentMediaTime()
@@ -139,16 +191,22 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         else if path.item <= message.blocks.count {
             cell.show(body: store.view(for: message.blocks[path.item - 1], width: bodyWidth))
             selection.paint(cell.body!)
+        } else if let auxiliaryView, message.original != nil {
+            cell.showAuxiliary(auxiliaryView(message))
         } else {
-            cell.showActions(message, copy: { UIPasteboard.general.string = message.markdown },
-                             quote: { [weak self] in self?.quote(message.markdown) },
-                             source: { [weak self] in self?.openWorkspace?(0) })
+            cell.showActions(message, copy: { UIPasteboard.general.string = message.copyableMarkdown },
+                             quote: { [weak self] in self?.quote(message.copyableMarkdown) },
+                             source: { [weak self] in
+                                 if let source = message.original?.sources.first { self?.openSource?(source) }
+                                 else { self?.openWorkspace?(0) }
+                             })
         }
     }
     func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
                         sizeForItemAt path: IndexPath) -> CGSize {
         let message = messages[path.section]
-        let height: CGFloat = path.item == 0 ? 30 : (path.item > message.blocks.count ? 42 : message.blocks[path.item - 1].height + 14)
+        let height: CGFloat = path.item == 0 ? (usesWorkspaceChrome ? 12 : 30)
+            : (path.item > message.blocks.count ? (usesWorkspaceChrome ? message.auxiliaryHeight : 42) : message.blocks[path.item - 1].height + 14)
         return CGSize(width: bodyWidth, height: height)
     }
     func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt path: IndexPath) {
@@ -158,6 +216,13 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         guard scrollView === collection, !layoutTransaction else { return }
         followsLatest = distanceToBottom < 32
         latest.isHidden = followsLatest
+        if usesWorkspaceChrome {
+            if let path = collection.indexPathsForVisibleItems.sorted().first,
+               let id = UUID(uuidString: messages[path.section].id), lastReadingMessageID != id {
+                lastReadingMessageID = id; readingMessageChanged?(id)
+            }
+            if collection.contentOffset.y < 120 { prependSavedHistory() }
+        }
     }
     var distanceToBottom: CGFloat {
         max(0, collection.contentSize.height - collection.bounds.height - collection.contentOffset.y)
@@ -208,6 +273,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
     func prependHistory() {
+        if !fixtureMode { prependSavedHistory(); return }
         guard preparation == nil, earlier > 0 else { status.text = "这个样本没有更早历史"; return }
         let end = earlier, start = max(0, end - 80)
         let generation = scenarioGeneration
@@ -234,11 +300,168 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
     @objc func sendPressed() {
+        if !fixtureMode {
+            if answering { stopAnswer?(); return }
+            guard input.markedTextRange == nil, !input.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            if submitQuestion?(input.text) == true { input.text = "" }
+            return
+        }
         if replay != nil { stopReplay(); return }
         guard input.markedTextRange == nil, !input.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let text = input.text!
         input.text = ""
         startReplay(question: text)
+    }
+
+    func showSession(_ session: StudySession) async {
+        loadViewIfNeeded()
+        scenarioGeneration += 1
+        preparation?.cancel(); preparation = nil
+        loadingSession = true
+        defer { loadingSession = false }
+        savedHistory = session.messages
+        earlier = max(0, savedHistory.count - 240)
+        selection.clear(); store.reset(); messages = []
+        collection.reloadData()
+        let generation = scenarioGeneration
+        for value in savedHistory.dropFirst(earlier) {
+            let message = renderMessage(value)
+            _ = await store.prepare(message, width: bodyWidth)
+            guard generation == scenarioGeneration else { return }
+            messages.append(message)
+        }
+        collection.reloadData(); collection.layoutIfNeeded(); scrollToLatest()
+        status.text = session.title
+    }
+
+    private func renderMessage(_ value: AgentMessage) -> LabMessage {
+        let message = LabMessage(id: value.id.uuidString, author: value.role == .user ? "你" : "魏碑", markdown: value.text)
+        message.markdown = formattedMarkdown(value, memo: message.markdownMemo)
+        message.original = value
+        message.state = value.completionState == .completed ? .complete : .stopped
+        return message
+    }
+
+    private func formattedMarkdown(_ value: AgentMessage, memo: AgentMessageMarkdownMemo) -> String {
+        // The original right-aligned user chip is hosted by the auxiliary row.
+        guard value.role == .assistant else { return usesWorkspaceChrome ? "" : value.text }
+        let text = AgentNativeMessageContent.markdown(text: value.text, blocks: value.contentBlocks)
+        return memo.outputs(text: text, sources: value.sources, language: interfaceLanguage).finalized
+    }
+
+    func setImages(_ images: LabImages) {
+        guard store.images !== images else { return }
+        store.images = images
+        for message in messages { for block in message.blocks where !block.imageSources.isEmpty { contentChanged(block) } }
+    }
+
+    func display(_ value: AgentMessage, streaming: Bool) async {
+        let generation = scenarioGeneration
+        if let message = messages.first(where: { $0.id == value.id.uuidString }) {
+            let old = message.blocks
+            let markdown = formattedMarkdown(value, memo: message.markdownMemo)
+            if message.markdown != markdown { message.markdown = markdown; message.revision += 1 }
+            message.original = value; message.state = streaming ? .streaming : (value.completionState == .completed ? .complete : .stopped)
+            if message.displayedRevision != message.revision || message.preparedTheme != store.themeRevision {
+                guard await store.prepare(message, width: bodyWidth), generation == scenarioGeneration else { return }
+                applyBlocks(message, previous: old)
+            }
+            refreshFooter(message)
+        } else {
+            let message = renderMessage(value)
+            message.state = streaming ? .streaming : message.state
+            _ = await store.prepare(message, width: bodyWidth)
+            guard generation == scenarioGeneration else { return }
+            messages.append(message)
+            UIView.performWithoutAnimation { collection.insertSections(IndexSet(integer: messages.count - 1)) }
+            collection.layoutIfNeeded()
+            if followsLatest || value.role == .user { scrollToLatest() }
+        }
+    }
+
+    func setAnswering(_ value: Bool, status text: String) {
+        answering = value
+        send.setImage(UIImage(systemName: value ? "stop.circle.fill" : "arrow.up.circle.fill"), for: .normal)
+        send.accessibilityLabel = value ? "停止回答并保留正文" : "发送问题"
+        status.text = text
+    }
+
+    func updateSavedHistory(_ values: [AgentMessage]) {
+        savedHistory = values
+        earlier = messages.first.flatMap { first in values.firstIndex { $0.id.uuidString == first.id } } ?? 0
+    }
+
+    func updateAuxiliaryHeight(_ height: CGFloat, for message: LabMessage) {
+        guard height.isFinite, height > 0, abs(message.auxiliaryHeight - height) > 0.5,
+              messages.contains(where: { $0 === message }) else { return }
+        let anchor = followsLatest ? nil : captureAnchor()
+        let follow = followsLatest
+        layoutTransaction = true
+        message.auxiliaryHeight = height
+        flow.invalidateLayout(); collection.layoutIfNeeded()
+        if follow { scrollToLatest() } else if let anchor { restore(anchor) }
+        layoutTransaction = false
+    }
+
+    func refreshAppearance() async {
+        let generation = scenarioGeneration
+        let anchor = captureAnchor(), follow = followsLatest
+        for message in messages {
+            guard await store.prepare(message, width: bodyWidth), generation == scenarioGeneration else { return }
+        }
+        layoutTransaction = true
+        for path in collection.indexPathsForVisibleItems {
+            if let cell = collection.cellForItem(at: path) as? MessageCell { configure(cell, at: path) }
+        }
+        flow.invalidateLayout(); collection.layoutIfNeeded()
+        if follow { scrollToLatest() } else if let anchor { restore(anchor) }
+        layoutTransaction = false
+    }
+
+    func removeMessages(except ids: Set<UUID>) {
+        let removed = IndexSet(messages.indices.filter { index in
+            guard let id = UUID(uuidString: messages[index].id) else { return false }
+            return !ids.contains(id)
+        })
+        guard !removed.isEmpty else { return }
+        let anchor = captureAnchor()
+        for index in removed.reversed() { messages.remove(at: index) }
+        UIView.performWithoutAnimation { collection.deleteSections(removed) }
+        collection.layoutIfNeeded()
+        if let anchor { restore(anchor) }
+    }
+
+    func revealMessage(_ id: UUID) async {
+        while !messages.contains(where: { $0.id == id.uuidString }), earlier > 0 {
+            prependSavedHistory()
+            await preparation?.value
+            if Task.isCancelled { return }
+        }
+        guard let section = messages.firstIndex(where: { $0.id == id.uuidString }) else { return }
+        collection.scrollToItem(at: IndexPath(item: 0, section: section), at: .top, animated: false)
+        followsLatest = false
+    }
+
+    private func prependSavedHistory() {
+        guard !loadingSession, preparation == nil, earlier > 0 else { return }
+        let start = max(0, earlier - 80), end = earlier
+        let generation = scenarioGeneration
+        preparation = Task { [weak self] in
+            guard let self else { return }
+            var incoming: [LabMessage] = []
+            for value in savedHistory[start..<end] {
+                let message = renderMessage(value)
+                _ = await store.prepare(message, width: bodyWidth)
+                guard generation == scenarioGeneration else { return }
+                incoming.append(message)
+            }
+            let anchor = captureAnchor()
+            messages.insert(contentsOf: incoming, at: 0)
+            UIView.performWithoutAnimation { collection.insertSections(IndexSet(integersIn: 0..<incoming.count)) }
+            collection.layoutIfNeeded()
+            if let anchor { restore(anchor) }
+            earlier = start; preparation = nil
+        }
     }
     func startReplay(question: String = "请按固定事件重放这段回答，便于比较阅读体验。") {
         guard preparation == nil, replay == nil else { return }
@@ -342,7 +565,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
     @objc private func imageDidLoad(_ notification: Notification) {
-        guard let source = notification.object as? String else { return }
+        guard let images = notification.object as? LabImages, images === store.images,
+              let source = notification.userInfo?["source"] as? String else { return }
         // Image readiness belongs to content, even if the original cell/view
         // has already left the bounded pool.
         for message in messages {
@@ -394,18 +618,20 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         followsLatest = false
     }
     func quote(_ text: String) {
+        if let quoteText { quoteText(text); return }
         input.text += (input.text.isEmpty ? "" : "\n\n") + text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n") + "\n\n"
         input.becomeFirstResponder()
     }
     func open(_ url: URL) {
-        if url.scheme == "weibei-lab" { openWorkspace?(url.host == "notes" ? 1 : 0) }
+        if url.scheme == "weibei-note", fixtureMode { openWorkspace?(1) }
+        else if url.scheme == "weibei-lab" { openWorkspace?(url.host == "notes" ? 1 : 0) }
         else if url.scheme == "https" || url.scheme == "http" { UIApplication.shared.open(url) }
     }
     override var keyCommands: [UIKeyCommand]? {
         let send = UIKeyCommand(title: "发送固定重放", action: #selector(sendPressed), input: "\r", modifierFlags: .command)
         let copy = UIKeyCommand(title: "复制会话选区", action: #selector(copySelection), input: "c", modifierFlags: .command)
         copy.wantsPriorityOverSystemBehavior = true
-        var commands = [send, UIKeyCommand(title: "聚焦输入框", action: #selector(focusInput), input: "l", modifierFlags: .command)]
+        var commands = usesWorkspaceChrome ? [] : [send, UIKeyCommand(title: "聚焦输入框", action: #selector(focusInput), input: "l", modifierFlags: .command)]
         if selection.hasSelection && selection.ownsFirstResponder { commands.append(copy) }
         return commands
     }
@@ -533,7 +759,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let blocks = messages[0].blocks
                 let formulas = blocks.flatMap { $0.content.rendered.values }
                 try expect(!formulas.isEmpty && formulas.allSatisfy { $0.image != nil }, "数学资源没有完整生成真实公式")
-                try expect(LabImages.shared.images["lab-image://landscape"] != nil, "图片没有解码成功")
+                try expect(LabImages.shared.image(for: "lab-image://landscape") != nil, "图片没有解码成功")
                 guard blocks.count > 3 else { throw Failure(message: "富内容样本不完整") }
                 guard let diagram = blocks.first(where: { if case .diagram = $0.kind { return true }; return false }) else {
                     throw Failure(message: "没有关系图内容")
@@ -559,7 +785,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     throw Failure(message: "没有实际图片正文")
                 }
                 let imageBlock = blocks[imageIndex]
-                LabImages.shared.images.removeValue(forKey: "lab-image://landscape")
+                LabImages.shared.remove("lab-image://landscape")
                 store.reset(); imageBlock.width = 0
                 _ = store.measure(imageBlock, width: bodyWidth)
                 let pendingHeight = imageBlock.height

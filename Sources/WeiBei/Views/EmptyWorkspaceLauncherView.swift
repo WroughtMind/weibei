@@ -31,7 +31,7 @@ struct EmptyWorkspaceLauncherView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
             GeometryReader { geometry in
-                let drawerWidth = libraryDrawer.isOpen ? CourseDrawerContainerView.panelWidth : 0
+                let drawerWidth = libraryDrawer.isOpen ? WeiBeiMetric.courseDrawerWidth : 0
                 let contentSize = CGSize(
                     width: max(1, geometry.size.width - drawerWidth),
                     height: geometry.size.height
@@ -242,26 +242,26 @@ struct EmptyWorkspaceLauncherView: View {
 }
 
 /// sRGB SwiftUI colors resolved from an explicit mode (not ambient WeiBeiTheme).
-/// `Color(nsColor:)` can stick to the wrong snapshot inside a long-lived NSHostingView.
+/// `Color(weiBeiNativeColor:)` can stick to the wrong snapshot inside a long-lived NSHostingView.
 private enum EmptyWorkspaceResolvedColor {
     static func paper(_ mode: WeiBeiAppearanceMode) -> Color {
-        Color(nsColor: WeiBeiNativePalette.paper(for: mode))
+        Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: mode))
     }
 
     static func paperRaised(_ mode: WeiBeiAppearanceMode) -> Color {
-        Color(nsColor: WeiBeiNativePalette.paperRaised(for: mode))
+        Color(weiBeiNativeColor: WeiBeiNativePalette.paperRaised(for: mode))
     }
 
     static func ink(_ mode: WeiBeiAppearanceMode) -> Color {
-        Color(nsColor: WeiBeiNativePalette.ink(for: mode))
+        Color(weiBeiNativeColor: WeiBeiNativePalette.ink(for: mode))
     }
 
     static func secondaryInk(_ mode: WeiBeiAppearanceMode) -> Color {
-        Color(nsColor: WeiBeiNativePalette.secondaryInk(for: mode))
+        Color(weiBeiNativeColor: WeiBeiNativePalette.secondaryInk(for: mode))
     }
 
     static func hairline(_ mode: WeiBeiAppearanceMode) -> Color {
-        Color(nsColor: WeiBeiNativePalette.hairline(for: mode))
+        Color(weiBeiNativeColor: WeiBeiNativePalette.hairline(for: mode))
     }
 }
 
@@ -461,7 +461,7 @@ private struct EmptyWorkspaceInspirationView: View {
         switch inspiration.presentation {
         case let .calligraphy(assetName):
             if let image = EmptyWorkspaceCalligraphyResource.image(named: assetName) {
-                Image(nsImage: image)
+                Image(weiBeiNativeImage: image)
                     .renderingMode(.template)
                     .resizable()
                     .scaledToFit()
@@ -589,7 +589,7 @@ private struct EmptyWorkspaceInkWatermarkView: View {
                 switch inspiration.presentation {
                 case let .calligraphy(assetName):
                     if let image = EmptyWorkspaceCalligraphyResource.image(named: assetName) {
-                        Image(nsImage: image)
+                        Image(weiBeiNativeImage: image)
                             .renderingMode(.template)
                             .resizable()
                             .scaledToFit()
@@ -627,7 +627,7 @@ private struct EmptyWorkspaceInkWatermarkView: View {
 }
 
 enum EmptyWorkspaceCalligraphyResource {
-    static func image(named name: String) -> NSImage? {
+    static func image(named name: String) -> WeiBeiPlatformImage? {
         // WeiBeiResources resolves the staged/packaged bundle via Bundle(url:);
         // a bare Bundle.module access can fatalError inside assembled apps when
         // both the packaged path and the compiled-in dev fallback are missing.
@@ -636,7 +636,11 @@ enum EmptyWorkspaceCalligraphyResource {
             ?? bundle.url(forResource: name, withExtension: "png", subdirectory: "Calligraphy")
             ?? bundle.url(forResource: name, withExtension: "png")
         guard let url else { return nil }
-        return NSImage(contentsOf: url)
+#if targetEnvironment(macCatalyst)
+        return WeiBeiPlatformImage(contentsOfFile: url.path)
+#else
+        return WeiBeiPlatformImage(contentsOf: url)
+#endif
     }
 }
 
@@ -732,8 +736,13 @@ private struct LibraryPlacementNoticeCard: View {
         .accessibilityIdentifier("library-placement-notice")
     }
 
-    private func relocateLibrary() {
+    private func relocateLibrary() { Task { await relocateLibraryWithPicker() } }
+
+    private func relocateLibraryWithPicker() async {
         relocationErrorText = nil
+#if targetEnvironment(macCatalyst)
+        guard let url = await WorkspaceFileDialog.pick(title: store.ui("选择资料库位置", "Choose Library Location"), types: [.folder], multiple: false).first else { return }
+#else
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -741,6 +750,7 @@ private struct LibraryPlacementNoticeCard: View {
         panel.allowsMultipleSelection = false
         panel.prompt = store.ui("选择", "Choose")
         guard panel.runModal() == .OK, let url = panel.url else { return }
+#endif
         isRelocating = true
         Task { @MainActor in
             do {

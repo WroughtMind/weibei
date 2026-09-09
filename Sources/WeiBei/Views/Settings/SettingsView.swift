@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import SwiftUI
 import WeiBeiCore
 
@@ -15,7 +19,11 @@ struct SettingsView: View {
     // Visible to `internal` so the Settings sub-views in Views/Settings/*.swift
     // (same-target extensions) can bind to them.
     @EnvironmentObject var store: WorkspaceStore
+#if targetEnvironment(macCatalyst)
+    @Environment(\.dismiss) private var dismissSettings
+#else
     @EnvironmentObject private var updateService: WeiBeiUpdateService
+#endif
     @StateObject var oauthService = AgentAccountService.shared
     @State private var selectedSection: SettingsSection = .agent
     @FocusState var focusedField: Field?
@@ -95,7 +103,7 @@ struct SettingsView: View {
                         )
                 }
                 .transition(.opacity)
-                .onExitCommand {
+                .weiBeiOnExitCommand {
                     withAnimation(WeiBeiMotion.panel) { showFeedbackSheet = false }
                 }
             }
@@ -111,7 +119,21 @@ struct SettingsView: View {
             WeiBeiThemeBackdrop(mode: store.appearanceMode)
                 .ignoresSafeArea()
         }
+#if targetEnvironment(macCatalyst)
+        .overlay(alignment: .topTrailing) {
+            Button { dismissSettings() } label: { Image(systemName: "xmark") }
+                .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+                .accessibilityLabel(store.ui("关闭设置", "Close Settings"))
+                .padding(12)
+        }
+        .background {
+            if let id = recordingShortcutID {
+                CatalystShortcutRecorder(onChord: { applyRecordedShortcut(id, chord: $0) }, onCancel: stopShortcutRecording)
+            }
+        }
+#else
         .background(SettingsWindowPaper(appearanceMode: store.appearanceMode))
+#endif
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
         .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
@@ -459,9 +481,14 @@ struct SettingsView: View {
         .padding(.bottom, 8)
     }
 
-    private func pickMigrationDestination() {
+    private func pickMigrationDestination() { Task { await pickMigrationDestinationWithPicker() } }
+
+    private func pickMigrationDestinationWithPicker() async {
         migrationErrorText = nil
         migrationSuccessText = nil
+#if targetEnvironment(macCatalyst)
+        guard let url = await WorkspaceFileDialog.pick(title: store.ui("选择资料库位置", "Choose Library Location"), types: [.folder], multiple: false).first else { return }
+#else
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -469,6 +496,7 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.prompt = store.ui("选择", "Choose")
         guard panel.runModal() == .OK, let url = panel.url else { return }
+#endif
         pendingMigrationDestination = url.standardizedFileURL
     }
 
@@ -701,6 +729,7 @@ struct SettingsView: View {
         stopShortcutRecording()
         recordingShortcutID = id
         shortcutStatusMessage = nil
+#if !targetEnvironment(macCatalyst)
         shortcutRecordMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Esc cancels without changing the binding.
             if event.keyCode == 53 {
@@ -713,6 +742,7 @@ struct SettingsView: View {
             }
             return nil
         }
+#endif
     }
 
     private func applyRecordedShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
@@ -740,9 +770,11 @@ struct SettingsView: View {
     }
 
     private func stopShortcutRecording() {
+#if !targetEnvironment(macCatalyst)
         if let shortcutRecordMonitor {
             NSEvent.removeMonitor(shortcutRecordMonitor)
         }
+#endif
         shortcutRecordMonitor = nil
         recordingShortcutID = nil
     }
@@ -752,6 +784,11 @@ struct SettingsView: View {
     private var aboutSettings: some View {
         VStack(alignment: .leading, spacing: 20) {
             // Version number + check only. No copy control (build/version still go into feedback).
+#if targetEnvironment(macCatalyst)
+            settingsGroup(store.ui("版本", "Version")) {
+                settingsRow(title: buildInfo.displayLine, detail: store.ui("Catalyst 独立候选", "Independent Catalyst candidate"), showsBottomDivider: false) { EmptyView() }
+            }
+#else
             settingsGroup(store.ui("版本", "Version")) {
                 settingsRow(
                     title: buildInfo.displayLine,
@@ -792,6 +829,8 @@ struct SettingsView: View {
                 }
             }
 
+#endif
+
             settingsGroup(store.ui("反馈", "Feedback")) {
                 settingsRow(
                     title: store.ui("提交反馈", "Send Feedback"),
@@ -807,15 +846,18 @@ struct SettingsView: View {
                 }
             }
 
+#if !targetEnvironment(macCatalyst)
             if case .failed = updateService.status {
                 Text(store.ui("更新失败，请重试。", "Update failed. Please try again."))
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .padding(.horizontal, 4)
             }
+#endif
         }
     }
 
+#if !targetEnvironment(macCatalyst)
     private var updateActionLabel: String {
         if updateService.availableUpdate != nil {
             if case .failed = updateService.status {
@@ -832,6 +874,8 @@ struct SettingsView: View {
             return store.ui("检查更新", "Check for Updates")
         }
     }
+
+#endif
 
     private var feedbackSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -937,15 +981,21 @@ struct SettingsView: View {
         let fullBody = feedbackIssueBody(userBody: body)
 
         // Prefer `gh` when the machine is already authenticated — truly hands-off.
+#if !targetEnvironment(macCatalyst)
         if let url = await createIssueWithGitHubCLI(title: title, body: fullBody) {
             feedbackBusy = false
             feedbackStatus = store.ui("已提交。", "Submitted.")
             showFeedbackSheet = false
+#if targetEnvironment(macCatalyst)
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+#else
             NSWorkspace.shared.open(url)
+#endif
             return
         }
 
-        // Fallback: open a prefilled GitHub new-issue page (one confirm click if logged in).
+#endif
+        // Open a prefilled GitHub new-issue page (one confirm click if logged in).
         openPrefilledGitHubIssue(title: title, body: fullBody)
         feedbackBusy = false
         feedbackStatus = store.ui(
@@ -970,6 +1020,7 @@ struct SettingsView: View {
         """
     }
 
+#if !targetEnvironment(macCatalyst)
     private func createIssueWithGitHubCLI(title: String, body: String) async -> URL? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -1003,6 +1054,8 @@ struct SettingsView: View {
         }
     }
 
+#endif
+
     private func openPrefilledGitHubIssue(title: String, body: String) {
         var components = URLComponents(string: "https://github.com/WroughtMind/weibei/issues/new")!
         components.queryItems = [
@@ -1011,10 +1064,15 @@ struct SettingsView: View {
             URLQueryItem(name: "labels", value: "bug"),
         ]
         if let url = components.url {
+#if targetEnvironment(macCatalyst)
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+#else
             NSWorkspace.shared.open(url)
+#endif
         }
     }
 
+#if !targetEnvironment(macCatalyst)
     private func runUpdateAction() {
         if updateService.availableUpdate == nil {
             updateService.checkForUpdates()
@@ -1029,6 +1087,8 @@ struct SettingsView: View {
             ? store.ui("包含最新改进和修复。", "Includes the latest improvements and fixes.")
             : lines.joined(separator: "\n")
     }
+
+#endif
 
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {
         let active = selectedSection == section
@@ -1205,6 +1265,7 @@ private enum SettingsType {
 
 /// Paint the Settings window with the same paper as the workspace.
 /// Leave the system titlebar in place so traffic lights stay clear of「设置」.
+#if !targetEnvironment(macCatalyst)
 private struct SettingsWindowPaper: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
 
@@ -1278,3 +1339,5 @@ private struct SettingsWindowPaper: NSViewRepresentable {
         window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
     }
 }
+
+#endif

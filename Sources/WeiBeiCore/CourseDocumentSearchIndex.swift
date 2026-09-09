@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import CryptoKit
 import Darwin
 import Foundation

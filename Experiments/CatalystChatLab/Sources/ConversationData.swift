@@ -1,4 +1,6 @@
 import Foundation
+import MarkdownParser
+import WeiBeiCore
 
 @MainActor
 final class LabMessage {
@@ -10,6 +12,13 @@ final class LabMessage {
     var displayedRevision = -1
     var state: State = .complete
     var blocks: [PreparedBlock] = []
+    var original: AgentMessage?
+    var parsed: MarkdownParser.ParseResult?
+    var parsedRevision = -1
+    var preparedTheme = -1
+    var auxiliaryHeight: CGFloat = 32
+    let markdownMemo = AgentMessageMarkdownMemo()
+    var copyableMarkdown: String { original?.text ?? markdown }
 
     init(id: String = UUID().uuidString, author: String, markdown: String) {
         self.id = id; self.author = author; self.markdown = markdown

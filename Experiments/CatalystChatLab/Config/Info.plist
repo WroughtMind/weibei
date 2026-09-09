@@ -3,17 +3,22 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<string>zh-Hans</string>
 	<key>CFBundleDisplayName</key>
-	<string>魏碑·Catalyst会话实验</string>
+	<string>魏碑·Catalyst独立候选</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh-Hans</string>
+		<string>en</string>
+	</array>
 	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
+	<string>魏碑候选</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -22,6 +27,8 @@
 	<string>1</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
+	<key>LabBusinessCheckEndpoint</key>
+	<string>$(LAB_BUSINESS_CHECK_ENDPOINT)</string>
 	<key>LabSourceDirty</key>
 	<string>$(LAB_SOURCE_DIRTY)</string>
 	<key>LabSourceRevision</key>

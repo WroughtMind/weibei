@@ -12,6 +12,8 @@ final class BlockView: UIView, UITextViewDelegate {
     private lazy var fold = UIButton(type: .system)
     private lazy var save = UIButton(type: .system)
     private var diagram: DiagramView?
+    private var workspaceContent: UIView?
+    var makeWorkspaceAttachment: ((PreparedBlock, String, @escaping (CGFloat) -> Void) -> UIView)?
     var diagramRendered: Bool { diagram?.renderSucceeded == true }
     func diagramSnapshot() async throws -> UIImage? { try await diagram?.snapshot() }
     private(set) var record: PreparedBlock?
@@ -60,6 +62,7 @@ final class BlockView: UIView, UITextViewDelegate {
         saveInteractionState()
         onChange = nil
         record = block
+        workspaceContent?.removeFromSuperview(); workspaceContent = nil
         geometry = nil
         lastWidth = 0
         selectionOverlay.path = nil
@@ -91,6 +94,14 @@ final class BlockView: UIView, UITextViewDelegate {
                 preparedLabel.selectionBackgroundColor = theme.colors.selectionBackground
                 preparedLabel.isHidden = false
             } else { markdown.isHidden = false }
+        case let .workspaceAttachment(identifier):
+            let content = makeWorkspaceAttachment?(block, identifier) { [weak self, weak block] height in
+                guard let self, let block, self.record === block,
+                      height.isFinite, height > 0, abs(block.height - height) > 0.5 else { return }
+                block.height = height
+                self.onChange?()
+            }
+            if let content { workspaceContent = content; addSubview(content) }
         case let .card(source):
             installCardControls()
             for child in [cardTitle, draft, fold, save] { child.isHidden = false }
@@ -136,6 +147,8 @@ final class BlockView: UIView, UITextViewDelegate {
             lastHeight = max(24, ceil(markdown.boundingSize(for: width).height))
             markdown.frame = CGRect(x: 0, y: 0, width: width, height: lastHeight)
             markdown.layoutIfNeeded()
+        case .workspaceAttachment:
+            lastHeight = max(120, record.height)
         case .card:
             lastHeight = record.collapsed ? 48 : 204
             draft.isHidden = record.collapsed; save.isHidden = record.collapsed
@@ -162,6 +175,7 @@ final class BlockView: UIView, UITextViewDelegate {
             draft.frame = CGRect(x: 12, y: 48, width: bounds.width - 24, height: 104)
             save.frame = CGRect(x: 12, y: 162, width: 160, height: 32)
         case .diagram: diagram?.frame = bounds
+        case .workspaceAttachment: workspaceContent?.frame = bounds
         }
     }
 
@@ -261,6 +275,7 @@ final class BlockView: UIView, UITextViewDelegate {
             return text
         case let .card(source): return record.draft.isEmpty ? source : record.draft
         case let .diagram(source): return source
+        case .workspaceAttachment: return "[互动内容]"
         }
     }
 }

@@ -1,4 +1,12 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+private typealias OrbitRepresentable = UIViewRepresentable
+typealias OrbitPlatformView = UIView
+#else
 import AppKit
+private typealias OrbitRepresentable = NSViewRepresentable
+typealias OrbitPlatformView = NSView
+#endif
 import PDFKit
 import SwiftUI
 import WeiBeiCore
@@ -188,7 +196,11 @@ struct PaneHeaderReorderModifier: ViewModifier {
 
     private func updateCursor(isHovering: Bool) {
         if isHovering, !cursorPushed {
+#if targetEnvironment(macCatalyst)
+            CatalystDesktopWindow.shared.pushCursor("openHand")
+#else
             NSCursor.openHand.push()
+#endif
             cursorPushed = true
         } else if !isHovering {
             popCursorIfNeeded()
@@ -197,12 +209,17 @@ struct PaneHeaderReorderModifier: ViewModifier {
 
     private func popCursorIfNeeded() {
         if cursorPushed {
+#if targetEnvironment(macCatalyst)
+            CatalystDesktopWindow.shared.popCursor()
+#else
             NSCursor.pop()
+#endif
             cursorPushed = false
         }
     }
 }
 
+#if !targetEnvironment(macCatalyst)
 private struct AccessibilityFrameProbe: NSViewRepresentable {
     let identifier: String
 
@@ -232,6 +249,8 @@ private struct AccessibilityFrameProbe: NSViewRepresentable {
         )
     }
 }
+
+#endif
 
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
@@ -622,6 +641,9 @@ struct NotePaneView: View {
         }, onCommandRejected: { documentID, command in
             store.noteEditorCommandRejected(command, documentID: documentID)
         })
+#if targetEnvironment(macCatalyst)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+#endif
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
     }
@@ -787,7 +809,7 @@ private struct NotebookCreationPanel: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)
         }
-        .onExitCommand(perform: cancel)
+        .weiBeiOnExitCommand(perform: cancel)
         .onAppear {
             focused = true
         }
@@ -1279,6 +1301,12 @@ struct AgentPaneView: View {
                             }
                         }
 
+#if targetEnvironment(macCatalyst)
+                        CatalystConversationView(wideTypography: comfy,
+                            bodyWidth: railOnly ? markdownContentWidth : contentWidth,
+                            onReadingMessage: updateAgentRailPosition)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+#else
                         ScrollView(showsIndicators: true) {
                             // No scrollTargetLayout / scrollPosition / viewport minHeight
                             // feedback — those all thrash sizeThatFits on the chat stack.
@@ -1358,6 +1386,8 @@ struct AgentPaneView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                         .zIndex(0)
+
+#endif
 
                         agentInputTray(wide: wide)
                             .zIndex(1)
@@ -1452,7 +1482,9 @@ struct AgentPaneView: View {
                     if showsContentRail, let lastID = store.messages.last?.id {
                         updateAgentRailPosition(for: lastID)
                     }
+#if !targetEnvironment(macCatalyst)
                     scrollAgentToBottom(proxy)
+#endif
                 }
                 .onChange(of: store.activeStudySessionID) { _, _ in
                     agentVisibleMessageLimit = Self.agentHistoryPageSize
@@ -1736,9 +1768,13 @@ struct AgentPaneView: View {
         // Folded turns must mount before scrollTo can find their row.
         revealAgentHistory(throughMessageID: turn.startMessageID)
         let navigate = {
+#if targetEnvironment(macCatalyst)
+            NotificationCenter.default.post(name: .weiBeiScrollAgentToMessage, object: turn.startMessageID)
+#else
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(turn.startMessageID, anchor: .center)
             }
+#endif
         }
         if railOnly {
             store.requestPaneExpansion(.agent, onCompleted: navigate)
@@ -2450,7 +2486,7 @@ struct FloatingSelectionAgentView: View {
                 expanded = true
             }
         }
-        .onExitCommand {
+        .weiBeiOnExitCommand {
             // 两段式 Esc:先收成胶囊,再按才整体关闭;流式/固定状态下保持直接关闭。
             if interaction.floatingComposerMode == .remark,
                store.selectionRemarkRecords.contains(where: { $0.id == interaction.selectionContext?.id }) {
@@ -2634,7 +2670,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .padding(12)
-        .onExitCommand { showsLinkEditor = false }
+        .weiBeiOnExitCommand { showsLinkEditor = false }
     }
 
     private func isFormattingActive(_ action: String) -> Bool {
@@ -2707,6 +2743,15 @@ struct FloatingSelectionAgentView: View {
                 .padding(.horizontal, 12)
 
             if showsFloatingFeed {
+#if targetEnvironment(macCatalyst)
+                CatalystConversationView(displayedMessages: visibleFloatingMessages,
+                    floatingThreadID: interaction.activeSelectionAskThreadID,
+                    onContentHeight: { height in
+                        guard userFeedHeight == nil, height > 1 else { return }
+                        measuredFeedContentHeight = height
+                    }, onReadingMessage: { _ in })
+                    .frame(height: resolvedFloatingFeedHeight)
+#else
                 ScrollView(showsIndicators: false) {
                     // Same order as immersive chat: messages → streaming → thinking.
                     LazyVStack(alignment: .leading, spacing: 12) {
@@ -2756,6 +2801,7 @@ struct FloatingSelectionAgentView: View {
                     previousFeedContentHeight = measuredFeedContentHeight
                     measuredFeedContentHeight = height
                 }
+#endif
             }
 
             composerField
@@ -2916,7 +2962,11 @@ struct FloatingSelectionAgentView: View {
             resizeOriginOffset = originOffset
         }
 
+#if targetEnvironment(macCatalyst)
+        let screen = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.coordinateSpace.bounds.size }.first ?? CGSize(width: 1_200, height: 800)
+#else
         let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1_200, height: 800)
+#endif
         let resized = SelectionFloatingAgentPlacement.resizedFrame(
             current: origin,
             translation: FloatingAgentSize(
@@ -3043,7 +3093,11 @@ private struct FloatingSelectionFeedHeightKey: PreferenceKey {
 
 private struct FloatingSelectionResizeHitRegion: View {
     let edge: FloatingAgentResizeEdge
+#if targetEnvironment(macCatalyst)
+    let cursor: CatalystResizeCursor
+#else
     let cursor: NSCursor
+#endif
     let onChanged: (FloatingAgentResizeEdge, DragGesture.Value?) -> Void
     @State private var cursorPushed = false
 
@@ -3072,7 +3126,11 @@ private struct FloatingSelectionResizeHitRegion: View {
 
     private func popCursorIfNeeded() {
         if cursorPushed {
+#if targetEnvironment(macCatalyst)
+            CatalystDesktopWindow.shared.popCursor()
+#else
             NSCursor.pop()
+#endif
             cursorPushed = false
         }
     }
@@ -3227,6 +3285,7 @@ struct AgentBubble: View {
     var liveActivityText: String? = nil
     var isStreaming = false
     var isChatWideTypography = false
+    var showsBody = true
     @State private var hovering = false
     @State private var copiedMessage = false
     /// Copy feedback identity: a second copy within the 1.2s window re-arms the
@@ -3235,7 +3294,9 @@ struct AgentBubble: View {
 
     var body: some View {
         Group {
-            if isUser {
+            if !showsBody {
+                regularMessageContent.padding(.bottom, 28)
+            } else if isUser {
                 userTurn
             } else {
                 assistantTurn
@@ -3292,9 +3353,9 @@ struct AgentBubble: View {
                 .accessibilityLabel(store.ui("重新生成最后一条回答", "Regenerate last response"))
             }
         }
-        .opacity(hovering ? 1 : 0)
+        .opacity(hovering || !showsBody ? 1 : 0)
         .offset(y: hovering ? 0 : -1)
-        .allowsHitTesting(hovering)
+        .allowsHitTesting(hovering || !showsBody)
         .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hovering)
     }
 
@@ -3303,11 +3364,17 @@ struct AgentBubble: View {
             ? message.text
             : AgentCitationParser.parse(store.agentDisplayText(for: message)).displayText
         guard !markdown.isEmpty else { return }
+#if targetEnvironment(macCatalyst)
+        UIPasteboard.general.string = markdown
+        copiedMessage = true
+        copyFeedbackGeneration += 1
+#else
         NSPasteboard.general.clearContents()
         if NSPasteboard.general.setString(markdown, forType: .string) {
             copiedMessage = true
             copyFeedbackGeneration += 1
         }
+#endif
     }
 
     @ViewBuilder
@@ -3401,7 +3468,8 @@ struct AgentBubble: View {
         let isAwaitingFirstToken = message.completionState == .generating
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .topLeading) {
+            if showsBody {
+              ZStack(alignment: .topLeading) {
                 AgentMessageMarkdownText(
                     text: AgentNativeMessageContent.markdown(text: answerText, blocks: message.contentBlocks),
                     rendersRichMarkdown: true,
@@ -3418,6 +3486,7 @@ struct AgentBubble: View {
                         chatWideTypography: isChatWideTypography
                     )
                 }
+            }
             }
             if !availableSources.isEmpty {
                 AgentReplySourceTagRow(sources: availableSources) { source in
@@ -3499,7 +3568,11 @@ struct AgentBubble: View {
                     if message.failureKind == .unauthorized
                         || !AgentProviderReadiness.isConfigured(for: store) {
                         Button(store.ui("去设置", "Open Settings")) {
+#if targetEnvironment(macCatalyst)
+                            NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
+#else
                             openSettingsWindow(id: "weibei-settings")
+#endif
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
@@ -3645,6 +3718,15 @@ private struct AgentReplyActionCard: View {
                 cancelledContent
             }
         }
+#if targetEnvironment(macCatalyst)
+        .onAppear {
+            if let draft = store.interaction.agentActionDrafts[action.id] {
+                title = draft.title; bodyText = draft.body
+            }
+        }
+        .onChange(of: title) { _, _ in retainDraft() }
+        .onChange(of: bodyText) { _, _ in retainDraft() }
+#endif
         .padding(12)
         .frame(
             maxWidth: action.state == .pending || action.state == .failed ? 600 : nil,
@@ -3659,6 +3741,12 @@ private struct AgentReplyActionCard: View {
             )
         }
     }
+
+#if targetEnvironment(macCatalyst)
+    private func retainDraft() {
+        store.interaction.agentActionDrafts[action.id] = (title, bodyText)
+    }
+#endif
 
     @ViewBuilder
     private var editableContent: some View {
@@ -4373,6 +4461,7 @@ private struct AgentScrollMetrics: Equatable {
 }
 
 /// Reads the enclosing scroll view's position and user scroll direction.
+#if !targetEnvironment(macCatalyst)
 private struct AgentScrollDistanceProbe: NSViewRepresentable {
     var onChange: (AgentScrollMetrics) -> Void
 
@@ -4489,6 +4578,8 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
     }
 }
 
+#endif
+
 /// Assistant text shares one native document across live, saved and floating conversations.
 private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
@@ -4518,6 +4609,10 @@ private struct AgentMessageMarkdownText: View {
     var body: some View {
         Group {
             if rendersRichMarkdown {
+#if targetEnvironment(macCatalyst)
+                CatalystMessageMarkdown(markdown: preparedMarkdown, fontSize: (isChatWideTypography && !compact ? 16 : 14) * textScale,
+                    appearanceMode: store.appearanceMode, openLink: openLink)
+#else
                 NativeChatMarkdownView(
                     markdown: preparedMarkdown,
                     messageID: messageID,
@@ -4550,6 +4645,7 @@ private struct AgentMessageMarkdownText: View {
                     }
                 )
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+#endif
             } else {
                 Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
                     .weiBeiText(compact ? 13.2 : 14.5)
@@ -4606,13 +4702,21 @@ private struct AgentMessageMarkdownText: View {
         } else if url.scheme == "weibei-source" {
             store.openSourceReference(String(url.absoluteString.dropFirst("weibei-source:".count)).removingPercentEncoding ?? url.path)
         } else if ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+#if targetEnvironment(macCatalyst)
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+#else
             NSWorkspace.shared.open(url)
+#endif
         } else {
             imageHandler.update(markdownBaseURLString: store.currentMarkdownBaseURL?.absoluteString ?? "",
                 attachmentDirectory: store.currentAttachmentDirectory,
                 appearanceMode: store.appearanceMode, interfaceLanguage: store.interfaceLanguage)
             if let imageURL = imageHandler.validatedLocalImageURL(source: url.absoluteString) {
-                NSWorkspace.shared.open(imageURL)
+    #if targetEnvironment(macCatalyst)
+            _ = CatalystDesktopWindow.shared.open(imageURL)
+#else
+            NSWorkspace.shared.open(imageURL)
+#endif
             }
         }
     }
@@ -4680,7 +4784,7 @@ private struct AgentLiveResponse: View {
 /// `orbitPadding` is the clear gap from the line-box edge to the stroke *centerline*
 /// on every side. Half the stroke width sits outside that centerline, so the view
 /// grows by `lineWidth` total to avoid clipping.
-private struct AgentThinkingIndicator: View {
+struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
     var activityText: String?
     /// Match the native answer text in wide and compact conversation surfaces.
@@ -4711,7 +4815,7 @@ private struct AgentThinkingIndicator: View {
     private static let lineWidth: CGFloat = 1.25
     /// Line box height matches the font’s typographic bounds so top/bottom pad stay equal.
     private var textLineHeight: CGFloat {
-        let font = NSFont.systemFont(ofSize: scaledFontSize, weight: .medium)
+        let font = WeiBeiPlatformFont.systemFont(ofSize: scaledFontSize, weight: .medium)
         return max(1, ceil(font.ascender - font.descender))
     }
     /// Outer view size = line box + equal pad on both sides + half stroke outside the path.
@@ -4803,14 +4907,14 @@ private struct AgentThinkingIndicator: View {
     }
 
     private static func measuredWidth(for text: String, fontSize: CGFloat) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        let font = WeiBeiPlatformFont.systemFont(ofSize: fontSize, weight: .medium)
         let size = (text as NSString).size(withAttributes: [.font: font])
         return max(1, ceil(size.width))
     }
 }
 
 /// Bridges V3 orbit motion into AppKit so SwiftUI layout never sees per-frame updates.
-private struct AgentThinkingOrbitHost: NSViewRepresentable {
+private struct AgentThinkingOrbitHost: OrbitRepresentable {
     let text: String
     let textWidth: CGFloat
     let orbitWidth: CGFloat
@@ -4823,9 +4927,20 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
     let motionEpoch: Date
     let appearanceMode: WeiBeiAppearanceMode
 
-    func makeNSView(context: Context) -> AgentThinkingOrbitNSView {
+#if targetEnvironment(macCatalyst)
+    func makeUIView(context: Context) -> AgentThinkingOrbitNSView { makeOrbit(context: context) }
+    func updateUIView(_ view: AgentThinkingOrbitNSView, context: Context) { updateOrbit(view, context: context) }
+#else
+    func makeNSView(context: Context) -> AgentThinkingOrbitNSView { makeOrbit(context: context) }
+    func updateNSView(_ view: AgentThinkingOrbitNSView, context: Context) { updateOrbit(view, context: context) }
+#endif
+    private func makeOrbit(context: Context) -> AgentThinkingOrbitNSView {
         let view = AgentThinkingOrbitNSView()
+#if targetEnvironment(macCatalyst)
+        view.isOpaque = false
+#else
         view.wantsLayer = true
+#endif
         view.apply(
             text: text,
             textWidth: textWidth,
@@ -4850,7 +4965,7 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
         CGSize(width: max(orbitWidth, 1), height: max(pathHeight, 1))
     }
 
-    func updateNSView(_ nsView: AgentThinkingOrbitNSView, context: Context) {
+    private func updateOrbit(_ nsView: AgentThinkingOrbitNSView, context: Context) {
         nsView.apply(
             text: text,
             textWidth: textWidth,
@@ -4868,7 +4983,7 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
 
 /// Fixed-size AppKit painter for 「行文进行中 V3」: reveal + first-pass underline + TextOrbitSegment.
 /// Text sits in a line box; orbit stroke centerline keeps equal `orbitPadding` on all four sides.
-final class AgentThinkingOrbitNSView: NSView {
+final class AgentThinkingOrbitNSView: OrbitPlatformView {
     private static let segmentLength: CGFloat = 10
     private static let firstPassDuration: TimeInterval = 0.88
     private static let orbitDuration: TimeInterval = 2.25
@@ -4887,18 +5002,23 @@ final class AgentThinkingOrbitNSView: NSView {
     private var appearanceMode: WeiBeiAppearanceMode = .paper
     private var displayLink: CADisplayLink?
 
+#if !targetEnvironment(macCatalyst)
     override var isFlipped: Bool { true }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: orbitWidth, height: pathHeight)
+#endif
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: orbitWidth, height: pathHeight)
     }
 
     deinit {
         stopDisplayLink()
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
+#if targetEnvironment(macCatalyst)
+    override func didMoveToWindow() { super.didMoveToWindow(); updateWindow() }
+#else
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); updateWindow() }
+#endif
+    private func updateWindow() {
         if window != nil {
             startDisplayLink()
         } else {
@@ -4934,7 +5054,11 @@ final class AgentThinkingOrbitNSView: NSView {
             invalidateIntrinsicContentSize()
         }
         // Paint only — do not call setNeedsLayout / invalidate parent SwiftUI layout.
+#if targetEnvironment(macCatalyst)
+        setNeedsDisplay()
+#else
         needsDisplay = true
+#endif
         if window != nil {
             startDisplayLink()
         }
@@ -4942,7 +5066,11 @@ final class AgentThinkingOrbitNSView: NSView {
 
     private func startDisplayLink() {
         guard displayLink == nil else { return }
+#if targetEnvironment(macCatalyst)
+        let link = CADisplayLink(target: self, selector: #selector(handleDisplayTick))
+#else
         let link = displayLink(target: self, selector: #selector(handleDisplayTick))
+#endif
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 20, maximum: 30, preferred: 30)
         link.add(to: .main, forMode: .common)
         displayLink = link
@@ -4955,11 +5083,19 @@ final class AgentThinkingOrbitNSView: NSView {
 
     @objc private func handleDisplayTick() {
         // Local repaint only. Never touch SwiftUI state from here.
+#if targetEnvironment(macCatalyst)
+        setNeedsDisplay()
+#else
         needsDisplay = true
+#endif
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func draw(_ dirtyRect: CGRect) {
+#if targetEnvironment(macCatalyst)
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+#else
         guard let context = NSGraphicsContext.current?.cgContext else { return }
+#endif
         let bounds = CGRect(x: 0, y: 0, width: orbitWidth, height: pathHeight)
         context.clear(bounds)
 
@@ -4980,7 +5116,7 @@ final class AgentThinkingOrbitNSView: NSView {
         let dim = WeiBeiNativePalette.tertiaryInk(for: appearanceMode).withAlphaComponent(0.70)
         let cinnabar = WeiBeiNativePalette.cinnabar(for: appearanceMode).withAlphaComponent(0.82)
 
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        let font = WeiBeiPlatformFont.systemFont(ofSize: fontSize, weight: .medium)
         // Line box inset so every side has the same gap to the stroke centerline.
         // view edge → stroke center = lineWidth/2
         // stroke center → line box edge = orbitPadding
@@ -5094,7 +5230,7 @@ enum TextOrbitSegment {
         height: CGFloat,
         segmentLength: CGFloat,
         lineWidth: CGFloat,
-        color: NSColor,
+        color: WeiBeiPlatformColor,
         in context: CGContext
     ) {
         let normalized = CGFloat(((progress.truncatingRemainder(dividingBy: 1)) + 1).truncatingRemainder(dividingBy: 1))

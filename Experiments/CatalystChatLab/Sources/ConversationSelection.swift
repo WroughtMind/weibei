@@ -115,8 +115,12 @@ final class ConversationSelection: NSObject, TextLabelViewDelegate, UIContextMen
                 actions.append(UIAction(title: "复制所选文字", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.string = self?.text() })
                 actions.append(UIAction(title: "引用所选文字", image: UIImage(systemName: "text.quote")) { _ in controller?.quote(self?.text() ?? "") })
             }
-            actions.append(UIAction(title: "复制整条回答") { _ in UIPasteboard.general.string = message.markdown })
-            actions.append(UIAction(title: "查看来源材料") { _ in controller?.openWorkspace?(0) })
+            actions.append(UIAction(title: "复制整条回答") { _ in UIPasteboard.general.string = message.copyableMarkdown })
+            if let sources = message.original?.sources, !sources.isEmpty {
+                actions += sources.map { source in UIAction(title: source.label, image: UIImage(systemName: "book")) { _ in controller?.openSource?(source) } }
+            } else if message.original == nil {
+                actions.append(UIAction(title: "查看来源材料") { _ in controller?.openWorkspace?(0) })
+            }
             return UIMenu(children: actions)
         }
     }

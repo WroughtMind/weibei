@@ -19,12 +19,17 @@ final class PreparedBlock {
     var preparedText: NSAttributedString?
     var preparedLayout: TextLabel.Layout?
     var imageSources: Set<String> = []
-    enum Kind { case markdown, card(String), diagram(String) }
+    enum Kind { case markdown, card(String), diagram(String), workspaceAttachment(String) }
 
-    init(id: String, messageID: String, node: MarkdownBlockNode, content: MarkdownContent) {
+    init(id: String, messageID: String, node: MarkdownBlockNode, content: MarkdownContent, fixtureCard: Bool) {
         self.id = id; self.messageID = messageID; self.node = node; self.content = content
+        if case let .paragraph(inlines) = node, inlines.count == 1,
+           case let .image(source, _) = inlines[0], source.hasPrefix("weibei-visualization:") {
+            kind = .workspaceAttachment(String(source.dropFirst("weibei-visualization:".count)).removingPercentEncoding ?? source)
+            return
+        }
         switch node {
-        case let .codeBlock(language, source) where language == "genui": kind = .card(source)
+        case let .codeBlock(language, source) where language == "genui" && fixtureCard: kind = .card(source)
         case let .codeBlock(language, source) where language == "mermaid": kind = .diagram(source)
         default: kind = .markdown
         }
@@ -45,7 +50,15 @@ final class ContentStore {
     private var generation = 0
     var changed: ((PreparedBlock) -> Void)?
     var interaction: ((BlockView) -> Void)?
-    var openLink: ((URL) -> Void)?
+    var openLink: ((URL, String) -> Void)?
+    var workspaceAttachment: ((PreparedBlock, String, @escaping (CGFloat) -> Void) -> UIView)?
+    var images = LabImages.shared
+    private(set) var themeRevision = 0
+    func setTheme(_ value: MarkdownTheme) -> Bool {
+        guard theme != value else { return false }
+        theme = value; themeRevision += 1; generation += 1
+        return true
+    }
     var saveNote: ((String) -> Void)?
     private(set) var parseCount = 0
     private(set) var renderedCount = 0
@@ -60,12 +73,18 @@ final class ContentStore {
         // ponytail: full source parsing preserves late reference definitions;
         // unchanged parsed blocks keep their content and layout. Use parser-owned
         // incremental invalidation only if this measured cost dominates.
-        let parsed = await Task.detached(priority: .userInitiated) { MarkdownParser().parse(text) }.value
-        guard generation == self.generation, revision == message.revision else { return false }
-        parseCount += 1
+        let parsed: MarkdownParser.ParseResult
+        if message.parsedRevision == revision, let cached = message.parsed { parsed = cached }
+        else {
+            parsed = await Task.detached(priority: .userInitiated) { MarkdownParser().parse(text) }.value
+            guard generation == self.generation, revision == message.revision else { return false }
+            message.parsed = parsed; message.parsedRevision = revision
+            parseCount += 1
+        }
+        let preservesRendering = message.preparedTheme == themeRevision
         let rendered = parsed.renderedContent(theme: theme)
         message.blocks = parsed.document.enumerated().map { index, node in
-            if index < message.blocks.count, message.blocks[index].node == node {
+            if preservesRendering, index < message.blocks.count, message.blocks[index].node == node {
                 return message.blocks[index]
             }
             var imageSources: Set<String> = []
@@ -93,7 +112,7 @@ final class ContentStore {
             // eviction of its global cache must not re-highlight old history.
             prepareCode(node)
             let content = MarkdownContent(blocks: transformed, rendered: rendered, highlightMaps: highlights)
-            let block = PreparedBlock(id: "\(message.id)/\(index)", messageID: message.id, node: node, content: content)
+            let block = PreparedBlock(id: "\(message.id)/\(index)", messageID: message.id, node: node, content: content, fixtureCard: message.original == nil)
             block.imageSources = imageSources
             if index < message.blocks.count {
                 views[message.blocks[index].id]?.saveInteractionState()
@@ -107,6 +126,7 @@ final class ContentStore {
         for block in message.blocks {
             if block.width != width { _ = measure(block, width: width) }
         }
+        message.preparedTheme = themeRevision
         message.displayedRevision = revision
         return true
     }
@@ -115,6 +135,8 @@ final class ContentStore {
         let body = views[block.id] ?? BlockView()
         views[block.id] = body
         let changed = body.record !== block
+        body.markdown.images = images
+        body.makeWorkspaceAttachment = workspaceAttachment
         if changed {
             body.configure(block, theme: theme)
             renderedCount += 1
@@ -123,7 +145,7 @@ final class ContentStore {
             guard let self, let block else { return }
             self.changed?(block)
         }
-        body.onLink = { [weak self] in self?.openLink?($0) }
+        body.onLink = { [weak self] in self?.openLink?($0, block.messageID) }
         body.onSaveNote = { [weak self] in self?.saveNote?($0) }
         if block.width != width {
             block.height = body.measure(width: width)
@@ -140,7 +162,7 @@ final class ContentStore {
             views[id] = nil
         }
         peakViewCount = max(peakViewCount, views.count)
-        interaction?(body)
+        if case .markdown = block.kind { interaction?(body) }
         return body
     }
 
