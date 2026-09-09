@@ -21,8 +21,6 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: 记录工具链
         run: xcodebuild -version
-      - name: 安装独立目标生成工具
-        run: brew install xcodegen
       - name: 构建真实 Mac Catalyst Release
         run: ./script/build.sh
       - name: 在独立 CI 桌面运行同一套应用内行为检查

@@ -379,3 +379,25 @@ struct CatalystWindowChrome: UIViewRepresentable {
         }
     }
 }
+
+// SwiftUI's Mac Catalyst sheet is hosted in a separate UIKit window.
+struct CatalystSheetBackground: UIViewRepresentable {
+    let color: UIColor
+    func makeUIView(context: Context) -> Probe { Probe() }
+    func updateUIView(_ view: Probe, context: Context) { view.color = color; view.configure() }
+    final class Probe: UIView {
+        var color = UIColor.clear
+        override func didMoveToWindow() { super.didMoveToWindow(); configure() }
+        func configure() {
+            guard let window else { return }
+            window.backgroundColor = color
+            var responder: UIResponder? = self
+            while let current = responder {
+                if let controller = current as? UIViewController {
+                    controller.view.backgroundColor = color
+                }
+                responder = current.next
+            }
+        }
+    }
+}

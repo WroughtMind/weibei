@@ -4,7 +4,7 @@
 
 ## 构建与隔离
 
-需要 Xcode 26、XcodeGen，以及本机可用的 Apple Development 签名身份和对应团队。运行：
+需要 Xcode 26，以及本机可用的 Apple Development 签名身份和对应团队。运行：
 
 ```sh
 cd Experiments/CatalystChatLab
@@ -17,7 +17,7 @@ cd Experiments/CatalystChatLab
 
 独立标识为 `org.weibei.CatalystCandidate452`。应用初始化原 store 之前设置原有工作区路径约定，使资料库、会话、备份和账号配置全部进入候选自己的目录。用户在候选设置中配置模型，不读取正式版凭据，不迁移生产资料。旧 `org.weibei.CatalystChatLab` 会话实验及已认可包保留。
 
-`project.yml` 是目标描述；生成的 Xcode 工程和共享 scheme 一并入库。应用内的 `LabSourceRevision`、`LabSourceDirty` 记录实际构建来源。独立检查身份可通过 `LAB_BUNDLE_IDENTIFIER` 设置，显示名称由 `LAB_APP_NAME` 设置；不改变嵌入组件身份。
+`project.yml` 是目标描述；生成的 Xcode 工程和共享 scheme 一并入库。构建直接使用已提交工程，避免生成器随机调整嵌入阶段顺序，导致干净源码被标成已修改。只有更改目标配置时才运行 `xcodegen generate` 并提交对应工程。应用内的 `LabSourceRevision`、`LabSourceDirty` 记录实际构建来源。独立检查身份可通过 `LAB_BUNDLE_IDENTIFIER` 设置，显示名称由 `LAB_APP_NAME` 设置；不改变嵌入组件身份。
 
 ## 复用与平台接点
 

@@ -189,6 +189,9 @@ struct CourseManagementSheet: View {
         }
         .padding(22)
         .frame(width: 460)
+#if targetEnvironment(macCatalyst)
+        .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
+#endif
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
         .interactiveDismissDisabled(isWorking)
@@ -373,6 +376,9 @@ struct CourseProjectEntrySheet: View {
         }
         .padding(22)
         .frame(width: 460)
+#if targetEnvironment(macCatalyst)
+        .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
+#endif
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
         .interactiveDismissDisabled(isWorking)

@@ -3,7 +3,6 @@ set -euo pipefail
 lab_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$lab_dir"
 mkdir -p .build dist
-xcodegen generate
 source_dirty=no
 if [[ -n "$(git status --porcelain)" ]]; then source_dirty=yes; fi
 signing_identity="${LAB_SIGNING_IDENTITY:-Apple Development}"
