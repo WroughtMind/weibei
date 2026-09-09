@@ -28,6 +28,8 @@ bash Experiments/ChatRendererLab/script/build_conversation.sh benchmark baseline
 
 每个包的 `Contents/Resources/environment.txt` 和 `Info.plist` 记录提交、工作区是否有改动、构建模式和系统；同目录包含实际 `Package.resolved`。结果目录保留编译、资源、签名及行为记录。最终体验应使用记录为干净提交构建的包。
 
+打包沿用正式版的 `strip -x` 清理可执行文件中的本地符号，再签名；完整调试符号单独保存在结果目录的 `WeiBei.dSYM`，校验构建身份一致。公式字体、代码高亮和其他显示资源保持完整。
+
 ## 实现边界
 
 | 环节 | 本分支的接线 |

@@ -77,6 +77,21 @@ info = dict(CFBundleExecutable='WeiBei', CFBundleIdentifier=identity, CFBundleNa
             WeiBeiExperimentVariant=variant)
 with open(pathlib.Path(app)/'Contents/Info.plist','wb') as output: plistlib.dump(info, output)
 PY
+dsymutil "$BIN/WeiBei" -o "$OUT/WeiBei.dSYM" > "$OUT/dsym.log" 2>&1
+BUILD_UUID="$(dwarfdump --uuid "$BIN/WeiBei" | awk 'NR == 1 {print $2}')"
+DSYM_UUID="$(dwarfdump --uuid "$OUT/WeiBei.dSYM" | awk 'NR == 1 {print $2}')"
+[[ -s "$OUT/WeiBei.dSYM/Contents/Resources/DWARF/WeiBei" && -n "$BUILD_UUID" && "$DSYM_UUID" == "$BUILD_UUID" ]] || {
+  echo '候选包的独立调试符号缺失或与构建不匹配' >&2; exit 1;
+}
+# Match the production packager: keep diagnostics outside the signed app.
+PRE_STRIP_BYTES="$(stat -f '%z' "$BUNDLE/Contents/MacOS/WeiBei")"
+strip -x "$BUNDLE/Contents/MacOS/WeiBei"
+POST_STRIP_BYTES="$(stat -f '%z' "$BUNDLE/Contents/MacOS/WeiBei")"
+STRIPPED_UUID="$(dwarfdump --uuid "$BUNDLE/Contents/MacOS/WeiBei" | awk 'NR == 1 {print $2}')"
+[[ "$STRIPPED_UUID" == "$BUILD_UUID" && "$POST_STRIP_BYTES" -lt "$PRE_STRIP_BYTES" ]] || {
+  echo '候选包的符号清理没有减小体积或改变了构建身份' >&2; exit 1;
+}
+printf 'before_bytes=%s\nafter_bytes=%s\nuuid=%s\n' "$PRE_STRIP_BYTES" "$POST_STRIP_BYTES" "$BUILD_UUID" > "$OUT/binary-size.txt"
 chmod -R u+w "$BUNDLE/Contents/Resources"
 xattr -cr "$BUNDLE"
 codesign --force --deep --sign - --timestamp=none "$BUNDLE/Contents/Frameworks/Sparkle.framework"
@@ -85,7 +100,6 @@ codesign --force --sign - --timestamp=none "$BUNDLE"
 codesign --verify --deep --strict "$BUNDLE"
 rm -rf "$APP"
 mv "$BUNDLE" "$APP"
-dsymutil "$BIN/WeiBei" -o "$OUT/WeiBei.dSYM" > "$OUT/dsym.log" 2>&1
 shasum -a 256 "$APP/Contents/MacOS/WeiBei" > "$OUT/binary-sha256.txt"
 echo "$APP"
 if [[ "$MODE" == verify ]]; then
