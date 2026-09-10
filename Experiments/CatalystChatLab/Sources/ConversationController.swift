@@ -157,27 +157,37 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             contentHeightChanged?(contentHeight)
         }
         let width = view.bounds.width
-        let nextWidth = usesWorkspaceChrome
+        guard width > 0 else { return }
+        let requestedWidth = usesWorkspaceChrome
             ? (workspaceBodyWidth ?? max(1, min(960, width - 24)))
             : max(240, min(maximumBodyWidth, width - 56))
+        // SwiftUI can deliver its content width after the native pane shrinks.
+        let nextWidth = min(width, requestedWidth)
+        let resized = nextWidth != bodyWidth || laidOutWidth != width
         let anchor = laidOutWidth > 0 && nextWidth != bodyWidth ? captureAnchor() : nil
-        toolbar.frame = CGRect(x: 28, y: 12, width: min(width - 56, 370), height: 34)
-        status.frame = CGRect(x: 28, y: 48, width: width - 56, height: 24)
-        input.frame = CGRect(x: 24, y: view.bounds.height - 112, width: width - 88, height: 88)
-        send.frame = CGRect(x: width - 56, y: view.bounds.height - 90, width: 40, height: 40)
-        collection.frame = CGRect(x: 0, y: 78, width: width, height: max(100, view.bounds.height - 202))
-        if usesWorkspaceChrome { collection.frame = view.bounds }
-        latest.frame = CGRect(x: (width - 34) / 2, y: collection.frame.maxY - 68, width: 34, height: 34)
-        if nextWidth != bodyWidth || laidOutWidth == 0 {
-            let started = CACurrentMediaTime()
+        let started = CACurrentMediaTime()
+        let wasUpdating = layoutTransaction
+        if resized {
             layoutTransaction = true
             bodyWidth = nextWidth
             let inset = max(0, (width - bodyWidth) / 2)
             flow.sectionInset = UIEdgeInsets(top: 14, left: inset, bottom: 10, right: inset)
             for message in messages { for block in message.blocks { autoreleasepool { _ = store.measure(block, width: bodyWidth) } } }
-            flow.invalidateLayout(); collection.layoutIfNeeded()
+            flow.invalidateLayout()
+        }
+        toolbar.frame = CGRect(x: 28, y: 12, width: min(width - 56, 370), height: 34)
+        status.frame = CGRect(x: 28, y: 48, width: width - 56, height: 24)
+        input.frame = CGRect(x: 24, y: view.bounds.height - 112, width: width - 88, height: 88)
+        send.frame = CGRect(x: width - 56, y: view.bounds.height - 90, width: 40, height: 40)
+        // setFrame can synchronously ask the flow layout for item sizes.
+        // Publish coherent widths first, then assign the final frame once.
+        collection.frame = usesWorkspaceChrome ? view.bounds
+            : CGRect(x: 0, y: 78, width: width, height: max(100, view.bounds.height - 202))
+        latest.frame = CGRect(x: (width - 34) / 2, y: collection.frame.maxY - 68, width: 34, height: 34)
+        if resized {
+            collection.layoutIfNeeded()
             if let anchor { restore(anchor) }
-            layoutTransaction = false
+            layoutTransaction = wasUpdating
             if laidOutWidth > 0 { metrics.record("resize_ms", (CACurrentMediaTime() - started) * 1000) }
         }
         laidOutWidth = width
@@ -757,6 +767,31 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 metrics.checks["resize_preserves_reading_paragraph"] = "passed"
                 maximumBodyWidth = 760
                 view.setNeedsLayout(); view.layoutIfNeeded()
+                // The native pane resizes before SwiftUI publishes its new
+                // content width. Both phases must fit and retain the paragraph.
+                let savedFrame = view.frame
+                let savedChrome = usesWorkspaceChrome, savedBodyWidth = workspaceBodyWidth
+                do {
+                    defer {
+                        usesWorkspaceChrome = savedChrome; workspaceBodyWidth = savedBodyWidth
+                        view.frame = savedFrame
+                        view.setNeedsLayout(); view.layoutIfNeeded()
+                    }
+                    usesWorkspaceChrome = true
+                    workspaceBodyWidth = max(1, savedFrame.width - 24)
+                    for width in [max(280, savedFrame.width - 96), max(240, savedFrame.width - 192), savedFrame.width] {
+                        let before = captureAnchor()
+                        view.frame.size.width = width
+                        view.setNeedsLayout(); view.layoutIfNeeded()
+                        try expect(bodyWidth + flow.sectionInset.left + flow.sectionInset.right <= collection.bounds.width + 0.01,
+                                   "原生窗口先收窄时正文宽度超出视口")
+                        workspaceBodyWidth = max(1, width - 24)
+                        view.setNeedsLayout(); view.layoutIfNeeded()
+                        let after = captureAnchor()
+                        try expect(after?.messageID == before?.messageID && after?.item == before?.item,
+                                   "连续改宽后离开了原来的正文段落")
+                    }
+                }
                 await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
 
                 let message = LabMessage(author: "检查样本", markdown: "第一段：中文与 emoji 👩🏽‍💻。\n\n第二段尚在增长")
