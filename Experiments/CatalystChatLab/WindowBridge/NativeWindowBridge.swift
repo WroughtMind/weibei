@@ -32,6 +32,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     }
     private func apply(to window: NSWindow) {
         guard window.styleMask.contains(.titled), let content = window.contentView else { return }
+        window.acceptsMouseMovedEvents = true
         let glass = ["glassLight", "glassDark", "glassMist", "glassSlate"].contains(mode)
         window.isOpaque = !glass
         guard glass else {
@@ -51,7 +52,9 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             materials.setObject(material, forKey: window)
         }
         window.isOpaque = false
-        window.backgroundColor = .clear
+        // WindowServer skips transparent pixels before UIKit hit-testing. Keep
+        // blank glass interactive even at the lowest material intensity.
+        window.backgroundColor = NSColor(white: mode == "glassLight" || mode == "glassMist" ? 1 : 0, alpha: 0.05)
         let fullScreen = window.styleMask.contains(.fullScreen)
         switch mode {
         case "glassLight":

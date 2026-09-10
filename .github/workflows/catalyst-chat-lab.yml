@@ -21,6 +21,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: 记录工具链
         run: xcodebuild -version
+      - name: 检查玻璃留白的原生窗口事件接收
+        run: |
+          mkdir -p .build
+          swiftc WindowBridge/WindowBridgeContract.swift WindowBridge/NativeWindowBridge.swift script/window-input-check.swift -o .build/window-input-check
+          .build/window-input-check > Evidence/ci-window-input.json
       - name: 构建真实 Mac Catalyst Release
         run: ./script/build.sh
       - name: 在独立 CI 桌面运行同一套应用内行为检查
@@ -35,5 +40,6 @@ jobs:
             Experiments/CatalystChatLab/.build/build.log
             Experiments/CatalystChatLab/Dependencies.json
             Experiments/CatalystChatLab/Evidence/ci.json
+            Experiments/CatalystChatLab/Evidence/ci-window-input.json
             Experiments/CatalystChatLab/Evidence/ci-window.png
             Experiments/CatalystChatLab/Evidence/ci-diagram.png
