@@ -60,11 +60,12 @@ final class LabImages {
 }
 
 final class ImageMarkdownView: MarkdownTextView {
+    var containsImages = false
     var images = LabImages.shared {
         didSet { if oldValue !== images { invalidateInlineDecoration() } }
     }
     var contentWidth: CGFloat = 680 {
-        didSet { if contentWidth != oldValue { invalidateInlineDecoration() } }
+        didSet { if containsImages && contentWidth != oldValue { invalidateInlineDecoration() } }
     }
 
     override func decorate(inlineText text: NSAttributedString, theme: MarkdownTheme) -> NSAttributedString {

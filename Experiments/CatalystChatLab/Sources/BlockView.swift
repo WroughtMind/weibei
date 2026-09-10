@@ -62,6 +62,7 @@ final class BlockView: UIView, UITextViewDelegate {
         saveInteractionState()
         onChange = nil
         record = block
+        markdown.containsImages = !block.imageSources.isEmpty
         workspaceContent?.removeFromSuperview(); workspaceContent = nil
         geometry = nil
         lastWidth = 0
@@ -139,7 +140,6 @@ final class BlockView: UIView, UITextViewDelegate {
         case .markdown:
             if let layout = record.preparedLayout {
                 lastHeight = max(24, ceil(layout.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height))
-                layout.containerSize = CGSize(width: width, height: lastHeight)
                 installSize(width: width, height: lastHeight)
                 return lastHeight
             }

@@ -196,7 +196,6 @@ final class ContentStore {
         if let layout = block.preparedLayout {
             block.height = max(24, ceil(layout.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height))
             block.width = width
-            layout.containerSize = CGSize(width: width, height: block.height)
             measureCount += 1
             return block.height
         }

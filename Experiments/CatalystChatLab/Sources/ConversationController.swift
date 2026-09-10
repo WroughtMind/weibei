@@ -920,6 +920,23 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                         try expect(!body.copyText().isEmpty, "公式排版丢失了可复制正文")
                     }
                 }
+                // Width-only changes must reuse already rendered code and tables.
+                // Images are the exception: their attachment size follows the width.
+                for block in blocks where block.imageSources.isEmpty {
+                    switch block.node {
+                    case .table, .codeBlock:
+                        guard case .markdown = block.kind else { continue }
+                        let body = store.view(for: block, width: bodyWidth)
+                        let rendered = body.markdown.textLabelView.attributedText
+                        for width in [max(120, bodyWidth - 72), bodyWidth] {
+                            _ = store.measure(block, width: width)
+                            body.layoutIfNeeded()
+                            try expect(body.markdown.textLabelView.attributedText === rendered,
+                                       "仅改宽就重复生成了代码或表格正文")
+                        }
+                    default: break
+                    }
+                }
                 try expect(LabImages.shared.image(for: "lab-image://landscape") != nil, "图片没有解码成功")
                 guard blocks.count > 3 else { throw Failure(message: "富内容样本不完整") }
                 guard let diagram = blocks.first(where: { if case .diagram = $0.kind { return true }; return false }) else {
@@ -957,6 +974,21 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let afterImage = captureAnchor()
                 try expect(beforeImage != nil && afterImage?.messageID == beforeImage?.messageID && afterImage?.item == beforeImage?.item && abs((afterImage?.offset ?? 0) - (beforeImage?.offset ?? 0)) <= 1,
                            "图片到达使正在阅读的正文跳位")
+                guard let image = LabImages.shared.image(for: "lab-image://landscape") else {
+                    throw Failure(message: "改宽检查缺少已解码图片")
+                }
+                for width in [min(bodyWidth, image.size.width) / 2, bodyWidth] {
+                    let body = store.view(for: imageBlock, width: width)
+                    body.layoutIfNeeded()
+                    guard let attachment = body.label.attributedText.attribute(.litextAttachment, at: 0, effectiveRange: nil) as? TextLabel.Attachment,
+                          let imageView = attachment.view?.subviews.compactMap({ $0 as? UIImageView }).first else {
+                        throw Failure(message: "改宽后图片视图丢失")
+                    }
+                    let expectedWidth = min(width, image.size.width)
+                    try expect(abs(imageView.bounds.width - expectedWidth) < 1
+                        && abs(imageView.bounds.height - expectedWidth * image.size.height / image.size.width) < 1,
+                               "收窄和拉宽后图片没有按原比例适应正文宽度")
+                }
                 metrics.checks["image_arrival_preserves_reading_text"] = "passed"
 
                 collection.scrollToItem(at: IndexPath(item: 2, section: 0), at: .top, animated: false)
