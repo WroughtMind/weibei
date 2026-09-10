@@ -722,6 +722,20 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             }
             do {
                 try expect(UIDevice.current.userInterfaceIdiom == .mac, "运行界面不是 Mac idiom")
+                // An empty top strip must register with its content surface on
+                // attachment, preserve the underlying input target, and detach.
+                let point = CGPoint(x: view.bounds.midX, y: 20)
+                let inputTarget = view.hitTest(point, with: nil)
+                let recognizers = Set((view.gestureRecognizers ?? []).map(ObjectIdentifier.init))
+                let probe = HoverPassThroughRegion.Probe(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: 36))
+                view.addSubview(probe)
+                let attached = (view.gestureRecognizers ?? []).filter { !recognizers.contains(ObjectIdentifier($0)) }
+                let registered = attached.contains { $0 is UIHoverGestureRecognizer && $0.isEnabled }
+                let preserved = view.hitTest(point, with: nil) === inputTarget
+                probe.removeFromSuperview()
+                try expect(registered && preserved && attached.allSatisfy { $0.view == nil },
+                           "空白顶部的悬停注册、输入穿透或移除未完成")
+                metrics.checks["hover_strip_attachment_preserves_input"] = "passed"
                 loadScenario("history")
                 await preparation?.value
                 let parses = store.parseCount
@@ -998,7 +1012,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
                 metrics.checks["single_long_answer_complete_and_revisitable"] = "passed"
                 selection.clear()
-                status.text = "10 项必要行为检查通过 · 桌面手感仍需单独体验"
+                status.text = "11 项必要行为检查通过 · 桌面手感仍需单独体验"
             } catch {
                 metrics.checks["failure"] = error.localizedDescription
                 status.text = "行为检查未通过：\(error.localizedDescription)"
@@ -1013,7 +1027,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
             }
             catch { status.text = "检查记录写入失败：\(error.localizedDescription)" }
-            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 10)
+            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 11)
         }
     }
 }

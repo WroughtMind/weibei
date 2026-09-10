@@ -19,10 +19,11 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             })
         }
         // A Catalyst scene can acquire its NSWindow after configure(), and a
-        // background/PiP window need not become key. Mount on its first update.
+        // background/PiP window need not become key. Apply input settings too.
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: nil, queue: .main) { [weak self] note in
-            guard let self, self.mode.hasPrefix("glass"), let window = note.object as? NSWindow,
-                  self.materials.object(forKey: window)?.superview == nil else { return }
+            guard let self, let window = note.object as? NSWindow,
+                  !window.acceptsMouseMovedEvents || window.isMovableByWindowBackground
+                    || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
             self.apply(to: window)
         })
     }
@@ -33,6 +34,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private func apply(to window: NSWindow) {
         guard window.styleMask.contains(.titled), let content = window.contentView else { return }
         window.acceptsMouseMovedEvents = true
+        window.isMovableByWindowBackground = false
         let glass = ["glassLight", "glassDark", "glassMist", "glassSlate"].contains(mode)
         window.isOpaque = !glass
         guard glass else {
@@ -52,9 +54,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             materials.setObject(material, forKey: window)
         }
         window.isOpaque = false
-        // WindowServer skips transparent pixels before UIKit hit-testing. Keep
-        // blank glass interactive even at the lowest material intensity.
-        window.backgroundColor = NSColor(white: mode == "glassLight" || mode == "glassMist" ? 1 : 0, alpha: 0.05)
+        window.backgroundColor = .clear
         let fullScreen = window.styleMask.contains(.fullScreen)
         switch mode {
         case "glassLight":

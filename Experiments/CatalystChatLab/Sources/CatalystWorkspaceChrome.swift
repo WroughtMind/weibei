@@ -335,19 +335,27 @@ struct HoverPassThroughRegion: UIViewRepresentable {
     static func dismantleUIView(_ view: Probe, coordinator: ()) { view.detach() }
     final class Probe: UIView, UIGestureRecognizerDelegate {
         var changed: ((Bool) -> Void)?
-        private weak var observedWindow: UIWindow?
+        private weak var observedView: UIView?
         private var inside = false
         private lazy var hover = UIHoverGestureRecognizer(target: self, action: #selector(moved(_:)))
         override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { false }
         override func didMoveToWindow() {
             super.didMoveToWindow()
             detach()
-            observedWindow = window
+            guard window != nil else { return }
+            // The owning content view receives hover for its descendants and
+            // follows this pane's lifetime, including the initially empty pane.
+            var responder = next
+            while let value = responder, !(value is UIViewController) { responder = value.next }
+            observedView = (responder as? UIViewController)?.view
             hover.cancelsTouchesInView = false
             hover.delegate = self
-            window?.addGestureRecognizer(hover)
+            observedView?.addGestureRecognizer(hover)
         }
-        func detach() { observedWindow?.removeGestureRecognizer(hover); observedWindow = nil }
+        func detach() {
+            observedView?.removeGestureRecognizer(hover); observedView = nil
+            if inside { inside = false; changed?(false) }
+        }
         @objc private func moved(_ recognizer: UIHoverGestureRecognizer) {
             let next = recognizer.state != .ended && recognizer.state != .cancelled
                 && window != nil && bounds.contains(recognizer.location(in: self))
@@ -360,12 +368,17 @@ struct HoverPassThroughRegion: UIViewRepresentable {
 
 struct CatalystWindowChrome: UIViewRepresentable {
     let appearanceMode: WeiBeiAppearanceMode
-    func makeUIView(context: Context) -> Probe { Probe() }
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+        view.isUserInteractionEnabled = false
+        return view
+    }
     func updateUIView(_ view: Probe, context: Context) { view.mode = appearanceMode; view.configure() }
     final class Probe: UIView {
         var mode: WeiBeiAppearanceMode = .paper
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         func configure() {
+            CatalystDesktopWindow.configure(mode: mode)
             guard let window, let scene = window.windowScene else { return }
             scene.titlebar?.titleVisibility = .hidden
             scene.titlebar?.toolbar = nil
@@ -375,7 +388,6 @@ struct CatalystWindowChrome: UIViewRepresentable {
             window.backgroundColor = WeiBeiNativePalette.paper(for: mode)
             window.rootViewController?.view.backgroundColor = .clear
             window.overrideUserInterfaceStyle = mode.isDark ? .dark : .light
-            CatalystDesktopWindow.configure(mode: mode)
         }
     }
 }

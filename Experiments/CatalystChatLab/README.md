@@ -44,7 +44,7 @@ cd Experiments/CatalystChatLab
 
 ## 验证入口与边界
 
-- `script/check-ci.sh` 只在 CI 的独立桌面运行原 10 项会话检查；本机真实操作必须使用画中画。
+- `script/check-ci.sh` 只在 CI 的独立桌面运行 11 项会话检查，包含顶部悬停接收的注册、输入穿透和移除；本机真实操作必须使用画中画，实体触控板仍单独验收。
 - `script/business-server.py --output .build/BusinessServer` 提供本机固定 HTTP/SSE 数据，不是模型。只有单独 `.businesscheck` 身份且构建时设置 `LAB_BUSINESS_CHECK_ENDPOINT=http://127.0.0.1:端口/v1` 才自动运行原业务往返检查。它覆盖导入、原编辑器和写闸门、有界 PDF 助手、Agent 读取工具、流式、来源、图片、答案入笔记、停止及重开。
 - 原笔记和存储隔离检查复用现有 Swift 测试；不另建大矩阵。
 
