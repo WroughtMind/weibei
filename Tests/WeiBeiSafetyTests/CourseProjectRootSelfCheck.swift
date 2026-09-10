@@ -1101,8 +1101,10 @@ enum CourseProjectRootSelfCheck {
             }
         )
         try check(
-            !replacedOwnedSearch.items.contains(where: { $0.item.id == ownedItem.id }),
-            "课程 Agent 搜索读取了授权后被换 inode 的文件"
+            replacedOwnedSearch.items.contains(where: {
+                $0.item.id == ownedItem.id && $0.item.searchText.contains("REPLACED_AGENT_TOKEN")
+            }),
+            "工具调用前正常替换的原文没有被重新核验并读取"
         )
 
         let sharedSourceURL = imports.appendingPathComponent("共享资料.txt")

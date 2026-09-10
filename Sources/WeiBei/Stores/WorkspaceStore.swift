@@ -7380,6 +7380,7 @@ final class WorkspaceStore: ObservableObject {
             }
             importedItems[index].importedFileIdentity = identity
             importedItems[index].contentDigest = Self.noteContentDigest(Data(diskText.utf8))
+            noteBackingContentDigestsByItemID[itemID] = importedItems[index].contentDigest
             for membershipIndex in courseItemMemberships.indices
             where courseItemMemberships[membershipIndex].itemID == itemID {
                 courseItemMemberships[membershipIndex].entryIdentity = identity
