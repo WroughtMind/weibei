@@ -78,9 +78,7 @@ public struct NativeToolExecutionContext: Sendable {
     public var mode: NativeAgentMode
     public var hostToolHandler: StudyAgentHostToolHandler?
     public var persistentAssetIDsByContextID: [String: String]
-    public var searchedItemIDs: [String]
     public var currentRunSourceURLs: [String]
-    public var readSourceRevisions: [String: String]
     public var lastReadMemoryRevision: UInt64?
     public var courseProfileUpdated: Bool
     public var loadedSkillIDs: Set<String>
@@ -91,9 +89,7 @@ public struct NativeToolExecutionContext: Sendable {
         mode: NativeAgentMode = .assistant,
         hostToolHandler: StudyAgentHostToolHandler? = nil,
         persistentAssetIDsByContextID: [String: String] = [:],
-        searchedItemIDs: [String] = [],
         currentRunSourceURLs: [String] = [],
-        readSourceRevisions: [String: String] = [:],
         lastReadMemoryRevision: UInt64? = nil,
         courseProfileUpdated: Bool = false,
         loadedSkillIDs: Set<String> = [],
@@ -103,9 +99,7 @@ public struct NativeToolExecutionContext: Sendable {
         self.mode = mode
         self.hostToolHandler = hostToolHandler
         self.persistentAssetIDsByContextID = persistentAssetIDsByContextID
-        self.searchedItemIDs = searchedItemIDs
         self.currentRunSourceURLs = currentRunSourceURLs
-        self.readSourceRevisions = readSourceRevisions
         self.lastReadMemoryRevision = lastReadMemoryRevision
         self.courseProfileUpdated = courseProfileUpdated
         self.loadedSkillIDs = loadedSkillIDs
@@ -262,7 +256,6 @@ public enum NativeBuiltinTools {
         await registry.register(visualize)
         await registry.register(visualAsset)
         await registry.register(courseMap)
-        await registry.register(courseSearch)
         await registry.register(workspaceSearch)
         await registry.register(courseRead)
         await registry.register(retryFailedPDFPages)
@@ -509,74 +502,66 @@ public enum NativeBuiltinTools {
         )
     }
 
-    private static var courseMap: NativeToolDefinition {
-        hostTool(
-            name: "weibei_course_map",
-            description: "按需列出全部课程资料。",
-            schema: NativeJSONSchema([
-                "type": "object",
-                "properties": [
-                    "itemID": ["type": "string"],
-                    "offset": ["type": "integer"],
-                    "limit": ["type": "integer"],
-                ],
-            ]),
-            makeRequest: { arguments, context in
-                let itemID = string(arguments["itemID"])
-                let persistent = itemID.flatMap { context.persistentAssetIDsByContextID[$0] ?? $0 }
-                return .courseMap(
-                    itemID: persistent,
-                    offset: int(arguments["offset"], default: 0),
-                    limit: int(arguments["limit"], default: 40, range: 1...40)
-                )
-            }
-        )
+    private static let sourceScopeProperties: [String: Any] = [
+        "scope": ["type": "string", "enum": ["material", "course", "library"]],
+        "scopeID": ["type": "string"],
+        "cursor": ["type": "string"],
+        "limit": ["type": "integer", "minimum": 1, "maximum": 100],
+    ]
+
+    private static func sourceScope(_ arguments: [String: Any], _ context: NativeToolExecutionContext) throws -> (StudyAgentSourceScope, String?) {
+        guard let raw = string(arguments["scope"]), let scope = StudyAgentSourceScope(rawValue: raw) else {
+            throw NativeLLMFailure(code: "invalid_arguments", message: "选择材料、课程或整个资料库的查询范围")
+        }
+        let current = scope == .material
+            ? (context.request.selectionSources.first?.itemID ?? context.request.focus?.materialItemID ?? context.request.courseContext.items.first(where: \.isCurrentNote)?.id)
+            : context.request.projectScope.courseID
+        let id = string(arguments["scopeID"]) ?? current
+        guard scope == .library || id != nil else {
+            throw NativeLLMFailure(code: "invalid_arguments", message: "当前没有这个范围的资料，请提供范围编号")
+        }
+        return (scope, scope == .library ? nil : id)
     }
 
-    private static var courseSearch: NativeToolDefinition {
-        hostTool(
-            name: "weibei_course_search",
-            description: "在课程索引中搜索材料与笔记。单次结果有输出预算；返回 nextCursor 时，把它作为下一次 offset 继续调用，直到 nextCursor 为空，不能把单页当作全部结果。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read，itemID 用搜索结果里的 id。PDF 结果的 indexedPageCount/totalPageCount 是当前文件版本的索引覆盖率，uncoveredPageNumbers 是未覆盖页，failedPageNumbers/failedPageReasons 是识别失败页及人话原因，失败页可由用户明确要求重试；即使没有正文命中也要报告这些状态，存在未覆盖页时不得声称搜遍全文。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
-            schema: NativeJSONSchema([
-                "type": "object",
-                "properties": [
-                    "query": ["type": "string"],
-                    "offset": ["type": "integer"],
-                    "limit": ["type": "integer"],
-                ],
-                "required": ["query"],
-            ]),
-            makeRequest: { arguments, _ in
-                .courseSearch(
-                    query: string(arguments["query"]) ?? "",
-                    offset: int(arguments["offset"], default: 0, range: 0...1_000_000),
-                    limit: int(arguments["limit"], default: 100, range: 1...100)
-                )
+    private static func positiveCount(_ raw: Any?, default fallback: Int, maximum: Int) throws -> Int {
+        guard let raw else { return fallback }
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue > 0, number.doubleValue.rounded() == number.doubleValue,
+              let value = Int(exactly: number.doubleValue) else {
+            throw NativeLLMFailure(code: "invalid_arguments", message: "数量需要是正整数")
+        }
+        return min(value, maximum)
+    }
+
+    private static var courseMap: NativeToolDefinition {
+        var properties = sourceScopeProperties
+        properties["name"] = ["type": "string"]
+        return hostTool(
+            name: "weibei_course_map",
+            description: "列出材料与编号；scope=material 时列出该材料的页/章节位置。scopeID 省略时使用当前材料或课程。name 仅筛选材料名称。nextCursor 表示还有目录，可按需要续页。目录没有正文引用标签。",
+            schema: NativeJSONSchema(["type": "object", "properties": properties, "required": ["scope"]]),
+            makeRequest: { arguments, context in
+                let (scope, id) = try sourceScope(arguments, context)
+                return .courseMap(scope: scope, scopeID: id, name: string(arguments["name"]),
+                    cursor: string(arguments["cursor"]), limit: try positiveCount(arguments["limit"], default: 40, maximum: 100))
             }
         )
     }
 
     private static var workspaceSearch: NativeToolDefinition {
-        hostTool(
+        var properties = sourceScopeProperties
+        properties["query"] = ["type": "string", "minLength": 1]
+        return hostTool(
             name: "weibei_search_workspace",
-            description: "在工作区检索材料与笔记。单次结果有输出预算；返回 nextCursor 时，把它作为下一次 offset 继续调用，直到 nextCursor 为空。默认只搜当前课程；只有用户明确要求查全部资料或问题明显跨课时，才把 crossLibrary 设为 true，跨库时其他课程的材料与笔记同样可搜，当前课程的命中排最前。结果带来源课程、标题和摘录；没有命中就如实报告空结果，不要编。不含网页。",
-            schema: NativeJSONSchema([
-                "type": "object",
-                "properties": [
-                    "query": ["type": "string"],
-                    "offset": ["type": "integer"],
-                    "limit": ["type": "integer"],
-                    "crossLibrary": ["type": "boolean"],
-                ],
-                "required": ["query"],
-            ]),
-            makeRequest: { arguments, _ in
-                .workspaceSearch(
-                    query: string(arguments["query"]) ?? "",
-                    offset: int(arguments["offset"], default: 0, range: 0...1_000_000),
-                    limit: int(arguments["limit"], default: 100, range: 1...100),
-                    crossLibrary: bool(arguments["crossLibrary"], default: false)
-                )
+            description: "在指定材料、课程或整个资料库的原文中查找连续文字，不区分大小写，不拆词。结果带命中页/章节、附近原文和引用标签。可换词或改变范围再查；nextCursor 表示还有结果，按需要续页。",
+            schema: NativeJSONSchema(["type": "object", "properties": properties, "required": ["query", "scope"]]),
+            makeRequest: { arguments, context in
+                let (scope, id) = try sourceScope(arguments, context)
+                guard let query = arguments["query"] as? String, !query.isEmpty else {
+                    throw NativeLLMFailure(code: "invalid_arguments", message: "查询文字不能为空")
+                }
+                return .workspaceSearch(query: query, scope: scope, scopeID: id,
+                    cursor: string(arguments["cursor"]), limit: try positiveCount(arguments["limit"], default: 20, maximum: 100))
             }
         )
     }
@@ -584,32 +569,28 @@ public enum NativeBuiltinTools {
     private static var courseRead: NativeToolDefinition {
         hostTool(
             name: "weibei_course_read",
-            description: "按搜索结果里的 itemID 渐进读取真实正文。单次读取有字符预算；返回 nextCursor 时，必须原样传回 cursor 继续读取，直到 nextCursor 为空，不能把单段当作全文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。itemID 必须是搜索返回的 id。PDF 的 uncoveredPageNumbers 与 failedPageNumbers 不在已读正文覆盖范围内；failedPageReasons 是人话失败原因，失败页可由用户明确要求重试。",
+            description: "按 itemID 读取连续原文。编号可来自当前位置、选区、目录或搜索。PDF 使用结果条目的 page（从1开始）；章节 location 使用返回的完整标识。未指定位置时从开头读。maximumCharacters 是本次正文额度，nextCursor 可用于按需续读。覆盖信息说明哪些页尚未取得正文。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
-                    "itemID": ["type": "string"],
-                    "query": ["type": "string"],
-                    "location": ["type": "string"],
-                    "cursor": ["type": "string"],
-                    "maximumCharacters": ["type": "integer"],
+                    "itemID": ["type": "string"], "page": ["type": "integer", "minimum": 1],
+                    "location": ["type": "string"], "cursor": ["type": "string"],
+                    "maximumCharacters": ["type": "integer", "minimum": 1, "maximum": 12_000],
                 ],
+                "required": ["itemID"],
             ]),
             makeRequest: { arguments, context in
-                let itemID = string(arguments["itemID"])
-                    ?? context.searchedItemIDs.last
-                    ?? ""
-                if itemID.isEmpty {
-                    throw NativeLLMFailure(code: "invalid_arguments", message: "weibei_course_read 需要搜索结果里的 itemID")
+                guard let id = string(arguments["itemID"]) else {
+                    throw NativeLLMFailure(code: "invalid_arguments", message: "读取需要材料编号")
                 }
-                let persistent = context.persistentAssetIDsByContextID[itemID] ?? itemID
-                return .courseRead(
-                    itemID: persistent,
-                    query: string(arguments["query"]) ?? "",
-                    location: string(arguments["location"]),
-                    cursor: string(arguments["cursor"]),
-                    maximumCharacters: int(arguments["maximumCharacters"], default: 12_000, range: 1_000...12_000)
-                )
+                let page = try arguments["page"].map { try positiveCount($0, default: 1, maximum: Int.max) }
+                let location = string(arguments["location"])
+                guard page == nil || location == nil else {
+                    throw NativeLLMFailure(code: "invalid_arguments", message: "请选择页码或章节位置")
+                }
+                return .courseRead(itemID: context.persistentAssetIDsByContextID[id] ?? id,
+                    page: page, location: location, cursor: string(arguments["cursor"]),
+                    maximumCharacters: try positiveCount(arguments["maximumCharacters"], default: 12_000, maximum: 12_000))
             }
         )
     }
@@ -640,7 +621,7 @@ public enum NativeBuiltinTools {
     private static var retryFailedPDFPages: NativeToolDefinition {
         hostTool(
             name: "weibei_course_retry_failed_pdf_pages",
-            description: "用户本轮明确要求重试或重新索引 PDF 失败页时使用。itemID 必须来自课程搜索结果。后端仅在当前文件确有失败页时重建这些页的索引，不改原文件；普通搜索和普通问答不得调用。",
+            description: "用户本轮明确要求重试或重新索引 PDF 失败页时使用。itemID 可来自当前位置、目录或搜索。后端仅在当前文件确有失败页时重建这些页的索引，不改原文件；普通搜索和普通问答不得调用。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": ["itemID": ["type": "string"]],
@@ -648,10 +629,9 @@ public enum NativeBuiltinTools {
             ]),
             makeRequest: { arguments, context in
                 let itemID = string(arguments["itemID"])
-                    ?? context.searchedItemIDs.last
                     ?? ""
                 guard !itemID.isEmpty else {
-                    throw NativeLLMFailure(code: "invalid_arguments", message: "重新索引失败页需要搜索结果里的 itemID")
+                    throw NativeLLMFailure(code: "invalid_arguments", message: "重新索引失败页需要材料编号")
                 }
                 return .retryFailedPDFPages(
                     itemID: context.persistentAssetIDsByContextID[itemID] ?? itemID

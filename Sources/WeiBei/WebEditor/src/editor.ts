@@ -3398,7 +3398,6 @@ const reportOutline = (doc: any) => {
   doc.descendants((node: any, pos: number) => {
     if (node.type.name !== 'heading') return true;
     const title = node.textContent.trim();
-    if (!title) return false;
     const index = items.length;
     items.push({
       id: `note-heading-${index}`,

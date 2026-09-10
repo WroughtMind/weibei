@@ -22,6 +22,7 @@ let package = Package(
     targets: [
         .target(
             name: "WeiBeiCore",
+            dependencies: [.product(name: "Markdown", package: "swift-markdown")],
             resources: [
                 .copy("AgentResources")
             ],

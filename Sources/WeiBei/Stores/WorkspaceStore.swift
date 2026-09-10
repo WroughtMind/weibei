@@ -3317,6 +3317,15 @@ final class WorkspaceStore: ObservableObject {
         return notesByItemID[item.id] ?? loadedCourseNoteTextByItemID[item.id]
     }
 
+    private func agentToolNoteText(for item: StudyItem, editorText: String? = nil) -> String? {
+        guard let text = pendingNotePersistenceByItemID[item.id]?.markdown ?? editorText
+            ?? loadedAgentNoteText(for: item) else { return nil }
+        guard item.editsBackingMarkdownFile,
+              pendingNotePersistenceByItemID[item.id] == nil,
+              let baseline = noteBackingContentDigestsByItemID[item.id] ?? item.contentDigest else { return text }
+        return Self.noteContentDigest(Data(text.utf8)) == baseline ? nil : text
+    }
+
     func select(itemID: String?) {
         WeiBeiPerf.measure("workspace.select") {
             guard let itemID,
@@ -5061,6 +5070,12 @@ final class WorkspaceStore: ObservableObject {
             revealDocumentPane(.agent, clearSelection: false)
             revealDocumentPane(.notes, clearSelection: false)
             focus(.notes)
+            let headingIndex = source.sectionLocationID.flatMap { id in
+                id.hasPrefix("markdown-heading-") ? Int(id.dropFirst("markdown-heading-".count)) : nil
+            } ?? source.sectionOrdinal.map { $0 - 1 }
+            if let headingIndex, headingIndex >= 0 {
+                noteEditorCommand = NoteEditorCommand(kind: .scrollToHeading, markdown: String(headingIndex), value: item.id)
+            }
             return activeStudySessionID == chatID
         }
 
@@ -7103,7 +7118,7 @@ final class WorkspaceStore: ObservableObject {
             let courseIDs = itemCourseIDs.map { $0.uuidString.lowercased() }
             let courseTitles = itemCourseIDs.compactMap { coursesByID[$0] }
             let baseSubtitle = displaySubtitle(for: item)
-            let memoryText = loadedAgentNoteText(for: item)
+            let memoryText = agentToolNoteText(for: item)
             let sourceRevision = memoryText.map(
                 CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
             ) ?? CourseDocumentSearchIndex.sourceRevision(for: item)
@@ -7365,6 +7380,7 @@ final class WorkspaceStore: ObservableObject {
             }
             importedItems[index].importedFileIdentity = identity
             importedItems[index].contentDigest = Self.noteContentDigest(Data(diskText.utf8))
+            noteBackingContentDigestsByItemID[itemID] = importedItems[index].contentDigest
             for membershipIndex in courseItemMemberships.indices
             where courseItemMemberships[membershipIndex].itemID == itemID {
                 courseItemMemberships[membershipIndex].entryIdentity = identity
@@ -7874,18 +7890,22 @@ final class WorkspaceStore: ObservableObject {
         ).scope
     }
 
+    func agentHostToolHandlerForSelfCheck(courseID: UUID?) throws -> StudyAgentHostToolHandler {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
+        let access = makeAgentProjectAccessSnapshot(target: target)
+        return makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+    }
+
     func agentHostSearchForSelfCheck(
         courseID: UUID?,
         query: String,
         beforeSearch: (() throws -> Void)? = nil
     ) throws -> StudyAgentHostToolResult {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+        let handler = try agentHostToolHandlerForSelfCheck(courseID: courseID)
         try beforeSearch?()
         return try waitForCourseFileOperation {
-            try await handler(.courseSearch(query: query, offset: 0, limit: 8))
+            try await handler(.workspaceSearch(query: query, scope: .library, scopeID: nil, cursor: nil, limit: 8))
         }
     }
 
@@ -7894,30 +7914,23 @@ final class WorkspaceStore: ObservableObject {
         itemID: String? = nil,
         offset: Int = 0
     ) throws -> StudyAgentHostToolResult {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+        let handler = try agentHostToolHandlerForSelfCheck(courseID: courseID)
         return try waitForCourseFileOperation {
-            try await handler(.courseMap(itemID: itemID, offset: offset, limit: 40))
+            try await handler(.courseMap(scope: itemID == nil ? .library : .material, scopeID: itemID, name: nil, cursor: String(offset), limit: 40))
         }
     }
 
     func agentHostReadForSelfCheck(
         courseID: UUID?,
         itemID: String,
-        query: String = "",
         location: String? = nil
     ) throws -> StudyAgentHostToolResult {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+        let handler = try agentHostToolHandlerForSelfCheck(courseID: courseID)
         return try waitForCourseFileOperation {
             try await handler(
                 .courseRead(
                     itemID: itemID,
-                    query: query,
+                    page: nil,
                     location: location,
                     cursor: nil,
                     maximumCharacters: 6_000
@@ -8024,21 +8037,24 @@ final class WorkspaceStore: ObservableObject {
             ?? ui("全部课程", "All Courses")
         let searchIndex = courseDocumentSearchIndex
 
-        return { request in
-            if case let .workspaceSearch(query, offset, limit, crossLibrary) = request {
-                return await self.searchWorkspaceForAgent(
-                    query: query,
-                    cursor: offset,
-                    limit: limit,
-                    crossLibrary: crossLibrary,
-                    currentCourseID: target.courseID
-                )
+        return { [weak self] request in
+            let currentSources = await MainActor.run { [weak self] in
+                guard let self else { return [AgentHostToolSource]() }
+                let current = Dictionary(uniqueKeysWithValues: self.makeAgentProjectAccessSnapshot(target: target)
+                    .sources.map { ($0.item.id, $0) })
+                return sources.compactMap { captured in
+                    guard var source = current[captured.item.id] else { return nil }
+                    // 外部冲突尚未解决时，编辑器快照不会写入笔记状态；保留本次提问时的草稿。
+                    if self.noteEditorRecoveryConflictsByItemID[captured.item.id] != nil,
+                       let markdown = captured.memoryText { source.memoryText = markdown }
+                    return source
+                }
             }
             let task = Task.detached(priority: .userInitiated) {
                 try await Self.executeAgentHostTool(
                     request,
                     title: title,
-                    sources: sources,
+                    sources: currentSources,
                     links: links,
                     searchIndex: searchIndex
                 )
@@ -9526,7 +9542,8 @@ final class WorkspaceStore: ObservableObject {
                 if let snapshot, snapshot.documentID == sentNoteItemID {
                     sentNoteText = snapshot.markdown
                     if let index = projectAccess.sources.firstIndex(where: { $0.item.id == snapshot.documentID }) {
-                        projectAccess.sources[index].memoryText = snapshot.markdown
+                        projectAccess.sources[index].memoryText = agentToolNoteText(
+                            for: projectAccess.sources[index].item, editorText: snapshot.markdown)
                     }
                 }
             }
@@ -9684,6 +9701,7 @@ final class WorkspaceStore: ObservableObject {
                     selectionTitle: sentSelectionTitle,
                     selectionText: sentSelectionText,
                     selectionSources: sentSelectionSources,
+                    knownSources: studySessions.first(where: { $0.id == target.sessionID })?.messages.flatMap(\.sources) ?? [],
                     courseContext: courseBuild.context,
                     projectScope: projectAccess.scope,
                     focus: StudyAgentFocus(
@@ -10129,7 +10147,7 @@ final class WorkspaceStore: ObservableObject {
         case let .usingTool(name, detail):
             let base: String
             switch name {
-            case "weibei_course_search", "weibei_search_workspace":
+            case "weibei_search_workspace":
                 base = ui("正在搜索", "Searching")
             case "weibei_course_read":
                 base = ui("正在读取", "Reading")
@@ -10153,7 +10171,10 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 agentStreaming.activityText = base
             }
-        case let .text(text, blocks):
+        case let .text(text, blocks, sources):
+            if studySessions.first(where: { $0.id == chatID })?.messages.first(where: { $0.id == replyMessageID })?.sources != sources {
+                _ = updateAgentMessage(replyMessageID, in: chatID) { $0.sources = sources }
+            }
             latestAgentStreamingText = text
             if agentStreaming.isDisplaying(replyMessageID) {
                 let canPaceVisibleReply = !agentStreamingUsesReducedMotion
