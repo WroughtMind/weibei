@@ -1,5 +1,7 @@
 import Foundation
 import CoreGraphics
+import CoreText
+import PDFKit
 import WeiBeiCore
 
 func checkCourseDocumentSearchReadiness() throws {
@@ -400,6 +402,7 @@ private func checkDirectSourceReading() throws {
                         urlPath: pdfURL.path, isSample: false)
     let probe = DirectPDFReadProbe()
     let index = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("search.sqlite3"),
+        verifiedFileDidOpen: { probe.recordSnapshot() },
         nativePDFTextLoader: { _, pages, _, _ in probe.native(pages) },
         pdfOCRPageLoader: { _, page in probe.ocr(page) })
     let native = index.read(item: pdf, page: 6, location: nil, maximumCharacters: 7)
@@ -410,11 +413,12 @@ private func checkDirectSourceReading() throws {
         "读取指定原生文字页却提取了其他页或进行了 OCR")
     let continuation = index.read(item: pdf, page: 6, location: nil, cursor: native.nextCursor)
     try requireSearchCheck((native.text ?? "") + (continuation.text ?? "") == DirectPDFReadProbe.nativeText
-        && probe.nativePages == [5], "PDF 续读遗漏正文或重复提取")
+        && probe.nativePages == [5] && probe.snapshotCount == 1, "PDF 续读遗漏正文或重复复制、提取")
     let scanned = index.read(item: pdf, page: 4, location: nil)
     let repeated = index.read(item: pdf, page: 4, location: nil)
     try requireSearchCheck(scanned.text == DirectPDFReadProbe.ocrText && repeated.text == scanned.text
-        && probe.nativePages == [5, 3] && probe.ocrPages == [3], "扫描页读取没有复用同页识别结果")
+        && probe.nativePages == [5, 3] && probe.ocrPages == [3] && probe.snapshotCount == 2,
+        "扫描页读取没有复用同页识别结果或重复复制整份文件")
     index.schedule([pdf])
     let searched = waitForSearchResult(until: Date().addingTimeInterval(8)) {
         index.searchPassages(item: pdf, query: DirectPDFReadProbe.ocrText)
@@ -422,12 +426,83 @@ private func checkDirectSourceReading() throws {
     try requireSearchCheck(searched?.passages.contains(where: { $0.pageIndex == 3 }) == true
         && probe.ocrPages.filter({ $0 == 3 }).count == 1,
         "直接读取的识别结果未被后续搜索或后台索引复用")
+
+    // 原生文字只有页码时，扫描正文仍须可读；后台索引不能抢先缓存残缺页。
+    let mixedURL = root.appendingPathComponent("mixed.pdf")
+    try makeNumberedScanPDF(at: mixedURL)
+    let mixed = StudyItem(id: "mixed", title: "mixed", subtitle: "mixed.pdf", kind: .pdf,
+                          urlPath: mixedURL.path, isSample: false)
+    let nativeLoader: CourseNativePDFTextLoader = { url, pages, _, _ in
+        guard let document = PDFDocument(url: url) else { return nil }
+        return Dictionary(uniqueKeysWithValues: pages.map {
+            ($0, BoundedPDFTextPage(text: document.page(at: $0)?.string ?? "", isPartial: false))
+        })
+    }
+    let mixedIndex = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("mixed.sqlite3"),
+                                               nativePDFTextLoader: nativeLoader)
+    let body = mixedIndex.read(item: mixed, page: 1, location: nil)
+    try requireSearchCheck(body.text?.contains("SCANNED BODY") == true && body.text?.split(separator: "\n").contains("1") == true,
+                           "带原生页码的扫描页漏掉图片正文或原生文字")
+    let background = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("mixed-background.sqlite3"),
+                                               nativePDFTextLoader: nativeLoader)
+    background.schedule([mixed])
+    let backgroundBody = waitForSearchResult(until: Date().addingTimeInterval(8)) {
+        background.searchPassages(item: mixed, query: "SCANNED BODY")
+    } where: { !$0.passages.isEmpty }
+    try requireSearchCheck(backgroundBody?.passages.first?.text.contains("SCANNED BODY") == true,
+                           "后台索引把混合扫描页误当成完整原生页")
+    let failedIndex = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("mixed-failed.sqlite3"),
+        nativePDFTextLoader: nativeLoader, pdfOCRPageLoader: { _, page in .failed(pageIndex: page, reason: .recognition) })
+    let failed = failedIndex.read(item: mixed, page: 1, location: nil)
+    try requireSearchCheck(failed.text?.contains("1") == true && failed.isTruncated && failed.failedPageIndexes == [0],
+                           "图片识别失败时丢弃原生文字或谎报整页已完整读取")
+
+}
+
+private func makeNumberedScanPDF(at url: URL) throws {
+    let bitmap = CGContext(data: nil, width: 600, height: 500, bitsPerComponent: 8, bytesPerRow: 600,
+        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)!
+    bitmap.setFillColor(CGColor(gray: 1, alpha: 1))
+    bitmap.fill(CGRect(x: 0, y: 0, width: 600, height: 500))
+    let attributes: [NSAttributedString.Key: Any] = [
+        NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithName("Helvetica" as CFString, 28, nil)
+    ]
+    bitmap.textPosition = CGPoint(x: 30, y: 350)
+    CTLineDraw(CTLineCreateWithAttributedString(NSAttributedString(string: "SCANNED BODY 10: market perfection", attributes: attributes)), bitmap)
+    func stream(_ header: String, _ data: Data) -> Data {
+        Data("<< \(header) /Length \(data.count) >>\nstream\n".utf8) + data + Data("\nendstream".utf8)
+    }
+    // 图片置于未声明 Resources 的 Form，必须沿用页面资源；原生层只有页码。
+    let objects = [
+        Data("<< /Type /Catalog /Pages 2 0 R >>".utf8),
+        Data("<< /Type /Pages /Kids [3 0 R] /Count 1 >>".utf8),
+        Data("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 700] /Resources << /Font << /F1 4 0 R >> /XObject << /Im1 5 0 R /Fm1 6 0 R >> >> /Contents 7 0 R >>".utf8),
+        Data("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".utf8),
+        stream("/Type /XObject /Subtype /Image /Width 600 /Height 500 /ColorSpace /DeviceGray /BitsPerComponent 8",
+               Data(bytes: bitmap.data!, count: 600 * 500)),
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 1 1]", Data("/Im1 Do".utf8)),
+        stream("", Data("q 600 0 0 500 0 100 cm /Fm1 Do Q BT /F1 28 Tf 300 30 Td (1) Tj ET".utf8))
+    ]
+    var pdf = Data("%PDF-1.7\n".utf8)
+    var offsets: [Int] = []
+    for (index, object) in objects.enumerated() {
+        offsets.append(pdf.count)
+        pdf += Data("\(index + 1) 0 obj\n".utf8) + object + Data("\nendobj\n".utf8)
+    }
+    let xref = pdf.count
+    pdf += Data("xref\n0 8\n0000000000 65535 f \n".utf8)
+    for offset in offsets { pdf += Data(String(format: "%010d 00000 n \n", offset).utf8) }
+    pdf += Data("trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n\(xref)\n%%EOF\n".utf8)
+    try pdf.write(to: url)
 }
 
 private final class DirectPDFReadProbe: @unchecked Sendable {
     static let nativeText = "短页原生文字也应直接读取"
     static let ocrText = "扫描页面按需识别 " + String(repeating: "内容", count: 20)
     private let lock = NSLock()
+    private var snapshots = 0
+    var snapshotCount: Int { lock.lock(); defer { lock.unlock() }; return snapshots }
+    func recordSnapshot() { lock.lock(); defer { lock.unlock() }; snapshots += 1 }
     private var nativeCalls: [Int] = []
     private var ocrCalls: [Int] = []
     var nativePages: [Int] { lock.lock(); defer { lock.unlock() }; return nativeCalls }

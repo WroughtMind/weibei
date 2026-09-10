@@ -688,18 +688,21 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         startingOrder: Int,
         visit: (CourseDocumentPassage, Int) -> Bool
     ) -> CourseDocumentIndexResult {
-        guard let file = VerifiedRegularFile(item: item),
-              let url = temporarySnapshot(of: file) else {
-            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        var snapshot: (url: URL, document: PDFDocument)?
+        defer { if let snapshot { try? FileManager.default.removeItem(at: snapshot.url) } }
+        func loadDocument() -> (url: URL, document: PDFDocument)? {
+            if let snapshot { return snapshot }
+            guard let file = VerifiedRegularFile(item: item),
+                  let url = temporarySnapshot(of: file) else { return nil }
+            guard Self.fileSignature(for: item) == scheduled.signature,
+                  let document = PDFDocument(url: url) else {
+                try? FileManager.default.removeItem(at: url)
+                return nil
+            }
+            snapshot = (url, document)
+            return snapshot
         }
-        defer { try? FileManager.default.removeItem(at: url) }
-        guard Self.fileSignature(for: item) == scheduled.signature,
-              let document = PDFDocument(url: url) else {
-            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
-        }
-        let requestedPage = page ?? location.flatMap { $0.hasPrefix("page-") ? Int($0.dropFirst(5)) : nil }
-        if (location != nil && page == nil && requestedPage == nil)
-            || requestedPage.map({ $0 < 1 || $0 > document.pageCount }) == true {
+        guard Self.fileSignature(for: item) == scheduled.signature else {
             return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
         }
         schedulingLock.lock()
@@ -707,21 +710,43 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         schedulingLock.unlock()
         let database = borrowDatabase()
         defer { if database != nil { returnDatabase() } }
+        var cachedPageCount: Int?
         if let database {
+            databaseWriteLock.lock()
+            if fileState(for: scheduled.storageID, in: database)?.signature == scheduled.signature {
+                cachedPageCount = storedPageCount(for: scheduled.storageID, in: database)
+            }
+            databaseWriteLock.unlock()
+        }
+        guard let pageCount = cachedPageCount ?? loadDocument()?.document.pageCount else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        let requestedPage = page ?? location.flatMap { $0.hasPrefix("page-") ? Int($0.dropFirst(5)) : nil }
+        if (location != nil && page == nil && requestedPage == nil)
+            || requestedPage.map({ $0 < 1 || $0 > pageCount }) == true {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        if let database, cachedPageCount == nil {
             _ = preparePDFRecord(item: item, storageID: scheduled.storageID, signature: scheduled.signature,
-                                 pageCount: document.pageCount, in: database)
+                                 pageCount: pageCount, in: database)
         }
         let firstPage = requestedPage.map { $0 - 1 } ?? startingOrder / 1_000
-        let endPage = requestedPage ?? document.pageCount
+        let endPage = requestedPage ?? pageCount
         var partial = false
         var failed: [Int: String] = [:]
         var nextCursor: String?
         if firstPage < endPage {
             for pageIndex in firstPage..<endPage {
-                guard !Task.isCancelled, Self.fileSignature(for: item) == scheduled.signature,
-                      let extraction = pdfPageText(item: item, storageID: scheduled.storageID,
-                        signature: scheduled.signature, url: url, document: document,
-                        pageIndex: pageIndex, in: database) else {
+                guard !Task.isCancelled, Self.fileSignature(for: item) == scheduled.signature else {
+                    return CourseDocumentIndexResult(text: nil, isTruncated: true, availability: .unavailable)
+                }
+                let cached = database.flatMap {
+                    cachedPDFPage(storageID: scheduled.storageID, signature: scheduled.signature, pageIndex: pageIndex, in: $0)
+                }
+                guard let extraction = cached ?? loadDocument().flatMap({ snapshot in
+                    pdfPageText(item: item, storageID: scheduled.storageID, signature: scheduled.signature,
+                        url: snapshot.url, document: snapshot.document, pageIndex: pageIndex, in: database)
+                }) else {
                     return CourseDocumentIndexResult(text: nil, isTruncated: true, availability: .unavailable)
                 }
                 partial = partial || extraction.kind.hasSuffix("-partial")
@@ -742,7 +767,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         let failedReasons = (status?.failedPageReasons ?? [:]).merging(failed) { _, current in current }
         return CourseDocumentIndexResult(text: nil, isTruncated: partial || !failed.isEmpty,
             availability: failed.isEmpty ? .ready : .unavailable, nextCursor: nextCursor, sourceRevision: scheduled.signature,
-            indexedPageCount: status?.indexedPageIndexes.count, totalPageCount: document.pageCount,
+            indexedPageCount: status?.indexedPageIndexes.count, totalPageCount: pageCount,
             uncoveredPageIndexes: status?.uncoveredPageIndexes ?? [],
             failedPageIndexes: failedReasons.keys.sorted(), failedPageReasons: failedReasons)
     }
@@ -797,20 +822,29 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             return cached
         }
         guard !Task.isCancelled, Self.fileSignature(for: item) == signature else { return nil }
+        let hasImages = Self.pdfPageContainsImages(document.page(at: pageIndex))
+        let native = (!nativeAlreadyAttempted || hasImages)
+            ? nativePDFTextLoader(url, [pageIndex], Self.maximumPDFPageCharacters, Self.foregroundPDFTextBudget)?[pageIndex]
+            : nil
+        let nativeText = native?.text ?? ""
         let extraction: (text: String, kind: String)
-        if !nativeAlreadyAttempted,
-           let native = nativePDFTextLoader(url, [pageIndex], Self.maximumPDFPageCharacters, Self.foregroundPDFTextBudget)?[pageIndex],
-           Self.hasMeaningfulText(native.text) {
-            extraction = (native.text, native.isPartial ? "text-partial" : "text")
+        if Self.hasMeaningfulText(nativeText), !hasImages {
+            extraction = (nativeText, native?.isPartial == true ? "text-partial" : "text")
         } else {
             switch pdfOCRPageLoader(document, pageIndex) {
             case let .text(page):
-                let text = String(page.text.prefix(Self.maximumPDFPageCharacters))
-                extraction = (text, text.count < page.text.count ? "ocr-partial" : "ocr")
+                // OCR 补图片正文；保留识别结果未覆盖的原生文字。
+                let recognizedLines = Set(page.lines.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) })
+                let nativeLines = nativeText.split(separator: "\n").map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { !$0.isEmpty && !recognizedLines.contains($0) }
+                let combined = ([page.text] + nativeLines).joined(separator: "\n")
+                let text = String(combined.prefix(Self.maximumPDFPageCharacters))
+                extraction = (text, text.count < combined.count || native?.isPartial == true ? "ocr-partial" : "ocr")
             case .empty:
-                extraction = ("", "empty")
+                extraction = (nativeText, native?.isPartial == true ? "text-partial" : (nativeText.isEmpty ? "empty" : "text"))
             case let .failed(_, reason):
-                extraction = ("", "ocr-failed-\(reason.rawValue)")
+                extraction = (nativeText, "ocr-failed-\(reason.rawValue)")
             }
         }
         guard !Task.isCancelled, Self.fileSignature(for: item) == signature else { return nil }
@@ -1103,7 +1137,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         switch item.kind {
         case .pdf:
             guard let file = VerifiedRegularFile(item: item),
-                  "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+                  "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                     == signature,
                   let snapshotURL = temporarySnapshot(of: file) else {
                 return false
@@ -1258,7 +1292,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 guard isExpected(signature: signature, for: storageID),
                       Self.fileSignature(for: item) == signature else { return false }
                 if let extraction = extractions[pageIndex],
-                   Self.hasMeaningfulText(extraction.text) {
+                   Self.hasMeaningfulText(extraction.text),
+                   !Self.pdfPageContainsImages(document.page(at: pageIndex)) {
                     let extractionKind = extraction.isPartial ? "text-partial" : "text"
                     guard replacePDFPage(
                         itemID: storageID,
@@ -1292,7 +1327,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         guard isExpected(signature: signature, for: storageID),
               Self.fileSignature(for: item) == signature,
               let file = VerifiedRegularFile(item: item),
-              "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+              "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                 == signature,
               let snapshotURL = temporarySnapshot(of: file) else { return }
         defer { try? FileManager.default.removeItem(at: snapshotURL) }
@@ -1940,7 +1975,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
     private static func fileSignature(for item: StudyItem) -> String? {
         guard let metadata = VerifiedRegularFile(item: item)?.metadata else { return nil }
-        return "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+        return "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
     }
 
     private static func scheduledItem(_ item: StudyItem) -> ScheduledItem? {
@@ -1950,7 +1985,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         return ScheduledItem(
             item: item,
             storageID: storageID(for: item.id),
-            signature: "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+            signature: "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
         )
     }
 
@@ -1964,7 +1999,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         expectedSignature: String
     ) -> [TextSection]? {
         guard let file = VerifiedRegularFile(item: item),
-              "\(item.kind == .markdown ? "md7" : "v6")#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+              "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                 == expectedSignature,
               let data = file.readData(afterOpen: verifiedFileDidOpen) else {
             return nil
@@ -2070,6 +2105,67 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             hash = hash &* 16_777_619
         }
         return String(format: "html-section-%08x", hash)
+    }
+
+    private struct PDFImageScan {
+        var found = false
+        var activeForms: Set<CGPDFStreamRef> = []
+        var resources: CGPDFContentStreamRef?
+    }
+
+    private static func pdfPageContainsImages(_ page: PDFPage?) -> Bool {
+        guard let page = page?.pageRef else { return true }
+        var scan = PDFImageScan()
+        scanPDFImages(CGPDFContentStreamCreateWithPage(page), state: &scan)
+        return scan.found
+    }
+
+    private static func scanPDFImages(
+        _ content: CGPDFContentStreamRef, inheritedResources: CGPDFContentStreamRef? = nil, state: inout PDFImageScan
+    ) {
+        let previousResources = state.resources
+        state.resources = inheritedResources ?? content
+        defer { state.resources = previousResources; CGPDFContentStreamRelease(content) }
+        guard let operators = CGPDFOperatorTableCreate() else { state.found = true; return }
+        defer { CGPDFOperatorTableRelease(operators) }
+        CGPDFOperatorTableSetCallback(operators, "BI") { scanner, info in
+            guard let info else { return }
+            info.assumingMemoryBound(to: PDFImageScan.self).pointee.found = true
+            CGPDFScannerStop(scanner)
+        }
+        CGPDFOperatorTableSetCallback(operators, "Do") { scanner, info in
+            guard let info else { return }
+            let state = info.assumingMemoryBound(to: PDFImageScan.self)
+            var name: UnsafePointer<CChar>?
+            guard CGPDFScannerPopName(scanner, &name), let name else { return }
+            let parent = CGPDFScannerGetContentStream(scanner)
+            guard let resources = state.pointee.resources,
+                  let object = CGPDFContentStreamGetResource(resources, "XObject", name) else { return }
+            var stream: CGPDFStreamRef?
+            guard CGPDFObjectGetValue(object, .stream, &stream), let stream else { return }
+            guard let dictionary = CGPDFStreamGetDictionary(stream) else { return }
+            var subtype: UnsafePointer<CChar>?
+            guard CGPDFDictionaryGetName(dictionary, "Subtype", &subtype), let subtype else { return }
+            switch String(cString: subtype) {
+            case "Image": state.pointee.found = true
+            case "Form":
+                if state.pointee.activeForms.insert(stream).inserted {
+                    defer { state.pointee.activeForms.remove(stream) }
+                    var resources: CGPDFDictionaryRef?
+                    _ = CGPDFDictionaryGetDictionary(dictionary, "Resources", &resources)
+                    CourseDocumentSearchIndex.scanPDFImages(
+                        CGPDFContentStreamCreateWithStream(stream, resources ?? dictionary, parent),
+                        inheritedResources: resources == nil ? state.pointee.resources : nil, state: &state.pointee)
+                }
+            default: break
+            }
+            if state.pointee.found { CGPDFScannerStop(scanner) }
+        }
+        withUnsafeMutablePointer(to: &state) { pointer in
+            let scanner = CGPDFScannerCreate(content, operators, pointer)
+            defer { CGPDFScannerRelease(scanner) }
+            if !CGPDFScannerScan(scanner) { pointer.pointee.found = true }
+        }
     }
 
     private static func hasMeaningfulText(_ text: String) -> Bool {
