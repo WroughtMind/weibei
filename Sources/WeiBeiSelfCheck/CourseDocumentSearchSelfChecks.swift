@@ -371,7 +371,79 @@ func checkCourseDocumentSearchReadiness() throws {
             && mainDecoded.entries.first?.sources.first?.itemID == "imported:material",
         "main 格式的历史档案数据应被完整读入,兼容字段保留不丢"
     )
+    try checkDirectSourceReading()
     try checkCourseDocumentSearchConnectionReuse()
+}
+
+// 保护原文不等完整索引、外部修改立即可读、同页 OCR 结果复用。
+private func checkDirectSourceReading() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("weibei-direct-read-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let item = try makeSearchItem("fresh", body: "# 原文\n磁盘上的内容", root: root)
+    let unavailableCache = root.appendingPathComponent("unavailable.sqlite3")
+    try FileManager.default.createDirectory(at: unavailableCache, withIntermediateDirectories: true)
+    let uncached = CourseDocumentSearchIndex(databaseURL: unavailableCache)
+    let first = uncached.read(item: item, location: nil, maximumCharacters: 3)
+    try requireSearchCheck(first.text == "# 原" && first.nextCursor != nil, "没有可用搜索缓存时不能直接读取原文")
+    let changed = "# 修改后的原文\n外部编辑立即生效"
+    try changed.write(to: root.appendingPathComponent("fresh.md"), atomically: true, encoding: .utf8)
+    try requireSearchCheck(uncached.read(item: item, location: nil).text == changed, "原文读取仍返回修改前的缓存")
+    try requireSearchCheck(uncached.read(item: item, location: nil, cursor: first.nextCursor).availability == .unavailable,
+                           "外部修改后仍接受旧游标")
+    try FileManager.default.removeItem(at: root.appendingPathComponent("fresh.md"))
+    try requireSearchCheck(uncached.read(item: item, location: nil).availability == .unavailable, "删除后仍能读到旧原文")
+
+    let pdfURL = root.appendingPathComponent("target.pdf")
+    try makeSearchRetryPDF(at: pdfURL, pageCount: 6)
+    let pdf = StudyItem(id: "direct-pdf", title: "direct-pdf", subtitle: "target.pdf", kind: .pdf,
+                        urlPath: pdfURL.path, isSample: false)
+    let probe = DirectPDFReadProbe()
+    let index = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("search.sqlite3"),
+        nativePDFTextLoader: { _, pages, _, _ in probe.native(pages) },
+        pdfOCRPageLoader: { _, page in probe.ocr(page) })
+    let native = index.read(item: pdf, page: 6, location: nil, maximumCharacters: 7)
+    try requireSearchCheck(native.text?.count == 7 && native.passages.first?.pageIndex == 5
+        && native.indexedPageCount == 1 && native.totalPageCount == 6
+        && native.uncoveredPageIndexes == [0, 1, 2, 3, 4]
+        && probe.nativePages == [5] && probe.ocrPages.isEmpty,
+        "读取指定原生文字页却提取了其他页或进行了 OCR")
+    let continuation = index.read(item: pdf, page: 6, location: nil, cursor: native.nextCursor)
+    try requireSearchCheck((native.text ?? "") + (continuation.text ?? "") == DirectPDFReadProbe.nativeText
+        && probe.nativePages == [5], "PDF 续读遗漏正文或重复提取")
+    let scanned = index.read(item: pdf, page: 4, location: nil)
+    let repeated = index.read(item: pdf, page: 4, location: nil)
+    try requireSearchCheck(scanned.text == DirectPDFReadProbe.ocrText && repeated.text == scanned.text
+        && probe.nativePages == [5, 3] && probe.ocrPages == [3], "扫描页读取没有复用同页识别结果")
+    index.schedule([pdf])
+    let searched = waitForSearchResult(until: Date().addingTimeInterval(8)) {
+        index.searchPassages(item: pdf, query: DirectPDFReadProbe.ocrText)
+    } where: { $0.availability == .ready }
+    try requireSearchCheck(searched?.passages.contains(where: { $0.pageIndex == 3 }) == true
+        && probe.ocrPages.filter({ $0 == 3 }).count == 1,
+        "直接读取的识别结果未被后续搜索或后台索引复用")
+}
+
+private final class DirectPDFReadProbe: @unchecked Sendable {
+    static let nativeText = "短页原生文字也应直接读取"
+    static let ocrText = "扫描页面按需识别 " + String(repeating: "内容", count: 20)
+    private let lock = NSLock()
+    private var nativeCalls: [Int] = []
+    private var ocrCalls: [Int] = []
+    var nativePages: [Int] { lock.lock(); defer { lock.unlock() }; return nativeCalls }
+    var ocrPages: [Int] { lock.lock(); defer { lock.unlock() }; return ocrCalls }
+    func native(_ pages: [Int]) -> [Int: BoundedPDFTextPage] {
+        lock.lock(); defer { lock.unlock() }
+        nativeCalls += pages
+        return Dictionary(uniqueKeysWithValues: pages.filter { $0 != 3 }.map {
+            ($0, BoundedPDFTextPage(text: Self.nativeText, isPartial: false))
+        })
+    }
+    func ocr(_ page: Int) -> PDFOCRPageOutcome {
+        lock.lock(); defer { lock.unlock() }
+        ocrCalls.append(page)
+        return .text(PDFOCRPage(pageIndex: page, lines: [PDFOCRLine(text: Self.ocrText, boundingBox: .zero)]))
+    }
 }
 
 func checkCourseDocumentSearchConnectionReuse() throws {

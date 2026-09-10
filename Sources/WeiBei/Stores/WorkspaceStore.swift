@@ -3317,6 +3317,15 @@ final class WorkspaceStore: ObservableObject {
         return notesByItemID[item.id] ?? loadedCourseNoteTextByItemID[item.id]
     }
 
+    private func agentToolNoteText(for item: StudyItem, editorText: String? = nil) -> String? {
+        guard let text = pendingNotePersistenceByItemID[item.id]?.markdown ?? editorText
+            ?? loadedAgentNoteText(for: item) else { return nil }
+        guard item.editsBackingMarkdownFile,
+              pendingNotePersistenceByItemID[item.id] == nil,
+              let baseline = noteBackingContentDigestsByItemID[item.id] ?? item.contentDigest else { return text }
+        return Self.noteContentDigest(Data(text.utf8)) == baseline ? nil : text
+    }
+
     func select(itemID: String?) {
         WeiBeiPerf.measure("workspace.select") {
             guard let itemID,
@@ -7109,7 +7118,7 @@ final class WorkspaceStore: ObservableObject {
             let courseIDs = itemCourseIDs.map { $0.uuidString.lowercased() }
             let courseTitles = itemCourseIDs.compactMap { coursesByID[$0] }
             let baseSubtitle = displaySubtitle(for: item)
-            let memoryText = loadedAgentNoteText(for: item)
+            let memoryText = agentToolNoteText(for: item)
             let sourceRevision = memoryText.map(
                 CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
             ) ?? CourseDocumentSearchIndex.sourceRevision(for: item)
@@ -8027,12 +8036,24 @@ final class WorkspaceStore: ObservableObject {
             ?? ui("全部课程", "All Courses")
         let searchIndex = courseDocumentSearchIndex
 
-        return { request in
+        return { [weak self] request in
+            let currentSources = await MainActor.run { [weak self] in
+                guard let self else { return [AgentHostToolSource]() }
+                let current = Dictionary(uniqueKeysWithValues: self.makeAgentProjectAccessSnapshot(target: target)
+                    .sources.map { ($0.item.id, $0) })
+                return sources.compactMap { captured in
+                    guard var source = current[captured.item.id] else { return nil }
+                    // 外部冲突尚未解决时，编辑器快照不会写入笔记状态；保留本次提问时的草稿。
+                    if self.noteEditorRecoveryConflictsByItemID[captured.item.id] != nil,
+                       let markdown = captured.memoryText { source.memoryText = markdown }
+                    return source
+                }
+            }
             let task = Task.detached(priority: .userInitiated) {
                 try await Self.executeAgentHostTool(
                     request,
                     title: title,
-                    sources: sources,
+                    sources: currentSources,
                     links: links,
                     searchIndex: searchIndex
                 )
@@ -9520,7 +9541,8 @@ final class WorkspaceStore: ObservableObject {
                 if let snapshot, snapshot.documentID == sentNoteItemID {
                     sentNoteText = snapshot.markdown
                     if let index = projectAccess.sources.firstIndex(where: { $0.item.id == snapshot.documentID }) {
-                        projectAccess.sources[index].memoryText = snapshot.markdown
+                        projectAccess.sources[index].memoryText = agentToolNoteText(
+                            for: projectAccess.sources[index].item, editorText: snapshot.markdown)
                     }
                 }
             }

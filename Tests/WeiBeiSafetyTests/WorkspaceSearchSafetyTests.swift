@@ -138,6 +138,20 @@ final class WorkspaceSearchSafetyTests: XCTestCase {
         XCTAssertEqual(reopened.noteEditorCommand?.markdown, "91")
         XCTAssertEqual(reopened.noteEditorCommand?.value, otherNote.id)
 
+        // 同一个工具会话应读到外部修改；有未保存编辑时使用当前草稿。
+        let diskText = "# 外部修改\nFreshDiskSourceToken"
+        let noteURL = try XCTUnwrap(currentNote.url)
+        try diskText.write(to: noteURL, atomically: true, encoding: .utf8)
+        let fresh = try await handler(.courseRead(itemID: currentNote.id, page: nil, location: nil,
+                                                  cursor: nil, maximumCharacters: 100))
+        XCTAssertEqual(fresh.items.compactMap { $0.source?.excerpt }.joined(), diskText)
+        let draftText = "# 未保存编辑\nCurrentDraftSourceToken"
+        store.scheduleNotePersistence(draftText, for: currentNote)
+        store.pendingNotePersistenceTasks.removeValue(forKey: currentNote.id)?.cancel()
+        let draft = try await handler(.courseRead(itemID: currentNote.id, page: nil, location: nil,
+                                                  cursor: nil, maximumCharacters: 100))
+        XCTAssertEqual(draft.items.compactMap { $0.source?.excerpt }.joined(), draftText)
+
     }
 
     private func importMarkdown(
