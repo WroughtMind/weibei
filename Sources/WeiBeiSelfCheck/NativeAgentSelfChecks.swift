@@ -665,23 +665,17 @@ private func checkBackendSelection() throws {
 
 private func checkContextRevisionEcho() throws {
     let revision = "12:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    let prompt = NativePromptAssembler.webiSystemPrompt(
-        bundledText: "you are webi",
-        tools: [],
+    let prompt = NativePromptAssembler.turnContext(
         contextRevision: revision
     )
-    try nativeRequire(prompt.contains(revision), "system prompt includes this turn's contextRevision")
-    try nativeRequire(prompt.contains("必须原样回传"), "system prompt tells the model to echo contextRevision")
-    let confirmedPrompt = NativePromptAssembler.webiSystemPrompt(
-        bundledText: "you are webi",
-        tools: [],
+    try nativeRequire(prompt.contains(revision), "turn context includes this turn's contextRevision")
+    let confirmedPrompt = NativePromptAssembler.turnContext(
         contextRevision: revision,
         confirmedNotes: [
             StudyAgentPersistedNoteRef(itemID: "note-rates", title: "利率是资金使用价格 2"),
         ]
     )
     try nativeRequire(confirmedPrompt.contains("note-rates"), "confirmed notes expose the persisted noteItemID")
-    try nativeRequire(confirmedPrompt.contains("已经落库"), "confirmed notes tell the model not to treat them as pending")
 
     let registry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }

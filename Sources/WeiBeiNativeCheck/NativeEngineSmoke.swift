@@ -4,6 +4,19 @@ import WeiBeiCore
 
 enum NativeEngineSmoke {
     static func runIfRequested(arguments: [String]) async -> Bool {
+        if let index = arguments.firstIndex(of: "--native-cache-smoke") {
+            do {
+                guard let token = arguments.dropFirst(index + 1).first,
+                      let provider = AgentProviderID(rawValue: token) else {
+                    throw NativeLLMFailure(code: "invalid_provider", message: "用法：--native-cache-smoke <provider-id>")
+                }
+                try await runCacheSmoke(provider: provider)
+            } catch {
+                fputs("native-cache-smoke failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            return true
+        }
         if arguments.contains("--native-perf") {
             do {
                 try await runDeepSeekPerf()
@@ -215,6 +228,61 @@ enum NativeEngineSmoke {
         try await runLivePlainQA(adapter: adapter, model: model, label: label)
         try await runLiveCourseTool(adapter: adapter, model: model, label: label)
         try await runLiveCancel(adapter: adapter, model: model, label: label)
+    }
+
+    private static func runCacheSmoke(provider: AgentProviderID) async throws {
+        let route = NativeProviderRouting.route(provider)
+        let model = ProcessInfo.processInfo.environment["WEIBEI_NATIVE_LIVE_MODEL"] ?? route.defaultModel
+        let adapter = try await NativeLLMAdapterFactory.make(
+            provider: provider, model: model,
+            endpoint: AgentProviderEndpoint(provider: provider, baseURL: "")
+        )
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-cache-smoke-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let chatID = UUID().uuidString.lowercased()
+        let runtime = NativeStudyAgentRuntime(
+            model: model, adapter: adapter, ledgerRoot: root,
+            systemPromptText: try AgentResources.bundled().systemPrompt
+        )
+        // 第二轮补充足够长的合成资料，第三轮命中必须越过首轮长度，避免只测到固定提示预热。
+        let material = String(repeating: "测试资料：本次对话的代号是杉木，后续回答只需保留这个代号。\n", count: 120)
+        let questions = [
+            "缓存验证：记住代号「杉木」，仅回复收到，不要调用工具。",
+            "补充测试资料：\n\(material)\n刚才的代号是什么？只回答代号，不要调用工具。",
+            "再次回答这个代号，只回答代号，不要调用工具。",
+        ]
+        var firstInputTokens: Int?
+        var lastCacheRead: Int?
+        for (index, question) in questions.enumerated() {
+            let first = FirstTokenBox()
+            let started = Date()
+            let reply = try await runtime.respond(
+                to: StudyAgentRequest(
+                    purpose: .conversation, question: question,
+                    materialTitle: "", materialText: "", noteTitle: "", noteText: "",
+                    projectScope: StudyAgentProjectScope(kind: .global, chatID: chatID),
+                    contextRevision: "\(index):\(UUID().uuidString)"
+                ),
+                progress: { progress in
+                    if case .text = progress { await first.mark(since: started) }
+                }
+            )
+            guard !reply.text.isEmpty, index == 0 || reply.text.contains("杉木") else {
+                throw NativeLLMFailure(code: "cache_smoke_answer", message: "缓存验证未保留前轮代号")
+            }
+            let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("\(chatID)/ledger.jsonl"))
+            let usage = (await ledger.allEvents()).filter { $0.turn == index + 1 }.compactMap(\.usage)
+            lastCacheRead = usage.last?.cacheReadTokens
+            let inputTokens = usage.last.map { $0.inputTokens + ($0.cacheReadTokens ?? 0) + ($0.cacheWriteTokens ?? 0) }
+            if index == 0 { firstInputTokens = inputTokens }
+            let read = lastCacheRead.map(String.init) ?? "unreported"
+            let input = inputTokens.map(String.init) ?? "unreported"
+            print("native-cache-smoke provider=\(provider.rawValue) model=\(model) turn=\(index + 1) input=\(input) cache_read=\(read) ttft=\(fmt(await first.seconds))")
+        }
+        guard let firstInputTokens, let lastCacheRead, lastCacheRead > firstInputTokens else {
+            throw NativeLLMFailure(code: "cache_not_observed", message: "本次连续请求未观察到缓存随历史增长；不能据此声明对话缓存已验证")
+        }
+        print("native-cache-smoke passed")
     }
 
     private static func runLivePlainQA(adapter: NativeLLMAdapter, model: String, label: String) async throws {

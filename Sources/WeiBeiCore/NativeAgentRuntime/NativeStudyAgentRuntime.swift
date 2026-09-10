@@ -65,9 +65,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         let prompt = NativePromptAssembler.webiSystemPrompt(
             bundledText: systemPromptText,
             tools: tools,
-            skillCatalog: liveStores.skillRegistry.catalogSummary(),
-            contextRevision: request.contextRevision,
-            confirmedNotes: request.confirmedNotes
+            skillCatalog: liveStores.skillRegistry.catalogSummary()
         )
         var stores = liveStores
         if stores.startSubagent == nil {
