@@ -779,9 +779,14 @@ final class StableDocumentSplitCoordinator {
         guard let previousAgentWidth,
               let agentHost = splitView.roleHosts[.agent],
               abs(previousAgentWidth - agentHost.frame.width) > 0.5 else { return }
-        // NSHostingView can defer SwiftUI's new width until the current window or
-        // divider event ends. Flush only the resized chat host at the shared frame path.
+        // UIKit combines intermediate pointer widths in its next display pass.
+        // Forcing layout here would rewrap the whole conversation for each event.
+#if targetEnvironment(macCatalyst)
+        agentHost.requestPaneLayout()
+#else
+        // NSHostingView needs its new width flushed within the divider event.
         agentHost.layoutPaneNow()
+#endif
     }
 
     private func animateFrames(
@@ -1139,7 +1144,6 @@ private extension Array {
 private extension UIView {
     var paneOpacity: CGFloat { get { alpha } set { alpha = newValue } }
     func requestPaneLayout() { setNeedsLayout() }
-    func layoutPaneNow() { layoutIfNeeded() }
     func setAnimatedPaneFrame(_ value: CGRect) { frame = value }
     func setAnimatedPaneOpacity(_ value: CGFloat) { alpha = value }
 }

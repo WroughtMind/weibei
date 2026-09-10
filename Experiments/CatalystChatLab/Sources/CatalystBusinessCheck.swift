@@ -206,6 +206,8 @@ enum CatalystBusinessCheck {
             try await until("stopped message displayed") { !store.isAgentRunningInActiveChat && controller.messages.last?.state == .stopped }
             try check("stop_preserves_received_text", store.messages.last?.completionState == .interrupted
                 && store.messages.last?.text.hasPrefix(received) == true && controller.messages.last?.markdown.hasPrefix(received) == true)
+            try await verifyDividerResize(controller)
+            try check("divider_batches_widths_and_reflows_during_drag", true)
             result["workspace_history"] = try await measureWorkspaceHistory(store)
             try check("history_and_long_answer_through_original_messages", true)
             guard await store.flushPendingWorkspaceSaveAsync() else { throw Failure("workspace save failed") }
@@ -218,6 +220,35 @@ enum CatalystBusinessCheck {
             try? write("failed")
             store.showImportantOperationError("候选业务检查失败：\(error.localizedDescription)")
             if CommandLine.arguments.contains("--exit-after-check") { exit(1) }
+        }
+    }
+
+    private static func verifyDividerResize(_ controller: ConversationController) async throws {
+        guard let window = controller.view.window,
+              let split = descendants(window).compactMap({ $0 as? StableDocumentSplitView }).first,
+              split.dividerViews.count == 2, split.dividerViews.allSatisfy({ !$0.isHidden }) else {
+            throw Failure("three-pane dividers unavailable")
+        }
+        for (index, divider) in split.dividerViews.enumerated() {
+            let originalWidth = controller.bodyWidth
+            let measurements = controller.store.measureCount
+            divider.onDragStart?()
+            do {
+                defer { divider.onDragChange?(0); divider.onDragEnd?() }
+                for delta in [CGFloat(6), 12, 18] {
+                    divider.onDragChange?(index == 0 ? delta : -delta)
+                }
+                guard controller.store.measureCount == measurements else {
+                    throw Failure("intermediate divider widths synchronously remeasured the conversation")
+                }
+                // Await a display pass while the pointer remains held: text must
+                // reflow now, not wait for onDragEnd to catch up.
+                try await until("conversation reflows during divider drag") {
+                    abs(controller.bodyWidth - originalWidth) > 1
+                        && controller.bodyWidth == controller.workspaceBodyWidth
+                }
+            }
+            try await until("divider restores original width") { abs(controller.bodyWidth - originalWidth) < 1 }
         }
     }
 
