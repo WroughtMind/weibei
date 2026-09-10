@@ -12,9 +12,12 @@ rm -rf _site
 mkdir -p _site
 cp -R website/. _site/
 rm -rf _site/qa
+python3 website/seo/build.py _site
+python3 website/seo/check.py _site
 touch _site/.nojekyll
 test -s _site/index.html
 test -s _site/feedback.html
 test -s _site/assets/WeiBeiStele.ttf
 test -s _site/assets/第一幕-真实首页截图-去黑边.webp
 test -s _site/paper-fold.css
+

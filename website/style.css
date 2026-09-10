@@ -460,3 +460,14 @@ html[data-scene="4"] body::after { visibility: visible; }
   html[data-scene="1"] .blank-layer, html[data-scene="2"] .experience-layer, html[data-scene="3"] .themes-layer, html[data-scene="4"] .release-layer { opacity: 1 !important; visibility: visible; }
   .release-destination { clip-path: none !important; opacity: 1 !important; transform: none !important; }
 }
+
+
+/* Keep product information in the existing first-scene copy area. */
+.hero-tagline h1 { margin: 0; font: inherit; letter-spacing: inherit; }
+.hero-description { max-width: min(29em, 26vw); margin: 10px 0 6px; font: 13px/1.8 system-ui, sans-serif; letter-spacing: .02em; white-space: normal; }
+.hero-guide { font: 13px/1.8 system-ui, sans-serif; letter-spacing: .02em; text-decoration: underline; text-underline-offset: 4px; }
+html[lang="en"] .hero-tagline { max-width: 26vw; white-space: normal; }
+@media (max-width: 760px) {
+  html[lang="en"] .hero-tagline { max-width: none; }
+  .hero-description { max-width: 31em; margin: 6px auto 2px; font-size: 12px; }
+}

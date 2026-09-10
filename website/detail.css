@@ -67,3 +67,13 @@
   .feedback-submit { width: 100%; }
   .feedback-status { text-align: left; }
 }
+
+
+.guide-shell { max-width: 960px; }
+.guide-shell section { margin: 42px 0; scroll-margin-top: 100px; }
+.guide-shell h2 { font-size: clamp(21px, 3vw, 28px); font-weight: 500; line-height: 1.5; }
+.guide-shell p, .guide-shell li { line-height: 1.9; }
+.guide-index, .guide-links { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+.guide-shell a { text-decoration: underline; text-underline-offset: 4px; }
+.guide-screenshot { display: block; width: 100%; height: auto; margin: 32px 0; }
+.guide-shell pre { overflow-x: auto; padding: 20px; background: rgba(255,255,255,.35); font-size: 13px; line-height: 1.8; }
