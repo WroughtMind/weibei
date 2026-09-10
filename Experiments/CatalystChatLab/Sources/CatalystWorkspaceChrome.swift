@@ -386,7 +386,8 @@ struct CatalystWindowChrome: UIViewRepresentable {
             scene.sizeRestrictions?.minimumSize = CGSize(width: 520, height: 720)
             window.isOpaque = !mode.isGlass
             window.backgroundColor = WeiBeiNativePalette.paper(for: mode)
-            window.rootViewController?.view.backgroundColor = .clear
+            // A nonzero root surface keeps Catalyst pointer events in transparent gaps.
+            window.rootViewController?.view.backgroundColor = UIColor(white: 0, alpha: 1.0 / 255)
             window.overrideUserInterfaceStyle = mode.isDark ? .dark : .light
         }
     }

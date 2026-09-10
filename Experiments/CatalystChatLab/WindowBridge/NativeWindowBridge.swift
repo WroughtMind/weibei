@@ -22,7 +22,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         // background/PiP window need not become key. Apply input settings too.
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: nil, queue: .main) { [weak self] note in
             guard let self, let window = note.object as? NSWindow,
-                  !window.acceptsMouseMovedEvents || window.isMovableByWindowBackground
+                  !window.acceptsMouseMovedEvents
                     || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
             self.apply(to: window)
         })
@@ -34,7 +34,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private func apply(to window: NSWindow) {
         guard window.styleMask.contains(.titled), let content = window.contentView else { return }
         window.acceptsMouseMovedEvents = true
-        window.isMovableByWindowBackground = false
         let glass = ["glassLight", "glassDark", "glassMist", "glassSlate"].contains(mode)
         window.isOpaque = !glass
         guard glass else {
