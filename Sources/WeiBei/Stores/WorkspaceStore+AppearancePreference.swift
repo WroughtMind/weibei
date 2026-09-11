@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import Foundation
 
 /// 外观跟随偏好：跟随系统 / 浅色 / 深色。存 UserDefaults，不进冻结主文件。
@@ -143,7 +147,11 @@ extension WorkspaceStore {
     }
 
     static var systemPrefersDarkAppearance: Bool {
+#if targetEnvironment(macCatalyst)
+        UITraitCollection.current.userInterfaceStyle == .dark
+#else
         NSApp?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+#endif
     }
 
     /// 系统深浅切换（或切到“跟随系统”）时换到同对伙伴；静态浅色/深色不动。

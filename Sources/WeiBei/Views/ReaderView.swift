@@ -1,3 +1,12 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+private typealias ReaderRepresentable = UIViewRepresentable
+typealias ReaderOverlayView = UIView
+#else
+import AppKit
+private typealias ReaderRepresentable = NSViewRepresentable
+typealias ReaderOverlayView = NSView
+#endif
 import Foundation
 import PDFKit
 import SwiftUI
@@ -5,9 +14,7 @@ import UniformTypeIdentifiers
 import WeiBeiCore
 import WebKit
 
-extension Notification.Name {
-    static let weiBeiScrollAgentToMessage = Notification.Name("WeiBeiScrollAgentToMessage")
-}
+
 
 /// 浮动标题可选的行内重命名支持：传入后标题可点击进入编辑，提交 / 取消由调用方负责。
 struct HoverTitleRename {
@@ -160,7 +167,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
             .frame(width: 220)
             .focused($titleFieldFocused)
             .onSubmit(titleRename.commit)
-            .onExitCommand(perform: titleRename.cancel)
+            .weiBeiOnExitCommand(perform: titleRename.cancel)
             .help(titleRename.hint)
             .onAppear {
                 renameFieldAlive = true
@@ -183,7 +190,9 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
             // 编辑已结束（提交/取消/切换笔记）就不再去抢焦点。
             guard renameFieldAlive else { return }
             // 焦点已在某个文本框里就不再打扰用户输入。
+#if !targetEnvironment(macCatalyst)
             guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return }
+#endif
             isReassertingTitleFocus = true
             titleFieldFocused = false
             DispatchQueue.main.async {
@@ -342,8 +351,8 @@ struct ReaderView: View {
             }
         }
         // Bind paper fill to the live mode so empty reader / page chrome tracks theme switches.
-        .background(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
-        .foregroundStyle(Color(nsColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
+        .background(Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
+        .foregroundStyle(Color(weiBeiNativeColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
         .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
@@ -1250,7 +1259,7 @@ private enum ReaderPlatformViewSizing {
     }
 }
 
-struct PDFReaderRepresentable: NSViewRepresentable {
+struct PDFReaderRepresentable: ReaderRepresentable {
     var url: URL
     var browseMode: PDFBrowseMode
     var searchQuery: String
@@ -1285,12 +1294,27 @@ struct PDFReaderRepresentable: NSViewRepresentable {
         )
     }
 
-    func makeNSView(context: Context) -> ReaderPDFView {
+#if targetEnvironment(macCatalyst)
+    func makeUIView(context: Context) -> ReaderPDFView { makeReaderView(context: context) }
+    func updateUIView(_ view: ReaderPDFView, context: Context) { updateReaderView(view, context: context) }
+    static func dismantleUIView(_ view: ReaderPDFView, coordinator: Coordinator) { dismantleReaderView(view, coordinator: coordinator) }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: ReaderPDFView, context: Context) -> CGSize? {
+        ReaderPlatformViewSizing.proposedReaderSize(proposal, fallback: uiView.bounds.size)
+    }
+#else
+    func makeNSView(context: Context) -> ReaderPDFView { makeReaderView(context: context) }
+    func updateNSView(_ view: ReaderPDFView, context: Context) { updateReaderView(view, context: context) }
+    static func dismantleNSView(_ view: ReaderPDFView, coordinator: Coordinator) { dismantleReaderView(view, coordinator: coordinator) }
+#endif
+
+    private func makeReaderView(context: Context) -> ReaderPDFView {
         let view = ReaderPDFView()
         view.autoScales = true
         view.displayDirection = .vertical
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
-        PDFReaderOpenSafety.disableAccessibilityTree(on: view)
+        #if !targetEnvironment(macCatalyst)
+                    PDFReaderOpenSafety.disableAccessibilityTree(on: view)
+#endif
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
@@ -1319,6 +1343,7 @@ struct PDFReaderRepresentable: NSViewRepresentable {
 
     /// Accept the SwiftUI proposal instead of Auto Layout fittingSize on PDFKit.
     /// Same hang class as HTML WKWebView: GeometryReader → PlatformView.sizeThatFits.
+#if !targetEnvironment(macCatalyst)
     func sizeThatFits(
         _ proposal: ProposedViewSize,
         nsView: ReaderPDFView,
@@ -1327,7 +1352,9 @@ struct PDFReaderRepresentable: NSViewRepresentable {
         ReaderPlatformViewSizing.proposedReaderSize(proposal, fallback: nsView.bounds.size)
     }
 
-    func updateNSView(_ view: ReaderPDFView, context: Context) {
+#endif
+
+    private func updateReaderView(_ view: ReaderPDFView, context: Context) {
         context.coordinator.pageIndex = $pageIndex
         context.coordinator.pageCount = $pageCount
         context.coordinator.appearanceMode = appearanceMode
@@ -1391,7 +1418,7 @@ struct PDFReaderRepresentable: NSViewRepresentable {
         }
     }
 
-    static func dismantleNSView(_ view: ReaderPDFView, coordinator: Coordinator) {
+    private static func dismantleReaderView(_ view: ReaderPDFView, coordinator: Coordinator) {
         coordinator.suspend()
         view.reportCurrentSelection = nil
     }
@@ -1478,9 +1505,13 @@ struct PDFReaderRepresentable: NSViewRepresentable {
                     .map(PDFReaderOpenSafety.pageHasNativeText) ?? false
                 DispatchQueue.main.async { [weak self, weak view] in
                     guard let self, let view, self.loadGeneration == generation, self.loadedURL == url else { return }
+                    #if !targetEnvironment(macCatalyst)
                     PDFReaderOpenSafety.disableAccessibilityTree(on: view)
+#endif
                     view.document = document
+                    #if !targetEnvironment(macCatalyst)
                     PDFReaderOpenSafety.disableAccessibilityTree(on: view)
+#endif
                     view.autoScales = true
                     self.pageCount.wrappedValue = document?.pageCount ?? 0
                     self.pageIndex.wrappedValue = 0
@@ -1667,6 +1698,16 @@ struct PDFReaderRepresentable: NSViewRepresentable {
                 self.updateSelectableTextState(in: view)
                 self.ensureOCRForCurrentPage(in: view)
             }
+#if targetEnvironment(macCatalyst)
+            (view as? ReaderPDFView)?.onPointerEvent = { [weak self, weak view] point, phase in
+                guard let self, let view else { return }
+                self.markUserNavigationIntent()
+                if let point { self.lastPointerInView = point }
+                if phase == .began { self.selectionReportGate.beginTracking() }
+                if phase == .ended || phase == .cancelled { self.selectionReportGate.endTracking() }
+                self.reportCurrentSelection(in: view)
+            }
+#else
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel, .keyDown]) { [weak self, weak view] event in
                 guard let self, let view, event.window === view.window else { return event }
                 if event.type == .keyDown {
@@ -1705,16 +1746,20 @@ struct PDFReaderRepresentable: NSViewRepresentable {
                 }
                 return event
             }
+#endif
         }
 
         private func markUserNavigationIntent() {
             userNavigationDeadline = Date().addingTimeInterval(0.9)
         }
 
+#if !targetEnvironment(macCatalyst)
         private func isFirstResponderInside(_ view: NSView) -> Bool {
             guard let responder = view.window?.firstResponder as? NSView else { return false }
             return responder === view || responder.isDescendant(of: view)
         }
+
+#endif
 
         private func removeObservers() {
             if let observer {
@@ -1725,10 +1770,14 @@ struct PDFReaderRepresentable: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(pageObserver)
                 self.pageObserver = nil
             }
+#if targetEnvironment(macCatalyst)
+            (observedView as? ReaderPDFView)?.onPointerEvent = nil
+#else
             if let eventMonitor {
                 NSEvent.removeMonitor(eventMonitor)
                 self.eventMonitor = nil
             }
+#endif
         }
 
         func reportCurrentSelection(in view: PDFView) {
@@ -1846,7 +1895,7 @@ struct PDFReaderRepresentable: NSViewRepresentable {
             askUnderlineHits = []
             hoveredAskThreadID = nil
             clearAskUnderlineAnnotations(in: document, includingHover: true)
-            let cinnabar = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.92)
+            let cinnabar = weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 0.92)
             for mark in marks {
                 if let pdf = mark.anchor?.pdf {
                     for (pageIndex, rects) in pdf.rectsByPage {
@@ -1878,7 +1927,7 @@ struct PDFReaderRepresentable: NSViewRepresentable {
             pageIndex: Int,
             lineBounds: CGRect,
             threadID: String,
-            cinnabar: NSColor
+            cinnabar: WeiBeiPlatformColor
         ) {
             guard lineBounds.width > 2, lineBounds.height > 0.5, pageIndex != NSNotFound else { return }
             var underlineBounds = lineBounds
@@ -1904,9 +1953,17 @@ struct PDFReaderRepresentable: NSViewRepresentable {
             hoveredAskThreadID = threadID
             applyAskUnderlineHoverHighlight(in: view)
             if threadID != nil {
+#if targetEnvironment(macCatalyst)
+                CatalystDesktopWindow.shared.setCursor("pointingHand")
+#else
                 NSCursor.pointingHand.set()
+#endif
             } else {
+#if targetEnvironment(macCatalyst)
+                CatalystDesktopWindow.shared.setCursor("iBeam")
+#else
                 NSCursor.iBeam.set()
+#endif
             }
         }
 
@@ -1945,7 +2002,7 @@ struct PDFReaderRepresentable: NSViewRepresentable {
             guard let document = view.document else { return }
             clearAskUnderlineAnnotations(in: document, includingHover: true, underlines: false)
             guard let threadID = hoveredAskThreadID else { return }
-            let fill = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.12)
+            let fill = weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 0.12)
             for hit in askUnderlineHits where hit.threadID == threadID {
                 guard let page = document.page(at: hit.pageIndex) else { continue }
                 let annotation = PDFAnnotation(bounds: hit.hitBounds, forType: .highlight, withProperties: nil)
@@ -2016,6 +2073,7 @@ struct PDFReaderRepresentable: NSViewRepresentable {
     }
 }
 
+#if !targetEnvironment(macCatalyst)
 final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
     var handleAskUnderlineHover: ((CGPoint) -> Void)?
@@ -2116,8 +2174,10 @@ final class ReaderPDFView: PDFView {
     }
 }
 
+#endif
+
 extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
-    func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
+    func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> ReaderOverlayView? {
         guard let document = view.document else { return nil }
         let index = document.index(for: page)
         guard index != NSNotFound, let ocrPage = ocrPagesByPageIndex[index] else { return nil }
@@ -2148,6 +2208,7 @@ extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
     }
 }
 
+#if !targetEnvironment(macCatalyst)
 private final class PDFOCRPageOverlayView: NSView {
     private let page: PDFOCRPage
     private let highlightedLineIndexes: Set<Int>
@@ -2270,6 +2331,8 @@ private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDele
         return SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)
     }
 }
+
+#endif
 
 private final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "weibeihtml"
@@ -2403,7 +2466,7 @@ private final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler
     )
 }
 
-struct WebReaderRepresentable: NSViewRepresentable {
+struct WebReaderRepresentable: ReaderRepresentable {
     var html: String?
     var url: URL?
     var searchQuery: String
@@ -2497,7 +2560,20 @@ struct WebReaderRepresentable: NSViewRepresentable {
         )
     }
 
-    func makeNSView(context: Context) -> WKWebView {
+#if targetEnvironment(macCatalyst)
+    func makeUIView(context: Context) -> WKWebView { makeReaderView(context: context) }
+    func updateUIView(_ view: WKWebView, context: Context) { updateReaderView(view, context: context) }
+    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) { dismantleReaderView(view, coordinator: coordinator) }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: WKWebView, context: Context) -> CGSize? {
+        ReaderPlatformViewSizing.proposedReaderSize(proposal, fallback: uiView.bounds.size)
+    }
+#else
+    func makeNSView(context: Context) -> WKWebView { makeReaderView(context: context) }
+    func updateNSView(_ view: WKWebView, context: Context) { updateReaderView(view, context: context) }
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) { dismantleReaderView(view, coordinator: coordinator) }
+#endif
+
+    private func makeReaderView(context: Context) -> WKWebView {
         let configuration = WeiBeiWebViewConfiguration.make(surface: .reader)
         let controller = WKUserContentController()
         for name in Self.scriptMessageNames {
@@ -2526,7 +2602,12 @@ struct WebReaderRepresentable: NSViewRepresentable {
         )
 
         let view = WKWebView(frame: .zero, configuration: configuration)
+#if targetEnvironment(macCatalyst)
+        view.isOpaque = false
+        view.backgroundColor = .clear
+#else
         view.setValue(false, forKey: "drawsBackground")
+#endif
         context.coordinator.webView = view
         view.navigationDelegate = context.coordinator
         return view
@@ -2535,6 +2616,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
     /// Accept the SwiftUI proposal instead of measuring WKWebView via Auto Layout.
     /// Hang report 2026-08-01: systemLayoutSizeFittingSize on the HTML reader blocked
     /// the main thread for ~30s after global chat published WorkspaceStore updates.
+#if !targetEnvironment(macCatalyst)
     func sizeThatFits(
         _ proposal: ProposedViewSize,
         nsView: WKWebView,
@@ -2543,7 +2625,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         ReaderPlatformViewSizing.proposedReaderSize(proposal, fallback: nsView.bounds.size)
     }
 
-    func updateNSView(_ view: WKWebView, context: Context) {
+#endif
+
+    private func updateReaderView(_ view: WKWebView, context: Context) {
         context.coordinator.searchQuery = searchQuery
         context.coordinator.onContentRailChange = onContentRailChange
         context.coordinator.onContentRailActiveChange = onContentRailActiveChange
@@ -2582,7 +2666,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         context.coordinator.applyContentRailTarget(in: view)
     }
 
-    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+    private static func dismantleReaderView(_ view: WKWebView, coordinator: Coordinator) {
         coordinator.cancelHTMLLoad()
         unbindScriptMessages(in: view)
         view.navigationDelegate = nil
@@ -2596,7 +2680,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
     }
 
     static let selectionRuntimeScript: String = {
-        guard let url = Bundle.module.url(forResource: "selection-runtime", withExtension: "js"),
+        guard let url = WeiBeiResources.selectionRuntimeURL,
               let script = try? String(contentsOf: url, encoding: .utf8) else {
             preconditionFailure("The bundled selection runtime is missing")
         }
@@ -3435,6 +3519,7 @@ private struct PlainTextReaderView: View {
     }
 }
 
+#if !targetEnvironment(macCatalyst)
 private struct SelectablePlainTextReader: NSViewRepresentable {
     var text: String
     var searchQuery: String
@@ -3489,7 +3574,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
             ]
         )
         let full = NSRange(location: 0, length: attributed.length)
-        let cinnabar = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 1)
+        let cinnabar = weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 1)
         for snippet in underlineSnippets {
             let needle = snippet.trimmingCharacters(in: .whitespacesAndNewlines)
             guard needle.count >= 4 else { continue }
@@ -3659,3 +3744,5 @@ struct EscapeKeyBridge: NSViewRepresentable {
         }
     }
 }
+
+#endif

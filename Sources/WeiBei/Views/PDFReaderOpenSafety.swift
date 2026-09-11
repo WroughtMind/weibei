@@ -1,4 +1,6 @@
+#if !targetEnvironment(macCatalyst)
 import AppKit
+#endif
 import Foundation
 import PDFKit
 import WeiBeiCore
@@ -7,6 +9,7 @@ import WeiBeiCore
 /// Full-document `page.string` and PDFKit's tagged accessibility tree
 /// freeze the UI on multi-page papers.
 enum PDFReaderOpenSafety {
+#if !targetEnvironment(macCatalyst)
     static func disableAccessibilityTree(on view: PDFView) {
         view.setAccessibilityElement(false)
         view.setAccessibilityRole(.none)
@@ -14,6 +17,8 @@ enum PDFReaderOpenSafety {
         view.documentView?.setAccessibilityElement(false)
         view.documentView?.setAccessibilityChildren(nil)
     }
+
+#endif
 
     static func pageHasNativeText(_ page: PDFPage) -> Bool {
         page.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false

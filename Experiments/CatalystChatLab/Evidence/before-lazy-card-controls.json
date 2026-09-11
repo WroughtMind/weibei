@@ -1,0 +1,531 @@
+{
+  "body_block_count" : 517,
+  "body_width_pt" : 724,
+  "build_configuration" : "Release",
+  "bundle_id" : "org.weibei.CatalystChatLab",
+  "checks" : {
+    "card_draft_and_fold_persist" : "passed",
+    "code_highlight_selection_and_scroll_persist" : "passed",
+    "cross_paragraph_copy_survives_reuse" : "passed",
+    "image_arrival_preserves_reading_text" : "passed",
+    "math_image_and_diagram_resources" : "passed",
+    "prepend_preserves_reading_text" : "passed",
+    "replay_stop_complete_and_history_reading" : "passed",
+    "resize_preserves_reading_paragraph" : "passed",
+    "single_long_answer_complete_and_revisitable" : "passed",
+    "stream_keeps_unchanged_blocks_and_tail" : "passed"
+  },
+  "font_size_pt" : 16,
+  "frame_evidence_boundary" : "CADisplayLink callback delivery intervals during programmatic scrolling; these are not GPU presentation timestamps and are not FPS or human trackpad acceptance.",
+  "idiom" : "mac",
+  "measure_count" : 3579,
+  "message_count" : 1,
+  "parse_count" : 394,
+  "peak_block_views" : 63,
+  "platform" : "Mac Catalyst",
+  "recorded_at" : "2026-09-08T21:47:15Z",
+  "render_count" : 2388,
+  "resident_memory_bytes" : 351584256,
+  "retained_block_views" : 63,
+  "samples" : {
+    "history_body_block_count" : [
+      739
+    ],
+    "history_first_prepare_and_layout_ms" : [
+      9440.2592916666217
+    ],
+    "history_message_count" : [
+      241
+    ],
+    "history_outbound_display_callback_interval_ms" : [
+      247.15412500000866,
+      133.32954166668287,
+      166.63695833329939,
+      185.37075000000414,
+      281.35450000002038,
+      316.63083333330633,
+      211.06887500002358,
+      247.93012499998213,
+      234.42704166666317,
+      217.75841666669749,
+      240.54520833328752,
+      184.54404166669747,
+      230.37862500001438,
+      349.99324999995451,
+      333.36020833337443,
+      183.30116666663798,
+      200.37612499999113,
+      216.27995833335945,
+      217.22987499998681,
+      249.70654166668282,
+      233.35466666668481,
+      266.42229166662901,
+      233.30200000003742,
+      233.38924999995925,
+      316.60595833335492
+    ],
+    "history_resident_memory_bytes" : [
+      176472064
+    ],
+    "history_return_display_callback_interval_ms" : [
+      99.992291666637811,
+      150.00775000004296,
+      249.99524999998357,
+      250.00349999999116,
+      251.75887500000727,
+      298.51620833335346,
+      299.76099999998951,
+      333.34133333329419,
+      216.65741666669192,
+      199.98737499997787,
+      233.31387500002165,
+      200.03579166666441,
+      216.63137500001994,
+      250.04512499998555,
+      199.99129166666307,
+      233.29566666666324,
+      199.99095833333058,
+      250.04191666670295,
+      249.97204166663778,
+      166.6942083333538,
+      216.66983333329881,
+      316.6457500000206,
+      299.9867500000164,
+      253.04283333332478,
+      263.68020833331229,
+      283.29270833336295
+    ],
+    "history_scroll_distance_pt" : [
+      82760
+    ],
+    "history_scroll_message_count" : [
+      321
+    ],
+    "history_scroll_new_measurements" : [
+      0
+    ],
+    "history_scroll_new_parses" : [
+      0
+    ],
+    "history_scroll_source_utf16_count" : [
+      51370
+    ],
+    "history_scroll_view_reconstructions" : [
+      323
+    ],
+    "history_source_utf16_count" : [
+      38832
+    ],
+    "long_body_block_count" : [
+      517
+    ],
+    "long_first_prepare_and_layout_ms" : [
+      5309.6551666666301
+    ],
+    "long_message_count" : [
+      1
+    ],
+    "long_outbound_display_callback_interval_ms" : [
+      105.36975000002258,
+      28.4007083333222,
+      90.880874999982098,
+      176.95933333334324,
+      283.60945833333062,
+      398.60333333331255,
+      183.26408333336985,
+      269.08937499996455,
+      309.62233333337963,
+      384.4754999999509,
+      203.51087500000631,
+      306.40370833333463,
+      295.05225000002611,
+      298.5295833333339,
+      177.59308333330637,
+      274.18662500002711,
+      321.42499999997654,
+      357.02445833334195,
+      376.62291666669034,
+      332.87812499997926,
+      93.601166666644531,
+      16.656124999997246,
+      16.679708333356302,
+      16.634375000023738,
+      16.66162499998336,
+      16.737166666644043,
+      16.626958333347375,
+      16.649041666653375,
+      16.670125000018743,
+      16.686750000019401,
+      16.673166666635097,
+      16.614124999989599,
+      16.682416666697009,
+      16.651249999995343,
+      16.697374999978365,
+      16.652416666659065,
+      16.675500000019383,
+      16.652000000021872,
+      16.715833333307728,
+      16.633291666664718,
+      16.716874999985976,
+      16.615166666667847,
+      16.672833333359449,
+      18.554041666675403,
+      16.027541666630896,
+      16.035958333361577,
+      16.017291666685196,
+      16.700374999970791,
+      16.680416666645215,
+      16.647583333337934,
+      16.639666666662833,
+      16.68895833336137,
+      16.649625000013657,
+      16.659708333293111,
+      16.692375000047832,
+      16.651166666633799,
+      16.65624999998272,
+      16.73445833336018,
+      16.637249999973847,
+      16.67737500002886
+    ],
+    "long_resident_memory_bytes" : [
+      330317824
+    ],
+    "long_return_display_callback_interval_ms" : [
+      83.373499999993328,
+      16.577541666663365,
+      16.72316666667939,
+      16.623333333313894,
+      16.683916666693221,
+      16.692416666671761,
+      16.615749999971285,
+      16.711874999998599,
+      16.636291666657144,
+      16.711291666695161,
+      16.652333333354363,
+      16.628374999982043,
+      16.662291666648343,
+      16.66554166666856,
+      16.687791666697649,
+      16.747874999964552,
+      16.566750000038155,
+      16.667124999969474,
+      16.66325000002189,
+      16.714291666630743,
+      16.663666666659083,
+      16.627249999999094,
+      16.700875000026372,
+      16.625625000017408,
+      16.708624999978383,
+      16.629041666647026,
+      16.686833333380946,
+      16.655083333318998,
+      16.681208333352515,
+      16.662708333285536,
+      16.643208333334769,
+      16.689208333332317,
+      16.690125000025091,
+      16.619458333309467,
+      16.663208333341117,
+      16.696541666703979,
+      16.640499999994063,
+      16.704208333294446,
+      16.676333333350613,
+      16.652291666673591,
+      16.657666666674231,
+      16.663249999965046,
+      16.644791666692527,
+      29.707666666638488,
+      120.28537500003722,
+      366.7014583332957,
+      283.31325000004881,
+      166.66670833330954,
+      166.65487500000609,
+      262.44420833330651,
+      270.91979166669944,
+      253.61008333334212,
+      224.75187499998128,
+      359.96366666665836,
+      449.85187499997892,
+      145.15350000004901,
+      283.37466666664568,
+      300.98199999997632,
+      465.65870833336476,
+      383.346291666669,
+      400.02799999996341,
+      316.60620833338271
+    ],
+    "long_scroll_distance_pt" : [
+      35864
+    ],
+    "long_scroll_message_count" : [
+      1
+    ],
+    "long_scroll_new_measurements" : [
+      0
+    ],
+    "long_scroll_new_parses" : [
+      0
+    ],
+    "long_scroll_source_utf16_count" : [
+      49858
+    ],
+    "long_scroll_view_reconstructions" : [
+      333
+    ],
+    "long_source_utf16_count" : [
+      49858
+    ],
+    "resize_ms" : [
+      277.95070833332147,
+      166.59304166665834
+    ],
+    "rich_body_block_count" : [
+      19,
+      19
+    ],
+    "rich_first_prepare_and_layout_ms" : [
+      997.69379166667704,
+      347.04675000000407
+    ],
+    "rich_message_count" : [
+      1,
+      1
+    ],
+    "rich_resident_memory_bytes" : [
+      135200768,
+      197640192
+    ],
+    "rich_source_utf16_count" : [
+      1088,
+      1088
+    ],
+    "stream_apply_ms" : [
+      303.44533333328627,
+      13.763874999995096,
+      8.2207083333400988,
+      26.625500000022839,
+      18.335791666686418,
+      22.734875000026022,
+      14.311833333351842,
+      10.121291666678189,
+      20.143249999989621,
+      20.917958333370734,
+      38.29291666664858,
+      14.625208333313822,
+      22.644916666706649,
+      15.625708333345756,
+      25.518458333351646,
+      16.299166666613019,
+      12.595541666655663,
+      11.35395833335906,
+      12.191250000000764,
+      255.11458333329529,
+      9.5578749999845058,
+      6.3846666666904639
+    ]
+  },
+  "source_dirty" : "no",
+  "source_revision" : "a876e6552d523bbabde66c53b340840e934b18ed",
+  "source_utf16_count" : 49858,
+  "summary" : {
+    "history_body_block_count" : {
+      "count" : 1,
+      "max" : 739,
+      "median" : 739,
+      "p95" : 739
+    },
+    "history_first_prepare_and_layout_ms" : {
+      "count" : 1,
+      "max" : 9440.2592916666217,
+      "median" : 9440.2592916666217,
+      "p95" : 9440.2592916666217
+    },
+    "history_message_count" : {
+      "count" : 1,
+      "max" : 241,
+      "median" : 241,
+      "p95" : 241
+    },
+    "history_outbound_display_callback_interval_ms" : {
+      "count" : 25,
+      "max" : 349.99324999995451,
+      "median" : 233.35466666668481,
+      "p95" : 333.36020833337443
+    },
+    "history_resident_memory_bytes" : {
+      "count" : 1,
+      "max" : 176472064,
+      "median" : 176472064,
+      "p95" : 176472064
+    },
+    "history_return_display_callback_interval_ms" : {
+      "count" : 26,
+      "max" : 333.34133333329419,
+      "median" : 249.99524999998357,
+      "p95" : 316.6457500000206
+    },
+    "history_scroll_distance_pt" : {
+      "count" : 1,
+      "max" : 82760,
+      "median" : 82760,
+      "p95" : 82760
+    },
+    "history_scroll_message_count" : {
+      "count" : 1,
+      "max" : 321,
+      "median" : 321,
+      "p95" : 321
+    },
+    "history_scroll_new_measurements" : {
+      "count" : 1,
+      "max" : 0,
+      "median" : 0,
+      "p95" : 0
+    },
+    "history_scroll_new_parses" : {
+      "count" : 1,
+      "max" : 0,
+      "median" : 0,
+      "p95" : 0
+    },
+    "history_scroll_source_utf16_count" : {
+      "count" : 1,
+      "max" : 51370,
+      "median" : 51370,
+      "p95" : 51370
+    },
+    "history_scroll_view_reconstructions" : {
+      "count" : 1,
+      "max" : 323,
+      "median" : 323,
+      "p95" : 323
+    },
+    "history_source_utf16_count" : {
+      "count" : 1,
+      "max" : 38832,
+      "median" : 38832,
+      "p95" : 38832
+    },
+    "long_body_block_count" : {
+      "count" : 1,
+      "max" : 517,
+      "median" : 517,
+      "p95" : 517
+    },
+    "long_first_prepare_and_layout_ms" : {
+      "count" : 1,
+      "max" : 5309.6551666666301,
+      "median" : 5309.6551666666301,
+      "p95" : 5309.6551666666301
+    },
+    "long_message_count" : {
+      "count" : 1,
+      "max" : 1,
+      "median" : 1,
+      "p95" : 1
+    },
+    "long_outbound_display_callback_interval_ms" : {
+      "count" : 60,
+      "max" : 398.60333333331255,
+      "median" : 16.68895833336137,
+      "p95" : 376.62291666669034
+    },
+    "long_resident_memory_bytes" : {
+      "count" : 1,
+      "max" : 330317824,
+      "median" : 330317824,
+      "p95" : 330317824
+    },
+    "long_return_display_callback_interval_ms" : {
+      "count" : 62,
+      "max" : 465.65870833336476,
+      "median" : 16.690125000025091,
+      "p95" : 383.346291666669
+    },
+    "long_scroll_distance_pt" : {
+      "count" : 1,
+      "max" : 35864,
+      "median" : 35864,
+      "p95" : 35864
+    },
+    "long_scroll_message_count" : {
+      "count" : 1,
+      "max" : 1,
+      "median" : 1,
+      "p95" : 1
+    },
+    "long_scroll_new_measurements" : {
+      "count" : 1,
+      "max" : 0,
+      "median" : 0,
+      "p95" : 0
+    },
+    "long_scroll_new_parses" : {
+      "count" : 1,
+      "max" : 0,
+      "median" : 0,
+      "p95" : 0
+    },
+    "long_scroll_source_utf16_count" : {
+      "count" : 1,
+      "max" : 49858,
+      "median" : 49858,
+      "p95" : 49858
+    },
+    "long_scroll_view_reconstructions" : {
+      "count" : 1,
+      "max" : 333,
+      "median" : 333,
+      "p95" : 333
+    },
+    "long_source_utf16_count" : {
+      "count" : 1,
+      "max" : 49858,
+      "median" : 49858,
+      "p95" : 49858
+    },
+    "resize_ms" : {
+      "count" : 2,
+      "max" : 277.95070833332147,
+      "median" : 277.95070833332147,
+      "p95" : 277.95070833332147
+    },
+    "rich_body_block_count" : {
+      "count" : 2,
+      "max" : 19,
+      "median" : 19,
+      "p95" : 19
+    },
+    "rich_first_prepare_and_layout_ms" : {
+      "count" : 2,
+      "max" : 997.69379166667704,
+      "median" : 997.69379166667704,
+      "p95" : 997.69379166667704
+    },
+    "rich_message_count" : {
+      "count" : 2,
+      "max" : 1,
+      "median" : 1,
+      "p95" : 1
+    },
+    "rich_resident_memory_bytes" : {
+      "count" : 2,
+      "max" : 197640192,
+      "median" : 197640192,
+      "p95" : 197640192
+    },
+    "rich_source_utf16_count" : {
+      "count" : 2,
+      "max" : 1088,
+      "median" : 1088,
+      "p95" : 1088
+    },
+    "stream_apply_ms" : {
+      "count" : 22,
+      "max" : 303.44533333328627,
+      "median" : 16.299166666613019,
+      "p95" : 255.11458333329529
+    }
+  },
+  "system" : "Version 26.6.2 (Build 25G83)"
+}

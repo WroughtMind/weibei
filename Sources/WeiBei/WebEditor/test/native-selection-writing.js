@@ -11,6 +11,45 @@ const reset = async (markdown = '') => {
   editor.selectDocumentEndForCheck();
   await pause();
 };
+// Every inline format accepts pre-typed pairs, ordinary input and committed Chinese.
+for (const [marker, selector] of [
+  ['**', 'strong'], ['__', 'strong'], ['*', 'em'], ['_', 'em'],
+  ['==', 'mark.weibei-highlight'], ['~~', 'del'], ['`', 'code'],
+]) {
+  const composing = marker !== '__';
+  window.webkit.messageHandlers.nativeInput.postMessage({ operation: 'checkpoint', text: `pair ${marker} ${composing ? 'IME' : 'text'}` });
+  await reset();
+  for (const character of marker.repeat(2)) await native('insert', character);
+  expect(document.querySelector('.ProseMirror').textContent === marker.repeat(2)
+    && !document.querySelector('.ProseMirror ' + selector), 'An empty pair converted prematurely: ' + marker);
+  for (let i = 0; i < marker.length; i += 1) await native('key', '\uF702', { keyCode: 123 });
+  if (composing) {
+    await native('marked', 'z', { caretAtEnd: true });
+    await native('marked', 'zhong', { caretAtEnd: true });
+    expect(document.querySelector('.ProseMirror').textContent === marker + 'zhong' + marker,
+      'Formatting interrupted active pinyin: ' + marker);
+    await native('insert', '中文');
+  } else {
+    await native('insert', 'Text');
+  }
+  const content = composing ? '中文' : 'Text';
+  expect(document.querySelector('.ProseMirror ' + selector)?.textContent === content
+    && document.querySelector('.ProseMirror').textContent === content,
+    'Typing inside a pre-typed pair did not format: ' + marker + ': ' + editor.getMarkdown());
+  await native('insert', '续');
+  const saved = editor.getMarkdown();
+  expect(document.querySelector('.ProseMirror ' + selector)?.textContent === content + '续', 'Continued input left its format: ' + marker);
+  expect(editor.undoForCheck() && editor.getMarkdown() !== saved, 'Formatted input could not be undone: ' + marker);
+  expect(editor.redoForCheck() && editor.getMarkdown() === saved, 'Redo did not restore formatted input: ' + marker);
+  editor.setMarkdown(saved);
+  expect(document.querySelector('.ProseMirror ' + selector)?.textContent === content + '续', 'Reloading lost formatting: ' + marker);
+}
+await reset('`****`');
+getSelection().collapse(document.querySelector('.ProseMirror code').firstChild, 2);
+await pause();
+await native('insert', 'literal');
+expect(document.querySelector('.ProseMirror code')?.textContent === '**literal**'
+  && !document.querySelector('.ProseMirror strong'), 'Code content was converted to bold');
 // Inserting from an unfocused note also changes focus. That second update must
 // not cancel the slash menu triggered by the first one.
 const waitFor = (condition, reason) => new Promise((resolve, reject) => {

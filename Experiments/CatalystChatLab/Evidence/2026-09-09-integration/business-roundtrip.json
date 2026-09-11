@@ -1,0 +1,54 @@
+{
+  "bundle_id" : "org.weibei.CatalystCandidate452.businesscheck",
+  "checks" : {
+    "history_and_long_answer_through_original_messages" : "passed",
+    "image_mounted_in_visible_message" : "passed",
+    "mac_idiom_and_isolated_storage" : "passed",
+    "original_answer_to_note" : "passed",
+    "original_attachment_loader" : "passed",
+    "original_editor_snapshot_and_note_write_gate" : "passed",
+    "original_http_agent_tools_and_uikit_stream" : "passed",
+    "original_import_reader_and_editor" : "passed",
+    "original_source_navigation" : "passed",
+    "reopen_original_note_and_session_files" : "passed",
+    "signed_bounded_pdf_worker" : "passed",
+    "signed_native_window_material" : "passed",
+    "stop_preserves_received_text" : "passed"
+  },
+  "configuration" : "Release",
+  "message_count" : 2,
+  "note_path" : "\/Users\/changfenhuang\/Library\/Application Support\/org.weibei.CatalystCandidate452.businesscheck\/Workspace-魏碑资料库\/通用笔记\/候选验证笔记 8.md",
+  "parse_count" : 64,
+  "platform" : "Mac Catalyst",
+  "recorded_at" : "2026-09-09T05:06:17Z",
+  "resident_memory_bytes" : 313114624,
+  "source" : "d2643572cf23f4d334971af2bce0ff5d20acb51b",
+  "source_dirty" : "yes",
+  "status" : "passed",
+  "transport" : "original client against isolated local SSE fixture; no live model claim",
+  "ui_evidence" : "in-process behavior checks, not mouse\/IME acceptance",
+  "workspace_history" : {
+    "body_width_pt" : 960,
+    "cache_state" : "first entry to these fixtures in an App that has completed the business round trip; not cold App launch",
+    "first_history_page_ms" : 629.95770829729736,
+    "first_long_answer_ms" : 426.92658340092748,
+    "first_page_messages" : 240,
+    "first_page_preparation_ms" : {
+      "measure" : 325.06612502038479,
+      "parse_elapsed" : -17.005793983116746,
+      "render_and_highlight" : -77.365582925267518
+    },
+    "font_size_pt" : 16,
+    "long_answer_blocks" : 517,
+    "long_answer_preparation_ms" : {
+      "measure" : 331.89270831644535,
+      "parse_elapsed" : 7.7130000572651625,
+      "render_and_highlight" : 15.808500000275671
+    },
+    "long_answer_utf16_count" : 49858,
+    "resident_memory_bytes" : 321503232,
+    "scroll_messages" : 720,
+    "scroll_new_measurements" : 0,
+    "scroll_new_parses" : 0
+  }
+}

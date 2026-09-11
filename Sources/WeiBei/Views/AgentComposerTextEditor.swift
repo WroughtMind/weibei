@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import AppKit
 import SwiftUI
 
@@ -225,3 +226,5 @@ private final class AgentComposerNativeTextView: NSTextView {
         return resigned
     }
 }
+
+#endif

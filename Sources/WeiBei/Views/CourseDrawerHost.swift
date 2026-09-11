@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import AppKit
 import SwiftUI
 
@@ -46,7 +47,7 @@ struct CourseDrawerHost: NSViewRepresentable {
 }
 
 final class CourseDrawerContainerView: NSView {
-    static let panelWidth: CGFloat = 252
+    static let panelWidth: CGFloat = WeiBeiMetric.courseDrawerWidth
 
     var onDismiss: (() -> Void)?
 
@@ -240,3 +241,5 @@ final class CourseDrawerContainerView: NSView {
         )
     }
 }
+
+#endif
