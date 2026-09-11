@@ -1877,16 +1877,20 @@ actor CourseProjectFileWorker {
         )
     }
 
+    func prepareHTMLImport(at url: URL) throws -> Data? {
+        try HTMLResourceImport.dataIfHTML(at: url)
+    }
+
     func copyAndVerify(
         from source: URL?,
         generatedData: Data?,
         to destination: URL,
         expectedSnapshot: CourseFileSnapshot
     ) throws -> ImportedFileIdentity {
-        if let source {
-            try fileManager.copyItem(at: source, to: destination)
-        } else if let generatedData {
+        if let generatedData {
             try generatedData.write(to: destination, options: [.withoutOverwriting])
+        } else if let source {
+            try fileManager.copyItem(at: source, to: destination)
         } else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
