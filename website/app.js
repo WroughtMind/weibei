@@ -6,6 +6,8 @@ const experiencePages = [...document.querySelectorAll('.experience-page')];
 const experienceLabel = document.querySelector('.experience-mode-label');
 const experienceLayer = document.querySelector('.experience-layer');
 const experiencePager = document.querySelector('.window-pager');
+const experienceTabsContainer = document.querySelector('.experience-tabs');
+const experienceTabs = [...document.querySelectorAll('[data-mode-target]')];
 const themePreviews = [...document.querySelectorAll('.theme-preview')];
 const themesLayer = document.querySelector('.themes-layer');
 const downloadLink = document.querySelector('[data-download-link]');
@@ -20,6 +22,7 @@ const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const mobileLayout = matchMedia('(max-width: 760px)');
 let activeMode = 0;
 let experiencePaused = false;
+let experienceSelected = false;
 let experienceTimer;
 let activeThemePreview;
 let themePointer;
@@ -29,7 +32,8 @@ let themeGesture;
 let suppressThemeClick = false;
 let matchedDownloads = matchDownloadAssets([]);
 let selectedDownloadId = 'mac-arm64';
-const downloadFallback = downloadLink?.href;
+let downloadSelected = false;
+const releasesURL = downloadLink?.href;
 
 renderDownloadControl();
 
@@ -58,7 +62,7 @@ function renderDownloadControl() {
     downloadLink.href = new URL(asset.download_url, document.baseURI).href;
     downloadLink.download = asset.name;
   } else {
-    downloadLink.href = downloadFallback;
+    downloadLink.href = releasesURL;
     downloadLink.removeAttribute('download');
   }
 
@@ -82,6 +86,7 @@ downloadToggle?.addEventListener('click', () => {
 });
 
 downloadOptions.forEach(option => option.addEventListener('click', () => {
+  downloadSelected = true;
   selectedDownloadId = option.dataset.downloadTarget;
   renderDownloadControl();
   closeDownloadMenu();
@@ -96,13 +101,14 @@ document.addEventListener('keydown', event => {
 
 detectDownloadEnvironment().then(async environment => {
   const preferredIds = preferredDownloadIds(environment);
-  selectedDownloadId = preferredIds[0];
+  if (!downloadSelected) selectedDownloadId = preferredIds[0];
   try {
     const response = await fetch(new URL('./release.json', import.meta.url), { cache: 'no-store' });
-    const release = response.ok ? await response.json() : { assets: [] };
+    if (!response.ok) throw new Error('Download information unavailable');
+    const release = await response.json();
     matchedDownloads = matchDownloadAssets(release.available && Array.isArray(release.assets) ? release.assets : []);
   } catch {}
-  selectedDownloadId = chooseDownloadId(matchedDownloads, preferredIds);
+  if (!downloadSelected) selectedDownloadId = chooseDownloadId(matchedDownloads, preferredIds);
   renderDownloadControl();
 });
 
@@ -113,24 +119,31 @@ const setExperienceMode = nextMode => {
     page.classList.toggle('is-active', active);
     page.setAttribute('aria-hidden', String(!active));
   });
-  experienceLabel.dataset.mode = experiencePages[activeMode].dataset.mode;
+  const mode = experiencePages[activeMode].dataset.mode;
+  experienceLabel.dataset.mode = mode;
+  experienceTabs.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.modeTarget === mode)));
 };
 
 const startExperienceRotation = () => {
   clearInterval(experienceTimer);
   experienceTimer = setInterval(() => {
-    if (!experiencePaused && !reducedMotion && !document.hidden && document.documentElement.dataset.scene === '2') setExperienceMode(activeMode + 1);
+    if (!experiencePaused && !experienceSelected && !reducedMotion && !document.hidden && document.documentElement.dataset.scene === '2') setExperienceMode(activeMode + 1);
   }, 4400);
 };
 
 document.querySelectorAll('.window-pager button').forEach(button => {
   button.addEventListener('click', () => {
+    experienceSelected = true;
     setExperienceMode(activeMode + Number(button.dataset.direction));
-    startExperienceRotation();
   });
 });
 
-[experienceLayer, experiencePager].forEach(element => {
+experienceTabs.forEach(button => button.addEventListener('click', () => {
+  experienceSelected = true;
+  setExperienceMode(experiencePages.findIndex(page => page.dataset.mode === button.dataset.modeTarget));
+}));
+
+[experienceLayer, experiencePager, experienceTabsContainer].forEach(element => {
   element.addEventListener('pointerenter', () => { experiencePaused = true; });
   element.addEventListener('pointerleave', () => { experiencePaused = false; startExperienceRotation(); });
 });
@@ -279,10 +292,40 @@ const observer = new IntersectionObserver(entries => {
   const activeChapter = chapters.reduce((best, chapter) => ratios.get(chapter) > ratios.get(best) ? chapter : best);
   const activeIndex = chapters.indexOf(activeChapter);
   document.documentElement.dataset.scene = String(activeIndex + 1);
+  document.querySelector('[data-language-toggle]').hash = activeChapter.id;
+  document.querySelector('.hero-tagline').inert = activeIndex !== 0;
+  [experienceLayer, experiencePager, experienceTabsContainer].forEach(element => { element.inert = activeIndex !== 1; });
+  themesLayer.inert = activeIndex !== 2;
+  document.querySelector('.release-layer').inert = activeIndex !== 3;
   if (activeIndex !== 2) resetThemePreview();
+  if (activeIndex !== 3) closeDownloadMenu();
   if (activeIndex >= 1) preloadSceneFour();
-  railButtons.forEach((button, index) => button.classList.toggle('is-active', index === activeIndex));
+  railButtons.forEach((button, index) => {
+    button.classList.toggle('is-active', index === activeIndex);
+    if (index === activeIndex) button.setAttribute('aria-current', 'step');
+    else button.removeAttribute('aria-current');
+  });
 }, { threshold: [.25, .5, .75] });
 
 chapters.forEach(chapter => observer.observe(chapter));
-
+window.addEventListener('pagehide', () => {
+  try {
+    sessionStorage.setItem('weibei-home-position', JSON.stringify({
+      scene: `scene-${document.documentElement.dataset.scene}`,
+      progress: scrollY / Math.max(1, document.documentElement.scrollHeight - innerHeight)
+    }));
+  } catch {}
+});
+window.addEventListener('pageshow', event => {
+  if (event.persisted) return;
+  const initialChapter = chapters.find(chapter => `#${chapter.id}` === location.hash);
+  if (!initialChapter) return;
+  let top = initialChapter.offsetTop;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('weibei-home-position'));
+    if (saved?.scene === initialChapter.id && Number.isFinite(saved.progress) && saved.progress >= 0 && saved.progress <= 1) {
+      top = saved.progress * (document.documentElement.scrollHeight - innerHeight);
+    }
+  } catch {}
+  scrollTo({ top, behavior: 'instant' });
+});
