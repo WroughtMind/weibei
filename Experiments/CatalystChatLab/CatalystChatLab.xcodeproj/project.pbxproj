@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		00EAD6D4B42D590A61CB472F /* NativeAgentSubagent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38CF7F231E8025C1269B5DA /* NativeAgentSubagent.swift */; };
 		0125EF09EAB0741674E2314F /* WeiBeiConsoleLogBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 621814668833595E01BBC859 /* WeiBeiConsoleLogBridge.swift */; };
+		0267E38E9FDF5C2018B595D8 /* StudyAgentSourceScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74C8AC8EA8DAA0F196A9B376 /* StudyAgentSourceScope.swift */; };
 		0623522F36F817CD96016D0C /* WeiBeiAgentDataPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 260D320A7F0D6EF052DFC92B /* WeiBeiAgentDataPaths.swift */; };
 		07A80A05DB70F0D5F4FFE1DC /* WorkspaceStore+WorkResume.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2252E36FA31EF36A534D5006 /* WorkspaceStore+WorkResume.swift */; };
 		09467730230F376E34226813 /* ConversationData.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF90D4244405F434304A77CE /* ConversationData.swift */; };
@@ -39,6 +40,7 @@
 		2A354E5E1C48CAEBA5DC53FD /* CatalystComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36561227F3ABBF6B76AA8AB5 /* CatalystComposer.swift */; };
 		2BAD887A233EC0F776B8ED55 /* RichMarkdownEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53DF047A51CB138139BE4112 /* RichMarkdownEditorView.swift */; };
 		2E6CA29B1888688910BA3B8F /* AgentConversationRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 029B6ABFA6A347EE8ADF467D /* AgentConversationRun.swift */; };
+		2EAB1E41C6E0C5F7532121DC /* CourseDocumentPassage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 847F291115160D3A2A948799 /* CourseDocumentPassage.swift */; };
 		30044E4E47EB9ED50410833D /* genui.css in Resources */ = {isa = PBXBuildFile; fileRef = 963A7E779C8EDE3820F2FD0D /* genui.css */; };
 		30FE90F08732653F521EF5BB /* AgentMessageViewportWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 329210C1B1CEA3DB0B230A58 /* AgentMessageViewportWindow.swift */; };
 		3277E0100043E9641EAD1B4B /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02DC350E23EA8E1FDC2D806A /* Theme.swift */; };
@@ -161,6 +163,7 @@
 		BA59D2F9872D73323CA01F64 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6700DF3A3E0D28595C211FCC /* ComposerView.swift */; };
 		BA949BDE0DE5EFF280A642A5 /* WeiBeiPerf.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B0B601608BB488D95409EDB /* WeiBeiPerf.swift */; };
 		BB84E6DD76894AC2F89E55A4 /* ReaderPDFRemarkMarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B71AD1B6FD608EBE601D16D1 /* ReaderPDFRemarkMarks.swift */; };
+		BC42E08705FB722671081F15 /* NativeAgentSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 924601733E67602C2D953705 /* NativeAgentSources.swift */; };
 		BCCDCFABBCE565048A7E303E /* CatalystWorkspaceChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C8E7C5955FF4461C6361B9 /* CatalystWorkspaceChrome.swift */; };
 		BE15A9F27B77E0A47889A6DB /* NativeAgentDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = D773238E3B7B21D4615D24F4 /* NativeAgentDocuments.swift */; };
 		BFC0102C2C3AF13C5F8B65E3 /* StudyAgentRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA9A92F7962B40194BBB5488 /* StudyAgentRuntime.swift */; };
@@ -360,6 +363,7 @@
 		6EB2A9C56DEA933B7631730B /* NativeAgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentTools.swift; sourceTree = "<group>"; };
 		72042136DA149497770A25AE /* WeiBeiSegmentedControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiSegmentedControl.swift; sourceTree = "<group>"; };
 		7272FB7799ACD70C699EC812 /* WebResearchClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebResearchClient.swift; sourceTree = "<group>"; };
+		74C8AC8EA8DAA0F196A9B376 /* StudyAgentSourceScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudyAgentSourceScope.swift; sourceTree = "<group>"; };
 		794D77A09ED7DB55251244E7 /* EmptyWorkspaceLauncherView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyWorkspaceLauncherView.swift; sourceTree = "<group>"; };
 		7B023F773738A301D0702C43 /* NativeAgentEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentEvents.swift; sourceTree = "<group>"; };
 		7C306DC33834EA03C30DAE63 /* NativeSessionTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSessionTitle.swift; sourceTree = "<group>"; };
@@ -373,11 +377,13 @@
 		810A8079BBB755D152F8F310 /* WorkspaceStore+NoteEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+NoteEditing.swift"; sourceTree = "<group>"; };
 		810B3496E40B269430393098 /* highlight.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = highlight.min.js; sourceTree = "<group>"; };
 		81D2DAD02BFEF7CA9BD88936 /* genui-math.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "genui-math.js"; sourceTree = "<group>"; };
+		847F291115160D3A2A948799 /* CourseDocumentPassage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDocumentPassage.swift; sourceTree = "<group>"; };
 		84EA87360D931ADDE576F074 /* MessageCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageCell.swift; sourceTree = "<group>"; };
 		89FDD823A64C95560067C84F /* WeiBeiResources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiResources.swift; sourceTree = "<group>"; };
 		8A4CAAE496814B5C8CBEE6C0 /* AgentResources */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AgentResources; path = ../../Sources/WeiBeiCore/AgentResources; sourceTree = SOURCE_ROOT; };
 		8AB1B8CEAE72796F17B88450 /* ConversationWebClippingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationWebClippingView.swift; sourceTree = "<group>"; };
 		8F5ED90595FB562556B73D8E /* StudySessionMessagePersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudySessionMessagePersistence.swift; sourceTree = "<group>"; };
+		924601733E67602C2D953705 /* NativeAgentSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentSources.swift; sourceTree = "<group>"; };
 		932D6A13A778AA74A875FCC0 /* NativeWindowBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWindowBridge.swift; sourceTree = "<group>"; };
 		950453F77B556E0E32761C26 /* CourseSidebarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseSidebarModel.swift; sourceTree = "<group>"; };
 		959A3BD77F6E36FB590875C2 /* WorkspaceStore+SnapshotRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+SnapshotRecovery.swift"; sourceTree = "<group>"; };
@@ -723,6 +729,7 @@
 				2D416585CEFDA80ADBBC997C /* AppShortcutCatalog.swift */,
 				3F2D2A89858EC0E19ACDD2D8 /* BoundedPDFTextExtractor.swift */,
 				DB48A5F3A0EEBBE76EF00078 /* ContentRailPolicy.swift */,
+				847F291115160D3A2A948799 /* CourseDocumentPassage.swift */,
 				1757D45BE79435D7B2AC94EB /* CourseDocumentSearchIndex.swift */,
 				2516C717774292979A846169 /* CourseKnowledgeIndex.swift */,
 				9F584070B046A4BAF604D171 /* CourseLibraryModels.swift */,
@@ -746,6 +753,7 @@
 				22D8870C3C90F05488A4A2EA /* SelectionPopoverAnchor.swift */,
 				1FD928F4E902A73F1CBDCC6A /* StudyAgentProposalDecoding.swift */,
 				FA9A92F7962B40194BBB5488 /* StudyAgentRuntime.swift */,
+				74C8AC8EA8DAA0F196A9B376 /* StudyAgentSourceScope.swift */,
 				A55E4AC025DDE148713014EB /* StudySessionMessageStore.swift */,
 				4A5C293962409D201F9C5271 /* UnavailableCourseUnregister.swift */,
 				7272FB7799ACD70C699EC812 /* WebResearchClient.swift */,
@@ -799,6 +807,7 @@
 				BE843942D0567EF7A83EAA58 /* NativeAgentOAuth.swift */,
 				4FA7199290AD7D07D55A5814 /* NativeAgentPrompt.swift */,
 				178E914315A103E7224BE8CD /* NativeAgentSkills.swift */,
+				924601733E67602C2D953705 /* NativeAgentSources.swift */,
 				45E005AFC5C4B2710EF9E5DE /* NativeAgentSSE.swift */,
 				B38CF7F231E8025C1269B5DA /* NativeAgentSubagent.swift */,
 				6EB2A9C56DEA933B7631730B /* NativeAgentTools.swift */,
@@ -1214,6 +1223,7 @@
 				60DD2BAA67CA9E88DF39A7CD /* AppShortcutCatalog.swift in Sources */,
 				A60A5B0B1354B27D898D9CD2 /* BoundedPDFTextExtractor.swift in Sources */,
 				21E26FD496629E941FE28D6F /* ContentRailPolicy.swift in Sources */,
+				2EAB1E41C6E0C5F7532121DC /* CourseDocumentPassage.swift in Sources */,
 				23AA1D320981D58C9EC39037 /* CourseDocumentSearchIndex.swift in Sources */,
 				19C2993B428F09D2CE17787A /* CourseKnowledgeIndex.swift in Sources */,
 				CF8CA2654515368091E20197 /* CourseLibraryModels.swift in Sources */,
@@ -1240,6 +1250,7 @@
 				B844821A05E0A5D695B33063 /* NativeAgentPrompt.swift in Sources */,
 				8895467A5B98BDC0272D7725 /* NativeAgentSSE.swift in Sources */,
 				9E539C7F5679D4D7440248B4 /* NativeAgentSkills.swift in Sources */,
+				BC42E08705FB722671081F15 /* NativeAgentSources.swift in Sources */,
 				00EAD6D4B42D590A61CB472F /* NativeAgentSubagent.swift in Sources */,
 				9CB2F1E7B8DBF39EB1FD9522 /* NativeAgentTools.swift in Sources */,
 				4908E4E487ACB6DAB9406FF9 /* NativeContextCompaction.swift in Sources */,
@@ -1263,6 +1274,7 @@
 				D24F15D883A35C45730535C4 /* SelectionPopoverAnchor.swift in Sources */,
 				B6713264D10195F9DE571EE6 /* StudyAgentProposalDecoding.swift in Sources */,
 				BFC0102C2C3AF13C5F8B65E3 /* StudyAgentRuntime.swift in Sources */,
+				0267E38E9FDF5C2018B595D8 /* StudyAgentSourceScope.swift in Sources */,
 				A2D2EB08BBEBF77C868B7A1D /* StudySessionMessageStore.swift in Sources */,
 				33A0CDEBF22DBE437F7D3193 /* UnavailableCourseUnregister.swift in Sources */,
 				81D0AABF04F475F8CE1E6C50 /* WebResearchClient.swift in Sources */,
