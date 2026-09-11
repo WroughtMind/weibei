@@ -305,8 +305,6 @@ html[data-scene="4"] body::after { visibility: visible; }
 .download-versions:hover { border-color: var(--vermilion); color: var(--vermilion); }
 .download-versions:focus-visible { outline: 0; border-color: var(--vermilion); }
 .download-versions[aria-expanded="true"] i { transform: rotate(180deg); }
-.download-versions[hidden] { display: none; }
-.download-control:has(.download-versions[hidden]) .primary-download { transform: none; }
 .download-menu { position: absolute; z-index: 8; left: 50%; bottom: 80px; width: 224px; padding: 6px 10px; border: 0; background: rgba(246,236,217,.98); box-shadow: 0 14px 28px rgba(54,40,25,.2), inset 0 0 0 1px rgba(74,58,42,.1); backdrop-filter: blur(12px); transform: translateX(-50%); }
 .download-menu[hidden] { display: none; }
 .download-menu button { display: grid; grid-template-columns: 8px 1fr; align-items: center; gap: 7px; width: 100%; min-height: 38px; padding: 7px 8px; border: 0; color: #302a24; background: transparent; text-align: left; cursor: pointer; }
@@ -314,7 +312,6 @@ html[data-scene="4"] body::after { visibility: visible; }
 .download-menu button + button { border-top: 1px solid rgba(74,58,42,.1); }
 .download-menu button:hover, .download-menu button.is-selected { background: rgba(185,48,31,.07); }
 .download-menu button.is-selected::before { opacity: 1; }
-.download-menu button:disabled { color: var(--ink-soft); opacity: .45; background: transparent; cursor: not-allowed; }
 
 @supports (animation-timeline: scroll()) {
   .hero-tagline { animation: hero-tagline-journey 1s linear both; animation-timeline: scroll(root block); }

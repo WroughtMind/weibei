@@ -32,6 +32,7 @@ let themeGesture;
 let suppressThemeClick = false;
 let matchedDownloads = matchDownloadAssets([]);
 let selectedDownloadId = 'mac-arm64';
+let downloadSelected = false;
 const releasesURL = downloadLink?.href;
 
 renderDownloadControl();
@@ -52,10 +53,8 @@ function renderDownloadControl() {
   const english = document.documentElement.lang === 'en';
   const target = downloadTargets.find(item => item.id === selectedDownloadId) || downloadTargets[0];
   const asset = matchedDownloads[target.id];
-  const available = Object.values(matchedDownloads).some(item => item?.download_url);
 
   downloadTitle.textContent = english ? 'Download WeiBei' : '下载 WeiBei';
-  downloadToggle.hidden = !available;
   downloadCaption.textContent = english ? 'Version' : '版本';
   downloadLabel.textContent = target.label[english ? 'en' : 'zh'];
   downloadToggle.setAttribute('aria-label', english ? 'Choose download version' : '选择下载版本');
@@ -71,7 +70,6 @@ function renderDownloadControl() {
     const optionTarget = downloadTargets.find(item => item.id === option.dataset.downloadTarget);
     option.querySelector('span').textContent = optionTarget.menuLabel[english ? 'en' : 'zh'];
     option.classList.toggle('is-selected', option.dataset.downloadTarget === selectedDownloadId);
-    option.disabled = !matchedDownloads[optionTarget.id]?.download_url;
   });
 }
 
@@ -88,6 +86,7 @@ downloadToggle?.addEventListener('click', () => {
 });
 
 downloadOptions.forEach(option => option.addEventListener('click', () => {
+  downloadSelected = true;
   selectedDownloadId = option.dataset.downloadTarget;
   renderDownloadControl();
   closeDownloadMenu();
@@ -102,14 +101,14 @@ document.addEventListener('keydown', event => {
 
 detectDownloadEnvironment().then(async environment => {
   const preferredIds = preferredDownloadIds(environment);
-  selectedDownloadId = preferredIds[0];
+  if (!downloadSelected) selectedDownloadId = preferredIds[0];
   try {
     const response = await fetch(new URL('./release.json', import.meta.url), { cache: 'no-store' });
     if (!response.ok) throw new Error('Download information unavailable');
     const release = await response.json();
     matchedDownloads = matchDownloadAssets(release.available && Array.isArray(release.assets) ? release.assets : []);
   } catch {}
-  selectedDownloadId = chooseDownloadId(matchedDownloads, preferredIds);
+  if (!downloadSelected) selectedDownloadId = chooseDownloadId(matchedDownloads, preferredIds);
   renderDownloadControl();
 });
 
@@ -293,6 +292,7 @@ const observer = new IntersectionObserver(entries => {
   const activeChapter = chapters.reduce((best, chapter) => ratios.get(chapter) > ratios.get(best) ? chapter : best);
   const activeIndex = chapters.indexOf(activeChapter);
   document.documentElement.dataset.scene = String(activeIndex + 1);
+  document.querySelector('[data-language-toggle]').hash = activeChapter.id;
   document.querySelector('.hero-tagline').inert = activeIndex !== 0;
   [experienceLayer, experiencePager, experienceTabsContainer].forEach(element => { element.inert = activeIndex !== 1; });
   themesLayer.inert = activeIndex !== 2;
@@ -308,3 +308,24 @@ const observer = new IntersectionObserver(entries => {
 }, { threshold: [.25, .5, .75] });
 
 chapters.forEach(chapter => observer.observe(chapter));
+window.addEventListener('pagehide', () => {
+  try {
+    sessionStorage.setItem('weibei-home-position', JSON.stringify({
+      scene: `scene-${document.documentElement.dataset.scene}`,
+      progress: scrollY / Math.max(1, document.documentElement.scrollHeight - innerHeight)
+    }));
+  } catch {}
+});
+window.addEventListener('pageshow', event => {
+  if (event.persisted) return;
+  const initialChapter = chapters.find(chapter => `#${chapter.id}` === location.hash);
+  if (!initialChapter) return;
+  let top = initialChapter.offsetTop;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('weibei-home-position'));
+    if (saved?.scene === initialChapter.id && Number.isFinite(saved.progress) && saved.progress >= 0 && saved.progress <= 1) {
+      top = saved.progress * (document.documentElement.scrollHeight - innerHeight);
+    }
+  } catch {}
+  scrollTo({ top, behavior: 'instant' });
+});

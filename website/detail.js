@@ -3,6 +3,15 @@ const feedbackSubmit = feedbackForm?.querySelector('.feedback-submit');
 const feedbackStatus = document.querySelector('#feedback-status');
 const repository = 'https://github.com/WroughtMind/weibei';
 
+try {
+  const saved = JSON.parse(sessionStorage.getItem('weibei-home-position'));
+  if (/^scene-[1-4]$/.test(saved?.scene)) {
+    document.querySelectorAll('a[href="index.html"], a[href="index.html#scene-1"], a[href="./"], a[href="./#scene-1"]').forEach(link => {
+      link.hash = saved.scene;
+    });
+  }
+} catch {}
+
 function updateFeedbackDestination() {
   if (!feedbackForm || !feedbackSubmit) return;
   const type = new FormData(feedbackForm).get('type');
@@ -37,4 +46,3 @@ feedbackForm?.addEventListener('submit', event => {
 });
 
 updateFeedbackDestination();
-
