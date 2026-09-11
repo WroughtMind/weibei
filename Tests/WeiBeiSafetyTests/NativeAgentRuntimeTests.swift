@@ -197,6 +197,65 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(capture.requests.last?.promptCacheKey, "another-chat")
     }
 
+    // 长工具链压缩到本轮内部后，仍能使用本轮修订号和已确认笔记，且重读会话时不丢失。
+    func testStepCompactionPreservesCurrentTurnContext() async throws {
+        struct StepCompactionAdapter: NativeLLMAdapter {
+            let family = "mock"
+            let capture: RequestCapture
+            let recoverOverflow: Bool
+
+            func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+                capture.requests.append(request)
+                if request.messages.first?.content == NativeContextCompaction.summarySystemPrompt {
+                    return MockLLMAdapter(chunks: [
+                        .textDelta(index: 0, text: "已读取资料，继续处理。"),
+                        .finish(reason: .stop, replayState: nil),
+                    ]).stream(request)
+                }
+                if capture.requests.count == 1 {
+                    return MockLLMAdapter(chunks: [
+                        .toolCallDelta(index: 0, id: "read-memory", name: "weibei_read_learning_memory", argumentsDelta: "{}"),
+                        .usage(NativeTokenUsage(inputTokens: 1_000)),
+                        .finish(reason: .toolCalls, replayState: nil),
+                    ]).stream(request)
+                }
+                if recoverOverflow && capture.requests.count == 2 {
+                    return AsyncThrowingStream { continuation in
+                        continuation.finish(throwing: NativeLLMFailure(code: "context_length_exceeded", status: 400, message: "overflow"))
+                    }
+                }
+                return MockLLMAdapter(chunks: [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)]).stream(request)
+            }
+        }
+        for recoverOverflow in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-step-context-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let capture = RequestCapture()
+            let runtime = NativeStudyAgentRuntime(
+                model: "mock", adapter: StepCompactionAdapter(capture: capture, recoverOverflow: recoverOverflow),
+                contextWindow: recoverOverflow ? nil : 1_024, ledgerRoot: root,
+                systemPromptText: "固定提示"
+            )
+            var request = testRequest()
+            request.projectScope = StudyAgentProjectScope(kind: .global, chatID: "step-context")
+            request.contextRevision = UUID().uuidString
+            request.confirmedNotes = [StudyAgentPersistedNoteRef(itemID: "confirmed-step-note", title: "已确认的笔记")]
+            _ = try await runtime.respond(to: request)
+
+            let last = try XCTUnwrap(capture.requests.last)
+            let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("step-context/ledger.jsonl"))
+            let events = await ledger.allEvents()
+            let checkpoint = try XCTUnwrap(events.first { $0.type == .contextCompaction })
+            let user = try XCTUnwrap(events.first { $0.type == .userMessage })
+            XCTAssertGreaterThan(try XCTUnwrap(checkpoint.firstKeptSeq), user.seq)
+            for messages in [last.messages, await ledger.deriveMessages()] {
+                XCTAssertTrue(messages.contains { $0.content.contains(request.contextRevision) })
+                XCTAssertTrue(messages.contains { $0.content.contains("confirmed-step-note") })
+            }
+            XCTAssertEqual(last.promptCacheKey, "step-context")
+        }
+    }
+
     // 缓存标记覆盖固定提示和最新消息，同时保留文字、图片和工具结果的内容与关联。
     func testAnthropicCacheBreakpointsPreserveMessageContent() throws {
         let image = NativeImagePart(mediaType: "image/png", data: Data([137, 80, 78, 71]))

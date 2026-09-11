@@ -65,7 +65,7 @@ public actor NativeAgentLoop {
         if !turnContext.isEmpty {
             userMessage += "\n\n" + turnContext
         }
-        _ = try await ledger.append { seq, time in
+        let userMessageEvent = try await ledger.append { seq, time in
             NativeSessionEvent(
                 type: .userMessage,
                 seq: seq,
@@ -143,7 +143,8 @@ public actor NativeAgentLoop {
                             request: llmRequest,
                             projection: projection,
                             adapter: adapter,
-                            contextWindow: effectiveContextWindow
+                            contextWindow: effectiveContextWindow,
+                            turnContext: (userMessageEvent.seq, turnContext)
                         )
                     } catch is CancellationError {
                         throw CancellationError()
@@ -231,7 +232,8 @@ public actor NativeAgentLoop {
                                 request: llmRequest,
                                 projection: recoveryProjection,
                                 adapter: adapter,
-                                contextWindow: effectiveContextWindow
+                                contextWindow: effectiveContextWindow,
+                                turnContext: (userMessageEvent.seq, turnContext)
                             )
                         } catch is CancellationError {
                             throw CancellationError()
