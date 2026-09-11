@@ -17,7 +17,6 @@ const downloadLabel = document.querySelector('[data-download-label]');
 const downloadControl = document.querySelector('[data-download-control]');
 const downloadToggle = document.querySelector('[data-download-toggle]');
 const downloadMenu = document.querySelector('[data-download-menu]');
-const downloadStatus = document.querySelector('[data-download-status]');
 const downloadOptions = [...document.querySelectorAll('[data-download-target]')];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const mobileLayout = matchMedia('(max-width: 760px)');
@@ -34,8 +33,6 @@ let suppressThemeClick = false;
 let matchedDownloads = matchDownloadAssets([]);
 let selectedDownloadId = 'mac-arm64';
 const releasesURL = downloadLink?.href;
-let releaseState = 'loading';
-let releaseVersion = '';
 
 renderDownloadControl();
 
@@ -57,20 +54,8 @@ function renderDownloadControl() {
   const asset = matchedDownloads[target.id];
   const available = Object.values(matchedDownloads).some(item => item?.download_url);
 
-  downloadTitle.textContent = asset?.download_url
-    ? (english ? 'Download WeiBei' : '下载 WeiBei')
-    : (english ? 'View releases' : '查看发布进度');
-  downloadControl.dataset.state = releaseState;
+  downloadTitle.textContent = english ? 'Download WeiBei' : '下载 WeiBei';
   downloadToggle.hidden = !available;
-  downloadStatus.textContent = asset?.download_url
-    ? (english ? `${releaseVersion} · ${target.label.en}` : `${releaseVersion} · ${target.label.zh}`)
-    : releaseState === 'loading'
-      ? (english ? 'Checking releases…' : '查询版本中…')
-      : releaseState === 'error'
-        ? (english ? 'Could not check releases.' : '暂时无法获取版本。')
-        : available
-          ? (english ? 'No package is published for this Mac yet.' : '此芯片版本暂无公开安装包。')
-          : (english ? 'No public download is available yet.' : '暂无公开安装包。');
   downloadCaption.textContent = english ? 'Version' : '版本';
   downloadLabel.textContent = target.label[english ? 'en' : 'zh'];
   downloadToggle.setAttribute('aria-label', english ? 'Choose download version' : '选择下载版本');
@@ -123,9 +108,7 @@ detectDownloadEnvironment().then(async environment => {
     if (!response.ok) throw new Error('Download information unavailable');
     const release = await response.json();
     matchedDownloads = matchDownloadAssets(release.available && Array.isArray(release.assets) ? release.assets : []);
-    releaseVersion = String(release.version || '');
-    releaseState = Object.values(matchedDownloads).some(item => item?.download_url) ? 'ready' : 'empty';
-  } catch { releaseState = 'error'; }
+  } catch {}
   selectedDownloadId = chooseDownloadId(matchedDownloads, preferredIds);
   renderDownloadControl();
 });

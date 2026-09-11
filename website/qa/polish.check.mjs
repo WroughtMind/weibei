@@ -1,5 +1,5 @@
 // 本地首页控制台：await (await import('/qa/polish.check.mjs')).checkWebsitePolish()
-// 保护手动选择、手机点击范围、跨幕焦点与真实下载状态；不检查文案措辞。
+// 保护手动选择、手机点击范围、跨幕焦点与下载链接；不检查文案措辞。
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const waitFor = async predicate => {
   const deadline = performance.now() + 3000;
@@ -14,14 +14,12 @@ const enter = async scene => {
   await waitFor(() => document.documentElement.dataset.scene === String(scene));
 };
 
-export async function checkDownloadState(expected, assets = []) {
+export async function checkDownloads(assets = []) {
   await enter(4);
-  const control = document.querySelector('[data-download-control]');
-  await waitFor(() => control.dataset.state !== 'loading');
-  assert(control.dataset.state === expected, '下载区没有区分可用、未发布和查询失败');
   const link = document.querySelector('[data-download-link]');
   const toggle = document.querySelector('[data-download-toggle]');
-  if (expected === 'ready') {
+  if (assets.length) {
+    await waitFor(() => link.hasAttribute('download'));
     assert(!toggle.hidden, '有安装包时无法选择芯片');
     toggle.click();
     for (const option of document.querySelectorAll('[data-download-target]')) {
@@ -33,8 +31,7 @@ export async function checkDownloadState(expected, assets = []) {
     assert(toggle.hidden && getComputedStyle(toggle).display === 'none', '无安装包时仍显示芯片选择');
     assert(!link.hasAttribute('download') && new URL(link.href).pathname.endsWith('/releases'), '无安装包时没有准确指向发布页');
   }
-  assert(document.querySelector('[data-download-status]').textContent.trim(), '没有展示下载状态');
-  return { downloads: expected };
+  return { downloads: 'passed' };
 }
 
 export async function checkWebsitePolish() {
@@ -61,9 +58,8 @@ export async function checkWebsitePolish() {
   assert(detail.inert && !themes.inert && release.inert, '第三幕操作边界不正确');
   await enter(4);
   assert(detail.inert && themes.inert && !release.inert, '第四幕操作边界不正确');
-  const bounds = document.querySelector('.download-status').getBoundingClientRect();
-  assert(bounds.top >= 0 && bounds.bottom <= innerHeight, '下载说明超出屏幕');
-  assert(document.querySelector('.download-control').getBoundingClientRect().bottom <= bounds.top, '下载纸签遮住版本状态');
+  const bounds = document.querySelector('.download-control').getBoundingClientRect();
+  assert(bounds.top >= 0 && bounds.bottom <= innerHeight, '下载按钮超出屏幕');
   assert(document.documentElement.scrollWidth <= innerWidth, '页面出现横向溢出');
   return { manualSelection: 'passed', sceneBoundaries: 'passed', viewport: [innerWidth, innerHeight] };
 }
