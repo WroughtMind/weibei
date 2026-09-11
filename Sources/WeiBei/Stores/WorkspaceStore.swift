@@ -6163,6 +6163,8 @@ final class WorkspaceStore: ObservableObject {
 
     func updateSelection(_ text: String, source: SelectionSource, anchor: SelectionPopoverAnchor? = nil, ownerTitle: String? = nil, isEditable: Bool = true, documentAnchor: SelectionDocumentAnchor? = nil) {
         guard !courseWorkspacePresented else { return }
+        // Pin locks both the passage and its position until the user releases it.
+        guard !pinnedFloatingAgent else { return }
         let documentAnchor = documentAnchor ?? anchor?.textAnchor.map { SelectionDocumentAnchor(text: $0) }
         let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
@@ -6186,11 +6188,17 @@ final class WorkspaceStore: ObservableObject {
                 && $0.source == source
                 && $0.ownerTitle == resolvedOwnerTitle
                 && $0.isEditable == isEditable
-                && $0.documentAnchor == documentAnchor
         } ?? false
+        let locationMatches = selectionContext?.documentAnchor == documentAnchor
+        // Blur, scrolling and source-mark updates can report the same selection
+        // again. An open composer keeps the anchor captured when it was opened.
+        if keepFloatingSelectionForAnswer, contentMatches,
+           documentAnchor == nil || locationMatches {
+            return
+        }
 
         // Drag stream: same text, only anchor moves — no spring, no new SelectionContext id.
-        if contentMatches {
+        if contentMatches && locationMatches {
             let anchorUnchanged = WorkspaceInteractionState.anchorsApproximatelyEqual(selectionAnchor, anchor, epsilon: 8)
             let surfaceAlreadyCorrect = shouldRevealSelectionPrompt
                 ? agentSurface == .selectionFloat

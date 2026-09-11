@@ -279,7 +279,6 @@ private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.weiBeiTextScale) private var textScale
     @Binding var expanded: Bool
-    @State private var surfaceSize = CGSize.zero
     let canvasSize: CGSize
 
     var body: some View {
@@ -288,27 +287,20 @@ private struct GlobalFloatingSelectionLayer: View {
                 FloatingSelectionAgentView(
                     expanded: $expanded
                 )
-                .onGeometryChange(for: CGSize.self) { $0.size } action: { surfaceSize = $0 }
-                .position(floatingAgentPosition)
-                .transition(WeiBeiTransition.floating)
-                .onChange(of: interaction.keepFloatingSelectionForAnswer) { _, keep in
-                    // Expand only when an intentional keep-open is requested
-                    // (点「问」/回访红线/顶部已问), not on bare selection.
-                    if keep { expanded = true }
+                // Place from this layout pass's actual size. Writing measured
+                // size back into State moved the click target again next frame.
+                .alignmentGuide(.leading) { dimensions in
+                    dimensions.width / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).x
                 }
-                .onChange(of: interaction.activeSelectionAskThreadID) { _, id in
-                    if id != nil, interaction.keepFloatingSelectionForAnswer {
-                        expanded = true
-                    }
+                .alignmentGuide(.top) { dimensions in
+                    dimensions.height / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).y
                 }
-                .onChange(of: interaction.selectionContext?.id) { _, _ in
-                    // Live reselection collapses to capsule; reopen-with-keepOpen must stay expanded.
-                    guard !interaction.pinnedFloatingAgent,
-                          !store.isAgentRunningInActiveChat,
-                          !interaction.keepFloatingSelectionForAnswer else { return }
-                    expanded = false
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+        }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
         }
     }
 
@@ -325,19 +317,15 @@ private struct GlobalFloatingSelectionLayer: View {
             )
     }
 
-    private var floatingAgentPosition: CGPoint {
+    private func floatingAgentPosition(size: CGSize) -> CGPoint {
         let point = SelectionFloatingAgentPlacement.position(
             anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
             topInset: Double(WeiBeiMetric.topBarHeight * textScale),
-            surfaceHalfWidth: surfaceSize.width > 0 ? Double(surfaceSize.width / 2) : expanded
-                ? SelectionFloatingAgentPlacement.expandedHalfWidth
-                : (store.selectionContext?.isReplaceableNoteSelection == true
-                    ? 144
-                    : SelectionFloatingAgentPlacement.compactHalfWidth),
-            measuredHalfHeight: surfaceSize.height > 0 ? Double(surfaceSize.height / 2) : nil,
+            surfaceHalfWidth: Double(size.width / 2),
+            measuredHalfHeight: Double(size.height / 2),
             prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
-            prefersAnchorCenter: !expanded
+            prefersAnchorCenter: !(expanded || interaction.keepFloatingSelectionForAnswer || interaction.pinnedFloatingAgent)
         )
         return CGPoint(x: point.x, y: point.y)
     }

@@ -53,6 +53,43 @@ final class SelectionExperienceTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testOpenedQuestionStaysBesideThePassageWhenReaderReportsSelectionAgain() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let textAnchor = SelectionTextAnchor(startOffset: 0, endOffset: 7)
+        let anchor = SelectionPopoverAnchor(x: 320, y: 210, textAnchor: textAnchor)
+        store.updateSelection("准备提问的原文", source: .document, anchor: anchor)
+        store.askSelection()
+        let selection = store.selectionContext
+        store.updateSelection("准备提问的原文", source: .document, anchor: nil)
+        store.updateSelection("准备提问的原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 440, textAnchor: textAnchor))
+        XCTAssertEqual(store.selectionAnchor, anchor)
+        XCTAssertEqual(store.selectionContext, selection)
+        XCTAssertEqual(store.agentSurface, .selectionFloat)
+        XCTAssertFalse(store.pinnedFloatingAgent)
+    }
+
+    @MainActor
+    func testPinnedQuestionKeepsItsPassageAndPositionUntilUnpinned() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let anchor = SelectionPopoverAnchor(x: 320, y: 210)
+        store.updateSelection("固定的原文", source: .document, anchor: anchor)
+        store.askSelection()
+        store.pinnedFloatingAgent = true
+        let selection = store.selectionContext
+        store.updateSelection("另外一处原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 440))
+        store.updateSelection("", source: .document)
+        XCTAssertEqual(store.selectionContext, selection)
+        XCTAssertEqual(store.selectionAnchor, anchor)
+        store.pinnedFloatingAgent = false
+        store.updateSelection("另外一处原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 440))
+        XCTAssertEqual(store.selectionContext?.text, "另外一处原文")
+    }
+
     func testExcerptsFollowDocumentPositionsInsteadOfCaptureTime() {
         let later = SelectionRemarkRecord(selectionText: "后段", remarkText: "", source: .document, ownerTitle: "文稿",
             documentAnchor: SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 20, endOffset: 22)))

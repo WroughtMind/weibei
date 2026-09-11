@@ -12,11 +12,6 @@ struct FloatingAgentModeSwitch: View {
             modeButton(store.ui("记", "Remark"), mode: .remark,
                        help: store.ui("记一句摘抄", "Save a remark"))
         }
-        .padding(2)
-        .background(
-            WeiBeiTheme.paperInset.opacity(0.5),
-            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-        )
     }
 
     private func modeButton(_ label: String, mode: FloatingSelectionComposerMode, help: String) -> some View {
@@ -25,19 +20,8 @@ struct FloatingAgentModeSwitch: View {
             withAnimation(WeiBeiMotion.micro) { interaction.floatingComposerMode = mode }
         } label: {
             Text(label)
-        .weiBeiText(12, weight: .semibold)
-        .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-        .padding(.horizontal, 9)
-        .frame(minWidth: 30, minHeight: 28)
-        .contentShape(Rectangle())
-        .background {
-            if active {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(WeiBeiTheme.paper.opacity(0.92))
-            }
         }
-        }
-        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28))
+        .buttonStyle(WeiBeiTextActionButtonStyle(active: active, fontSize: 12, height: 28))
         .help(help)
         .accessibilityLabel(Text(help))
     }

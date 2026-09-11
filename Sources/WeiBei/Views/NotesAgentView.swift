@@ -2386,7 +2386,7 @@ struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Binding var expanded: Bool
-    @State private var dragOffset = CGSize.zero
+    @GestureState private var dragOffset = CGSize.zero
     @State private var settledOffset = CGSize.zero
     @State private var panelWidth = CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2)
     @State private var userFeedHeight: CGFloat?
@@ -2401,7 +2401,6 @@ struct FloatingSelectionAgentView: View {
     @State private var remarkSaveFailed = false
     @FocusState private var draftFocused: Bool
     @FocusState private var linkFocused: Bool
-    @Namespace private var floatingNamespace
 
     var body: some View {
         Group {
@@ -2415,13 +2414,7 @@ struct FloatingSelectionAgentView: View {
                 promptBody
             }
         }
-        .matchedGeometryEffect(id: "selection-agent-surface", in: floatingNamespace)
-        .transition(WeiBeiTransition.floating)
-        .modifier(SelectionFloatChrome(expanded: showsExpandedBody))
-        .scaleEffect(showsExpandedBody ? 1 : 0.985)
-        .animation(WeiBeiMotion.panel, value: expanded)
-        .animation(WeiBeiMotion.panel, value: interaction.pinnedFloatingAgent)
-        .animation(WeiBeiMotion.panel, value: store.isAgentRunningInActiveChat)
+        .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
         .offset(
             x: dragOffset.width + settledOffset.width,
             y: dragOffset.height + settledOffset.height
@@ -2432,6 +2425,8 @@ struct FloatingSelectionAgentView: View {
                 && previous?.source == next?.source
                 && previous?.ownerTitle == next?.ownerTitle
                 && previous?.isEditable == next?.isEditable
+                && previous?.itemID == next?.itemID
+                && previous?.documentAnchor == next?.documentAnchor
             guard !sameContent else { return }
             let isReopen = next.map { context in
                 interaction.activeSelectionAskThreadID == context.id
@@ -2440,7 +2435,6 @@ struct FloatingSelectionAgentView: View {
             if isReopen, interaction.keepFloatingSelectionForAnswer {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
-                    dragOffset = .zero
                     settledOffset = .zero
                 }
                 return
@@ -2450,7 +2444,6 @@ struct FloatingSelectionAgentView: View {
                 expanded = false
                 interaction.keepFloatingSelectionForAnswer = false
                 interaction.activeSelectionAskThreadID = nil
-                dragOffset = .zero
                 settledOffset = .zero
             }
         }
@@ -2458,7 +2451,6 @@ struct FloatingSelectionAgentView: View {
             if keep {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
-                    dragOffset = .zero
                     settledOffset = .zero
                 }
             }
@@ -2467,24 +2459,16 @@ struct FloatingSelectionAgentView: View {
             if id != nil, interaction.keepFloatingSelectionForAnswer {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
-                    dragOffset = .zero
                     settledOffset = .zero
                 }
-            }
-        }
-        .onChange(of: store.isAgentRunningInActiveChat) { _, asking in
-            if asking {
-                withAnimation(WeiBeiMotion.panel) { expanded = true }
             }
         }
         .onChange(of: paneState.focusRequest) { _, _ in
             draftFocused = paneState.focusedPane == .agent
         }
         .onAppear {
-            draftFocused = paneState.focusedPane == .agent
-            if interaction.pinnedFloatingAgent || store.isAgentRunningInActiveChat || interaction.keepFloatingSelectionForAnswer {
-                expanded = true
-            }
+            expanded = interaction.pinnedFloatingAgent || interaction.keepFloatingSelectionForAnswer
+            draftFocused = expanded && paneState.focusedPane == .agent
         }
         .weiBeiOnExitCommand {
             // 两段式 Esc:先收成胶囊,再按才整体关闭;流式/固定状态下保持直接关闭。
@@ -2506,8 +2490,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var showsExpandedBody: Bool {
-        // Capsule for bare selection; expand for 问 / pin / stream / 红线回访(keepOpen).
-        expanded || interaction.pinnedFloatingAgent || store.isAgentRunningInActiveChat || interaction.keepFloatingSelectionForAnswer
+        expanded || interaction.pinnedFloatingAgent || interaction.keepFloatingSelectionForAnswer
     }
 
     private var promptBody: some View {
@@ -2522,8 +2505,10 @@ struct FloatingSelectionAgentView: View {
 
     private var defaultPromptBody: some View {
         HStack(spacing: 0) {
-            Button(store.ui("问", "Ask")) {
+            Button {
                 openExpandedComposer()
+            } label: {
+                Text(store.ui("问", "Ask")).frame(minWidth: 28)
             }
             .foregroundStyle(WeiBeiTheme.link)
             .accessibilityLabel(Text(store.ui("就这段提问", "Ask about this passage")))
@@ -2538,16 +2523,18 @@ struct FloatingSelectionAgentView: View {
 
             if store.selectionContext != nil {
                 promptSeparator
-                Button(store.ui("记", "Remark")) {
+                Button {
                     openRemarkComposer()
+                } label: {
+                    Text(store.ui("记", "Remark")).frame(minWidth: 28)
                 }
                 .foregroundStyle(WeiBeiTheme.link)
                 .accessibilityLabel(Text(store.ui("记下这段", "Remark on this passage")))
                 .help(store.ui("记下这段(留空只存原文)", "Remark on this passage (empty saves excerpt only)"))
             }
         }
-        .weiBeiText(12, weight: .semibold)
-        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 30))
+        .weiBeiText(13, weight: .medium)
+        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 13, height: 32))
         .padding(.horizontal, 4)
         .frame(height: 34)
         .fixedSize()
@@ -2701,17 +2688,23 @@ struct FloatingSelectionAgentView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 FloatingAgentModeSwitch()
-                if let selection = store.selectionContext?.text, !selection.isEmpty {
-                    FloatingSelectionPreview(text: selection)
+                HStack(spacing: 0) {
+                    if let selection = store.selectionContext?.text, !selection.isEmpty {
+                        FloatingSelectionPreview(text: selection)
+                    }
+                    Spacer(minLength: 4)
                 }
-                Spacer(minLength: 4)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .contentShape(Rectangle())
+                .gesture(moveFloatingAgentGesture, including: interaction.pinnedFloatingAgent ? .none : .all)
                 Button {
                     withAnimation(WeiBeiMotion.micro) { togglePinnedFloatingAgent() }
                 } label: {
                     Image(systemName: store.pinnedFloatingAgent ? "pin.fill" : "pin")
                         .weiBeiText(12, weight: .semibold)
                         .foregroundStyle(store.pinnedFloatingAgent ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(store.pinnedFloatingAgent
@@ -2725,7 +2718,8 @@ struct FloatingSelectionAgentView: View {
                     Image(systemName: "xmark")
                         .weiBeiText(10.5, weight: .bold)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(store.ui("关闭", "Close"))
@@ -2734,8 +2728,6 @@ struct FloatingSelectionAgentView: View {
             .padding(.horizontal, 12)
             .padding(.top, 9)
             .padding(.bottom, 7)
-            .contentShape(Rectangle())
-            .gesture(moveFloatingAgentGesture)
 
             Rectangle()
                 .fill(WeiBeiTheme.hairline.opacity(0.35))
@@ -2808,7 +2800,9 @@ struct FloatingSelectionAgentView: View {
         }
         .frame(width: panelWidth, alignment: .leading)
         .overlay {
-            floatingResizeBorder
+            if !interaction.pinnedFloatingAgent {
+                floatingResizeBorder
+            }
         }
         .onChange(of: showsFloatingFeed) { _, _ in
             unlockFeedHeightFeedback()
@@ -2892,19 +2886,16 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var moveFloatingAgentGesture: some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .global)
-            .onChanged { value in
-                dragOffset = value.translation
+        DragGesture(minimumDistance: 8, coordinateSpace: .global)
+            .updating($dragOffset) { value, offset, transaction in
+                transaction.animation = nil
+                offset = value.translation
             }
             .onEnded { value in
-                withAnimation(WeiBeiMotion.panel) {
-                    settledOffset = CGSize(
-                        width: settledOffset.width + value.translation.width,
-                        height: settledOffset.height + value.translation.height
-                    )
-                    dragOffset = .zero
-                    // Dragging repositions; pin is only set by the pin control.
-                }
+                settledOffset = CGSize(
+                    width: settledOffset.width + value.translation.width,
+                    height: settledOffset.height + value.translation.height
+                )
             }
     }
 
@@ -2994,17 +2985,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func togglePinnedFloatingAgent() {
-        let next = !store.pinnedFloatingAgent
-        store.pinnedFloatingAgent = next
-        if next {
-            store.agentSurface = .selectionFloat
-            store.keepFloatingSelectionForAnswer = true
-        } else {
-            // Unpin must not dismiss — keepOpen holds the float without a drag anchor.
-            store.keepFloatingSelectionForAnswer = true
-            store.agentSurface = .selectionFloat
-            expanded = true
-        }
+        store.pinnedFloatingAgent.toggle()
     }
 
     private func openExpandedComposer() {
@@ -3073,7 +3054,6 @@ struct FloatingSelectionAgentView: View {
     private func closeFloatingAgent() {
         withAnimation(WeiBeiMotion.panel) {
             expanded = false
-            dragOffset = .zero
             settledOffset = .zero
             store.dismissFloatingSelectionAgent()
         }
@@ -3133,26 +3113,6 @@ private struct FloatingSelectionResizeHitRegion: View {
 #endif
             cursorPushed = false
         }
-    }
-}
-
-/// Paper float chrome: one quiet surface for both compact and expanded states.
-private struct SelectionFloatChrome: ViewModifier {
-    var expanded: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .foregroundColor(WeiBeiTheme.ink)
-            .background {
-                WeiBeiEtchedBackdrop(
-                    shape: RoundedRectangle(cornerRadius: expanded ? 12 : 8, style: .continuous),
-                    fill: WeiBeiTheme.paperRaised.opacity(0.98),
-                    stroke: WeiBeiTheme.hairline.opacity(0.65),
-                    showsContactShadow: true
-                )
-            }
-            .clipShape(RoundedRectangle(cornerRadius: expanded ? 12 : 8, style: .continuous))
-            .shadow(color: WeiBeiTheme.ink.opacity(0.06), radius: 8, y: 3)
     }
 }
 
