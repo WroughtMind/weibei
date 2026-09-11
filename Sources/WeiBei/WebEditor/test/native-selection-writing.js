@@ -11,6 +11,36 @@ const reset = async (markdown = '') => {
   editor.selectDocumentEndForCheck();
   await pause();
 };
+// Complete pre-typed emphasis pairs with real native input, including Chinese IME.
+for (const marker of ['**', '__']) {
+  await reset();
+  for (const character of marker.repeat(2)) await native('insert', character);
+  await native('key', '\uF702', { keyCode: 123 });
+  await native('key', '\uF702', { keyCode: 123 });
+  if (marker === '**') {
+    await native('marked', 'zhong', { caretAtEnd: true });
+    expect(document.querySelector('.ProseMirror').textContent === '**zhong**', 'Formatting interrupted active pinyin');
+    await native('insert', '中文');
+  } else {
+    await native('insert', 'Bold');
+  }
+  const content = marker === '**' ? '中文' : 'Bold';
+  expect(document.querySelector('.ProseMirror strong')?.textContent === content,
+    'Typing inside a pre-typed pair did not become bold: ' + editor.getMarkdown());
+  await native('insert', '续');
+  const saved = editor.getMarkdown();
+  expect(document.querySelector('.ProseMirror strong')?.textContent === content + '续', 'Continued input left the bold run');
+  expect(editor.undoForCheck() && editor.getMarkdown() !== saved, 'Bold input could not be undone');
+  expect(editor.redoForCheck() && editor.getMarkdown() === saved, 'Redo did not restore bold input');
+  editor.setMarkdown(saved);
+  expect(document.querySelector('.ProseMirror strong')?.textContent === content + '续', 'Reloading lost bold formatting');
+}
+await reset('`****`');
+getSelection().collapse(document.querySelector('.ProseMirror code').firstChild, 2);
+await pause();
+await native('insert', 'literal');
+expect(document.querySelector('.ProseMirror code')?.textContent === '**literal**'
+  && !document.querySelector('.ProseMirror strong'), 'Code content was converted to bold');
 // Inserting from an unfocused note also changes focus. That second update must
 // not cancel the slash menu triggered by the first one.
 const waitFor = (condition, reason) => new Promise((resolve, reject) => {

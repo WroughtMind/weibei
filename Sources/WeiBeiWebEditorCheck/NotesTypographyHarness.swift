@@ -40,7 +40,7 @@ final class NotesTypographyHarness: NSObject, WKScriptMessageHandler {
         var result: Any?
         webView.evaluateJavaScript(source) { value, failure in
             result = value
-            if let failure { self.error = failure.localizedDescription }
+            if let failure { self.error = String(describing: failure) }
             done = true
         }
         wait { done }
@@ -76,6 +76,10 @@ final class NotesTypographyHarness: NSObject, WKScriptMessageHandler {
         wait { js("window.fontsLoaded") as? Bool == true }
         check("document.fonts.check('16px Mplus1p') && document.fonts.check('16px \"Mplus1p Heading\"')", "Onigiri fonts load locally")
         js("window.savedMarkdown = window.WeiBeiEditor.getMarkdown(); window.css = s => getComputedStyle(document.querySelector(s)); 0")
+        js("window.WeiBeiEditor.setMarkdown('正文 **粗体中文 Bold**'); 0")
+        check("parseFloat(css('.ProseMirror strong').fontWeight) >= 600", "bold notes select a bold weight instead of reusing the light body face")
+        capture("notes-bold")
+        js("window.WeiBeiEditor.setMarkdown(window.savedMarkdown); 0")
         check("css('.ProseMirror').fontSize === '16px' && css('.ProseMirror p').lineHeight === '28px'", "notes use the measured Onigiri body size and line spacing")
         check("Math.abs(document.querySelector('.ProseMirror').getBoundingClientRect().width - 984) < 1", "wide notes match Onigiri's 1024px page including its two 20px gutters")
         check("Math.abs(document.querySelector('.ProseMirror').getBoundingClientRect().left - (document.getElementById('editor').clientWidth - 984) / 2) < 1", "the writing area is centered")
@@ -109,6 +113,18 @@ final class NotesTypographyHarness: NSObject, WKScriptMessageHandler {
         js("window.WeiBeiEditor.setTypewriterMode(false); 0")
         check("document.body.dataset.typewriter === 'false' && parseFloat(css('#editor').paddingTop) === 36", "turning typewriter mode off restores normal document spacing")
         check("window.WeiBeiEditor.getMarkdown().replace('验证拼','') === window.savedMarkdown", "typography, zoom and typewriter toggles preserve note contents")
+        js("window.WeiBeiEditor.setMarkdown('段落位置检查\\n\\n'.repeat(30)); window.WeiBeiEditor.selectDocumentEndForCheck(); window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}'); window.plusAligned = () => { const button=document.querySelector('.weibei-line-plus'); const b=button.getBoundingClientRect(); const p=document.querySelector('.ProseMirror p:last-child'); const r=p.querySelector('br').getBoundingClientRect(); const viewport=document.getElementById('editor').getBoundingClientRect(); if(r.bottom<=viewport.top || r.top>=viewport.bottom) return button.hidden; return !button.hidden && b.right < r.left && Math.abs((b.top+b.bottom-r.top-r.bottom)/2) < 1; }; 0")
+        settle()
+        check("plusAligned()", "the insert button is centered beside the empty-line caret")
+        js("document.getElementById('editor').scrollTop -= 80; 0")
+        settle()
+        check("plusAligned()", "the insert button follows manual scrolling")
+        webView.frame.size.width = 420
+        js("window.WeiBeiEditor.setTextScale(1.25); 0")
+        settle()
+        check("plusAligned()", "the insert button stays beside the caret after split-pane resizing and text scaling")
+        capture("notes-plus-narrow")
+        js("window.WeiBeiEditor.setTextScale(1); 0")
         js("window.WeiBeiEditor.setEditable(false); 0")
         check("css('.ProseMirror').fontSize === '17px' && document.body.dataset.typewriter === 'false'", "read-only documents retain their own typography and do not enable typewriter scrolling")
         print("Notes typography check passed: layout, local fonts, six heading scales, split pane, typing, manual scroll, toggle, content preservation, read-only isolation")

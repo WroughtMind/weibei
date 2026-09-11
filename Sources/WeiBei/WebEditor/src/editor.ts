@@ -523,8 +523,10 @@ const syncLinePlus = (view: any) => {
   linePlusElement.hidden = !$from;
   if (!$from) return;
   const rect = view.coordsAtPos($from.pos);
+  const viewport = document.getElementById('editor')!.getBoundingClientRect();
+  linePlusElement.hidden = rect.bottom <= viewport.top || rect.top >= viewport.bottom;
   linePlusElement.style.left = `${Math.max(6, rect.left - 30)}px`;
-  linePlusElement.style.top = `${Math.max(6, rect.top - 2)}px`;
+  linePlusElement.style.top = `${(rect.top + rect.bottom) / 2}px`;
 };
 
 /** Builds the replacement nodes directly instead of reparsing generated Markdown. */
@@ -2471,6 +2473,38 @@ const transactionTouchesHeading = (transaction: any) => transaction.steps.some((
   return touchesHeading;
 });
 
+/** Input rules read only left of the caret; also finish a pre-typed bold closer. */
+const completePairedStrong = (view: any, from: number, to: number, text: string) => {
+  if (!isEditable || view.composing) return false;
+  const { state } = view;
+  const $from = state.doc.resolve(from);
+  const $to = state.doc.resolve(to);
+  if (!$from.sameParent($to) || !$from.parent.isTextblock || $from.parent.type.spec.code) return false;
+  const after = $to.parent.textBetween($to.parentOffset, $to.parent.content.size, '\uFFFC', '\uFFFC');
+  const closer = after.slice(0, 2);
+  if (closer !== '**' && closer !== '__') return false;
+  const before = $from.parent.textBetween(0, $from.parentOffset, '\uFFFC', '\uFFFC');
+  const match = /(?<![\w:/])(?:\*\*|__)([^*_\n]+?)(?:\*\*|__)$/.exec(before + text + closer);
+  if (!match || !match[1].trim() || !match[0].startsWith(closer)) return false;
+  let slashes = 0;
+  for (let i = match.index - 1; i >= 0 && before[i] === '\\'; i -= 1) slashes += 1;
+  if (slashes % 2) return false;
+  const start = from + text.length + closer.length - match[0].length;
+  let literal = false;
+  state.doc.nodesBetween(start, to + closer.length, (node: any) => {
+    if (node.marks.some((mark: any) => mark.type.spec.code)) literal = true;
+  });
+  if (literal) return false;
+  const tr = state.tr.insertText(text, from, to);
+  const end = from + text.length;
+  tr.delete(end, end + closer.length).delete(start, start + closer.length);
+  const mark = state.schema.marks.strong.create({ marker: closer[0] });
+  tr.addMark(start, end - closer.length, mark);
+  tr.setSelection(TextSelection.create(tr.doc, end - closer.length)).addStoredMark(mark);
+  view.dispatch(tr);
+  return true;
+};
+
 const weiBeiDialectPlugin = $prose(() => new Plugin({
   state: {
     init: () => null,
@@ -2633,6 +2667,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       if (!isEditable) return false;
       const incoming = String(text || '');
       if (!incoming) return false;
+      if (completePairedStrong(view, from, to, incoming)) return true;
       const { $from } = view.state.selection;
       if (!view.composing && $from.parent.type.name === 'paragraph' && /^[\u200B\uFEFF]+$/.test($from.parent.textContent)) {
         view.dispatch(view.state.tr.insertText(incoming, $from.start(), $from.end()));
@@ -2976,6 +3011,11 @@ const normalizeCompletedEmptyTextblockComposition = () => {
 const publishCompletedCompositionMarkdown = () => {
   if (!editor) return;
   normalizeCompletedEmptyTextblockComposition();
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const { from, to } = view.state.selection;
+    completePairedStrong(view, from, to, '');
+  });
   compositionEndPending = false;
   compositionStartMarkdown = null;
   reportSelection();
@@ -3839,9 +3879,14 @@ if (WEIBEI_EDITOR_RUNTIME) {
         provider.onHide = () => { slashMenuElement.setAttribute('aria-hidden', 'true'); slashRuntime.context = null; slashRuntime.tableOpen = false; dismissSlashTablePanel(); syncSlashAccessibility(); };
         provider.update(view);
         syncLinePlus(view);
+        const repositionLinePlus = () => syncLinePlus(view);
+        const linePlusResizeObserver = new ResizeObserver(repositionLinePlus);
+        linePlusResizeObserver.observe(view.dom);
+        document.addEventListener('scroll', repositionLinePlus, true);
+        document.fonts.addEventListener('loadingdone', repositionLinePlus);
         // The provider debounces updates: a focus-only transaction can replace the
         // typing update, so always evaluate the current state without a stale baseline.
-        return { update(updatedView: any) { slashRuntime.view = updatedView; const context = slashContextForView(updatedView); if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) slashRuntime.dismissedContext = ''; provider.update(updatedView); syncLinePlus(updatedView); }, destroy() { provider.destroy(); linePlusElement.removeEventListener('mousedown', preventLinePlusBlur); linePlusElement.removeEventListener('click', openLineMenu); slashMenuElement.remove(); slashStatusElement.remove(); linePlusElement.remove(); slashTablePanelElement?.remove(); slashRuntime.provider = null; slashRuntime.view = null; } };
+        return { update(updatedView: any) { slashRuntime.view = updatedView; const context = slashContextForView(updatedView); if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) slashRuntime.dismissedContext = ''; provider.update(updatedView); syncLinePlus(updatedView); }, destroy() { provider.destroy(); linePlusResizeObserver.disconnect(); document.removeEventListener('scroll', repositionLinePlus, true); document.fonts.removeEventListener('loadingdone', repositionLinePlus); linePlusElement.removeEventListener('mousedown', preventLinePlusBlur); linePlusElement.removeEventListener('click', openLineMenu); slashMenuElement.remove(); slashStatusElement.remove(); linePlusElement.remove(); slashTablePanelElement?.remove(); slashRuntime.provider = null; slashRuntime.view = null; } };
       },
     });
   });
