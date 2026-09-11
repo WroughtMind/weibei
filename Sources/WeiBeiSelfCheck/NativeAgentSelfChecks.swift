@@ -23,7 +23,6 @@ func runNativeAgentSelfChecks() throws {
     try checkCreateDocumentUserConfirmation()
     try checkDelegateCapabilities()
     try checkEvalSetLunaLow()
-    try checkRetrievalPrompt()
     try checkBackendSelection()
     try checkContextRevisionEcho()
     try checkNativeProductContract()
@@ -96,15 +95,15 @@ private func checkSSEFraming() throws {
 
 private func checkToolCallAssembly() throws {
     var assembler = NativeToolCallAssembler()
-    assembler.apply(.toolCallDelta(index: 0, id: "call-1", name: "weibei_course_search", argumentsDelta: "{\"query\":"))
+    assembler.apply(.toolCallDelta(index: 0, id: "call-1", name: "weibei_search_workspace", argumentsDelta: "{\"query\":"))
     assembler.apply(.toolCallDelta(index: 0, id: "call-1", name: nil, argumentsDelta: "\"利率\"}"))
     let calls = try assembler.completedCalls()
-    try nativeRequire(calls.count == 1 && calls[0].name == "weibei_course_search", "tool call fragments assemble")
+    try nativeRequire(calls.count == 1 && calls[0].name == "weibei_search_workspace", "tool call fragments assemble")
 }
 
 private func checkIncompleteArgumentsRejected() throws {
     var assembler = NativeToolCallAssembler()
-    assembler.apply(.toolCallDelta(index: 0, id: "call-1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"利率\""))
+    assembler.apply(.toolCallDelta(index: 0, id: "call-1", name: "weibei_search_workspace", argumentsDelta: "{\"query\":\"利率\""))
     do {
         _ = try assembler.completedCalls()
         throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 3, userInfo: [
@@ -217,9 +216,9 @@ private func checkResponsesTranslation() throws {
     )
     try nativeRequire(text.first == .textDelta(index: 0, text: "利率"), "Responses text delta maps")
     let tool = try OpenAIResponsesProvider.translate(
-        #"{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"c1","name":"weibei_course_search"}}"#
+        #"{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"c1","name":"weibei_search_workspace"}}"#
     )
-    try nativeRequire(tool.first == .toolCallDelta(index: 1, id: "c1", name: "weibei_course_search", argumentsDelta: ""), "Responses tool start maps")
+    try nativeRequire(tool.first == .toolCallDelta(index: 1, id: "c1", name: "weibei_search_workspace", argumentsDelta: ""), "Responses tool start maps")
     let searchSources = try OpenAIResponsesProvider.translate(
         #"{"type":"response.output_item.done","output_index":2,"item":{"type":"web_search_call","action":{"type":"search","sources":[{"type":"url","url":"https://example.com/fresh"}]}}}"#
     )
@@ -474,31 +473,22 @@ private func checkSkillCatalogAndLoad() throws {
     } catch let failure as NativeLLMFailure {
         try nativeRequire(failure.code == "unknown_tool", "retired read alias fails as unknown_tool")
     }
-    let search = tools.first { $0.name == "weibei_course_search" }
-    try nativeRequire(search?.description.contains("不要先反问") == true, "course_search description forbids clarifying questions")
-    try nativeRequire(search?.description.contains("weibei_course_read") == true, "course_search description continues into course_read")
-    try nativeRequire(search?.description.contains("网页搜索") == true, "course_search description still allows web search after a miss")
-    try nativeRequire(search?.description.contains("闲聊") == true, "course_search description skips unrelated chat")
     let workspace = tools.first { $0.name == "weibei_search_workspace" }
     try nativeRequire(workspace != nil, "workspace search tool is registered")
     if let schema = jsonObject(workspace?.schema.object),
        let properties = jsonObject(schema["properties"]) {
         try nativeRequire(properties["query"] != nil, "workspace search requires query")
-        try nativeRequire(properties["offset"] != nil, "workspace search exposes pagination offset")
-        try nativeRequire(properties["crossLibrary"] != nil, "workspace search exposes crossLibrary")
+        try nativeRequire(properties["cursor"] != nil, "workspace search exposes pagination cursor")
+        try nativeRequire(properties["scope"] != nil, "workspace search exposes scope")
         let required = schema["required"] as? [String] ?? []
         try nativeRequire(required.contains("query"), "workspace search query is required")
-        try nativeRequire(!required.contains("crossLibrary"), "workspace search defaults to current course")
+        try nativeRequire(required.contains("scope"), "workspace search requires an explicit scope")
     } else {
         throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 21, userInfo: [
             NSLocalizedDescriptionKey: "workspace search schema is incomplete",
         ])
     }
-    let read = tools.first { $0.name == "weibei_course_read" }
-    try nativeRequire(read?.description.contains("不要停下来反问") == true, "course_read description forbids interrupting to ask")
-    try nativeRequire(read?.description.contains("nextCursor") == true, "course_read description continues truncated reads")
-    let webOpen = tools.first { $0.name == "weibei_web_open" }
-    try nativeRequire(webOpen?.description.contains("nextCursor") == true, "web_open description continues truncated reads")
+
 }
 
 private func checkLoadSkillIdempotent() throws {
@@ -660,22 +650,6 @@ private func checkEvalSetLunaLow() throws {
     )
 }
 
-private func checkRetrievalPrompt() throws {
-    let prompt = NativePromptAssembler.webiSystemPrompt(
-        bundledText: "you are webi",
-        tools: []
-    )
-    try nativeRequire(prompt.contains("检索策略"), "native system prompt includes retrieval strategy")
-    try nativeRequire(prompt.contains("不要用反问打断心流"), "retrieval strategy forbids interrupting with a clarifying question")
-    try nativeRequire(prompt.contains("weibei_course_search"), "retrieval strategy names course_search")
-    try nativeRequire(prompt.contains("weibei_search_workspace"), "retrieval strategy names workspace search")
-    try nativeRequire(
-        !prompt.contains("本轮还没有工作区文件检索工具"),
-        "retired skip-workspace-search instruction stays gone"
-    )
-    try nativeRequire(prompt.contains("闲聊"), "retrieval strategy skips unrelated chat")
-}
-
 private func checkBackendSelection() throws {
     // Pi retired 2026-08: native is the only backend. "pi" must stay
     // undecodable so legacy archives hit the lossy-decode marker instead.
@@ -809,7 +783,6 @@ private func checkNativeProductContract() throws {
         "weibei_course_profile_update",
         "weibei_note_proposal",
         "weibei_relation_proposal",
-        "weibei_course_search",
         "weibei_search_workspace",
         "weibei_course_read",
     ] {

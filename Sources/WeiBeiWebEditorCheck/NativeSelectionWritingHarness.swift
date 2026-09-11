@@ -31,7 +31,7 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
         window.contentView = web
         window.makeFirstResponder(web)
         web.loadFileURL(resources.appendingPathComponent("index.html"), allowingReadAccessTo: resources)
-        let deadline = Date().addingTimeInterval(60)
+        let deadline = Date().addingTimeInterval(180)
         while !done && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
         expect(done, "native selection/writing check timed out")
         config.userContentController.removeAllScriptMessageHandlers()
@@ -41,11 +41,30 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "nativeInput", let body = message.body as? [String: Any] {
             if body["operation"] as? String == "checkpoint" { print("native-check: \(body["text"] ?? "")"); fflush(stdout); return }
-            guard let client = web.inputContext?.client else { expect(false, "native text input unavailable"); return }
+            if body["operation"] as? String == "click", let x = body["x"] as? Double, let y = body["y"] as? Double {
+                let point = NSPoint(x: x, y: web.isFlipped ? y : web.bounds.height - y)
+                let location = web.convert(point, to: nil)
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+                    if type == .leftMouseDown { web.mouseDown(with: event) }
+                    else { web.mouseUp(with: event) }
+                }
+                return
+            }
             let text = body["text"] as? String ?? ""
+            if body["operation"] as? String == "key", let keyCode = body["keyCode"] as? UInt16 {
+                let modifiers: NSEvent.ModifierFlags = body["shift"] as? Bool == true ? .shift : []
+                let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: keyCode)!
+                web.keyDown(with: event)
+                return
+            }
+            guard let client = web.inputContext?.client else { expect(false, "native text input unavailable"); return }
             let replacement = NSRange(location: NSNotFound, length: 0)
             if body["operation"] as? String == "marked" {
-                client.setMarkedText(text, selectedRange: NSRange(location: 0, length: text.utf16.count), replacementRange: replacement)
+                let selected = body["caretAtEnd"] as? Bool == true
+                    ? NSRange(location: text.utf16.count, length: 0)
+                    : NSRange(location: 0, length: text.utf16.count)
+                client.setMarkedText(text, selectedRange: selected, replacementRange: replacement)
             } else {
                 client.insertText(text, replacementRange: replacement)
             }

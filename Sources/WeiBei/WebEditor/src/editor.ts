@@ -1,6 +1,6 @@
 import { commandsCtx, Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, parserCtx, rootCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
-import { gfm } from '@milkdown/kit/preset/gfm';
+import { autoInsertSpanPlugin, gfm, strikethroughInputRule, strikethroughSchema } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 import { history } from '@milkdown/kit/plugin/history';
 import { clipboard } from '@milkdown/kit/plugin/clipboard';
@@ -21,7 +21,7 @@ import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
 import { closeHistory, redo, undo } from '@milkdown/kit/prose/history';
-import { nodeRule } from '@milkdown/kit/prose';
+import { markRule, nodeRule } from '@milkdown/kit/prose';
 import { Fragment } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
@@ -113,6 +113,11 @@ let mermaidPreviewGeneration = 0;
 const pendingAttachments = new Map();
 const pendingImagePickers = new Map();
 const weiBeiSlash = WEIBEI_EDITOR_RUNTIME ? slashFactory('WEIBEI_BLOCK_COMMAND') : null as any;
+// Empty tilde pairs are delimiters, not content to strike through.
+const weiBeiStrikethroughInputRule = $inputRule((ctx) => markRule(
+  /(?<![\w:/~])(~{1,2})([^~\n]+?)\1(?![\w/~])$/,
+  strikethroughSchema.type(ctx),
+));
 let mathTypedLandingPosition: number | null = null;
 const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => nodeRule(
   inlineMathInputPattern,
@@ -400,7 +405,7 @@ const tableToolbarElement = (WEIBEI_EDITOR_RUNTIME ? document.createElement('div
 if (WEIBEI_EDITOR_RUNTIME) {
   slashMenuElement.className = 'weibei-slash-menu';
   slashMenuElement.dataset.show = 'false';
-  slashMenuElement.dataset.state = 'closed';
+  slashMenuElement.setAttribute('aria-hidden', 'true');
   slashMenuElement.setAttribute('role', 'listbox');
   slashMenuElement.setAttribute('aria-label', 'Slash commands');
   slashStatusElement.className = 'weibei-visually-hidden';
@@ -474,9 +479,6 @@ const slashRuntime: {
 } = { provider: null, view: null, context: null, commands: [], activeIndex: 0, dismissedContext: '', activationContext: '', tableOpen: false, tableFocus: 'rows', tableRows: 3, tableColumns: 3, tableMenuBaseLeft: '', error: '' };
 const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 'table_row', 'table_header_row', 'table_cell', 'table_header', 'code_block', 'math_block']);
 
-/** Slash menu visual phase + the generation that guards every deferred cleanup. */
-const slashMenuPhase: { state: 'closed' | 'opening' | 'open' | 'closing'; generation: number; timer: number; frame: number } = { state: 'closed', generation: 0, timer: 0, frame: 0 };
-
 const isEditorReduceMotion = () => document.documentElement.dataset.weibeiReduceMotion === 'true';
 
 /** Native reduce-motion sync: written before the page scripts run and pushed
@@ -526,8 +528,10 @@ const syncLinePlus = (view: any) => {
   linePlusElement.hidden = !$from;
   if (!$from) return;
   const rect = view.coordsAtPos($from.pos);
+  const viewport = document.getElementById('editor')!.getBoundingClientRect();
+  linePlusElement.hidden = rect.bottom <= viewport.top || rect.top >= viewport.bottom;
   linePlusElement.style.left = `${Math.max(6, rect.left - 30)}px`;
-  linePlusElement.style.top = `${Math.max(6, rect.top - 2)}px`;
+  linePlusElement.style.top = `${(rect.top + rect.bottom) / 2}px`;
 };
 
 /** Builds the replacement nodes directly instead of reparsing generated Markdown. */
@@ -2474,6 +2478,46 @@ const transactionTouchesHeading = (transaction: any) => transaction.steps.some((
   return touchesHeading;
 });
 
+/** Input rules read only left of the caret; also finish pre-typed inline closers. */
+const completePairedMark = (view: any, from: number, to: number, text: string) => {
+  if (!isEditable || view.composing) return false;
+  const { state } = view;
+  const $from = state.doc.resolve(from);
+  const $to = state.doc.resolve(to);
+  if (!$from.sameParent($to) || !$from.parent.isTextblock || $from.parent.type.spec.code) return false;
+  const after = $to.parent.textBetween($to.parentOffset, $to.parent.content.size, '\uFFFC', '\uFFFC');
+  const closer = /^(?:\*\*|__|~~|==|\*|_|`)/.exec(after)?.[0];
+  if (!closer || after[closer.length] === closer[0]) return false;
+  const before = $from.parent.textBetween(0, $from.parentOffset, '\uFFFC', '\uFFFC');
+  const opening = before.lastIndexOf(closer);
+  if (opening < 0) return false;
+  const content = before.slice(opening + closer.length) + text;
+  if (!content.trim() || content.includes(closer[0]) || /[\n\uFFFC]/.test(content)) return false;
+  const previous = before[opening - 1] || '';
+  if (previous === closer[0] || (['**', '__', '_', '~~'].includes(closer) && /[\w:/]/.test(previous))) return false;
+  let slashes = 0;
+  for (let i = opening - 1; i >= 0 && before[i] === '\\'; i -= 1) slashes += 1;
+  if (slashes % 2) return false;
+  const start = $from.start() + opening;
+  let literal = false;
+  state.doc.nodesBetween(start, to + closer.length, (node: any) => {
+    if (node.marks.some((mark: any) => mark.type.spec.code)) literal = true;
+  });
+  if (literal) return false;
+  const tr = state.tr.insertText(text, from, to);
+  const end = from + text.length;
+  tr.delete(end, end + closer.length).delete(start, start + closer.length);
+  const markNames: Record<string, string> = {
+    '**': 'strong', '__': 'strong', '*': 'emphasis', '_': 'emphasis',
+    '~~': 'strike_through', '==': 'highlight', '`': 'inlineCode',
+  };
+  const mark = state.schema.marks[markNames[closer]].create({ marker: closer[0] });
+  tr.addMark(start, end - closer.length, mark);
+  tr.setSelection(TextSelection.create(tr.doc, end - closer.length)).addStoredMark(mark);
+  view.dispatch(tr);
+  return true;
+};
+
 const weiBeiDialectPlugin = $prose(() => new Plugin({
   state: {
     init: () => null,
@@ -2636,6 +2680,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       if (!isEditable) return false;
       const incoming = String(text || '');
       if (!incoming) return false;
+      if (completePairedMark(view, from, to, incoming)) return true;
       const { $from } = view.state.selection;
       if (!view.composing && $from.parent.type.name === 'paragraph' && /^[\u200B\uFEFF]+$/.test($from.parent.textContent)) {
         view.dispatch(view.state.tr.insertText(incoming, $from.start(), $from.end()));
@@ -2979,6 +3024,11 @@ const normalizeCompletedEmptyTextblockComposition = () => {
 const publishCompletedCompositionMarkdown = () => {
   if (!editor) return;
   normalizeCompletedEmptyTextblockComposition();
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const { from, to } = view.state.selection;
+    completePairedMark(view, from, to, '');
+  });
   compositionEndPending = false;
   compositionStartMarkdown = null;
   reportSelection();
@@ -3401,7 +3451,6 @@ const reportOutline = (doc: any) => {
   doc.descendants((node: any, pos: number) => {
     if (node.type.name !== 'heading') return true;
     const title = node.textContent.trim();
-    if (!title) return false;
     const index = items.length;
     items.push({
       id: `note-heading-${index}`,
@@ -3839,68 +3888,18 @@ if (WEIBEI_EDITOR_RUNTIME) {
         document.body.append(slashStatusElement, linePlusElement);
         const provider = new SlashProvider({ content: slashMenuElement, debounce: 0, offset: 6, root: document.body, shouldShow: (updatedView) => { const context = slashContextForView(updatedView); return Boolean(context && slashRuntime.dismissedContext !== context.key); } });
         slashRuntime.provider = provider; slashRuntime.view = view;
-        // Visual state machine (closed → opening → open → closing → closed) wraps the
-        // provider's raw show/hide: open fades ~250ms, close fades ~150ms and blocks
-        // hit testing + assistive tech immediately. Every open or close bumps a
-        // generation; cleanup callbacks (transitionend + a missed-event fallback)
-        // only run while their generation is still current, so a fast close → reopen
-        // can never be torn down by the stale close.
-        const providerShow = provider.show.bind(provider);
-        const providerHide = provider.hide.bind(provider);
-        const finishSlashMenuHide = (generation: number) => {
-          if (slashMenuPhase.generation !== generation) return;
-          slashMenuPhase.state = 'closed';
-          slashMenuElement.dataset.state = 'closed';
-          providerHide();
-        };
-        provider.show = () => {
-          slashMenuPhase.generation += 1;
-          window.clearTimeout(slashMenuPhase.timer);
-          if (window.weiBeiEditorCheckMode || isEditorReduceMotion()) {
-            slashMenuPhase.state = 'open';
-            slashMenuElement.dataset.state = 'open';
-            providerShow();
-            return;
-          }
-          providerShow();
-          slashMenuPhase.state = 'opening';
-          slashMenuElement.dataset.state = 'opening';
-          const generation = slashMenuPhase.generation;
-          slashMenuPhase.frame = window.requestAnimationFrame(() => {
-            if (slashMenuPhase.generation !== generation) return;
-            slashMenuPhase.state = 'open';
-            slashMenuElement.dataset.state = 'open';
-          });
-        };
-        provider.hide = () => {
-          slashMenuPhase.generation += 1;
-          window.clearTimeout(slashMenuPhase.timer);
-          window.cancelAnimationFrame(slashMenuPhase.frame);
-          if (slashMenuElement.dataset.show !== 'true' || window.weiBeiEditorCheckMode || isEditorReduceMotion()) {
-            finishSlashMenuHide(slashMenuPhase.generation);
-            return;
-          }
-          slashMenuPhase.state = 'closing';
-          slashMenuElement.dataset.state = 'closing';
-          slashMenuElement.setAttribute('aria-hidden', 'true');
-          const generation = slashMenuPhase.generation;
-          const finish = () => {
-            if (slashMenuPhase.generation !== generation) return;
-            slashMenuElement.removeAttribute('aria-hidden');
-            finishSlashMenuHide(generation);
-          };
-          slashMenuElement.addEventListener('transitionend', function onSlashMenuTransitionEnd(event) {
-            if (event.target !== slashMenuElement || event.propertyName !== 'opacity') return;
-            slashMenuElement.removeEventListener('transitionend', onSlashMenuTransitionEnd);
-            finish();
-          });
-          slashMenuPhase.timer = window.setTimeout(finish, 200);
-        };
-        provider.onShow = () => { slashRuntime.view = view; renderSlashMenu(); };
-        provider.onHide = () => { slashRuntime.context = null; slashRuntime.tableOpen = false; dismissSlashTablePanel(); syncSlashAccessibility(); };
+        provider.onShow = () => { slashMenuElement.removeAttribute('aria-hidden'); slashRuntime.view = view; renderSlashMenu(); };
+        provider.onHide = () => { slashMenuElement.setAttribute('aria-hidden', 'true'); slashRuntime.context = null; slashRuntime.tableOpen = false; dismissSlashTablePanel(); syncSlashAccessibility(); };
         provider.update(view);
         syncLinePlus(view);
-        return { update(updatedView: any, previousState: any) { slashRuntime.view = updatedView; const context = slashContextForView(updatedView); if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) slashRuntime.dismissedContext = ''; provider.update(updatedView, previousState); syncLinePlus(updatedView); }, destroy() { provider.destroy(); linePlusElement.removeEventListener('mousedown', preventLinePlusBlur); linePlusElement.removeEventListener('click', openLineMenu); slashMenuElement.remove(); slashStatusElement.remove(); linePlusElement.remove(); slashTablePanelElement?.remove(); slashRuntime.provider = null; slashRuntime.view = null; } };
+        const repositionLinePlus = () => syncLinePlus(view);
+        const linePlusResizeObserver = new ResizeObserver(repositionLinePlus);
+        linePlusResizeObserver.observe(view.dom);
+        document.addEventListener('scroll', repositionLinePlus, true);
+        document.fonts.addEventListener('loadingdone', repositionLinePlus);
+        // The provider debounces updates: a focus-only transaction can replace the
+        // typing update, so always evaluate the current state without a stale baseline.
+        return { update(updatedView: any) { slashRuntime.view = updatedView; const context = slashContextForView(updatedView); if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) slashRuntime.dismissedContext = ''; provider.update(updatedView); syncLinePlus(updatedView); }, destroy() { provider.destroy(); linePlusResizeObserver.disconnect(); document.removeEventListener('scroll', repositionLinePlus, true); document.fonts.removeEventListener('loadingdone', repositionLinePlus); linePlusElement.removeEventListener('mousedown', preventLinePlusBlur); linePlusElement.removeEventListener('click', openLineMenu); slashMenuElement.remove(); slashStatusElement.remove(); linePlusElement.remove(); slashTablePanelElement?.remove(); slashRuntime.provider = null; slashRuntime.view = null; } };
       },
     });
   });
@@ -3909,7 +3908,9 @@ if (WEIBEI_EDITOR_RUNTIME) {
 editorBuilder = editorBuilder
   .use(weiBeiDialectPlugin)
   .use(commonmark)
-  .use(gfm)
+  // The old Safari IME widget interrupts native composition when its caret is at
+  // the end, leaving compositionend missing and all input commands disabled.
+  .use(gfm.filter((plugin) => plugin !== autoInsertSpanPlugin && plugin !== strikethroughInputRule))
   .use(structuredMarkdown)
   .use(weiBeiMath)
   .use(streaming)
@@ -3917,6 +3918,7 @@ editorBuilder = editorBuilder
 
 if (WEIBEI_EDITOR_RUNTIME) {
   editorBuilder = editorBuilder
+    .use(weiBeiStrikethroughInputRule)
     .use($prose(() => createSyntaxMarksPlugin({
       isEditable: () => isEditable,
       isStreaming: () => streamingMarkdownBuffer !== null,

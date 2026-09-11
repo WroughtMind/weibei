@@ -1,4 +1,6 @@
+#if !targetEnvironment(macCatalyst)
 import AppKit
+#endif
 import Foundation
 import SwiftUI
 
@@ -12,6 +14,7 @@ final class AgentTurnReadingPositionModel {
 /// crossed this row's top edge. Same coalescing contract as the viewport
 /// visibility probe: the callback fires only on a flip, so ordinary scrolling
 /// never re-enters SwiftUI per frame.
+#if !targetEnvironment(macCatalyst)
 struct AgentTurnReadingPositionProbe: NSViewRepresentable {
     var messageID: UUID
     var onChange: (UUID, Bool) -> Void
@@ -106,3 +109,5 @@ struct AgentTurnReadingPositionProbe: NSViewRepresentable {
         }
     }
 }
+
+#endif

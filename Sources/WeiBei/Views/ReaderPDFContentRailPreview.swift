@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import Foundation
 import PDFKit
 
@@ -6,7 +10,7 @@ import PDFKit
 /// off the main thread through a latest-first serial queue. Split out of
 /// ReaderView.swift so PDF preview remains its own focused responsibility.
 struct PDFContentRailPreview {
-    var image: NSImage
+    var image: WeiBeiPlatformImage
     var title: String
     var excerpt: String
 }
@@ -123,7 +127,7 @@ private final class PDFPreviewRenderOperation: Operation {
             return
         }
 
-        let image = page.thumbnail(of: NSSize(width: 180, height: 240), for: .mediaBox)
+        let image = page.thumbnail(of: CGSize(width: 180, height: 240), for: .mediaBox)
         let lines = (page.string ?? "")
             .split(whereSeparator: { $0.isNewline })
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

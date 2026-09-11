@@ -182,6 +182,12 @@ public enum BoundedPDFTextExtractor {
         guard !Task.isCancelled,
               maximumOutputBytes > 0,
               let workerURL = workerURL() else { return nil }
+#if targetEnvironment(macCatalyst)
+        return runCatalystWorker(at: workerURL, arguments: arguments, timeout: timeout,
+                                 maximumResidentBytes: maximumResidentBytes,
+                                 maximumOutputBytes: maximumOutputBytes,
+                                 environmentOverrides: environmentOverrides)
+#else
         let process = Process()
         let outputPipe = Pipe()
         process.executableURL = workerURL
@@ -243,7 +249,62 @@ public enum BoundedPDFTextExtractor {
               process.terminationStatus == 0,
               !captured.overflowed else { return nil }
         return captured.output
+#endif
     }
+
+#if targetEnvironment(macCatalyst)
+    // Catalyst exposes POSIX spawning, but not Process.run(). Keep the same
+    // isolated PDF worker and its time, memory, cancellation and output limits.
+    private static func runCatalystWorker(
+        at url: URL, arguments: [String], timeout: TimeInterval,
+        maximumResidentBytes: UInt64, maximumOutputBytes: Int,
+        environmentOverrides: [String: String]
+    ) -> Data? {
+        var descriptors: [Int32] = [0, 0]
+        guard pipe(&descriptors) == 0 else { return nil }
+        defer { close(descriptors[0]) }
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_adddup2(&actions, descriptors[1], STDOUT_FILENO)
+        posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0)
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+        var environment = ["LANG": "en_US.UTF-8", "PATH": "/usr/bin:/bin", "TMPDIR": NSTemporaryDirectory()]
+        environment.merge(environmentOverrides) { _, new in new }
+        var argv = ([url.path] + arguments).map { strdup($0) } + [nil]
+        var envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
+        var pid: pid_t = 0
+        let result = posix_spawn(&pid, url.path, &actions, &attributes, &argv, &envp)
+        close(descriptors[1])
+        guard result == 0 else { return nil }
+        var exited = false
+        var status: Int32 = 0
+        defer {
+            if !exited { kill(pid, SIGKILL); while waitpid(pid, &status, 0) < 0 && errno == EINTR {} }
+        }
+        guard fcntl(descriptors[0], F_SETFL, O_NONBLOCK) != -1 else { return nil }
+        var output = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            guard !Task.isCancelled, Date() < deadline,
+                  workerResidentBytes(pid).map({ $0 <= maximumResidentBytes }) != false else { return nil }
+            let count = read(descriptors[0], &buffer, buffer.count)
+            if count > 0 {
+                guard output.count + count <= maximumOutputBytes else { return nil }
+                output.append(contentsOf: buffer.prefix(count))
+            } else if count < 0 && errno != EAGAIN && errno != EINTR { return nil }
+            if !exited { exited = waitpid(pid, &status, WNOHANG) == pid }
+            if exited && count <= 0 { return status == 0 ? output : nil }
+            if count <= 0 { usleep(20_000) }
+        }
+    }
+#endif
 
     private static func workerURL() -> URL? {
         let fileManager = FileManager.default
@@ -275,6 +336,7 @@ public enum BoundedPDFTextExtractor {
         return result == Int32(size) ? information.pti_resident_size : nil
     }
 
+#if !targetEnvironment(macCatalyst)
     private static func terminate(_ process: Process) {
         guard process.isRunning else { return }
         process.terminate()
@@ -283,4 +345,5 @@ public enum BoundedPDFTextExtractor {
             Darwin.kill(process.processIdentifier, SIGKILL)
         }
     }
+#endif
 }

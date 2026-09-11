@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import CryptoKit
 import Darwin
 import Foundation
@@ -17,6 +21,7 @@ private final class CourseIndexCancellationProbe {
 
 public struct CourseDocumentIndexResult: Sendable {
     public var text: String?
+    public var passages: [CourseDocumentPassage]
     public var isTruncated: Bool
     public var rank: Double?
     public var availability: CourseDocumentIndexAvailability
@@ -39,9 +44,11 @@ public struct CourseDocumentIndexResult: Sendable {
         totalPageCount: Int? = nil,
         uncoveredPageIndexes: [Int] = [],
         failedPageIndexes: [Int] = [],
-        failedPageReasons: [Int: String] = [:]
+        failedPageReasons: [Int: String] = [:],
+        passages: [CourseDocumentPassage] = []
     ) {
         self.text = text
+        self.passages = passages
         self.isTruncated = isTruncated
         self.rank = rank
         self.availability = availability
@@ -574,233 +581,363 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         }
     }
 
+    /// 扫描同一份缓存，按页/节拼回技术分块；回调可在取得所需正文后停止。
+    private func scanPassages(
+        item: StudyItem,
+        visit: (CourseDocumentPassage, Int) -> Bool
+    ) -> CourseDocumentIndexResult {
+        guard let scheduled = Self.scheduledItem(item) else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        refreshChangedItemsForLookup([item])
+        waitForInitialIndexing([scheduled])
+        guard !Task.isCancelled, let database = borrowDatabase() else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        defer { returnDatabase() }
+        guard Self.fileSignature(for: item) == scheduled.signature,
+              let state = fileState(for: scheduled.storageID, in: database),
+              state.signature == scheduled.signature,
+              let statement = prepare(
+                "SELECT sort_order, location, text FROM chunks WHERE item_id = ? ORDER BY sort_order",
+                in: database
+              ) else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .indexing)
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(scheduled.storageID, at: 1, in: statement)
+        var location: String?
+        var text = ""
+        var order = 0
+        var stopped = false
+        while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
+            let nextLocation = columnText(statement, at: 1) ?? ""
+            if let previous = location, previous != nextLocation {
+                if !visit(CourseDocumentPassage(storedLocation: previous, text: text), order) {
+                    stopped = true
+                    break
+                }
+                text = ""
+            }
+            if location != nextLocation {
+                order = Int(sqlite3_column_int64(statement, 0))
+                location = nextLocation
+            }
+            var body = columnText(statement, at: 2) ?? ""
+            if item.kind == .pdf, body.hasPrefix(nextLocation + "\n") {
+                body.removeFirst(nextLocation.count + 1)
+            } else if item.kind == .html, !text.isEmpty, let newline = body.firstIndex(of: "\n") {
+                // HTML 缓存为每个技术分块重复写了同一节标题，只保留第一份。
+                body = String(body[body.index(after: newline)...])
+            }
+            text += body
+        }
+        if !stopped, let location { _ = visit(CourseDocumentPassage(storedLocation: location, text: text), order) }
+        let status = pdfIndexStatus(for: scheduled.storageID, in: database)
+        return CourseDocumentIndexResult(
+            text: nil,
+            isTruncated: !state.isComplete || state.hasPartialExtraction,
+            availability: state.isComplete ? .ready : .indexing,
+            sourceRevision: scheduled.signature,
+            indexedPageCount: status?.indexedPageIndexes.count,
+            totalPageCount: status?.pageCount,
+            uncoveredPageIndexes: status?.uncoveredPageIndexes ?? [],
+            failedPageIndexes: status?.failedPageIndexes.sorted() ?? [],
+            failedPageReasons: status?.failedPageReasons ?? [:]
+        )
+    }
+
+    public func searchPassages(item: StudyItem, query: String) -> CourseDocumentIndexResult {
+        var passages: [CourseDocumentPassage] = []
+        // ponytail: 所选原文线性扫描；只有实际资料量导致延迟时才调整索引。
+        var result = scanPassages(item: item) { passage, _ in
+            if let excerpt = passage.excerpt(matching: query) { passages.append(excerpt) }
+            return true
+        }
+        result.passages = passages
+        return result
+    }
+
+    private func scanOriginalPassages(
+        item: StudyItem,
+        page: Int?,
+        location: String?,
+        startingOrder: Int,
+        visit: (CourseDocumentPassage, Int) -> Bool
+    ) -> CourseDocumentIndexResult {
+        guard let scheduled = Self.scheduledItem(item) else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        if item.kind == .pdf {
+            return readPDFPassages(item: item, scheduled: scheduled, page: page, location: location,
+                                   startingOrder: startingOrder, visit: visit)
+        }
+        guard let sections = textSections(for: item, expectedSignature: scheduled.signature) else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        for (order, section) in sections.enumerated() {
+            guard !Task.isCancelled else {
+                return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+            }
+            if !visit(CourseDocumentPassage(storedLocation: section.location, text: section.text), order) { break }
+        }
+        return CourseDocumentIndexResult(text: nil, isTruncated: false, sourceRevision: scheduled.signature)
+    }
+
+    private func readPDFPassages(
+        item: StudyItem,
+        scheduled: ScheduledItem,
+        page: Int?,
+        location: String?,
+        startingOrder: Int,
+        visit: (CourseDocumentPassage, Int) -> Bool
+    ) -> CourseDocumentIndexResult {
+        var snapshot: (url: URL, document: PDFDocument)?
+        defer { if let snapshot { try? FileManager.default.removeItem(at: snapshot.url) } }
+        func loadDocument() -> (url: URL, document: PDFDocument)? {
+            if let snapshot { return snapshot }
+            guard let file = VerifiedRegularFile(item: item),
+                  let url = temporarySnapshot(of: file) else { return nil }
+            guard Self.fileSignature(for: item) == scheduled.signature,
+                  let document = PDFDocument(url: url) else {
+                try? FileManager.default.removeItem(at: url)
+                return nil
+            }
+            snapshot = (url, document)
+            return snapshot
+        }
+        guard Self.fileSignature(for: item) == scheduled.signature else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        schedulingLock.lock()
+        expectedSignaturesByStorageID[scheduled.storageID] = scheduled.signature
+        schedulingLock.unlock()
+        let database = borrowDatabase()
+        defer { if database != nil { returnDatabase() } }
+        var cachedPageCount: Int?
+        if let database {
+            databaseWriteLock.lock()
+            if fileState(for: scheduled.storageID, in: database)?.signature == scheduled.signature {
+                cachedPageCount = storedPageCount(for: scheduled.storageID, in: database)
+            }
+            databaseWriteLock.unlock()
+        }
+        guard let pageCount = cachedPageCount ?? loadDocument()?.document.pageCount else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        let requestedPage = page ?? location.flatMap { $0.hasPrefix("page-") ? Int($0.dropFirst(5)) : nil }
+        if (location != nil && page == nil && requestedPage == nil)
+            || requestedPage.map({ $0 < 1 || $0 > pageCount }) == true {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        if let database, cachedPageCount == nil {
+            _ = preparePDFRecord(item: item, storageID: scheduled.storageID, signature: scheduled.signature,
+                                 pageCount: pageCount, in: database)
+        }
+        let firstPage = requestedPage.map { $0 - 1 } ?? startingOrder / 1_000
+        let endPage = requestedPage ?? pageCount
+        var partial = false
+        var failed: [Int: String] = [:]
+        var nextCursor: String?
+        if firstPage < endPage {
+            for pageIndex in firstPage..<endPage {
+                guard !Task.isCancelled, Self.fileSignature(for: item) == scheduled.signature else {
+                    return CourseDocumentIndexResult(text: nil, isTruncated: true, availability: .unavailable)
+                }
+                let cached = database.flatMap {
+                    cachedPDFPage(storageID: scheduled.storageID, signature: scheduled.signature, pageIndex: pageIndex, in: $0)
+                }
+                guard let extraction = cached ?? loadDocument().flatMap({ snapshot in
+                    pdfPageText(item: item, storageID: scheduled.storageID, signature: scheduled.signature,
+                        url: snapshot.url, document: snapshot.document, pageIndex: pageIndex, in: database)
+                }) else {
+                    return CourseDocumentIndexResult(text: nil, isTruncated: true, availability: .unavailable)
+                }
+                partial = partial || extraction.kind.hasSuffix("-partial")
+                if extraction.kind.hasPrefix("ocr-failed-") {
+                    failed[pageIndex] = String(extraction.kind.dropFirst("ocr-failed-".count))
+                }
+                let passage = CourseDocumentPassage(storedLocation: "第 \(pageIndex + 1) 页", text: extraction.text)
+                if !visit(passage, pageIndex * 1_000) {
+                    if pageIndex + 1 < endPage {
+                        nextCursor = Self.encodeCursor(itemID: scheduled.storageID, sourceRevision: scheduled.signature,
+                            location: page.map { "page-\($0)" } ?? location, sortOrder: (pageIndex + 1) * 1_000, characterOffset: 0)
+                    }
+                    break
+                }
+            }
+        }
+        let status = database.flatMap { pdfIndexStatus(for: scheduled.storageID, in: $0) }
+        let failedReasons = (status?.failedPageReasons ?? [:]).merging(failed) { _, current in current }
+        return CourseDocumentIndexResult(text: nil, isTruncated: partial || !failed.isEmpty,
+            availability: failed.isEmpty ? .ready : .unavailable, nextCursor: nextCursor, sourceRevision: scheduled.signature,
+            indexedPageCount: status?.indexedPageIndexes.count, totalPageCount: pageCount,
+            uncoveredPageIndexes: status?.uncoveredPageIndexes ?? [],
+            failedPageIndexes: failedReasons.keys.sorted(), failedPageReasons: failedReasons)
+    }
+
+    private func preparePDFRecord(
+        item: StudyItem, storageID: String, signature: String, pageCount: Int, in database: OpaquePointer
+    ) -> Bool {
+        withWriteTransaction(in: database) {
+            guard isExpected(signature: signature, for: storageID),
+                  Self.fileSignature(for: item) == signature else { return false }
+            if fileState(for: storageID, in: database)?.signature == signature,
+               storedPageCount(for: storageID, in: database) == pageCount { return true }
+            return deleteIndexedContent(for: storageID, in: database)
+                && replaceFileRecord(itemID: storageID, kind: item.kind, signature: signature,
+                    pageCount: pageCount, processedCount: 0, isComplete: pageCount == 0, chunkCount: 0, in: database)
+        }
+    }
+
+    private func cachedPDFPage(
+        storageID: String, signature: String, pageIndex: Int, in database: OpaquePointer
+    ) -> (text: String, kind: String)? {
+        databaseWriteLock.lock()
+        defer { databaseWriteLock.unlock() }
+        guard fileState(for: storageID, in: database)?.signature == signature,
+              let state = prepare("SELECT extraction_kind FROM processed_pages WHERE item_id = ? AND page_index = ?", in: database) else { return nil }
+        defer { sqlite3_finalize(state) }
+        bind(storageID, at: 1, in: state)
+        sqlite3_bind_int64(state, 2, sqlite3_int64(pageIndex))
+        guard sqlite3_step(state) == SQLITE_ROW, let kind = columnText(state, at: 0),
+              let chunks = prepare("SELECT location, text FROM chunks WHERE item_id = ? AND sort_order >= ? AND sort_order < ? ORDER BY sort_order", in: database) else { return nil }
+        defer { sqlite3_finalize(chunks) }
+        bind(storageID, at: 1, in: chunks)
+        sqlite3_bind_int64(chunks, 2, sqlite3_int64(pageIndex * 1_000))
+        sqlite3_bind_int64(chunks, 3, sqlite3_int64((pageIndex + 1) * 1_000))
+        var text = ""
+        while sqlite3_step(chunks) == SQLITE_ROW {
+            let prefix = (columnText(chunks, at: 0) ?? "") + "\n"
+            let body = columnText(chunks, at: 1) ?? ""
+            text += body.hasPrefix(prefix) ? String(body.dropFirst(prefix.count)) : body
+        }
+        return (text, kind)
+    }
+
+    private func pdfPageText(
+        item: StudyItem, storageID: String, signature: String, url: URL, document: PDFDocument,
+        pageIndex: Int, nativeAlreadyAttempted: Bool = false, in database: OpaquePointer?
+    ) -> (text: String, kind: String)? {
+        // 同页读取与后台 OCR 共用现有锁；其他页的提取不阻塞本页。
+        guard let pageLock = acquireItemIndexLock(for: "\(storageID)#page-\(pageIndex)") else { return nil }
+        defer { pageLock.unlock() }
+        if let database, let cached = cachedPDFPage(storageID: storageID, signature: signature, pageIndex: pageIndex, in: database) {
+            return cached
+        }
+        guard !Task.isCancelled, Self.fileSignature(for: item) == signature else { return nil }
+        let hasImages = Self.pdfPageContainsImages(document.page(at: pageIndex))
+        let native = (!nativeAlreadyAttempted || hasImages)
+            ? nativePDFTextLoader(url, [pageIndex], Self.maximumPDFPageCharacters, Self.foregroundPDFTextBudget)?[pageIndex]
+            : nil
+        let nativeText = native?.text ?? ""
+        let extraction: (text: String, kind: String)
+        if Self.hasMeaningfulText(nativeText), !hasImages {
+            extraction = (nativeText, native?.isPartial == true ? "text-partial" : "text")
+        } else {
+            switch pdfOCRPageLoader(document, pageIndex) {
+            case let .text(page):
+                // OCR 补图片正文；保留识别结果未覆盖的原生文字。
+                let recognizedLines = Set(page.lines.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) })
+                let nativeLines = nativeText.split(separator: "\n").map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { !$0.isEmpty && !recognizedLines.contains($0) }
+                let combined = ([page.text] + nativeLines).joined(separator: "\n")
+                let text = String(combined.prefix(Self.maximumPDFPageCharacters))
+                extraction = (text, text.count < combined.count || native?.isPartial == true ? "ocr-partial" : "ocr")
+            case .empty:
+                extraction = (nativeText, native?.isPartial == true ? "text-partial" : (nativeText.isEmpty ? "empty" : "text"))
+            case let .failed(_, reason):
+                extraction = (nativeText, "ocr-failed-\(reason.rawValue)")
+            }
+        }
+        guard !Task.isCancelled, Self.fileSignature(for: item) == signature else { return nil }
+        if let database {
+            // 后台原生文字提取可能先完成，保留已经写入的同版本结果。
+            if let cached = cachedPDFPage(storageID: storageID, signature: signature, pageIndex: pageIndex, in: database) { return cached }
+            if replacePDFPage(itemID: storageID, expectedSignature: signature, pageIndex: pageIndex,
+                              pageText: extraction.text, extractionKind: extraction.kind, in: database) {
+                _ = markNativeAttempted(itemID: storageID, expectedSignature: signature, pageIndex: pageIndex, in: database)
+                _ = updateFileProgress(itemID: storageID, expectedSignature: signature, in: database)
+            }
+        }
+        return extraction
+    }
+
     public func read(
         item: StudyItem,
-        query: String,
+        page: Int? = nil,
         location: String?,
         cursor: String? = nil,
         maximumCharacters: Int = 24_000
     ) -> CourseDocumentIndexResult {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rawLocation = location?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedLocation = rawLocation?.isEmpty == false ? rawLocation : nil
-        if !trimmedQuery.isEmpty, trimmedLocation?.isEmpty ?? true {
-            guard cursor == nil else {
-                return CourseDocumentIndexResult(
-                    text: nil,
-                    isTruncated: false,
-                    availability: .unavailable
-                )
-            }
-            return lookup(
-                items: [item],
-                query: trimmedQuery,
-                maximumCharactersPerItem: maximumCharacters
-            )[item.id] ?? CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable
-            )
+        let scope = page.map { "page-\($0)" } ?? location
+        let revision = Self.fileSignature(for: item)
+        let decoded = cursor.flatMap(Self.decodeCursor)
+        if cursor != nil, decoded.map({
+            $0.version == 1 && $0.itemID == Self.storageID(for: item.id)
+                && $0.sourceRevision == revision && $0.location == scope
+                && $0.sortOrder >= 0 && $0.characterOffset >= 0
+        }) != true {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
         }
-
-        guard let scheduled = Self.scheduledItem(item) else {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable
-            )
-        }
-        refreshChangedItemsForLookup([item])
-        waitForInitialIndexing([scheduled])
-        guard !Task.isCancelled,
-              let database = borrowDatabase() else {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable
-            )
-        }
-        defer { returnDatabase() }
-        schedulingLock.lock()
-        let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
-        let isScheduled = scheduledSignatures.contains(
-            "\(scheduled.storageID)#\(scheduled.signature)"
-        )
-        schedulingLock.unlock()
-        guard expectedSignature == scheduled.signature,
-              Self.fileSignature(for: item) == scheduled.signature,
-              let state = fileState(for: scheduled.storageID, in: database),
-              state.signature == scheduled.signature else {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: isScheduled ? .indexing : .unavailable
-            )
-        }
-
-        let decodedCursor = cursor.flatMap(Self.decodeCursor)
-        if cursor != nil,
-           decodedCursor.map({
-               $0.version == 1
-                   && $0.itemID == scheduled.storageID
-                   && $0.sourceRevision == scheduled.signature
-                   && $0.location == trimmedLocation
-                   && $0.sortOrder >= 0
-                   && $0.characterOffset >= 0
-           }) != true {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable,
-                sourceRevision: scheduled.signature
-            )
-        }
-
-        let hasLocation = trimmedLocation != nil
-        let sql = hasLocation
-            ? """
-              SELECT sort_order, location, text
-              FROM chunks
-              WHERE item_id = ? AND (location = ? OR instr(location, ?) > 0)
-                AND sort_order >= ?
-              ORDER BY sort_order
-              """
-            : """
-              SELECT sort_order, location, text
-              FROM chunks
-              WHERE item_id = ? AND sort_order >= ?
-              ORDER BY sort_order
-              """
-        guard let statement = prepare(sql, in: database) else {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable
-            )
-        }
-        defer { sqlite3_finalize(statement) }
-        bind(scheduled.storageID, at: 1, in: statement)
-        if hasLocation, let trimmedLocation {
-            bind(trimmedLocation, at: 2, in: statement)
-            bind(trimmedLocation, at: 3, in: statement)
-            sqlite3_bind_int64(
-                statement,
-                4,
-                sqlite3_int64(decodedCursor?.sortOrder ?? 0)
-            )
-        } else {
-            sqlite3_bind_int64(
-                statement,
-                2,
-                sqlite3_int64(decodedCursor?.sortOrder ?? 0)
-            )
-        }
-
-        let characterLimit = max(maximumCharacters, 1)
-        var output = ""
+        var passages: [CourseDocumentPassage] = []
+        var remaining = maximumCharacters
         var nextCursor: String?
-        while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
-            let sortOrder = Int(sqlite3_column_int64(statement, 0))
-            guard let text = columnText(statement, at: 2), !text.isEmpty else { continue }
-            let chunkLocation = columnText(statement, at: 1) ?? ""
-            let chunk = chunkLocation.isEmpty || text.hasPrefix(chunkLocation)
-                ? text
-                : "\(chunkLocation)\n\(text)"
-            let offset = decodedCursor?.sortOrder == sortOrder
-                ? decodedCursor?.characterOffset ?? 0
-                : 0
-            guard offset <= chunk.count else {
-                return CourseDocumentIndexResult(
-                    text: nil,
-                    isTruncated: false,
-                    availability: .unavailable,
-                    sourceRevision: scheduled.signature
-                )
+        var invalidOffset = false
+        var result = scanOriginalPassages(item: item, page: page, location: location,
+                                          startingOrder: decoded?.sortOrder ?? 0) { passage, order in
+            guard passage.matches(page: page, location: location), order >= (decoded?.sortOrder ?? 0) else { return true }
+            let offset = order == decoded?.sortOrder ? decoded!.characterOffset : 0
+            guard offset <= passage.text.count else { invalidOffset = true; return false }
+            let unread = passage.text.dropFirst(offset)
+            let consumed = min(unread.count, max(remaining, 0))
+            if consumed > 0 {
+                var part = passage
+                part.text = String(unread.prefix(consumed))
+                passages.append(part)
+                remaining -= consumed
             }
-            let separator = output.isEmpty ? "" : "\n\n"
-            let remaining = characterLimit - output.count
-            guard remaining > separator.count else {
-                nextCursor = Self.encodeCursor(
-                    itemID: scheduled.storageID,
-                    sourceRevision: scheduled.signature,
-                    location: trimmedLocation,
-                    sortOrder: sortOrder,
-                    characterOffset: offset
-                )
-                break
+            if consumed < unread.count, let revision {
+                nextCursor = Self.encodeCursor(itemID: Self.storageID(for: item.id), sourceRevision: revision,
+                    location: scope, sortOrder: order, characterOffset: offset + consumed)
+                return false
             }
-            output += separator
-            let unread = chunk.dropFirst(offset)
-            let consumed = min(unread.count, characterLimit - output.count)
-            output += unread.prefix(consumed)
-            if consumed < unread.count {
-                nextCursor = Self.encodeCursor(
-                    itemID: scheduled.storageID,
-                    sourceRevision: scheduled.signature,
-                    location: trimmedLocation,
-                    sortOrder: sortOrder,
-                    characterOffset: offset + consumed
-                )
-                break
-            }
+            return remaining > 0 || item.kind != .pdf
         }
-        let pdfStatus = pdfIndexStatus(for: scheduled.storageID, in: database)
-        return CourseDocumentIndexResult(
-            text: output.isEmpty ? nil : output,
-            isTruncated: state.isComplete != true
-                || state.hasPartialExtraction
-                || nextCursor != nil,
-            availability: state.isComplete
-                ? .ready
-                : (isScheduled ? .indexing : .unavailable),
-            nextCursor: nextCursor,
-            sourceRevision: scheduled.signature,
-            indexedPageCount: pdfStatus?.indexedPageIndexes.count,
-            totalPageCount: pdfStatus?.pageCount,
-            uncoveredPageIndexes: pdfStatus?.uncoveredPageIndexes ?? [],
-            failedPageIndexes: pdfStatus?.failedPageIndexes.sorted() ?? [],
-            failedPageReasons: pdfStatus?.failedPageReasons ?? [:]
-        )
+        if invalidOffset || Self.fileSignature(for: item) != revision {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        result.passages = passages
+        result.text = passages.isEmpty ? nil : passages.map(\.text).joined()
+        result.nextCursor = nextCursor ?? result.nextCursor
+        result.isTruncated = result.isTruncated || result.nextCursor != nil
+        return result
     }
 
-    public func outline(
-        item: StudyItem,
-        maximumEntries: Int = 24
-    ) -> [String] {
-        guard maximumEntries > 0,
-              let scheduled = Self.scheduledItem(item) else { return [] }
-        refreshChangedItemsForLookup([item])
-        waitForInitialIndexing([scheduled])
-        guard !Task.isCancelled,
-              let database = borrowDatabase() else { return [] }
-        defer { returnDatabase() }
-        schedulingLock.lock()
-        let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
-        schedulingLock.unlock()
-        guard expectedSignature == scheduled.signature,
-              Self.fileSignature(for: item) == scheduled.signature,
-              fileState(for: scheduled.storageID, in: database)?.signature
-                == scheduled.signature,
-              let statement = prepare(
-                  """
-                  SELECT location
-                  FROM chunks
-                  WHERE item_id = ? AND location <> ''
-                  GROUP BY location
-                  ORDER BY MIN(sort_order)
-                  LIMIT ?
-                  """,
-                  in: database
-              ) else { return [] }
-        defer { sqlite3_finalize(statement) }
-        bind(scheduled.storageID, at: 1, in: statement)
-        sqlite3_bind_int64(statement, 2, sqlite3_int64(min(maximumEntries, 80)))
-        var entries: [String] = []
-        while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
-            guard let value = columnText(statement, at: 0), !value.isEmpty else { continue }
-            entries.append(String(value.prefix(300)))
+    public func outlinePassages(item: StudyItem, offset: Int, limit: Int) -> CourseDocumentIndexResult {
+        var count = 0
+        var entries: [CourseDocumentPassage] = []
+        var more = false
+        var result = scanPassages(item: item) { passage, _ in
+            guard !passage.location.isEmpty else { return true }
+            defer { count += 1 }
+            guard count >= offset else { return true }
+            guard entries.count < limit else { more = true; return false }
+            var entry = passage
+            entry.text = ""
+            entries.append(entry)
+            return true
         }
-        return entries
+        result.passages = entries
+        result.nextCursor = more ? String(offset + entries.count) : nil
+        return result
+    }
+
+    public func outline(item: StudyItem, maximumEntries: Int = 24) -> [String] {
+        outlinePassages(item: item, offset: 0, limit: maximumEntries).passages.map {
+            [$0.location, $0.title].compactMap { $0 }.joined(separator: " ")
+        }
     }
 
     private static func encodeCursor(
@@ -1004,7 +1141,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         switch item.kind {
         case .pdf:
             guard let file = VerifiedRegularFile(item: item),
-                  "v6#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+                  "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                     == signature,
                   let snapshotURL = temporarySnapshot(of: file) else {
                 return false
@@ -1062,7 +1199,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                         indexedAllChunks = false
                         break
                     }
-                    let chunk = section.heading.map { "# \($0)\n\(body)" } ?? body
+                    let chunk = item.kind == .markdown ? body : (section.heading.map { "# \($0)\n\(body)" } ?? body)
                     guard insertChunk(
                         itemID: storageID,
                         sortOrder: indexedChunkCount,
@@ -1099,26 +1236,9 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     ) -> Bool {
         guard let document = PDFDocument(url: url) else { return false }
         let pageCount = max(document.pageCount, 0)
-        let existingState = fileState(for: storageID, in: database)
-        if existingState?.signature != signature || storedPageCount(for: storageID, in: database) != pageCount {
-            let reset = withWriteTransaction(in: database) {
-                isExpected(signature: signature, for: storageID)
-                    && deleteIndexedContent(for: storageID, in: database)
-                    && replaceFileRecord(
-                        itemID: storageID,
-                        kind: item.kind,
-                        signature: signature,
-                        pageCount: pageCount,
-                        processedCount: 0,
-                        isComplete: pageCount == 0,
-                        chunkCount: 0,
-                        in: database
-                    )
-            }
-            guard reset else { return false }
-        }
+        guard preparePDFRecord(item: item, storageID: storageID, signature: signature,
+                               pageCount: pageCount, in: database) else { return false }
 
-        var processedPages = processedPageIndexes(for: storageID, in: database)
         var nativeAttemptedPages = nativeAttemptedPageIndexes(for: storageID, in: database)
         let nativePageLimit = min(pageCount, maximumPages.map { max($0, 0) } ?? pageCount)
         let extractionDeadline = Date().addingTimeInterval(
@@ -1176,7 +1296,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 guard isExpected(signature: signature, for: storageID),
                       Self.fileSignature(for: item) == signature else { return false }
                 if let extraction = extractions[pageIndex],
-                   Self.hasMeaningfulText(extraction.text) {
+                   Self.hasMeaningfulText(extraction.text),
+                   !Self.pdfPageContainsImages(document.page(at: pageIndex)) {
                     let extractionKind = extraction.isPartial ? "text-partial" : "text"
                     guard replacePDFPage(
                         itemID: storageID,
@@ -1186,7 +1307,6 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                         extractionKind: extractionKind,
                         in: database
                     ) else { continue }
-                    processedPages.insert(pageIndex)
                 }
                 guard markNativeAttempted(
                     itemID: storageID,
@@ -1200,11 +1320,9 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         _ = updateFileProgress(
             itemID: storageID,
             expectedSignature: signature,
-            processedCount: processedPages.count,
-            isComplete: processedPages.count == pageCount,
             in: database
         )
-        return processedPages.count < pageCount
+        return processedPageIndexes(for: storageID, in: database).count < pageCount
     }
 
     private func finishPDFOCR(item: StudyItem, storageID: String, signature: String) {
@@ -1213,7 +1331,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         guard isExpected(signature: signature, for: storageID),
               Self.fileSignature(for: item) == signature,
               let file = VerifiedRegularFile(item: item),
-              "v6#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+              "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                 == signature,
               let snapshotURL = temporarySnapshot(of: file) else { return }
         defer { try? FileManager.default.removeItem(at: snapshotURL) }
@@ -1221,47 +1339,13 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         defer { returnDatabase() }
         guard let document = PDFDocument(url: snapshotURL),
               fileState(for: storageID, in: database)?.signature == signature else { return }
-        let pageCount = max(document.pageCount, 0)
-        var processedPages = processedPageIndexes(for: storageID, in: database)
-        let nativeAttemptedPages = nativeAttemptedPageIndexes(for: storageID, in: database)
-        let pagesToOCR = nativeAttemptedPages
-            .subtracting(processedPages)
-            .sorted()
+        let pagesToOCR = nativeAttemptedPageIndexes(for: storageID, in: database)
+            .subtracting(processedPageIndexes(for: storageID, in: database)).sorted()
         for pageIndex in pagesToOCR {
-            guard hasDatabaseCapacity() else { return }
-            guard isExpected(signature: signature, for: storageID),
-                  Self.fileSignature(for: item) == signature,
-                  fileState(for: storageID, in: database)?.signature == signature else { return }
-            let pageText: String
-            let extractionKind: String
-            switch pdfOCRPageLoader(document, pageIndex) {
-            case let .text(page):
-                let rawText = page.text
-                pageText = String(rawText.prefix(Self.maximumPDFPageCharacters))
-                extractionKind = rawText.count > pageText.count ? "ocr-partial" : "ocr"
-            case .empty:
-                pageText = ""
-                extractionKind = "empty"
-            case let .failed(_, reason):
-                pageText = ""
-                extractionKind = "ocr-failed-\(reason.rawValue)"
-            }
-            guard replacePDFPage(
-                itemID: storageID,
-                expectedSignature: signature,
-                pageIndex: pageIndex,
-                pageText: pageText,
-                extractionKind: extractionKind,
-                in: database
-            ) else { continue }
-            processedPages.insert(pageIndex)
-            _ = updateFileProgress(
-                itemID: storageID,
-                expectedSignature: signature,
-                processedCount: processedPages.count,
-                isComplete: processedPages.count == pageCount,
-                in: database
-            )
+            guard hasDatabaseCapacity(), isExpected(signature: signature, for: storageID) else { return }
+            _ = pdfPageText(item: item, storageID: storageID, signature: signature,
+                url: snapshotURL, document: document, pageIndex: pageIndex,
+                nativeAlreadyAttempted: true, in: database)
         }
     }
 
@@ -1294,7 +1378,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         in database: OpaquePointer
     ) -> Bool {
         withWriteTransaction(in: database) {
-            guard isExpected(signature: expectedSignature, for: itemID) else { return false }
+            guard isExpected(signature: expectedSignature, for: itemID),
+                  fileState(for: itemID, in: database)?.signature == expectedSignature else { return false }
             let pageRange = (pageIndex * 1_000)...(pageIndex * 1_000 + 999)
             guard deleteChunks(for: itemID, sortOrderRange: pageRange, in: database) else { return false }
 
@@ -1432,8 +1517,6 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private func updateFileProgress(
         itemID: String,
         expectedSignature: String,
-        processedCount: Int,
-        isComplete: Bool,
         in database: OpaquePointer
     ) -> Bool {
         databaseWriteLock.lock()
@@ -1441,23 +1524,16 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         guard let statement = prepare(
             """
             UPDATE files
-            SET processed_count = ?,
-                is_complete = ?,
-                chunk_count = CASE
-                    WHEN ? = 1 THEN (SELECT COUNT(*) FROM chunk_index WHERE item_id = ?)
-                    ELSE chunk_count
-                END
+            SET processed_count = (SELECT COUNT(*) FROM processed_pages WHERE item_id = files.item_id),
+                is_complete = (page_count = (SELECT COUNT(*) FROM processed_pages WHERE item_id = files.item_id)),
+                chunk_count = (SELECT COUNT(*) FROM chunk_index WHERE item_id = files.item_id)
             WHERE item_id = ? AND signature = ?
             """,
             in: database
         ) else { return false }
         defer { sqlite3_finalize(statement) }
-        sqlite3_bind_int64(statement, 1, sqlite3_int64(processedCount))
-        sqlite3_bind_int(statement, 2, isComplete ? 1 : 0)
-        sqlite3_bind_int(statement, 3, isComplete ? 1 : 0)
-        bind(itemID, at: 4, in: statement)
-        bind(itemID, at: 5, in: statement)
-        bind(expectedSignature, at: 6, in: statement)
+        bind(itemID, at: 1, in: statement)
+        bind(expectedSignature, at: 2, in: statement)
         return sqlite3_step(statement) == SQLITE_DONE
     }
 
@@ -1903,7 +1979,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
     private static func fileSignature(for item: StudyItem) -> String? {
         guard let metadata = VerifiedRegularFile(item: item)?.metadata else { return nil }
-        return "v6#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+        return "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
     }
 
     private static func scheduledItem(_ item: StudyItem) -> ScheduledItem? {
@@ -1913,7 +1989,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         return ScheduledItem(
             item: item,
             storageID: storageID(for: item.id),
-            signature: "v6#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+            signature: "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
         )
     }
 
@@ -1927,7 +2003,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         expectedSignature: String
     ) -> [TextSection]? {
         guard let file = VerifiedRegularFile(item: item),
-              "v6#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+              "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                 == expectedSignature,
               let data = file.readData(afterOpen: verifiedFileDidOpen) else {
             return nil
@@ -2004,44 +2080,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     }
 
     private static func markdownSections(in text: String) -> [TextSection] {
-        let lines = text.components(separatedBy: .newlines)
-        var sections: [TextSection] = []
-        var body: [String] = []
-        var heading: String?
-        var location = ""
-        var ordinal = 0
-        func appendSection() {
-            let sectionText = body.joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !sectionText.isEmpty || heading != nil else { return }
-            sections.append(
-                TextSection(
-                    location: location,
-                    heading: heading,
-                    text: sectionText
-                )
-            )
+        CourseMarkdownSections.parse(text).map {
+            TextSection(location: [$0.location, $0.title].compactMap { $0 }.joined(separator: " "),
+                        heading: $0.title, text: $0.text)
         }
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if let range = trimmed.range(
-                of: #"^#{1,6}\s+(.+?)\s*#*$"#,
-                options: .regularExpression
-            ) {
-                appendSection()
-                body.removeAll(keepingCapacity: true)
-                let rawHeading = String(trimmed[range])
-                let title = rawHeading
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "# "))
-                heading = String(title.prefix(300))
-                location = "markdown-heading-\(ordinal) \(title.prefix(300))"
-                ordinal += 1
-            } else {
-                body.append(line)
-            }
-        }
-        appendSection()
-        return sections
     }
 
     private static func htmlPlainText(_ fragment: String) -> String {
@@ -2069,11 +2111,69 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         return String(format: "html-section-%08x", hash)
     }
 
+    private struct PDFImageScan {
+        var found = false
+        var activeForms: Set<CGPDFStreamRef> = []
+        var resources: CGPDFContentStreamRef?
+    }
+
+    private static func pdfPageContainsImages(_ page: PDFPage?) -> Bool {
+        guard let page = page?.pageRef else { return true }
+        var scan = PDFImageScan()
+        scanPDFImages(CGPDFContentStreamCreateWithPage(page), state: &scan)
+        return scan.found
+    }
+
+    private static func scanPDFImages(
+        _ content: CGPDFContentStreamRef, inheritedResources: CGPDFContentStreamRef? = nil, state: inout PDFImageScan
+    ) {
+        let previousResources = state.resources
+        state.resources = inheritedResources ?? content
+        defer { state.resources = previousResources; CGPDFContentStreamRelease(content) }
+        guard let operators = CGPDFOperatorTableCreate() else { state.found = true; return }
+        defer { CGPDFOperatorTableRelease(operators) }
+        CGPDFOperatorTableSetCallback(operators, "BI") { scanner, info in
+            guard let info else { return }
+            info.assumingMemoryBound(to: PDFImageScan.self).pointee.found = true
+            CGPDFScannerStop(scanner)
+        }
+        CGPDFOperatorTableSetCallback(operators, "Do") { scanner, info in
+            guard let info else { return }
+            let state = info.assumingMemoryBound(to: PDFImageScan.self)
+            var name: UnsafePointer<CChar>?
+            guard CGPDFScannerPopName(scanner, &name), let name else { return }
+            let parent = CGPDFScannerGetContentStream(scanner)
+            guard let resources = state.pointee.resources,
+                  let object = CGPDFContentStreamGetResource(resources, "XObject", name) else { return }
+            var stream: CGPDFStreamRef?
+            guard CGPDFObjectGetValue(object, .stream, &stream), let stream else { return }
+            guard let dictionary = CGPDFStreamGetDictionary(stream) else { return }
+            var subtype: UnsafePointer<CChar>?
+            guard CGPDFDictionaryGetName(dictionary, "Subtype", &subtype), let subtype else { return }
+            switch String(cString: subtype) {
+            case "Image": state.pointee.found = true
+            case "Form":
+                if state.pointee.activeForms.insert(stream).inserted {
+                    defer { state.pointee.activeForms.remove(stream) }
+                    var resources: CGPDFDictionaryRef?
+                    _ = CGPDFDictionaryGetDictionary(dictionary, "Resources", &resources)
+                    CourseDocumentSearchIndex.scanPDFImages(
+                        CGPDFContentStreamCreateWithStream(stream, resources ?? dictionary, parent),
+                        inheritedResources: resources == nil ? state.pointee.resources : nil, state: &state.pointee)
+                }
+            default: break
+            }
+            if state.pointee.found { CGPDFScannerStop(scanner) }
+        }
+        withUnsafeMutablePointer(to: &state) { pointer in
+            let scanner = CGPDFScannerCreate(content, operators, pointer)
+            defer { CGPDFScannerRelease(scanner) }
+            if !CGPDFScannerScan(scanner) { pointer.pointee.found = true }
+        }
+    }
+
     private static func hasMeaningfulText(_ text: String) -> Bool {
-        text.unicodeScalars.filter {
-            !CharacterSet.whitespacesAndNewlines.contains($0)
-                && !CharacterSet.punctuationCharacters.contains($0)
-        }.count >= 20
+        text.unicodeScalars.contains { !CharacterSet.whitespacesAndNewlines.contains($0) }
     }
 
     private static func pdfFailureReason(in extractionKind: String) -> String? {
@@ -2119,70 +2219,50 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         searchTerms(in: query).contains { text.localizedCaseInsensitiveContains($0) }
     }
 
+    public static func markdownPassages(_ markdown: String) -> [CourseDocumentPassage] {
+        markdownSections(in: markdown).map { CourseDocumentPassage(storedLocation: $0.location, text: $0.text) }
+    }
+
     public static func readMarkdown(
         _ markdown: String,
-        query: String,
         location: String?,
         cursor: String? = nil,
         sourceID: String = "markdown",
         maximumCharacters: Int = 24_000
     ) -> CourseDocumentIndexResult {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedLocation = location?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let sections = markdownSections(in: markdown).filter { section in
-            if !trimmedLocation.isEmpty {
-                return section.location == trimmedLocation
-                    || section.location.localizedCaseInsensitiveContains(trimmedLocation)
+        let revision = sourceRevision(forMarkdown: markdown)
+        let decoded = cursor.flatMap(Self.decodeCursor)
+        if cursor != nil, decoded.map({
+            $0.version == 1 && $0.itemID == sourceID && $0.sourceRevision == revision
+                && $0.location == location && $0.sortOrder >= 0 && $0.characterOffset >= 0
+        }) != true {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
+        }
+        var output: [CourseDocumentPassage] = []
+        var remaining = maximumCharacters
+        var nextCursor: String?
+        for (order, passage) in markdownPassages(markdown).enumerated() {
+            guard passage.matches(page: nil, location: location), order >= (decoded?.sortOrder ?? 0) else { continue }
+            let offset = order == decoded?.sortOrder ? decoded!.characterOffset : 0
+            guard offset <= passage.text.count else {
+                return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
             }
-            guard !trimmedQuery.isEmpty else { return true }
-            return text(
-                [section.heading, section.text].compactMap { $0 }.joined(separator: "\n"),
-                matchesAnyTermIn: trimmedQuery
-            )
+            let unread = passage.text.dropFirst(offset)
+            let consumed = min(unread.count, max(remaining, 0))
+            if consumed > 0 {
+                var part = passage
+                part.text = String(unread.prefix(consumed))
+                output.append(part)
+                remaining -= consumed
+            }
+            if consumed < unread.count {
+                nextCursor = encodeCursor(itemID: sourceID, sourceRevision: revision, location: location,
+                                          sortOrder: order, characterOffset: offset + consumed)
+                break
+            }
         }
-        let joined = sections.map { section in
-            section.heading.map { "# \($0)\n\(section.text)" } ?? section.text
-        }.joined(separator: "\n\n")
-        let limit = max(maximumCharacters, 1)
-        let sourceRevision = sourceRevision(forMarkdown: markdown)
-        let scope = [trimmedQuery, trimmedLocation].joined(separator: "\u{1f}")
-        let decodedCursor = cursor.flatMap(Self.decodeCursor)
-        if cursor != nil,
-           decodedCursor.map({
-               $0.version == 1
-                   && $0.itemID == sourceID
-                   && $0.sourceRevision == sourceRevision
-                   && $0.location == scope
-                   && $0.sortOrder == 0
-                   && $0.characterOffset >= 0
-                   && $0.characterOffset <= joined.count
-           }) != true {
-            return CourseDocumentIndexResult(
-                text: nil,
-                isTruncated: false,
-                availability: .unavailable,
-                sourceRevision: sourceRevision
-            )
-        }
-        let offset = decodedCursor?.characterOffset ?? 0
-        let unread = joined.dropFirst(offset)
-        let pageText = String(unread.prefix(limit))
-        let nextOffset = offset + pageText.count
-        let nextCursor = nextOffset < joined.count
-            ? Self.encodeCursor(
-                itemID: sourceID,
-                sourceRevision: sourceRevision,
-                location: scope,
-                sortOrder: 0,
-                characterOffset: nextOffset
-            )
-            : nil
-        return CourseDocumentIndexResult(
-            text: pageText.isEmpty ? nil : pageText,
-            isTruncated: nextCursor != nil,
-            nextCursor: nextCursor,
-            sourceRevision: sourceRevision
-        )
+        return CourseDocumentIndexResult(text: output.isEmpty ? nil : output.map(\.text).joined(),
+            isTruncated: nextCursor != nil, nextCursor: nextCursor, sourceRevision: revision, passages: output)
     }
 
     public static func sourceRevision(for item: StudyItem) -> String? {

@@ -9,6 +9,9 @@ public struct AgentResources: Sendable {
     public var systemPrompt: String
 
     public static func bundled() throws -> AgentResources {
+#if targetEnvironment(macCatalyst)
+        let resourceBundle = Bundle.main
+#else
         let bundleName = "WeiBei_WeiBeiCore.bundle"
         let packagedBundle = Bundle.main.resourceURL
             .map { $0.appendingPathComponent(bundleName) }
@@ -23,6 +26,7 @@ public struct AgentResources: Sendable {
             throw NativeAgentResourcesError.incomplete(resource: "bundle", cause: "missing")
         }
         let resourceBundle = packagedBundle ?? legacyBundle ?? Bundle.module
+#endif
         guard let rootURL = resourceBundle.url(forResource: "AgentResources", withExtension: nil) else {
             throw NativeAgentResourcesError.incomplete(resource: "agent_resources", cause: "missing")
         }
@@ -58,6 +62,7 @@ public struct AgentResources: Sendable {
         )
     }
 }
+
 
 public enum NativeAgentResourcesError: LocalizedError, Equatable {
     public static let agentComponentsIncompleteMessage = "Agent 组件不完整，无法启动；请修复或重装魏碑"

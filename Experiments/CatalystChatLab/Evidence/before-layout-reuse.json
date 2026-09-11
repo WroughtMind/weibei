@@ -1,0 +1,61 @@
+{
+  "body_block_count" : 19,
+  "body_width_pt" : 724,
+  "build_configuration" : "Release",
+  "bundle_id" : "org.weibei.CatalystChatLab",
+  "checks" : {
+    "card_draft_and_fold_persist" : "passed",
+    "cross_paragraph_copy_survives_reuse" : "passed",
+    "math_and_image_resources" : "passed",
+    "prepend_preserves_reading_text" : "passed",
+    "resize_preserves_reading_paragraph" : "passed",
+    "stream_keeps_unchanged_blocks_and_tail" : "passed"
+  },
+  "font_size_pt" : 16,
+  "frame_evidence_boundary" : "CADisplayLink callback delivery intervals during programmatic scrolling; these are not GPU presentation timestamps and are not FPS or human trackpad acceptance.",
+  "idiom" : "mac",
+  "measure_count" : 3051,
+  "message_count" : 1,
+  "parse_count" : 369,
+  "peak_block_views" : 36,
+  "platform" : "Mac Catalyst",
+  "recorded_at" : "2026-09-08T20:31:48Z",
+  "render_count" : 3026,
+  "resident_memory_bytes" : 884129792,
+  "retained_block_views" : 36,
+  "samples" : {
+    "history_first_prepare_and_layout_ms" : [
+      1802.4042500182986
+    ],
+    "resize_ms" : [
+      2100.7911249762401,
+      3212.7845833310857
+    ],
+    "rich_first_prepare_and_layout_ms" : [
+      265.40929172188044,
+      122.15475004632026
+    ]
+  },
+  "source_utf16_count" : 1035,
+  "summary" : {
+    "history_first_prepare_and_layout_ms" : {
+      "count" : 1,
+      "max" : 1802.4042500182986,
+      "median" : 1802.4042500182986,
+      "p95" : 1802.4042500182986
+    },
+    "resize_ms" : {
+      "count" : 2,
+      "max" : 3212.7845833310857,
+      "median" : 3212.7845833310857,
+      "p95" : 3212.7845833310857
+    },
+    "rich_first_prepare_and_layout_ms" : {
+      "count" : 2,
+      "max" : 265.40929172188044,
+      "median" : 265.40929172188044,
+      "p95" : 265.40929172188044
+    }
+  },
+  "system" : "Version 27.0 (Build 26A5421a)"
+}

@@ -9,7 +9,11 @@ public enum WeiBeiAgentDataPaths {
     public static var applicationSupportRoot: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+#if targetEnvironment(macCatalyst)
+        return base.appendingPathComponent(Bundle.main.bundleIdentifier!, isDirectory: true)
+#else
         return base.appendingPathComponent("com.changfenhuang.weibei", isDirectory: true)
+#endif
     }
 
     public static var nativeAgentDirectory: URL {

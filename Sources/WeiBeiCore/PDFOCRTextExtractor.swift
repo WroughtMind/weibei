@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import Foundation
 import PDFKit
 import Vision
@@ -88,9 +92,13 @@ public enum PDFOCRTextExtractor {
         let bounds = page.bounds(for: .mediaBox)
         guard bounds.width > 0, bounds.height > 0 else { return nil }
         let scale = min(2.0, 1600.0 / max(bounds.width, bounds.height))
-        let size = NSSize(width: bounds.width * scale, height: bounds.height * scale)
+        let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+#if targetEnvironment(macCatalyst)
+        return page.thumbnail(of: size, for: .mediaBox).cgImage
+#else
         var rect = CGRect(origin: .zero, size: size)
         return page.thumbnail(of: size, for: .mediaBox).cgImage(forProposedRect: &rect, context: nil, hints: nil)
+#endif
     }
 
     private static func recognizeLines(in image: CGImage) -> [PDFOCRLine]? {

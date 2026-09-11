@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import AppKit
 import WebKit
 
@@ -131,3 +132,5 @@ final class ConversationWebClippingView: NSView {
         webView.isHidden = false
     }
 }
+
+#endif

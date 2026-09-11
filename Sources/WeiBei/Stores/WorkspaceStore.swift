@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import Combine
 import CryptoKit
 import Darwin
@@ -918,7 +922,6 @@ final class WorkspaceStore: ObservableObject {
         return messages.last { $0.isUsableAgentAnswer }
     }
 
-    private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
     private static let legacySelectionAskThreadsDefaultsKey = "weibei.selectionAskThreads.v1"
 
     convenience init() {
@@ -3317,6 +3320,15 @@ final class WorkspaceStore: ObservableObject {
         return notesByItemID[item.id] ?? loadedCourseNoteTextByItemID[item.id]
     }
 
+    private func agentToolNoteText(for item: StudyItem, editorText: String? = nil) -> String? {
+        guard let text = pendingNotePersistenceByItemID[item.id]?.markdown ?? editorText
+            ?? loadedAgentNoteText(for: item) else { return nil }
+        guard item.editsBackingMarkdownFile,
+              pendingNotePersistenceByItemID[item.id] == nil,
+              let baseline = noteBackingContentDigestsByItemID[item.id] ?? item.contentDigest else { return text }
+        return Self.noteContentDigest(Data(text.utf8)) == baseline ? nil : text
+    }
+
     func select(itemID: String?) {
         WeiBeiPerf.measure("workspace.select") {
             guard let itemID,
@@ -3891,7 +3903,7 @@ final class WorkspaceStore: ObservableObject {
                 markdownOnly: asNotes
             )
             guard !expanded.isEmpty,
-                  confirmCourseImportPlan(
+                  await confirmCourseImportPlan(
                     expanded,
                     courseID: courseID,
                     asNotes: asNotes
@@ -3902,7 +3914,7 @@ final class WorkspaceStore: ObservableObject {
             var imported: [StudyItem] = []
             for (offset, sourceURL) in expanded.enumerated() {
                 let role: CourseOwnedFileRole = asNotes ? .note : .material
-                guard let resolution = courseImportConflictResolution(
+                guard let resolution = await courseImportConflictResolution(
                     sourceURL: sourceURL,
                     courseID: courseID,
                     role: role
@@ -3948,104 +3960,58 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func confirmCourseImportPlan(
-        _ sources: [URL],
-        courseID: UUID,
-        asNotes: Bool
-    ) -> Bool {
+        _ sources: [URL], courseID: UUID, asNotes: Bool
+    ) async -> Bool {
         guard let root = courseRootURL(for: courseID) else { return false }
         let role: CourseOwnedFileRole = asNotes ? .note : .material
         let mappings = sources.prefix(12).map {
             "\($0.path)\n→ \(root.appendingPathComponent(role.directoryName).appendingPathComponent($0.lastPathComponent).path)"
         }
         let remaining = max(0, sources.count - mappings.count)
-        let alert = NSAlert()
-        alert.messageText = ui("确认移入课程", "Confirm moving into course")
-        alert.informativeText = mappings.joined(separator: "\n\n")
-            + (remaining > 0 ? ui("\n\n另有 \(remaining) 个文件。", "\n\nPlus \(remaining) more file(s).") : "")
-        alert.addButton(withTitle: ui("取消", "Cancel"))
-        alert.addButton(withTitle: ui("移入课程", "Move into Course"))
-        return alert.runModal() == .alertSecondButtonReturn
+        let choice = await WorkspaceFileDialog.choose(
+            title: ui("确认移入课程", "Confirm moving into course"),
+            message: mappings.joined(separator: "\n\n")
+                + (remaining > 0 ? ui("\n\n另有 \(remaining) 个文件。", "\n\nPlus \(remaining) more file(s).") : ""),
+            buttons: [ui("取消", "Cancel"), ui("移入课程", "Move into Course")]
+        )
+        return choice.index == 1
     }
 
     func courseImportConflictResolution(
-        sourceURL: URL,
-        courseID: UUID,
-        role: CourseOwnedFileRole,
-        allowsReplace: Bool = true,
-        additionalProtectedTarget: URL? = nil
-    ) -> CourseFileConflictResolution? {
+        sourceURL: URL, courseID: UUID, role: CourseOwnedFileRole,
+        allowsReplace: Bool = true, additionalProtectedTarget: URL? = nil
+    ) async -> CourseFileConflictResolution? {
         guard let root = courseRootURL(for: courseID) else { return nil }
-        let target = root
-            .appendingPathComponent(role.directoryName, isDirectory: true)
+        let target = root.appendingPathComponent(role.directoryName, isDirectory: true)
             .appendingPathComponent(sourceURL.lastPathComponent)
         let targetExists = FileManager.default.fileExists(atPath: target.path)
         let protectedTargetExists = additionalProtectedTarget.map {
             FileManager.default.fileExists(atPath: $0.path)
         } ?? false
-        guard targetExists || protectedTargetExists else {
-            return .cancel
-        }
-        let alert = NSAlert()
-        alert.messageText = ui("课程中已有同名文件", "A file with this name already exists")
-        let conflictTargetURLs = [targetExists ? target : nil, protectedTargetExists
-            ? additionalProtectedTarget
-            : nil]
-            .compactMap { $0 }
-        let conflictTargets = conflictTargetURLs.map(\.path).joined(
-            separator: "\n"
-        )
-        alert.informativeText =
-            "\(ui("来源", "Source"))：\(sourceURL.path)\n\(ui("冲突目标", "Conflicting target"))：\(conflictTargets)"
+        guard targetExists || protectedTargetExists else { return .cancel }
+        let targets = [targetExists ? target : nil, protectedTargetExists ? additionalProtectedTarget : nil].compactMap { $0 }
         let suggestedName = CourseKeepBothNaming.suggestedFileName(
-            originalName: sourceURL.lastPathComponent,
-            conflictingTargets: conflictTargetURLs
+            originalName: sourceURL.lastPathComponent, conflictingTargets: targets
         )
-        let keepBothLabel = NSTextField(
-            labelWithString: ui(
-                "选择“保留两份”时使用的新文件名",
-                "New file name when choosing Keep Both"
-            )
-        )
-        keepBothLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        keepBothLabel.textColor = .secondaryLabelColor
-        let keepBothNameField = NSTextField(string: suggestedName)
-        keepBothNameField.placeholderString = suggestedName
-        keepBothNameField.setAccessibilityLabel(keepBothLabel.stringValue)
-        let keepBothAccessory = NSStackView(
-            views: [keepBothLabel, keepBothNameField]
-        )
-        keepBothAccessory.orientation = .vertical
-        keepBothAccessory.alignment = .leading
-        keepBothAccessory.spacing = 5
-        keepBothNameField.widthAnchor.constraint(
-            equalToConstant: 360
-        ).isActive = true
-        alert.accessoryView = keepBothAccessory
-        alert.addButton(withTitle: ui("取消", "Cancel"))
-        alert.addButton(withTitle: ui("保留两份", "Keep Both"))
         let targetItem = courseItemMemberships.first {
             $0.courseID == courseID && $0.courseRelativePath == "\(role.directoryName)/\(sourceURL.lastPathComponent)"
-        }.flatMap { membership in
-            importedItems.first { $0.id == membership.itemID }
-        }
-        if allowsReplace,
-           !protectedTargetExists,
+        }.flatMap { membership in importedItems.first { $0.id == membership.itemID } }
+        var buttons = [ui("取消", "Cancel"), ui("保留两份", "Keep Both")]
+        if allowsReplace, !protectedTargetExists,
            targetItem.map({ if case .common = $0.storage { return true }; return false }) != true {
-            alert.addButton(withTitle: ui("替换", "Replace"))
+            buttons.append(ui("替换", "Replace"))
         }
-        switch alert.runModal() {
-        case .alertSecondButtonReturn:
-            let preferredName = keepBothNameField.stringValue
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return .keepBoth(
-                preferredFileName: preferredName.isEmpty
-                    ? suggestedName
-                    : preferredName
-            )
-        case .alertThirdButtonReturn:
-            return .replace
-        default:
-            return nil
+        let choice = await WorkspaceFileDialog.choose(
+            title: ui("课程中已有同名文件", "A file with this name already exists"),
+            message: "\(ui("来源", "Source"))：\(sourceURL.path)\n\(ui("冲突目标", "Conflicting target"))：\(targets.map(\.path).joined(separator: "\n"))",
+            buttons: buttons, proposedName: suggestedName
+        )
+        switch choice.index {
+        case 1:
+            let preferred = choice.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return .keepBoth(preferredFileName: preferred.isEmpty ? suggestedName : preferred)
+        case 2: return .replace
+        default: return nil
         }
     }
 
@@ -4150,7 +4116,11 @@ final class WorkspaceStore: ObservableObject {
         FileManager.default.fileExists(atPath: folder.path) else {
             return
         }
+#if targetEnvironment(macCatalyst)
+        CatalystDesktopWindow.shared.reveal(folder)
+#else
         NSWorkspace.shared.activateFileViewerSelecting([folder])
+#endif
     }
 
     func continueCourseSession(
@@ -5061,6 +5031,12 @@ final class WorkspaceStore: ObservableObject {
             revealDocumentPane(.agent, clearSelection: false)
             revealDocumentPane(.notes, clearSelection: false)
             focus(.notes)
+            let headingIndex = source.sectionLocationID.flatMap { id in
+                id.hasPrefix("markdown-heading-") ? Int(id.dropFirst("markdown-heading-".count)) : nil
+            } ?? source.sectionOrdinal.map { $0 - 1 }
+            if let headingIndex, headingIndex >= 0 {
+                noteEditorCommand = NoteEditorCommand(kind: .scrollToHeading, markdown: String(headingIndex), value: item.id)
+            }
             return activeStudySessionID == chatID
         }
 
@@ -5496,53 +5472,6 @@ final class WorkspaceStore: ObservableObject {
         readerSearch = ""
     }
 
-    private static func shortcutKey(from event: NSEvent) -> String? {
-        switch event.keyCode {
-        case 0: return "a"
-        case 1: return "s"
-        case 2: return "d"
-        case 3: return "f"
-        case 4: return "h"
-        case 5: return "g"
-        case 6: return "z"
-        case 7: return "x"
-        case 8: return "c"
-        case 9: return "v"
-        case 11: return "b"
-        case 12: return "q"
-        case 13: return "w"
-        case 14: return "e"
-        case 15: return "r"
-        case 16: return "y"
-        case 17: return "t"
-        case 18: return "1"
-        case 19: return "2"
-        case 20: return "3"
-        case 21: return "4"
-        case 22: return "6"
-        case 23: return "5"
-        case 25: return "9"
-        case 26: return "7"
-        case 28: return "8"
-        case 29: return "0"
-        case 30: return "]"
-        case 31: return "o"
-        case 32: return "u"
-        case 33: return "["
-        case 34: return "i"
-        case 35: return "p"
-        case 37: return "l"
-        case 38: return "j"
-        case 40: return "k"
-        case 45: return "n"
-        case 46: return "m"
-        case 36, 76: return "return"
-        case 125: return "down"
-        case 126: return "up"
-        default:
-            return event.charactersIgnoringModifiers?.lowercased()
-        }
-    }
 
     func setAgentProviderID(_ provider: AgentProviderID) {
         guard agentProviderID != provider else { return }
@@ -5680,7 +5609,11 @@ final class WorkspaceStore: ObservableObject {
                 ?? AgentProviderConsoleLinks.loginURL(for: agentProviderID)
             : AgentProviderConsoleLinks.loginURL(for: agentProviderID)
         guard let url else { return }
+#if targetEnvironment(macCatalyst)
+        _ = CatalystDesktopWindow.shared.open(url)
+#else
         NSWorkspace.shared.open(url)
+#endif
     }
 
     private func touchActiveAgentProfileMetadata() {
@@ -5772,6 +5705,35 @@ final class WorkspaceStore: ObservableObject {
         assigningToCourseID: UUID? = nil,
         panelTitle: String? = nil
     ) {
+#if targetEnvironment(macCatalyst)
+        Task { @MainActor in
+            let types: [UTType] = markdownOnly
+                ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
+                : [.pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
+            let urls = await WorkspaceFileDialog.pick(
+                title: panelTitle ?? ui("选择学习资料或课程文件夹", "Choose study materials or a course folder"),
+                types: types, multiple: true
+            )
+            guard !urls.isEmpty else { return }
+            let scoped = urls.filter { $0.startAccessingSecurityScopedResource() }
+            let releaseScopes = { scoped.forEach { $0.stopAccessingSecurityScopedResource() } }
+            if let assigningToCourseID {
+                importCourseFilesFromURLs(urls, asNotes: markdownAsNotes, courseID: assigningToCourseID) { _ in releaseScopes() }
+                return
+            }
+            let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
+            importFiles(urls, selectsFirstImportedItem: selectsFirstImportedItem,
+                        markdownAsNotes: markdownAsNotes, markdownOnly: markdownOnly,
+                        reclassifiesExistingMarkdown: reclassifiesExistingMarkdown) { selectedItems in
+                defer { releaseScopes() }
+                if let targetNoteID, self.activeNotebookItemID == targetNoteID {
+                    self.setLinkedSourceIDsForActiveNote(
+                        Set(self.linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
+                    )
+                }
+            }
+        }
+#else
         let panel = NSOpenPanel()
         panel.title = panelTitle ?? ui("选择学习资料或课程文件夹", "Choose study materials or a course folder")
         panel.allowsMultipleSelection = true
@@ -5804,6 +5766,7 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
         }
+#endif
     }
 
     func importFiles(
@@ -6190,8 +6153,12 @@ final class WorkspaceStore: ObservableObject {
             guard selectedMaterialItem != nil || activeNoteItem?.isNotebookNote == true else { return }
             reference = ui("来源：\(currentSourceReferenceTitle)", "Source: \(currentSourceReferenceTitle)")
         }
+#if targetEnvironment(macCatalyst)
+        UIPasteboard.general.string = reference
+#else
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(reference, forType: .string)
+#endif
     }
 
     func updateSelection(_ text: String, source: SelectionSource, anchor: SelectionPopoverAnchor? = nil, ownerTitle: String? = nil, isEditable: Bool = true, documentAnchor: SelectionDocumentAnchor? = nil) {
@@ -7103,7 +7070,7 @@ final class WorkspaceStore: ObservableObject {
             let courseIDs = itemCourseIDs.map { $0.uuidString.lowercased() }
             let courseTitles = itemCourseIDs.compactMap { coursesByID[$0] }
             let baseSubtitle = displaySubtitle(for: item)
-            let memoryText = loadedAgentNoteText(for: item)
+            let memoryText = agentToolNoteText(for: item)
             let sourceRevision = memoryText.map(
                 CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
             ) ?? CourseDocumentSearchIndex.sourceRevision(for: item)
@@ -7365,6 +7332,7 @@ final class WorkspaceStore: ObservableObject {
             }
             importedItems[index].importedFileIdentity = identity
             importedItems[index].contentDigest = Self.noteContentDigest(Data(diskText.utf8))
+            noteBackingContentDigestsByItemID[itemID] = importedItems[index].contentDigest
             for membershipIndex in courseItemMemberships.indices
             where courseItemMemberships[membershipIndex].itemID == itemID {
                 courseItemMemberships[membershipIndex].entryIdentity = identity
@@ -7874,18 +7842,22 @@ final class WorkspaceStore: ObservableObject {
         ).scope
     }
 
+    func agentHostToolHandlerForSelfCheck(courseID: UUID?) throws -> StudyAgentHostToolHandler {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
+        let access = makeAgentProjectAccessSnapshot(target: target)
+        return makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+    }
+
     func agentHostSearchForSelfCheck(
         courseID: UUID?,
         query: String,
         beforeSearch: (() throws -> Void)? = nil
     ) throws -> StudyAgentHostToolResult {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+        let handler = try agentHostToolHandlerForSelfCheck(courseID: courseID)
         try beforeSearch?()
         return try waitForCourseFileOperation {
-            try await handler(.courseSearch(query: query, offset: 0, limit: 8))
+            try await handler(.workspaceSearch(query: query, scope: .library, scopeID: nil, cursor: nil, limit: 8))
         }
     }
 
@@ -7894,30 +7866,23 @@ final class WorkspaceStore: ObservableObject {
         itemID: String? = nil,
         offset: Int = 0
     ) throws -> StudyAgentHostToolResult {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+        let handler = try agentHostToolHandlerForSelfCheck(courseID: courseID)
         return try waitForCourseFileOperation {
-            try await handler(.courseMap(itemID: itemID, offset: offset, limit: 40))
+            try await handler(.courseMap(scope: itemID == nil ? .library : .material, scopeID: itemID, name: nil, cursor: String(offset), limit: 40))
         }
     }
 
     func agentHostReadForSelfCheck(
         courseID: UUID?,
         itemID: String,
-        query: String = "",
         location: String? = nil
     ) throws -> StudyAgentHostToolResult {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
-        let access = makeAgentProjectAccessSnapshot(target: target)
-        let handler = makeAgentHostToolHandler(target: target, access: access, focusItemIDs: [])
+        let handler = try agentHostToolHandlerForSelfCheck(courseID: courseID)
         return try waitForCourseFileOperation {
             try await handler(
                 .courseRead(
                     itemID: itemID,
-                    query: query,
+                    page: nil,
                     location: location,
                     cursor: nil,
                     maximumCharacters: 6_000
@@ -8024,21 +7989,24 @@ final class WorkspaceStore: ObservableObject {
             ?? ui("全部课程", "All Courses")
         let searchIndex = courseDocumentSearchIndex
 
-        return { request in
-            if case let .workspaceSearch(query, offset, limit, crossLibrary) = request {
-                return await self.searchWorkspaceForAgent(
-                    query: query,
-                    cursor: offset,
-                    limit: limit,
-                    crossLibrary: crossLibrary,
-                    currentCourseID: target.courseID
-                )
+        return { [weak self] request in
+            let currentSources = await MainActor.run { [weak self] in
+                guard let self else { return [AgentHostToolSource]() }
+                let current = Dictionary(uniqueKeysWithValues: self.makeAgentProjectAccessSnapshot(target: target)
+                    .sources.map { ($0.item.id, $0) })
+                return sources.compactMap { captured in
+                    guard var source = current[captured.item.id] else { return nil }
+                    // 外部冲突尚未解决时，编辑器快照不会写入笔记状态；保留本次提问时的草稿。
+                    if self.noteEditorRecoveryConflictsByItemID[captured.item.id] != nil,
+                       let markdown = captured.memoryText { source.memoryText = markdown }
+                    return source
+                }
             }
             let task = Task.detached(priority: .userInitiated) {
                 try await Self.executeAgentHostTool(
                     request,
                     title: title,
-                    sources: sources,
+                    sources: currentSources,
                     links: links,
                     searchIndex: searchIndex
                 )
@@ -9526,7 +9494,8 @@ final class WorkspaceStore: ObservableObject {
                 if let snapshot, snapshot.documentID == sentNoteItemID {
                     sentNoteText = snapshot.markdown
                     if let index = projectAccess.sources.firstIndex(where: { $0.item.id == snapshot.documentID }) {
-                        projectAccess.sources[index].memoryText = snapshot.markdown
+                        projectAccess.sources[index].memoryText = agentToolNoteText(
+                            for: projectAccess.sources[index].item, editorText: snapshot.markdown)
                     }
                 }
             }
@@ -9684,6 +9653,7 @@ final class WorkspaceStore: ObservableObject {
                     selectionTitle: sentSelectionTitle,
                     selectionText: sentSelectionText,
                     selectionSources: sentSelectionSources,
+                    knownSources: studySessions.first(where: { $0.id == target.sessionID })?.messages.flatMap(\.sources) ?? [],
                     courseContext: courseBuild.context,
                     projectScope: projectAccess.scope,
                     focus: StudyAgentFocus(
@@ -10129,7 +10099,7 @@ final class WorkspaceStore: ObservableObject {
         case let .usingTool(name, detail):
             let base: String
             switch name {
-            case "weibei_course_search", "weibei_search_workspace":
+            case "weibei_search_workspace":
                 base = ui("正在搜索", "Searching")
             case "weibei_course_read":
                 base = ui("正在读取", "Reading")
@@ -10153,7 +10123,10 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 agentStreaming.activityText = base
             }
-        case let .text(text, blocks):
+        case let .text(text, blocks, sources):
+            if studySessions.first(where: { $0.id == chatID })?.messages.first(where: { $0.id == replyMessageID })?.sources != sources {
+                _ = updateAgentMessage(replyMessageID, in: chatID) { $0.sources = sources }
+            }
             latestAgentStreamingText = text
             if agentStreaming.isDisplaying(replyMessageID) {
                 let canPaceVisibleReply = !agentStreamingUsesReducedMotion

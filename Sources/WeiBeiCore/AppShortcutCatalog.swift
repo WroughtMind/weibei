@@ -1,4 +1,14 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+public typealias AppShortcutModifiers = UIKeyModifierFlags
+
+extension UIKeyModifierFlags {
+    public static var option: Self { .alternate }
+}
+#else
 import AppKit
+public typealias AppShortcutModifiers = NSEvent.ModifierFlags
+#endif
 import Foundation
 
 // MARK: - Customizable app shortcuts
@@ -133,12 +143,12 @@ public enum AppShortcutGroup: String, CaseIterable, Identifiable, Sendable {
 
 public struct AppShortcutChord: Codable, Equatable, Hashable, Sendable {
     public var key: String
-    /// Normalized raw value of `NSEvent.ModifierFlags` intersection with command/option/control/shift.
+    /// Normalized raw value of `AppShortcutModifiers` intersection with command/option/control/shift.
     public var modifiersRaw: UInt
 
-    public init(key: String, modifiers: NSEvent.ModifierFlags) {
+    public init(key: String, modifiers: AppShortcutModifiers) {
         self.key = key
-        self.modifiersRaw = modifiers.intersection(Self.mask).rawValue
+        self.modifiersRaw = UInt(modifiers.intersection(Self.mask).rawValue)
     }
 
     public init(key: String, modifiersRaw: UInt) {
@@ -146,10 +156,10 @@ public struct AppShortcutChord: Codable, Equatable, Hashable, Sendable {
         self.modifiersRaw = modifiersRaw
     }
 
-    public static let mask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+    public static let mask: AppShortcutModifiers = [.command, .option, .control, .shift]
 
-    public var modifiers: NSEvent.ModifierFlags {
-        NSEvent.ModifierFlags(rawValue: modifiersRaw).intersection(Self.mask)
+    public var modifiers: AppShortcutModifiers {
+        AppShortcutModifiers(rawValue: numericCast(modifiersRaw & UInt(Self.mask.rawValue)))
     }
 
     public var display: String {
@@ -163,6 +173,31 @@ public struct AppShortcutChord: Codable, Equatable, Hashable, Sendable {
         return parts.joined()
     }
 
+#if targetEnvironment(macCatalyst)
+    public static func from(key: UIKey) -> AppShortcutChord? {
+        let value: String
+        let code = key.keyCode.rawValue
+        switch key.keyCode {
+        case .keyboardReturnOrEnter, .keypadEnter: value = "return"
+        case .keyboardLeftArrow: value = "left"
+        case .keyboardRightArrow: value = "right"
+        case .keyboardUpArrow: value = "up"
+        case .keyboardDownArrow: value = "down"
+        case .keyboardOpenBracket: value = "["
+        case .keyboardCloseBracket: value = "]"
+        case .keyboard0: value = "0"
+        default:
+            if (UIKeyboardHIDUsage.keyboardA.rawValue...UIKeyboardHIDUsage.keyboardZ.rawValue).contains(code) {
+                value = String(UnicodeScalar(97 + code - UIKeyboardHIDUsage.keyboardA.rawValue)!)
+            } else if (UIKeyboardHIDUsage.keyboard1.rawValue...UIKeyboardHIDUsage.keyboard9.rawValue).contains(code) {
+                value = String(code - UIKeyboardHIDUsage.keyboard1.rawValue + 1)
+            } else { return nil }
+        }
+        let flags = key.modifierFlags.intersection(mask)
+        if value.count == 1 && value.rangeOfCharacter(from: .alphanumerics) != nil && flags.isEmpty { return nil }
+        return AppShortcutChord(key: value, modifiers: flags)
+    }
+#else
     public static func from(event: NSEvent) -> AppShortcutChord? {
         guard let key = key(from: event) else { return nil }
         let flags = event.modifierFlags.intersection(mask)
@@ -217,6 +252,8 @@ public struct AppShortcutChord: Codable, Equatable, Hashable, Sendable {
             return nil
         }
     }
+
+#endif
 
     private static func displayKey(_ key: String) -> String {
         switch key {

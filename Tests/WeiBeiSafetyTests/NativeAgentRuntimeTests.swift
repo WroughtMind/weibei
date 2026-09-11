@@ -2,18 +2,72 @@ import XCTest
 @testable import WeiBeiCore
 
 final class NativeAgentRuntimeTests: XCTestCase {
+    func testReadAllowanceAndOnlyCitedLocationsSurvivePersistence() async throws {
+        let headings = CourseDocumentSearchIndex.markdownPassages("---\n# 文件头\n---\n\n```\n# 代码\n```\n\n$$\n# 公式\n$$\n\n#\n\n章节\n====\n\n## **末节**\n正文").filter { !$0.location.isEmpty }
+        XCTAssertEqual(headings.map { $0.title ?? "" }, ["", "章节", "末节"])
+        XCTAssertEqual(headings.map(\.location), ["markdown-heading-0", "markdown-heading-1", "markdown-heading-2"])
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let recorder = WorkspaceSearchRecorder()
+        let context = NativeToolExecutionContext(
+            request: StudyAgentRequest(purpose: .conversation, question: "读取", materialTitle: "", materialText: "", noteTitle: "", noteText: "", contextRevision: "read"),
+            hostToolHandler: { request in
+                await recorder.record(request)
+                return StudyAgentHostToolResult(query: "", items: [])
+            }
+        )
+        _ = try await registry.execute(
+            NativeToolCallRequest(name: "weibei_course_read", argumentsJSON: #"{"itemID":"note","location":"markdown-heading-91","maximumCharacters":37}"#, callID: "read"),
+            context: context, scope: .global
+        )
+        let captured = await recorder.request
+        guard case let .courseRead(itemID, _, location, _, allowance) = captured else { return XCTFail("没有读取原文") }
+        XCTAssertEqual(itemID, "note")
+        XCTAssertEqual(location, "markdown-heading-91")
+        XCTAssertEqual(allowance, 37)
+
+        var selectionContext = context
+        selectionContext.request.focus = StudyAgentFocus(chatID: "chat", courseID: nil, materialItemID: "reader-material", materialTitle: "旁边材料", pageIndex: 16, sectionTitle: nil, sectionLocationID: nil, sectionOrdinal: nil, selectionText: nil, actionSource: "note")
+        selectionContext.request.selectionSources = [AgentReplySource(itemID: "selected-note", kind: .selection, title: "笔记选区", label: "", excerpt: "选区")]
+        _ = try await registry.execute(
+            NativeToolCallRequest(name: "weibei_course_map", argumentsJSON: #"{"scope":"material"}"#, callID: "map"),
+            context: selectionContext, scope: .global
+        )
+        let selectedRequest = await recorder.request
+        guard case let .courseMap(_, selectedID, _, _, _) = selectedRequest else { return XCTFail("没有查看选区目录") }
+        XCTAssertEqual(selectedID, "selected-note")
+
+        let source = AgentReplySource(itemID: itemID, kind: .note, title: "长笔记", label: "", excerpt: "末节原文", sectionLocationID: location, sectionOrdinal: 92)
+        let item = StudyAgentCourseItem(id: itemID, title: source.title, subtitle: "", kind: "markdown", role: "note", searchText: source.excerpt)
+        let payload = StudyAgentHostToolResult(query: "", items: [
+            StudyAgentHostToolItem(item: item, source: source),
+            StudyAgentHostToolItem(item: item, source: AgentReplySource(itemID: "unrelated", kind: .material, title: "无关材料", label: "", excerpt: "无关片段", pageIndex: 16)),
+        ])
+        XCTAssertEqual(payload.items.last?.page, 17)
+        var result = NativeToolExecutionResult(text: String(decoding: try JSONEncoder().encode(payload), as: UTF8.self))
+        var index = 0
+        NativeAgentSources.attach(to: &result, name: "weibei_course_read", turn: 1, index: &index)
+        let available = NativeAgentSources.fromToolText(result.text)
+        XCTAssertTrue(NativeAgentSources.used(in: "尚未引用", available: available).isEmpty)
+        let used = NativeAgentSources.used(in: "回答" + available[0].label, available: available)
+        XCTAssertEqual(used.count, 1)
+        let reopened = try JSONDecoder().decode([AgentReplySource].self, from: JSONEncoder().encode(used))
+        XCTAssertEqual(reopened.first?.sectionLocationID, "markdown-heading-91")
+        XCTAssertEqual(reopened.first?.sectionOrdinal, 92)
+    }
+
     func testSSEFramingAndToolAssembly() throws {
         var framer = NativeSSEFramer()
         let lines = try framer.append(Data("data: {\"a\":1}\r\ndata: {\"b\":2}\n".utf8))
         XCTAssertEqual(lines, ["{\"a\":1}", "{\"b\":2}"])
 
         var assembler = NativeToolCallAssembler()
-        assembler.apply(.toolCallDelta(index: 0, id: "c1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"利率\"}"))
+        assembler.apply(.toolCallDelta(index: 0, id: "c1", name: "weibei_search_workspace", argumentsDelta: "{\"query\":\"利率\",\"scope\":\"library\"}"))
         let calls = try assembler.completedCalls()
-        XCTAssertEqual(calls.first?.name, "weibei_course_search")
+        XCTAssertEqual(calls.first?.name, "weibei_search_workspace")
 
         var incomplete = NativeToolCallAssembler()
-        incomplete.apply(.toolCallDelta(index: 0, id: "c1", name: "weibei_course_search", argumentsDelta: "{\"query\":"))
+        incomplete.apply(.toolCallDelta(index: 0, id: "c1", name: "weibei_search_workspace", argumentsDelta: "{\"query\":"))
         XCTAssertThrowsError(try incomplete.completedCalls())
     }
 
@@ -133,13 +187,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let items = try XCTUnwrap(updatedSpec["items"] as? [[String: Int]])
         XCTAssertEqual(items.first?["value"], 2)
         XCTAssertNotEqual(first.specJSON, updated.specJSON)
-        XCTAssertEqual(progress[0], .text("before", []))
+        XCTAssertEqual(progress[0], .text("before", [], []))
         XCTAssertEqual(firstBlocks, [.text("before"), .visualization(first)])
-        XCTAssertEqual(progress[2], .text("beforeafter", [.text("before"), .visualization(first), .text("after")]))
+        XCTAssertEqual(progress[2], .text("beforeafter", [.text("before"), .visualization(first), .text("after")], []))
         XCTAssertEqual(updatedBlocks, [.text("before"), .visualization(updated), .text("after")])
         XCTAssertEqual(result.text, "beforeaftertail")
         XCTAssertEqual(result.contentBlocks, [.text("before"), .visualization(updated), .text("aftertail")])
-        XCTAssertEqual(progress[4], .text(result.text, result.contentBlocks))
+        XCTAssertEqual(progress[4], .text(result.text, result.contentBlocks, []))
     }
 
     func testContextCompactionProjectionUsesOnlyLatestCheckpointAndKeepsToolPairs() async throws {
@@ -418,7 +472,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let context = NativeToolExecutionContext(request: request)
         do {
             _ = try await registry.execute(
-                NativeToolCallRequest(name: "weibei_course_search", argumentsJSON: "{\"query\":\"利率\"", callID: "2"),
+                NativeToolCallRequest(name: "weibei_search_workspace", argumentsJSON: "{\"query\":\"利率\"", callID: "2"),
                 context: context,
                 scope: .global
             )
@@ -513,7 +567,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
         let adapter = MockLLMAdapter(chunks: [
-            .toolCallDelta(index: 0, id: "t1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"利率\"}"),
+            .toolCallDelta(index: 0, id: "t1", name: "weibei_search_workspace", argumentsDelta: "{\"query\":\"利率\",\"scope\":\"library\"}"),
             .finish(reason: .toolCalls, replayState: nil),
         ])
         let loop = NativeAgentLoop()
@@ -773,14 +827,14 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(azureRequest.url?.lastPathComponent, "responses")
     }
 
-    func testWorkspaceSearchToolDefaultsToCurrentCourseAndReportsEmptyHits() async throws {
+    func testWorkspaceSearchToolUsesExplicitCourseAndReportsEmptyHits() async throws {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
         let recorder = WorkspaceSearchRecorder()
         let result = try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_search_workspace",
-                argumentsJSON: "{\"query\":\"利率\"}",
+                argumentsJSON: "{\"query\":\"利率\",\"scope\":\"course\",\"scopeID\":\"course-example\"}",
                 callID: "w1"
             ),
             context: NativeToolExecutionContext(
@@ -807,23 +861,23 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(decoded.items.isEmpty)
         XCTAssertEqual(decoded.webPages.count, 0)
         let captured = await recorder.request
-        guard case let .workspaceSearch(query, offset, limit, crossLibrary) = captured else {
+        guard case let .workspaceSearch(query, scope, scopeID, cursor, _) = captured else {
             return XCTFail("expected workspaceSearch")
         }
         XCTAssertEqual(query, "利率")
-        XCTAssertEqual(offset, 0)
-        XCTAssertEqual(limit, 100)
-        XCTAssertFalse(crossLibrary)
+        XCTAssertEqual(scope, .course)
+        XCTAssertEqual(scopeID, "course-example")
+        XCTAssertNil(cursor)
     }
 
-    func testWorkspaceSearchToolCrossLibraryParameter() async throws {
+    func testWorkspaceSearchToolUsesExplicitLibrary() async throws {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
         let recorder = WorkspaceSearchRecorder()
         _ = try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_search_workspace",
-                argumentsJSON: "{\"query\":\"利率\",\"crossLibrary\":true}",
+                argumentsJSON: "{\"query\":\"利率\",\"scope\":\"library\"}",
                 callID: "w2"
             ),
             context: NativeToolExecutionContext(
@@ -844,10 +898,11 @@ final class NativeAgentRuntimeTests: XCTestCase {
             scope: .global
         )
         let captured = await recorder.request
-        guard case let .workspaceSearch(_, _, _, crossLibrary) = captured else {
+        guard case let .workspaceSearch(_, scope, scopeID, _, _) = captured else {
             return XCTFail("expected workspaceSearch")
         }
-        XCTAssertTrue(crossLibrary)
+        XCTAssertEqual(scope, .library)
+        XCTAssertNil(scopeID)
     }
 
     func testSessionTitleNormalizationRejectsGenericAndStripsDecorations() {
@@ -1301,7 +1356,7 @@ private struct LongToolRunMockLLMAdapter: NativeLLMAdapter {
                 .toolCallDelta(
                     index: 0,
                     id: "t\(completedToolSteps + 1)",
-                    name: "weibei_course_search",
+                    name: "weibei_search_workspace",
                     argumentsDelta: "{\"query\":\"利率\"}"
                 ),
                 .finish(reason: .toolCalls, replayState: nil),

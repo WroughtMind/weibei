@@ -110,7 +110,7 @@ struct ComposerView: View {
         .onChange(of: focused.wrappedValue) { _, focused in
             if focused { focusRequest &+= 1 }
         }
-        .onChange(of: store.agentDraft) { _, newValue in
+        .onReceive(store.$agentDraft) { newValue in
             guard draft != newValue else { return }
             draft = newValue
         }

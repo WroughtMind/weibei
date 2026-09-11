@@ -1,4 +1,6 @@
+#if !targetEnvironment(macCatalyst)
 import AppKit
+#endif
 import SwiftUI
 import WeiBeiCore
 
@@ -42,7 +44,7 @@ struct ContentView: View {
                             .background(
                                 store.appearanceMode.isGlass
                                     ? Color.clear
-                                    : Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
+                                    : Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
                             )
                             // Only cross-fade immersive ↔ document families. Pane show/hide inside
                             // the document family is owned by AppKit StableDocumentWorkspace animation
@@ -79,7 +81,7 @@ struct ContentView: View {
 
                 if store.courseWorkspacePresented {
                     ZStack {
-                        Color(nsColor: WeiBeiNativePalette.foregroundWorkspaceSurface(
+                        Color(weiBeiNativeColor: WeiBeiNativePalette.foregroundWorkspaceSurface(
                             for: store.appearanceMode
                         ))
                         CourseWorkspaceView()
@@ -162,6 +164,7 @@ struct ContentView: View {
     }
 }
 
+#if !targetEnvironment(macCatalyst)
 private struct WindowFullScreenReader: NSViewRepresentable {
     @Binding var isFullScreen: Bool
 
@@ -225,6 +228,8 @@ private struct WindowFullScreenReader: NSViewRepresentable {
         }
     }
 }
+
+#endif
 
 /// AppKit course drawer layer. Observes only `LibraryDrawerState`; the store reference
 /// is passed through without subscribing this chrome layer to the whole workspace.
@@ -528,7 +533,9 @@ private struct WorkspaceChromeBackdrop: View {
 
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
+#if !targetEnvironment(macCatalyst)
     @EnvironmentObject private var updateService: WeiBeiUpdateService
+#endif
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
@@ -564,7 +571,7 @@ private struct UnifiedTopBarView: View {
                     .weiBeiText(12)
                     .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
                     .frame(width: 220)
-                .onExitCommand {
+                .weiBeiOnExitCommand {
                     withAnimation(WeiBeiMotion.panel) {
                         store.hideReaderSearch()
                         searchFocused.wrappedValue = false
@@ -593,7 +600,7 @@ private struct UnifiedTopBarView: View {
 
             // Full Settings window (agent keys, appearance, data) — not the old mini menu.
             topIconButton("gearshape", help: store.ui("打开设置", "Open Settings")) {
-                openSettingsWindow(id: "weibei-settings")
+                showSettings()
             }
 
             Spacer()
@@ -617,7 +624,7 @@ private struct UnifiedTopBarView: View {
         // ⌘, bridge: Commands cannot reach the openWindow environment action,
         // so the menu item posts a notification and the live top bar opens it.
         .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
-            openSettingsWindow(id: "weibei-settings")
+            showSettings()
         }
         .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
@@ -625,6 +632,10 @@ private struct UnifiedTopBarView: View {
         .animation(WeiBeiMotion.panel, value: paneState.showReader)
         .animation(WeiBeiMotion.panel, value: paneState.showAgent)
         .animation(WeiBeiMotion.panel, value: paneState.showNotes)
+    }
+
+    private func showSettings() {
+        openSettingsWindow(id: "weibei-settings")
     }
 
     private var barHeight: CGFloat {
@@ -678,7 +689,7 @@ private struct UnifiedTopBarView: View {
                 // ZStack root — the bar itself must not paint a second layer.
                 Color.clear
             } else {
-                Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
+                Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
             }
         }
     }
@@ -711,6 +722,7 @@ private struct UnifiedTopBarView: View {
             .weiBeiKeyboardShortcut(store.executableChord(for: .navigateForward))
             .disabled(!store.canNavigateForward)
 
+#if !targetEnvironment(macCatalyst)
             if updateService.showsToolbarControl, let update = updateService.availableUpdate {
                 Button {
                     updateService.installAvailableUpdate()
@@ -729,10 +741,14 @@ private struct UnifiedTopBarView: View {
                 .help(updateHelpText(update))
                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
             }
+#endif
         }
+#if !targetEnvironment(macCatalyst)
         .animation(WeiBeiMotion.panel, value: updateService.showsToolbarControl)
+#endif
     }
 
+#if !targetEnvironment(macCatalyst)
     private func updateHelpText(_ update: WeiBeiAvailableUpdate) -> String {
         var text = update.helpText
         if update.releaseNotesLines.count > update.summaryLines.count {
@@ -746,6 +762,8 @@ private struct UnifiedTopBarView: View {
         }
         return text
     }
+
+#endif
 
     private var paneToggleCluster: some View {
         WeiBeiSegmentedControl(segments: [
@@ -1051,6 +1069,7 @@ struct OwnerToken: Equatable {
     let generation: Int
 }
 
+#if !targetEnvironment(macCatalyst)
 final class PersistentPaneHostRegistry: ObservableObject {
     private var hosts: [WorkspacePaneRole: NSHostingView<AnyView>] = [:]
     private var latestOwnerGeneration: [WorkspacePaneRole: Int] = [:]
@@ -1221,12 +1240,23 @@ struct PersistentPaneHost: NSViewRepresentable {
     }
 }
 
-private struct PersistentPaneRoot: View {
+#endif
+
+struct PersistentPaneRoot: View {
     @EnvironmentObject private var store: WorkspaceStore
     let role: WorkspacePaneRole
 
-    @ViewBuilder
     var body: some View {
+        pane
+#if targetEnvironment(macCatalyst)
+            .environment(\.weiBeiTextScale, store.interfaceTextScale.multiplier)
+            .weiBeiMotionScoped()
+            .preferredColorScheme(store.appearanceMode.colorScheme)
+#endif
+    }
+
+    @ViewBuilder
+    private var pane: some View {
         switch role {
         case .reader:
             ReaderView(

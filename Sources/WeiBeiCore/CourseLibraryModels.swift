@@ -17,9 +17,14 @@ public enum CourseLibraryLayout {
             return workspace.deletingLastPathComponent()
                 .appendingPathComponent(workspace.lastPathComponent + "-" + defaultFolderName, isDirectory: true)
         }
+#if targetEnvironment(macCatalyst)
+        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(defaultFolderName, isDirectory: true)
+#else
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
             .appendingPathComponent(defaultFolderName, isDirectory: true)
+#endif
     }
 }
 

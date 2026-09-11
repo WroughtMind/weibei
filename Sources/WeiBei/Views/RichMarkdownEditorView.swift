@@ -1,4 +1,10 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+private typealias MarkdownEditorRepresentable = UIViewRepresentable
+#else
 import AppKit
+private typealias MarkdownEditorRepresentable = NSViewRepresentable
+#endif
 import os
 import SwiftUI
 import WebKit
@@ -519,6 +525,38 @@ private enum MarkdownWebNetworkGuard {
     }
 }
 
+#if targetEnvironment(macCatalyst)
+final class MarkdownWebView: WKWebView {
+    var pasteImageFromClipboard: (() -> Bool)?
+    var onWindowAttachment: (() -> Void)?
+    var passesVerticalScrollToSuperview = false {
+        didSet { scrollView.isScrollEnabled = !passesVerticalScrollToSuperview }
+    }
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { onWindowAttachment?() }
+    }
+    override func paste(_ sender: Any?) {
+        if pasteImageFromClipboard?() != true { super.paste(sender) }
+    }
+    @discardableResult
+    func scrollOuterSuperview(deltaY: CGFloat) -> Bool {
+        guard passesVerticalScrollToSuperview else { return false }
+        var ancestor = superview
+        while let view = ancestor {
+            if let scroll = view as? UIScrollView {
+                let inset = scroll.adjustedContentInset
+                let y = min(max(scroll.contentOffset.y + deltaY, -inset.top),
+                            max(-inset.top, scroll.contentSize.height - scroll.bounds.height + inset.bottom))
+                scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: y), animated: false)
+                return true
+            }
+            ancestor = view.superview
+        }
+        return false
+    }
+}
+#else
 final class MarkdownWebView: WKWebView {
     var pasteImageFromClipboard: (() -> Bool)?
     var onWindowAttachment: (() -> Void)?
@@ -650,7 +688,9 @@ final class MarkdownWebView: WKWebView {
 
 }
 
-struct RichMarkdownEditorView: NSViewRepresentable {
+#endif
+
+struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     @AppStorage("weibei.notes.typewriterMode") private var notesTypewriterMode = false
     /// Resolved by WeiBeiMotionScope — pushed into the page before first paint and
     /// synced live on preference changes (never reloads the note).
@@ -738,7 +778,23 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         )
     }
 
-    func makeNSView(context: Context) -> WKWebView {
+#if targetEnvironment(macCatalyst)
+    func makeUIView(context: Context) -> WKWebView { makeWebView(context: context) }
+    func updateUIView(_ view: WKWebView, context: Context) { updateWebView(view, context: context) }
+    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) { dismantleWebView(view, coordinator: coordinator) }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: WKWebView, context: Context) -> CGSize? {
+        proposedSize(proposal, view: uiView)
+    }
+#else
+    func makeNSView(context: Context) -> WKWebView { makeWebView(context: context) }
+    func updateNSView(_ view: WKWebView, context: Context) { updateWebView(view, context: context) }
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) { dismantleWebView(view, coordinator: coordinator) }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: WKWebView, context: Context) -> CGSize? {
+        proposedSize(proposal, view: nsView)
+    }
+#endif
+
+    private func makeWebView(context: Context) -> WKWebView {
         let configuration = WeiBeiWebViewConfiguration.make(surface: .editor)
         let controller = WKUserContentController()
         context.coordinator.imageSchemeHandler.update(
@@ -797,7 +853,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         WeiBeiWebViewConfiguration.installConsoleErrorBridge(on: controller, surface: .editor)
 
         let view = MarkdownWebView(frame: .zero, configuration: configuration)
+#if targetEnvironment(macCatalyst)
+        view.isOpaque = false
+        view.backgroundColor = .clear
+#else
         view.setValue(false, forKey: "drawsBackground")
+#endif
         view.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         view.pasteImageFromClipboard = { [weak coordinator = context.coordinator] in
@@ -813,10 +874,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             extra:
                 "instance=\(context.coordinator.performanceInstanceID.uuidString.lowercased()) surface=\(isEditable ? "editor" : "preview") compact=\(isCompactPreview ? 1 : 0) wide=\(isChatWideTypography ? 1 : 0) doc=\(documentID) mdlen=\(markdown.count)"
         )
-        let resourceURL = WeiBeiResources.bundle.url(
-            forResource: "index",
-            withExtension: "html"
-        )
+        let resourceURL = WeiBeiResources.editorURL
         MarkdownWebNetworkGuard.install(in: controller) {
             [weak view, weak coordinator = context.coordinator] result in
             guard let view else { return }
@@ -843,18 +901,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     /// Chat/notes send publishes WorkspaceStore and remasures every markdown WKWebView.
     /// Accept the SwiftUI proposal so AppKit never walks WebKit Auto Layout fittingSize
     /// (cpu_resource + sample 2026-08-01: PlatformView.sizeThatFits freeze on send).
-    func sizeThatFits(
-        _ proposal: ProposedViewSize,
-        nsView: WKWebView,
-        context: Context
-    ) -> CGSize? {
-        let fallback = nsView.bounds.size
+    private func proposedSize(_ proposal: ProposedViewSize, view: WKWebView) -> CGSize? {
+        let fallback = view.bounds.size
         let width = proposal.width ?? (fallback.width > 1 ? fallback.width : 1)
         let height = proposal.height ?? (fallback.height > 1 ? fallback.height : 1)
         return CGSize(width: max(width, 1), height: max(height, 1))
     }
 
-    func updateNSView(_ view: WKWebView, context: Context) {
+    private func updateWebView(_ view: WKWebView, context: Context) {
         (view as? MarkdownWebView)?.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         context.coordinator.markdown = markdown
@@ -972,7 +1026,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.runPendingCommandIfReady()
     }
 
-    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+    private static func dismantleWebView(_ view: WKWebView, coordinator: Coordinator) {
         coordinator.rejectUnconfirmedContentCommands()
         coordinator.unbindEditingSession()
         coordinator.imageSchemeHandler.invalidate()
@@ -1036,7 +1090,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
     private static func applyWebAppearance(to view: WKWebView, appearanceMode: WeiBeiAppearanceMode) {
         view.underPageBackgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
+#if targetEnvironment(macCatalyst)
+        view.overrideUserInterfaceStyle = appearanceMode.isDark ? .dark : .light
+#else
         view.appearance = NSAppearance(named: appearanceMode.isDark ? .darkAqua : .aqua)
+#endif
     }
 
     private static func json(_ value: String) -> String {
@@ -1285,7 +1343,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             if scheme == "weibei-source" || scheme == "weibei-source-group" {
                 onSourceReference(targetURL.absoluteString)
             } else if scheme == "http" || scheme == "https" || scheme == "mailto" {
+#if targetEnvironment(macCatalyst)
+                UIApplication.shared.open(targetURL, options: [:], completionHandler: nil)
+#else
                 NSWorkspace.shared.open(targetURL)
+#endif
             }
             // Never replace an answer/editor with an external or unknown page.
             decisionHandler(.cancel)
@@ -1704,6 +1766,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                       $0.command.id == pending.id
                   }),
                   let editingSession else { return }
+            if pending.kind == .scrollToHeading, let target = pending.value, target != editingSession.documentID { return }
             let source = InFlightCommand(
                 command: pending,
                 documentID: editingSession.documentID,
@@ -1860,8 +1923,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func applyFocus() {
             guard isReady, isFocused, focusRequest != lastAppliedFocusRequest,
-                  let webView, let window = webView.window,
-                  window.makeFirstResponder(webView) else { return }
+                  let webView, webView.window != nil else { return }
+#if targetEnvironment(macCatalyst)
+            guard webView.becomeFirstResponder() else { return }
+#else
+            guard webView.window?.makeFirstResponder(webView) == true else { return }
+#endif
             lastAppliedFocusRequest = focusRequest
             if let editingSession {
                 dispatchV2(NoteEditorCommandEnvelope(
@@ -1899,15 +1966,18 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func pasteImageFromClipboard() -> Bool {
-            guard isEditable,
-                  let editingSession,
-                  let image = NSImage(pasteboard: .general),
+            guard isEditable, let editingSession else { return false }
+#if targetEnvironment(macCatalyst)
+            guard let data = UIPasteboard.general.image?.pngData() else { return false }
+#else
+            guard let image = NSImage(pasteboard: .general),
                   let tiff = image.tiffRepresentation,
                   let bitmap = NSBitmapImageRep(data: tiff),
                   let data = bitmap.representation(using: .png, properties: [:]) else {
                 return false
             }
 
+#endif
             let body: [String: Any] = [
                 "dataURL": "data:image/png;base64,\(data.base64EncodedString())",
                 "name": "pasted-image.png",
@@ -1950,6 +2020,16 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 evaluate("window.WeiBeiEditor?.rejectImagePicker(\(Self.json(requestID)), \(Self.json(interfaceLanguage.text("无法打开图片选择器", "Image picker could not be opened"))))")
                 return
             }
+#if targetEnvironment(macCatalyst)
+            Task { [weak self] in
+                guard let self else { return }
+                let urls = await WorkspaceFileDialog.pick(
+                    title: interfaceLanguage.text("插入图片", "Insert Image"),
+                    types: [.png, .jpeg, .gif, .webP, .tiff, .heic], multiple: false
+                )
+                self.completeImagePicker(url: urls.first, requestID: requestID, documentID: requestedDocumentID)
+            }
+#else
             let panel = NSOpenPanel()
             panel.title = interfaceLanguage.text("插入图片", "Insert Image")
             panel.prompt = interfaceLanguage.text("插入", "Insert")
@@ -1958,22 +2038,30 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             panel.canChooseDirectories = false
             panel.canChooseFiles = true
             panel.beginSheetModal(for: window) { [weak self] response in
-                guard let self else { return }
-                guard self.documentID == requestedDocumentID else {
-                    self.evaluate("window.WeiBeiEditor?.discardImagePicker(\(Self.json(requestID)))")
+                self?.completeImagePicker(url: response == .OK ? panel.url : nil,
+                                          requestID: requestID, documentID: requestedDocumentID)
+            }
+#endif
+        }
+
+        private func completeImagePicker(url: URL?, requestID: String, documentID requestedDocumentID: String) {
+                guard documentID == requestedDocumentID else {
+                    evaluate("window.WeiBeiEditor?.discardImagePicker(\(Self.json(requestID)))")
                     return
                 }
-                guard response == .OK else {
-                    self.evaluate("window.WeiBeiEditor?.cancelImagePicker(\(Self.json(requestID)))")
+                guard let fileURL = url else {
+                    evaluate("window.WeiBeiEditor?.cancelImagePicker(\(Self.json(requestID)))")
                     return
                 }
-                guard let fileURL = panel.url, let attachmentDirectory = self.attachmentDirectory else {
-                    self.evaluate("window.WeiBeiEditor?.rejectImagePicker(\(Self.json(requestID)), \(Self.json(self.interfaceLanguage.text("图片无法写入本地附件目录", "Image could not be written to the local attachments folder"))))")
+                guard let attachmentDirectory else {
+                    evaluate("window.WeiBeiEditor?.rejectImagePicker(\(Self.json(requestID)), \(Self.json(interfaceLanguage.text("图片无法写入本地附件目录", "Image could not be written to the local attachments folder"))))")
                     return
                 }
                 let markdownBaseURLString = self.markdownBaseURLString
                 let failureMessage = self.interfaceLanguage.text("图片读取或写入失败，请检查文件与附件目录权限", "Image could not be read or saved. Check the file and attachments folder permissions.")
+                let scoped = fileURL.startAccessingSecurityScopedResource()
                 DispatchQueue.global(qos: .userInitiated).async {
+                    defer { if scoped { fileURL.stopAccessingSecurityScopedResource() } }
                     let result = Result { try Self.saveImageAttachment(fromFileURL: fileURL, attachmentDirectory: attachmentDirectory, markdownBaseURLString: markdownBaseURLString) }
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
@@ -1989,7 +2077,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                         }
                     }
                 }
-            }
         }
 
         /** Reads and saves a picker image on a background queue. */
