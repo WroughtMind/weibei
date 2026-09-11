@@ -7,6 +7,9 @@ packages:
   MarkdownView:
     url: https://github.com/Lakr233/MarkdownView
     revision: 757b6fcc4b3095e84f4c0613f4b98147f49dcd09
+  SwiftMarkdown:
+    url: https://github.com/swiftlang/swift-markdown.git
+    revision: 7d9a5ce307528578dfa777d505496bd5f544ad94
 targets:
   CatalystChatLab:
     type: application
@@ -142,6 +145,8 @@ targets:
         SKIP_INSTALL: YES
     dependencies:
       - sdk: libsqlite3.tbd
+      - package: SwiftMarkdown
+        product: Markdown
   WeiBeiPDFTextWorker:
     type: tool
     platform: macOS

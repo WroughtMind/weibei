@@ -979,9 +979,11 @@
 			buildRules = (
 			);
 			dependencies = (
+				A743FDB43246B9EA1FF15F69 /* PBXTargetDependency */,
 			);
 			name = WeiBeiCore;
 			packageProductDependencies = (
+				427F2DC006AD3598D4753A73 /* Markdown */,
 			);
 			productName = WeiBeiCore;
 			productReference = 7E88EACC45448D95F47EF3BC /* libWeiBeiCore.a */;
@@ -1013,6 +1015,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				26007EB06EAFC6CB049D6EFE /* XCRemoteSwiftPackageReference "MarkdownView" */,
+				16E76B9DA49BFB70E34CFAB4 /* XCRemoteSwiftPackageReference "swift-markdown" */,
 			);
 			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
@@ -1290,6 +1293,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		A743FDB43246B9EA1FF15F69 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 427F2DC006AD3598D4753A73 /* Markdown */;
+		};
 		AA9756BBF39FC9E21A8D9814 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = ABF7F59F1C3B4D1ECC9F5956 /* WeiBeiCore */;
@@ -1674,6 +1681,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		16E76B9DA49BFB70E34CFAB4 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
+			requirement = {
+				kind = revision;
+				revision = 7d9a5ce307528578dfa777d505496bd5f544ad94;
+			};
+		};
 		26007EB06EAFC6CB049D6EFE /* XCRemoteSwiftPackageReference "MarkdownView" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/Lakr233/MarkdownView";
@@ -1685,6 +1700,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		427F2DC006AD3598D4753A73 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 16E76B9DA49BFB70E34CFAB4 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
+		};
 		BCC82BD85980B74A9D76C0FF /* MarkdownView */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 26007EB06EAFC6CB049D6EFE /* XCRemoteSwiftPackageReference "MarkdownView" */;
