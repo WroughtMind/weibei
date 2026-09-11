@@ -15,6 +15,64 @@ enum CatalystBusinessCheck {
     private static let finalMarker = "【候选真实业务链路结束】"
     private static let noteMarker = "编辑器输入、保存与重开验证：中文 café 👩🏽‍💻。"
 
+    /// Real Quit while a confirmed action is in flight must save both the note and
+    /// its executed state. The gate exists only in the isolated acceptance App.
+    static func runQuitSaveCheck(store: WorkspaceStore) async {
+        guard !started else { return }; started = true
+        let path = store.workspaceDirectory.appendingPathComponent("quit-save.json")
+        let marker = "【退出时完成笔记动作】"
+        do {
+            if CommandLine.arguments.contains("--verify-quit-save") {
+                var result = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
+                let chatID = UUID(uuidString: result["chat_id"] as! String)!
+                let payload = try StudySessionMessageFile.decoder().decode(PersistedStudySessionMessages.self,
+                    from: Data(contentsOf: StudySessionMessageFile.fileURL(sessionID: chatID, in: store.workspaceDirectory)))
+                let action = payload.messages.first { $0.id.uuidString == result["message_id"] as? String }?.actions.first
+                let body = try String(contentsOfFile: result["note_path"] as! String, encoding: .utf8)
+                guard action?.id.uuidString == result["action_id"] as? String,
+                      action?.state == .executed,
+                      body.components(separatedBy: marker).count == 2,
+                      action?.resultContentDigest == WorkspaceStore.noteContentDigest(Data(body.utf8)) else {
+                    throw Failure("Quit left note content and action state inconsistent")
+                }
+                result["status"] = "passed"
+                try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: path, options: .atomic)
+                exit(0)
+            }
+            let courseID = try store.createCourseInLibrary(title: "退出保存检查")
+            guard let chat = store.createStudySession(courseID: courseID),
+                  let noteID = await store.createCourseNotebookNote(courseID: courseID, title: "退出保存笔记",
+                    markdown: "原始正文", revealInWorkspace: false),
+                  let noteURL = store.importedItems.first(where: { $0.id == noteID })?.url else {
+                throw Failure("Quit check could not create its isolated note")
+            }
+            let action = AgentReplyAction(kind: .writeNote, targetItemID: noteID, proposedMarkdown: marker)
+            let reply = AgentMessage(role: .assistant, text: "已确认的笔记动作", source: nil, actions: [action],
+                origin: AgentReplyOrigin(requestID: UUID(), chatID: chat.id, courseID: courseID))
+            store.appendAgentMessage(reply)
+            guard await store.flushPendingWorkspaceSaveAsync() else { throw Failure("Quit check initial save failed") }
+            let result: [String: Any] = [
+                "source": Bundle.main.object(forInfoDictionaryKey: "WeiBeiGitCommit") as? String ?? "",
+                "source_dirty": Bundle.main.object(forInfoDictionaryKey: "WeiBeiSourceDirty") as? Bool ?? true,
+                "pid": ProcessInfo.processInfo.processIdentifier, "chat_id": chat.id.uuidString,
+                "message_id": reply.id.uuidString, "action_id": action.id.uuidString,
+                "note_path": noteURL.path, "status": "awaiting_quit"
+            ]
+            store.agentActionSaveCheck = {
+                try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: path, options: .atomic)
+                await withCheckedContinuation { done in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { done.resume() }
+                }
+            }
+            await store.confirmAgentReplyAction(messageID: reply.id, actionID: action.id)
+            store.agentActionSaveCheck = nil
+            // The external CI process requests normal Quit; do not replace it with exit().
+        } catch {
+            try? error.localizedDescription.write(to: path, atomically: true, encoding: .utf8)
+            exit(1)
+        }
+    }
+
     static func run(store: WorkspaceStore, endpoint: String) async {
         guard !started else { return }; started = true
         let root = store.storageURL.deletingLastPathComponent()

@@ -218,6 +218,7 @@ jobs:
             dist/package-${{ matrix.arch }}.json
             App/Evidence/ci*.json
             App/Evidence/ci*.png
+            App/Evidence/ci*.log
             .build/catalyst-${{ matrix.arch }}/build.log
           retention-days: 2
           if-no-files-found: error

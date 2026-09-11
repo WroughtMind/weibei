@@ -222,7 +222,11 @@ struct CatalystWeiBeiApp: App {
 #if WEIBEI_ACCEPTANCE_CHECKS
             .task {
                 if let endpoint = AppDelegate.businessCheckEndpoint {
-                    await CatalystBusinessCheck.run(store: AppDelegate.workspace, endpoint: endpoint)
+                    if CommandLine.arguments.contains("--quit-save-check") || CommandLine.arguments.contains("--verify-quit-save") {
+                        await CatalystBusinessCheck.runQuitSaveCheck(store: AppDelegate.workspace)
+                    } else {
+                        await CatalystBusinessCheck.run(store: AppDelegate.workspace, endpoint: endpoint)
+                    }
                 }
             }
 #endif

@@ -113,7 +113,7 @@ xattr -cr "$STAGED_APP"
 # Thin all nested code before signing. Keep vendor helper entitlements when re-signing.
 python3 - "$STAGED_APP" "$TARGET_ARCH" "$SIGNING_IDENTITY" <<'SIGN'
 from pathlib import Path
-import os,shutil,subprocess,sys
+import os,plistlib,shutil,subprocess,sys
 app,arch,identity=Path(sys.argv[1]),sys.argv[2],sys.argv[3]
 # Framework headers and module interfaces are compiler inputs, not runtime resources.
 for framework in app.rglob('*.framework'):
@@ -137,11 +137,20 @@ for p in files:
     binaries.append(p)
 args=['codesign','--force','--options','runtime','--sign',identity,'--preserve-metadata=entitlements']
 args+=['--timestamp'] if identity.startswith('Developer ID Application:') else ['--timestamp=none']
-for p in binaries:subprocess.run(args+[str(p)],check=True)
 bundles=[p for p in app.rglob('*') if p.is_dir() and not p.is_symlink()
          and p.suffix in {'.app','.xpc','.framework','.bundle'}
          and any(p in binary.parents for binary in binaries)]
-for p in sorted(bundles,key=lambda p:len(p.parts),reverse=True)+[app]:
+# Sign bundle executables through their container, after its nested code. Signing
+# the main executable directly can inspect still-unsigned siblings on Intel.
+main_executables=set()
+for bundle in bundles+[app]:
+    info=bundle/'Contents/Info.plist'
+    executable_dir=bundle/'Contents/MacOS'
+    if not info.exists():info=bundle/'Resources/Info.plist'; executable_dir=bundle
+    with info.open('rb') as f:executable=plistlib.load(f)['CFBundleExecutable']
+    main_executables.add((executable_dir/executable).resolve())
+standalone=[p for p in binaries if p.resolve() not in main_executables]
+for p in sorted(standalone+bundles,key=lambda p:len(p.parts),reverse=True)+[app]:
     subprocess.run(args+[str(p)],check=True)
 print(f'packaged_architecture={arch}; signed_macho_count={len(binaries)}')
 SIGN
