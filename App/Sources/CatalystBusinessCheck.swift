@@ -46,6 +46,7 @@ enum CatalystBusinessCheck {
                   let noteURL = store.importedItems.first(where: { $0.id == noteID })?.url else {
                 throw Failure("Quit check could not create its isolated note")
             }
+            store.associateStudySession(chat.id, with: [courseID])
             let action = AgentReplyAction(kind: .writeNote, targetItemID: noteID, proposedMarkdown: marker)
             let reply = AgentMessage(role: .assistant, text: "已确认的笔记动作", source: nil, actions: [action],
                 origin: AgentReplyOrigin(requestID: UUID(), chatID: chat.id, courseID: courseID))
