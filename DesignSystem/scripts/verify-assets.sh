@@ -85,6 +85,7 @@ has_alpha "$ROOT/assets/logo/exports/wordmark/weibei-wordmark-stamped.png"
 has_alpha "$ROOT/assets/logo/exports/transparent/weibei-mark-flat-1024.png"
 node --experimental-strip-types --check "$ROOT/scripts/build-icns.ts"
 node --experimental-strip-types --check "$ROOT/scripts/build-manifest.ts"
+node --test "$ROOT/scripts/build-manifest.test.mjs"
 npx tsx "$ROOT/scripts/build-manifest.ts" "$ROOT" --check
 
 echo "asset verification passed"
