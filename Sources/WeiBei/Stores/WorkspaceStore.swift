@@ -6180,13 +6180,15 @@ final class WorkspaceStore: ObservableObject {
         lastSelectionUpdateDate = Date()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
+        let selectionItemID = source == .note ? activeNotebookItemID : selectedItemID
         // Multi-pane and immersive both get the selection capsule when there is an anchor
         // (previously suppressed whenever the chat column was open — looked "broken").
-        let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
+        let shouldRevealSelectionPrompt = anchor != nil
         let contentMatches = selectionContext.map {
             $0.text == cleaned
                 && $0.source == source
                 && $0.ownerTitle == resolvedOwnerTitle
+                && $0.itemID == selectionItemID
                 && $0.isEditable == isEditable
         } ?? false
         let locationMatches = selectionContext?.documentAnchor == documentAnchor
@@ -6203,7 +6205,7 @@ final class WorkspaceStore: ObservableObject {
             let surfaceAlreadyCorrect = shouldRevealSelectionPrompt
                 ? agentSurface == .selectionFloat
                 : agentSurface != .selectionFloat
-            if anchorUnchanged, !pinnedFloatingAgent, !keepFloatingSelectionForAnswer, surfaceAlreadyCorrect {
+            if anchorUnchanged, surfaceAlreadyCorrect {
                 return
             }
             if !anchorUnchanged {
@@ -6215,14 +6217,7 @@ final class WorkspaceStore: ObservableObject {
                     interaction.publishSelectionAnchorIfDue(minInterval: 0.05)
                 }
             }
-            // Never clear pin while the user locked the float (or mid selection-answer).
             cancelPendingSelectionAttachment()
-            if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-                if agentSurface != .selectionFloat {
-                    agentSurface = .selectionFloat
-                }
-                return
-            }
             if shouldRevealSelectionPrompt {
                 if agentSurface != .selectionFloat {
                     withAnimation(WeiBeiMotion.panel) {
@@ -6243,7 +6238,7 @@ final class WorkspaceStore: ObservableObject {
             text: cleaned,
             source: source,
             ownerTitle: resolvedOwnerTitle,
-            itemID: source == .note ? activeNotebookItemID : selectedItemID,
+            itemID: selectionItemID,
             isEditable: isEditable,
             documentAnchor: documentAnchor
         )
@@ -6253,11 +6248,9 @@ final class WorkspaceStore: ObservableObject {
         selectionAnchor = anchor
         floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
         cancelPendingSelectionAttachment()
-        // Respect pin / answer lock — do not force-unpin on every new selection.
-        if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-            agentSurface = .selectionFloat
-            return
-        }
+        // New passages start compact even if the previous reader unmounted its float.
+        keepFloatingSelectionForAnswer = false
+        activeSelectionAskThreadID = nil
         if shouldRevealSelectionPrompt {
             if agentSurface != .selectionFloat {
                 withAnimation(WeiBeiMotion.panel) {

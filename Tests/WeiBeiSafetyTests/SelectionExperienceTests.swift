@@ -96,6 +96,22 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectingInAnotherReaderStartsWithCompactActions() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.selectedItemID = "first-document"
+        store.updateSelection("两份同名文稿里的相同原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100), ownerTitle: "文稿")
+        store.askSelection()
+        store.selectedItemID = "second-document"
+        store.updateSelection("两份同名文稿里的相同原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 400), ownerTitle: "文稿")
+        XCTAssertEqual(store.agentSurface, .selectionFloat)
+        XCTAssertFalse(store.keepFloatingSelectionForAnswer)
+        XCTAssertNil(store.activeSelectionAskThreadID)
+        XCTAssertEqual(store.selectionContext?.itemID, "second-document")
+    }
+
+    @MainActor
     func testPinnedQuestionKeepsItsPassageAndPositionUntilUnpinned() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
