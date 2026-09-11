@@ -92,13 +92,7 @@ mkdir -p "$CONTENTS/Resources/Legal"
 for notice in PRIVACY.md THIRD_PARTY_NOTICES.md ASSET_ATTRIBUTIONS.md; do
   cp "$ROOT_DIR/$notice" "$CONTENTS/Resources/Legal/$notice"
 done
-ICON_BUILD="$STAGING/icon"
-mkdir -p "$ICON_BUILD"
-xcrun actool --compile "$ICON_BUILD" --platform macosx --minimum-deployment-target 14.0 \
-  --target-device mac --app-icon AppIcon --output-partial-info-plist "$ICON_BUILD/partial.plist" \
-  --standalone-icon-behavior all DesignSystem/assets/app-icon/AppIcon.icon >/dev/null
-cp "$ICON_BUILD/Assets.car" "$ICON_BUILD/AppIcon.icns" "$CONTENTS/Resources/"
-plutil -replace CFBundleIconName -string AppIcon "$PLIST"
+# The Catalyst target compiles the layered icon and supplies its Info.plist keys.
 for resource in Web/diagram.html Web/mermaid.min.js landscape.png Editor/index.html genui.html AgentResources/system.md; do
   [[ -s "$CONTENTS/Resources/$resource" ]] || { echo "package failed: missing $resource" >&2; exit 10; }
 done

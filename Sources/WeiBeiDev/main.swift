@@ -120,6 +120,15 @@ func runVerifyReleaseMetadata(arguments: [String]) {
           fileManager.fileExists(atPath: appIconAssets.path) else {
         fail("incomplete app bundle at \(appBundle.path)", exitCode: 4)
     }
+    // Catalyst must load its layered icon, including the approved tinted mark.
+    guard let catalogJSON = runCommand("/usr/bin/xcrun", arguments: ["assetutil", "--info", appIconAssets.path]),
+          let catalog = try? JSONSerialization.jsonObject(with: Data(catalogJSON.utf8)) as? [[String: Any]],
+          catalog.first?["Platform"] as? String == "macosx-ios",
+          Set(catalog.filter { $0["AssetType"] as? String == "IconImageStack" && $0["Name"] as? String == "AppIcon" }
+              .compactMap { $0["Appearance"] as? String })
+            .isSuperset(of: ["UIAppearanceLight", "UIAppearanceDark", "ISAppearanceTintable"]) else {
+        fail("app icon must contain Catalyst light, dark and tinted layers", exitCode: 9)
+    }
     for legalFile in ["PRIVACY.md", "THIRD_PARTY_NOTICES.md", "ASSET_ATTRIBUTIONS.md"] {
         let url = legalDirectory.appendingPathComponent(legalFile)
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
