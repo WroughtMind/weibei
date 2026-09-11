@@ -399,6 +399,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
     func setAnswering(_ value: Bool, status text: String) {
+        guard answering != value || status.text != text else { return }
         answering = value
         send.setImage(UIImage(systemName: value ? "stop.circle.fill" : "arrow.up.circle.fill"), for: .normal)
         send.accessibilityLabel = value ? "停止回答并保留正文" : "发送问题"
@@ -829,6 +830,24 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 sendPressed()
                 await replay?.value
                 try expect(stopping.state == .stopped && stopping.markdown == received && stopping.displayedRevision == stopping.revision, "停止丢失了已经收到的内容")
+                let controls = ConversationController(fixtureMode: false)
+                controls.loadViewIfNeeded()
+                let prompt = UUID().uuidString
+                var submitted: [String] = [], stops = 0
+                controls.submitQuestion = { submitted.append($0); return true }
+                controls.stopAnswer = { stops += 1 }
+                controls.input.text = prompt
+                let activity = UUID().uuidString
+                controls.setAnswering(true, status: "")
+                controls.setAnswering(true, status: activity)
+                controls.setAnswering(true, status: activity)
+                controls.sendPressed()
+                try expect(stops == 1 && submitted.isEmpty && controls.input.text == prompt && controls.status.text == activity,
+                           "重复状态更新后，停止操作误发或清除了待发送问题")
+                controls.setAnswering(false, status: "")
+                controls.setAnswering(false, status: "")
+                controls.sendPressed()
+                try expect(submitted == [prompt] && controls.input.text.isEmpty, "回答结束后未恢复发送和清空输入")
                 metrics.checks["replay_stop_complete_and_history_reading"] = "passed"
 
                 // Reproduce the empty rows left when a theme change cancels
@@ -1047,9 +1066,19 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 metrics.checks["code_highlight_selection_and_scroll_persist"] = "passed"
                 if AppDelegate.checksConversation {
                     let diagramIndex = blocks.firstIndex(where: { $0 === diagram })!
-                    collection.scrollToItem(at: IndexPath(item: diagramIndex + 1, section: 0), at: .centeredVertically, animated: false)
+                    let diagramPath = IndexPath(item: diagramIndex + 1, section: 0)
+                    collection.scrollToItem(at: diagramPath, at: .centeredVertically, animated: false)
                     collection.layoutIfNeeded()
-                    guard let image = try await diagramView.diagramSnapshot(), let data = image.pngData() else {
+                    // The view pool was reset above; inspect the replacement on screen.
+                    guard let visibleDiagram = (collection.cellForItem(at: diagramPath) as? MessageCell)?.body else {
+                        throw Failure(message: "关系图没有显示在当前会话中")
+                    }
+                    let visibleDiagramDeadline = ContinuousClock.now + .seconds(10)
+                    while !visibleDiagram.diagramRendered, ContinuousClock.now < visibleDiagramDeadline {
+                        try await Task.sleep(for: .milliseconds(20))
+                    }
+                    try expect(visibleDiagram.diagramRendered, "回收视图后关系图没有重新绘制")
+                    guard let image = try await visibleDiagram.diagramSnapshot(), let data = image.pngData() else {
                         throw Failure(message: "关系图没有生成实际渲染快照")
                     }
                     try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)

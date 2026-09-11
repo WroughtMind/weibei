@@ -1,0 +1,180 @@
+{
+  "baseline_revision": "af8769d13c9d7098540bf7d46a0f1a833ac0c88e",
+  "baseline_acceptance": "User accepted conversation divider behavior before this refinement.",
+  "production_changes": [
+    "Build the Markdown theme only when font size or appearance changes, using the existing coordinator pattern.",
+    "Reuse send/stop state when both answering state and activity text are unchanged."
+  ],
+  "source_sha256": {
+    "Experiments/CatalystChatLab/Sources/CatalystBusinessCheck.swift": "12b5d8864b22e58e9dd9140e52fe8f1aa67858262381c82b1f4a8c85795372de",
+    "Experiments/CatalystChatLab/Sources/ConversationController.swift": "64b301739a60ec422330ac1fba6bca90f58094684faa90f86757d769e9acb5db",
+    "Experiments/CatalystChatLab/Sources/CatalystConversationView.swift": "72dbf707d74443c337c95e2a67f691a648e29890e13473b589b49be12c1bb397"
+  },
+  "performance_probe": "Release Mac Catalyst build; same production changes plus temporary per-function timing probes. The subsequent screenshot-check correction changes only the check runner. All temporary probes were removed before regression builds.",
+  "scenario": {
+    "messages": 8,
+    "blocks": 94,
+    "font_size_pt": 14,
+    "theme": "glassSlate",
+    "panes": 3,
+    "body_width_range_pt": {
+      "before": [
+        263,
+        382.5
+      ],
+      "after": [
+        262.5,
+        382.5
+      ]
+    },
+    "seconds_per_divider": 12,
+    "narrow_widen_cycles_per_divider": 6,
+    "location": "middle of the same long answer",
+    "input": "three synchronous divider updates per display callback; text reflows while held"
+  },
+  "before": {
+    "recorded_at": "2026-09-11T00:38:07Z",
+    "preparation_ms": {
+      "measure": 143.34662514738739,
+      "parse_elapsed": 306.1865831259638,
+      "render_and_highlight": 8.0977079924196
+    },
+    "samples": {
+      "bridge_update_ms": {
+        "count": 767,
+        "max": 1.795333344489336,
+        "median": 0.7344166515395045,
+        "p95": 1.0726667242124677
+      },
+      "bridge_theme_ms": {
+        "count": 767,
+        "max": 0.5134165985509753,
+        "median": 0.18099998123943806,
+        "p95": 0.25233335327357054
+      },
+      "answering_update_ms": {
+        "count": 767,
+        "max": 1.0006249649450183,
+        "median": 0.39629172533750534,
+        "p95": 0.5863333353772759
+      },
+      "resize_ms": {
+        "count": 752,
+        "max": 16.801125020720065,
+        "median": 7.530333241447806,
+        "p95": 10.747208376415074
+      },
+      "resize_measure_ms": {
+        "count": 753,
+        "max": 10.768166626803577,
+        "median": 4.373833304271102,
+        "p95": 6.029000040143728
+      },
+      "resize_collection_layout_ms": {
+        "count": 753,
+        "max": 5.773041630163789,
+        "median": 2.524874988012016,
+        "p95": 3.8152083288878202
+      }
+    },
+    "state_changes": 2,
+    "state_updates": 767
+  },
+  "after": {
+    "recorded_at": "2026-09-11T00:39:44Z",
+    "preparation_ms": {
+      "measure": 156.40508325304836,
+      "parse_elapsed": 367.26329172961414,
+      "render_and_highlight": 11.809791903942823
+    },
+    "samples": {
+      "bridge_update_ms": {
+        "count": 952,
+        "max": 1.030791667290032,
+        "median": 0.1430416014045477,
+        "p95": 0.21566671784967184
+      },
+      "bridge_theme_ms": {
+        "count": 952,
+        "max": 0.2129583153873682,
+        "median": 0.0005416804924607277,
+        "p95": 0.0008749775588512421
+      },
+      "answering_update_ms": {
+        "count": 952,
+        "max": 0.5973749794065952,
+        "median": 0.00341667328029871,
+        "p95": 0.00641669612377882
+      },
+      "resize_ms": {
+        "count": 938,
+        "max": 13.494541635736823,
+        "median": 6.759833311662078,
+        "p95": 8.289374993182719
+      },
+      "resize_measure_ms": {
+        "count": 939,
+        "max": 7.132041617296636,
+        "median": 3.9223749190568924,
+        "p95": 5.04287495277822
+      },
+      "resize_collection_layout_ms": {
+        "count": 939,
+        "max": 5.002874997444451,
+        "median": 2.2667082957923412,
+        "p95": 2.929041744209826
+      }
+    },
+    "state_changes": 2,
+    "state_updates": 952
+  },
+  "conversation_checks": {
+    "recorded_at": "2026-09-11T00:32:45Z",
+    "bundle_id": "org.weibei.CatalystCandidate452.refinement2.conversationcheck",
+    "checks": {
+      "card_draft_and_fold_persist": "passed",
+      "code_highlight_selection_and_scroll_persist": "passed",
+      "cross_paragraph_copy_survives_reuse": "passed",
+      "hover_strip_attachment_preserves_input": "passed",
+      "image_arrival_preserves_reading_text": "passed",
+      "math_image_and_diagram_resources": "passed",
+      "prepend_preserves_reading_text": "passed",
+      "replay_stop_complete_and_history_reading": "passed",
+      "resize_preserves_reading_paragraph": "passed",
+      "single_long_answer_complete_and_revisitable": "passed",
+      "stream_keeps_unchanged_blocks_and_tail": "passed"
+    }
+  },
+  "business_checks": {
+    "recorded_at": "2026-09-11T00:36:40Z",
+    "bundle_id": "org.weibei.CatalystCandidate452.refinement2.businesscheck",
+    "status": "passed",
+    "checks": {
+      "conversation_appearance_and_scale_after_resize": "passed",
+      "divider_batches_widths_and_reflows_during_drag": "passed",
+      "history_and_long_answer_through_original_messages": "passed",
+      "image_mounted_in_visible_message": "passed",
+      "mac_idiom_and_isolated_storage": "passed",
+      "original_answer_to_note": "passed",
+      "original_attachment_loader": "passed",
+      "original_editor_snapshot_and_note_write_gate": "passed",
+      "original_http_agent_tools_and_uikit_stream": "passed",
+      "original_import_reader_and_editor": "passed",
+      "original_source_navigation": "passed",
+      "reopen_original_note_and_session_files": "passed",
+      "return_clears_original_composer": "passed",
+      "signed_bounded_pdf_worker": "passed",
+      "signed_native_window_material": "passed",
+      "status_disappears_at_first_text": "passed",
+      "stop_preserves_received_text": "passed",
+      "waiting_status_not_clipped": "passed"
+    }
+  },
+  "boundaries": [
+    "Function durations and display-callback intervals are not GPU presentation timestamps or FPS.",
+    "The adjacent runs are local measurements, not physical trackpad acceptance; the candidate capture connection was restored during its run.",
+    "Business checks use isolated local HTTP/SSE fixtures, not a live model.",
+    "No compilation ran during the final adjacent performance measurements.",
+    "The original af8769d1 text measurement, wrapping, scrolling and hit-testing code is unchanged by this refinement."
+  ]
+}

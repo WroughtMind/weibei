@@ -48,8 +48,11 @@ struct CatalystConversationView: View {
             let coordinator = context.coordinator
             coordinator.wideTypography = wideTypography
             let fontSize = (wideTypography ? 16.0 : 14.0) * workspace.interfaceTextScale.multiplier
-            let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: workspace.appearanceMode)
-            let appearanceChanged = controller.store.setTheme(theme)
+            var appearanceChanged = false
+            if coordinator.fontSize != fontSize || coordinator.appearance != workspace.appearanceMode {
+                coordinator.fontSize = fontSize; coordinator.appearance = workspace.appearanceMode
+                appearanceChanged = controller.store.setTheme(.weiBei(fontSize: fontSize, appearance: workspace.appearanceMode))
+            }
             if appearanceChanged { controller.updateJumpToLatestAppearance(workspace.appearanceMode) }
             controller.interfaceLanguage = workspace.interfaceLanguage
             let imageContext = (workspace.currentMarkdownBaseURL?.absoluteString ?? "") + "|" + (workspace.currentAttachmentDirectory?.path ?? "")
@@ -95,6 +98,8 @@ struct CatalystConversationView: View {
         var enqueuedStreamingID: UUID?
         var refreshAppearance = false
         var wideTypography = false
+        var fontSize: CGFloat = 0
+        var appearance: WeiBeiAppearanceMode?
         var floatingMessages: [AgentMessage]?
         var floatingThreadID: UUID?
         var auxiliaryHosts: [String: CatalystHostingView] = [:]

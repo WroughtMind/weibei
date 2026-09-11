@@ -208,6 +208,8 @@ enum CatalystBusinessCheck {
                 && store.messages.last?.text.hasPrefix(received) == true && controller.messages.last?.markdown.hasPrefix(received) == true)
             try await verifyDividerResize(controller)
             try check("divider_batches_widths_and_reflows_during_drag", true)
+            try await verifyConversationAppearance(controller, workspace: store)
+            try check("conversation_appearance_and_scale_after_resize", true)
             result["workspace_history"] = try await measureWorkspaceHistory(store)
             try check("history_and_long_answer_through_original_messages", true)
             guard await store.flushPendingWorkspaceSaveAsync() else { throw Failure("workspace save failed") }
@@ -249,6 +251,27 @@ enum CatalystBusinessCheck {
                 }
             }
             try await until("divider restores original width") { abs(controller.bodyWidth - originalWidth) < 1 }
+        }
+    }
+
+    private static func verifyConversationAppearance(_ controller: ConversationController, workspace: WorkspaceStore) async throws {
+        let original = (workspace.interfaceTextScale, workspace.appearancePreference, workspace.appearanceStyle)
+        let scale: WeiBeiTypography.TextScale = original.0 == .large ? .standard : .large
+        let preference: WeiBeiAppearancePreference = original.1 == .dark ? .light : .dark
+        let style: WeiBeiAppearanceStyle = original.2 == .clearGlass ? .paperInk : .clearGlass
+        defer {
+            workspace.setInterfaceTextScale(original.0)
+            workspace.appearancePreference = original.1; workspace.appearanceStyle = original.2
+        }
+        for (scale, preference, style) in [
+            (scale, original.1, original.2), (scale, preference, original.2), (scale, preference, style), original
+        ] {
+            workspace.setInterfaceTextScale(scale)
+            workspace.appearancePreference = preference; workspace.appearanceStyle = style
+            try await until("conversation applies changed typography and appearance") {
+                controller.store.theme == .weiBei(fontSize: 14 * scale.multiplier, appearance: workspace.appearanceMode)
+                    && controller.messages.allSatisfy { $0.preparedTheme == controller.store.themeRevision }
+            }
         }
     }
 
