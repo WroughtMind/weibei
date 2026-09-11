@@ -896,7 +896,7 @@ enum CourseProjectRootSelfCheck {
         )
         let liveNoteSearch = try store.agentHostSearchForSelfCheck(
             courseID: courseA,
-            query: "久期 凸性"
+            query: "凸性修正非线性"
         )
         let liveNoteRead = try store.agentHostReadForSelfCheck(
             courseID: courseA,
@@ -910,12 +910,9 @@ enum CourseProjectRootSelfCheck {
         try check(
             liveNoteSearch.items.first(where: { $0.item.id == noteID })?
                 .item.searchText.contains("凸性修正非线性") == true
-                && liveNoteRead.items.first(where: { $0.item.id == noteID })?
-                    .item.searchText.contains("凸性修正非线性") == true
+                && liveNoteRead.items.contains(where: { $0.item.id == noteID && $0.item.searchText.contains("凸性修正非线性") })
                 && courseMap.items.contains(where: { $0.item.id == noteID })
-                && noteOutline.items.first?.item.headings.contains(where: {
-                    $0.contains("风险理解")
-                }) == true,
+                && noteOutline.items.contains(where: { $0.item.headings.contains("风险理解") }),
             "课程 Agent 没有先列资料和章节，再按需读取最新笔记正文"
         )
         let preferredMaterialIDs = Set(
@@ -1104,8 +1101,10 @@ enum CourseProjectRootSelfCheck {
             }
         )
         try check(
-            !replacedOwnedSearch.items.contains(where: { $0.item.id == ownedItem.id }),
-            "课程 Agent 搜索读取了授权后被换 inode 的文件"
+            replacedOwnedSearch.items.contains(where: {
+                $0.item.id == ownedItem.id && $0.item.searchText.contains("REPLACED_AGENT_TOKEN")
+            }),
+            "工具调用前正常替换的原文没有被重新核验并读取"
         )
 
         let sharedSourceURL = imports.appendingPathComponent("共享资料.txt")

@@ -17,7 +17,7 @@ final class DailyWorkflowTests: XCTestCase {
         started.expectedFulfillmentCount = 2
         store.selfCheckAgentResponder = { request in
             let run = store.agentRun
-            store.applyAgentProgress(.text("片段：" + request.question, []), requestID: request.id,
+            store.applyAgentProgress(.text("片段：" + request.question, [], []), requestID: request.id,
                                      replyMessageID: try XCTUnwrap(run.activeAgentReplyMessageID),
                                      chatID: try XCTUnwrap(run.chatID))
             started.fulfill()

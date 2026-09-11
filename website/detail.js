@@ -1,31 +1,7 @@
-const languageToggle = document.querySelector('[data-language-toggle]');
-const translatable = [...document.querySelectorAll('[data-en]')];
-const labelled = [...document.querySelectorAll('[data-en-label]')];
-const placeholders = [...document.querySelectorAll('[data-en-placeholder]')];
 const feedbackForm = document.querySelector('#feedback-form');
 const feedbackSubmit = feedbackForm?.querySelector('.feedback-submit');
 const feedbackStatus = document.querySelector('#feedback-status');
 const repository = 'https://github.com/WroughtMind/weibei';
-
-translatable.forEach(element => { element.dataset.zh = element.textContent; });
-labelled.forEach(element => { element.dataset.zhLabel = element.getAttribute('aria-label'); });
-placeholders.forEach(element => { element.dataset.zhPlaceholder = element.getAttribute('placeholder'); });
-
-const setLanguage = language => {
-  const english = language === 'en';
-  document.documentElement.lang = english ? 'en' : 'zh-CN';
-  document.title = english ? document.documentElement.dataset.titleEn : document.documentElement.dataset.titleZh;
-  translatable.forEach(element => { element.textContent = english ? element.dataset.en : element.dataset.zh; });
-  labelled.forEach(element => { element.setAttribute('aria-label', english ? element.dataset.enLabel : element.dataset.zhLabel); });
-  placeholders.forEach(element => { element.setAttribute('placeholder', english ? element.dataset.enPlaceholder : element.dataset.zhPlaceholder); });
-  languageToggle.setAttribute('aria-label', english ? '切换为中文' : 'Switch to English');
-  languageToggle.setAttribute('aria-pressed', String(english));
-  localStorage.setItem('weibei-language', language);
-  updateFeedbackDestination();
-};
-
-languageToggle.addEventListener('click', () => setLanguage(document.documentElement.lang === 'en' ? 'zh-CN' : 'en'));
-setLanguage(localStorage.getItem('weibei-language') === 'en' ? 'en' : 'zh-CN');
 
 function updateFeedbackDestination() {
   if (!feedbackForm || !feedbackSubmit) return;
@@ -61,3 +37,4 @@ feedbackForm?.addEventListener('submit', event => {
 });
 
 updateFeedbackDestination();
+

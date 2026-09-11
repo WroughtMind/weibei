@@ -31,6 +31,8 @@ public actor NativeAgentLoop {
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: turn)
         }
+        var sources = request.knownSources
+        var sourceIndex = 0
         var userMessage: String
         if let selection = request.selectionText,
            !selection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -46,6 +48,15 @@ public actor NativeAgentLoop {
         }
         if let location = NativeTurnLocation.block(for: request) {
             userMessage += "\n\n\(location)"
+        }
+        let selections = request.selectionSources.filter { !$0.excerpt.isEmpty }.map { source in
+            sourceIndex += 1
+            return NativeAgentSources.label(source, turn: turn, index: sourceIndex)
+        }
+        sources += selections
+        if !selections.isEmpty, let data = try? JSONEncoder().encode(selections),
+           let text = String(data: data, encoding: .utf8) {
+            userMessage += "\n\n选区引用：\n" + text
         }
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(
@@ -79,7 +90,6 @@ public actor NativeAgentLoop {
         var appliedProfileUpdate: AgentReplyProfileUpdate?
         var loadedSkills: [StudyAgentLoadedSkill] = []
         var readItemIDs: [String] = []
-        var sources: [AgentReplySource] = []
         var contentBlocks: [AgentMessageContentBlock] = []
         var pendingUnstarted: [NativeToolCall] = []
 
@@ -89,6 +99,11 @@ public actor NativeAgentLoop {
                 step += 1
                 try checkCancelled()
                 let projection = await ledger.deriveProjection()
+                for message in projection.messages where message.role == .tool {
+                    for source in NativeAgentSources.fromToolText(message.content) where !sources.contains(where: { $0.label == source.label }) {
+                        sources.append(source)
+                    }
+                }
                 var messages = [NativeModelMessage(role: .system, content: systemPrompt)]
                 messages.append(contentsOf: projection.messages)
                 if let invariant = NativeAgentInvariant.mismatch(
@@ -175,7 +190,7 @@ public actor NativeAgentLoop {
                                         contentBlocks.append(.text(text))
                                     }
                                 }
-                                await progress?(.text(collectedText, contentBlocks))
+                                await progress?(.text(collectedText, contentBlocks, NativeAgentSources.used(in: collectedText, available: sources)))
                             case let .webSearchSource(url):
                                 if !context.currentRunSourceURLs.contains(url) {
                                     context.currentRunSourceURLs.append(url)
@@ -282,7 +297,7 @@ public actor NativeAgentLoop {
                     let call = callResult.call
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
-                    let result: NativeToolExecutionResult
+                    var result: NativeToolExecutionResult
                     let previousBlocks = contentBlocks
                     if let failure = callResult.failure {
                         result = NativeToolExecutionResult(text: failure.localizedDescription, isError: true)
@@ -300,6 +315,7 @@ public actor NativeAgentLoop {
                             result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
                         }
                     }
+                    NativeAgentSources.attach(to: &result, name: call.name, turn: turn, index: &sourceIndex)
                     applySideEffects(
                         name: call.name,
                         result: result,
@@ -351,7 +367,7 @@ public actor NativeAgentLoop {
             return NativeLoopResult(
                 text: collectedText,
                 contentBlocks: contentBlocks,
-                sources: sources,
+                sources: NativeAgentSources.used(in: collectedText, available: sources),
                 toolTrace: toolTrace,
                 noteProposal: noteProposal,
                 relationProposal: relationProposal,
@@ -425,32 +441,11 @@ public actor NativeAgentLoop {
     ) {
         if result.isError { return }
         let details = result.details
-        if name == "weibei_course_search"
-            || name == "weibei_course_read"
-            || name == "weibei_search_workspace" {
-            if let items = (try? JSONDecoder().decode(StudyAgentHostToolResult.self, from: Data(result.text.utf8)))?.items {
-                for item in items {
-                    if !context.searchedItemIDs.contains(item.item.id) {
-                        context.searchedItemIDs.append(item.item.id)
-                    }
-                    readItemIDs.append(item.item.id)
-                    if let revision = item.sourceRevision {
-                        context.readSourceRevisions[item.item.id] = revision
-                    }
-                    let excerpt = item.item.searchText
-                    let kind: AgentReplySourceKind = item.item.role == "note" ? .note : .material
-                    let label = kind == .note ? "[笔记：\(item.item.title)]" : "[材料：\(item.item.title)]"
-                    if !sources.contains(where: { $0.itemID == item.item.id }) {
-                        sources.append(
-                            AgentReplySource(
-                                itemID: item.item.id,
-                                kind: kind,
-                                title: item.item.title,
-                                label: label,
-                                excerpt: String(excerpt.prefix(160))
-                            )
-                        )
-                    }
+        if name == "weibei_course_read" || name == "weibei_search_workspace" {
+            for source in NativeAgentSources.fromToolText(result.text) {
+                if !sources.contains(where: { $0.label == source.label }) { sources.append(source) }
+                if name == "weibei_course_read", let id = source.itemID, !readItemIDs.contains(id) {
+                    readItemIDs.append(id)
                 }
             }
         }

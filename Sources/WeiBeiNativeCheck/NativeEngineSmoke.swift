@@ -95,7 +95,7 @@ enum NativeEngineSmoke {
     private static func runSearchThenAnswer() async throws {
         let adapter = ScriptedLLMAdapter(chunks: [
             [
-                .toolCallDelta(index: 0, id: "c1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"利率\"}"),
+                .toolCallDelta(index: 0, id: "c1", name: "weibei_search_workspace", argumentsDelta: "{\"query\":\"利率\",\"scope\":\"library\"}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
             [
@@ -107,7 +107,7 @@ enum NativeEngineSmoke {
             question: "利率这一节讲了什么？",
             adapter: adapter,
             host: { request in
-                guard case let .courseSearch(query, _, _) = request, query.contains("利率") else {
+                guard case let .workspaceSearch(query, _, _, _, _) = request, query.contains("利率") else {
                     throw NSError(domain: "WeiBei.NativeSmoke", code: 2, userInfo: [NSLocalizedDescriptionKey: "unexpected host request"])
                 }
                 return StudyAgentHostToolResult(
@@ -128,7 +128,7 @@ enum NativeEngineSmoke {
                 )
             }
         )
-        guard reply.text.contains("资金"), reply.toolTrace.contains("weibei_course_search") else {
+        guard reply.text.contains("资金"), reply.toolTrace.contains("weibei_search_workspace") else {
             throw NSError(domain: "WeiBei.NativeSmoke", code: 3, userInfo: [NSLocalizedDescriptionKey: "search-then-answer failed"])
         }
     }
@@ -233,13 +233,13 @@ enum NativeEngineSmoke {
     private static func runLiveCourseTool(adapter: NativeLLMAdapter, model: String, label: String) async throws {
         let reply = try await respond(
             question: """
-            必须先调用 weibei_course_search，参数 query 设为「利率」。
+            必须先调用 weibei_search_workspace，参数 query 设为「利率」，scope 设为 library。
             禁止使用 web_search，禁止跳过工具直接回答。
             拿到工具结果后只用一句话作答。
             """,
             adapter: adapter,
             host: { request in
-                guard case let .courseSearch(query, _, _) = request else {
+                guard case let .workspaceSearch(query, _, _, _, _) = request else {
                     throw NSError(domain: "WeiBei.NativeSmoke", code: 8, userInfo: [NSLocalizedDescriptionKey: "\(label) expected courseSearch"])
                 }
                 return StudyAgentHostToolResult(
@@ -261,11 +261,11 @@ enum NativeEngineSmoke {
             },
             model: model
         )
-        guard reply.toolTrace.contains("weibei_course_search") else {
+        guard reply.toolTrace.contains("weibei_search_workspace") else {
             throw NSError(
                 domain: "WeiBei.NativeSmoke",
                 code: 9,
-                userInfo: [NSLocalizedDescriptionKey: "\(label) did not call weibei_course_search; trace=\(reply.toolTrace.joined(separator: ","))"]
+                userInfo: [NSLocalizedDescriptionKey: "\(label) did not call weibei_search_workspace; trace=\(reply.toolTrace.joined(separator: ","))"]
             )
         }
         print("\(label) tool-call prefix=\(reply.text.prefix(40)) tools=\(reply.toolTrace.joined(separator: ","))")

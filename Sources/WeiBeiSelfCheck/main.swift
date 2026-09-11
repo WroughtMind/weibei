@@ -664,8 +664,8 @@ expect(
 )
 let nativePDFPageRead = courseIndex.read(
     item: mixedPDFItem,
-    query: "",
-    location: "第 1 页"
+    page: 1,
+    location: nil
 )
 expect(
     nativePDFPageRead.text?.contains("Native text layer content for page 1") == true,
@@ -673,18 +673,16 @@ expect(
 )
 let markdownSectionRead = courseIndex.read(
     item: markdownIndexItem,
-    query: "",
-    location: "Deep section"
+    location: courseIndex.outlinePassages(item: markdownIndexItem, offset: 0, limit: 100).passages.first { $0.title == "Deep section" }?.location
 )
 expect(
     markdownSectionRead.text?.contains(lateMarkdownToken) == true
         && markdownSectionRead.text?.contains("ordinary material") != true,
-    "course host read resolves an exact indexed Markdown section by its visible title"
+    "course host read resolves an exact indexed Markdown section by its returned section location"
 )
 let htmlSectionRead = courseIndex.read(
     item: stableHTMLItem,
-    query: "",
-    location: "html-heading-0"
+    location: courseIndex.outlinePassages(item: stableHTMLItem, offset: 0, limit: 100).passages.first?.location
 )
 expect(
     htmlSectionRead.text?.contains("ORIGINAL_ALPHA_SECTION") == true

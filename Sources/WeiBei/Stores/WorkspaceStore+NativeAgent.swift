@@ -267,63 +267,6 @@ extension WorkspaceStore {
         )
     }
 
-    func searchWorkspaceForAgent(
-        query rawQuery: String,
-        cursor: Int = 0,
-        limit: Int,
-        crossLibrary: Bool,
-        currentCourseID: UUID?
-    ) async -> StudyAgentHostToolResult {
-        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let offset = max(cursor, 0)
-        let pageLimit = min(max(limit, 1), 100)
-        guard !query.isEmpty else {
-            return StudyAgentHostToolResult(query: rawQuery, items: [], total: 0)
-        }
-        if crossLibrary {
-            let outcome = await searchAllCourses(
-                currentCourseID: currentCourseID,
-                query: query,
-                resultLimit: .max
-            )
-            // 检索能力对所有 Chat 一致：跨库时其他课程的材料与笔记一样可搜，
-            // 当前课程命中已由 searchAllCourses 排在最前，这里只按类型过滤。
-            let hits = outcome.hits.filter { hit in
-                hit.result.kind == .material || hit.result.kind == .note
-            }
-            return Self.pagedSearchResult(
-                query: query,
-                items: hits.dropFirst(offset).prefix(pageLimit).map { hostToolItem(from: $0) },
-                total: hits.count,
-                offset: offset
-            )
-        }
-        guard let currentCourseID else {
-            return StudyAgentHostToolResult(query: query, items: [], total: 0)
-        }
-        let outcome = await searchCourseHome(
-            courseID: currentCourseID,
-            query: query,
-            resultLimit: .max
-        )
-        let courseTitle = course(withID: currentCourseID)?.title ?? ""
-        let results = outcome.results.filter {
-            $0.kind == .material || $0.kind == .note
-        }
-        return Self.pagedSearchResult(
-            query: query,
-            items: results.dropFirst(offset).prefix(pageLimit).map {
-                hostToolItem(
-                    from: $0,
-                    courseID: currentCourseID,
-                    courseTitle: courseTitle
-                )
-            },
-            total: results.count,
-            offset: offset
-        )
-    }
-
     nonisolated private static func pagedSearchResult(
         query: String,
         items: [StudyAgentHostToolItem],
@@ -361,34 +304,59 @@ extension WorkspaceStore {
         return text.components(separatedBy: "\\n").count <= 2_000
     }
 
-    private func hostToolItem(from hit: GlobalSearchHit) -> StudyAgentHostToolItem {
-        hostToolItem(
-            from: hit.result,
-            courseID: hit.courseID,
-            courseTitle: hit.courseTitle
+    nonisolated private static func sourceToolItem(
+        _ source: AgentHostToolSource,
+        passage: CourseDocumentPassage? = nil,
+        state: CourseDocumentIndexResult? = nil,
+        preferredCourseID: String? = nil,
+        links: [NoteSourceLink] = []
+    ) -> StudyAgentHostToolItem {
+        let courseID = preferredCourseID.flatMap { source.courseIDs.contains($0) ? $0 : nil } ?? source.courseIDs.first
+        let reference = passage.map {
+            AgentReplySource(itemID: source.item.id, courseID: courseID.flatMap(UUID.init(uuidString:)),
+                kind: source.role == "note" ? .note : .material, title: source.title, label: "", excerpt: $0.text,
+                pageIndex: $0.pageIndex, sectionTitle: $0.title,
+                sectionLocationID: $0.location.isEmpty ? nil : $0.location, sectionOrdinal: $0.sectionOrdinal)
+        }
+        return StudyAgentHostToolItem(
+            item: StudyAgentCourseItem(id: source.item.id, title: source.title, subtitle: source.subtitle,
+                kind: source.kind, role: source.role,
+                linkedItemIDs: links.compactMap { link in
+                    if link.noteItemID == source.item.id { return link.sourceItemID }
+                    if link.sourceItemID == source.item.id { return link.noteItemID }
+                    return nil
+                },
+                headings: passage?.title.map { [$0] } ?? [], tags: source.courseTitles,
+                searchText: passage?.text ?? "", isTruncated: state?.isTruncated ?? false,
+                indexedPageCount: state?.indexedPageCount, totalPageCount: state?.totalPageCount,
+                uncoveredPageNumbers: state?.uncoveredPageIndexes.map { $0 + 1 } ?? [],
+                failedPageNumbers: state?.failedPageIndexes.map { $0 + 1 } ?? [],
+                failedPageReasons: state.map { Dictionary(uniqueKeysWithValues: $0.failedPageReasons.map { ($0.key + 1, $0.value) }) } ?? [:]),
+            relativePath: source.relativePath, courseIDs: source.courseIDs, courseTitles: source.courseTitles,
+            sourceRevision: state?.sourceRevision ?? source.projectItem.sourceRevision, source: reference,
+            availability: state.map { String(describing: $0.availability) }
         )
     }
 
-    private func hostToolItem(
-        from result: CourseHomeSearchResult,
-        courseID: UUID?,
-        courseTitle: String
-    ) -> StudyAgentHostToolItem {
-        let role = result.kind == .note ? "note" : "material"
-        let excerpt = result.matchedText ?? result.detail
-        return StudyAgentHostToolItem(
-            item: StudyAgentCourseItem(
-                id: result.itemID ?? result.id,
-                title: result.title,
-                subtitle: result.detail,
-                kind: result.kind.rawValue,
-                role: role,
-                tags: courseTitle.isEmpty ? [] : [courseTitle],
-                searchText: excerpt
-            ),
-            courseIDs: courseID.map { [$0.uuidString.lowercased()] } ?? [],
-            courseTitles: courseTitle.isEmpty ? [] : [courseTitle]
-        )
+    nonisolated private static func scopedToolSources(
+        _ sources: [AgentHostToolSource], scope: StudyAgentSourceScope, id: String?
+    ) -> [AgentHostToolSource] {
+        sources.filter { source in
+            guard agentHostToolSourceIsValid(source) else { return false }
+            switch scope {
+            case .library: return true
+            case .material: return source.item.id == id
+            case .course: return id.map { source.courseIDs.contains($0.lowercased()) } ?? false
+            }
+        }
+    }
+
+    nonisolated private static func sourcePageOffset(_ cursor: String?) throws -> Int {
+        guard let cursor else { return 0 }
+        guard let offset = Int(cursor), offset >= 0 else {
+            throw AgentConversationTargetError(message: "目录或搜索游标无效")
+        }
+        return offset
     }
 
     nonisolated static func executeAgentHostTool(
@@ -400,242 +368,82 @@ extension WorkspaceStore {
     ) async throws -> StudyAgentHostToolResult {
         try Task.checkCancellation()
         switch request {
-        case let .courseMap(itemID, offset, limit):
-            let approvedSources = sources.filter(agentHostToolSourceIsValid)
-            let selectedSources: ArraySlice<AgentHostToolSource>
-            let total: Int
-            if let itemID {
-                let matches = approvedSources.filter { $0.item.id == itemID }
-                selectedSources = matches[...]
-                total = matches.count
-            } else {
-                selectedSources = approvedSources.dropFirst(offset).prefix(limit)
-                total = approvedSources.count
+        case let .courseMap(scope, scopeID, name, cursor, limit):
+            let offset = try sourcePageOffset(cursor)
+            let selected = scopedToolSources(sources, scope: scope, id: scopeID).filter {
+                name == nil || $0.title.localizedCaseInsensitiveContains(name ?? "")
             }
-            let items = selectedSources.map { source in
-                let linkedItemIDs = links.compactMap { link -> String? in
-                    if link.noteItemID == source.item.id { return link.sourceItemID }
-                    if link.sourceItemID == source.item.id { return link.noteItemID }
-                    return nil
-                }
-                return StudyAgentHostToolItem(
-                    item: StudyAgentCourseItem(
-                        id: source.item.id,
-                        title: source.title,
-                        subtitle: source.subtitle,
-                        kind: source.kind,
-                        role: source.role,
-                        linkedItemIDs: linkedItemIDs,
-                        headings: itemID == nil
-                            ? []
-                            : searchIndex.outline(item: source.item),
-                        tags: source.courseTitles,
-                        searchText: "",
-                        isTruncated: false
-                    ),
-                    relativePath: source.relativePath,
-                    courseIDs: source.courseIDs,
-                    courseTitles: source.courseTitles,
-                    sourceRevision: source.projectItem.sourceRevision
-                )
-            }
-            return StudyAgentHostToolResult(
-                query: "",
-                items: items,
-                total: total,
-                nextCursor: offset + items.count < total
-                    ? String(offset + items.count)
-                    : nil
-            )
-
-        case let .courseSearch(query, offset, limit):
-            let approvedSources = sources.filter(agentHostToolSourceIsValid)
-            let indexed = searchIndex.lookup(
-                items: approvedSources.compactMap {
-                    $0.memoryText == nil ? $0.item : nil
-                },
-                query: query
-            )
-            let matched = approvedSources.compactMap { source -> (
-                source: AgentHostToolSource,
-                result: CourseDocumentIndexResult,
-                titleMatched: Bool
-            )? in
-                let titleMatched = source.title.localizedCaseInsensitiveContains(query)
-                    || source.subtitle.localizedCaseInsensitiveContains(query)
-                    || (
-                        source.title.count >= 2
-                            && query.localizedCaseInsensitiveContains(source.title)
-                    )
-                let indexedResult = indexed[source.item.id]
-                let result: CourseDocumentIndexResult
-                if let memoryText = source.memoryText {
-                    result = CourseDocumentSearchIndex.readMarkdown(
-                        memoryText,
-                        query: titleMatched ? "" : query,
-                        location: nil
-                    )
-                } else if titleMatched {
-                    result = searchIndex.read(
-                        item: source.item,
-                        query: "",
-                        location: nil
-                    )
+            if scope == .material, let source = selected.first {
+                var state: CourseDocumentIndexResult
+                if let markdown = source.memoryText {
+                    let all = CourseDocumentSearchIndex.markdownPassages(markdown).filter { !$0.location.isEmpty }
+                    let entries = all.dropFirst(offset).prefix(limit).map { passage -> CourseDocumentPassage in
+                        var entry = passage; entry.text = ""; return entry
+                    }
+                    state = CourseDocumentIndexResult(text: nil, isTruncated: false,
+                        nextCursor: offset + entries.count < all.count ? String(offset + entries.count) : nil,
+                        sourceRevision: CourseDocumentSearchIndex.sourceRevision(forMarkdown: markdown), passages: entries)
                 } else {
-                    result = indexedResult ?? CourseDocumentIndexResult(
-                        text: nil,
-                        isTruncated: false,
-                        rank: nil
-                    )
+                    state = searchIndex.outlinePassages(item: source.item, offset: offset, limit: limit)
                 }
-                let text = result.text ?? ""
-                guard agentHostToolSourceIsValid(source),
-                      (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || result.totalPageCount != nil) else {
-                    return nil
-                }
-                return (
-                    source,
-                    CourseDocumentIndexResult(
-                        text: text,
-                        isTruncated: result.isTruncated,
-                        rank: result.rank,
-                        sourceRevision: result.sourceRevision,
-                        indexedPageCount: result.indexedPageCount,
-                        totalPageCount: result.totalPageCount,
-                        uncoveredPageIndexes: result.uncoveredPageIndexes,
-                        failedPageIndexes: result.failedPageIndexes,
-                        failedPageReasons: result.failedPageReasons
-                    ),
-                    titleMatched
-                )
-            }.sorted { left, right in
-                if left.titleMatched != right.titleMatched {
-                    return left.titleMatched
-                }
-                return (left.result.rank ?? .greatestFiniteMagnitude)
-                    < (right.result.rank ?? .greatestFiniteMagnitude)
+                return StudyAgentHostToolResult(query: name ?? "",
+                    items: state.passages.map { sourceToolItem(source, passage: $0, state: state, links: links) },
+                    nextCursor: state.nextCursor, scope: scope, scopeID: scopeID,
+                    coverage: [sourceToolItem(source, state: state)])
             }
-            let knowledgeSources = matched.dropFirst(offset).prefix(limit).map { match in
-                CourseKnowledgeSource(
-                    id: match.source.item.id,
-                    title: match.source.title,
-                    subtitle: match.source.subtitle,
-                    kind: match.source.kind,
-                    role: match.source.role,
-                    text: match.result.text ?? "",
-                    isTruncated: match.result.isTruncated,
-                    indexedPageCount: match.result.indexedPageCount,
-                    totalPageCount: match.result.totalPageCount,
-                    uncoveredPageNumbers: match.result.uncoveredPageIndexes.map { $0 + 1 },
-                    failedPageNumbers: match.result.failedPageIndexes.map { $0 + 1 },
-                    failedPageReasons: Dictionary(
-                        uniqueKeysWithValues: match.result.failedPageReasons.map { ($0.key + 1, $0.value) }
-                    )
-                )
-            }
-            let context = CourseKnowledgeIndex.build(
-                title: title,
-                sources: knowledgeSources,
-                links: links,
-                query: query,
-                currentMaterialID: nil,
-                currentNoteID: nil
-            )
-            let sourceByID = Dictionary(
-                uniqueKeysWithValues: matched.map { ($0.source.item.id, $0.source) }
-            )
-            let sourceRevisionByID = Dictionary(
-                uniqueKeysWithValues: matched.map {
-                    ($0.source.item.id, $0.result.sourceRevision)
-                }
-            )
-            return pagedSearchResult(
-                query: query,
-                items: context.items.compactMap { item in
-                    guard let source = sourceByID[item.id] else { return nil }
-                    return StudyAgentHostToolItem(
-                        item: item,
-                        relativePath: source.relativePath,
-                        courseIDs: source.courseIDs,
-                        courseTitles: source.courseTitles,
-                        sourceRevision: sourceRevisionByID[item.id] ?? nil
-                    )
-                },
-                total: matched.count,
-                offset: offset
-            )
+            var result = pagedSearchResult(query: name ?? "",
+                items: selected.dropFirst(offset).prefix(limit).map { sourceToolItem($0, links: links) },
+                total: selected.count, offset: offset)
+            result.scope = scope; result.scopeID = scopeID
+            return result
 
-        case let .courseRead(itemID, query, location, cursor, maximumCharacters):
-            guard let source = sources.first(where: { $0.item.id == itemID }),
-                  agentHostToolSourceIsValid(source) else {
-                throw AgentConversationTargetError(message: "这份资料不属于当前 Chat 的查询范围")
+        case let .workspaceSearch(query, scope, scopeID, cursor, limit):
+            let offset = try sourcePageOffset(cursor)
+            let selected = scopedToolSources(sources, scope: scope, id: scopeID)
+            var matches: [StudyAgentHostToolItem] = []
+            var coverage: [StudyAgentHostToolItem] = []
+            for source in selected {
+                try Task.checkCancellation()
+                let state: CourseDocumentIndexResult
+                if let markdown = source.memoryText {
+                    state = CourseDocumentIndexResult(text: nil, isTruncated: false,
+                        sourceRevision: CourseDocumentSearchIndex.sourceRevision(forMarkdown: markdown),
+                        passages: CourseDocumentSearchIndex.markdownPassages(markdown).compactMap { $0.excerpt(matching: query) })
+                } else {
+                    state = searchIndex.searchPassages(item: source.item, query: query)
+                }
+                guard agentHostToolSourceIsValid(source) else { continue }
+                matches += state.passages.map { sourceToolItem(source, passage: $0, state: state,
+                    preferredCourseID: scope == .course ? scopeID : nil) }
+                if state.isTruncated || state.availability != .ready {
+                    coverage.append(sourceToolItem(source, state: state))
+                }
             }
-            let indexed: CourseDocumentIndexResult
-            if let memoryText = source.memoryText {
-                indexed = CourseDocumentSearchIndex.readMarkdown(
-                    memoryText,
-                    query: query,
-                    location: location,
-                    cursor: cursor,
-                    sourceID: source.item.id,
-                    maximumCharacters: maximumCharacters
-                )
+            var result = pagedSearchResult(query: query, items: Array(matches.dropFirst(offset).prefix(limit)),
+                total: matches.count, offset: offset)
+            result.scope = scope; result.scopeID = scopeID
+            result.coverage = coverage.isEmpty ? nil : coverage
+            return result
+
+        case let .courseRead(itemID, page, location, cursor, maximumCharacters):
+            guard let source = sources.first(where: { $0.item.id == itemID }), agentHostToolSourceIsValid(source) else {
+                throw AgentConversationTargetError(message: "资料不存在或无法读取")
+            }
+            let state: CourseDocumentIndexResult
+            if let markdown = source.memoryText {
+                state = CourseDocumentSearchIndex.readMarkdown(markdown, location: location, cursor: cursor,
+                    sourceID: source.item.id, maximumCharacters: maximumCharacters)
             } else {
-                indexed = searchIndex.read(
-                    item: source.item,
-                    query: query,
-                    location: location,
-                    cursor: cursor,
-                    maximumCharacters: maximumCharacters
-                )
+                state = searchIndex.read(item: source.item, page: page, location: location, cursor: cursor,
+                    maximumCharacters: maximumCharacters)
             }
-            guard let text = indexed.text,
-                  agentHostToolSourceIsValid(source) else {
-                throw AgentConversationTargetError(message: "这份资料在读取期间发生了变化")
+            guard agentHostToolSourceIsValid(source) else {
+                throw AgentConversationTargetError(message: "资料在读取期间发生了变化")
             }
-            let context = CourseKnowledgeIndex.build(
-                title: title,
-                sources: [
-                    CourseKnowledgeSource(
-                        id: source.item.id,
-                        title: source.title,
-                        subtitle: source.subtitle,
-                        kind: source.kind,
-                        role: source.role,
-                        text: text,
-                        isTruncated: indexed.isTruncated,
-                        indexedPageCount: indexed.indexedPageCount,
-                        totalPageCount: indexed.totalPageCount,
-                        uncoveredPageNumbers: indexed.uncoveredPageIndexes.map { $0 + 1 },
-                        failedPageNumbers: indexed.failedPageIndexes.map { $0 + 1 },
-                        failedPageReasons: Dictionary(
-                            uniqueKeysWithValues: indexed.failedPageReasons.map { ($0.key + 1, $0.value) }
-                        )
-                    ),
-                ],
-                links: links,
-                query: [query, location].compactMap { $0 }.joined(separator: " "),
-                currentMaterialID: nil,
-                currentNoteID: nil
-            )
-            return StudyAgentHostToolResult(
-                query: query,
-                items: context.items.map { item in
-                    var item = item
-                    item.searchText = text
-                    item.isTruncated = indexed.isTruncated
-                    return StudyAgentHostToolItem(
-                        item: item,
-                        relativePath: source.relativePath,
-                        courseIDs: source.courseIDs,
-                        courseTitles: source.courseTitles,
-                        sourceRevision: indexed.sourceRevision
-                    )
-                },
-                nextCursor: indexed.nextCursor,
-                sourceRevision: indexed.sourceRevision
-            )
+            return StudyAgentHostToolResult(query: "",
+                items: state.passages.map { sourceToolItem(source, passage: $0, state: state) },
+                nextCursor: state.nextCursor, sourceRevision: state.sourceRevision,
+                scope: .material, scopeID: itemID, coverage: [sourceToolItem(source, state: state)])
 
         case let .retryFailedPDFPages(itemID):
             guard let source = sources.first(where: { $0.item.id == itemID }),
@@ -665,8 +473,6 @@ extension WorkspaceStore {
                 nextCursor: page.isTruncated ? String(offset + page.text.count) : nil
             )
 
-        case .workspaceSearch:
-            throw AgentConversationTargetError(message: "工作区检索由课程宿主执行")
         }
     }
 
