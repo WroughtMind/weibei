@@ -4861,9 +4861,12 @@ struct AgentThinkingIndicator: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: true, vertical: true)
         .offset(x: -Self.pathOuterInset)
+#if WEIBEI_ACCEPTANCE_CHECKS
+        .background(AccessibilityFrameProbe(identifier: "agent-thinking-status-layout")
+            .allowsHitTesting(false).accessibilityHidden(true))
+#endif
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
-        .accessibilityIdentifier("agent-thinking-status")
         .onAppear {
             refreshCache(for: statusText)
             motionEpoch = Date()

@@ -208,19 +208,16 @@ enum CatalystBusinessCheck {
                     let reduced = preference.resolvesReduceMotion(systemReduceMotion: UIAccessibility.isReduceMotionEnabled)
                     try await until("waiting status mounted in \(preference.rawValue) motion") {
                         guard let view = conversation()?.view else { return false }
-                        return !CatalystDesktopWindow.shared.acceptanceThinkingStatusFrame().isNull
+                        return waitingStatus(in: view) != nil
                             && descendants(view).contains { $0 is AgentThinkingOrbitNSView } == !reduced
                     }
                     try await until("waiting status fits its row", seconds: 1.5) {
-                        guard let controller = conversation(), let message = controller.messages.last,
-                              let footer = controller.collection.cellForItem(at: IndexPath(item: message.blocks.count + 1,
-                                  section: controller.messages.count - 1)),
-                              let host = descendants(footer).compactMap({ $0 as? CatalystHostingView }).first else { return false }
-                        let frame = CatalystDesktopWindow.shared.acceptanceThinkingStatusFrame()
-                        guard !frame.isNull, frame.width > 0, frame.height > 0 else { return false }
+                        guard let view = conversation()?.view, let indicator = waitingStatus(in: view) else { return false }
+                        let frame = indicator.convert(indicator.bounds, to: indicator.window)
+                        guard frame.width > 0, frame.height > 0 else { return false }
                         var clippingBounds: [String] = []
                         defer { result["waiting_status_layout"] = ["status": String(describing: frame), "clipping_bounds": clippingBounds] }
-                        var parent: UIView? = host.controller.view
+                        var parent = indicator.superview
                         while let view = parent {
                             if view.clipsToBounds {
                                 let bounds = view.convert(view.bounds, to: view.window)
@@ -244,7 +241,7 @@ enum CatalystBusinessCheck {
             try await until("UIKit received real message") { conversation()?.messages.last?.original?.role == .assistant && conversation()?.messages.last?.blocks.isEmpty == false }
             let controller = conversation()!
             try check("return_clears_original_composer", composer.text.isEmpty)
-            try check("status_disappears_at_first_text", CatalystDesktopWindow.shared.acceptanceThinkingStatusFrame().isNull)
+            try check("status_disappears_at_first_text", waitingStatus(in: controller.view) == nil)
             let originalFirstBlock = controller.messages.last!.blocks.first!
             try await until("real HTTP stream completed", seconds: 60) { !store.isAgentRunningInActiveChat && store.messages.last?.text.contains(finalMarker) == true }
             try await until("UIKit final tail") { controller.messages.last?.markdown.contains(finalMarker) == true }
@@ -493,6 +490,11 @@ enum CatalystBusinessCheck {
         func children(_ controller: UIViewController) -> [UIViewController] { [controller] + controller.children.flatMap(children) }
         return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
             .compactMap(\.rootViewController).flatMap(children).compactMap { $0 as? ConversationController }.first
+    }
+    private static func waitingStatus(in view: UIView) -> UIView? {
+        descendants(view).first {
+            $0.accessibilityIdentifier == "agent-thinking-status-layout" && $0.window != nil && !$0.isHidden
+        }
     }
 }
 
