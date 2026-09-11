@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CourseImmersiveDrawerView: View {
-    static let width: CGFloat = CourseDrawerContainerView.panelWidth
+    static let width: CGFloat = WeiBeiMetric.courseDrawerWidth
 
     let store: WorkspaceStore
     let model: CourseSidebarModel

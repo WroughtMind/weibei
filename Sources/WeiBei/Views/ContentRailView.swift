@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import Foundation
 import SwiftUI
 import WeiBeiCore
@@ -10,7 +14,7 @@ struct ContentRailItem: Identifiable {
     let title: String
     let excerpt: String
     let metadata: String
-    let previewImage: NSImage?
+    let previewImage: WeiBeiPlatformImage?
 
     init(
         id: String,
@@ -19,7 +23,7 @@ struct ContentRailItem: Identifiable {
         title: String,
         excerpt: String = "",
         metadata: String = "",
-        previewImage: NSImage? = nil
+        previewImage: WeiBeiPlatformImage? = nil
     ) {
         self.id = id
         self.position = min(max(position, 0), 1)
@@ -235,7 +239,7 @@ struct ContentRailView: View {
         }
         .frame(width: compactWidth, height: height)
         .contentShape(Rectangle())
-        .onExitCommand {
+        .weiBeiOnExitCommand {
             focusedItemID = nil
         }
     }
@@ -452,7 +456,7 @@ private struct ContentRailPreviewCard: View {
 
         HStack(alignment: .top, spacing: showsPreviewImage ? 12 : 0) {
             if showsPreviewImage, let image = item.previewImage {
-                Image(nsImage: image)
+                Image(weiBeiNativeImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 88, height: 112)
@@ -507,6 +511,7 @@ private struct ContentRailPreviewCard: View {
 
 /// The dormant pane is only 40pt wide, so its preview cannot live inside that pane's
 /// clipped host. This bridge places the same SwiftUI card in the existing window root.
+#if !targetEnvironment(macCatalyst)
 private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
     let label: String
     let item: ContentRailItem?
@@ -665,3 +670,46 @@ private final class ContentRailPassthroughHostingView: NSHostingView<AnyView> {
         false
     }
 }
+
+#else
+
+private struct ContentRailFloatingPreviewBridge: UIViewRepresentable {
+    let label: String
+    let item: ContentRailItem?
+    let appearanceMode: WeiBeiAppearanceMode
+    let width: CGFloat
+    let reduceMotion: Bool
+    let motionPreference: WeiBeiMotionPreference
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> UIView { UIView() }
+    func updateUIView(_ view: UIView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.generation += 1
+        let generation = coordinator.generation
+        guard let item else { coordinator.dismiss(); return }
+        DispatchQueue.main.async { [weak view, weak coordinator] in
+            guard let view, let coordinator, generation == coordinator.generation,
+                  let parent = view.window?.rootViewController?.view else { return }
+            let root = ContentRailPreviewCard(label: label, item: item, appearanceMode: appearanceMode, width: width)
+                .weiBeiMotionScoped(preference: motionPreference)
+            let host: CatalystHostingView
+            if let current = coordinator.host { host = current; host.controller.rootView = AnyView(root) }
+            else {
+                host = CatalystHostingView(root); host.isUserInteractionEnabled = false
+                coordinator.host = host; parent.addSubview(host)
+            }
+            let size = host.controller.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
+            let anchor = view.convert(view.bounds, to: parent)
+            host.frame = CGRect(x: min(max(8, anchor.maxX + 12), parent.bounds.width - width - 8),
+                y: min(max(8, anchor.midY - size.height / 2), max(8, parent.bounds.height - size.height - 8)),
+                width: width, height: size.height)
+        }
+    }
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.generation += 1; coordinator.dismiss() }
+    final class Coordinator {
+        var host: CatalystHostingView?
+        var generation = 0
+        func dismiss() { host?.removeFromSuperview(); host = nil }
+    }
+}
+#endif

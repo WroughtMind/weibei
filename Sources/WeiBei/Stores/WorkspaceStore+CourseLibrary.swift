@@ -1,4 +1,8 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
+#endif
 import CryptoKit
 import Darwin
 import Foundation
@@ -4172,7 +4176,7 @@ extension WorkspaceStore {
     func validateLibraryRoot(_ root: URL) throws {
         let protectedRoots = [
             URL(fileURLWithPath: "/", isDirectory: true),
-            FileManager.default.homeDirectoryForCurrentUser,
+            URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
             FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
         ].compactMap { $0?.resolvingSymlinksInPath().standardizedFileURL }
         if protectedRoots.contains(where: { CourseProjectPathPolicy.contains(root, $0) })
@@ -4219,7 +4223,7 @@ extension WorkspaceStore {
     ) throws {
         let protectedRoots = [
             URL(fileURLWithPath: "/", isDirectory: true),
-            FileManager.default.homeDirectoryForCurrentUser,
+            URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
             FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
         ].compactMap { $0?.resolvingSymlinksInPath().standardizedFileURL }
         if protectedRoots.contains(where: { CourseProjectPathPolicy.contains(root, $0) })
@@ -4817,7 +4821,11 @@ extension WorkspaceStore {
 
     func revealCourseRoot(_ courseID: UUID) {
         guard let root = courseRootURL(for: courseID) else { return }
+#if targetEnvironment(macCatalyst)
+        CatalystDesktopWindow.shared.reveal(root)
+#else
         NSWorkspace.shared.activateFileViewerSelecting([root])
+#endif
     }
 
     func removeCourseFromWeiBeiForSelfCheck(
@@ -5676,6 +5684,10 @@ extension WorkspaceStore {
     }
 
     func setCourseIDs(_ courseIDs: Set<UUID>, for itemID: String) {
+        Task { await setCourseIDsWithConfirmation(courseIDs, for: itemID) }
+    }
+
+    private func setCourseIDsWithConfirmation(_ courseIDs: Set<UUID>, for itemID: String) async {
         guard !activeItemFileMutationIDs.contains(itemID),
               let item = importedItems.first(where: { $0.id == itemID }) else {
             return
@@ -5696,13 +5708,13 @@ extension WorkspaceStore {
            removed.isEmpty,
            let courseID = added.first,
            let sourceURL = item.url,
-           confirmManagedCourseMove(
+           await confirmManagedCourseMove(
             sourceURL: sourceURL,
             courseID: courseID,
             role: CourseOwnedFileRole(item: item),
             verb: ui("移入课程", "Move into Course")
            ) {
-            let resolution = courseImportConflictResolution(
+            let resolution = await courseImportConflictResolution(
                 sourceURL: sourceURL,
                 courseID: courseID,
                 role: CourseOwnedFileRole(item: item)
@@ -5741,7 +5753,7 @@ extension WorkspaceStore {
                     "转为\(role.commonDirectoryName)",
                     "Move to common content"
                 )
-            guard confirmManagedCourseMove(
+            guard await confirmManagedCourseMove(
                 sourceURL: sourceURL,
                 courseID: courseID,
                 role: role,
@@ -5757,7 +5769,7 @@ extension WorkspaceStore {
                         isDirectory: true
                     )
                     .appendingPathComponent(sourceURL.lastPathComponent)
-            let resolution = courseImportConflictResolution(
+            let resolution = await courseImportConflictResolution(
                 sourceURL: sourceURL,
                 courseID: courseID,
                 role: role,
@@ -5808,11 +5820,11 @@ extension WorkspaceStore {
                     isDirectory: true
                 )
                 .appendingPathComponent(sourceURL.lastPathComponent)
-            guard confirmPromotionToCommon(
+            guard await confirmPromotionToCommon(
                 sourceURL: sourceURL,
                 targetURL: commonTarget
             ),
-            let resolution = commonContentConflictResolution(
+            let resolution = await commonContentConflictResolution(
                 sourceURL: sourceURL,
                 targetURL: commonTarget
             ) else {
@@ -5854,13 +5866,13 @@ extension WorkspaceStore {
             let role = CourseOwnedFileRole(item: item)
             if let courseID = added.first,
                let sourceURL = item.url,
-               confirmManagedCourseMove(
+               await confirmManagedCourseMove(
                 sourceURL: sourceURL,
                 courseID: courseID,
                 role: role,
                 verb: ui("加入另一门课程", "Add to Another Course")
                ),
-               let resolution = courseImportConflictResolution(
+               let resolution = await courseImportConflictResolution(
                 sourceURL: sourceURL,
                 courseID: courseID,
                 role: role,
@@ -5918,56 +5930,30 @@ extension WorkspaceStore {
         save()
     }
 
-    private func confirmPromotionToCommon(
-        sourceURL: URL,
-        targetURL: URL
-    ) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = ui(
-            "从本课程移除",
-            "Remove from This Course"
+    private func confirmPromotionToCommon(sourceURL: URL, targetURL: URL) async -> Bool {
+        let choice = await WorkspaceFileDialog.choose(
+            title: ui("从本课程移除", "Remove from This Course"),
+            message: ui(
+                "原文件会先复制到通用目录，再解除课程关系。\n来源：\(sourceURL.path)\n目标：\(targetURL.path)",
+                "The source will be copied to common content before its course relation is removed.\nSource: \(sourceURL.path)\nTarget: \(targetURL.path)"
+            ), buttons: [ui("取消", "Cancel"), ui("移除关系", "Remove Relation")]
         )
-        alert.informativeText = ui(
-            "原文件会先复制到通用目录，再解除课程关系。\n来源：\(sourceURL.path)\n目标：\(targetURL.path)",
-            "The source will be copied to common content before its course relation is removed.\nSource: \(sourceURL.path)\nTarget: \(targetURL.path)"
-        )
-        alert.addButton(withTitle: ui("取消", "Cancel"))
-        alert.addButton(withTitle: ui("移除关系", "Remove Relation"))
-        return alert.runModal() == .alertSecondButtonReturn
+        return choice.index == 1
     }
 
-    private func commonContentConflictResolution(
-        sourceURL: URL,
-        targetURL: URL
-    ) -> CourseFileConflictResolution? {
-        guard FileManager.default.fileExists(atPath: targetURL.path) else {
-            return .cancel
-        }
+    private func commonContentConflictResolution(sourceURL: URL, targetURL: URL) async -> CourseFileConflictResolution? {
+        guard FileManager.default.fileExists(atPath: targetURL.path) else { return .cancel }
         let suggestedName = CourseKeepBothNaming.suggestedFileName(
-            originalName: sourceURL.lastPathComponent,
-            conflictingTargets: [targetURL]
+            originalName: sourceURL.lastPathComponent, conflictingTargets: [targetURL]
         )
-        let alert = NSAlert()
-        alert.messageText = ui(
-            "通用目录中已有同名文件",
-            "A file with this name already exists"
+        let choice = await WorkspaceFileDialog.choose(
+            title: ui("通用目录中已有同名文件", "A file with this name already exists"),
+            message: "\(ui("冲突目标", "Conflicting target"))：\(targetURL.path)",
+            buttons: [ui("取消", "Cancel"), ui("保留两份", "Keep Both")], proposedName: suggestedName
         )
-        alert.informativeText = "\(ui("冲突目标", "Conflicting target"))：\(targetURL.path)"
-        let nameField = NSTextField(string: suggestedName)
-        nameField.setAccessibilityLabel(ui("新文件名", "New file name"))
-        nameField.widthAnchor.constraint(equalToConstant: 360).isActive = true
-        alert.accessoryView = nameField
-        alert.addButton(withTitle: ui("取消", "Cancel"))
-        alert.addButton(withTitle: ui("保留两份", "Keep Both"))
-        guard alert.runModal() == .alertSecondButtonReturn else {
-            return nil
-        }
-        let preferred = nameField.stringValue.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        return .keepBoth(
-            preferredFileName: preferred.isEmpty ? suggestedName : preferred
-        )
+        guard choice.index == 1 else { return nil }
+        let preferred = choice.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return .keepBoth(preferredFileName: preferred.isEmpty ? suggestedName : preferred)
     }
 
     func confirmMoveItemSourceToTrash(_ itemID: String) {
@@ -5988,23 +5974,23 @@ extension WorkspaceStore {
         let courseSummary = affectedCourses.isEmpty
             ? ui("没有课程关系", "No course relations")
             : affectedCourses.joined(separator: "、")
-        let alert = NSAlert()
-        alert.messageText = ui(
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let choice = await WorkspaceFileDialog.choose(
+                title: ui(
             "将原文件移到废纸篓？",
             "Move the Source File to Trash?"
-        )
-        alert.informativeText = ui(
+        ),
+                message: ui(
             "这会把唯一原文件移到废纸篓，并从所有课程中删除。\n文件：\(displayTitle(for: item))\n路径：\(sourceURL.path)\n受影响课程：\(courseSummary)",
             "This moves the only source file to Trash and deletes it from every course.\nFile: \(displayTitle(for: item))\nPath: \(sourceURL.path)\nAffected courses: \(courseSummary)"
-        )
-        alert.addButton(withTitle: ui("取消", "Cancel"))
-        alert.addButton(withTitle: ui("移到废纸篓", "Move to Trash"))
-        guard alert.runModal() == .alertSecondButtonReturn else { return }
-        Task { @MainActor [weak self] in
+        ),
+                buttons: [ui("取消", "Cancel"), ui("移到废纸篓", "Move to Trash")]
+            )
+            guard choice.index == 1 else { return }
             do {
-                try await self?.moveItemSourceToTrash(itemID)
+                try await self.moveItemSourceToTrash(itemID)
             } catch {
-                guard let self else { return }
                 self.recordCourseLibraryUIFailure(
                     error,
                     operation: "move_content_source_to_trash",
@@ -6205,21 +6191,17 @@ extension WorkspaceStore {
 
 
     private func confirmManagedCourseMove(
-        sourceURL: URL,
-        courseID: UUID,
-        role: CourseOwnedFileRole,
-        verb: String
-    ) -> Bool {
+        sourceURL: URL, courseID: UUID, role: CourseOwnedFileRole, verb: String
+    ) async -> Bool {
         guard let root = courseRootURL(for: courseID) else { return false }
-        let target = root
-            .appendingPathComponent(role.directoryName, isDirectory: true)
+        let target = root.appendingPathComponent(role.directoryName, isDirectory: true)
             .appendingPathComponent(sourceURL.lastPathComponent)
-        let alert = NSAlert()
-        alert.messageText = verb
-        alert.informativeText = "\(ui("来源", "Source"))：\(sourceURL.path)\n\(ui("目标", "Target"))：\(target.path)"
-        alert.addButton(withTitle: ui("取消", "Cancel"))
-        alert.addButton(withTitle: verb)
-        return alert.runModal() == .alertSecondButtonReturn
+        let choice = await WorkspaceFileDialog.choose(
+            title: verb,
+            message: "\(ui("来源", "Source"))：\(sourceURL.path)\n\(ui("目标", "Target"))：\(target.path)",
+            buttons: [ui("取消", "Cancel"), verb]
+        )
+        return choice.index == 1
     }
 
     private func removeSharedItem(

@@ -13,13 +13,16 @@ public enum CourseLibraryVolatility {
     }
 
     public static func volatileRoots() -> [URL] {
-        [
+#if targetEnvironment(macCatalyst)
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+#else
+        let caches = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches", isDirectory: true)
+#endif
+        return [
             canonicalize(URL(fileURLWithPath: "/private/tmp", isDirectory: true)),
             canonicalize(URL(fileURLWithPath: "/private/var/folders", isDirectory: true)),
-            canonicalize(
-                FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent("Library/Caches", isDirectory: true)
-            ),
+            canonicalize(caches),
             canonicalize(URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)),
         ]
     }

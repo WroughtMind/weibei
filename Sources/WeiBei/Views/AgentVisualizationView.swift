@@ -1,4 +1,10 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+private typealias VisualizationRepresentable = UIViewRepresentable
+#else
 import AppKit
+private typealias VisualizationRepresentable = NSViewRepresentable
+#endif
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -103,7 +109,7 @@ struct AgentVisualizationView: View {
     }
 }
 
-private struct AgentVisualizationWebView: NSViewRepresentable {
+private struct AgentVisualizationWebView: VisualizationRepresentable {
     var visualization: AgentVisualization
     var appearance: String
     var loadAttempt: Int
@@ -118,7 +124,16 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
         Coordinator(parent: self)
     }
 
-    func makeNSView(context: Context) -> ConversationWebClippingView {
+#if targetEnvironment(macCatalyst)
+    func makeUIView(context: Context) -> ConversationWebClippingView { makeVisualization(context: context) }
+    func updateUIView(_ view: ConversationWebClippingView, context: Context) { updateVisualization(view, context: context) }
+    static func dismantleUIView(_ view: ConversationWebClippingView, coordinator: Coordinator) { dismantleVisualization(view, coordinator: coordinator) }
+#else
+    func makeNSView(context: Context) -> ConversationWebClippingView { makeVisualization(context: context) }
+    func updateNSView(_ view: ConversationWebClippingView, context: Context) { updateVisualization(view, context: context) }
+    static func dismantleNSView(_ view: ConversationWebClippingView, coordinator: Coordinator) { dismantleVisualization(view, coordinator: coordinator) }
+#endif
+    private func makeVisualization(context: Context) -> ConversationWebClippingView {
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: Coordinator.handlerName)
 
@@ -132,7 +147,12 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
 
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
+#if targetEnvironment(macCatalyst)
+        view.isOpaque = false
+        view.backgroundColor = .clear
+#else
         view.setValue(false, forKey: "drawsBackground")
+#endif
         view.underPageBackgroundColor = .clear
         view.allowsLinkPreview = false
         context.coordinator.webView = view
@@ -148,12 +168,12 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
         return ConversationWebClippingView(webView: view)
     }
 
-    func updateNSView(_ container: ConversationWebClippingView, context: Context) {
+    private func updateVisualization(_ container: ConversationWebClippingView, context: Context) {
         context.coordinator.update(parent: self)
         context.coordinator.renderIfReady()
     }
 
-    static func dismantleNSView(_ container: ConversationWebClippingView, coordinator: Coordinator) {
+    private static func dismantleVisualization(_ container: ConversationWebClippingView, coordinator: Coordinator) {
         let view = container.webView
         view.stopLoading()
         view.loadHTMLString("", baseURL: nil)
@@ -349,6 +369,16 @@ struct UnavailableAgentContentBlockView: View {
     }
 
     private func exportRawData() {
+#if targetEnvironment(macCatalyst)
+        Task {
+            do {
+                try await WorkspaceFileDialog.export(Data(rawJSON.utf8), name: store.ui("互动内容原始数据.json", "interactive-content-raw.json"))
+                exportError = nil
+            } catch {
+                exportError = store.ui("原始数据未能导出，请换一个位置后重试。", "The raw data could not be exported. Choose another location and try again.")
+            }
+        }
+#else
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = store.ui("互动内容原始数据.json", "interactive-content-raw.json")
@@ -365,5 +395,6 @@ struct UnavailableAgentContentBlockView: View {
                 "The raw data could not be exported. Choose another location and try again."
             )
         }
+#endif
     }
 }

@@ -1,3 +1,6 @@
+#if targetEnvironment(macCatalyst)
+import UIKit
+#endif
 import SwiftUI
 import WeiBeiCore
 import os
@@ -112,7 +115,13 @@ final class AgentAccountService: ObservableObject {
                 let store = try NativeAgentCredentialStore.defaultStore()
                 let record = try await NativeOpenAIOAuth.loginWithBrowser(
                     store: store,
-                    openURL: { url in NSWorkspace.shared.open(url) }
+                    openURL: { url in
+#if targetEnvironment(macCatalyst)
+                        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+#else
+                        NSWorkspace.shared.open(url)
+#endif
+                    }
                 )
                 self.isLoggingIn = false
                 self.statusMessage = nil

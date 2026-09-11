@@ -17,8 +17,8 @@ extension PDFReaderRepresentable.Coordinator {
     static let remarkMarkMarker = "weibei-selection-remark"
     static let remarkMarkHoverMarker = "weibei-selection-remark-hover"
 
-    private var remarkCinnabar: NSColor {
-        NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 1.0)
+    private var remarkCinnabar: WeiBeiPlatformColor {
+        weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 1.0)
     }
 
     private static let dotDiameter: CGFloat = 8
@@ -147,7 +147,9 @@ extension PDFReaderRepresentable.Coordinator {
         applyRemarkHoverHighlight(in: view)
         // 指针只在命中时接管;无命中时保留问下划线 hover 设置的光标。
         if recordID != nil {
+            #if !targetEnvironment(macCatalyst)
             NSCursor.pointingHand.set()
+#endif
         }
     }
 
@@ -203,7 +205,7 @@ extension PDFReaderRepresentable.Coordinator {
         guard let document = view.document else { return }
         clearRemarkAnnotations(in: document, includingHover: true, bars: false)
         guard let recordID = hoveredRemarkRecordID ?? activeRemarkRecordID else { return }
-        let fill = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.14)
+        let fill = weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 0.14)
         for hit in remarkHits where hit.recordID == recordID {
             for (pageIndex, rects) in hit.highlightRectsByPage {
                 guard let page = document.page(at: pageIndex) else { continue }

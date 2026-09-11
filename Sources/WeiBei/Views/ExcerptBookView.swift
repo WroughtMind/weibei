@@ -249,7 +249,7 @@ private struct ExcerptRemarkEditor: View {
             }
             .weiBeiText(11).foregroundStyle(WeiBeiTheme.secondaryInk)
         }
-        .onExitCommand(perform: finish)
+        .weiBeiOnExitCommand(perform: finish)
     }
 }
 

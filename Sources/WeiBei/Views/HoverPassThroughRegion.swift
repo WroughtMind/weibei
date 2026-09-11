@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import AppKit
 import SwiftUI
 
@@ -52,3 +53,5 @@ final class HoverPassThroughTrackingView: NSView {
         nil
     }
 }
+
+#endif

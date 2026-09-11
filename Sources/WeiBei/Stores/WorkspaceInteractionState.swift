@@ -25,6 +25,10 @@ struct ExcerptRevealRequest: Equatable {
 /// Isolated from `WorkspaceStore` so selection drag does not rebuild the whole workspace tree.
 @MainActor
 final class WorkspaceInteractionState: ObservableObject {
+#if targetEnvironment(macCatalyst)
+    // UI drafts survive collection-cell eviction and switching away from a chat.
+    var agentActionDrafts: [UUID: (title: String, body: String)] = [:]
+#endif
     @Published var agentSurface: AgentSurface = .hidden
     @Published var floatingSelectionPrompt = ""
     @Published var pinnedFloatingAgent = false
@@ -88,4 +92,8 @@ final class WorkspaceInteractionState: ObservableObject {
             return false
         }
     }
+}
+
+extension Notification.Name {
+    static let weiBeiScrollAgentToMessage = Notification.Name("WeiBeiScrollAgentToMessage")
 }

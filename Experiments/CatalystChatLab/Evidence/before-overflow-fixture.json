@@ -1,0 +1,266 @@
+{
+  "body_block_count" : 19,
+  "body_width_pt" : 724,
+  "build_configuration" : "Release",
+  "bundle_id" : "org.weibei.CatalystChatLab",
+  "checks" : {
+    "card_draft_and_fold_persist" : "passed",
+    "cross_paragraph_copy_survives_reuse" : "passed",
+    "failure" : "长代码没有可横向阅读的完整宽度",
+    "image_arrival_preserves_reading_text" : "passed",
+    "prepend_preserves_reading_text" : "passed",
+    "replay_stop_complete_and_history_reading" : "passed",
+    "resize_preserves_reading_paragraph" : "passed",
+    "stream_keeps_unchanged_blocks_and_tail" : "passed"
+  },
+  "font_size_pt" : 16,
+  "frame_evidence_boundary" : "CADisplayLink callback delivery intervals during programmatic scrolling; these are not GPU presentation timestamps and are not FPS or human trackpad acceptance.",
+  "idiom" : "mac",
+  "measure_count" : 3061,
+  "message_count" : 1,
+  "parse_count" : 393,
+  "peak_block_views" : 36,
+  "platform" : "Mac Catalyst",
+  "recorded_at" : "2026-09-08T21:17:10Z",
+  "render_count" : 1496,
+  "resident_memory_bytes" : 179224576,
+  "retained_block_views" : 2,
+  "samples" : {
+    "history_body_block_count" : [
+      739
+    ],
+    "history_first_prepare_and_layout_ms" : [
+      7440.5057083333759
+    ],
+    "history_message_count" : [
+      241
+    ],
+    "history_outbound_display_callback_interval_ms" : [
+      299.40970833331448,
+      200.03608333331613,
+      280.12841666668464,
+      219.86800000001949,
+      186.55124999997952,
+      196.7499166666471,
+      156.62762499999872,
+      176.74608333334163,
+      233.33829166671194,
+      249.9864166666157,
+      199.97408333335898,
+      216.67804166668247,
+      249.99108333332742,
+      249.99545833333059,
+      183.35637500001667,
+      233.34774999995034,
+      186.06395833336364,
+      197.26024999999936,
+      233.30579166668031,
+      166.68891666665786,
+      200.03149999996594,
+      250.00166666666246,
+      199.98025000001007,
+      250.00954166665679,
+      233.63275000002659,
+      233.03187499999467,
+      183.3290416666955
+    ],
+    "history_resident_memory_bytes" : [
+      155795456
+    ],
+    "history_return_display_callback_interval_ms" : [
+      149.94866666665985,
+      166.67191666664394,
+      116.71829166670022,
+      266.61795833331325,
+      250.01916666667512,
+      183.49829166663767,
+      266.48145833337367,
+      233.38262499999018,
+      283.32641666662539,
+      266.67958333337083,
+      283.28499999997803,
+      266.97312499999271,
+      299.71466666665947,
+      234.03608333336479,
+      299.30954166667334,
+      283.36787500001037,
+      283.2670416666474,
+      266.75395833331095,
+      233.23712500001648,
+      216.6682499999979,
+      250.04908333335152,
+      216.62787499997194,
+      333.37604166666779,
+      266.62791666666408,
+      233.33775000003243
+    ],
+    "history_scroll_new_measurements" : [
+      0
+    ],
+    "history_scroll_new_parses" : [
+      0
+    ],
+    "history_scroll_view_reconstructions" : [
+      321
+    ],
+    "history_source_utf16_count" : [
+      38779
+    ],
+    "resize_ms" : [
+      316.57949999998891,
+      215.88612499999726
+    ],
+    "rich_body_block_count" : [
+      19,
+      19
+    ],
+    "rich_first_prepare_and_layout_ms" : [
+      994.3211666666798,
+      244.97374999998556
+    ],
+    "rich_message_count" : [
+      1,
+      1
+    ],
+    "rich_resident_memory_bytes" : [
+      135282688,
+      177471488
+    ],
+    "rich_source_utf16_count" : [
+      1035,
+      1035
+    ],
+    "stream_apply_ms" : [
+      140.44083333328672,
+      13.230833333295777,
+      6.944625000016913,
+      17.638041666714344,
+      11.915916666680459,
+      13.82054166663238,
+      17.851583333310828,
+      7.5402916666575948,
+      23.102833333325634,
+      19.155500000010761,
+      21.214958333303002,
+      8.2457916666953679,
+      15.590166666697769,
+      11.866374999954132,
+      15.436458333340397,
+      18.607041666655277,
+      10.051041666656602,
+      10.899416666632078,
+      5.5398333333869232,
+      199.70570833334023,
+      9.536958333342227,
+      13.598791666709076
+    ]
+  },
+  "source_dirty" : "no",
+  "source_revision" : "f17bf39cfaac8d6729ee6be2ff1eca9437c00399",
+  "source_utf16_count" : 1035,
+  "summary" : {
+    "history_body_block_count" : {
+      "count" : 1,
+      "max" : 739,
+      "median" : 739,
+      "p95" : 739
+    },
+    "history_first_prepare_and_layout_ms" : {
+      "count" : 1,
+      "max" : 7440.5057083333759,
+      "median" : 7440.5057083333759,
+      "p95" : 7440.5057083333759
+    },
+    "history_message_count" : {
+      "count" : 1,
+      "max" : 241,
+      "median" : 241,
+      "p95" : 241
+    },
+    "history_outbound_display_callback_interval_ms" : {
+      "count" : 27,
+      "max" : 299.40970833331448,
+      "median" : 216.67804166668247,
+      "p95" : 280.12841666668464
+    },
+    "history_resident_memory_bytes" : {
+      "count" : 1,
+      "max" : 155795456,
+      "median" : 155795456,
+      "p95" : 155795456
+    },
+    "history_return_display_callback_interval_ms" : {
+      "count" : 25,
+      "max" : 333.37604166666779,
+      "median" : 266.48145833337367,
+      "p95" : 299.71466666665947
+    },
+    "history_scroll_new_measurements" : {
+      "count" : 1,
+      "max" : 0,
+      "median" : 0,
+      "p95" : 0
+    },
+    "history_scroll_new_parses" : {
+      "count" : 1,
+      "max" : 0,
+      "median" : 0,
+      "p95" : 0
+    },
+    "history_scroll_view_reconstructions" : {
+      "count" : 1,
+      "max" : 321,
+      "median" : 321,
+      "p95" : 321
+    },
+    "history_source_utf16_count" : {
+      "count" : 1,
+      "max" : 38779,
+      "median" : 38779,
+      "p95" : 38779
+    },
+    "resize_ms" : {
+      "count" : 2,
+      "max" : 316.57949999998891,
+      "median" : 316.57949999998891,
+      "p95" : 316.57949999998891
+    },
+    "rich_body_block_count" : {
+      "count" : 2,
+      "max" : 19,
+      "median" : 19,
+      "p95" : 19
+    },
+    "rich_first_prepare_and_layout_ms" : {
+      "count" : 2,
+      "max" : 994.3211666666798,
+      "median" : 994.3211666666798,
+      "p95" : 994.3211666666798
+    },
+    "rich_message_count" : {
+      "count" : 2,
+      "max" : 1,
+      "median" : 1,
+      "p95" : 1
+    },
+    "rich_resident_memory_bytes" : {
+      "count" : 2,
+      "max" : 177471488,
+      "median" : 177471488,
+      "p95" : 177471488
+    },
+    "rich_source_utf16_count" : {
+      "count" : 2,
+      "max" : 1035,
+      "median" : 1035,
+      "p95" : 1035
+    },
+    "stream_apply_ms" : {
+      "count" : 22,
+      "max" : 199.70570833334023,
+      "median" : 13.82054166663238,
+      "p95" : 140.44083333328672
+    }
+  },
+  "system" : "Version 26.6.2 (Build 25G83)"
+}
