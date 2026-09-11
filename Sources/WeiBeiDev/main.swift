@@ -246,7 +246,7 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
     }
 
     let fileManager = FileManager.default
-    let binaryRoots = ["MacOS", "Helpers", "Frameworks"].map {
+    let binaryRoots = ["MacOS", "Helpers", "Frameworks", "PlugIns"].map {
         contents.appendingPathComponent($0, isDirectory: true)
     }
     var machOBinaries: [URL] = []
@@ -267,6 +267,14 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
 
     let appBinary = contents.appendingPathComponent("MacOS/WeiBei")
     let helperBinary = contents.appendingPathComponent("Helpers/WeiBeiPDFTextWorker")
+    let windowBridgeBinary = contents.appendingPathComponent("PlugIns/WeiBeiWindowBridge.bundle/Contents/MacOS/WeiBeiWindowBridge")
+    let sparkleBinary = contents.appendingPathComponent("PlugIns/WeiBeiWindowBridge.bundle/Contents/Frameworks/Sparkle.framework/Sparkle").resolvingSymlinksInPath()
+    guard let buildCommands = runCommand("/usr/bin/xcrun", arguments: ["vtool", "-show-build", appBinary.path]),
+          buildCommands.components(separatedBy: .newlines).contains(where: {
+              $0.trimmingCharacters(in: .whitespaces) == "platform MACCATALYST"
+          }) else {
+        fail("the application executable must target Mac Catalyst", exitCode: 10)
+    }
     guard !machOBinaries.isEmpty else {
         fail("app bundle contains no Mach-O binaries", exitCode: 6)
     }
@@ -274,7 +282,7 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
     // Inspect required executables directly. FileManager can enumerate a DMG
     // mounted below /var using /private/var URLs, so URL equality is not a
     // reliable way to prove that these files were present in the enumeration.
-    for requiredBinary in [appBinary, helperBinary] {
+    for requiredBinary in [appBinary, helperBinary, windowBridgeBinary, sparkleBinary] {
         guard fileManager.fileExists(atPath: requiredBinary.path),
               let fileDescription = runCommand("/usr/bin/file", arguments: ["-b", requiredBinary.path]),
               fileDescription.contains("Mach-O") else {
@@ -297,9 +305,9 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
             fail("cannot inspect architectures for \(binary.path)", exitCode: 7)
         }
         let architectureSet = Set(architectures.split(separator: " ").map(String.init))
-        guard architectureSet.contains(expectedArchitecture) else {
+        guard architectureSet == Set([expectedArchitecture]) else {
             fail(
-                "\(binary.path) lacks \(expectedArchitecture); found \(architectures)",
+                "\(binary.path) must contain only \(expectedArchitecture); found \(architectures)",
                 exitCode: 8
             )
         }
@@ -313,6 +321,10 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
 // MARK: - verify-production-hygiene
 
 private let forbiddenBinaryMarkers = [
+    "--self-check",
+    "--fixtures",
+    "WB452_SOURCE",
+    "WB452_STOP",
     "WEIBEI_VERIFY_SCENARIO",
     "WEIBEI_SUPPRESS_ACTIVATION",
     "WEIBEI_FORCE_OFFLINE_AGENT",
@@ -413,6 +425,9 @@ func runVerifyProductionHygiene(arguments: [String]) {
     }
     let appBinary = appBundle
         .appendingPathComponent("Contents/MacOS/\(executableName)")
+    guard plistDictionary["WeiBeiAcceptanceChecks"] as? Bool == false else {
+        fail("production app must exclude acceptance checks", exitCode: 4)
+    }
     guard fileManager.isExecutableFile(atPath: appBinary.path) else {
         fail("missing executable \(appBinary.path)", exitCode: 3)
     }

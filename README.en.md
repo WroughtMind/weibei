@@ -92,15 +92,16 @@ Choose your model: built-in profiles include OpenAI, Anthropic, Google, DeepSeek
 
 ## Get started
 
-For now, build from source. You need **macOS 14 or later** and **Xcode Command Line Tools with Swift 5.9 or later**. The first build needs a network connection to fetch dependencies.
+For now, build from source. You need **macOS 14 or later** and **full Xcode 26 and Node.js 22 or later**. The first build needs a network connection to fetch dependencies.
 
 ```bash
 git clone https://github.com/WroughtMind/weibei.git
 cd weibei
+npm ci
 ./script/build_and_run.sh
 ```
 
-The script builds and opens WeiBei. Full checks, packaging, and web-editor rebuilds also require **Node.js 22 or later** and `npm ci` from the repository root.
+The script builds and opens WeiBei through the single Catalyst project. Local builds use an existing Apple Development identity by default; `WEIBEI_SIGNING_IDENTITY=-` creates an unnotarized candidate without one. See the [application build guide](App/README.md).
 
 1. Import a folder of your own material as a course.
 2. Open a document, write notes alongside it, and try full-text search.
@@ -119,11 +120,11 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 
 | Target | What it runs |
 |---|---|
-| `make build` | `swift build` |
+| `make build` | `./script/build_and_run.sh package` |
 | `make run` | `./script/build_and_run.sh` |
 | `make check` | `./script/build_and_run.sh check` |
 | `make package` | `./script/build_and_run.sh package` |
-| `make verify` | `./script/build_and_run.sh verify` (package, launch, and confirm a live process) |
+| `make verify` | `./script/build_and_run.sh verify` (automatic launch on isolated CI desktops only; use picture-in-picture locally) |
 | `make editor-build` | `npm run build:editor` |
 | `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)` (usage: `make perf-p95 LOG=<perf-log> METRIC=<metric-name>`) |
@@ -159,7 +160,7 @@ Live-provider checks require valid local credentials and are never silently repl
 <details>
 <summary><strong>Architecture</strong></summary>
 
-SwiftUI handles the interface, with AppKit hosting persistent reader, chat, and note panes. PDFKit reads PDFs, WebKit renders HTML and the Milkdown editor, Vision handles OCR for scanned pages, and SQLite FTS5 provides local full-text indexes. Math uses KaTeX, and diagrams use Mermaid.
+SwiftUI and Mac Catalyst host the workspace; UIKit chat uses reusable cells and native rich-text layout. PDFKit reads PDFs, WebKit renders HTML and the Milkdown editor, Vision handles OCR, and SQLite FTS5 provides local full-text indexes. Chat math uses SwiftMath, web math uses KaTeX, and diagrams use Mermaid. The existing AppKit bridge handles window materials and Sparkle updates.
 
 A Swift-native Agent runtime handles the tool loop, provider connections, credentials, and session ledger. WeiBei validates citations, memory updates, note proposals, and rich answers before display or writing. Interactive `visualize` fragments run in a sandbox without network or local-file access. Long PDFs and scans use a resource-bounded helper process for text extraction, with OCR only on pages that have no native text.
 

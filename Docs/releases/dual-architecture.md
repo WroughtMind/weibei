@@ -14,15 +14,17 @@
 - `weibei.rb`，包含 ARM 与 Intel 两份 SHA-256；
 - `WeiBei-<version>-debug-symbols.zip`，保存两种架构对应的崩溃分析符号，仅供开发者排查问题，不会装进用户电脑。
 
-App 内的 `WeiBeiArchitecture` 和 `SUFeedURL` 会绑定当前包的真实架构。`WeiBeiDev verify-release-architecture` 会检查主程序、PDF Helper 和 Sparkle 中的全部 Mach-O；主程序与 Helper 必须是单架构原生二进制，嵌套框架至少必须包含目标架构。
+App 内的 `WeiBeiArchitecture` 和 `SUFeedURL` 会绑定当前包的真实架构。`WeiBeiDev verify-release-architecture` 会检查主程序、PDF 助手、窗口桥接及 Sparkle 中的全部 Mach-O；所有嵌套程序和框架都必须只包含目标架构，主程序还必须声明真实的 Mac Catalyst 平台。裁剪、资源整理在最终签名前完成。
 
 两个安装盘共用仓库内固定背景图，只保留安装指引、Webi 和箭头；芯片类型由 DMG 文件名和 App 元数据表达，不在背景图上重复绘制。
 
 ## 日常 PR 门禁
 
-`.github/workflows/pr-checks.yml` 保留 Apple Silicon 的既有必需检查，并新增常驻的 `macos-26-intel` job。代码变更在 Intel 上原生编译和运行核心自检；发布链路变更还会打包、实际启动进程、检查签名、元数据、生产卫生和二进制架构，并保留一天的验收包。
+`.github/workflows/pr-checks.yml` 保留必需汇总检查。共用业务自检运行一次；同一 Catalyst 任务分别在 `macos-26` 与 `macos-26-intel` 原生构建正式 App、启动检查，并在隔离的验收 App 中运行会话及资料保存重开检查。发布链路变更还会生成、挂载并检查当前架构 DMG，证据保留两天。旧独立会话工作流已并入此入口。
 
-如果 GitHub 将来停止提供 Intel 托管 runner，必须先把 `macos-26-intel` 替换为运行受支持 Xcode 的 Intel 自托管 runner，保持 job 名称和所有验收步骤不变；不得跳过 Intel job 后继续发布。
+如果 GitHub 将来停止提供 Intel 托管 runner，必须先把 `macos-26-intel` 替换为运行受支持 Xcode 的 Intel 自托管 runner，保留两种架构的所有验收步骤；不得跳过 Intel job 后继续发布。
+
+解压后 App 的逻辑字节数与 DMG 下载字节数分别记录在 `dist/package-<arch>.json`；字体、公式、图表和图片资源完整保留。
 
 ## 正式发布工作流
 

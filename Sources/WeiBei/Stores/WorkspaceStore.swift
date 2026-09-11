@@ -2141,6 +2141,28 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+#if targetEnvironment(macCatalyst)
+    // Keep an already-started note/relation transaction alive through normal Quit.
+    // Focus changes and hidden windows must not cancel an unrelated conversation.
+    private func beginAgentActionSave() -> (() -> Void)? {
+        var token: UIBackgroundTaskIdentifier = .invalid
+        @MainActor func finish() {
+            guard token != .invalid else { return }
+            let active = token
+            token = .invalid
+            UIApplication.shared.endBackgroundTask(active)
+        }
+        token = UIApplication.shared.beginBackgroundTask(withName: "保存笔记动作") {
+            MainActor.assumeIsolated { finish() }
+        }
+        guard token != .invalid else { return nil }
+        return { finish() }
+    }
+#if WEIBEI_ACCEPTANCE_CHECKS
+    var agentActionSaveCheck: (() async -> Void)?
+#endif
+#endif
+
     func confirmAgentReplyAction(
         messageID: UUID,
         actionID: UUID,
@@ -2162,6 +2184,17 @@ final class WorkspaceStore: ObservableObject {
             if let itemID = snapshot.action.targetItemID { releaseAgentNoteAction(itemID) }
         }
         guard !Task.isCancelled else { return }
+#if targetEnvironment(macCatalyst)
+        guard let finishSave = beginAgentActionSave() else {
+            await failAgentReplyAction(messageID: messageID, actionID: actionID, chatID: snapshot.chatID,
+                message: ui("当前无法安全保存笔记动作，请稍后重试。", "The note action cannot be saved safely right now. Try again later."))
+            return
+        }
+        defer { finishSave() }
+#if WEIBEI_ACCEPTANCE_CHECKS
+        await agentActionSaveCheck?()
+#endif
+#endif
         switch snapshot.action.kind {
         case .writeNote:
             await confirmAgentNoteAction(
@@ -2194,6 +2227,14 @@ final class WorkspaceStore: ObservableObject {
             if let itemID = snapshot.action.targetItemID { releaseAgentNoteAction(itemID) }
         }
         guard !Task.isCancelled else { return }
+#if targetEnvironment(macCatalyst)
+        guard let finishSave = beginAgentActionSave() else {
+            await failAgentReplyAction(messageID: messageID, actionID: actionID, chatID: snapshot.chatID,
+                message: ui("当前无法安全保存笔记动作，请稍后重试。", "The note action cannot be saved safely right now. Try again later."))
+            return
+        }
+        defer { finishSave() }
+#endif
         switch snapshot.action.kind {
         case .writeNote:
             await undoAgentNoteAction(messageID: messageID, snapshot: snapshot)
