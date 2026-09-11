@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#eee1ca">
   <title>魏碑 · 把读、问、写放回同一张桌面</title>
   <link rel="preload" as="image" href="assets/第一幕-真实首页截图-去黑边.webp" imagesrcset="assets/mobile/第一幕-真实首页截图-去黑边.webp 1080w, assets/第一幕-真实首页截图-去黑边.webp 2940w" imagesizes="(max-width: 760px) 92vw, 72vw">
-  <link rel="stylesheet" href="style.css?v=20260909-seo">
+  <link rel="stylesheet" href="style.css?v=20260912-polish">
   <link rel="stylesheet" href="paper-fold.css?v=20260907-css-fold">
 </head>
 <body>
@@ -31,10 +31,10 @@
   </nav>
 
   <aside class="scene-rail" aria-label="场景导航" data-en-label="Scene navigation">
-    <button class="is-active" data-jump="scene-1" aria-label="第一幕" data-en-label="Scene one"><span class="sr-only" data-en="Scene one">第一幕</span></button>
-    <button data-jump="scene-2" aria-label="第二幕" data-en-label="Scene two"><span class="sr-only" data-en="Scene two">第二幕</span></button>
-    <button data-jump="scene-3" aria-label="第三幕" data-en-label="Scene three"><span class="sr-only" data-en="Scene three">第三幕</span></button>
-    <button data-jump="scene-4" aria-label="第四幕" data-en-label="Scene four"><span class="sr-only" data-en="Scene four">第四幕</span></button>
+    <button class="is-active" data-jump="scene-1" aria-label="第一幕：桌面" data-en-label="Scene one: Your desk" aria-current="step"><span class="rail-label" data-en="Your desk">桌面</span></button>
+    <button data-jump="scene-2" aria-label="第二幕：读问写" data-en-label="Scene two: Read, ask, write"><span class="rail-label" data-en="Read, ask, write">读问写</span></button>
+    <button data-jump="scene-3" aria-label="第三幕：主题" data-en-label="Scene three: Themes"><span class="rail-label" data-en="Themes">主题</span></button>
+    <button data-jump="scene-4" aria-label="第四幕：下载" data-en-label="Scene four: Downloads"><span class="rail-label" data-en="Downloads">下载</span></button>
   </aside>
 
   <div class="journey-stage" aria-label="贯穿四幕的魏碑应用窗口" data-en-label="WeiBei application preview">
@@ -43,7 +43,7 @@
         <img src="assets/第一幕-真实首页截图-去黑边.webp" srcset="assets/mobile/第一幕-真实首页截图-去黑边.webp 1080w, assets/第一幕-真实首页截图-去黑边.webp 2940w" sizes="(max-width: 760px) 92vw, 72vw" alt="魏碑首页真实应用截图，中央显示阅读、对话和笔记入口" data-en-alt="WeiBei home screen with reading, conversation, and notes entries" fetchpriority="high" decoding="async" width="2940" height="1682">
       </div>
 
-      <div class="journey-layer experience-layer">
+      <div class="journey-layer experience-layer" inert>
         <div class="window-bar"><span class="traffic"><i></i><i></i><i></i></span><b>WeiBei</b><span>⌘</span></div>
         <div class="experience-page experience-shot-page is-active" data-mode="overview">
           <img src="assets/第二幕-真实三窗截图-去黑边.webp" srcset="assets/mobile/第二幕-真实三窗截图-去黑边.webp 1080w, assets/第二幕-真实三窗截图-去黑边.webp 2940w" sizes="(max-width: 760px) 92vw, 72vw" alt="魏碑读、问、写三窗并行的真实应用截图" data-en-alt="WeiBei workspace with reading, AI conversation, and Markdown notes side by side" loading="lazy" decoding="async" width="2940" height="1686">
@@ -65,12 +65,19 @@
         <span class="mode-word mode-write" data-en="NOTE">写</span>
       </div>
 
-      <div class="window-pager" role="group" aria-label="切换体验内容" data-en-label="Switch experience">
+      <div class="window-pager" role="group" aria-label="切换体验内容" data-en-label="Switch experience" inert>
         <button data-direction="-1" aria-label="上一个体验" data-en-label="Previous experience">←</button>
         <button data-direction="1" aria-label="下一个体验" data-en-label="Next experience">→</button>
       </div>
 
-      <div class="journey-layer themes-layer">
+      <div class="experience-tabs" role="group" aria-label="选择工作方式" data-en-label="Choose a workspace view" inert>
+        <button type="button" data-mode-target="overview" aria-pressed="true" data-en="Together">并排</button>
+        <button type="button" data-mode-target="read" aria-pressed="false" data-en="Read">阅读</button>
+        <button type="button" data-mode-target="chat" aria-pressed="false" data-en="Ask">提问</button>
+        <button type="button" data-mode-target="write" aria-pressed="false" data-en="Write">笔记</button>
+      </div>
+
+      <div class="journey-layer themes-layer" inert>
         <article class="theme-preview theme-paper" data-theme="paper-ink" tabindex="0" aria-label="吊桥主题" data-en-label="The Drawbridge theme">
           <img class="theme-art" src="assets/第三幕-画作-皮拉内西吊桥.webp" srcset="assets/mobile/第三幕-画作-皮拉内西吊桥.webp 1080w, assets/第三幕-画作-皮拉内西吊桥.webp 2847w" sizes="(max-width: 760px) 100vw, 50vw" alt="" aria-hidden="true" loading="lazy" decoding="async">
           <span class="theme-name" data-en="The Drawbridge">吊桥</span>
@@ -118,7 +125,7 @@
   </div>
 
   <div class="release-stage">
-    <div class="journey-layer release-layer" aria-label="魏碑的更多入口" data-en-label="Explore WeiBei">
+    <div class="journey-layer release-layer" aria-label="魏碑的更多入口" data-en-label="Explore WeiBei" inert>
       <div class="release-map">
         <div class="paper-sheet" aria-hidden="true">
           <div class="paper-shadow"></div>
@@ -153,9 +160,9 @@
         <img class="mascot mascot-four" src="assets/Webi-第四幕-下载.webp?v=20260909" alt="Webi 拉下下载箭头的循环动画" data-en-alt="Webi, the WeiBei companion" loading="lazy" decoding="async" width="256" height="256">
         <div class="download-control" data-download-control>
           <a class="primary-download" href="https://github.com/WroughtMind/weibei/releases" data-download-link>
-            <span class="download-title" data-download-title data-en="Download WeiBei">下载 WeiBei</span>
+            <span class="download-title" data-download-title data-en="View releases">查看可用版本</span>
           </a>
-          <button class="download-versions" type="button" data-download-toggle aria-haspopup="menu" aria-expanded="false" aria-label="选择下载版本" data-en-label="Choose download version">
+          <button class="download-versions" type="button" data-download-toggle hidden aria-haspopup="menu" aria-expanded="false" aria-label="选择下载版本" data-en-label="Choose download version">
             <span data-download-caption data-en="Version">版本</span>
             <strong data-download-label data-en="Apple silicon">Apple 芯片</strong>
             <i aria-hidden="true">⌄</i>
@@ -166,6 +173,7 @@
           </div>
         </div>
       </div>
+      <p class="download-status" data-download-status role="status" data-en="Checking releases…">查询版本中…</p>
     </div>
   </div>
 
@@ -216,7 +224,6 @@
     </section>
   </main>
 
-  <script type="module" src="app.js?v=20260909-seo"></script>
+  <script type="module" src="app.js?v=20260912-polish"></script>
 </body>
 </html>
-

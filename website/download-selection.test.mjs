@@ -24,3 +24,8 @@ test('芯片未知时优先当前主力 Apple 芯片版', () => {
   const matched = matchDownloadAssets(assets);
   assert.equal(chooseDownloadId(matched, preferredDownloadIds({ platform: 'MacIntel' })), 'mac-arm64');
 });
+
+test('本机芯片没有安装包时，不擅自推荐另一种芯片', () => {
+  assert.equal(chooseDownloadId(matchDownloadAssets([assets[0]]), preferredDownloadIds({ platform: 'macOS', architecture: 'x86' })), 'mac-intel');
+  assert.equal(chooseDownloadId(matchDownloadAssets([assets[1]]), preferredDownloadIds({ platform: 'macOS', architecture: 'arm' })), 'mac-arm64');
+});

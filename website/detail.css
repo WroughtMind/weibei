@@ -10,6 +10,8 @@
 .faq-list summary { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 17px 10px 17px 24px; cursor: pointer; list-style: none; font-size: clamp(17px, 1.45vw, 21px); text-align: left; }
 .faq-list summary::-webkit-details-marker { display: none; }
 .faq-list summary::after { content: "+"; font: 24px/1 ui-sans-serif, system-ui, sans-serif; transition: transform .22s ease; }
+.faq-list summary:hover { color: var(--vermilion); background: rgba(255,251,243,.24); }
+.faq-list summary:focus-visible { outline: 2px solid var(--vermilion); outline-offset: -2px; }
 .faq-list details[open] summary::after { transform: rotate(45deg); }
 .faq-list details p { margin: -2px 0 22px; padding: 0 54px 0 24px; color: var(--ink-soft); font-size: 14px; line-height: 1.8; text-align: left; }
 
@@ -49,7 +51,7 @@
 :is(.detail-heading, .detail-lead, .faq-list summary, .lab-item h2) { font-family: "WeiBei Stele", serif; font-weight: 400; letter-spacing: .065em; }
 
 @media (max-width: 760px) {
-  .detail-shell { width: 88vw; padding: 92px 0 48px; }
+  .detail-shell { width: 88vw; padding: 120px 0 48px; }
   .detail-heading { font-size: 34px; }
   .detail-lead { margin: 12px auto 24px; font-size: 14px; }
   .faq-list { margin-top: 24px; }
@@ -60,7 +62,7 @@
   .lab-item + .lab-item { border-top: 1px solid var(--line); border-left: 0; }
   .lab-item h2 { font-size: 25px; }
   .lab-item p { margin-top: 10px; font-size: 13px; }
-  .feedback-shell { width: 88vw; padding-top: 102px; }
+  .feedback-shell { width: 88vw; padding-top: 120px; }
   .feedback-kind-grid { grid-template-columns: 1fr 1fr; }
   .feedback-kind-option > span { min-height: 62px; padding: 11px 12px; }
   .feedback-footer { grid-template-columns: 1fr; gap: 14px; }
@@ -70,10 +72,20 @@
 
 
 .guide-shell { max-width: 960px; }
-.guide-shell section { margin: 42px 0; scroll-margin-top: 100px; }
+.guide-shell section { max-width: 42em; margin: 48px auto; scroll-margin-top: 116px; text-align: left; }
 .guide-shell h2 { font-size: clamp(21px, 3vw, 28px); font-weight: 500; line-height: 1.5; }
 .guide-shell p, .guide-shell li { line-height: 1.9; }
-.guide-index, .guide-links { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+.guide-shell section > p, .guide-shell li { color: var(--ink-soft); }
+.guide-shell ol { padding-left: 1.5em; }
+.guide-index, .guide-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 24px; }
+.guide-shell section .guide-links { justify-content: flex-start; }
+.guide-index a, .guide-links a { padding: 8px 0; }
+.guide-index a:hover, .guide-links a:hover { color: var(--vermilion); }
 .guide-shell a { text-decoration: underline; text-underline-offset: 4px; }
 .guide-screenshot { display: block; width: 100%; height: auto; margin: 32px 0; }
 .guide-shell pre { overflow-x: auto; padding: 20px; background: rgba(255,255,255,.35); font-size: 13px; line-height: 1.8; }
+@media (max-width: 760px) {
+  .guide-shell .detail-heading { font-size: 30px; line-height: 1.35; text-wrap: balance; }
+  .guide-shell section { margin: 36px 0; }
+  .guide-index { gap: 4px 20px; }
+}

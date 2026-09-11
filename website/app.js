@@ -6,6 +6,8 @@ const experiencePages = [...document.querySelectorAll('.experience-page')];
 const experienceLabel = document.querySelector('.experience-mode-label');
 const experienceLayer = document.querySelector('.experience-layer');
 const experiencePager = document.querySelector('.window-pager');
+const experienceTabsContainer = document.querySelector('.experience-tabs');
+const experienceTabs = [...document.querySelectorAll('[data-mode-target]')];
 const themePreviews = [...document.querySelectorAll('.theme-preview')];
 const themesLayer = document.querySelector('.themes-layer');
 const downloadLink = document.querySelector('[data-download-link]');
@@ -15,11 +17,13 @@ const downloadLabel = document.querySelector('[data-download-label]');
 const downloadControl = document.querySelector('[data-download-control]');
 const downloadToggle = document.querySelector('[data-download-toggle]');
 const downloadMenu = document.querySelector('[data-download-menu]');
+const downloadStatus = document.querySelector('[data-download-status]');
 const downloadOptions = [...document.querySelectorAll('[data-download-target]')];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const mobileLayout = matchMedia('(max-width: 760px)');
 let activeMode = 0;
 let experiencePaused = false;
+let experienceSelected = false;
 let experienceTimer;
 let activeThemePreview;
 let themePointer;
@@ -29,7 +33,9 @@ let themeGesture;
 let suppressThemeClick = false;
 let matchedDownloads = matchDownloadAssets([]);
 let selectedDownloadId = 'mac-arm64';
-const downloadFallback = downloadLink?.href;
+const releasesURL = downloadLink?.href;
+let releaseState = 'loading';
+let releaseVersion = '';
 
 renderDownloadControl();
 
@@ -49,8 +55,22 @@ function renderDownloadControl() {
   const english = document.documentElement.lang === 'en';
   const target = downloadTargets.find(item => item.id === selectedDownloadId) || downloadTargets[0];
   const asset = matchedDownloads[target.id];
+  const available = Object.values(matchedDownloads).some(item => item?.download_url);
 
-  downloadTitle.textContent = english ? 'Download WeiBei' : '下载 WeiBei';
+  downloadTitle.textContent = asset?.download_url
+    ? (english ? 'Download WeiBei' : '下载 WeiBei')
+    : (english ? 'View releases' : '查看发布进度');
+  downloadControl.dataset.state = releaseState;
+  downloadToggle.hidden = !available;
+  downloadStatus.textContent = asset?.download_url
+    ? (english ? `${releaseVersion} · ${target.label.en}` : `${releaseVersion} · ${target.label.zh}`)
+    : releaseState === 'loading'
+      ? (english ? 'Checking releases…' : '查询版本中…')
+      : releaseState === 'error'
+        ? (english ? 'Could not check releases.' : '暂时无法获取版本。')
+        : available
+          ? (english ? 'No package is published for this Mac yet.' : '此芯片版本暂无公开安装包。')
+          : (english ? 'No public download is available yet.' : '暂无公开安装包。');
   downloadCaption.textContent = english ? 'Version' : '版本';
   downloadLabel.textContent = target.label[english ? 'en' : 'zh'];
   downloadToggle.setAttribute('aria-label', english ? 'Choose download version' : '选择下载版本');
@@ -58,7 +78,7 @@ function renderDownloadControl() {
     downloadLink.href = new URL(asset.download_url, document.baseURI).href;
     downloadLink.download = asset.name;
   } else {
-    downloadLink.href = downloadFallback;
+    downloadLink.href = releasesURL;
     downloadLink.removeAttribute('download');
   }
 
@@ -66,6 +86,7 @@ function renderDownloadControl() {
     const optionTarget = downloadTargets.find(item => item.id === option.dataset.downloadTarget);
     option.querySelector('span').textContent = optionTarget.menuLabel[english ? 'en' : 'zh'];
     option.classList.toggle('is-selected', option.dataset.downloadTarget === selectedDownloadId);
+    option.disabled = !matchedDownloads[optionTarget.id]?.download_url;
   });
 }
 
@@ -99,9 +120,12 @@ detectDownloadEnvironment().then(async environment => {
   selectedDownloadId = preferredIds[0];
   try {
     const response = await fetch(new URL('./release.json', import.meta.url), { cache: 'no-store' });
-    const release = response.ok ? await response.json() : { assets: [] };
+    if (!response.ok) throw new Error('Download information unavailable');
+    const release = await response.json();
     matchedDownloads = matchDownloadAssets(release.available && Array.isArray(release.assets) ? release.assets : []);
-  } catch {}
+    releaseVersion = String(release.version || '');
+    releaseState = Object.values(matchedDownloads).some(item => item?.download_url) ? 'ready' : 'empty';
+  } catch { releaseState = 'error'; }
   selectedDownloadId = chooseDownloadId(matchedDownloads, preferredIds);
   renderDownloadControl();
 });
@@ -113,24 +137,31 @@ const setExperienceMode = nextMode => {
     page.classList.toggle('is-active', active);
     page.setAttribute('aria-hidden', String(!active));
   });
-  experienceLabel.dataset.mode = experiencePages[activeMode].dataset.mode;
+  const mode = experiencePages[activeMode].dataset.mode;
+  experienceLabel.dataset.mode = mode;
+  experienceTabs.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.modeTarget === mode)));
 };
 
 const startExperienceRotation = () => {
   clearInterval(experienceTimer);
   experienceTimer = setInterval(() => {
-    if (!experiencePaused && !reducedMotion && !document.hidden && document.documentElement.dataset.scene === '2') setExperienceMode(activeMode + 1);
+    if (!experiencePaused && !experienceSelected && !reducedMotion && !document.hidden && document.documentElement.dataset.scene === '2') setExperienceMode(activeMode + 1);
   }, 4400);
 };
 
 document.querySelectorAll('.window-pager button').forEach(button => {
   button.addEventListener('click', () => {
+    experienceSelected = true;
     setExperienceMode(activeMode + Number(button.dataset.direction));
-    startExperienceRotation();
   });
 });
 
-[experienceLayer, experiencePager].forEach(element => {
+experienceTabs.forEach(button => button.addEventListener('click', () => {
+  experienceSelected = true;
+  setExperienceMode(experiencePages.findIndex(page => page.dataset.mode === button.dataset.modeTarget));
+}));
+
+[experienceLayer, experiencePager, experienceTabsContainer].forEach(element => {
   element.addEventListener('pointerenter', () => { experiencePaused = true; });
   element.addEventListener('pointerleave', () => { experiencePaused = false; startExperienceRotation(); });
 });
@@ -279,10 +310,18 @@ const observer = new IntersectionObserver(entries => {
   const activeChapter = chapters.reduce((best, chapter) => ratios.get(chapter) > ratios.get(best) ? chapter : best);
   const activeIndex = chapters.indexOf(activeChapter);
   document.documentElement.dataset.scene = String(activeIndex + 1);
+  document.querySelector('.hero-tagline').inert = activeIndex !== 0;
+  [experienceLayer, experiencePager, experienceTabsContainer].forEach(element => { element.inert = activeIndex !== 1; });
+  themesLayer.inert = activeIndex !== 2;
+  document.querySelector('.release-layer').inert = activeIndex !== 3;
   if (activeIndex !== 2) resetThemePreview();
+  if (activeIndex !== 3) closeDownloadMenu();
   if (activeIndex >= 1) preloadSceneFour();
-  railButtons.forEach((button, index) => button.classList.toggle('is-active', index === activeIndex));
+  railButtons.forEach((button, index) => {
+    button.classList.toggle('is-active', index === activeIndex);
+    if (index === activeIndex) button.setAttribute('aria-current', 'step');
+    else button.removeAttribute('aria-current');
+  });
 }, { threshold: [.25, .5, .75] });
 
 chapters.forEach(chapter => observer.observe(chapter));
-
