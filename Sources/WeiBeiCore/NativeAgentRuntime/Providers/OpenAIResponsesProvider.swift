@@ -43,7 +43,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
     private func makeURLOrURLRequestWithoutSearch(_ request: NativeLLMRequest) -> URLRequest {
         var urlRequest = makeURLRequest(request)
         if let body = try? JSONSerialization.data(
-            withJSONObject: Self.payload(for: request, webSearchSupported: false)
+            withJSONObject: Self.payload(for: request, webSearchSupported: false), options: [.sortedKeys]
         ) {
             urlRequest.httpBody = body
         }
@@ -64,7 +64,10 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         if let accountID, !accountID.isEmpty {
             urlRequest.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
         }
-        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request, webSearchSupported: webSearchSupported))
+        if chatgptBackend, let key = request.promptCacheKey {
+            urlRequest.setValue(key, forHTTPHeaderField: "session-id")
+        }
+        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request, webSearchSupported: webSearchSupported), options: [.sortedKeys])
         return urlRequest
     }
 
@@ -95,6 +98,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         ]
         if let instructions = assembled.instructions { payload["instructions"] = instructions }
         if !tools.isEmpty { payload["tools"] = tools }
+        if let key = request.promptCacheKey { payload["prompt_cache_key"] = key }
         payload["include"] = include
         if let effort = request.reasoningEffort, !effort.isEmpty {
             payload["reasoning"] = ["effort": effort]

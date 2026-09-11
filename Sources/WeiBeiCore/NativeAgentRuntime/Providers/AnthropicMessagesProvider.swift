@@ -32,7 +32,7 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
     private func makeURLRequestWithoutSearch(_ request: NativeLLMRequest) -> URLRequest {
         var urlRequest = makeURLRequest(request)
         if let body = try? JSONSerialization.data(
-            withJSONObject: Self.payload(for: request, webSearchTool: false)
+            withJSONObject: Self.payload(for: request, webSearchTool: false), options: [.sortedKeys]
         ) {
             urlRequest.httpBody = body
         }
@@ -45,7 +45,7 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request, webSearchTool: webSearchTool))
+        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request, webSearchTool: webSearchTool), options: [.sortedKeys])
         return urlRequest
     }
 
@@ -90,13 +90,29 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
                 ])
             }
         }
+        // 固定提示和增长中的历史分别设置缓存点，同样适用于 MiniMax/Vercel 的 Messages 接口。
+        let cacheControl = ["type": "ephemeral"]
+        if let last = messages.indices.last {
+            var content = messages[last]["content"] as? [[String: Any]] ?? []
+            if let text = messages[last]["content"] as? String, !text.isEmpty {
+                content = [["type": "text", "text": text]]
+            }
+            if let block = content.lastIndex(where: {
+                !["thinking", "redacted_thinking"].contains($0["type"] as? String ?? "")
+            }) {
+                content[block]["cache_control"] = cacheControl
+                messages[last]["content"] = content
+            }
+        }
         var payload: [String: Any] = [
             "model": request.model,
             "max_tokens": request.maxTokens ?? 16_384,
             "stream": true,
             "messages": messages,
         ]
-        if let system { payload["system"] = system }
+        if let system, !system.isEmpty {
+            payload["system"] = [["type": "text", "text": system, "cache_control": cacheControl]]
+        }
         var tools: [[String: Any]] = request.tools.map { tool in
             [
                 "name": tool.name,

@@ -131,10 +131,183 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(messages, [
             NativeModelMessage(role: .user, content: "第一问"),
             NativeModelMessage(role: .assistant, content: "第一答"),
-            NativeModelMessage(role: .user, content: "第二问"),
+            NativeModelMessage(role: .user, content: "第二问\n\n" + NativePromptAssembler.turnContext(contextRevision: "r2")),
             NativeModelMessage(role: .assistant, content: "第二答"),
         ])
         XCTAssertTrue(result.contentBlocks.isEmpty)
+    }
+
+    // 连续追问、笔记确认和工具续跑只追加上下文，保留已经发给模型的完整前缀。
+    func testPromptCachePrefixSurvivesToolStepsAndNewTurns() async throws {
+        struct CacheSequenceAdapter: NativeLLMAdapter {
+            let family = "mock"
+            let capture: RequestCapture
+
+            func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+                capture.requests.append(request)
+                let chunks: [NativeStreamChunk] = capture.requests.count == 1
+                    ? [.toolCallDelta(index: 0, id: "memory-read", name: "weibei_read_learning_memory", argumentsDelta: "{}"),
+                       .finish(reason: .toolCalls, replayState: nil)]
+                    : [.textDelta(index: 0, text: "已读取"), .finish(reason: .stop, replayState: nil)]
+                return MockLLMAdapter(chunks: chunks).stream(request)
+            }
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-cache-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capture = RequestCapture()
+        let runtime = NativeStudyAgentRuntime(
+            model: "mock", adapter: CacheSequenceAdapter(capture: capture), ledgerRoot: root,
+            systemPromptText: "固定系统提示"
+        )
+        var request = testRequest()
+        request.projectScope = StudyAgentProjectScope(kind: .global, chatID: "cache-chat")
+        request.contextRevision = "first-turn-revision"
+        _ = try await runtime.respond(to: request)
+        request.id = UUID()
+        request.question = "关联刚刚确认的笔记"
+        request.contextRevision = "second-turn-revision"
+        request.confirmedNotes = [StudyAgentPersistedNoteRef(itemID: "confirmed-note", title: "确认的笔记")]
+        _ = try await runtime.respond(to: request)
+
+        XCTAssertEqual(capture.requests.count, 3)
+        for (previous, next) in zip(capture.requests, capture.requests.dropFirst()) {
+            XCTAssertEqual(Array(next.messages.prefix(previous.messages.count)), previous.messages)
+            XCTAssertEqual(next.tools.map(\.name), previous.tools.map(\.name))
+            XCTAssertEqual(next.promptCacheKey, previous.promptCacheKey)
+        }
+        let first = try XCTUnwrap(capture.requests.first)
+        let last = try XCTUnwrap(capture.requests.last)
+        XCTAssertEqual(first.promptCacheKey, "cache-chat")
+        XCTAssertEqual(OpenAIResponsesProvider.payload(for: last)["prompt_cache_key"] as? String, "cache-chat")
+        let codex = OpenAIResponsesProvider(
+            baseURL: URL(string: "https://chatgpt.com/backend-api/codex")!,
+            accessToken: "test", chatgptBackend: true
+        )
+        XCTAssertEqual(codex.makeURLRequest(last).value(forHTTPHeaderField: "session-id"), "cache-chat")
+        XCTAssertFalse(first.messages[0].content.contains("first-turn-revision"))
+        XCTAssertFalse(last.messages[0].content.contains("second-turn-revision"))
+        XCTAssertTrue(first.messages.last?.content.contains("first-turn-revision") == true)
+        XCTAssertTrue(last.messages.last?.content.contains("second-turn-revision") == true)
+        XCTAssertTrue(last.messages.last?.content.contains("confirmed-note") == true)
+        let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("cache-chat/ledger.jsonl"))
+        let persisted = await ledger.deriveMessages()
+        XCTAssertEqual(Array(persisted.prefix(last.messages.count - 1)), Array(last.messages.dropFirst()))
+        request.projectScope = StudyAgentProjectScope(kind: .global, chatID: "another-chat")
+        _ = try await runtime.respond(to: request)
+        XCTAssertEqual(capture.requests.last?.promptCacheKey, "another-chat")
+    }
+
+    // 长工具链压缩到本轮内部后，仍能使用本轮修订号和已确认笔记，且重读会话时不丢失。
+    func testStepCompactionPreservesCurrentTurnContext() async throws {
+        struct StepCompactionAdapter: NativeLLMAdapter {
+            let family = "mock"
+            let capture: RequestCapture
+            let recoverOverflow: Bool
+
+            func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+                capture.requests.append(request)
+                if request.messages.first?.content == NativeContextCompaction.summarySystemPrompt {
+                    return MockLLMAdapter(chunks: [
+                        .textDelta(index: 0, text: "已读取资料，继续处理。"),
+                        .finish(reason: .stop, replayState: nil),
+                    ]).stream(request)
+                }
+                if capture.requests.count == 1 {
+                    return MockLLMAdapter(chunks: [
+                        .toolCallDelta(index: 0, id: "read-memory", name: "weibei_read_learning_memory", argumentsDelta: "{}"),
+                        .usage(NativeTokenUsage(inputTokens: 1_000)),
+                        .finish(reason: .toolCalls, replayState: nil),
+                    ]).stream(request)
+                }
+                if recoverOverflow && capture.requests.count == 2 {
+                    return AsyncThrowingStream { continuation in
+                        continuation.finish(throwing: NativeLLMFailure(code: "context_length_exceeded", status: 400, message: "overflow"))
+                    }
+                }
+                return MockLLMAdapter(chunks: [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)]).stream(request)
+            }
+        }
+        for recoverOverflow in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-step-context-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let capture = RequestCapture()
+            let runtime = NativeStudyAgentRuntime(
+                model: "mock", adapter: StepCompactionAdapter(capture: capture, recoverOverflow: recoverOverflow),
+                contextWindow: recoverOverflow ? nil : 1_024, ledgerRoot: root,
+                systemPromptText: "固定提示"
+            )
+            var request = testRequest()
+            request.projectScope = StudyAgentProjectScope(kind: .global, chatID: "step-context")
+            request.contextRevision = UUID().uuidString
+            request.confirmedNotes = [StudyAgentPersistedNoteRef(itemID: "confirmed-step-note", title: "已确认的笔记")]
+            _ = try await runtime.respond(to: request)
+
+            let last = try XCTUnwrap(capture.requests.last)
+            let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("step-context/ledger.jsonl"))
+            let events = await ledger.allEvents()
+            let checkpoint = try XCTUnwrap(events.first { $0.type == .contextCompaction })
+            let user = try XCTUnwrap(events.first { $0.type == .userMessage })
+            XCTAssertGreaterThan(try XCTUnwrap(checkpoint.firstKeptSeq), user.seq)
+            for messages in [last.messages, await ledger.deriveMessages()] {
+                XCTAssertTrue(messages.contains { $0.content.contains(request.contextRevision) })
+                XCTAssertTrue(messages.contains { $0.content.contains("confirmed-step-note") })
+            }
+            XCTAssertEqual(last.promptCacheKey, "step-context")
+        }
+    }
+
+    // 缓存标记覆盖固定提示和最新消息，同时保留文字、图片和工具结果的内容与关联。
+    func testAnthropicCacheBreakpointsPreserveMessageContent() throws {
+        let image = NativeImagePart(mediaType: "image/png", data: Data([137, 80, 78, 71]))
+        let endings = [
+            NativeModelMessage(role: .user, content: "新问题"),
+            NativeModelMessage(role: .user, content: "看这张图", images: [image]),
+            NativeModelMessage(role: .tool, content: "读取结果", toolCallID: "read-1", images: [image]),
+        ]
+        for ending in endings {
+            let request = NativeLLMRequest(model: "claude-test", messages: [
+                NativeModelMessage(role: .system, content: "固定提示"),
+                NativeModelMessage(role: .user, content: "上一问"),
+                NativeModelMessage(role: .assistant, content: "上一答"),
+                ending,
+            ])
+            let payload = AnthropicMessagesProvider.payload(for: request)
+            let system = try XCTUnwrap((payload["system"] as? [[String: Any]])?.first)
+            XCTAssertEqual(system["text"] as? String, "固定提示")
+            XCTAssertEqual((system["cache_control"] as? [String: String])?["type"], "ephemeral")
+            let messages = try XCTUnwrap(payload["messages"] as? [[String: Any]])
+            XCTAssertEqual(messages[0]["content"] as? String, "上一问")
+            var blocks = try XCTUnwrap(messages.last?["content"] as? [[String: Any]])
+            XCTAssertEqual((blocks.last?["cache_control"] as? [String: String])?["type"], "ephemeral")
+            blocks[blocks.count - 1].removeValue(forKey: "cache_control")
+            let content = try JSONSerialization.data(withJSONObject: blocks, options: [.sortedKeys])
+            let text = String(decoding: content, as: UTF8.self)
+            XCTAssertTrue(text.contains(ending.content))
+            if !ending.images.isEmpty { XCTAssertTrue(text.contains(image.base64)) }
+            if let callID = ending.toolCallID {
+                XCTAssertEqual(blocks.first?["tool_use_id"] as? String, callID)
+            }
+        }
+    }
+
+    // 四种接口重复发送同一上下文时，工具参数与请求字节不能因字典顺序漂移。
+    func testProviderRequestEncodingIsStableForPromptCaching() async throws {
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let request = NativeLLMRequest(model: "test", messages: [
+            NativeModelMessage(role: .system, content: "固定提示"),
+            NativeModelMessage(role: .user, content: "问题"),
+        ], tools: await registry.resolved(scope: .global))
+        let encoders: [(NativeLLMRequest) throws -> URLRequest] = [
+            OpenAIResponsesProvider(baseURL: URL(string: "https://api.openai.com/v1")!, accessToken: "test").makeURLRequest,
+            OpenAIChatCompletionsProvider(apiKey: "test").makeURLRequest,
+            AnthropicMessagesProvider(apiKey: "test").makeURLRequest,
+            GoogleGenerativeAIProvider(apiKey: "test").makeURLRequest,
+        ]
+        for encode in encoders {
+            let bodies = try (0..<30).map { _ in try XCTUnwrap(encode(request).httpBody) }
+            XCTAssertEqual(Set(bodies).count, 1)
+        }
     }
 
     // A streamed figure keeps its place between text, including an update to the same figure.
@@ -654,7 +827,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             chunks: [.finish(reason: .stop, replayState: nil)],
             inspect: { request in
                 let firstUserMessage = request.messages.first { $0.role == .user }?.content
-                XCTAssertEqual(firstUserMessage, expectedUserMessage)
+                XCTAssertTrue(firstUserMessage?.hasPrefix(expectedUserMessage) == true)
             }
         )
         let request = StudyAgentRequest(
@@ -1466,6 +1639,7 @@ private func testRequest() -> StudyAgentRequest {
 
 private final class RequestCapture: @unchecked Sendable {
     var request: NativeLLMRequest?
+    var requests: [NativeLLMRequest] = []
 }
 
 private final class TitleCapture: @unchecked Sendable {

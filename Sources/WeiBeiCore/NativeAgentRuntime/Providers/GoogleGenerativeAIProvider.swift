@@ -32,7 +32,7 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
     private func makeURLRequestWithoutSearch(_ request: NativeLLMRequest) -> URLRequest {
         var urlRequest = makeURLRequest(request)
         if let body = try? JSONSerialization.data(
-            withJSONObject: Self.payload(for: request, groundingSearch: false)
+            withJSONObject: Self.payload(for: request, groundingSearch: false), options: [.sortedKeys]
         ) {
             urlRequest.httpBody = body
         }
@@ -47,7 +47,7 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request, groundingSearch: groundingSearch))
+        urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: Self.payload(for: request, groundingSearch: groundingSearch), options: [.sortedKeys])
         return urlRequest
     }
 

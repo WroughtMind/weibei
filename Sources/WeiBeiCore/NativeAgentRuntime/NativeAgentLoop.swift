@@ -58,7 +58,14 @@ public actor NativeAgentLoop {
            let text = String(data: data, encoding: .utf8) {
             userMessage += "\n\n选区引用：\n" + text
         }
-        _ = try await ledger.append { seq, time in
+        let turnContext = NativePromptAssembler.turnContext(
+            contextRevision: request.contextRevision,
+            confirmedNotes: request.confirmedNotes
+        )
+        if !turnContext.isEmpty {
+            userMessage += "\n\n" + turnContext
+        }
+        let userMessageEvent = try await ledger.append { seq, time in
             NativeSessionEvent(
                 type: .userMessage,
                 seq: seq,
@@ -112,7 +119,12 @@ public actor NativeAgentLoop {
                 ) {
                     assertionFailure(invariant)
                 }
-                var llmRequest = NativeLLMRequest(model: model, messages: messages, tools: tools)
+                var llmRequest = NativeLLMRequest(
+                    model: model, messages: messages, tools: tools,
+                    promptCacheKey: request.projectScope.chatID.isEmpty
+                        ? request.id.uuidString.lowercased()
+                        : request.projectScope.chatID.lowercased()
+                )
                 // 搜索开关对全协议族生效;推理档仅 Responses 家族支持。
                 llmRequest.enableNativeWebSearch = tools.contains { $0.name == "weibei_course_map" }
                 if adapter.family.contains("responses") {
@@ -131,7 +143,8 @@ public actor NativeAgentLoop {
                             request: llmRequest,
                             projection: projection,
                             adapter: adapter,
-                            contextWindow: effectiveContextWindow
+                            contextWindow: effectiveContextWindow,
+                            turnContext: (userMessageEvent.seq, turnContext)
                         )
                     } catch is CancellationError {
                         throw CancellationError()
@@ -219,7 +232,8 @@ public actor NativeAgentLoop {
                                 request: llmRequest,
                                 projection: recoveryProjection,
                                 adapter: adapter,
-                                contextWindow: effectiveContextWindow
+                                contextWindow: effectiveContextWindow,
+                                turnContext: (userMessageEvent.seq, turnContext)
                             )
                         } catch is CancellationError {
                             throw CancellationError()
