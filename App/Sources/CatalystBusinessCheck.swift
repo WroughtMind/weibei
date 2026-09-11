@@ -286,6 +286,37 @@ enum CatalystBusinessCheck {
             if CommandLine.arguments.contains("--exit-after-check") { exit(0) }
         } catch {
             result["failure"] = error.localizedDescription
+            let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+            result["failure_state"] = [
+                "application_state": UIApplication.shared.applicationState.rawValue,
+                "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
+                "motion_preference": store.motionPreference.rawValue,
+                "system_reduce_motion": UIAccessibility.isReduceMotionEnabled,
+                "agent_running": store.isAgentRunningInActiveChat,
+                "stream_text_count": store.agentStreaming.text.count,
+                "messages": store.messages.map { ["role": $0.role.rawValue, "state": $0.completionState.rawValue, "text_count": String($0.text.count)] },
+                "views": windows.flatMap(descendants).map { ["type": String(reflecting: type(of: $0)), "frame": String(describing: $0.frame), "hidden": String($0.isHidden)] }
+            ]
+            if let controller = conversation() {
+                let collection = controller.collection
+                result["conversation_state"] = [
+                    "messages": controller.messages.map { message in
+                        ["id": message.id, "state": message.original?.completionState.rawValue ?? "",
+                         "blocks": String(message.blocks.count), "auxiliary_height": String(describing: message.auxiliaryHeight)]
+                    },
+                    "section_items": (0..<collection.numberOfSections).map { collection.numberOfItems(inSection: $0) },
+                    "visible_items": collection.indexPathsForVisibleItems.map { [$0.section, $0.item] },
+                    "bounds": String(describing: collection.bounds),
+                    "content_size": String(describing: collection.contentSize),
+                    "follows_latest": controller.followsLatest
+                ]
+            }
+            if let window = conversation()?.view.window ?? windows.first {
+                let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                }
+                try? snapshot.pngData()?.write(to: root.appendingPathComponent("business-failure.png"))
+            }
             try? write("failed")
             store.showImportantOperationError("候选业务检查失败：\(error.localizedDescription)")
             if CommandLine.arguments.contains("--exit-after-check") { exit(1) }
