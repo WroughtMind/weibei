@@ -29,8 +29,8 @@ export const preferredDownloadIds = ({ platform = '', architecture = '' }) => {
   const normalizedPlatform = platform.toLowerCase();
   const normalizedArchitecture = architecture.toLowerCase();
   if (/mac|darwin/.test(normalizedPlatform)) {
-    if (/arm|aarch64/.test(normalizedArchitecture)) return ['mac-arm64', 'mac-intel'];
-    if (/x86|intel/.test(normalizedArchitecture)) return ['mac-intel', 'mac-arm64'];
+    if (/arm|aarch64/.test(normalizedArchitecture)) return ['mac-arm64'];
+    if (/x86|intel/.test(normalizedArchitecture)) return ['mac-intel'];
     return ['mac-arm64', 'mac-intel'];
   }
   return ['mac-arm64', 'mac-intel'];
