@@ -99,9 +99,12 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         while let element = pending.popLast() {
             guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
             if element.accessibilityIdentifier() == "agent-thinking-status" {
-                let frame = element.accessibilityFrame()
-                // UIKit accessibility uses the main screen's top-left origin.
-                return CGRect(x: frame.minX, y: NSScreen.screens[0].frame.maxY - frame.maxY,
+                guard let window = element.accessibilityWindow() as? NSWindow,
+                      let content = window.contentView else { return .null }
+                let frame = content.convert(window.convertFromScreen(element.accessibilityFrame()), from: nil)
+                // Compare in the window, independent of its display and screen origin.
+                return CGRect(x: frame.minX - content.bounds.minX,
+                              y: content.isFlipped ? frame.minY - content.bounds.minY : content.bounds.maxY - frame.maxY,
                               width: frame.width, height: frame.height)
             }
             pending.append(contentsOf: (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol })

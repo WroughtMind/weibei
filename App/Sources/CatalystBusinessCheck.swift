@@ -218,10 +218,15 @@ enum CatalystBusinessCheck {
                               let host = descendants(footer).compactMap({ $0 as? CatalystHostingView }).first else { return false }
                         let frame = CatalystDesktopWindow.shared.acceptanceThinkingStatusFrame()
                         guard !frame.isNull, frame.width > 0, frame.height > 0 else { return false }
+                        var clippingBounds: [String] = []
+                        defer { result["waiting_status_layout"] = ["status": String(describing: frame), "clipping_bounds": clippingBounds] }
                         var parent: UIView? = host.controller.view
                         while let view = parent {
-                            let bounds = UIAccessibility.convertToScreenCoordinates(view.bounds, in: view)
-                            if view.clipsToBounds && (frame.minY < bounds.minY - 1 || frame.maxY > bounds.maxY + 1) { return false }
+                            if view.clipsToBounds {
+                                let bounds = view.convert(view.bounds, to: view.window)
+                                clippingBounds.append(String(describing: bounds))
+                                if frame.minY < bounds.minY - 1 || frame.maxY > bounds.maxY + 1 { return false }
+                            }
                             parent = view.superview
                         }
                         return true
