@@ -125,7 +125,8 @@ final class NotesTypographyHarness: NSObject, WKScriptMessageHandler {
         js("window.WeiBeiEditor.setTextScale(1.25); 0")
         settle()
         js("document.querySelector('.ProseMirror p:last-child').scrollIntoView({block:'center'}); 0")
-        settle()
+        // Hidden WebKit delivers resize/scroll notifications asynchronously.
+        wait { js("!document.querySelector('.weibei-line-plus').hidden && plusAligned()") as? Bool == true }
         check("!document.querySelector('.weibei-line-plus').hidden && plusAligned()", "the insert button stays beside the caret after split-pane resizing and text scaling")
         capture("notes-plus-narrow")
         js("window.WeiBeiEditor.setTextScale(1); 0")
