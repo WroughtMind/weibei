@@ -1,6 +1,6 @@
 import { commandsCtx, Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, parserCtx, rootCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
-import { autoInsertSpanPlugin, gfm } from '@milkdown/kit/preset/gfm';
+import { autoInsertSpanPlugin, gfm, strikethroughInputRule, strikethroughSchema } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 import { history } from '@milkdown/kit/plugin/history';
 import { clipboard } from '@milkdown/kit/plugin/clipboard';
@@ -21,7 +21,7 @@ import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
 import { closeHistory, redo, undo } from '@milkdown/kit/prose/history';
-import { nodeRule } from '@milkdown/kit/prose';
+import { markRule, nodeRule } from '@milkdown/kit/prose';
 import { Fragment } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
@@ -113,6 +113,11 @@ let mermaidPreviewGeneration = 0;
 const pendingAttachments = new Map();
 const pendingImagePickers = new Map();
 const weiBeiSlash = WEIBEI_EDITOR_RUNTIME ? slashFactory('WEIBEI_BLOCK_COMMAND') : null as any;
+// Empty tilde pairs are delimiters, not content to strike through.
+const weiBeiStrikethroughInputRule = $inputRule((ctx) => markRule(
+  /(?<![\w:/~])(~{1,2})([^~\n]+?)\1(?![\w/~])$/,
+  strikethroughSchema.type(ctx),
+));
 let mathTypedLandingPosition: number | null = null;
 const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => nodeRule(
   inlineMathInputPattern,
@@ -2473,23 +2478,27 @@ const transactionTouchesHeading = (transaction: any) => transaction.steps.some((
   return touchesHeading;
 });
 
-/** Input rules read only left of the caret; also finish a pre-typed bold closer. */
-const completePairedStrong = (view: any, from: number, to: number, text: string) => {
+/** Input rules read only left of the caret; also finish pre-typed inline closers. */
+const completePairedMark = (view: any, from: number, to: number, text: string) => {
   if (!isEditable || view.composing) return false;
   const { state } = view;
   const $from = state.doc.resolve(from);
   const $to = state.doc.resolve(to);
   if (!$from.sameParent($to) || !$from.parent.isTextblock || $from.parent.type.spec.code) return false;
   const after = $to.parent.textBetween($to.parentOffset, $to.parent.content.size, '\uFFFC', '\uFFFC');
-  const closer = after.slice(0, 2);
-  if (closer !== '**' && closer !== '__') return false;
+  const closer = /^(?:\*\*|__|~~|==|\*|_|`)/.exec(after)?.[0];
+  if (!closer || after[closer.length] === closer[0]) return false;
   const before = $from.parent.textBetween(0, $from.parentOffset, '\uFFFC', '\uFFFC');
-  const match = /(?<![\w:/])(?:\*\*|__)([^*_\n]+?)(?:\*\*|__)$/.exec(before + text + closer);
-  if (!match || !match[1].trim() || !match[0].startsWith(closer)) return false;
+  const opening = before.lastIndexOf(closer);
+  if (opening < 0) return false;
+  const content = before.slice(opening + closer.length) + text;
+  if (!content.trim() || content.includes(closer[0]) || /[\n\uFFFC]/.test(content)) return false;
+  const previous = before[opening - 1] || '';
+  if (previous === closer[0] || (['**', '__', '_', '~~'].includes(closer) && /[\w:/]/.test(previous))) return false;
   let slashes = 0;
-  for (let i = match.index - 1; i >= 0 && before[i] === '\\'; i -= 1) slashes += 1;
+  for (let i = opening - 1; i >= 0 && before[i] === '\\'; i -= 1) slashes += 1;
   if (slashes % 2) return false;
-  const start = from + text.length + closer.length - match[0].length;
+  const start = $from.start() + opening;
   let literal = false;
   state.doc.nodesBetween(start, to + closer.length, (node: any) => {
     if (node.marks.some((mark: any) => mark.type.spec.code)) literal = true;
@@ -2498,7 +2507,11 @@ const completePairedStrong = (view: any, from: number, to: number, text: string)
   const tr = state.tr.insertText(text, from, to);
   const end = from + text.length;
   tr.delete(end, end + closer.length).delete(start, start + closer.length);
-  const mark = state.schema.marks.strong.create({ marker: closer[0] });
+  const markNames: Record<string, string> = {
+    '**': 'strong', '__': 'strong', '*': 'emphasis', '_': 'emphasis',
+    '~~': 'strike_through', '==': 'highlight', '`': 'inlineCode',
+  };
+  const mark = state.schema.marks[markNames[closer]].create({ marker: closer[0] });
   tr.addMark(start, end - closer.length, mark);
   tr.setSelection(TextSelection.create(tr.doc, end - closer.length)).addStoredMark(mark);
   view.dispatch(tr);
@@ -2667,7 +2680,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       if (!isEditable) return false;
       const incoming = String(text || '');
       if (!incoming) return false;
-      if (completePairedStrong(view, from, to, incoming)) return true;
+      if (completePairedMark(view, from, to, incoming)) return true;
       const { $from } = view.state.selection;
       if (!view.composing && $from.parent.type.name === 'paragraph' && /^[\u200B\uFEFF]+$/.test($from.parent.textContent)) {
         view.dispatch(view.state.tr.insertText(incoming, $from.start(), $from.end()));
@@ -3014,7 +3027,7 @@ const publishCompletedCompositionMarkdown = () => {
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const { from, to } = view.state.selection;
-    completePairedStrong(view, from, to, '');
+    completePairedMark(view, from, to, '');
   });
   compositionEndPending = false;
   compositionStartMarkdown = null;
@@ -3897,7 +3910,7 @@ editorBuilder = editorBuilder
   .use(commonmark)
   // The old Safari IME widget interrupts native composition when its caret is at
   // the end, leaving compositionend missing and all input commands disabled.
-  .use(gfm.filter((plugin) => plugin !== autoInsertSpanPlugin))
+  .use(gfm.filter((plugin) => plugin !== autoInsertSpanPlugin && plugin !== strikethroughInputRule))
   .use(structuredMarkdown)
   .use(weiBeiMath)
   .use(streaming)
@@ -3905,6 +3918,7 @@ editorBuilder = editorBuilder
 
 if (WEIBEI_EDITOR_RUNTIME) {
   editorBuilder = editorBuilder
+    .use(weiBeiStrikethroughInputRule)
     .use($prose(() => createSyntaxMarksPlugin({
       isEditable: () => isEditable,
       isStreaming: () => streamingMarkdownBuffer !== null,

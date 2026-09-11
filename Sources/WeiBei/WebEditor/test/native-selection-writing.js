@@ -11,29 +11,38 @@ const reset = async (markdown = '') => {
   editor.selectDocumentEndForCheck();
   await pause();
 };
-// Complete pre-typed emphasis pairs with real native input, including Chinese IME.
-for (const marker of ['**', '__']) {
+// Every inline format accepts pre-typed pairs, ordinary input and committed Chinese.
+for (const [marker, selector] of [
+  ['**', 'strong'], ['__', 'strong'], ['*', 'em'], ['_', 'em'],
+  ['==', 'mark.weibei-highlight'], ['~~', 'del'], ['`', 'code'],
+]) {
+  const composing = marker !== '__';
+  window.webkit.messageHandlers.nativeInput.postMessage({ operation: 'checkpoint', text: `pair ${marker} ${composing ? 'IME' : 'text'}` });
   await reset();
   for (const character of marker.repeat(2)) await native('insert', character);
-  await native('key', '\uF702', { keyCode: 123 });
-  await native('key', '\uF702', { keyCode: 123 });
-  if (marker === '**') {
+  expect(document.querySelector('.ProseMirror').textContent === marker.repeat(2)
+    && !document.querySelector('.ProseMirror ' + selector), 'An empty pair converted prematurely: ' + marker);
+  for (let i = 0; i < marker.length; i += 1) await native('key', '\uF702', { keyCode: 123 });
+  if (composing) {
+    await native('marked', 'z', { caretAtEnd: true });
     await native('marked', 'zhong', { caretAtEnd: true });
-    expect(document.querySelector('.ProseMirror').textContent === '**zhong**', 'Formatting interrupted active pinyin');
+    expect(document.querySelector('.ProseMirror').textContent === marker + 'zhong' + marker,
+      'Formatting interrupted active pinyin: ' + marker);
     await native('insert', '中文');
   } else {
-    await native('insert', 'Bold');
+    await native('insert', 'Text');
   }
-  const content = marker === '**' ? '中文' : 'Bold';
-  expect(document.querySelector('.ProseMirror strong')?.textContent === content,
-    'Typing inside a pre-typed pair did not become bold: ' + editor.getMarkdown());
+  const content = composing ? '中文' : 'Text';
+  expect(document.querySelector('.ProseMirror ' + selector)?.textContent === content
+    && document.querySelector('.ProseMirror').textContent === content,
+    'Typing inside a pre-typed pair did not format: ' + marker + ': ' + editor.getMarkdown());
   await native('insert', '续');
   const saved = editor.getMarkdown();
-  expect(document.querySelector('.ProseMirror strong')?.textContent === content + '续', 'Continued input left the bold run');
-  expect(editor.undoForCheck() && editor.getMarkdown() !== saved, 'Bold input could not be undone');
-  expect(editor.redoForCheck() && editor.getMarkdown() === saved, 'Redo did not restore bold input');
+  expect(document.querySelector('.ProseMirror ' + selector)?.textContent === content + '续', 'Continued input left its format: ' + marker);
+  expect(editor.undoForCheck() && editor.getMarkdown() !== saved, 'Formatted input could not be undone: ' + marker);
+  expect(editor.redoForCheck() && editor.getMarkdown() === saved, 'Redo did not restore formatted input: ' + marker);
   editor.setMarkdown(saved);
-  expect(document.querySelector('.ProseMirror strong')?.textContent === content + '续', 'Reloading lost bold formatting');
+  expect(document.querySelector('.ProseMirror ' + selector)?.textContent === content + '续', 'Reloading lost formatting: ' + marker);
 }
 await reset('`****`');
 getSelection().collapse(document.querySelector('.ProseMirror code').firstChild, 2);
