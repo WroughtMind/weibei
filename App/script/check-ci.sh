@@ -8,7 +8,15 @@ CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-business-ci.XXXXXX")"
 python3 App/script/business-server.py --output "$CHECK_DIR" > "$CHECK_DIR/server.log" 2>&1 &
 server_pid=$!
 mkdir -p App/Evidence
-trap 'kill "$server_pid" 2>/dev/null || true; cp "$CHECK_DIR/server.log" App/Evidence/ci-server.log' EXIT
+save_evidence() {
+  kill "$server_pid" 2>/dev/null || true
+  for file in "$CHECK_DIR/server.log" "$CHECK_DIR/requests.jsonl" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-check.json" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
+    [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
+  done
+}
+trap save_evidence EXIT
 for _ in {1..600}; do
   [[ ! -s "$CHECK_DIR/endpoint.txt" ]] || break
   kill -0 "$server_pid"
@@ -35,11 +43,12 @@ evidence = Path('App/Evidence')
 def launch(argument):
     subprocess.run(['open', '-n', '-W', app, '--args', argument], check=True, timeout=360)
 
-def verify(path, source_key):
+def verify(path, source_key, status=None):
     result = json.loads(path.read_text())
     assert result[source_key] == source and result['source_dirty'] is False, result
     assert result['platform'] == 'Mac Catalyst', result
     assert result['checks'] and all(v == 'passed' for v in result['checks'].values()), result
+    assert status is None or result['status'] == status, result
     return result
 
 launch('--self-check')
@@ -50,10 +59,10 @@ for filename in ['latest.json', 'window.png', 'diagram.png']:
 
 business_path = support / 'Workspace/business-check.json'
 launch('--exit-after-check')
-assert verify(business_path, 'source')['status'] == 'awaiting_reopen'
+verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
-business = verify(business_path, 'source')
-assert business['status'] == 'passed' and len(business['checks']) == 19, business
+business = verify(business_path, 'source', 'passed')
+assert len(business['checks']) == 19, business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
 print('11 项会话检查与 19 项原业务保存重开检查通过；不替代鼠标、输入法及触控板体验验收。')
