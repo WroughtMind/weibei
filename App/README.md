@@ -17,6 +17,8 @@ npm ci
 
 主程序、PDF 助手、桥接和嵌套框架在最终签名前裁成单架构。资源字体、公式、图片和图表保留；编译期框架头文件与模块接口不进入安装包。调试符号在 App 外单独保留并核对 UUID。安装包沿用根目录 `script/build_release_dmg.sh`，详见[双架构发布流程](../Docs/releases/dual-architecture.md)。
 
+临时（ad-hoc）签名没有开发团队身份，根应用需带 `disable-library-validation` 权限才能动态加载窗口桥；其强化运行时和嵌套签名仍保留。开发签名和 Developer ID 签名不添加此权限。静态验签不能替代实际启动检查。
+
 ## 身份、数据和更新
 
 正式身份保持 `com.changfenhuang.weibei`，名称为“魏碑”，使用原有工作区初始化方式和资料目录。版本、构建号、源码提交及干净状态写入 App 元数据；两种架构使用同一源码和功能，分别选择自己的更新源。

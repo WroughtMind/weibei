@@ -150,8 +150,15 @@ for bundle in bundles+[app]:
     with info.open('rb') as f:executable=plistlib.load(f)['CFBundleExecutable']
     main_executables.add((executable_dir/executable).resolve())
 standalone=[p for p in binaries if p.resolve() not in main_executables]
-for p in sorted(standalone+bundles,key=lambda p:len(p.parts),reverse=True)+[app]:
+for p in sorted(standalone+bundles,key=lambda p:len(p.parts),reverse=True):
     subprocess.run(args+[str(p)],check=True)
+root_args=args
+if identity=='-':
+    # Ad-hoc code has no Team ID for the runtime-loaded AppKit bridge to share.
+    entitlements=app.parent/'adhoc-entitlements.plist'
+    entitlements.write_bytes(plistlib.dumps({'com.apple.security.cs.disable-library-validation':True}))
+    root_args=args+['--entitlements',str(entitlements)]
+subprocess.run(root_args+[str(app)],check=True)
 print(f'packaged_architecture={arch}; signed_macho_count={len(binaries)}')
 SIGN
 codesign --verify --deep --strict "$STAGED_APP"

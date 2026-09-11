@@ -200,18 +200,33 @@ enum CatalystBusinessCheck {
             let (_, held) = try await URLSession.shared.data(for: answerControl)
             guard (held as? HTTPURLResponse)?.statusCode == 204 else { throw Failure("test answer hold failed") }
             _ = composer.delegate?.textView?(composer, shouldChangeTextIn: NSRange(location: composer.text.utf16.count, length: 0), replacementText: "\n")
-            try await until("waiting indicator mounted") {
-                conversation()?.view.window.map { descendants($0).contains { $0 is AgentThinkingOrbitNSView } } == true
-            }
-            try await until("waiting status fits its row", seconds: 1.5) {
-                guard let indicator = descendants(conversation()!.view).first(where: { $0 is AgentThinkingOrbitNSView }) else { return false }
-                var parent = indicator.superview
-                while let view = parent {
-                    let frame = indicator.convert(indicator.bounds, to: view)
-                    if view.clipsToBounds && (frame.minY < view.bounds.minY - 1 || frame.maxY > view.bounds.maxY + 1) { return false }
-                    parent = view.superview
+            let originalMotion = store.motionPreference
+            do {
+                defer { store.motionPreference = originalMotion }
+                for preference in [originalMotion, .reduce, .full] {
+                    store.motionPreference = preference
+                    let reduced = preference.resolvesReduceMotion(systemReduceMotion: UIAccessibility.isReduceMotionEnabled)
+                    try await until("waiting status mounted in \(preference.rawValue) motion") {
+                        guard let view = conversation()?.view else { return false }
+                        return !CatalystDesktopWindow.shared.acceptanceThinkingStatusFrame().isNull
+                            && descendants(view).contains { $0 is AgentThinkingOrbitNSView } == !reduced
+                    }
+                    try await until("waiting status fits its row", seconds: 1.5) {
+                        guard let controller = conversation(), let message = controller.messages.last,
+                              let footer = controller.collection.cellForItem(at: IndexPath(item: message.blocks.count + 1,
+                                  section: controller.messages.count - 1)),
+                              let host = descendants(footer).compactMap({ $0 as? CatalystHostingView }).first else { return false }
+                        let frame = CatalystDesktopWindow.shared.acceptanceThinkingStatusFrame()
+                        guard !frame.isNull, frame.width > 0, frame.height > 0 else { return false }
+                        var parent: UIView? = host.controller.view
+                        while let view = parent {
+                            let bounds = UIAccessibility.convertToScreenCoordinates(view.bounds, in: view)
+                            if view.clipsToBounds && (frame.minY < bounds.minY - 1 || frame.maxY > bounds.maxY + 1) { return false }
+                            parent = view.superview
+                        }
+                        return true
+                    }
                 }
-                return true
             }
             try check("waiting_status_not_clipped", true)
             answerControl.url = URL(string: endpoint + "/continue-answer")!
@@ -224,7 +239,7 @@ enum CatalystBusinessCheck {
             try await until("UIKit received real message") { conversation()?.messages.last?.original?.role == .assistant && conversation()?.messages.last?.blocks.isEmpty == false }
             let controller = conversation()!
             try check("return_clears_original_composer", composer.text.isEmpty)
-            try check("status_disappears_at_first_text", !descendants(controller.view).contains { $0 is AgentThinkingOrbitNSView })
+            try check("status_disappears_at_first_text", CatalystDesktopWindow.shared.acceptanceThinkingStatusFrame().isNull)
             let originalFirstBlock = controller.messages.last!.blocks.first!
             try await until("real HTTP stream completed", seconds: 60) { !store.isAgentRunningInActiveChat && store.messages.last?.text.contains(finalMarker) == true }
             try await until("UIKit final tail") { controller.messages.last?.markdown.contains(finalMarker) == true }

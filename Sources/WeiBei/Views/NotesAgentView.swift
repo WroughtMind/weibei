@@ -4863,6 +4863,7 @@ struct AgentThinkingIndicator: View {
         .offset(x: -Self.pathOuterInset)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
+        .accessibilityIdentifier("agent-thinking-status")
         .onAppear {
             refreshCache(for: statusText)
             motionEpoch = Date()

@@ -91,6 +91,24 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     func open(_ url: URL) -> Bool { NSWorkspace.shared.open(url) }
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func materialWindowCount() -> Int { materials.count }
+#if WEIBEI_ACCEPTANCE_CHECKS
+    /// Catalyst exposes SwiftUI accessibility through AppKit, including static text.
+    @MainActor func acceptanceThinkingStatusFrame() -> CGRect {
+        var pending: [any NSAccessibilityProtocol] = NSApp.windows
+        var visited = Set<ObjectIdentifier>()
+        while let element = pending.popLast() {
+            guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
+            if element.accessibilityIdentifier() == "agent-thinking-status" {
+                let frame = element.accessibilityFrame()
+                // UIKit accessibility uses the main screen's top-left origin.
+                return CGRect(x: frame.minX, y: NSScreen.screens[0].frame.maxY - frame.maxY,
+                              width: frame.width, height: frame.height)
+            }
+            pending.append(contentsOf: (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol })
+        }
+        return .null
+    }
+#endif
     @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void) {
         updateObservation = updateService.$status.combineLatest(updateService.$availableUpdate)
             .sink { status, update in
