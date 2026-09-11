@@ -3096,25 +3096,25 @@ struct WebReaderRepresentable: ReaderRepresentable {
             adaptiveCSS = ""
         } else if mode.isDark {
             adaptiveCSS = """
-            html, body { max-width: 100%; overflow-x: hidden; color-scheme: \(scheme); background: transparent !important; }
+            html, body { color-scheme: \(scheme); background-color: transparent !important; }
             body, main, article, section, div, p, li, blockquote, td, th, span { color: \(tokens.ink) !important; background-color: transparent !important; }
             a { color: \(tokens.link) !important; text-decoration-color: color-mix(in srgb, \(tokens.link) 55%, transparent) !important; }
             h1, h2, h3 { color: \(tokens.link) !important; }
-            blockquote { border-left: 3px solid color-mix(in srgb, \(tokens.cinnabar) 62%, transparent) !important; background: color-mix(in srgb, \(tokens.cinnabar) 10%, transparent) !important; color: \(tokens.ink) !important; }
-            code { background: rgba(255, 255, 255, .05) !important; color: \(tokens.link) !important; }
-            pre { background: \(tokens.paperRaised) !important; border: 1px solid color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; color: \(tokens.ink) !important; }
-            table { background: rgba(255, 255, 255, .02) !important; }
-            th { color: \(tokens.link) !important; background: color-mix(in srgb, \(tokens.link) 10%, transparent) !important; }
+            blockquote { border-left-color: color-mix(in srgb, \(tokens.cinnabar) 62%, transparent) !important; background-color: color-mix(in srgb, \(tokens.cinnabar) 10%, transparent) !important; color: \(tokens.ink) !important; }
+            code { background-color: rgba(255, 255, 255, .05) !important; color: \(tokens.link) !important; }
+            pre { background-color: \(tokens.paperRaised) !important; border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; color: \(tokens.ink) !important; }
+            table { background-color: rgba(255, 255, 255, .02) !important; }
+            th { color: \(tokens.link) !important; background-color: color-mix(in srgb, \(tokens.link) 10%, transparent) !important; }
             table, th, td { border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
             """
         } else {
             adaptiveCSS = """
-            html, body { max-width: 100%; overflow-x: hidden; color-scheme: \(scheme); background: transparent !important; }
+            html, body { color-scheme: \(scheme); background-color: transparent !important; }
             body, main, article, section, div, p, li, blockquote, td, th, span { color: \(tokens.ink) !important; }
             [data-weibei-paper-surface] { background-color: transparent !important; }
             a { color: \(tokens.link) !important; }
-            code { background: color-mix(in srgb, \(tokens.ink) 6%, transparent) !important; color: \(tokens.muted) !important; }
-            pre { background: color-mix(in srgb, \(tokens.ink) 5%, transparent) !important; border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
+            code { background-color: color-mix(in srgb, \(tokens.ink) 6%, transparent) !important; color: \(tokens.muted) !important; }
+            pre { background-color: color-mix(in srgb, \(tokens.ink) 5%, transparent) !important; border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
             table, th, td { border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
             """
         }
@@ -3133,12 +3133,6 @@ struct WebReaderRepresentable: ReaderRepresentable {
           }
           document.documentElement.dataset.weibeiTheme = adaptsDocumentColors ? appearance : "original";
           style.textContent = css;
-          if (adaptsDocumentColors) style.textContent += `
-            body, main, article, section, div { box-sizing: border-box; max-width: 100%; }
-            h1, h2, h3, h4, p, li, blockquote { overflow-wrap: anywhere; word-break: normal; }
-            pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
-            img, table { max-width: 100%; }
-          `;
 
           document.querySelectorAll("[data-weibei-paper-surface]").forEach((element) => {
             element.removeAttribute("data-weibei-paper-surface");

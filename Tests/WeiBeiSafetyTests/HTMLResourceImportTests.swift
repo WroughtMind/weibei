@@ -12,7 +12,7 @@ final class HTMLResourceImportTests: XCTestCase {
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
     }
 
-    // One dragged page must retain styles and working scripts after its original folder is gone.
+    // One dragged page retains its resources and layout when moved or recolored for reading.
     func testPortableHTMLRendersAfterSourceFolderIsRemoved() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -75,6 +75,24 @@ final class HTMLResourceImportTests: XCTestCase {
         XCTAssertEqual(result?["inlineModule"] as? Bool, true)
         XCTAssertEqual(result?["text"] as? Bool, true)
         XCTAssertEqual(try HTMLResourceImport.dataIfHTML(at: moved), data)
+        let layout = """
+        JSON.stringify([...document.body.querySelectorAll('*')].map(e => {
+          const c = getComputedStyle(e), r = e.getBoundingClientRect();
+          return [e.tagName,r.x,r.y,r.width,r.height,c.fontFamily,c.fontSize,c.fontWeight,c.lineHeight,
+            c.margin,c.padding,c.borderWidth,c.boxSizing,c.maxWidth,c.whiteSpace,c.overflowWrap,c.backgroundImage];
+        }))
+        """
+        let originalLayout = try await web.evaluateJavaScript(layout) as? String
+        for mode: WeiBeiAppearanceMode in [.paper, .glassSlate] {
+            _ = try await web.evaluateJavaScript(WebReaderRepresentable.readerStyleScript(for: mode, adaptsDocumentColors: true))
+            let adaptedLayout = try await web.evaluateJavaScript(layout) as? String
+            let adaptedColor = try await web.evaluateJavaScript("getComputedStyle(document.querySelector('.sheet')).color") as? String
+            XCTAssertEqual(adaptedLayout, originalLayout)
+            XCTAssertNotEqual(adaptedColor, result?["color"] as? String)
+            _ = try await web.evaluateJavaScript(WebReaderRepresentable.readerStyleScript(for: mode, adaptsDocumentColors: false))
+            let restoredLayout = try await web.evaluateJavaScript(layout) as? String
+            XCTAssertEqual(restoredLayout, originalLayout)
+        }
         web.stopLoading()
     }
 
@@ -190,12 +208,14 @@ final class HTMLResourceImportTests: XCTestCase {
             <img src="../assets/photo%20one.svg">
             <img id="responsive" srcset="../assets/photo%20one.svg 1x, ../assets/photo%20one.svg 2x">
             <pre>line 1\n    line 2</pre><svg viewBox="0 0 2 2"><path d="M0 0h2v2H0z"/></svg>
+            <blockquote>引用说明</blockquote><table><tr><th>变量</th><th>结果</th></tr><tr><td>收入</td><td>12</td></tr></table>
             </main></body></html>
             """)
             try write("assets/style.css", """
             @import url("nested/theme.css");
             @font-face{font-family:Portable;src:url('font.woff2')} .font{font-family:Portable}
             .sheet {max-width:720px;color:rgb(12,34,56);background-color:rgb(240,230,220)}
+            blockquote{border-left:7px solid brown;padding:13px} pre{border:4px solid gray;padding:9px}
             .sheet::before {content:"url(not-a-resource.png)"}
             /* url(also-not-a-resource.png) */
             """)

@@ -30,7 +30,7 @@ SPARKLE_PUBLIC_KEY="${WEIBEI_SPARKLE_PUBLIC_KEY:-eRFPLZuNM6m8bltmtpPX4fzKbufI1z6
 SPARKLE_FEED_URL="${WEIBEI_SPARKLE_FEED_URL:-https://github.com/WroughtMind/weibei/releases/latest/download/appcast-$TARGET_ARCH.xml}"
 DERIVED="$ROOT_DIR/.build/catalyst-$TARGET_ARCH"
 PACKAGES="$ROOT_DIR/.build/catalyst-packages"
-DIST_DIR="$ROOT_DIR/dist"
+DIST_DIR="${WEIBEI_DIST_DIR:-$ROOT_DIR/dist}"
 [[ "$ACCEPTANCE" != 1 ]] || DIST_DIR="$DIST_DIR/acceptance"
 APP_BUNDLE="$DIST_DIR/魏碑.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/WeiBei"
