@@ -115,6 +115,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         send.addTarget(self, action: #selector(sendPressed), for: .touchUpInside)
         latest.setImage(UIImage(systemName: "arrow.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)), for: .normal)
         latest.accessibilityLabel = "回到最新消息"
+        latest.accessibilityIdentifier = "chat-scroll-to-latest"
         latest.layer.cornerRadius = 17
         latest.layer.borderWidth = 1
         latest.layer.shadowOpacity = 0.14

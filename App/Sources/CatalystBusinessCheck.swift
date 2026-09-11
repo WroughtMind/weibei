@@ -195,6 +195,10 @@ enum CatalystBusinessCheck {
             composer.text = question
             composer.delegate?.textViewDidChange?(composer)
             try await until("next local draft published") { store.pendingComposerDraft == question }
+            var answerControl = URLRequest(url: URL(string: endpoint + "/hold-answer")!)
+            answerControl.setValue("Bearer catalyst-test-only", forHTTPHeaderField: "Authorization")
+            let (_, held) = try await URLSession.shared.data(for: answerControl)
+            guard (held as? HTTPURLResponse)?.statusCode == 204 else { throw Failure("test answer hold failed") }
             _ = composer.delegate?.textView?(composer, shouldChangeTextIn: NSRange(location: composer.text.utf16.count, length: 0), replacementText: "\n")
             try await until("waiting indicator mounted") {
                 conversation()?.view.window.map { descendants($0).contains { $0 is AgentThinkingOrbitNSView } } == true
@@ -210,6 +214,9 @@ enum CatalystBusinessCheck {
                 return true
             }
             try check("waiting_status_not_clipped", true)
+            answerControl.url = URL(string: endpoint + "/continue-answer")!
+            let (_, response) = try await URLSession.shared.data(for: answerControl)
+            guard (response as? HTTPURLResponse)?.statusCode == 204 else { throw Failure("test answer release failed") }
             try await until("real HTTP stream began") {
                 store.isAgentRunningInActiveChat && store.agentStreaming.displayingChatID == store.activeStudySessionID
                     && store.agentStreaming.text.count > 80
@@ -364,7 +371,10 @@ enum CatalystBusinessCheck {
         let parses = controller.store.parseCount, measurements = controller.store.measureCount
         controller.scrollToLatest()
         controller.collection.contentOffset.y -= 240
-        guard let jump = descendants(controller.view).compactMap({ $0 as? UIButton }).first(where: { $0.accessibilityLabel == "回到最新消息" }),
+        let originalLanguage = controller.interfaceLanguage
+        controller.interfaceLanguage = .english
+        defer { controller.interfaceLanguage = originalLanguage }
+        guard let jump = descendants(controller.view).compactMap({ $0 as? UIButton }).first(where: { $0.accessibilityIdentifier == "chat-scroll-to-latest" }),
               !jump.isHidden, jump.currentTitle == nil, jump.currentImage != nil,
               jump.bounds.size == CGSize(width: 34, height: 34) else { throw Failure("circular jump-to-latest control") }
         jump.sendActions(for: .touchUpInside)

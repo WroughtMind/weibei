@@ -5,12 +5,14 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import re
+from threading import Event
 import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--output", type=Path, required=True)
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
+answer_ready = Event()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -20,6 +22,17 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path in {"/v1/hold-answer", "/v1/continue-answer"}:
+            if self.headers.get("Authorization") != "Bearer catalyst-test-only":
+                self.send_error(401)
+                return
+            if self.path == "/v1/hold-answer":
+                answer_ready.clear()
+            else:
+                answer_ready.set()
+            self.send_response(204)
+            self.end_headers()
+            return
         body = json.dumps({"data": [{"id": "catalyst-local-check", "object": "model"}]}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -66,7 +79,10 @@ class Handler(BaseHTTPRequestHandler):
                     answer = "## 停止验证\n\n" + "正在输出的正文应完整保留。中文 café 👩🏽‍💻。\n\n" * 400
                     step, delay = 30, 0.06
                 elif item:
-                    time.sleep(2)
+                    # Slow CI must inspect the waiting state before the answer removes it.
+                    if not answer_ready.wait(60):
+                        print("waiting-state check did not release the answer", flush=True)
+                        return
                     image = re.search(r"WB452_IMAGE=(\S+)", user)
                     answer = "## 资料与阅读位置\n\n这是通过原 HTTP 客户端、Agent 和资料读取工具收到的独立测试回答。\n\n"
                     read_result = next(m["content"] for m in messages if m.get("tool_call_id") == "read452")
