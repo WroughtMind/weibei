@@ -1,13 +1,15 @@
 import AppKit
+import Combine
 
-/// Only native window material and desktop cursors cross this platform boundary.
-/// The window's content controller, panes and conversation remain in Catalyst.
+/// Native window services and Sparkle use this bridge; content stays in Catalyst.
 @objc(WeiBeiCatalystWindowBridge)
 final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var mode = "paper"
     private var intensity = 1.0
     private let materials = NSMapTable<NSWindow, NSVisualEffectView>.weakToStrongObjects()
     private var observers: [NSObjectProtocol] = []
+    @MainActor private lazy var updateService = WeiBeiUpdateService()
+    @MainActor private var updateObservation: AnyCancellable?
 
     required override init() {
         super.init()
@@ -89,5 +91,14 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     func open(_ url: URL) -> Bool { NSWorkspace.shared.open(url) }
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func materialWindowCount() -> Int { materials.count }
+    @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void) {
+        updateObservation = updateService.$status.combineLatest(updateService.$availableUpdate)
+            .sink { status, update in
+                observer(status.rawValue, update?.version, update?.releaseNotesLines ?? [],
+                    update?.informationOnly ?? false, update?.informationURL)
+            }
+    }
+    @MainActor func checkForUpdates() { updateService.checkForUpdates() }
+    @MainActor func installAvailableUpdate() { updateService.installAvailableUpdate() }
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 }

@@ -1,5 +1,5 @@
 {
-  "originHash" : "e33e45294a27cbb680848ef5c4305a3581fd15e6e37b21ec456f78b494be4c0a",
+  "originHash" : "8b92b171a4be3d57782bc07466352855918cb8fd6a3f14d07cb054a2470d6e53",
   "pins" : [
     {
       "identity" : "highlightr",
@@ -34,6 +34,15 @@
       "location" : "https://github.com/Lakr233/MarkdownView",
       "state" : {
         "revision" : "757b6fcc4b3095e84f4c0613f4b98147f49dcd09"
+      }
+    },
+    {
+      "identity" : "sparkle",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sparkle-project/Sparkle",
+      "state" : {
+        "revision" : "ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a",
+        "version" : "2.9.6"
       }
     },
     {

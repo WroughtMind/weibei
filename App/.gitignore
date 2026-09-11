@@ -2,3 +2,5 @@
 dist/
 *.xcuserstate
 xcuserdata/
+Evidence/ci*.json
+Evidence/ci*.png

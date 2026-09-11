@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh-Hans</string>
 	<key>CFBundleDisplayName</key>
-	<string>$(LAB_APP_NAME)</string>
+	<string>魏碑</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
@@ -20,7 +20,7 @@
 		<string>en</string>
 	</array>
 	<key>CFBundleName</key>
-	<string>$(LAB_APP_NAME)</string>
+	<string>魏碑</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -31,10 +31,22 @@
 	<string>public.app-category.productivity</string>
 	<key>LabBusinessCheckEndpoint</key>
 	<string>$(LAB_BUSINESS_CHECK_ENDPOINT)</string>
-	<key>LabSourceDirty</key>
-	<string>$(LAB_SOURCE_DIRTY)</string>
-	<key>LabSourceRevision</key>
-	<string>$(LAB_SOURCE_REVISION)</string>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>$(WEIBEI_SPARKLE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(WEIBEI_SPARKLE_PUBLIC_KEY)</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -46,5 +58,11 @@
 	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>WeiBeiArchitecture</key>
+	<string>$(WEIBEI_TARGET_ARCH)</string>
+	<key>WeiBeiGitCommit</key>
+	<string>$(WEIBEI_GIT_COMMIT)</string>
+	<key>WeiBeiSourceDirty</key>
+	<string>$(WEIBEI_SOURCE_DIRTY)</string>
 </dict>
 </plist>

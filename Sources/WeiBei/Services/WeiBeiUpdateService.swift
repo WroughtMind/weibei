@@ -1,7 +1,12 @@
-import AppKit
 import Combine
+import Foundation
+#if !targetEnvironment(macCatalyst)
+import AppKit
 import Sparkle
+#endif
+#if canImport(WeiBeiCore)
 import WeiBeiCore
+#endif
 
 struct WeiBeiAvailableUpdate: Equatable {
     let version: String
@@ -83,7 +88,7 @@ struct WeiBeiAvailableUpdate: Equatable {
 
 @MainActor
 final class WeiBeiUpdateService: NSObject, ObservableObject {
-    enum Status: Equatable {
+    enum Status: String, Equatable {
         case idle
         case checking
         case available
@@ -116,6 +121,21 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
         }
     }
 
+#if targetEnvironment(macCatalyst)
+    override init() {
+        super.init()
+        CatalystDesktopWindow.shared.observeUpdates { [weak self] status, version, notes, informationOnly, informationURL in
+            self?.availableUpdate = version.map {
+                WeiBeiAvailableUpdate(version: $0, releaseNotesLines: notes,
+                    informationOnly: informationOnly, informationURL: informationURL)
+            }
+            self?.status = Status(rawValue: status) ?? .failed
+        }
+    }
+
+    func checkForUpdates() { CatalystDesktopWindow.shared.checkForUpdates() }
+    func installAvailableUpdate() { CatalystDesktopWindow.shared.installAvailableUpdate() }
+#else
     private lazy var updater = SPUUpdater(
         hostBundle: .main,
         applicationBundle: .main,
@@ -161,9 +181,10 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
             updater.checkForUpdates()
         }
     }
-
+#endif
 }
 
+#if !targetEnvironment(macCatalyst)
 extension WeiBeiUpdateService: SPUUserDriver {
     func show(_ request: SPUUpdatePermissionRequest) async -> SUUpdatePermissionResponse {
         SUUpdatePermissionResponse(
@@ -293,3 +314,4 @@ extension WeiBeiUpdateService: SPUUserDriver {
         return []
     }
 }
+#endif

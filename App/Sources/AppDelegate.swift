@@ -3,6 +3,7 @@ import SwiftUI
 import WeiBeiCore
 
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+#if WEIBEI_ACCEPTANCE_CHECKS
     static let checksConversation = CommandLine.arguments.contains("--self-check")
         || Bundle.main.bundleIdentifier?.hasSuffix(".conversationcheck") == true
     static let usesFixture = checksConversation || CommandLine.arguments.contains("--fixtures")
@@ -12,19 +13,27 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
               value.hasPrefix("http://127.0.0.1:") else { return nil }
         return value
     }
+#else
+    static let checksConversation = false
+    static let usesFixture = false
+#endif
     static let workspace: WorkspaceStore = {
+        WeiBeiPerf.beginLaunch()
+        WorkspaceStore.loadPersistedGlassIntensity()
+        if Bundle.main.bundleIdentifier == "com.changfenhuang.weibei" {
+            return WorkspaceStore()
+        }
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier!, isDirectory: true)
             .appendingPathComponent("Workspace", isDirectory: true)
         // Set before constructing the original store: library, accounts and sessions
         // must never discover the production workspace through their default paths.
         setenv("WEIBEI_WORKSPACE_DIR", root.path, 1)
-        WeiBeiPerf.beginLaunch()
-        WorkspaceStore.loadPersistedGlassIntensity()
         return WorkspaceStore(workspaceDirectory: root,
             noteBackupRootURL: root.appendingPathComponent(NoteBackupRing.subdirectoryName),
             startsAtBlankEntries: true)
     }()
+    static let updates = WeiBeiUpdateService()
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var saveTask: Task<Void, Never>?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -181,38 +190,51 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 struct CatalystWeiBeiApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     var body: some Scene {
-        WindowGroup("魏碑 · Catalyst 独立候选") {
+        WindowGroup("魏碑") {
+#if WEIBEI_ACCEPTANCE_CHECKS
             if AppDelegate.usesFixture {
                 CatalystFixtureHost()
             } else {
-                CatalystWorkspaceRoot(store: AppDelegate.workspace, appDelegate: appDelegate)
-                    .frame(minWidth: 520, minHeight: 720)
-                    .ignoresSafeArea(.container, edges: .top)
-                    .onOpenURL { AppDelegate.workspace.importFiles([$0]) }
-                    .task {
-                        if let endpoint = AppDelegate.businessCheckEndpoint {
-                            await CatalystBusinessCheck.run(store: AppDelegate.workspace, endpoint: endpoint)
-                        }
-                    }
+                workspaceContent
             }
+#else
+            workspaceContent
+#endif
         }
         .defaultSize(width: 1240, height: 760)
         WindowGroup("设置", id: "weibei-settings") {
             SettingsView()
                 .weiBeiMotionScoped()
                 .environmentObject(AppDelegate.workspace)
+                .environmentObject(AppDelegate.updates)
                 .frame(minWidth: 700, minHeight: 600)
                 .background(CatalystWindowChrome(appearanceMode: AppDelegate.workspace.appearanceMode))
                 .ignoresSafeArea(.container, edges: .top)
         }
         .defaultSize(width: 900, height: 640)
     }
+
+    private var workspaceContent: some View {
+        CatalystWorkspaceRoot(store: AppDelegate.workspace, appDelegate: appDelegate)
+            .frame(minWidth: 520, minHeight: 720)
+            .ignoresSafeArea(.container, edges: .top)
+            .onOpenURL { AppDelegate.workspace.importFiles([$0]) }
+#if WEIBEI_ACCEPTANCE_CHECKS
+            .task {
+                if let endpoint = AppDelegate.businessCheckEndpoint {
+                    await CatalystBusinessCheck.run(store: AppDelegate.workspace, endpoint: endpoint)
+                }
+            }
+#endif
+    }
 }
 
+#if WEIBEI_ACCEPTANCE_CHECKS
 private struct CatalystFixtureHost: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> WorkspaceController { WorkspaceController() }
     func updateUIViewController(_ controller: WorkspaceController, context: Context) {}
 }
+#endif
 
 private struct CatalystWorkspaceRoot: View {
     @ObservedObject var store: WorkspaceStore
@@ -222,6 +244,7 @@ private struct CatalystWorkspaceRoot: View {
     var body: some View {
         ContentView()
             .environmentObject(store)
+            .environmentObject(AppDelegate.updates)
             .environmentObject(store.libraryDrawer)
             .environmentObject(store.threePaneReorder)
             .environmentObject(store.paneState)

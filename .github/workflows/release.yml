@@ -103,7 +103,7 @@ jobs:
           test -s "$RUNNER_TEMP/weibei-sparkle-private-key"
           chmod 600 "$RUNNER_TEMP/weibei-sparkle-private-key"
 
-      - name: 构建、签名并验证当前架构 DMG
+      - name: 通过唯一 Catalyst 入口构建、签名并验证当前架构 DMG
         env:
           WEIBEI_TARGET_ARCH: ${{ matrix.arch }}
           WEIBEI_SPARKLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/weibei-sparkle-private-key
@@ -138,6 +138,7 @@ jobs:
             dist/release/${{ matrix.arch }}/appcast-${{ matrix.arch }}.xml
             dist/release/${{ matrix.arch }}/appcast.xml
             dist/release/${{ matrix.arch }}/WeiBei-*.dSYM/**
+            dist/package-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 14
 

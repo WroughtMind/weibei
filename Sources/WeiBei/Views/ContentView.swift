@@ -533,9 +533,7 @@ private struct WorkspaceChromeBackdrop: View {
 
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
-#if !targetEnvironment(macCatalyst)
     @EnvironmentObject private var updateService: WeiBeiUpdateService
-#endif
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
@@ -722,7 +720,6 @@ private struct UnifiedTopBarView: View {
             .weiBeiKeyboardShortcut(store.executableChord(for: .navigateForward))
             .disabled(!store.canNavigateForward)
 
-#if !targetEnvironment(macCatalyst)
             if updateService.showsToolbarControl, let update = updateService.availableUpdate {
                 Button {
                     updateService.installAvailableUpdate()
@@ -741,14 +738,10 @@ private struct UnifiedTopBarView: View {
                 .help(updateHelpText(update))
                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
             }
-#endif
         }
-#if !targetEnvironment(macCatalyst)
         .animation(WeiBeiMotion.panel, value: updateService.showsToolbarControl)
-#endif
     }
 
-#if !targetEnvironment(macCatalyst)
     private func updateHelpText(_ update: WeiBeiAvailableUpdate) -> String {
         var text = update.helpText
         if update.releaseNotesLines.count > update.summaryLines.count {
@@ -762,8 +755,6 @@ private struct UnifiedTopBarView: View {
         }
         return text
     }
-
-#endif
 
     private var paneToggleCluster: some View {
         WeiBeiSegmentedControl(segments: [

@@ -30,6 +30,7 @@ final class LabMessage {
     }
 }
 
+#if WEIBEI_ACCEPTANCE_CHECKS
 enum LabFixture {
     static let source = """
     阅读材料 · 如何在长文中保持上下文
@@ -160,3 +161,5 @@ enum LabFixture {
     完成：最后的中文、标点与 👩🏽‍💻 都已完整保留。
     """
 }
+
+#endif

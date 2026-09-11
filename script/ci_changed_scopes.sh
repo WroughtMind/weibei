@@ -22,7 +22,7 @@ classify_path() {
   esac
 
   case "$path" in
-    Sources/*|Tests/*|Package.swift|Package.resolved|package.json|package-lock.json|Config/*)
+    Sources/*|Tests/*|App/Sources/*|App/WindowBridge/*|App/project.yml|App/WeiBei.xcodeproj/*|Package.swift|Package.resolved|package.json|package-lock.json|Config/*)
       code=true ;;
   esac
 
@@ -46,7 +46,7 @@ classify_path() {
 
   # Shared roots cannot be classified safely from the path alone.
   case "$path" in
-    Sources/WeiBei/Stores/WorkspaceStore.swift|Sources/WeiBei/App/WeiBeiApp.swift|Sources/WeiBei/Views/ContentView.swift|Sources/WeiBei/Views/StableDocumentWorkspace.swift|Sources/WeiBeiSelfCheck/main.swift|Package.swift|Package.resolved)
+    Sources/WeiBei/Stores/WorkspaceStore.swift|App/Sources/AppDelegate.swift|Sources/WeiBei/Views/ContentView.swift|Sources/WeiBei/Views/StableDocumentWorkspace.swift|Sources/WeiBeiSelfCheck/main.swift|Package.swift|Package.resolved)
       agent=true
       editor=true
       data_safety=true
@@ -54,7 +54,7 @@ classify_path() {
   esac
 
   case "$path" in
-    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|script/build_number.py|script/check_build_number.py|script/check_build_info.swift|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
+    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|App/project.yml|App/WeiBei.xcodeproj/*|App/Config/*|App/Resources/*|App/script/*|script/verify_app_launch.sh|script/package_size.py|script/build_number.py|script/check_build_number.py|script/check_build_info.swift|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
@@ -103,6 +103,10 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes "code data_safety" "Sources/WeiBei/Views/SidebarView.swift" "Sources/WeiBei/Views/CourseDrawerHost.swift"
   expect_scopes "code data_safety" "Sources/WeiBeiCore/LearningModels.swift" "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" "Sources/WeiBeiCore/NoteSourceRelations.swift"
   expect_scopes "code agent" "Sources/WeiBeiCore/NativeAgentRuntime/NativeAgentLoop.swift"
+  expect_scopes "code" "App/Sources/ConversationController.swift" "App/WindowBridge/NativeWindowBridge.swift"
+  expect_scopes "code agent editor data_safety" "App/Sources/AppDelegate.swift"
+  expect_scopes "code release" "App/project.yml"
+  expect_scopes "release" "App/Resources/Web/diagram.html" "App/script/check-ci.sh"
   expect_scopes "tools" "script/check-genui-math.ts" "tsconfig.json" "script/homebrew/generate_cask.test.mjs"
   expect_scopes "release tools" "DesignSystem/scripts/build-icns.ts"
   expect_scopes "code agent editor release tools" "package.json" "package-lock.json"

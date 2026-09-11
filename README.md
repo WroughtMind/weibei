@@ -92,15 +92,16 @@
 
 ## 开始使用
 
-目前请从源码运行。需要 **macOS 14 及以上**和 **Xcode Command Line Tools（Swift 5.9 及以上）**，首次构建需要联网获取依赖。
+目前请从源码运行。需要 **macOS 14 及以上**和 **完整 Xcode 26、Node.js 22 及以上**，首次构建需要联网获取依赖。
 
 ```bash
 git clone https://github.com/WroughtMind/weibei.git
 cd weibei
+npm ci
 ./script/build_and_run.sh
 ```
 
-脚本会构建并打开魏碑。完整检查、打包或重建网页编辑器时，还需要 **Node.js 22 及以上**，并先在仓库根目录运行 `npm ci`。
+脚本通过唯一的 Catalyst 工程构建并打开魏碑。本机默认使用已有的 Apple Development 签名；无开发身份时可用 `WEIBEI_SIGNING_IDENTITY=-` 生成未公证候选。详见[应用构建说明](App/README.md)。
 
 1. 导入自己的资料文件夹，作为一门课程打开。
 2. 选一份资料阅读，在旁边写笔记，试试全文搜索。
@@ -119,11 +120,11 @@ cd weibei
 
 | 目标 | 实际执行 |
 |---|---|
-| `make build` | `swift build` |
+| `make build` | `./script/build_and_run.sh package` |
 | `make run` | `./script/build_and_run.sh` |
 | `make check` | `./script/build_and_run.sh check` |
 | `make package` | `./script/build_and_run.sh package` |
-| `make verify` | `./script/build_and_run.sh verify`（打包并完成一次真实进程启动验收） |
+| `make verify` | `./script/build_and_run.sh verify`（仅 CI 独立桌面自动启动；本机使用画中画验收） |
 | `make editor-build` | `npm run build:editor` |
 | `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)`（用法：`make perf-p95 LOG=<perf日志> METRIC=<指标名>`） |
@@ -159,7 +160,7 @@ swift run WeiBeiNativeCheck --authentication-status
 <details>
 <summary><strong>技术架构</strong></summary>
 
-SwiftUI 负责界面，AppKit 承载常驻的阅读、对话和笔记面板。PDFKit 读取 PDF，WebKit 渲染 HTML 和 Milkdown 编辑器，Vision 处理扫描页 OCR，SQLite FTS5 提供本地全文索引。公式使用 KaTeX，图表使用 Mermaid。
+SwiftUI 与 Mac Catalyst 承载工作区，UIKit 会话复用列表和原生富文本排版。PDFKit 读取 PDF，WebKit 渲染 HTML 和 Milkdown 编辑器，Vision 处理扫描页 OCR，SQLite FTS5 提供本地全文索引。会话公式使用 SwiftMath，网页公式使用 KaTeX，图表使用 Mermaid；现有 AppKit 桥接负责窗口材质和 Sparkle 更新。
 
 Swift 原生 Agent 运行时负责工具循环、供应商连接、凭据与会话账本。魏碑在展示或写入前校验引用、学习记忆更新、笔记提案和富答案；`visualize` 交互片段在无网络、无本地文件访问的沙箱中执行。长 PDF 和扫描件通过资源受限的辅助进程抽取文本，仅无原生文本的页面使用 OCR。
 

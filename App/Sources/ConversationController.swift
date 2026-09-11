@@ -26,7 +26,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private var savedHistory: [AgentMessage] = []
     private var answering = false
 
-    init(fixtureMode: Bool = true) {
+    init(fixtureMode: Bool = false) {
         self.fixtureMode = fixtureMode
         super.init(nibName: nil, bundle: nil)
     }
@@ -74,44 +74,44 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         for child in [toolbar, status, collection, input, send, latest] { view.addSubview(child) }
         toolbar.spacing = 16; toolbar.alignment = .center
         toolbar.addArrangedSubview(button("阅读区", symbol: "sidebar.left", action: { [weak self] in self?.toggleWorkspace?() }))
-        let title = UILabel(); title.text = "会话实验"; title.font = .systemFont(ofSize: 18, weight: .semibold)
+        let title = UILabel(); title.text = "对话"; title.font = .systemFont(ofSize: 18, weight: .semibold)
         toolbar.addArrangedSubview(title)
         toolbar.addArrangedSubview(button("载入更早记录", symbol: "clock.arrow.circlepath", action: { [weak self] in self?.prependHistory() }))
         let menu = UIButton(type: .system)
         menu.setImage(UIImage(systemName: "ellipsis.circle"), for: .normal)
-        menu.accessibilityLabel = "样本与验证"
+        menu.accessibilityLabel = "会话操作"
         menu.widthAnchor.constraint(equalToConstant: 30).isActive = true
         menu.showsMenuAsPrimaryAction = true
         menu.menu = UIMenu(children: [
-            UIAction(title: "长历史 · 240 条起步") { [weak self] _ in self?.loadScenario("history") },
-            UIAction(title: "单条长回答 · 140 节") { [weak self] _ in self?.loadScenario("long") },
-            UIAction(title: "富内容与桌面操作") { [weak self] _ in self?.loadScenario("rich") },
-            UIAction(title: "开始固定流式重放") { [weak self] _ in self?.startReplay() },
-            UIAction(title: "运行必要行为检查") { [weak self] _ in self?.runChecks() },
-            UIAction(title: "采样连续滚动与热回看") { [weak self] _ in self?.sampleScroll() },
-            UIAction(title: "导出本次性能记录") { [weak self] _ in self?.exportEvidence() }
+            UIAction(title: "新对话", image: UIImage(systemName: "square.and.pencil")) { [weak self] _ in self?.createSession?() },
+            UIAction(title: "模型设置", image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in self?.openSettings?() }
         ])
-        if !fixtureMode {
-            title.text = "对话"
-            menu.accessibilityLabel = "会话操作"
+#if WEIBEI_ACCEPTANCE_CHECKS
+        if fixtureMode {
+            title.text = "会话实验"
+            menu.accessibilityLabel = "样本与验证"
             menu.menu = UIMenu(children: [
-                UIAction(title: "新对话", image: UIImage(systemName: "square.and.pencil")) { [weak self] _ in self?.createSession?() },
-                UIAction(title: "模型设置", image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in self?.openSettings?() }
+                UIAction(title: "长历史 · 240 条起步") { [weak self] _ in self?.loadScenario("history") },
+                UIAction(title: "单条长回答 · 140 节") { [weak self] _ in self?.loadScenario("long") },
+                UIAction(title: "富内容与桌面操作") { [weak self] _ in self?.loadScenario("rich") },
+                UIAction(title: "开始固定流式重放") { [weak self] _ in self?.startReplay() },
+                UIAction(title: "运行必要行为检查") { [weak self] _ in self?.runChecks() },
+                UIAction(title: "采样连续滚动与热回看") { [weak self] _ in self?.sampleScroll() },
+                UIAction(title: "导出本次性能记录") { [weak self] _ in self?.exportEvidence() }
             ])
         }
+#endif
         toolbar.addArrangedSubview(menu)
         status.font = .systemFont(ofSize: 12); status.textColor = .secondaryLabel
-        status.text = "固定重放 · 未接通模型 · 独立合成资料"
+        status.text = "选择资料或直接开始对话"
         input.font = .systemFont(ofSize: 16)
         input.backgroundColor = .secondarySystemBackground
         input.layer.cornerRadius = 8
         input.textContainerInset = UIEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
         input.delegate = self
-        input.accessibilityLabel = "输入问题，⌘回车发送；当前使用固定重放"
-        if !fixtureMode { input.accessibilityLabel = "输入问题，⌘回车发送"; status.text = "选择资料或直接开始对话" }
+        input.accessibilityLabel = "输入问题，⌘回车发送"
         send.setImage(UIImage(systemName: "arrow.up.circle.fill"), for: .normal)
-        send.accessibilityLabel = "发送并重放固定回答"
-        if !fixtureMode { send.accessibilityLabel = "发送问题" }
+        send.accessibilityLabel = "发送问题"
         send.addTarget(self, action: #selector(sendPressed), for: .touchUpInside)
         latest.setImage(UIImage(systemName: "arrow.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)), for: .normal)
         latest.accessibilityLabel = "回到最新消息"
@@ -138,6 +138,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+#if WEIBEI_ACCEPTANCE_CHECKS
         if fixtureMode, messages.isEmpty, preparation == nil {
             loadScenario("rich")
             if AppDelegate.checksConversation {
@@ -147,6 +148,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
             }
         }
+#endif
     }
 
     override func viewDidLayoutSubviews() {
@@ -245,6 +247,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         max(0, collection.contentSize.height - collection.bounds.height - collection.contentOffset.y)
     }
 
+#if WEIBEI_ACCEPTANCE_CHECKS
     func loadScenario(_ name: String) {
         stopReplay()
         replay = nil
@@ -289,45 +292,54 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         }
     }
 
+#endif
+
     func prependHistory() {
-        if !fixtureMode { prependSavedHistory(); return }
-        guard preparation == nil, earlier > 0 else { status.text = "这个样本没有更早历史"; return }
-        let end = earlier, start = max(0, end - 80)
-        let generation = scenarioGeneration
-        status.text = "载入更早的 80 条…"
-        preparation = Task { [weak self] in
-            guard let self else { return }
-            let incoming = (start..<end).map { LabMessage(id: "history-\($0)", author: "魏碑 · 合成历史 \($0 + 1)", markdown: LabFixture.history($0)) }
-            for message in incoming {
-                _ = await store.prepare(message, width: bodyWidth)
-                guard !Task.isCancelled, generation == scenarioGeneration else { return }
+#if WEIBEI_ACCEPTANCE_CHECKS
+        if fixtureMode {
+            guard preparation == nil, earlier > 0 else { status.text = "这个样本没有更早历史"; return }
+            let end = earlier, start = max(0, end - 80)
+            let generation = scenarioGeneration
+            status.text = "载入更早的 80 条…"
+            preparation = Task { [weak self] in
+                guard let self else { return }
+                let incoming = (start..<end).map { LabMessage(id: "history-\($0)", author: "魏碑 · 合成历史 \($0 + 1)", markdown: LabFixture.history($0)) }
+                for message in incoming {
+                    _ = await store.prepare(message, width: bodyWidth)
+                    guard !Task.isCancelled, generation == scenarioGeneration else { return }
+                }
+                let anchor = captureAnchor()
+                layoutTransaction = true
+                messages.insert(contentsOf: incoming, at: 0)
+                UIView.performWithoutAnimation {
+                    collection.performBatchUpdates { collection.insertSections(IndexSet(integersIn: 0..<incoming.count)) }
+                }
+                collection.layoutIfNeeded()
+                if let anchor { restore(anchor) }
+                layoutTransaction = false
+                earlier = start; preparation = nil
+                status.text = "已载入 \(messages.count) 条 · 阅读位置保留"
             }
-            let anchor = captureAnchor()
-            layoutTransaction = true
-            messages.insert(contentsOf: incoming, at: 0)
-            UIView.performWithoutAnimation {
-                collection.performBatchUpdates { collection.insertSections(IndexSet(integersIn: 0..<incoming.count)) }
-            }
-            collection.layoutIfNeeded()
-            if let anchor { restore(anchor) }
-            layoutTransaction = false
-            earlier = start; preparation = nil
-            status.text = "已载入 \(messages.count) 条 · 阅读位置保留"
+            return
         }
+#endif
+        prependSavedHistory()
     }
 
     @objc func sendPressed() {
-        if !fixtureMode {
-            if answering { stopAnswer?(); return }
+#if WEIBEI_ACCEPTANCE_CHECKS
+        if fixtureMode {
+            if replay != nil { stopReplay(); return }
             guard input.markedTextRange == nil, !input.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            if submitQuestion?(input.text) == true { input.text = "" }
+            let text = input.text!
+            input.text = ""
+            startReplay(question: text)
             return
         }
-        if replay != nil { stopReplay(); return }
+#endif
+        if answering { stopAnswer?(); return }
         guard input.markedTextRange == nil, !input.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let text = input.text!
-        input.text = ""
-        startReplay(question: text)
+        if submitQuestion?(input.text) == true { input.text = "" }
     }
 
     func showSession(_ session: StudySession) async {
@@ -496,6 +508,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             earlier = start; preparation = nil
         }
     }
+#if WEIBEI_ACCEPTANCE_CHECKS
     func startReplay(question: String = "请按固定事件重放这段回答，便于比较阅读体验。") {
         guard preparation == nil, replay == nil else { return }
         let generation = scenarioGeneration
@@ -547,6 +560,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         replay?.cancel()
         if let message = messages.last, message.state == .streaming { message.state = .stopped; refreshFooter(message) }
     }
+#endif
+
     private func applyBlocks(_ message: LabMessage, previous: [PreparedBlock]) {
         guard let section = messages.firstIndex(where: { $0 === message }) else { return }
         let anchor = followsLatest ? nil : captureAnchor()
@@ -656,12 +671,14 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         input.becomeFirstResponder()
     }
     func open(_ url: URL) {
-        if url.scheme == "weibei-note", fixtureMode { openWorkspace?(1) }
-        else if url.scheme == "weibei-lab" { openWorkspace?(url.host == "notes" ? 1 : 0) }
-        else if url.scheme == "https" || url.scheme == "http" { UIApplication.shared.open(url) }
+#if WEIBEI_ACCEPTANCE_CHECKS
+        if url.scheme == "weibei-note", fixtureMode { openWorkspace?(1); return }
+        if url.scheme == "weibei-lab" { openWorkspace?(url.host == "notes" ? 1 : 0); return }
+#endif
+        if url.scheme == "https" || url.scheme == "http" { UIApplication.shared.open(url) }
     }
     override var keyCommands: [UIKeyCommand]? {
-        let send = UIKeyCommand(title: "发送固定重放", action: #selector(sendPressed), input: "\r", modifierFlags: .command)
+        let send = UIKeyCommand(title: "发送问题", action: #selector(sendPressed), input: "\r", modifierFlags: .command)
         let copy = UIKeyCommand(title: "复制会话选区", action: #selector(copy(_:)), input: "c", modifierFlags: .command)
         copy.wantsPriorityOverSystemBehavior = true
         var commands = usesWorkspaceChrome ? [] : [send, UIKeyCommand(title: "聚焦输入框", action: #selector(focusInput), input: "l", modifierFlags: .command)]
@@ -683,6 +700,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         return button
     }
 
+#if WEIBEI_ACCEPTANCE_CHECKS
     func sampleScroll(name requestedName: String? = nil, completed: (() -> Void)? = nil) {
         guard preparation == nil, replay == nil else { return }
         let beforeParse = store.parseCount
@@ -1126,4 +1144,5 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             completed?(metrics.checks["failure"] == nil && metrics.checks.count == 11)
         }
     }
+#endif
 }

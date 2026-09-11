@@ -1,3 +1,4 @@
+#if WEIBEI_ACCEPTANCE_CHECKS
 import UIKit
 import WebKit
 import WeiBeiCore
@@ -19,8 +20,8 @@ enum CatalystBusinessCheck {
         let root = store.storageURL.deletingLastPathComponent()
         let resultURL = root.appendingPathComponent("business-check.json")
         var result: [String: Any] = [
-            "source": Bundle.main.object(forInfoDictionaryKey: "LabSourceRevision") as? String ?? "",
-            "source_dirty": Bundle.main.object(forInfoDictionaryKey: "LabSourceDirty") as? String ?? "",
+            "source": Bundle.main.object(forInfoDictionaryKey: "WeiBeiGitCommit") as? String ?? "",
+            "source_dirty": Bundle.main.object(forInfoDictionaryKey: "WeiBeiSourceDirty") as? Bool ?? true,
             "bundle_id": Bundle.main.bundleIdentifier ?? "", "platform": "Mac Catalyst",
             "configuration": "Release", "transport": "original client against isolated local SSE fixture; no live model claim",
             "ui_evidence": "in-process behavior checks, not mouse/IME acceptance", "checks": [String: String]()
@@ -64,6 +65,7 @@ enum CatalystBusinessCheck {
             try check("mac_idiom_and_isolated_storage", UIDevice.current.userInterfaceIdiom == .mac
                 && root.path.contains(".businesscheck/")
                 && WeiBeiAgentDataPaths.nativeAgentDirectory.path.contains(".businesscheck/"))
+            try check("original_update_service_through_native_bridge", AppDelegate.updates.status != .failed)
             // This in-process check uses the candidate's own default library.
             // First-launch folder confirmation remains a separate UI check.
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
@@ -374,3 +376,5 @@ enum CatalystBusinessCheck {
             .compactMap(\.rootViewController).flatMap(children).compactMap { $0 as? ConversationController }.first
     }
 }
+
+#endif

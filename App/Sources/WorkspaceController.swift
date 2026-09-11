@@ -1,7 +1,8 @@
+#if WEIBEI_ACCEPTANCE_CHECKS
 import UIKit
 
 final class WorkspaceController: UIViewController {
-    let conversation = ConversationController()
+    let conversation = ConversationController(fixtureMode: true)
     private let panel = UIView()
     private let mode = UISegmentedControl(items: ["阅读材料", "实验笔记"])
     private let editor = UITextView()
@@ -77,3 +78,5 @@ final class WorkspaceController: UIViewController {
         view.setNeedsLayout(); view.layoutIfNeeded()
     }
 }
+
+#endif

@@ -7,7 +7,6 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "WeiBei", targets: ["WeiBei"]),
         .executable(name: "WeiBeiSelfCheck", targets: ["WeiBeiSelfCheck"]),
         .executable(name: "WeiBeiWebEditorCheck", targets: ["WeiBeiWebEditorCheck"]),
         .executable(name: "WeiBeiNativeCheck", targets: ["WeiBeiNativeCheck"]),
@@ -34,7 +33,8 @@ let package = Package(
                 .linkedLibrary("sqlite3")
             ]
         ),
-        .executableTarget(
+        // Host-side shared-code checks. The only application entry is App/WeiBei.xcodeproj.
+        .target(
             name: "WeiBei",
             dependencies: [
                 "WeiBeiCore",

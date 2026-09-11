@@ -50,14 +50,14 @@ BASE_APP="$ROOT_DIR/dist/$APP_NAME"
 RELEASE_DIR="$ROOT_DIR/dist/release/$TARGET_ARCH"
 RELEASE_APP="$RELEASE_DIR/$APP_NAME"
 PDF_HELPER="$RELEASE_APP/Contents/Helpers/WeiBeiPDFTextWorker"
-SPARKLE_FRAMEWORK="$RELEASE_APP/Contents/Frameworks/Sparkle.framework"
+SPARKLE_FRAMEWORK="$RELEASE_APP/Contents/PlugIns/WeiBeiWindowBridge.bundle/Contents/Frameworks/Sparkle.framework"
 APPCAST_PATH="$RELEASE_DIR/appcast-$TARGET_ARCH.xml"
 APPCAST_INPUT_DIR="$RELEASE_DIR/appcast-input-$TARGET_ARCH"
 SPARKLE_PUBLIC_KEY="${WEIBEI_SPARKLE_PUBLIC_KEY:-}"
 SPARKLE_PRIVATE_KEY_FILE="${WEIBEI_SPARKLE_PRIVATE_KEY_FILE:-}"
 SPARKLE_APPCAST_REQUIRED="${WEIBEI_REQUIRE_APPCAST:-0}"
-SPARKLE_GENERATE_APPCAST="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
-SPARKLE_SIGN_UPDATE="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
+SPARKLE_GENERATE_APPCAST="$ROOT_DIR/.build/catalyst-packages/artifacts/sparkle/Sparkle/bin/generate_appcast"
+SPARKLE_SIGN_UPDATE="$ROOT_DIR/.build/catalyst-packages/artifacts/sparkle/Sparkle/bin/sign_update"
 
 if [[ ! -f "$VERSION_FILE" ]]; then
   echo "release failed: missing VERSION" >&2
@@ -93,6 +93,18 @@ if [[ "$SPARKLE_APPCAST_REQUIRED" == "1" && ! -s "$SPARKLE_PRIVATE_KEY_FILE" ]];
   echo "release failed: publication requires WEIBEI_SPARKLE_PRIVATE_KEY_FILE" >&2
   exit 21
 fi
+
+DMG_NAME="WeiBei-$APP_VERSION-macOS-$TARGET_ARCH.dmg"
+DMG_PATH="$RELEASE_DIR/$DMG_NAME"
+DMG_SHA_PATH="$DMG_PATH.sha256"
+
+"$ROOT_DIR/DesignSystem/scripts/verify-assets.sh"
+npm --prefix "$ROOT_DIR" ls --all >/dev/null
+
+mkdir -p "$RELEASE_DIR"
+
+"$ROOT_DIR/script/build_and_run.sh" package
+
 if [[ -s "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
   if [[ "$(/usr/bin/printf '%s' "$SPARKLE_PUBLIC_KEY" | /usr/bin/base64 -D 2>/dev/null | /usr/bin/wc -c | /usr/bin/tr -d ' ')" != "32" ]]; then
     echo "release failed: appcast generation requires a 32-byte base64 WEIBEI_SPARKLE_PUBLIC_KEY" >&2
@@ -132,16 +144,6 @@ if [[ -s "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
   trap - EXIT
 fi
 
-DMG_NAME="WeiBei-$APP_VERSION-macOS-$TARGET_ARCH.dmg"
-DMG_PATH="$RELEASE_DIR/$DMG_NAME"
-DMG_SHA_PATH="$DMG_PATH.sha256"
-
-"$ROOT_DIR/DesignSystem/scripts/verify-assets.sh"
-npm --prefix "$ROOT_DIR" ls --all >/dev/null
-
-mkdir -p "$RELEASE_DIR"
-
-"$ROOT_DIR/script/build_and_run.sh" package
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$BASE_APP")
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-architecture "$TARGET_ARCH" "$BASE_APP")
 
@@ -170,10 +172,6 @@ if [[ ! -x "$PDF_HELPER" || ! -d "$SPARKLE_FRAMEWORK" ]]; then
   exit 12
 fi
 
-/usr/bin/codesign --force --options runtime --timestamp=none --sign - "$PDF_HELPER"
-/usr/bin/codesign --force --deep --options runtime --timestamp=none --sign - "$SPARKLE_FRAMEWORK"
-/usr/bin/codesign --force --options runtime --timestamp=none --sign - "$RELEASE_APP"
-
 /usr/bin/codesign --verify --strict --verbose=2 "$PDF_HELPER"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$SPARKLE_FRAMEWORK"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$RELEASE_APP"
@@ -181,39 +179,8 @@ fi
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-architecture "$TARGET_ARCH" "$RELEASE_APP")
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-production-hygiene "$RELEASE_APP")
 
-verify_release_launch() {
-  local pid="" candidate="" command=""
-  local target_binary="$RELEASE_APP/Contents/MacOS/WeiBei"
-  /usr/bin/open -n "$RELEASE_APP"
-  for _ in {1..120}; do
-    while IFS= read -r candidate; do
-      [[ -n "$candidate" ]] || continue
-      command="$(ps -p "$candidate" -o command= 2>/dev/null || true)"
-      if [[ "$command" == "$target_binary" || "$command" == "$target_binary "* ]]; then
-        pid="$candidate"
-        break 2
-      fi
-    done < <(pgrep -x WeiBei 2>/dev/null || true)
-    sleep 0.25
-  done
-  if [[ -z "$pid" ]]; then
-    echo "release failed: final signed app did not stay running after launch" >&2
-    exit 34
-  fi
-  kill -TERM "$pid" 2>/dev/null || true
-  for _ in {1..260}; do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      echo "release_launch=passed"
-      return 0
-    fi
-    sleep 0.25
-  done
-  echo "release failed: final signed app did not exit after SIGTERM" >&2
-  exit 35
-}
-
 if [[ "${WEIBEI_VERIFY_LAUNCH:-0}" == "1" ]]; then
-  verify_release_launch
+  "$ROOT_DIR/script/verify_app_launch.sh" "$RELEASE_APP"
 fi
 
 npx tsx "$ROOT_DIR/script/dmg/build_dmg.ts" \
@@ -293,4 +260,7 @@ echo "release_app=$RELEASE_APP"
 echo "release_dmg=$DMG_PATH"
 echo "release_sha256=$DMG_SHA256"
 echo "release_appcast=$APPCAST_RESULT"
-echo "release_trust=adhoc-unnotarized"
+"$ROOT_DIR/script/package_size.py" "$RELEASE_APP" "$DMG_PATH" > "$ROOT_DIR/dist/package-$TARGET_ARCH.json"
+echo "release_size_report=$ROOT_DIR/dist/package-$TARGET_ARCH.json"
+/usr/bin/codesign --display --verbose=2 "$RELEASE_APP" 2>&1 | sed -n '/^Signature=/p; /^Authority=/p; /^TeamIdentifier=/p'
+echo "release_notarization=not-performed"
