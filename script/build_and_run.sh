@@ -93,7 +93,7 @@ for notice in PRIVACY.md THIRD_PARTY_NOTICES.md ASSET_ATTRIBUTIONS.md; do
   cp "$ROOT_DIR/$notice" "$CONTENTS/Resources/Legal/$notice"
 done
 # The Catalyst target compiles the layered icon and supplies its Info.plist keys.
-for resource in Web/diagram.html Web/mermaid.min.js landscape.png Editor/index.html genui.html AgentResources/system.md; do
+for resource in Editor/diagram.html Editor/mermaid-runtime.js landscape.png Editor/index.html genui.html AgentResources/system.md; do
   [[ -s "$CONTENTS/Resources/$resource" ]] || { echo "package failed: missing $resource" >&2; exit 10; }
 done
 DSYM_PATH="$DIST_DIR/WeiBei-$APP_VERSION-$TARGET_ARCH-build-$BUILD_NUMBER-$GIT_COMMIT.dSYM"
@@ -109,6 +109,15 @@ python3 - "$STAGED_APP" "$TARGET_ARCH" "$SIGNING_IDENTITY" <<'SIGN'
 from pathlib import Path
 import os,plistlib,shutil,subprocess,sys
 app,arch,identity=Path(sys.argv[1]),sys.argv[2],sys.argv[3]
+# MarkdownView uses MTFontManager.defaultFont (Latin Modern), with no alternate
+# family selection or font-family fallback. Keep its complete font and metrics,
+# and all licenses; only trim the other families from this staging copy.
+math_fonts=app/'Contents/Resources/SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle'
+for suffix in ['.otf','.plist']:
+    required=math_fonts/('latinmodern-math'+suffix)
+    if not required.is_file():raise SystemExit(f'package failed: missing {required}')
+    for path in math_fonts.glob('*'+suffix):
+        if path!=required:path.unlink()
 # Framework headers and module interfaces are compiler inputs, not runtime resources.
 for framework in app.rglob('*.framework'):
     for name in ['Headers','PrivateHeaders','Modules']:

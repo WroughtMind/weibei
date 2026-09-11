@@ -737,7 +737,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-Mermaid 11.12.0
+Mermaid 11.16.1
 The MIT License (MIT)
 
 Copyright (c) 2014 - 2022 Knut Sveidqvist
@@ -761,20 +761,24 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-Bundled Mermaid transitive notices (unmodified)
+Bundled Mermaid transitive notices (from the shared editor runtime)
 /*! Bundled license information:
 
 dompurify/dist/purify.es.mjs:
-  (*! @license DOMPurify 3.2.6 | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/3.2.6/LICENSE *)
+  (*! @license DOMPurify 3.4.12 | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/3.4.12/LICENSE *)
 
-js-yaml/dist/js-yaml.mjs:
-  (*! js-yaml 4.1.0 https://github.com/nodeca/js-yaml @license MIT *)
+mermaid/dist/chunks/mermaid.core/chunk-ZIRB5QZD.mjs:
+  (*! Bundled license information:
+
+  js-yaml/dist/js-yaml.mjs:
+    (*! js-yaml 4.1.1 https://github.com/nodeca/js-yaml @license MIT *)
+  *)
 
 lodash-es/lodash.js:
   (**
    * @license
    * Lodash (Custom Build) <https://lodash.com/>
-   * Build: `lodash modularize exports="es" -o ./`
+   * Build: `lodash modularize exports="es" --repo lodash/lodash#4.18.1 -o ./`
    * Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
    * Released under MIT license <https://lodash.com/license>
    * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
@@ -789,12 +793,32 @@ cytoscape/dist/cytoscape.esm.mjs:
   *)
   (*!
   Event object based on jQuery events, MIT license
-  
+
   https://jquery.org/license/
   https://tldrlegal.com/license/mit-license
   https://github.com/jquery/jquery/blob/master/src/event.js
   *)
   (*! Bezier curve function generator. Copyright Gaetan Renaudeau. MIT License: http://en.wikipedia.org/wiki/MIT_License *)
   (*! Runge-Kutta spring physics function generator. Adapted from Framer.js, copyright Koen Bok. MIT License: http://en.wikipedia.org/wiki/MIT_License *)
+
+@mermaid-js/parser/dist/chunks/mermaid-parser.core/chunk-KEIR6QF5.mjs:
+  (*! Bundled license information:
+
+  lodash-es/lodash.js:
+    (**
+     * @license
+     * Lodash (Custom Build) <https://lodash.com/>
+     * Build: `lodash modularize exports="es" -o ./`
+     * Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
+     * Released under MIT license <https://lodash.com/license>
+     * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
+     * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+     *)
+  *)
+
+mermaid/dist/mermaid.core.mjs:
+  (*! Check if previously processed *)
+  (*!
+   * Wait for document loaded before starting the execution
+   *)
 */
-globalThis["mermaid"] = globalThis.__esbuild_esm_mermaid_nm["mermaid"].default;

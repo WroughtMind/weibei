@@ -26,11 +26,14 @@ const bundle = (entry, outfile, editable, globalName) => build({
 
 if (!check) {
   for (const name of generated) await rm(resolve(resources, name), { recursive: true, force: true });
+  for (const name of await readdir(resources)) {
+    if (/^KaTeX_.*\.(?:ttf|woff)$/.test(name)) await rm(resolve(resources, name));
+  }
 }
 await mkdir(output, { recursive: true });
 if (check) {
-  for (const font of ['Mplus1p-Light.ttf', 'Mplus1p-Regular.ttf']) {
-    await writeFile(resolve(output, font), await readFile(resolve(resources, font)));
+  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'diagram.html']) {
+    await writeFile(resolve(output, name), await readFile(resolve(resources, name)));
   }
 }
 
@@ -42,8 +45,13 @@ const [editorMeta, viewerMeta] = await Promise.all([
   bundle('vendor/prism-runtime.ts', 'prism-runtime.js', false),
   bundle('selection.ts', 'selection-runtime.js', false, 'WeiBeiSelection'),
   build({
-    entryPoints: [resolve(root, 'node_modules/katex/dist/katex.css')], bundle: true, minify: true,
-    outfile: resolve(output, 'editor.css'), loader: { '.woff': 'file', '.woff2': 'file', '.ttf': 'file' },
+    stdin: {
+      contents: (await readFile(resolve(root, 'node_modules/katex/dist/katex.css'), 'utf8'))
+        .replace(/,\s*url\([^)]*\.(?:woff|ttf)\)\s*format\("[^"]+"\)/g, ''),
+      resolveDir: resolve(root, 'node_modules/katex/dist'), loader: 'css',
+    },
+    bundle: true, minify: true,
+    outfile: resolve(output, 'editor.css'), loader: { '.woff2': 'file' },
     // SPM .process 会把 bundle 内目录拍平;字体平铺输出 + css 同级相对路径才能在拍平后仍可解析。
     assetNames: '[name]', logLevel: 'warning',
   }),

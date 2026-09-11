@@ -36,13 +36,10 @@ targets:
         type: folder
         buildPhase: resources
       - path: ../Sources/WeiBei/Resources
-        excludes: [Fonts, Editor]
+        excludes: [Fonts, Editor, NativeChat]
         buildPhase: resources
       - path: Resources
-        excludes: [Web, 实验说明.txt]
-        buildPhase: resources
-      - path: Resources/Web
-        type: folder
+        excludes: [实验说明.txt]
         buildPhase: resources
       - path: ../Sources/WeiBeiCore/AgentResources
         type: folder

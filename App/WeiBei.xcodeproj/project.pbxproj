@@ -128,7 +128,6 @@
 		8E2B32B3E58E4AD9A6373C6D /* ThirdPartyNotices.txt in Resources */ = {isa = PBXBuildFile; fileRef = 3897F22789F4D06837AF58FA /* ThirdPartyNotices.txt */; };
 		901418B7B90140CE34A9DCBD /* CourseRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2AA846F70ABF4574FE654D1 /* CourseRecordsView.swift */; };
 		94D96D08A77CF0891C483063 /* libWeiBeiCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = AB4D551D5F0841FA7DC2C881 /* libWeiBeiCore.a */; };
-		94FA8C1589B372F0A58EC06A /* Web in Resources */ = {isa = PBXBuildFile; fileRef = 6D5E6542F8F6A55FE708F914 /* Web */; };
 		95543CC327F2A63E388BA7AC /* CourseDocumentSearchIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E085667A58861BF79AA2AA6 /* CourseDocumentSearchIndex.swift */; };
 		955C9BBC22E7C0E4BF4E414E /* StudyAgentRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F640D8A72FC9836C85A5DEA /* StudyAgentRuntime.swift */; };
 		96DBACEBF4FEA918529A8F2B /* SelectionAnchors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 575B41F872D11C6C38B41A0F /* SelectionAnchors.swift */; };
@@ -192,7 +191,6 @@
 		D7461916660B38F076DD209D /* EmptyWorkspaceLauncherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 372CEF37BF1F172BC10D41B1 /* EmptyWorkspaceLauncherView.swift */; };
 		D76BD45A3BF29926A9903C54 /* NativeAgentOAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F233FF07163AFDB2AA11D8A /* NativeAgentOAuth.swift */; };
 		D80C1F6556A74170160BE481 /* NativeAgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC57794E6452A1C33344AE4 /* NativeAgentTools.swift */; };
-		D8386CCEBD74E5F53DB399D6 /* highlight.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 02A644E17B69948BC29DFF8A /* highlight.min.js */; };
 		DAD5CD55F5CE81202AA1FA5A /* AgentModelListService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D53033C3513BF2C8A9010FBA /* AgentModelListService.swift */; };
 		DC51A4D7FCA3FD8B4B44D7D1 /* AgentComposerTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349423CEC169514B0680B82B /* AgentComposerTextEditor.swift */; };
 		DE9B436506BF9DA2A449693E /* ContentRailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FE38247B6232C409983A720 /* ContentRailView.swift */; };
@@ -275,7 +273,6 @@
 		00CC9A562BFCADF885FE9E32 /* CourseHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseHubView.swift; sourceTree = "<group>"; };
 		015665548EEE165E258A0617 /* ReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderView.swift; sourceTree = "<group>"; };
 		026BB72571E60524486B752B /* WeiBeiUpdateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiUpdateService.swift; sourceTree = "<group>"; };
-		02A644E17B69948BC29DFF8A /* highlight.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = highlight.min.js; sourceTree = "<group>"; };
 		04E38AE36B5042658CF2A6F3 /* WorkspaceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceController.swift; sourceTree = "<group>"; };
 		05462FCC5016BCB94FCEE1E5 /* NativeLLMAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLLMAdapter.swift; sourceTree = "<group>"; };
 		057144163738E98063D4A1EB /* StudySessionMessageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudySessionMessageStore.swift; sourceTree = "<group>"; };
@@ -358,7 +355,6 @@
 		68FCBB7347C7604DB882F5CF /* StudySessionMessagePersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudySessionMessagePersistence.swift; sourceTree = "<group>"; };
 		6AE1BD06D63DB363CD74B121 /* NativeAgentLedger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentLedger.swift; sourceTree = "<group>"; };
 		6B75AA7D25C00BCF032B925C /* CourseRelationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseRelationsView.swift; sourceTree = "<group>"; };
-		6D5E6542F8F6A55FE708F914 /* Web */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Web; path = Resources/Web; sourceTree = SOURCE_ROOT; };
 		6E085667A58861BF79AA2AA6 /* CourseDocumentSearchIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDocumentSearchIndex.swift; sourceTree = "<group>"; };
 		6EA7DFEC6BAFDD75647B0EBD /* EmptyWorkspaceInspiration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyWorkspaceInspiration.swift; sourceTree = "<group>"; };
 		6F233FF07163AFDB2AA11D8A /* NativeAgentOAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentOAuth.swift; sourceTree = "<group>"; };
@@ -644,7 +640,6 @@
 				34B53E38967ACD5B8B394ACE /* landscape.png */,
 				5E56540C4FCF69F043F6338E /* Mermaid-LICENSE.txt */,
 				3897F22789F4D06837AF58FA /* ThirdPartyNotices.txt */,
-				6D5E6542F8F6A55FE708F914 /* Web */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -697,7 +692,6 @@
 				48C3E845BD6802C0EAC6F997 /* genui.html */,
 				F21F01A9F97D0BF878AAA2C7 /* genui.js */,
 				5FCEDF5D4D6611F3D562A0AC /* Inspiration */,
-				D67E2B2B9E71BC97CCD933A7 /* NativeChat */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -906,14 +900,6 @@
 			);
 			sourceTree = "<group>";
 		};
-		D67E2B2B9E71BC97CCD933A7 /* NativeChat */ = {
-			isa = PBXGroup;
-			children = (
-				02A644E17B69948BC29DFF8A /* highlight.min.js */,
-			);
-			path = NativeChat;
-			sourceTree = "<group>";
-		};
 		DFA62BCBBCDB535662781971 /* Settings */ = {
 			isa = PBXGroup;
 			children = (
@@ -1063,12 +1049,10 @@
 				B27EA9DA746F1D2CC4D6F834 /* Mermaid-LICENSE.txt in Resources */,
 				271FB7CA84ACC13D506F13E9 /* SOURCES.md in Resources */,
 				8E2B32B3E58E4AD9A6373C6D /* ThirdPartyNotices.txt in Resources */,
-				94FA8C1589B372F0A58EC06A /* Web in Resources */,
 				0BCC975404C9DE312A2CCACD /* genui-math.js in Resources */,
 				260BE27DB5F0D3C4524AAC0E /* genui.css in Resources */,
 				C377834C0CF96725BF81B310 /* genui.html in Resources */,
 				C29A40D29E700064AA7015AC /* genui.js in Resources */,
-				D8386CCEBD74E5F53DB399D6 /* highlight.min.js in Resources */,
 				BFF0F15140DDB6156E503CE3 /* landscape.png in Resources */,
 				839106CD2DC282EB94F74D4A /* lanting-clear-breeze.png in Resources */,
 				6F175382A5668AE9051BCB22 /* lanting-observe-kinds.png in Resources */,

@@ -24,5 +24,7 @@ Logo、App 图标、纸纹、宣传图和社交分享图仍是保留权利的品
 
 笔记默认使用 M PLUS 1p（Light / Regular），Copyright 2016 The M+ Project Authors，
 采用 SIL Open Font License 1.1；完整许可随应用资源包中的 `Mplus1p-OFL.txt` 分发。
-字体原样取自 Typora 官方主题库收录的 [Onigiri](https://theme.typora.io/theme/Onigiri/)，
-用于匹配该主题的笔记排版。中文缺字由系统无衬线字体补齐。
+字体取自 Typora 官方主题库收录的 [Onigiri](https://theme.typora.io/theme/Onigiri/)，
+用于匹配该主题的笔记排版。应用使用保留全部字形、映射、度量和微调指令的 WOFF2 压缩格式，
+原始 TTF 保存在设计资产目录；开发时可用 `python3 script/convert_editor_fonts.py --check`
+（fontTools 4.62.1，含 WOFF2 支持）重现并逐字形核对。中文缺字由系统无衬线字体补齐。

@@ -136,6 +136,44 @@ func runVerifyReleaseMetadata(arguments: [String]) {
             fail("missing packaged notice \(legalFile)", exitCode: 10)
         }
     }
+    let resources = appBundle.appendingPathComponent("Contents/Resources")
+    let mathFonts = resources.appendingPathComponent("SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle")
+    let mathFiles = (try? fileManager.contentsOfDirectory(atPath: mathFonts.path)) ?? []
+    guard Set(mathFiles.filter { $0.hasSuffix(".otf") || $0.hasSuffix(".plist") })
+            == ["latinmodern-math.otf", "latinmodern-math.plist"],
+          ["GUST-FONT-LICENSE.txt", "OFL.txt", "LICENSE"].allSatisfy({ mathFiles.contains($0) }),
+          !fileManager.fileExists(atPath: resources.appendingPathComponent("highlight.min.js").path),
+          fileManager.fileExists(atPath: resources.appendingPathComponent("Highlightr_Highlightr.bundle/Contents/Resources/highlight.min.js").path) else {
+        fail("packaged math fonts or conversation highlighter are incorrect", exitCode: 10)
+    }
+    let editor = resources.appendingPathComponent("Editor")
+    let editorFiles = (try? fileManager.contentsOfDirectory(atPath: editor.path)) ?? []
+    let formulaFonts = editorFiles.filter { $0.hasPrefix("KaTeX_") }
+    guard formulaFonts.count == 20, formulaFonts.allSatisfy({ $0.hasSuffix(".woff2") }) else {
+        fail("editor must contain all 20 formula fonts in WOFF2 format", exitCode: 10)
+    }
+    for name in ["Mplus1p-Light.woff2", "Mplus1p-Regular.woff2", "diagram.html", "mermaid-runtime.js"] {
+        guard let data = try? Data(contentsOf: editor.appendingPathComponent(name)), !data.isEmpty else {
+            fail("missing editor resource \(name)", exitCode: 10)
+        }
+    }
+    guard !editorFiles.contains(where: { $0.hasSuffix(".ttf") || $0.hasSuffix(".woff") }),
+          !fileManager.fileExists(atPath: resources.appendingPathComponent("Web").path) else {
+        fail("obsolete duplicate web resources are packaged", exitCode: 10)
+    }
+    guard let enumerator = fileManager.enumerator(at: appBundle,
+        includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]) else {
+        fail("cannot enumerate app size", exitCode: 10)
+    }
+    var appBytes = 0
+    for case let url as URL in enumerator {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]) else {
+            fail("cannot measure \(url.path)", exitCode: 10)
+        }
+        if values.isRegularFile == true && values.isSymbolicLink != true { appBytes += values.fileSize ?? 0 }
+    }
+    guard appBytes < 30_000_000 else { fail("app body is \(appBytes) bytes; limit is below 30 MB", exitCode: 10) }
+    print("app_logical_bytes=\(appBytes)")
     // Pre-1.0 包不得把未来 1.0.0 发布计划散文当作现行法律副本打包。
     if fileManager.fileExists(atPath: legalDirectory.appendingPathComponent("v1.0.0.md").path) {
         fail("packaged Legal must not include future v1.0.0 release notes", exitCode: 11)
