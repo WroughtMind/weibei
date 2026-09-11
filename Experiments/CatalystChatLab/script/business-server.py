@@ -69,6 +69,11 @@ class Handler(BaseHTTPRequestHandler):
                     time.sleep(2)
                     image = re.search(r"WB452_IMAGE=(\S+)", user)
                     answer = "## 资料与阅读位置\n\n这是通过原 HTTP 客户端、Agent 和资料读取工具收到的独立测试回答。\n\n"
+                    read_result = next(m["content"] for m in messages if m.get("tool_call_id") == "read452")
+                    for result_item in json.loads(read_result).get("items", []):
+                        source = result_item.get("source") or {}
+                        if label := source.get("label"):
+                            answer += label + "\n\n"
                     answer += "保留第一段的显示对象，后续内容增长时继续读取同一段。\n\n"
                     answer += "行内公式 $E=mc^2$。\n\n$$\\int_0^1 x^2\\,dx=\\frac{1}{3}$$\n\n"
                     answer += "```swift\nlet 原始业务 = [\"资料\", \"会话\", \"笔记\"]\nprint(原始业务)\n```\n\n"
