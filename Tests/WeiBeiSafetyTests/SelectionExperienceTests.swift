@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import WeiBei
 import WeiBeiCore
@@ -51,6 +53,28 @@ final class SelectionExperienceTests: XCTestCase {
             XCTAssertEqual(store.selectionAnchor, anchor)
             XCTAssertTrue(store.keepFloatingSelectionForAnswer)
         }
+    }
+
+    @MainActor
+    func testOpeningQuestionFocusesTheMountedInputWithoutAnotherClick() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.updateSelection("直接开始提问", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
+        store.askSelection()
+        let host = NSHostingView(rootView: FloatingSelectionAgentView(expanded: .constant(true))
+            .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 180),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        // The window stays hidden; no activation or input on the user's desktop.
+        for _ in 0..<20 {
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            if window.firstResponder is NSTextView { break }
+        }
+        XCTAssertTrue(window.firstResponder is NSTextView)
     }
 
     @MainActor

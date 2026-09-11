@@ -2844,7 +2844,8 @@ struct FloatingSelectionAgentView: View {
                 sendTrailing: 4,
                 horizontalPadding: 2,
                 verticalPadding: 4,
-                showsChrome: false
+                showsChrome: false,
+                focusesOnAppear: true
             ) {
                 sendDraft()
             }
