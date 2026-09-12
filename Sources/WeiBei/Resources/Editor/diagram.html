@@ -10,8 +10,9 @@ body { padding:12px; overflow:auto; }
 @media(prefers-color-scheme:dark) { html { color:#eee; } }
 </style>
 <div id="diagram" role="img" aria-label="关系图"></div><p id="error" role="status"></p>
-<script src="mermaid.min.js"></script>
+<script src="mermaid-runtime.js"></script>
 <script>
+const mermaid=window.WeiBeiMermaid;
 mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:matchMedia('(prefers-color-scheme:dark)').matches?'dark':'neutral',fontFamily:'-apple-system'});
 let current=0;
 async function renderDiagram(source,generation) {

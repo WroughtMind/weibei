@@ -22,9 +22,10 @@ final class DiagramView: UIView, WKNavigationDelegate {
         web.scrollView.isScrollEnabled = true
         web.accessibilityLabel = "可横向阅读的关系图"
         addSubview(web)
-        guard let url = Bundle.main.url(forResource: "diagram", withExtension: "html", subdirectory: "Web") else {
+        guard let url = Bundle.main.url(forResource: "diagram", withExtension: "html", subdirectory: "Editor") else {
             preconditionFailure("Bundled diagram runtime is missing")
         }
+        // Both pages use the same static renderer; access stays within Editor.
         web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }

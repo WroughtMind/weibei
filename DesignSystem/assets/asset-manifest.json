@@ -170,6 +170,16 @@
       "sha256": "42d0c9c2b49284a963ddb3bdf40fd751c2ce4e92114ac6b3001fdbec4f8fffc9"
     },
     {
+      "path": "assets/fonts/Mplus1p-Light.ttf",
+      "bytes": 1767352,
+      "sha256": "1452047ac8cb749b2c3a8012bedf4f54e12c26f2288e093f2c8da1e91d97ed4b"
+    },
+    {
+      "path": "assets/fonts/Mplus1p-Regular.ttf",
+      "bytes": 1758820,
+      "sha256": "44ff34017bea6bfcf3542be0f9072b7c1c53eb03967f00cddb1ec933b1e17356"
+    },
+    {
       "path": "assets/fonts/WeiBeiStele.ttf",
       "bytes": 17380,
       "sha256": "5ae600f7a1a367c637d3bfbce482107216c3c4361e3b5a6ca054926cb1f24c87"
