@@ -350,7 +350,10 @@ struct ReaderView: View {
                         Text(store.ui("部分网页资源未能带入", "Some webpage resources could not be imported")).font(.headline)
                         Text(store.ui("正文已保存。以下配套文件未能读取，部分排版、图片或交互可能不完整：", "The document is saved. These supporting files could not be read, so some styles, images or interactions may be incomplete:"))
                         Text(htmlResourceIssues.prefix(12).joined(separator: "\n")).font(.caption)
-                    }.padding().frame(maxWidth: 320)
+                    }
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding().frame(maxWidth: 320)
                 }
                 .padding(6)
             }
