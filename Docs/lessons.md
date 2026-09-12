@@ -28,3 +28,9 @@
 - 规则:**凡是"流式增量推送 + 文本变换"的管道,变换只能作用于"已决"文本**。在每一层入口用 `withholdUndecidableStreamingTail` 截断"下一字符会改变解释"的尾部(未闭合定界符、`\hat` 参数链、行首 `[`、尾部裸 `\`/`$`/`<`),放行后一次性转换到位;finalize 时不截断。变换函数本身保持纯粹,流式上下文由调用点传入。
 - 验证方法:harness(`WEIBEI_STREAM_PROBE=1 WEIBEI_STREAM_PROBE_SCENARIO=<name>`)跑 plain/long/sources/currency/inlinemath/math/mathline 七场景,`prefix-break` 与 `prefixMatch = 0` 必须全为 0。探针默认关闭,勿删 harness,回归时直接复用。
 - 教训:修流式渲染先证"前缀单调"不变量,再谈动画/高度;在错误层(web)修原生引入的断裂会反复打地鼠。环境变量名以源码为准,不要凭记忆。
+
+## 2026-09-13 本地 checkout 落后远端 100 个提交，差点在旧路线上修性能
+
+- 现象：用户报「最新版会话窗口改宽卡顿」，本地 main 停在 PR #430，读到的还是 AppKit `NativeChatMarkdownView` 路线；用户提醒「去 GitHub 看最新版」后才发现正式 App 已切到 Mac Catalyst（`App/Sources/ConversationController.swift`）。
+- 规则：接到任何「最新版」问题，开工第一步 `git fetch` 并核对已安装 App 的 `WeiBeiGitCommit` 与 `origin/main`，再读代码；本地 checkout 不等于用户手里的版本。
+- 附带：画中画是 Codex 侧的桌面操作工具，本会话不用；验收用 App 自带的隔离身份验收包 `--self-check` 在进程内跑，每次会弹一个独立窗口约两分钟，先跟用户说明再跑。
