@@ -5,6 +5,10 @@ import WeiBeiCore
 /// Keeps each original SwiftUI pane and its editor/controller alive when moving between layouts.
 final class CatalystHostingView: UIView {
     let controller: UIHostingController<AnyView>
+#if WEIBEI_ACCEPTANCE_CHECKS
+    /// Acceptance harness only: main-thread time of each layout pass of this host.
+    var layoutTiming: ((TimeInterval) -> Void)?
+#endif
     init<Content: View>(_ root: Content) {
         controller = UIHostingController(rootView: AnyView(root))
         super.init(frame: .zero)
@@ -15,8 +19,18 @@ final class CatalystHostingView: UIView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func layoutSubviews() {
+#if WEIBEI_ACCEPTANCE_CHECKS
+        let started = layoutTiming == nil ? 0 : CACurrentMediaTime()
         super.layoutSubviews()
         controller.view.frame = bounds
+        if let layoutTiming {
+            controller.view.layoutIfNeeded()
+            layoutTiming(CACurrentMediaTime() - started)
+        }
+#else
+        super.layoutSubviews()
+        controller.view.frame = bounds
+#endif
     }
     override func didMoveToWindow() {
         super.didMoveToWindow()

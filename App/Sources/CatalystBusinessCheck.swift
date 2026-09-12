@@ -74,6 +74,204 @@ enum CatalystBusinessCheck {
         }
     }
 
+    /// Drives the real three-pane divider the way a pointer does — a new width on
+    /// every frame — over a synthetic long conversation, and records the display
+    /// callback intervals. Isolated identity only; never the production workspace.
+    static func runDragProfile(store: WorkspaceStore) async {
+        guard !started else { return }; started = true
+        do {
+            UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
+            // --drag-panes=agent-notes (default) | reader-agent | reader-notes
+            let panes = CommandLine.arguments.first { $0.hasPrefix("--drag-panes=") }.map { String($0.dropFirst("--drag-panes=".count)) } ?? "agent-notes"
+            store.paneState.showReader = true
+            store.paneState.showAgent = panes != "reader-notes"
+            store.paneState.showNotes = panes != "reader-agent"
+            store.setLayout(.documentAgentNotes)
+            // --drag-content=full opens a real material in the reader and a real note in the
+            // editor, like a working session; default leaves both panes at their empty state.
+            if CommandLine.arguments.contains("--drag-content=full") {
+                let inputs = store.storageURL.deletingLastPathComponent().appendingPathComponent("DragInputs", isDirectory: true)
+                try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+                let materialURL = inputs.appendingPathComponent("拖动采样材料.txt")
+                try (0..<80).map { LabFixture.history($0) }.joined(separator: "\n\n").write(to: materialURL, atomically: true, encoding: .utf8)
+                let noteURL = inputs.appendingPathComponent("拖动采样笔记.md")
+                try ("# 拖动采样笔记\n\n" + (0..<40).map { LabFixture.history($0) }.joined(separator: "\n\n")).write(to: noteURL, atomically: true, encoding: .utf8)
+                let materials: [StudyItem] = await withCheckedContinuation { done in store.importFiles([materialURL]) { done.resume(returning: $0) } }
+                let notes: [StudyItem] = await withCheckedContinuation { done in store.importFiles([noteURL], markdownAsNotes: true) { done.resume(returning: $0) } }
+                guard let material = materials.first, let note = notes.first else { throw Failure("drag inputs") }
+                store.openCourseNote(note.id)
+                try await until("note editor ready", seconds: 60) {
+                    guard !store.activeNoteIsLoading, store.activeNoteItemID == note.id,
+                          let editor = await editor(documentID: store.activeNoteEditorDocumentID) else { return false }
+                    return (try? await editor.evaluateJavaScript("Boolean(document.querySelector('.ProseMirror'))") as? Bool) == true
+                }
+                store.select(itemID: material.id)
+                try await Task.sleep(for: .milliseconds(1500))
+            }
+            guard store.createStudySession(courseID: nil) != nil else { throw Failure("session") }
+            let history = (0..<240).map { AgentMessage(role: $0 % 4 == 0 ? .user : .assistant, text: LabFixture.history($0), source: nil) }
+            store.messages = history
+            try await until("history displayed", seconds: 60) {
+                conversation()?.messages.count == 240 && conversation()?.messages.last?.id == history.last?.id.uuidString
+            }
+            let controller = conversation()!
+            if panes == "reader-notes" { try await Task.sleep(for: .milliseconds(400)) }
+            if CommandLine.arguments.contains("--pane-open-check") {
+                // Two panes at an uneven split, then a third opens: the two already on
+                // screen must keep their proportion inside the space left to them.
+                guard let window = controller.view.window ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first,
+                      let split = descendants(window).compactMap({ $0 as? StableDocumentSplitView }).first else { throw Failure("split") }
+                store.paneState.showNotes = false
+                try await Task.sleep(for: .milliseconds(700))
+                let divider = split.dividerViews[0]
+                divider.onDragStart?(); divider.onDragChange?(-160); divider.onDragEnd?()
+                try await Task.sleep(for: .milliseconds(700))
+                let before = [WorkspacePaneRole.reader, .agent].map { split.roleHosts[$0]!.frame.width }
+                store.paneState.showNotes = true
+                try await Task.sleep(for: .milliseconds(900))
+                let after = [WorkspacePaneRole.reader, .agent, .notes].map { split.roleHosts[$0]!.frame.width }
+                let ratioBefore = before[0] / before[1], ratioAfter = after[0] / after[1]
+                let result: [String: Any] = ["before": before.map { Double($0) }, "after": after.map { Double($0) },
+                    "ratio_before": Double(ratioBefore), "ratio_after": Double(ratioAfter),
+                    "passed": abs(ratioBefore - ratioAfter) < 0.05 && abs(ratioBefore - 1) > 0.2]
+                try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
+                try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: LabMetrics.directory.appendingPathComponent("pane-open.json"), options: .atomic)
+                exit(result["passed"] as! Bool ? 0 : 1)
+            }
+            guard let window = controller.view.window ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first,
+                  let split = descendants(window).compactMap({ $0 as? StableDocumentSplitView }).first,
+                  split.dividerViews.count == 2 else { throw Failure("dividers") }
+            try await Task.sleep(for: .milliseconds(600))
+            controller.collection.contentOffset.y = controller.collection.contentSize.height / 3
+            controller.collection.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(600))
+            let divider = split.dividerViews[panes == "agent-notes" ? 1 : 0]
+            let metrics = controller.metrics
+            metrics.checks["drag_panes"] = panes
+            let seconds = 20.0
+            let amplitude = CommandLine.arguments.first { $0.hasPrefix("--drag-amplitude=") }.flatMap { Double($0.dropFirst("--drag-amplitude=".count)) } ?? 140
+            let themeRevisionBefore = controller.store.themeRevision
+            var widths: [CGFloat] = []
+            // Per-pane host layout cost, so a stall can be attributed to a pane.
+            var hostTimes: [String: [Double]] = [:]
+            for (role, host) in split.roleHosts {
+                let key = "\(role.rawValue)"
+                host.layoutTiming = { hostTimes[key, default: []].append($0 * 1000) }
+            }
+            defer { for host in split.roleHosts.values { host.layoutTiming = nil } }
+            // --drag-nofooters removes the SwiftUI footers (user bubbles / actions) to
+            // measure their share; product behaviour is unchanged otherwise.
+            let savedAuxiliary = controller.auxiliaryView
+            if CommandLine.arguments.contains("--drag-nofooters") {
+                controller.auxiliaryView = nil
+                controller.collection.reloadData()
+                try await Task.sleep(for: .milliseconds(300))
+            }
+            defer { controller.auxiliaryView = savedAuxiliary }
+            let sampler = DisplayIntervalSampler(name: "product_drag", metrics: metrics)
+            sampler.start()
+            let turns = RunLoopTurnSampler(metrics: metrics)
+            turns.start()
+            defer { turns.stop() }
+            divider.onDragStart?()
+            let started = CACurrentMediaTime()
+            var frames = 0
+            // --drag-hz=60 (default: one event per display frame, like a pointer) | 125 (stress)
+            let hz = CommandLine.arguments.first { $0.hasPrefix("--drag-hz=") }.flatMap { Double($0.dropFirst("--drag-hz=".count)) } ?? 60
+            var deadline = ContinuousClock.now
+            while CACurrentMediaTime() - started < seconds {
+                let t = CACurrentMediaTime() - started
+                // Back-and-forth like a hand: 1.2 s period, ±amplitude pt, plus small jitter.
+                let delta = -amplitude * sin(t * 2 * .pi / 1.2) + CGFloat(frames % 3)
+                divider.onDragChange?(delta)
+                widths.append(controller.bodyWidth)
+                frames += 1
+                deadline += .microseconds(Int64(1_000_000 / hz))
+                try await Task.sleep(until: deadline, clock: .continuous)
+            }
+            metrics.record("product_drag_hz", hz)
+            divider.onDragChange?(0)
+            divider.onDragEnd?()
+            try await Task.sleep(for: .milliseconds(800))
+            sampler.stop()
+            metrics.record("product_drag_events", Double(frames))
+            for (key, values) in hostTimes { for value in values { metrics.record("product_drag_host_\(key)_layout_ms", value) } }
+            metrics.checks["drag_content"] = CommandLine.arguments.contains("--drag-content=full") ? "full" : "empty"
+            metrics.record("product_drag_amplitude", amplitude)
+            metrics.record("product_drag_theme_changes", Double(controller.store.themeRevision - themeRevisionBefore))
+            metrics.record("product_drag_body_width_min", Double(widths.min() ?? 0))
+            metrics.record("product_drag_body_width_max", Double(widths.max() ?? 0))
+            metrics.record("product_drag_messages", Double(controller.messages.count))
+            _ = try metrics.write(controller: controller)
+            exit(0)
+        } catch {
+            try? error.localizedDescription.write(to: LabMetrics.directory.appendingPathComponent("drag-profile-failure.txt"), atomically: true, encoding: .utf8)
+            exit(1)
+        }
+    }
+
+    /// Wall time and main-thread CPU time per run-loop turn. A long turn with little
+    /// CPU means the main thread was blocked (render-server fences, IPC), which the
+    /// display-callback intervals alone cannot tell apart from computation.
+    @MainActor private final class RunLoopTurnSampler {
+        private var observer: CFRunLoopObserver?
+        private var turnStart: (wall: CFTimeInterval, cpu: Double)?
+        private let metrics: LabMetrics
+        init(metrics: LabMetrics) { self.metrics = metrics }
+        private static func cpuSeconds() -> Double {
+            var info = thread_basic_info()
+            var count = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.size / MemoryLayout<natural_t>.size)
+            let thread = mach_thread_self()
+            defer { mach_port_deallocate(mach_task_self_, thread) }
+            let result = withUnsafeMutablePointer(to: &info) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { thread_info(thread, thread_flavor_t(THREAD_BASIC_INFO), $0, &count) }
+            }
+            guard result == KERN_SUCCESS else { return 0 }
+            return Double(info.user_time.seconds + info.system_time.seconds) + Double(info.user_time.microseconds + info.system_time.microseconds) / 1_000_000
+        }
+        func start() {
+            let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { [weak self] _, activity in
+                guard let self else { return }
+                if activity == .afterWaiting {
+                    self.turnStart = (CACurrentMediaTime(), Self.cpuSeconds())
+                } else if let start = self.turnStart {
+                    let wall = (CACurrentMediaTime() - start.wall) * 1000
+                    let cpu = (Self.cpuSeconds() - start.cpu) * 1000
+                    self.metrics.record("product_drag_turn_wall_ms", wall)
+                    if wall > 20 {
+                        self.metrics.record("product_drag_long_turn_wall_ms", wall)
+                        self.metrics.record("product_drag_long_turn_cpu_ms", cpu)
+                    }
+                    self.turnStart = nil
+                }
+            }
+            self.observer = observer
+            CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        }
+        func stop() {
+            if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+            observer = nil
+        }
+    }
+
+    @MainActor private final class DisplayIntervalSampler: NSObject {
+        private var link: CADisplayLink?
+        private var previous: CFTimeInterval?
+        private let name: String
+        private let metrics: LabMetrics
+        init(name: String, metrics: LabMetrics) { self.name = name; self.metrics = metrics }
+        func start() {
+            let link = CADisplayLink(target: self, selector: #selector(fire))
+            link.add(to: .main, forMode: .common); self.link = link
+        }
+        func stop() { link?.invalidate(); link = nil }
+        @objc private func fire() {
+            let now = CACurrentMediaTime()
+            if let previous { metrics.record("\(name)_display_callback_interval_ms", (now - previous) * 1000) }
+            previous = now
+        }
+    }
+
     static func run(store: WorkspaceStore, endpoint: String) async {
         guard !started else { return }; started = true
         let root = store.storageURL.deletingLastPathComponent()

@@ -221,7 +221,10 @@ struct CatalystWeiBeiApp: App {
             .onOpenURL { AppDelegate.workspace.importFiles([$0]) }
 #if WEIBEI_ACCEPTANCE_CHECKS
             .task {
-                if let endpoint = AppDelegate.businessCheckEndpoint {
+                if CommandLine.arguments.contains("--drag-profile"),
+                   Bundle.main.bundleIdentifier?.hasSuffix(".dragprofile") == true {
+                    await CatalystBusinessCheck.runDragProfile(store: AppDelegate.workspace)
+                } else if let endpoint = AppDelegate.businessCheckEndpoint {
                     if CommandLine.arguments.contains("--quit-save-check") || CommandLine.arguments.contains("--verify-quit-save") {
                         await CatalystBusinessCheck.runQuitSaveCheck(store: AppDelegate.workspace)
                     } else {

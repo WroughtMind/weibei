@@ -193,6 +193,12 @@ final class ContentStore {
     @discardableResult
     func measure(_ block: PreparedBlock, width: CGFloat) -> CGFloat {
         if block.width == width { return block.height }
+        if let view = block.renderedView, view.record === block, view.superview != nil {
+            block.height = view.measure(width: width)
+            block.width = width
+            measureCount += 1
+            return block.height
+        }
         if let layout = block.preparedLayout {
             block.height = max(24, ceil(layout.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height))
             block.width = width

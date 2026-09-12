@@ -138,6 +138,16 @@ final class BlockView: UIView, UITextViewDelegate {
         lastWidth = width
         switch record.kind {
         case .markdown:
+            if record.preparedLayout != nil, !preparedLabel.isHidden {
+                // Measure through the label's own layout: Litext keeps that measurement
+                // and adopts it when the view is laid out at the same width, so the
+                // paragraph is typeset once per width instead of once for the height
+                // and again for drawing.
+                preparedLabel.preferredMaxLayoutWidth = width
+                lastHeight = max(24, ceil(preparedLabel.intrinsicContentSize.height))
+                installSize(width: width, height: lastHeight)
+                return lastHeight
+            }
             if let layout = record.preparedLayout {
                 lastHeight = max(24, ceil(layout.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height))
                 installSize(width: width, height: lastHeight)
@@ -281,3 +291,4 @@ final class BlockView: UIView, UITextViewDelegate {
         }
     }
 }
+

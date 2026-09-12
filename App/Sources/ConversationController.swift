@@ -4,7 +4,7 @@ import Litext
 import MarkdownView
 import QuartzCore
 
-final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UITextViewDelegate {
+final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate, UITextViewDelegate {
     let fixtureMode: Bool
     var usesWorkspaceChrome = false
     var auxiliaryView: ((LabMessage) -> UIView)?
@@ -32,7 +32,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     let store = ContentStore()
-    let flow = UICollectionViewFlowLayout()
+    let flow = ConversationLayout()
     lazy var collection = UICollectionView(frame: .zero, collectionViewLayout: flow)
     let input = UITextView()
     private let toolbar = UIStackView()
@@ -60,6 +60,14 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     let metrics = LabMetrics()
     private var pendingChanges: [String: PreparedBlock] = [:]
     private var changeScheduled = false
+    private var layoutRefreshScheduled = false
+    /// Width convergence after a resize: only on-screen paragraphs reflow on the
+    /// resize frame itself; the rest catch up here in display-link slices.
+    private var convergence: WidthConvergence?
+    private var convergenceGeneration = 0
+    private var convergenceElapsed: Double = 0
+    private var dragAnchor: Anchor?
+    private var settleRefreshPending = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -70,7 +78,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         collection.alwaysBounceVertical = true
         collection.keyboardDismissMode = .none
         collection.accessibilityLabel = "会话消息列表"
-        flow.minimumLineSpacing = 0
+        flow.itemHeight = { [weak self] path in self?.itemHeight(at: path) ?? 0 }
         for child in [toolbar, status, collection, input, send, latest] { view.addSubview(child) }
         toolbar.spacing = 16; toolbar.alignment = .center
         toolbar.addArrangedSubview(button("阅读区", symbol: "sidebar.left", action: { [weak self] in self?.toggleWorkspace?() }))
@@ -167,21 +175,40 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         // SwiftUI can deliver its content width after the native pane shrinks.
         let nextWidth = min(width, requestedWidth)
         let resized = nextWidth != bodyWidth || laidOutWidth != width
-        let anchor = laidOutWidth > 0 && nextWidth != bodyWidth ? captureAnchor() : nil
+        // Successive drag frames keep the character and screen offset captured on
+        // the first one, so the reading line holds still for the whole gesture.
+        let anchor = laidOutWidth > 0 && nextWidth != bodyWidth ? (dragAnchor ?? captureAnchor()) : nil
+        if anchor != nil { dragAnchor = anchor }
         let started = CACurrentMediaTime()
         let wasUpdating = layoutTransaction
         if resized {
             layoutTransaction = true
+            let widthChanged = nextWidth != bodyWidth
             bodyWidth = nextWidth
+            if widthChanged {
+                if laidOutWidth > 0 {
+                    // A divider or window drag delivers a new width every frame. Reflow
+                    // only what is on screen now; offscreen paragraphs keep their last
+                    // height as an estimate and converge once the width settles.
+                    reflowVisibleParagraphs()
+                } else {
+                    // First layout: every paragraph is measured before the list appears.
+                    for message in messages { for block in message.blocks { autoreleasepool { _ = store.measure(block, width: bodyWidth) } } }
+                }
+            }
             let inset = max(0, (width - bodyWidth) / 2)
             flow.sectionInset = UIEdgeInsets(top: 14, left: inset, bottom: 10, right: inset)
-            for message in messages { for block in message.blocks { autoreleasepool { _ = store.measure(block, width: bodyWidth) } } }
+            flow.itemWidth = bodyWidth
             flow.invalidateLayout()
         }
-        toolbar.frame = CGRect(x: 28, y: 12, width: min(width - 56, 370), height: 34)
-        status.frame = CGRect(x: 28, y: 48, width: width - 56, height: 24)
-        input.frame = CGRect(x: 24, y: view.bounds.height - 112, width: width - 88, height: 88)
-        send.frame = CGRect(x: width - 56, y: view.bounds.height - 90, width: 40, height: 40)
+        if !usesWorkspaceChrome {
+            // The workspace hosts its own composer; these hidden controls must not
+            // relayout a text view on every drag frame.
+            toolbar.frame = CGRect(x: 28, y: 12, width: min(width - 56, 370), height: 34)
+            status.frame = CGRect(x: 28, y: 48, width: width - 56, height: 24)
+            input.frame = CGRect(x: 24, y: view.bounds.height - 112, width: width - 88, height: 88)
+            send.frame = CGRect(x: width - 56, y: view.bounds.height - 90, width: 40, height: 40)
+        }
         // setFrame can synchronously ask the flow layout for item sizes.
         // Publish coherent widths first, then assign the final frame once.
         collection.frame = usesWorkspaceChrome ? view.bounds
@@ -192,8 +219,116 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             if let anchor { restore(anchor) }
             layoutTransaction = wasUpdating
             if laidOutWidth > 0 { metrics.record("resize_ms", (CACurrentMediaTime() - started) * 1000) }
+            scheduleWidthConvergence()
         }
         laidOutWidth = width
+    }
+
+    /// Paragraphs within one viewport height around the visible area at the current
+    /// width. Blocks whose cached height belongs to another width are the only work.
+    private func reflowVisibleParagraphs() {
+        // Widening shrinks paragraphs and pulls the next ones up into view, so the
+        // region reaches a little below the viewport; anything else waits.
+        var region = collection.bounds
+        region.size.height *= 1.2
+        for attributes in flow.layoutAttributesForElements(in: region) ?? [] {
+            let path = attributes.indexPath
+            guard path.section < messages.count else { continue }
+            let message = messages[path.section]
+            guard path.item >= 1, path.item <= message.blocks.count else { continue }
+            let block = message.blocks[path.item - 1]
+            if block.width != bodyWidth { autoreleasepool { _ = store.measure(block, width: bodyWidth) } }
+        }
+    }
+
+    private func scheduleWidthConvergence() {
+        convergence?.stop(); convergence = nil
+        convergenceGeneration &+= 1
+        let generation = convergenceGeneration
+        // Wait for the pointer to pause; every resize frame restarts this delay.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self, generation == self.convergenceGeneration, self.convergence == nil else { return }
+            self.dragAnchor = nil
+            guard self.hasStaleParagraphWidths else {
+                if self.settleRefreshPending { self.settleRefreshPending = false; self.performLayoutRefresh() }
+                return
+            }
+            self.settleRefreshPending = false
+            self.convergenceElapsed = 0
+            self.convergence = WidthConvergence { [weak self] in self?.convergeWidthSlice() }
+        }
+    }
+
+    /// One display-link slice: measure the nearest stale paragraphs within a small
+    /// time budget, then apply the new heights while keeping the reading position.
+    private func convergeWidthSlice() {
+        let started = CACurrentMediaTime()
+        let firstVisible = collection.indexPathsForVisibleItems.min()?.section ?? 0
+        var remaining = false
+        for section in messages.indices.sorted(by: { abs($0 - firstVisible) < abs($1 - firstVisible) }) {
+            for block in messages[section].blocks where block.width != bodyWidth {
+                if CACurrentMediaTime() - started > 0.004 { remaining = true; break }
+                autoreleasepool { _ = store.measure(block, width: bodyWidth) }
+            }
+            if remaining { break }
+        }
+        convergenceElapsed += (CACurrentMediaTime() - started) * 1000
+        // Offscreen heights do not move anything on screen until the list is laid
+        // out again, so slices only measure; one anchored refresh applies them all.
+        guard !remaining else { return }
+        convergence?.stop(); convergence = nil
+        metrics.record("resize_convergence_ms", convergenceElapsed)
+        convergenceElapsed = 0
+        performLayoutRefresh()
+    }
+
+    var isConvergingWidth: Bool { convergence != nil }
+    var hasStaleParagraphWidths: Bool {
+        messages.contains { message in message.blocks.contains { $0.width != bodyWidth } }
+    }
+
+    /// Coalesces height changes reported in the same frame into one layout pass.
+    func requestLayoutRefresh() {
+        // While a drag is in flight the next resize frame lays the list out anyway;
+        // a footer height that arrives now is applied there or when the pointer pauses.
+        if dragAnchor != nil { settleRefreshPending = true; return }
+        guard !layoutRefreshScheduled else { return }
+        layoutRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.layoutRefreshScheduled else { return }
+            self.performLayoutRefresh()
+        }
+    }
+
+    private func performLayoutRefresh() {
+        layoutRefreshScheduled = false
+        guard isViewLoaded, !messages.isEmpty else { return }
+        let follow = followsLatest
+        let anchor = follow ? nil : captureAnchor()
+        let wasUpdating = layoutTransaction
+        layoutTransaction = true
+        if let anchor, let section = messages.firstIndex(where: { $0.id == anchor.messageID }),
+           anchor.item >= 1, anchor.item <= messages[section].blocks.count {
+            _ = store.measure(messages[section].blocks[anchor.item - 1], width: bodyWidth)
+        }
+        flow.invalidateLayout(); collection.layoutIfNeeded()
+        if follow { scrollToLatest() } else if let anchor { restore(anchor) }
+        layoutTransaction = wasUpdating
+    }
+
+    /// Display-link driver whose target does not retain the controller.
+    private final class WidthConvergence {
+        private var link: CADisplayLink?
+        private let tick: () -> Void
+        init(tick: @escaping () -> Void) {
+            self.tick = tick
+            let link = CADisplayLink(target: self, selector: #selector(fire))
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        }
+        @objc private func fire() { tick() }
+        func stop() { link?.invalidate(); link = nil }
+        deinit { link?.invalidate() }
     }
 
     func numberOfSections(in collectionView: UICollectionView) -> Int { messages.count }
@@ -209,8 +344,13 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         let message = messages[path.section]
         if path.item == 0 { cell.showHeader(message) }
         else if path.item <= message.blocks.count {
-            cell.show(body: store.view(for: message.blocks[path.item - 1], width: bodyWidth))
+            let block = message.blocks[path.item - 1]
+            let stale = block.width != bodyWidth
+            cell.show(body: store.view(for: block, width: bodyWidth))
             selection.paint(cell.body!)
+            // A paragraph scrolled in before the width converged was sized from its
+            // previous width; the frame in the layout catches up on the next turn.
+            if stale { requestLayoutRefresh() }
         } else if let auxiliaryView, message.original != nil {
             cell.showAuxiliary(auxiliaryView(message))
         } else {
@@ -222,12 +362,12 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                              })
         }
     }
-    func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
-                        sizeForItemAt path: IndexPath) -> CGSize {
+    private func itemHeight(at path: IndexPath) -> CGFloat {
+        guard path.section < messages.count else { return 0 }
         let message = messages[path.section]
-        let height: CGFloat = path.item == 0 ? (usesWorkspaceChrome ? 12 : 30)
-            : (path.item > message.blocks.count ? (usesWorkspaceChrome ? message.auxiliaryHeight : 42) : message.blocks[path.item - 1].height + store.theme.spacings.paragraph)
-        return CGSize(width: bodyWidth, height: height)
+        if path.item == 0 { return usesWorkspaceChrome ? 12 : 30 }
+        if path.item > message.blocks.count { return usesWorkspaceChrome ? message.auxiliaryHeight : 42 }
+        return message.blocks[path.item - 1].height + store.theme.spacings.paragraph
     }
     func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt path: IndexPath) {
         (cell as? MessageCell)?.body?.saveInteractionState()
@@ -435,13 +575,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     func updateAuxiliaryHeight(_ height: CGFloat, for message: LabMessage) {
         guard height.isFinite, height > 0, abs(message.auxiliaryHeight - height) > 0.5,
               messages.contains(where: { $0 === message }) else { return }
-        let anchor = followsLatest ? nil : captureAnchor()
-        let follow = followsLatest
-        layoutTransaction = true
         message.auxiliaryHeight = height
-        flow.invalidateLayout(); collection.layoutIfNeeded()
-        if follow { scrollToLatest() } else if let anchor { restore(anchor) }
-        layoutTransaction = false
+        // Every visible footer reports after a resize; lay the list out once for all of them.
+        requestLayoutRefresh()
     }
 
     func refreshAppearance() async {
@@ -702,6 +838,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
 #if WEIBEI_ACCEPTANCE_CHECKS
+    /// Continuous alternating pane widths, driven from the run loop like a real drag,
+    /// so an external sampler can attribute main-thread time.
     func sampleScroll(name requestedName: String? = nil, completed: (() -> Void)? = nil) {
         guard preparation == nil, replay == nil else { return }
         let beforeParse = store.parseCount
@@ -813,6 +951,88 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     }
                 }
                 await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
+
+                // A divider drag resizes the pane and its body width together every
+                // frame. Each frame may reflow only the paragraphs on screen; the rest
+                // converge after the pointer pauses, and the reader stays on the same
+                // paragraph throughout.
+                do {
+                    collection.contentOffset.y = min(4300, collection.contentSize.height / 3)
+                    collection.layoutIfNeeded()
+                    let savedFrame = view.frame
+                    let savedChrome = usesWorkspaceChrome, savedBodyWidth = workspaceBodyWidth
+                    @MainActor func waitForConvergence() async throws {
+                        let deadline = ContinuousClock.now + .seconds(10)
+                        while isConvergingWidth || hasStaleParagraphWidths {
+                            if ContinuousClock.now >= deadline { throw Failure(message: "停手后屏幕外段落没有收敛到新宽度") }
+                            try await Task.sleep(for: .milliseconds(20))
+                        }
+                        try await Task.sleep(for: .milliseconds(40))
+                    }
+                    defer {
+                        usesWorkspaceChrome = savedChrome; workspaceBodyWidth = savedBodyWidth
+                        view.frame = savedFrame
+                        view.setNeedsLayout(); view.layoutIfNeeded()
+                    }
+                    usesWorkspaceChrome = true
+                    workspaceBodyWidth = max(1, savedFrame.width - 24)
+                    view.setNeedsLayout(); view.layoutIfNeeded()
+                    try await waitForConvergence()
+                    guard let reading = captureAnchor() else { throw Failure(message: "连续改宽前没有阅读锚点") }
+                    let total = messages.reduce(0) { $0 + $1.blocks.count }
+                    var frameScopes: [Int] = []
+                    for step in 1...12 {
+                        let visibleBefore = Set(collection.indexPathsForVisibleItems)
+                        let measurementsBefore = store.measureCount
+                        let started = CACurrentMediaTime()
+                        let width = savedFrame.width - CGFloat(step) * 9
+                        view.frame.size.width = width
+                        workspaceBodyWidth = max(1, width - 24)
+                        view.setNeedsLayout(); view.layoutIfNeeded()
+                        metrics.record("drag_frame_ms", (CACurrentMediaTime() - started) * 1000)
+                        let visibleAfter = Set(collection.indexPathsForVisibleItems)
+                        let allowed = visibleBefore.union(visibleAfter).count + 6
+                        let measured = store.measureCount - measurementsBefore
+                        frameScopes.append(measured)
+                        try expect(measured <= allowed && measured < total,
+                                   "拖动帧重排了屏幕外段落（第 \(step) 步测量 \(measured) 段，可见 \(allowed) 段，共 \(total) 段）")
+                        try expect(abs(bodyWidth - (width - 24)) < 0.5, "拖动帧没有实时应用新宽度")
+                        for cell in collection.visibleCells.compactMap({ $0 as? MessageCell }) {
+                            if let body = cell.body { try expect(abs(body.frame.width - bodyWidth) < 0.5, "可见段落没有跟随拖动中的宽度重排") }
+                        }
+                        let now = captureAnchor()
+                        try expect(now?.messageID == reading.messageID && now?.item == reading.item, "连续改宽离开了正在阅读的段落")
+                    }
+                    try await waitForConvergence()
+                    let settled = captureAnchor()
+                    try expect(settled?.messageID == reading.messageID && settled?.item == reading.item, "收敛后离开了正在阅读的段落")
+                    for section in messages.indices {
+                        for item in 1...messages[section].blocks.count {
+                            guard let frame = collection.layoutAttributesForItem(at: IndexPath(item: item, section: section))?.frame else { continue }
+                            let expected = messages[section].blocks[item - 1].height + store.theme.spacings.paragraph
+                            try expect(abs(frame.height - expected) < 0.5, "收敛后列表高度与段落高度不一致")
+                        }
+                    }
+                    metrics.record("drag_frame_measured_paragraphs_max", Double(frameScopes.max() ?? 0))
+                    // Fast back-and-forth: alternate widths every frame for 60 frames while
+                    // letting the run loop turn, so asynchronous refresh and convergence
+                    // work between frames is included in the per-frame cost.
+                    for step in 0..<60 {
+                        let started = CACurrentMediaTime()
+                        let width = savedFrame.width - CGFloat(step % 2 == 0 ? 60 : 24) - CGFloat(step % 7)
+                        view.frame.size.width = width
+                        workspaceBodyWidth = max(1, width - 24)
+                        view.setNeedsLayout(); view.layoutIfNeeded()
+                        metrics.record("fastdrag_frame_ms", (CACurrentMediaTime() - started) * 1000)
+                        try await Task.sleep(for: .milliseconds(8))
+                    }
+                    try await waitForConvergence()
+                    usesWorkspaceChrome = savedChrome; workspaceBodyWidth = savedBodyWidth
+                    view.frame = savedFrame
+                    view.setNeedsLayout(); view.layoutIfNeeded()
+                    try await waitForConvergence()
+                }
+                metrics.checks["drag_reflows_visible_only_then_converges"] = "passed"
 
                 let message = LabMessage(author: "检查样本", markdown: "第一段：中文与 emoji 👩🏽‍💻。\n\n第二段尚在增长")
                 _ = await store.prepare(message, width: bodyWidth)
@@ -1127,7 +1347,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
                 metrics.checks["single_long_answer_complete_and_revisitable"] = "passed"
                 selection.clear()
-                status.text = "11 项必要行为检查通过 · 桌面手感仍需单独体验"
+                status.text = "12 项必要行为检查通过 · 桌面手感仍需单独体验"
             } catch {
                 metrics.checks["failure"] = error.localizedDescription
                 status.text = "行为检查未通过：\(error.localizedDescription)"
@@ -1142,7 +1362,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
             }
             catch { status.text = "检查记录写入失败：\(error.localizedDescription)" }
-            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 11)
+            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 12)
         }
     }
 #endif

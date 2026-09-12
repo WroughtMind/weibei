@@ -54,7 +54,7 @@ def verify(path, source_key, status=None):
 
 launch('--self-check')
 conversation = verify(support / 'Results/latest.json', 'source_revision')
-assert conversation['idiom'] == 'mac' and len(conversation['checks']) == 11, conversation
+assert conversation['idiom'] == 'mac' and len(conversation['checks']) == 12, conversation
 for filename in ['latest.json', 'window.png', 'diagram.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-conversation-' + filename))
 
@@ -66,7 +66,7 @@ business = verify(business_path, 'source', 'passed')
 assert len(business['checks']) == 19, business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
-print('11 项会话检查与 19 项原业务保存重开检查通过；不替代鼠标、输入法及触控板体验验收。')
+print('12 项会话检查与 19 项原业务保存重开检查通过；不替代鼠标、输入法及触控板体验验收。')
 
 with tempfile.TemporaryDirectory(prefix='weibei-quit-check-') as scratch:
     helper = str(Path(scratch) / 'quit')
