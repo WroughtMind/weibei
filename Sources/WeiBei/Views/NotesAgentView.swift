@@ -64,6 +64,26 @@ struct WeiBeiPaneHeader<Actions: View>: View {
     var availableWidth: CGFloat = 960
     @ViewBuilder var actions: () -> Actions
 
+    init(
+        title: String,
+        latinMark: String? = nil,
+        subtitle: String,
+        appearanceMode: WeiBeiAppearanceMode,
+        reorderRole: WorkspacePaneRole? = nil,
+        availableWidth: CGFloat = 960,
+        @ViewBuilder actions: @escaping () -> Actions
+    ) {
+        self.title = title
+        self.latinMark = latinMark
+        self.subtitle = subtitle
+        self.appearanceMode = appearanceMode
+        self.reorderRole = reorderRole
+        // The width only selects a header tier; store the tier so a divider drag
+        // does not hand this view a new value on every frame.
+        self.availableWidth = availableWidth < 300 ? 299 : (availableWidth < 420 ? 419 : 960)
+        self.actions = actions
+    }
+
     private var isCompactHeader: Bool { availableWidth < 420 }
     private var isTightHeader: Bool { availableWidth < 300 }
 
@@ -122,6 +142,16 @@ struct WeiBeiPaneHeader<Actions: View>: View {
 
     private var titleUsesEnglishBrand: Bool {
         title.unicodeScalars.allSatisfy(\.isASCII)
+    }
+}
+
+/// For `.equatable()` where the actions are a fixed menu whose content is built
+/// lazily on open; the actions closure itself is not compared.
+extension WeiBeiPaneHeader: Equatable {
+    static func == (lhs: WeiBeiPaneHeader, rhs: WeiBeiPaneHeader) -> Bool {
+        lhs.title == rhs.title && lhs.latinMark == rhs.latinMark && lhs.subtitle == rhs.subtitle
+            && lhs.appearanceMode == rhs.appearanceMode && lhs.reorderRole == rhs.reorderRole
+            && lhs.availableWidth == rhs.availableWidth
     }
 }
 
@@ -320,6 +350,7 @@ struct NotePaneView: View {
                         onActivate: { activateNoteRailItem($0, railOnly: railOnly) },
                         motionPreference: store.motionPreference
                     )
+                    .equatable()
                     .zIndex(4)
                 }
             }
@@ -1140,6 +1171,43 @@ private struct AgentRailTurn {
     var answer: String
 }
 
+/// Caches rail derivations keyed on what they read: message identities, the
+/// newest message's text and state (streaming appends), and the language.
+private final class AgentRailMemo {
+    private struct Key: Equatable {
+        let ids: [UUID]
+        let lastTextLength: Int
+        let lastState: AgentReplyCompletionState?
+        let language: WeiBeiInterfaceLanguage
+    }
+    private var key: Key?
+    private var cachedTurns: [AgentRailTurn]?
+    private var cachedItems: [ContentRailItem]?
+    private var cachedStartIDs: Set<UUID>?
+
+    private func refresh(_ messages: [AgentMessage], language: WeiBeiInterfaceLanguage) {
+        let next = Key(ids: messages.map(\.id), lastTextLength: messages.last?.text.utf8.count ?? 0,
+                       lastState: messages.last?.completionState, language: language)
+        guard next != key else { return }
+        key = next; cachedTurns = nil; cachedItems = nil; cachedStartIDs = nil
+    }
+    func turns(for messages: [AgentMessage], language: WeiBeiInterfaceLanguage, compute: () -> [AgentRailTurn]) -> [AgentRailTurn] {
+        refresh(messages, language: language)
+        if let cachedTurns { return cachedTurns }
+        let value = compute(); cachedTurns = value; return value
+    }
+    func items(for messages: [AgentMessage], language: WeiBeiInterfaceLanguage, compute: () -> [ContentRailItem]) -> [ContentRailItem] {
+        refresh(messages, language: language)
+        if let cachedItems { return cachedItems }
+        let value = compute(); cachedItems = value; return value
+    }
+    func startIDs(for messages: [AgentMessage], language: WeiBeiInterfaceLanguage, compute: () -> Set<UUID>) -> Set<UUID> {
+        refresh(messages, language: language)
+        if let cachedStartIDs { return cachedStartIDs }
+        let value = compute(); cachedStartIDs = value; return value
+    }
+}
+
 /// Keeps the last frame-level probe value without publishing it through SwiftUI state.
 /// The real parent proposal lays out visible content; sampled width settles render caches.
 private final class AgentPaneWidthRelay {
@@ -1221,6 +1289,9 @@ struct AgentPaneView: View {
     /// reference type on purpose: per-event dictionary writes must not publish
     /// SwiftUI state; only the derived activeAgentRailID write renders.
     @State private var turnReadingPositions = AgentTurnReadingPositionModel()
+    /// Rail turns derive from every message with a regex per turn. The pane body
+    /// runs on every divider frame; the derivation runs only when messages change.
+    @State private var railMemo = AgentRailMemo()
     /// Far-row IDs represented by their measured row heights. Empty unless the
     /// unload flag is on; published only when the set changes, not per scroll pixel.
     @State private var offscreenPlaceholderIDs: Set<UUID> = []
@@ -1278,8 +1349,15 @@ struct AgentPaneView: View {
                 availableWidth: heldPaneLayoutWidth ?? agentPaneWidth,
                 wide: wide
             )
+#if targetEnvironment(macCatalyst)
+            // Crossing the tier threshold restyles every message. During a divider
+            // drag the tier follows the held width and settles once with it.
+            let typographyWidth = isPaneWidthMotionActive ? markdownContentWidth : contentWidth
+#else
+            let typographyWidth = contentWidth
+#endif
             let comfy = wide
-                || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
+                || typographyWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
             let composerHeight = AgentChatLayoutMetrics.composerHeight
             let headerHeight: CGFloat = showsPaneHeader
                 ? (liveAvailableWidth < 420 ? 44 : 54)
@@ -1299,6 +1377,7 @@ struct AgentPaneView: View {
                             ) {
                                 sessionMenu
                             }
+                            .equatable()
                         }
 
 #if targetEnvironment(macCatalyst)
@@ -1434,6 +1513,7 @@ struct AgentPaneView: View {
                             onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) },
                             motionPreference: store.motionPreference
                         )
+                        .equatable()
                         .zIndex(4)
                     }
                 }
@@ -1712,6 +1792,10 @@ struct AgentPaneView: View {
     }
 
     private var agentRailTurns: [AgentRailTurn] {
+        railMemo.turns(for: store.messages, language: store.interfaceLanguage) { computeAgentRailTurns() }
+    }
+
+    private func computeAgentRailTurns() -> [AgentRailTurn] {
         var turns: [AgentRailTurn] = []
         for (index, message) in store.messages.enumerated() {
             switch message.role {
@@ -1743,6 +1827,10 @@ struct AgentPaneView: View {
     }
 
     private var agentRailItems: [ContentRailItem] {
+        railMemo.items(for: store.messages, language: store.interfaceLanguage) { computeAgentRailItems() }
+    }
+
+    private func computeAgentRailItems() -> [ContentRailItem] {
         let turns = agentRailTurns
         return turns.enumerated().map { index, turn in
             ContentRailItem(
@@ -1758,7 +1846,7 @@ struct AgentPaneView: View {
     /// Rows whose message starts a rail turn — the only rows that need a
     /// reading-position probe. Rail ticks are turns, not messages.
     private var agentRailTurnStartMessageIDs: Set<UUID> {
-        Set(agentRailTurns.map(\.startMessageID))
+        railMemo.startIDs(for: store.messages, language: store.interfaceLanguage) { Set(agentRailTurns.map(\.startMessageID)) }
     }
 
     private func activateAgentRailItem(_ item: ContentRailItem, railOnly: Bool, proxy: ScrollViewProxy) {

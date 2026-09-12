@@ -4,7 +4,7 @@ import Litext
 import MarkdownView
 import QuartzCore
 
-final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UITextViewDelegate {
+final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate, UITextViewDelegate {
     let fixtureMode: Bool
     var usesWorkspaceChrome = false
     var auxiliaryView: ((LabMessage) -> UIView)?
@@ -32,7 +32,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     let store = ContentStore()
-    let flow = UICollectionViewFlowLayout()
+    let flow = ConversationLayout()
     lazy var collection = UICollectionView(frame: .zero, collectionViewLayout: flow)
     let input = UITextView()
     private let toolbar = UIStackView()
@@ -66,8 +66,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private var convergence: WidthConvergence?
     private var convergenceGeneration = 0
     private var convergenceElapsed: Double = 0
-    /// Number of paragraphs reflowed synchronously by the latest resize frame.
-    private(set) var lastResizeScope = 0
+    private var dragAnchor: Anchor?
+    private var settleRefreshPending = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -78,7 +78,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         collection.alwaysBounceVertical = true
         collection.keyboardDismissMode = .none
         collection.accessibilityLabel = "会话消息列表"
-        flow.minimumLineSpacing = 0
+        flow.itemHeight = { [weak self] path in self?.itemHeight(at: path) ?? 0 }
         for child in [toolbar, status, collection, input, send, latest] { view.addSubview(child) }
         toolbar.spacing = 16; toolbar.alignment = .center
         toolbar.addArrangedSubview(button("阅读区", symbol: "sidebar.left", action: { [weak self] in self?.toggleWorkspace?() }))
@@ -175,7 +175,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         // SwiftUI can deliver its content width after the native pane shrinks.
         let nextWidth = min(width, requestedWidth)
         let resized = nextWidth != bodyWidth || laidOutWidth != width
-        let anchor = laidOutWidth > 0 && nextWidth != bodyWidth ? captureAnchor() : nil
+        // Successive drag frames keep the character and screen offset captured on
+        // the first one, so the reading line holds still for the whole gesture.
+        let anchor = laidOutWidth > 0 && nextWidth != bodyWidth ? (dragAnchor ?? captureAnchor()) : nil
+        if anchor != nil { dragAnchor = anchor }
         let started = CACurrentMediaTime()
         let wasUpdating = layoutTransaction
         if resized {
@@ -190,18 +193,22 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     reflowVisibleParagraphs()
                 } else {
                     // First layout: every paragraph is measured before the list appears.
-                    lastResizeScope = 0
                     for message in messages { for block in message.blocks { autoreleasepool { _ = store.measure(block, width: bodyWidth) } } }
                 }
             }
             let inset = max(0, (width - bodyWidth) / 2)
             flow.sectionInset = UIEdgeInsets(top: 14, left: inset, bottom: 10, right: inset)
+            flow.itemWidth = bodyWidth
             flow.invalidateLayout()
         }
-        toolbar.frame = CGRect(x: 28, y: 12, width: min(width - 56, 370), height: 34)
-        status.frame = CGRect(x: 28, y: 48, width: width - 56, height: 24)
-        input.frame = CGRect(x: 24, y: view.bounds.height - 112, width: width - 88, height: 88)
-        send.frame = CGRect(x: width - 56, y: view.bounds.height - 90, width: 40, height: 40)
+        if !usesWorkspaceChrome {
+            // The workspace hosts its own composer; these hidden controls must not
+            // relayout a text view on every drag frame.
+            toolbar.frame = CGRect(x: 28, y: 12, width: min(width - 56, 370), height: 34)
+            status.frame = CGRect(x: 28, y: 48, width: width - 56, height: 24)
+            input.frame = CGRect(x: 24, y: view.bounds.height - 112, width: width - 88, height: 88)
+            send.frame = CGRect(x: width - 56, y: view.bounds.height - 90, width: 40, height: 40)
+        }
         // setFrame can synchronously ask the flow layout for item sizes.
         // Publish coherent widths first, then assign the final frame once.
         collection.frame = usesWorkspaceChrome ? view.bounds
@@ -224,29 +231,29 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         // region reaches a little below the viewport; anything else waits.
         var region = collection.bounds
         region.size.height *= 1.2
-        var scope = 0
         for attributes in flow.layoutAttributesForElements(in: region) ?? [] {
             let path = attributes.indexPath
             guard path.section < messages.count else { continue }
             let message = messages[path.section]
             guard path.item >= 1, path.item <= message.blocks.count else { continue }
             let block = message.blocks[path.item - 1]
-            if block.width != bodyWidth {
-                scope += 1
-                autoreleasepool { _ = store.measure(block, width: bodyWidth) }
-            }
+            if block.width != bodyWidth { autoreleasepool { _ = store.measure(block, width: bodyWidth) } }
         }
-        lastResizeScope = scope
     }
 
     private func scheduleWidthConvergence() {
         convergence?.stop(); convergence = nil
         convergenceGeneration &+= 1
         let generation = convergenceGeneration
-        guard hasStaleParagraphWidths else { return }
         // Wait for the pointer to pause; every resize frame restarts this delay.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             guard let self, generation == self.convergenceGeneration, self.convergence == nil else { return }
+            self.dragAnchor = nil
+            guard self.hasStaleParagraphWidths else {
+                if self.settleRefreshPending { self.settleRefreshPending = false; self.performLayoutRefresh() }
+                return
+            }
+            self.settleRefreshPending = false
             self.convergenceElapsed = 0
             self.convergence = WidthConvergence { [weak self] in self?.convergeWidthSlice() }
         }
@@ -282,6 +289,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
 
     /// Coalesces height changes reported in the same frame into one layout pass.
     func requestLayoutRefresh() {
+        // While a drag is in flight the next resize frame lays the list out anyway;
+        // a footer height that arrives now is applied there or when the pointer pauses.
+        if dragAnchor != nil { settleRefreshPending = true; return }
         guard !layoutRefreshScheduled else { return }
         layoutRefreshScheduled = true
         DispatchQueue.main.async { [weak self] in
@@ -352,12 +362,12 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                              })
         }
     }
-    func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
-                        sizeForItemAt path: IndexPath) -> CGSize {
+    private func itemHeight(at path: IndexPath) -> CGFloat {
+        guard path.section < messages.count else { return 0 }
         let message = messages[path.section]
-        let height: CGFloat = path.item == 0 ? (usesWorkspaceChrome ? 12 : 30)
-            : (path.item > message.blocks.count ? (usesWorkspaceChrome ? message.auxiliaryHeight : 42) : message.blocks[path.item - 1].height + store.theme.spacings.paragraph)
-        return CGSize(width: bodyWidth, height: height)
+        if path.item == 0 { return usesWorkspaceChrome ? 12 : 30 }
+        if path.item > message.blocks.count { return usesWorkspaceChrome ? message.auxiliaryHeight : 42 }
+        return message.blocks[path.item - 1].height + store.theme.spacings.paragraph
     }
     func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt path: IndexPath) {
         (cell as? MessageCell)?.body?.saveInteractionState()
@@ -828,6 +838,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
 #if WEIBEI_ACCEPTANCE_CHECKS
+    /// Continuous alternating pane widths, driven from the run loop like a real drag,
+    /// so an external sampler can attribute main-thread time.
     func sampleScroll(name requestedName: String? = nil, completed: (() -> Void)? = nil) {
         guard preparation == nil, replay == nil else { return }
         let beforeParse = store.parseCount
@@ -1002,6 +1014,19 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                         }
                     }
                     metrics.record("drag_frame_measured_paragraphs_max", Double(frameScopes.max() ?? 0))
+                    // Fast back-and-forth: alternate widths every frame for 60 frames while
+                    // letting the run loop turn, so asynchronous refresh and convergence
+                    // work between frames is included in the per-frame cost.
+                    for step in 0..<60 {
+                        let started = CACurrentMediaTime()
+                        let width = savedFrame.width - CGFloat(step % 2 == 0 ? 60 : 24) - CGFloat(step % 7)
+                        view.frame.size.width = width
+                        workspaceBodyWidth = max(1, width - 24)
+                        view.setNeedsLayout(); view.layoutIfNeeded()
+                        metrics.record("fastdrag_frame_ms", (CACurrentMediaTime() - started) * 1000)
+                        try await Task.sleep(for: .milliseconds(8))
+                    }
+                    try await waitForConvergence()
                     usesWorkspaceChrome = savedChrome; workspaceBodyWidth = savedBodyWidth
                     view.frame = savedFrame
                     view.setNeedsLayout(); view.layoutIfNeeded()
