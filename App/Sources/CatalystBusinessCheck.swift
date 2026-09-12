@@ -116,6 +116,28 @@ enum CatalystBusinessCheck {
             }
             let controller = conversation()!
             if panes == "reader-notes" { try await Task.sleep(for: .milliseconds(400)) }
+            if CommandLine.arguments.contains("--pane-open-check") {
+                // Two panes at an uneven split, then a third opens: the two already on
+                // screen must keep their proportion inside the space left to them.
+                guard let window = controller.view.window ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first,
+                      let split = descendants(window).compactMap({ $0 as? StableDocumentSplitView }).first else { throw Failure("split") }
+                store.paneState.showNotes = false
+                try await Task.sleep(for: .milliseconds(700))
+                let divider = split.dividerViews[0]
+                divider.onDragStart?(); divider.onDragChange?(-160); divider.onDragEnd?()
+                try await Task.sleep(for: .milliseconds(700))
+                let before = [WorkspacePaneRole.reader, .agent].map { split.roleHosts[$0]!.frame.width }
+                store.paneState.showNotes = true
+                try await Task.sleep(for: .milliseconds(900))
+                let after = [WorkspacePaneRole.reader, .agent, .notes].map { split.roleHosts[$0]!.frame.width }
+                let ratioBefore = before[0] / before[1], ratioAfter = after[0] / after[1]
+                let result: [String: Any] = ["before": before.map { Double($0) }, "after": after.map { Double($0) },
+                    "ratio_before": Double(ratioBefore), "ratio_after": Double(ratioAfter),
+                    "passed": abs(ratioBefore - ratioAfter) < 0.05 && abs(ratioBefore - 1) > 0.2]
+                try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
+                try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: LabMetrics.directory.appendingPathComponent("pane-open.json"), options: .atomic)
+                exit(result["passed"] as! Bool ? 0 : 1)
+            }
             guard let window = controller.view.window ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first,
                   let split = descendants(window).compactMap({ $0 as? StableDocumentSplitView }).first,
                   split.dividerViews.count == 2 else { throw Failure("dividers") }

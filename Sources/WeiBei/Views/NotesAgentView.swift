@@ -145,16 +145,6 @@ struct WeiBeiPaneHeader<Actions: View>: View {
     }
 }
 
-/// For `.equatable()` where the actions are a fixed menu whose content is built
-/// lazily on open; the actions closure itself is not compared.
-extension WeiBeiPaneHeader: Equatable {
-    static func == (lhs: WeiBeiPaneHeader, rhs: WeiBeiPaneHeader) -> Bool {
-        lhs.title == rhs.title && lhs.latinMark == rhs.latinMark && lhs.subtitle == rhs.subtitle
-            && lhs.appearanceMode == rhs.appearanceMode && lhs.reorderRole == rhs.reorderRole
-            && lhs.availableWidth == rhs.availableWidth
-    }
-}
-
 struct PaneHeaderReorderModifier: ViewModifier {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var dragActive = false
@@ -350,7 +340,6 @@ struct NotePaneView: View {
                         onActivate: { activateNoteRailItem($0, railOnly: railOnly) },
                         motionPreference: store.motionPreference
                     )
-                    .equatable()
                     .zIndex(4)
                 }
             }
@@ -1377,7 +1366,6 @@ struct AgentPaneView: View {
                             ) {
                                 sessionMenu
                             }
-                            .equatable()
                         }
 
 #if targetEnvironment(macCatalyst)
@@ -1513,7 +1501,6 @@ struct AgentPaneView: View {
                             onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) },
                             motionPreference: store.motionPreference
                         )
-                        .equatable()
                         .zIndex(4)
                     }
                 }

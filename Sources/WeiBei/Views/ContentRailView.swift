@@ -35,25 +35,6 @@ struct ContentRailItem: Identifiable {
     }
 }
 
-/// Value equality for `.equatable()`: a pane whose width changes every frame must not
-/// rebuild sixty tick buttons when nothing the rail shows has changed. Callbacks are
-/// not compared; callers pass closures that only capture values compared here.
-extension ContentRailView: Equatable {
-    static func == (lhs: ContentRailView, rhs: ContentRailView) -> Bool {
-        lhs.label == rhs.label && lhs.activeID == rhs.activeID
-            && lhs.appearanceMode == rhs.appearanceMode && lhs.isRailOnly == rhs.isRailOnly
-            && lhs.availableWidth == rhs.availableWidth
-            && lhs.topInset == rhs.topInset && lhs.bottomInset == rhs.bottomInset
-            && lhs.motionPreference == rhs.motionPreference
-            && lhs.items.count == rhs.items.count
-            && zip(lhs.items, rhs.items).allSatisfy { a, b in
-                a.id == b.id && a.position == b.position && a.level == b.level
-                    && a.title == b.title && a.excerpt == b.excerpt && a.metadata == b.metadata
-                    && a.previewImage === b.previewImage
-            }
-    }
-}
-
 enum ContentRailMetrics {
     /// Overlay hit area. Readable panes must not reserve this width in their layout.
     static let normalWidth: CGFloat = ContentRailPolicy.dormantWidth
@@ -127,9 +108,7 @@ struct ContentRailView: View {
         self.activeID = activeID
         self.appearanceMode = appearanceMode
         self.isRailOnly = isRailOnly
-        // Only the preview card reads this width. Coarse steps keep the rail's value
-        // stable while a divider drag delivers a new pane width every frame.
-        self.availableWidth = availableWidth.map { ($0 / 16).rounded(.down) * 16 }
+        self.availableWidth = availableWidth
         self.topInset = topInset
         self.bottomInset = bottomInset
         self.onActivate = onActivate

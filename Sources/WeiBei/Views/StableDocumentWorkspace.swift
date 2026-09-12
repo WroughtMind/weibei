@@ -612,10 +612,30 @@ final class StableDocumentSplitCoordinator {
         }
 
         if preserveCurrentWidths, appliedState != nil {
-            // Opening more columns (incl. empty board progression): always even left→right
-            // so 文稿/对话/笔记 land as equal L/C/R slots instead of crushing neighbors.
-            if visibleOrder.count > displayedVisibleOrder.count || displayedVisibleOrder.isEmpty {
+            // Empty board progression: even left→right slots.
+            if displayedVisibleOrder.isEmpty {
                 return equalPaneWidths(count: count, total: usable)
+            }
+            // Opening more columns: each new pane takes an even share; the panes
+            // already on screen keep their proportions inside the remainder.
+            if visibleOrder.count > displayedVisibleOrder.count {
+                let share = usable / CGFloat(count)
+                let existing = visibleOrder.compactMap { role -> CGFloat? in
+                    guard displayedVisibleOrder.contains(role),
+                          let width = splitView.roleHosts[role]?.frame.width, width > 0.5 else { return nil }
+                    return width
+                }
+                let existingTotal = existing.reduce(0, +)
+                let newCount = CGFloat(visibleOrder.count - existing.count)
+                let existingBudget = max(0, usable - share * newCount)
+                let desired = visibleOrder.map { role -> CGFloat in
+                    if displayedVisibleOrder.contains(role),
+                       let width = splitView.roleHosts[role]?.frame.width, width > 0.5, existingTotal > 0.5 {
+                        return existingBudget * width / existingTotal
+                    }
+                    return share
+                }
+                return normalizedWidths(desired, total: usable)
             }
             // Closing columns: keep remaining relative widths.
             let desired = visibleOrder.map { role -> CGFloat in

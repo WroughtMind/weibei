@@ -544,7 +544,6 @@ struct ReaderView: View {
             onHover: hoverContentRailItem,
             motionPreference: store.motionPreference
         )
-        .equatable()
     }
 
     private func activateContentRailItem(_ item: ContentRailItem, railOnly: Bool) {
