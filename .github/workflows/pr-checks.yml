@@ -141,6 +141,9 @@ jobs:
         id: editor
         if: needs.scope.outputs.editor == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: |
+          python3 -m venv "$RUNNER_TEMP/weibei-editor-fonts"
+          "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
+          "$RUNNER_TEMP/weibei-editor-fonts/bin/python" script/convert_editor_fonts.py --check
           npm run typecheck:editor
           npm run test:editor
           npm run build:editor

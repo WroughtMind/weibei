@@ -87,5 +87,6 @@ node --experimental-strip-types --check "$ROOT/scripts/build-icns.ts"
 node --experimental-strip-types --check "$ROOT/scripts/build-manifest.ts"
 node --test "$ROOT/scripts/build-manifest.test.mjs"
 npx tsx "$ROOT/scripts/build-manifest.ts" "$ROOT" --check
+python3 "$ROOT/../script/convert_editor_fonts.py" --check
 
 echo "asset verification passed"
