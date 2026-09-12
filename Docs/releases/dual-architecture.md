@@ -28,7 +28,9 @@ App 内的 `WeiBeiArchitecture` 和 `SUFeedURL` 会绑定当前包的真实架�
 
 ## 正式发布工作流
 
-在 GitHub Actions 中从 `main` 手动运行“魏碑双架构正式发布”，输入与 `VERSION`、`package.json` 和 `Docs/update-summaries/v<version>.md` 一致的版本号。当前发布路线固定使用 ad-hoc 签名，不需要付费 Apple 开发者账号，也不执行 Apple 公证。发布说明和 Cask 必须保留首次启动指引。
+在 GitHub Actions 中手动运行“魏碑双架构正式发布”，输入与 `VERSION`、`package.json` 和 `Docs/update-summaries/v<version>.md` 一致的版本号。默认只构建并验证两种架构及更新签名，候选资产保存在 Actions，不创建 Tag 或 Release；可以从待合并分支验证仓库密钥。获得正式发布授权后，从 `main` 运行并勾选 `publish`，才会公开版本。
+
+当前发布路线固定使用 ad-hoc 签名，不需要付费 Apple 开发者账号，也不执行 Apple 公证。发布说明和 Cask 必须保留首次启动指引。
 
 工作流要求以下 GitHub Secrets：
 
@@ -39,6 +41,8 @@ App 内的 `WeiBeiArchitecture` 和 `SUFeedURL` 会绑定当前包的真实架�
 
 Sparkle 密钥与 Apple 公证无关。首次公开发布前生成一次正式密钥对：公钥写入 App，私钥放入 GitHub Secret 并保留一份离线加密备份；已有用户后不得随意更换。
 
+正式密钥保存在开发机系统钥匙串的 `WroughtMind/weibei` 账户中；使用 Sparkle 的 `generate_keys --account WroughtMind/weibei -p` 核对公钥，`-x <文件>` 导出，`-f <文件>` 从备份恢复。私钥 Secret 必须是导出文件整体再次 Base64 编码后的内容。早期开发版内的测试公钥没有对应的正式私钥，需要手动安装一次采用正式公钥的版本，后续版本始终沿用这套密钥。
+
 仓库应配置受保护的 `production-release` Environment。两个架构先并行完成最终 App 启动、签名结构、DMG、架构、dSYM 和 appcast 验证，再进入该环境的发布 job；发布 job 下载并重新核对两个 DMG 的哈希和 appcast 指向，打包双架构调试符号，生成双架构 Cask，先创建草稿 Release，全部资产上传成功后才将其公开并标记为 latest。
 
-本流程不会由普通 PR 自动创建 Tag 或 Release。执行正式发布工作流本身就是发布授权；合并代码不等于授权发布。
+本流程不会由普通 PR 自动创建 Tag 或 Release。明确勾选 `publish` 执行才代表发布授权；仅运行验证或合并代码不等于授权发布。

@@ -169,6 +169,16 @@ for failed_job in [None, *gate['needs']]:
 # 发布流程成功后刷新官网，失败/取消/非主线不能触发部署。
 trigger = PAGES.get('on', PAGES.get(True, {}))['workflow_run']
 release = yaml.safe_load((ROOT / '.github/workflows/release.yml').read_text())
+# 验证安装包不能意外公开；真正发布仍然只接受主线。
+release_inputs = release.get('on', release.get(True, {}))['workflow_dispatch']['inputs']
+assert release_inputs['publish']['default'] is False
+source_gate = next(step for step in release['jobs']['authorize']['steps'] if step.get('id') == 'source')
+for publish in [False, True]:
+    assert condition(release['jobs']['publish']['if'], {'inputs': {'publish': publish}}) == publish
+    for ref in ['refs/heads/main', 'refs/heads/codex/signing-check']:
+        env = {**os.environ, 'PUBLISH_RELEASE': str(publish).lower(), 'RELEASE_REF': ref}
+        run = subprocess.run(['bash', '-e', '-c', source_gate['run']], env=env, capture_output=True)
+        assert (run.returncode == 0) == (not publish or ref == 'refs/heads/main')
 assert trigger['workflows'] == [release['name']] and trigger['types'] == ['completed']
 for outcome, branch, expected in [('success', 'main', True), ('failure', 'main', False), ('cancelled', 'main', False), ('success', 'feature', False)]:
     context = {'github': {'event_name': 'workflow_run', 'event': {'workflow_run': {'conclusion': outcome, 'head_branch': branch}}}}
