@@ -99,8 +99,12 @@ jobs:
           swift --version
           xcodebuild -version
 
-      - name: 安装固定 Node 依赖
-        run: npm ci
+      - name: 安装固定构建依赖
+        run: |
+          npm ci
+          python3 -m venv "$RUNNER_TEMP/weibei-editor-fonts"
+          "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
+          echo "$RUNNER_TEMP/weibei-editor-fonts/bin" >> "$GITHUB_PATH"
 
       - name: 准备 Sparkle 发布密钥
         env:
