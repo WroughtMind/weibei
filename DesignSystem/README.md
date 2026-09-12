@@ -71,7 +71,8 @@ DesignSystem/scripts/verify-assets.sh
 
 编辑器字体保留完整字形，以 WOFF2 压缩。先在 Python 虚拟环境安装
 `script/editor-font-requirements.txt` 中的固定依赖，再运行
-`python3 script/convert_editor_fonts.py` 重建；资产校验和 CI 会核对字体原件与压缩成品。
+`python3 script/convert_editor_fonts.py` 重建；资产校验和 CI 会直接解压随包字体，
+与原件核对完整字形、度量、字体信息和许可。压缩字节可随 CPU 架构不同，内容必须一致。
 
 ## 当前接入状态
 

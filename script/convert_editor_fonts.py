@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce complete editor WOFF2 fonts with fontTools[woff] (no subsetting)."""
+"""Generate or verify complete editor WOFF2 fonts (no subsetting)."""
 from io import BytesIO
 from pathlib import Path
 import hashlib
@@ -16,8 +16,19 @@ for name in ["Mplus1p-Light", "Mplus1p-Regular"]:
     original = TTFont(source, recalcTimestamp=False)
     original.flavor = "woff2"
     output = BytesIO()
-    original.save(output)
+    if "--check" in sys.argv:
+        # Compare the shipped font itself: compression bytes differ across CPU architectures.
+        output.write(target.read_bytes())
+    else:
+        original.save(output)
     compressed = TTFont(BytesIO(output.getvalue()), recalcTimestamp=False)
+    assert compressed.flavor == "woff2", name
+    assert set(original.keys()) == set(compressed.keys()), (name, "tables")
+    for field, value in vars(original["head"]).items():
+        if field not in {"checkSumAdjustment", "flags"}:
+            assert value == getattr(compressed["head"], field), (name, "head", field)
+    # WOFF2 sets bit 11 to record its lossless transform; SFNT checksum changes too.
+    assert original["head"].flags | (1 << 11) == compressed["head"].flags, (name, "head", "flags")
     assert original.getGlyphOrder() == compressed.getGlyphOrder(), name
     assert original["hmtx"].metrics == compressed["hmtx"].metrics, name
     for tag in original.keys():
@@ -34,9 +45,7 @@ for name in ["Mplus1p-Light", "Mplus1p-Regular"]:
         a = getattr(original["glyf"][glyph], "program", None)
         b = getattr(compressed["glyf"][glyph], "program", None)
         assert (a.getBytecode() if a else None) == (b.getBytecode() if b else None), (name, glyph, "hinting")
-    if "--check" in sys.argv:
-        assert target.read_bytes() == output.getvalue(), (name, "generated file differs")
-    else:
+    if "--check" not in sys.argv:
         target.write_bytes(output.getvalue())
     print(json.dumps({"font": name, "glyphs": len(original.getGlyphOrder()),
                       "unicode_mappings": len(original.getBestCmap()), "source_bytes": source.stat().st_size,
