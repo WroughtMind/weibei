@@ -25,10 +25,9 @@ the MIT License.
 
 The native conversation view uses Swift Markdown (Apache 2.0 with Swift
 Runtime Library Exception), cmark-gfm (BSD 2-Clause), SwiftMath (MIT), and
-highlight.js 11.9.0 (BSD 3-Clause). Swift package versions are fixed in
-`Package.resolved`. The unmodified `Resources/NativeChat/highlight.min.js`
-was copied from HighlightSwift revision `99c431b38a1444a5fd6a4978307fbbefe3a7af53`
-(https://github.com/appstefan/highlightswift). Native token colors are adapted
+Highlightr 2.3.0 (MIT), which bundles highlight.js 11.11.1 (BSD 3-Clause).
+Swift package versions are fixed in `Package.resolved`; syntax highlighting
+loads the script from Highlightr's resource bundle. Native token colors are adapted
 from HighlightSwift's Xcode themes (MIT); its Swift UI/HTML wrapper is not linked.
 SwiftMath's mathematical fonts carry their own licenses inside its bundled
 `mathFonts.bundle`.

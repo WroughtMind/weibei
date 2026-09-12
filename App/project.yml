@@ -20,7 +20,7 @@ targets:
     sources:
       - Sources
       - WindowBridge/WindowBridgeContract.swift
-      - path: ../DesignSystem/assets/app-icon/AppIcon.icns
+      - path: ../DesignSystem/assets/app-icon/AppIcon.icon
         buildPhase: resources
       - path: ../Sources/WeiBei/Stores
       - path: ../Sources/WeiBei/Editing
@@ -36,13 +36,10 @@ targets:
         type: folder
         buildPhase: resources
       - path: ../Sources/WeiBei/Resources
-        excludes: [Fonts, Editor]
+        excludes: [Fonts, Editor, NativeChat]
         buildPhase: resources
       - path: Resources
-        excludes: [Web, 实验说明.txt]
-        buildPhase: resources
-      - path: Resources/Web
-        type: folder
+        excludes: [实验说明.txt]
         buildPhase: resources
       - path: ../Sources/WeiBeiCore/AgentResources
         type: folder
@@ -74,6 +71,7 @@ targets:
         PRODUCT_NAME: 魏碑
         PRODUCT_MODULE_NAME: WeiBei
         EXECUTABLE_NAME: WeiBei
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SUPPORTS_MACCATALYST: YES
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO

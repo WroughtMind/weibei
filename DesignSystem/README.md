@@ -69,6 +69,11 @@ DesignSystem/scripts/verify-assets.sh
 
 图像与品牌字样导出需要 ImageMagick；ICNS 与清单生成需要 Node.js。字体从本文件夹读取，构建不会联网。
 
+编辑器字体保留完整字形，以 WOFF2 压缩。先在 Python 虚拟环境安装
+`script/editor-font-requirements.txt` 中的固定依赖，再运行
+`python3 script/convert_editor_fonts.py` 重建；资产校验和 CI 会直接解压随包字体，
+与原件核对完整字形、度量、字体信息和许可。压缩字节可随 CPU 架构不同，内容必须一致。
+
 ## 当前接入状态
 
 `AppIcon.icon` 已接入手工打包脚本。构建时由 Xcode 编译出 macOS 27 使用的 `Assets.car` 和 macOS 14–26 使用的 `AppIcon.icns`，两者来自同一份分层图标：系统底板与关闭玻璃效果的拓印字标。
