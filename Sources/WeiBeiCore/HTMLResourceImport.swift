@@ -9,7 +9,7 @@ public enum HTMLResourceImport {
 
     public static func dataIfHTML(at url: URL) throws -> Data? {
         guard ["html", "htm"].contains(url.pathExtension.lowercased()) else { return nil }
-        let data = try Data(contentsOf: url)
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
         // Foundation preserves macOS aliases such as /var and /tmp even after
         // resolvingSymlinksInPath. Start from the selected file's real path so
         // those system aliases aren't mistaken for a linked dependency.
