@@ -7,6 +7,11 @@ on:
         description: "与 VERSION/package.json 一致的 major.minor.patch（不含 v）"
         required: true
         type: string
+      publish:
+        description: "公开发布版本；不勾选时只构建并验证，不创建 Tag 或 Release"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,10 +30,15 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
 
     steps:
-      - name: 只允许从 main 发起
+      - name: 只允许从 main 正式发布
+        id: source
         env:
           RELEASE_REF: ${{ github.ref }}
-        run: test "$RELEASE_REF" = "refs/heads/main"
+          PUBLISH_RELEASE: ${{ inputs.publish }}
+        run: |
+          if [[ "$PUBLISH_RELEASE" == true ]]; then
+            test "$RELEASE_REF" = "refs/heads/main"
+          fi
 
       - name: 取出完整源码历史
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -97,6 +107,7 @@ jobs:
           SPARKLE_PRIVATE_KEY_BASE64: ${{ secrets.WEIBEI_SPARKLE_PRIVATE_KEY_BASE64 }}
           SPARKLE_PUBLIC_KEY: ${{ secrets.WEIBEI_SPARKLE_PUBLIC_KEY }}
         run: |
+          umask 077
           test -n "$SPARKLE_PRIVATE_KEY_BASE64"
           test -n "$SPARKLE_PUBLIC_KEY"
           /usr/bin/printf '%s' "$SPARKLE_PRIVATE_KEY_BASE64" | /usr/bin/base64 -D -o "$RUNNER_TEMP/weibei-sparkle-private-key"
@@ -147,6 +158,7 @@ jobs:
         run: /bin/rm -f "$RUNNER_TEMP/weibei-sparkle-private-key"
 
   publish:
+    if: inputs.publish
     env:
       WEIBEI_BUILD_NUMBER: ${{ needs.authorize.outputs.build_number }}
     name: 汇总后原子公开双架构 Release
