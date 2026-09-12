@@ -35,4 +35,10 @@ const manifest = {
   files,
 };
 
-fs.writeFileSync(path.join(assets, "asset-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+const destination = path.join(assets, "asset-manifest.json");
+const contents = `${JSON.stringify(manifest, null, 2)}\n`;
+if (process.argv.includes("--check")) {
+  if (fs.readFileSync(destination, "utf8") !== contents) throw new Error("Asset manifest differs; regenerate it before packaging");
+} else {
+  fs.writeFileSync(destination, contents);
+}

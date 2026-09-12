@@ -9,6 +9,7 @@ public struct NativeLLMRequest: Sendable {
     public var enableNativeWebSearch: Bool
     public var replayState: Data?
     public var maxTokens: Int?
+    public var promptCacheKey: String?
 
     public init(
         model: String,
@@ -18,7 +19,8 @@ public struct NativeLLMRequest: Sendable {
         reasoningEffort: String? = nil,
         enableNativeWebSearch: Bool = false,
         replayState: Data? = nil,
-        maxTokens: Int? = nil
+        maxTokens: Int? = nil,
+        promptCacheKey: String? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -28,6 +30,7 @@ public struct NativeLLMRequest: Sendable {
         self.enableNativeWebSearch = enableNativeWebSearch
         self.replayState = replayState
         self.maxTokens = maxTokens
+        self.promptCacheKey = promptCacheKey
     }
 }
 

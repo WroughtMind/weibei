@@ -31,7 +31,8 @@ enum NativeContextCompaction {
         request: NativeLLMRequest,
         projection: NativeLedgerProjection,
         adapter: NativeLLMAdapter,
-        contextWindow: Int
+        contextWindow: Int,
+        turnContext: (userMessageSeq: Int, text: String)
     ) async throws -> NativeContextCompactionCandidate? {
         let warningLine = contextWindow - min(16_384, contextWindow / 4)
         guard let usage = projection.latestUsage,
@@ -45,7 +46,8 @@ enum NativeContextCompaction {
             recentBudget: max(
                 0,
                 min(maximumRecentTokens, warningLine - maximumSummaryTokens)
-            )
+            ),
+            turnContext: turnContext
         )
     }
 
@@ -53,7 +55,8 @@ enum NativeContextCompaction {
         request: NativeLLMRequest,
         projection: NativeLedgerProjection,
         adapter: NativeLLMAdapter,
-        contextWindow: Int?
+        contextWindow: Int?,
+        turnContext: (userMessageSeq: Int, text: String)
     ) async throws -> NativeContextCompactionCandidate? {
         let recentBudget: Int
         if let contextWindow {
@@ -66,7 +69,8 @@ enum NativeContextCompaction {
             request: request,
             projection: projection,
             adapter: adapter,
-            recentBudget: recentBudget
+            recentBudget: recentBudget,
+            turnContext: turnContext
         )
     }
 
@@ -74,7 +78,8 @@ enum NativeContextCompaction {
         request: NativeLLMRequest,
         projection: NativeLedgerProjection,
         adapter: NativeLLMAdapter,
-        recentBudget: Int
+        recentBudget: Int,
+        turnContext: (userMessageSeq: Int, text: String)
     ) async throws -> NativeContextCompactionCandidate? {
         guard let firstKeptSeq = selectCut(
             projection: projection,
@@ -82,11 +87,15 @@ enum NativeContextCompaction {
         ) else { return nil }
         let history = projection.exitingMessages(before: firstKeptSeq)
         guard !history.isEmpty else { return nil }
-        let summary = try await generateSummary(
+        var summary = try await generateSummary(
             history: history,
             adapter: adapter,
             model: request.model
         )
+        // 步骤级压缩可能越过本轮问题；修订号和已确认笔记必须原样留在持久化检查点中。
+        if firstKeptSeq > turnContext.userMessageSeq, !turnContext.text.isEmpty {
+            summary += "\n\n" + turnContext.text
+        }
         var candidate = request
         candidate.messages = request.messages.filter { $0.role == .system }
             + [summaryMessage(summary)]

@@ -5,19 +5,19 @@
 
 help: ## 列出全部目标与一句话说明（默认目标）
 	@echo "魏碑 Makefile 入口："
-	@echo "  make build               Swift 构建（swift build）"
+	@echo "  make build               构建正式 Catalyst App（与 make package 相同入口）"
 	@echo "  make run                 构建并启动 App（./script/build_and_run.sh）"
 	@echo "  make check               构建 + 全部自检（./script/build_and_run.sh check）"
 	@echo "  make package             为当前 Mac 架构生成 dist/魏碑.app 候选包"
-	@echo "  make verify              打包、启动并确认当前架构 App 可运行后退出"
+	@echo "  make verify              CI 独立桌面打包及启动检查；本机使用画中画"
 	@echo "  make editor-build        esbuild 构建 Web 编辑器（npm run build:editor）"
 	@echo "  make genui-math-check    校验 GenUI 安全数学表达式运行时（npx tsx script/check-genui-math.ts）"
 	@echo "  make perf-p95            p95 性能解析，用法：make perf-p95 LOG=<perf-log> METRIC=<metric-name>"
 	@echo "  make release             为当前 Mac 架构构建未公证的正式 DMG"
 	@echo "  make clean               清理构建产物（swift package clean && rm -rf dist；不删 node_modules / 用户数据）"
 
-build: ## Swift 构建
-	swift build
+build: ## 构建正式 Catalyst App
+	./script/build_and_run.sh package
 
 run: ## 构建并启动 App
 	./script/build_and_run.sh

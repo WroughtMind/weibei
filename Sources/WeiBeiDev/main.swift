@@ -120,6 +120,15 @@ func runVerifyReleaseMetadata(arguments: [String]) {
           fileManager.fileExists(atPath: appIconAssets.path) else {
         fail("incomplete app bundle at \(appBundle.path)", exitCode: 4)
     }
+    // Catalyst must load its layered icon, including the approved tinted mark.
+    guard let catalogJSON = runCommand("/usr/bin/xcrun", arguments: ["assetutil", "--info", appIconAssets.path]),
+          let catalog = try? JSONSerialization.jsonObject(with: Data(catalogJSON.utf8)) as? [[String: Any]],
+          catalog.first?["Platform"] as? String == "macosx-ios",
+          Set(catalog.filter { $0["AssetType"] as? String == "IconImageStack" && $0["Name"] as? String == "AppIcon" }
+              .compactMap { $0["Appearance"] as? String })
+            .isSuperset(of: ["UIAppearanceLight", "UIAppearanceDark", "ISAppearanceTintable"]) else {
+        fail("app icon must contain Catalyst light, dark and tinted layers", exitCode: 9)
+    }
     for legalFile in ["PRIVACY.md", "THIRD_PARTY_NOTICES.md", "ASSET_ATTRIBUTIONS.md"] {
         let url = legalDirectory.appendingPathComponent(legalFile)
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
@@ -127,6 +136,44 @@ func runVerifyReleaseMetadata(arguments: [String]) {
             fail("missing packaged notice \(legalFile)", exitCode: 10)
         }
     }
+    let resources = appBundle.appendingPathComponent("Contents/Resources")
+    let mathFonts = resources.appendingPathComponent("SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle")
+    let mathFiles = (try? fileManager.contentsOfDirectory(atPath: mathFonts.path)) ?? []
+    guard Set(mathFiles.filter { $0.hasSuffix(".otf") || $0.hasSuffix(".plist") })
+            == ["latinmodern-math.otf", "latinmodern-math.plist"],
+          ["GUST-FONT-LICENSE.txt", "OFL.txt", "LICENSE"].allSatisfy({ mathFiles.contains($0) }),
+          !fileManager.fileExists(atPath: resources.appendingPathComponent("highlight.min.js").path),
+          fileManager.fileExists(atPath: resources.appendingPathComponent("Highlightr_Highlightr.bundle/Contents/Resources/highlight.min.js").path) else {
+        fail("packaged math fonts or conversation highlighter are incorrect", exitCode: 10)
+    }
+    let editor = resources.appendingPathComponent("Editor")
+    let editorFiles = (try? fileManager.contentsOfDirectory(atPath: editor.path)) ?? []
+    let formulaFonts = editorFiles.filter { $0.hasPrefix("KaTeX_") }
+    guard formulaFonts.count == 20, formulaFonts.allSatisfy({ $0.hasSuffix(".woff2") }) else {
+        fail("editor must contain all 20 formula fonts in WOFF2 format", exitCode: 10)
+    }
+    for name in ["Mplus1p-Light.woff2", "Mplus1p-Regular.woff2", "diagram.html", "mermaid-runtime.js"] {
+        guard let data = try? Data(contentsOf: editor.appendingPathComponent(name)), !data.isEmpty else {
+            fail("missing editor resource \(name)", exitCode: 10)
+        }
+    }
+    guard !editorFiles.contains(where: { $0.hasSuffix(".ttf") || $0.hasSuffix(".woff") }),
+          !fileManager.fileExists(atPath: resources.appendingPathComponent("Web").path) else {
+        fail("obsolete duplicate web resources are packaged", exitCode: 10)
+    }
+    guard let enumerator = fileManager.enumerator(at: appBundle,
+        includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]) else {
+        fail("cannot enumerate app size", exitCode: 10)
+    }
+    var appBytes = 0
+    for case let url as URL in enumerator {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]) else {
+            fail("cannot measure \(url.path)", exitCode: 10)
+        }
+        if values.isRegularFile == true && values.isSymbolicLink != true { appBytes += values.fileSize ?? 0 }
+    }
+    guard appBytes < 30_000_000 else { fail("app body is \(appBytes) bytes; limit is below 30 MB", exitCode: 10) }
+    print("app_logical_bytes=\(appBytes)")
     // Pre-1.0 包不得把未来 1.0.0 发布计划散文当作现行法律副本打包。
     if fileManager.fileExists(atPath: legalDirectory.appendingPathComponent("v1.0.0.md").path) {
         fail("packaged Legal must not include future v1.0.0 release notes", exitCode: 11)
@@ -246,7 +293,7 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
     }
 
     let fileManager = FileManager.default
-    let binaryRoots = ["MacOS", "Helpers", "Frameworks"].map {
+    let binaryRoots = ["MacOS", "Helpers", "Frameworks", "PlugIns"].map {
         contents.appendingPathComponent($0, isDirectory: true)
     }
     var machOBinaries: [URL] = []
@@ -267,6 +314,14 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
 
     let appBinary = contents.appendingPathComponent("MacOS/WeiBei")
     let helperBinary = contents.appendingPathComponent("Helpers/WeiBeiPDFTextWorker")
+    let windowBridgeBinary = contents.appendingPathComponent("PlugIns/WeiBeiWindowBridge.bundle/Contents/MacOS/WeiBeiWindowBridge")
+    let sparkleBinary = contents.appendingPathComponent("PlugIns/WeiBeiWindowBridge.bundle/Contents/Frameworks/Sparkle.framework/Sparkle").resolvingSymlinksInPath()
+    guard let buildCommands = runCommand("/usr/bin/xcrun", arguments: ["vtool", "-show-build", appBinary.path]),
+          buildCommands.components(separatedBy: .newlines).contains(where: {
+              $0.trimmingCharacters(in: .whitespaces) == "platform MACCATALYST"
+          }) else {
+        fail("the application executable must target Mac Catalyst", exitCode: 10)
+    }
     guard !machOBinaries.isEmpty else {
         fail("app bundle contains no Mach-O binaries", exitCode: 6)
     }
@@ -274,7 +329,7 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
     // Inspect required executables directly. FileManager can enumerate a DMG
     // mounted below /var using /private/var URLs, so URL equality is not a
     // reliable way to prove that these files were present in the enumeration.
-    for requiredBinary in [appBinary, helperBinary] {
+    for requiredBinary in [appBinary, helperBinary, windowBridgeBinary, sparkleBinary] {
         guard fileManager.fileExists(atPath: requiredBinary.path),
               let fileDescription = runCommand("/usr/bin/file", arguments: ["-b", requiredBinary.path]),
               fileDescription.contains("Mach-O") else {
@@ -297,9 +352,9 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
             fail("cannot inspect architectures for \(binary.path)", exitCode: 7)
         }
         let architectureSet = Set(architectures.split(separator: " ").map(String.init))
-        guard architectureSet.contains(expectedArchitecture) else {
+        guard architectureSet == Set([expectedArchitecture]) else {
             fail(
-                "\(binary.path) lacks \(expectedArchitecture); found \(architectures)",
+                "\(binary.path) must contain only \(expectedArchitecture); found \(architectures)",
                 exitCode: 8
             )
         }
@@ -313,6 +368,10 @@ func runVerifyReleaseArchitecture(arguments: [String]) {
 // MARK: - verify-production-hygiene
 
 private let forbiddenBinaryMarkers = [
+    "--self-check",
+    "--fixtures",
+    "WB452_SOURCE",
+    "WB452_STOP",
     "WEIBEI_VERIFY_SCENARIO",
     "WEIBEI_SUPPRESS_ACTIVATION",
     "WEIBEI_FORCE_OFFLINE_AGENT",
@@ -413,6 +472,9 @@ func runVerifyProductionHygiene(arguments: [String]) {
     }
     let appBinary = appBundle
         .appendingPathComponent("Contents/MacOS/\(executableName)")
+    guard plistDictionary["WeiBeiAcceptanceChecks"] as? Bool == false else {
+        fail("production app must exclude acceptance checks", exitCode: 4)
+    }
     guard fileManager.isExecutableFile(atPath: appBinary.path) else {
         fail("missing executable \(appBinary.path)", exitCode: 3)
     }

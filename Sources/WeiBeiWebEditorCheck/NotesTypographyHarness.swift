@@ -116,16 +116,17 @@ final class NotesTypographyHarness: NSObject, WKScriptMessageHandler {
         js("window.WeiBeiEditor.setMarkdown('段落位置检查\\n\\n'.repeat(30)); window.WeiBeiEditor.selectDocumentEndForCheck(); window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}'); window.plusAligned = () => { const button=document.querySelector('.weibei-line-plus'); const b=button.getBoundingClientRect(); const p=document.querySelector('.ProseMirror p:last-child'); const r=p.querySelector('br').getBoundingClientRect(); const viewport=document.getElementById('editor').getBoundingClientRect(); if(r.bottom<=viewport.top || r.top>=viewport.bottom) return button.hidden; return !button.hidden && b.right < r.left && Math.abs((b.top+b.bottom-r.top-r.bottom)/2) < 1; }; 0")
         settle()
         js("document.querySelector('.ProseMirror p:last-child').scrollIntoView({block:'center'}); 0")
-        settle()
+        wait { js("!document.querySelector('.weibei-line-plus').hidden && plusAligned()") as? Bool == true }
         check("!document.querySelector('.weibei-line-plus').hidden && plusAligned()", "the insert button is centered beside the empty-line caret")
         js("document.getElementById('editor').scrollTop -= 80; 0")
-        settle()
+        wait { js("plusAligned()") as? Bool == true }
         check("plusAligned()", "the insert button follows manual scrolling")
         webView.frame.size.width = 420
         js("window.WeiBeiEditor.setTextScale(1.25); 0")
         settle()
         js("document.querySelector('.ProseMirror p:last-child').scrollIntoView({block:'center'}); 0")
-        settle()
+        // Hidden WebKit delivers resize/scroll notifications asynchronously.
+        wait { js("!document.querySelector('.weibei-line-plus').hidden && plusAligned()") as? Bool == true }
         check("!document.querySelector('.weibei-line-plus').hidden && plusAligned()", "the insert button stays beside the caret after split-pane resizing and text scaling")
         capture("notes-plus-narrow")
         js("window.WeiBeiEditor.setTextScale(1); 0")

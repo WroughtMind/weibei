@@ -21,9 +21,8 @@ struct SettingsView: View {
     @EnvironmentObject var store: WorkspaceStore
 #if targetEnvironment(macCatalyst)
     @Environment(\.dismiss) private var dismissSettings
-#else
-    @EnvironmentObject private var updateService: WeiBeiUpdateService
 #endif
+    @EnvironmentObject private var updateService: WeiBeiUpdateService
     @StateObject var oauthService = AgentAccountService.shared
     @State private var selectedSection: SettingsSection = .agent
     @FocusState var focusedField: Field?
@@ -784,11 +783,6 @@ struct SettingsView: View {
     private var aboutSettings: some View {
         VStack(alignment: .leading, spacing: 20) {
             // Version number + check only. No copy control (build/version still go into feedback).
-#if targetEnvironment(macCatalyst)
-            settingsGroup(store.ui("版本", "Version")) {
-                settingsRow(title: buildInfo.displayLine, detail: store.ui("Catalyst 独立候选", "Independent Catalyst candidate"), showsBottomDivider: false) { EmptyView() }
-            }
-#else
             settingsGroup(store.ui("版本", "Version")) {
                 settingsRow(
                     title: buildInfo.displayLine,
@@ -829,8 +823,6 @@ struct SettingsView: View {
                 }
             }
 
-#endif
-
             settingsGroup(store.ui("反馈", "Feedback")) {
                 settingsRow(
                     title: store.ui("提交反馈", "Send Feedback"),
@@ -846,18 +838,15 @@ struct SettingsView: View {
                 }
             }
 
-#if !targetEnvironment(macCatalyst)
             if case .failed = updateService.status {
                 Text(store.ui("更新失败，请重试。", "Update failed. Please try again."))
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .padding(.horizontal, 4)
             }
-#endif
         }
     }
 
-#if !targetEnvironment(macCatalyst)
     private var updateActionLabel: String {
         if updateService.availableUpdate != nil {
             if case .failed = updateService.status {
@@ -874,8 +863,6 @@ struct SettingsView: View {
             return store.ui("检查更新", "Check for Updates")
         }
     }
-
-#endif
 
     private var feedbackSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1072,7 +1059,6 @@ struct SettingsView: View {
         }
     }
 
-#if !targetEnvironment(macCatalyst)
     private func runUpdateAction() {
         if updateService.availableUpdate == nil {
             updateService.checkForUpdates()
@@ -1087,8 +1073,6 @@ struct SettingsView: View {
             ? store.ui("包含最新改进和修复。", "Includes the latest improvements and fixes.")
             : lines.joined(separator: "\n")
     }
-
-#endif
 
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {
         let active = selectedSection == section

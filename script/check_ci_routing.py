@@ -84,12 +84,18 @@ with tempfile.TemporaryDirectory() as directory:
         ('工具测试', ['script/homebrew/generate_cask.test.mjs'], {'tools-check'}),
         ('工具代码', ['script/check-genui-math.ts'], {'tools-check'}),
         ('检查编排', ['.github/workflows/pr-checks.yml', 'script/check_ci_routing.py'], set()),
-        ('官网与应用混合', ['website/app.js', 'Sources/WeiBei/Stores/WorkspaceStore.swift'], {'website-check', 'app-check', 'intel-check'}),
-        ('编辑器配置', ['tsconfig.editor.json'], {'app-check'}),
-        ('安装包声明', ['PRIVACY.md'], {'release-package', 'intel-check'}),
-        ('打包脚本', ['script/build_release_dmg.sh'], {'release-package', 'intel-check'}),
-        ('图标生成工具', ['DesignSystem/scripts/build-icns.ts'], {'tools-check', 'release-package', 'intel-check'}),
-        ('依赖清单', ['package.json'], {'tools-check', 'app-check', 'intel-check', 'release-package'}),
+        ('官网与应用混合', ['website/app.js', 'Sources/WeiBei/Stores/WorkspaceStore.swift'], {'website-check', 'app-check', 'catalyst-check'}),
+        ('正式会话代码', ['App/Sources/ConversationController.swift'], {'app-check', 'catalyst-check'}),
+        ('正式工程配置', ['App/project.yml'], {'app-check', 'catalyst-check'}),
+        ('编辑器配置', ['tsconfig.editor.json'], {'app-check', 'catalyst-check'}),
+        ('字体原件', ['DesignSystem/assets/fonts/Mplus1p-Light.ttf'], {'app-check', 'catalyst-check'}),
+        ('字体生成工具', ['script/convert_editor_fonts.py'], {'app-check', 'catalyst-check'}),
+        ('字体工具依赖', ['script/editor-font-requirements.txt'], {'app-check', 'catalyst-check'}),
+        ('安装包声明', ['PRIVACY.md'], {'catalyst-check'}),
+        ('打包脚本', ['script/build_release_dmg.sh'], {'catalyst-check'}),
+        ('会话验收脚本', ['App/script/check-ci.sh'], {'catalyst-check'}),
+        ('图标生成工具', ['DesignSystem/scripts/build-icns.ts'], {'tools-check', 'catalyst-check'}),
+        ('依赖清单', ['package.json'], {'tools-check', 'app-check', 'catalyst-check'}),
     ]
     for label, paths, expected in scenarios:
         base = git('rev-parse', 'HEAD')
@@ -105,7 +111,8 @@ with tempfile.TemporaryDirectory() as directory:
         assert jobs - {'scope', 'fast-check'} == expected, (label, jobs, expected)
         if scopes['code'] == 'true':
             require_steps(jobs, steps, 'app-check', {'compile', 'core', 'dev'})
-            require_steps(jobs, steps, 'intel-check', {'core'})
+        if any(scopes[k] == 'true' for k in ['code', 'editor', 'release']):
+            require_steps(jobs, steps, 'catalyst-check', {'dependencies', 'compile', 'launch', 'acceptance'})
         if scopes['editor'] == 'true':
             require_steps(jobs, steps, 'app-check', {'dependencies', 'editor'})
         if scopes['agent'] == 'true' or scopes['data_safety'] == 'true':
@@ -115,8 +122,7 @@ with tempfile.TemporaryDirectory() as directory:
         if scopes['website'] == 'true':
             require_steps(jobs, steps, 'website-check', {'website'})
         if scopes['release'] == 'true':
-            require_steps(jobs, steps, 'release-package', {'dependencies', 'package'})
-            require_steps(jobs, steps, 'intel-check', {'dependencies', 'package'})
+            require_steps(jobs, steps, 'catalyst-check', {'dependencies', 'package'})
         if label == '官网':
             manual_jobs, manual_steps = selected(scopes, True, 'workflow_dispatch')
             assert manual_jobs == set(JOBS), '手动完整检查必须保留全部验证'
@@ -136,7 +142,11 @@ else:
     raise AssertionError('回归检查没有发现编译步骤被关闭')
 
 # 两种架构只共享范围判断，不再先排队等另一种架构完成。
-assert JOBS['app-check']['needs'] == JOBS['intel-check']['needs'] == 'scope'
+assert JOBS['app-check']['needs'] == JOBS['catalyst-check']['needs'] == 'scope'
+assert JOBS['catalyst-check']['strategy']['matrix']['include'] == [
+    {'arch': 'arm64', 'runner': 'macos-26'},
+    {'arch': 'x86_64', 'runner': 'macos-26-intel'},
+]
 # 已验证最新主线组合的 PR 合入后不再重复启动应用检查。
 assert 'push' not in WORKFLOW.get('on', WORKFLOW.get(True, {}))
 

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src 'self'">
+<style>
+html,body { margin:0; background:transparent; color:#252925; font:15px -apple-system,sans-serif; }
+body { padding:12px; overflow:auto; }
+#diagram { width:max-content; min-width:100%; }
+#diagram svg { max-width:none !important; }
+@media(prefers-color-scheme:dark) { html { color:#eee; } }
+</style>
+<div id="diagram" role="img" aria-label="关系图"></div><p id="error" role="status"></p>
+<script src="mermaid-runtime.js"></script>
+<script>
+const mermaid=window.WeiBeiMermaid;
+mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:matchMedia('(prefers-color-scheme:dark)').matches?'dark':'neutral',fontFamily:'-apple-system'});
+let current=0;
+async function renderDiagram(source,generation) {
+  current=generation;
+  let rendered=false;
+  try {
+    const result=await mermaid.render('diagram-'+generation,source);
+    if(current!==generation)return;
+    document.querySelector('#diagram').innerHTML=result.svg;
+    const svg=document.querySelector('#diagram svg');
+    // Mermaid's percentage width collapses inside a max-content scroller.
+    // Keep its actual diagram dimensions so horizontal reading stays available.
+    svg.setAttribute('width',svg.viewBox.baseVal.width);
+    svg.setAttribute('height',svg.viewBox.baseVal.height);
+    const bounds=svg.getBoundingClientRect();
+    if(!(bounds.width>0&&bounds.height>0))throw new Error('图形没有可见尺寸');
+    rendered=true;
+    document.querySelector('#error').textContent='';
+  } catch(error) {
+    if(current!==generation)return;
+    document.querySelector('#diagram').replaceChildren();
+    document.querySelector('#error').textContent='关系图内容无效：'+error.message;
+  }
+  window.webkit.messageHandlers.size.postMessage({generation,rendered,height:Math.ceil(document.body.getBoundingClientRect().height)+16});
+}
+</script></html>
