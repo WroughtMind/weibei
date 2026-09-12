@@ -191,7 +191,11 @@ jobs:
 
       - name: 安装构建工具依赖
         id: dependencies
-        run: npm ci
+        run: |
+          npm ci
+          python3 -m venv "$RUNNER_TEMP/weibei-editor-fonts"
+          "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
+          echo "$RUNNER_TEMP/weibei-editor-fonts/bin" >> "$GITHUB_PATH"
 
       - name: 通过唯一入口构建正式 Catalyst 应用
         id: compile
