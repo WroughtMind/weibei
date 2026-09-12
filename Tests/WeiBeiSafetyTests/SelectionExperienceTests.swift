@@ -103,8 +103,36 @@ final class SelectionExperienceTests: XCTestCase {
         store.selectedItemID = "first-document"
         store.updateSelection("两份同名文稿里的相同原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100), ownerTitle: "文稿")
         store.askSelection()
+        // An answer still running must not keep a different passage's actions expanded.
+        let chatID = UUID()
+        store.activeStudySessionID = chatID
+        let run = AgentConversationRun(chatID: chatID)
+        run.agentRequestTask = Task {}
+        store.agentRuns[chatID] = run
+        XCTAssertTrue(store.isAgentRunningInActiveChat)
+        var expanded = false
+        let host = NSHostingView(rootView: FloatingSelectionAgentView(
+            expanded: Binding(get: { expanded }, set: { expanded = $0 }))
+            .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        for _ in 0..<20 {
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            if expanded { break }
+        }
+        XCTAssertTrue(expanded)
         store.selectedItemID = "second-document"
         store.updateSelection("两份同名文稿里的相同原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 400), ownerTitle: "文稿")
+        for _ in 0..<20 {
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            if !expanded { break }
+        }
+        XCTAssertFalse(expanded)
+        XCTAssertTrue(store.isAgentRunningInActiveChat)
         XCTAssertEqual(store.agentSurface, .selectionFloat)
         XCTAssertFalse(store.keepFloatingSelectionForAnswer)
         XCTAssertNil(store.activeSelectionAskThreadID)

@@ -2420,7 +2420,7 @@ struct FloatingSelectionAgentView: View {
             y: dragOffset.height + settledOffset.height
         )
         .onChange(of: interaction.selectionContext) { previous, next in
-            guard !interaction.pinnedFloatingAgent, !store.isAgentRunningInActiveChat else { return }
+            guard !interaction.pinnedFloatingAgent else { return }
             let sameContent = previous?.text == next?.text
                 && previous?.source == next?.source
                 && previous?.ownerTitle == next?.ownerTitle
