@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import WeiBei
 import WeiBeiCore
@@ -51,6 +53,109 @@ final class SelectionExperienceTests: XCTestCase {
             XCTAssertEqual(store.selectionAnchor, anchor)
             XCTAssertTrue(store.keepFloatingSelectionForAnswer)
         }
+    }
+
+    @MainActor
+    func testOpeningQuestionFocusesTheMountedInputWithoutAnotherClick() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.updateSelection("直接开始提问", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
+        store.askSelection()
+        let host = NSHostingView(rootView: FloatingSelectionAgentView(expanded: .constant(true))
+            .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 180),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        // The window stays hidden; no activation or input on the user's desktop.
+        for _ in 0..<20 {
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            if window.firstResponder is NSTextView { break }
+        }
+        XCTAssertTrue(window.firstResponder is NSTextView)
+    }
+
+    @MainActor
+    func testOpenedQuestionStaysBesideThePassageWhenReaderReportsSelectionAgain() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let textAnchor = SelectionTextAnchor(startOffset: 0, endOffset: 7)
+        let anchor = SelectionPopoverAnchor(x: 320, y: 210, textAnchor: textAnchor)
+        store.updateSelection("准备提问的原文", source: .document, anchor: anchor)
+        store.askSelection()
+        let selection = store.selectionContext
+        store.updateSelection("准备提问的原文", source: .document, anchor: nil)
+        store.updateSelection("准备提问的原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 440, textAnchor: textAnchor))
+        XCTAssertEqual(store.selectionAnchor, anchor)
+        XCTAssertEqual(store.selectionContext, selection)
+        XCTAssertEqual(store.agentSurface, .selectionFloat)
+        XCTAssertFalse(store.pinnedFloatingAgent)
+    }
+
+    @MainActor
+    func testSelectingInAnotherReaderStartsWithCompactActions() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.selectedItemID = "first-document"
+        store.updateSelection("两份同名文稿里的相同原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100), ownerTitle: "文稿")
+        store.askSelection()
+        // An answer still running must not keep a different passage's actions expanded.
+        let chatID = UUID()
+        store.activeStudySessionID = chatID
+        let run = AgentConversationRun(chatID: chatID)
+        run.agentRequestTask = Task {}
+        store.agentRuns[chatID] = run
+        XCTAssertTrue(store.isAgentRunningInActiveChat)
+        var expanded = false
+        let host = NSHostingView(rootView: FloatingSelectionAgentView(
+            expanded: Binding(get: { expanded }, set: { expanded = $0 }))
+            .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        for _ in 0..<20 {
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            if expanded { break }
+        }
+        XCTAssertTrue(expanded)
+        store.selectedItemID = "second-document"
+        store.updateSelection("两份同名文稿里的相同原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 400), ownerTitle: "文稿")
+        for _ in 0..<20 {
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            if !expanded { break }
+        }
+        XCTAssertFalse(expanded)
+        XCTAssertTrue(store.isAgentRunningInActiveChat)
+        XCTAssertEqual(store.agentSurface, .selectionFloat)
+        XCTAssertFalse(store.keepFloatingSelectionForAnswer)
+        XCTAssertNil(store.activeSelectionAskThreadID)
+        XCTAssertEqual(store.selectionContext?.itemID, "second-document")
+    }
+
+    @MainActor
+    func testPinnedQuestionKeepsItsPassageAndPositionUntilUnpinned() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let anchor = SelectionPopoverAnchor(x: 320, y: 210)
+        store.updateSelection("固定的原文", source: .document, anchor: anchor)
+        store.askSelection()
+        store.pinnedFloatingAgent = true
+        let selection = store.selectionContext
+        store.updateSelection("另外一处原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 440))
+        store.updateSelection("", source: .document)
+        XCTAssertEqual(store.selectionContext, selection)
+        XCTAssertEqual(store.selectionAnchor, anchor)
+        store.pinnedFloatingAgent = false
+        store.updateSelection("另外一处原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 440))
+        XCTAssertEqual(store.selectionContext?.text, "另外一处原文")
     }
 
     func testExcerptsFollowDocumentPositionsInsteadOfCaptureTime() {

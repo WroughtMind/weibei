@@ -24,6 +24,7 @@ struct ComposerView: View {
     var verticalPadding: CGFloat = 0
     /// Floating paper surfaces already provide their own chrome.
     var showsChrome = true
+    var focusesOnAppear = false
     var submit: () -> Void
 
     private var canSend: Bool {
@@ -105,7 +106,7 @@ struct ComposerView: View {
         .onAppear {
             draft = store.agentDraft
             store.pendingComposerDraft = draft
-            if focused.wrappedValue { focusRequest &+= 1 }
+            if focusesOnAppear || focused.wrappedValue { focusRequest &+= 1 }
         }
         .onChange(of: focused.wrappedValue) { _, focused in
             if focused { focusRequest &+= 1 }
