@@ -2686,6 +2686,19 @@ extension WorkspaceStore {
             throw CourseOwnedFileError.verificationFailed
         }
 
+        let payloadData: Data?
+        if let sourceURL {
+            payloadData = try await courseProjectFileWorker.prepareHTMLImport(at: sourceURL) ?? generatedData
+        } else {
+            payloadData = generatedData
+        }
+        let payloadSnapshot: CourseFileSnapshot
+        if let payloadData {
+            payloadSnapshot = await courseProjectFileWorker.snapshot(of: payloadData)
+        } else {
+            payloadSnapshot = sourceSnapshot
+        }
+
         let transactionID = UUID()
         let transactionDirectory = try courseFileTransactionDirectory(
             transactionID: transactionID,
@@ -2751,9 +2764,9 @@ extension WorkspaceStore {
             try courseProjectMutationHook(.beforeCourseFileStagingCopy)
             stagedIdentity = try await courseProjectFileWorker.copyAndVerify(
                 from: sourceURL,
-                generatedData: generatedData,
+                generatedData: payloadData,
                 to: payloadURL,
-                expectedSnapshot: sourceSnapshot
+                expectedSnapshot: payloadSnapshot
             )
             try courseProjectMutationHook(.afterCourseFileStagingCopy)
 
@@ -2849,7 +2862,7 @@ extension WorkspaceStore {
                     courseRoot: canonicalRoot,
                     destinationDirectory: destinationDirectory,
                     expectedDestinationIdentity: destinationDirectoryIdentity,
-                    expectedSnapshot: sourceSnapshot,
+                    expectedSnapshot: payloadSnapshot,
                     beforeRename: {
                         try self.courseProjectMutationHook(
                             .afterCourseFileDestinationValidationBeforeRename
@@ -2879,7 +2892,7 @@ extension WorkspaceStore {
                 expectedDestinationIdentity: destinationDirectoryIdentity,
                 targetURL: resolvedTarget,
                 expectedIdentity: targetIdentity,
-                expectedSnapshot: sourceSnapshot
+                expectedSnapshot: payloadSnapshot
             )
 
             let targetInfo = try await courseProjectFileWorker.metadata(at: resolvedTarget)
@@ -2907,7 +2920,7 @@ extension WorkspaceStore {
                 contentRevision: replacingItemIndex == nil
                     ? (previousItem?.contentRevision ?? 1)
                     : (previousItem?.contentRevision ?? 0) &+ 1,
-                contentDigest: sourceSnapshot.sha256,
+                contentDigest: payloadSnapshot.sha256,
                 fileByteCount: targetInfo.byteCount,
                 fileModificationTimeNanoseconds: targetInfo.modificationTimeNanoseconds
             )
@@ -2929,7 +2942,7 @@ extension WorkspaceStore {
             }
             courseItemMemberships.append(membership)
             if role == .note {
-                noteBackingContentDigestsByItemID[committedItemID] = sourceSnapshot.sha256
+                noteBackingContentDigestsByItemID[committedItemID] = payloadSnapshot.sha256
             }
             try courseProjectMutationHook(.beforeCourseFileWorkspaceSave)
             _ = try await revalidatedCourseFileTargetInBackground(
@@ -2940,7 +2953,7 @@ extension WorkspaceStore {
                 expectedDestinationIdentity: destinationDirectoryIdentity,
                 targetURL: resolvedTarget,
                 expectedIdentity: targetIdentity,
-                expectedSnapshot: sourceSnapshot
+                expectedSnapshot: payloadSnapshot
             )
             guard await persistWorkspaceNow() else {
                 throw CourseOwnedFileError.workspaceSaveFailed
@@ -3053,7 +3066,7 @@ extension WorkspaceStore {
                         at: targetURL,
                         quarantineURL: targetQuarantineURL,
                         expectedIdentity: expectedTargetIdentity,
-                        expectedSnapshot: sourceSnapshot,
+                        expectedSnapshot: payloadSnapshot,
                         remover: { try FileManager.default.removeItem(at: $0) }
                     )
                 }

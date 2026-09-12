@@ -252,6 +252,9 @@ struct ReaderView: View {
     /// Page currently under the rail pointer — stale render completions (older pages)
     /// may only fill the loader cache, never replace this page's preview card.
     @State private var pdfRailHoveredPageIndex: Int?
+    @State private var htmlResourceIssues: [String] = []
+    @State private var htmlIssueDetailsPresented = false
+    @State private var adaptsHTMLColors = false
     @State private var htmlContentRailItems: [ContentRailItem] = []
     @State private var htmlContentRailActiveID: String?
     @State private var htmlContentRailTarget: WebReaderContentRailTarget?
@@ -332,6 +335,33 @@ struct ReaderView: View {
                     }
                 }
             }
+        }
+        .overlay(alignment: .topTrailing) {
+            if store.selectedMaterialItem?.kind == .html, !htmlResourceIssues.isEmpty {
+                Button { htmlIssueDetailsPresented.toggle() } label: {
+                    Circle().fill(.orange).frame(width: 7, height: 7)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(store.ui("部分网页资源未能带入", "Some webpage resources could not be imported"))
+                .help(store.ui("部分图片、排版或交互未能加载，正文已导入。", "Some images, styles or interactions are unavailable. The document was imported."))
+                .popover(isPresented: $htmlIssueDetailsPresented) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(store.ui("部分网页资源未能带入", "Some webpage resources could not be imported")).font(.headline)
+                        Text(store.ui("正文已保存。以下配套文件未能读取，部分排版、图片或交互可能不完整：", "The document is saved. These supporting files could not be read, so some styles, images or interactions may be incomplete:"))
+                        Text(htmlResourceIssues.prefix(12).joined(separator: "\n")).font(.caption)
+                    }
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding().frame(maxWidth: 320)
+                }
+                .padding(6)
+            }
+        }
+        .onChange(of: store.selectedMaterialItem?.id) { _, _ in
+            htmlResourceIssues = []
+            htmlIssueDetailsPresented = false
+            adaptsHTMLColors = false
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Width/height probe as background sibling — never parent of WKWebView/PDFView.
@@ -718,12 +748,16 @@ struct ReaderView: View {
         if supportsImportedDocumentColorAdaptation {
             Button {
                 withAnimation(WeiBeiMotion.appearance) {
-                    store.toggleImportedDocumentColorAdaptation()
+                    if store.selectedMaterialItem?.kind == .html {
+                        adaptsHTMLColors.toggle()
+                    } else {
+                        store.toggleImportedDocumentColorAdaptation()
+                    }
                 }
             } label: {
                 Image(systemName: "eyeglasses")
             }
-            .buttonStyle(WeiBeiIconButtonStyle(active: store.adaptImportedDocumentColors, size: 22))
+            .buttonStyle(WeiBeiIconButtonStyle(active: adaptsSelectedDocumentColors, size: 22))
             .accessibilityLabel(Text(importedDocumentAdaptationLabel))
             .help(importedDocumentAdaptationLabel)
         }
@@ -776,8 +810,12 @@ struct ReaderView: View {
         return item.kind == .pdf || item.kind == .html
     }
 
+    private var adaptsSelectedDocumentColors: Bool {
+        store.selectedMaterialItem?.kind == .html ? adaptsHTMLColors : store.adaptImportedDocumentColors
+    }
+
     private var importedDocumentAdaptationLabel: String {
-        if store.adaptImportedDocumentColors {
+        if adaptsSelectedDocumentColors {
             return store.ui("显示导入文稿原始色彩", "Show Original Document Colors")
         }
         return store.ui("让导入文稿跟随魏碑阅读环境", "Adapt Document to WeiBei Reading")
@@ -1060,7 +1098,8 @@ struct ReaderView: View {
                         url: url,
                         searchQuery: store.effectiveReaderSearch,
                         appearanceMode: store.appearanceMode,
-                        adaptsDocumentColors: store.adaptImportedDocumentColors,
+                        adaptsDocumentColors: adaptsHTMLColors,
+                        onResourceIssuesChange: { htmlResourceIssues = $0 },
                         contentRailTarget: htmlContentRailTarget,
                         selectionAskMarks: selectionAskMarksJSON(for: item.id),
                         selectionRemarkMarks: remarkMarksJSON(for: item.id),
@@ -2334,7 +2373,7 @@ private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDele
 
 #endif
 
-private final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler {
+final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "weibeihtml"
 
     private let lock = NSLock()
@@ -2482,7 +2521,10 @@ struct WebReaderRepresentable: ReaderRepresentable {
     var selectionRemarkMarks: String = "[]"
     var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
 
+    var onResourceIssuesChange: ([String]) -> Void = { _ in }
+
     private static let scriptMessageNames = [
+        "htmlResourceIssues",
         "selection",
         "selectionAskMark",
         "remarkMark",
@@ -2523,7 +2565,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
         url: URL,
         searchQuery: String = "",
         appearanceMode: WeiBeiAppearanceMode = .paper,
-        adaptsDocumentColors: Bool = true,
+        adaptsDocumentColors: Bool = false,
+        onResourceIssuesChange: @escaping ([String]) -> Void = { _ in },
         contentRailTarget: WebReaderContentRailTarget? = nil,
         selectionAskMarks: String = "[]",
         selectionRemarkMarks: String = "[]",
@@ -2534,6 +2577,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.html = nil
+        self.onResourceIssuesChange = onResourceIssuesChange
         self.url = url
         self.searchQuery = searchQuery
         self.appearanceMode = appearanceMode
@@ -2594,6 +2638,18 @@ struct WebReaderRepresentable: ReaderRepresentable {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         ))
+        controller.addUserScript(WKUserScript(
+            source: """
+            (() => {
+              const meta = document.querySelector('meta[name="weibei-import-missing-resources"]');
+              let missing = [];
+              try { missing = JSON.parse(meta?.content || "[]"); } catch (_) {}
+              window.webkit.messageHandlers.htmlResourceIssues.postMessage(missing);
+            })();
+            """,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
         configuration.userContentController = controller
         WeiBeiWebViewConfiguration.installConsoleErrorBridge(on: controller, surface: .reader)
         configuration.setURLSchemeHandler(
@@ -2629,6 +2685,13 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     private func updateReaderView(_ view: WKWebView, context: Context) {
         context.coordinator.searchQuery = searchQuery
+        context.coordinator.onResourceIssuesChange = onResourceIssuesChange
+#if targetEnvironment(macCatalyst)
+        view.isOpaque = !adaptsDocumentColors
+        view.backgroundColor = adaptsDocumentColors ? .clear : .white
+#else
+        view.setValue(!adaptsDocumentColors, forKey: "drawsBackground")
+#endif
         context.coordinator.onContentRailChange = onContentRailChange
         context.coordinator.onContentRailActiveChange = onContentRailActiveChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
@@ -3036,25 +3099,25 @@ struct WebReaderRepresentable: ReaderRepresentable {
             adaptiveCSS = ""
         } else if mode.isDark {
             adaptiveCSS = """
-            html, body { max-width: 100%; overflow-x: hidden; color-scheme: \(scheme); background: transparent !important; }
+            html, body { color-scheme: \(scheme); background-color: transparent !important; }
             body, main, article, section, div, p, li, blockquote, td, th, span { color: \(tokens.ink) !important; background-color: transparent !important; }
             a { color: \(tokens.link) !important; text-decoration-color: color-mix(in srgb, \(tokens.link) 55%, transparent) !important; }
             h1, h2, h3 { color: \(tokens.link) !important; }
-            blockquote { border-left: 3px solid color-mix(in srgb, \(tokens.cinnabar) 62%, transparent) !important; background: color-mix(in srgb, \(tokens.cinnabar) 10%, transparent) !important; color: \(tokens.ink) !important; }
-            code { background: rgba(255, 255, 255, .05) !important; color: \(tokens.link) !important; }
-            pre { background: \(tokens.paperRaised) !important; border: 1px solid color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; color: \(tokens.ink) !important; }
-            table { background: rgba(255, 255, 255, .02) !important; }
-            th { color: \(tokens.link) !important; background: color-mix(in srgb, \(tokens.link) 10%, transparent) !important; }
+            blockquote { border-left-color: color-mix(in srgb, \(tokens.cinnabar) 62%, transparent) !important; background-color: color-mix(in srgb, \(tokens.cinnabar) 10%, transparent) !important; color: \(tokens.ink) !important; }
+            code { background-color: rgba(255, 255, 255, .05) !important; color: \(tokens.link) !important; }
+            pre { background-color: \(tokens.paperRaised) !important; border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; color: \(tokens.ink) !important; }
+            table { background-color: rgba(255, 255, 255, .02) !important; }
+            th { color: \(tokens.link) !important; background-color: color-mix(in srgb, \(tokens.link) 10%, transparent) !important; }
             table, th, td { border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
             """
         } else {
             adaptiveCSS = """
-            html, body { max-width: 100%; overflow-x: hidden; color-scheme: \(scheme); background: transparent !important; }
+            html, body { color-scheme: \(scheme); background-color: transparent !important; }
             body, main, article, section, div, p, li, blockquote, td, th, span { color: \(tokens.ink) !important; }
             [data-weibei-paper-surface] { background-color: transparent !important; }
             a { color: \(tokens.link) !important; }
-            code { background: color-mix(in srgb, \(tokens.ink) 6%, transparent) !important; color: \(tokens.muted) !important; }
-            pre { background: color-mix(in srgb, \(tokens.ink) 5%, transparent) !important; border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
+            code { background-color: color-mix(in srgb, \(tokens.ink) 6%, transparent) !important; color: \(tokens.muted) !important; }
+            pre { background-color: color-mix(in srgb, \(tokens.ink) 5%, transparent) !important; border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
             table, th, td { border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
             """
         }
@@ -3072,12 +3135,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             document.head.appendChild(style);
           }
           document.documentElement.dataset.weibeiTheme = adaptsDocumentColors ? appearance : "original";
-          style.textContent = `${css}
-            body, main, article, section, div { box-sizing: border-box; max-width: 100%; }
-            h1, h2, h3, h4, p, li, blockquote { overflow-wrap: anywhere; word-break: normal; }
-            pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
-            img, table { max-width: 100%; }
-          `;
+          style.textContent = css;
 
           document.querySelectorAll("[data-weibei-paper-surface]").forEach((element) => {
             element.removeAttribute("data-weibei-paper-surface");
@@ -3125,11 +3183,12 @@ struct WebReaderRepresentable: ReaderRepresentable {
         var selectionAskMarks = "[]"
         var selectionRemarkMarks = "[]"
         var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+        var onResourceIssuesChange: ([String]) -> Void = { _ in }
         var lastAppliedSelectionRemarkMarks = ""
         var htmlReadTask: Task<Data?, Never>?
         var htmlLoadTask: Task<Void, Never>?
         var htmlLoadRequestID: UUID?
-        fileprivate let htmlResourceSchemeHandler = WebReaderResourceSchemeHandler()
+        let htmlResourceSchemeHandler = WebReaderResourceSchemeHandler()
         private var lastAppliedSearchQuery = ""
         var lastAppliedSelectionAskMarks = ""
         private var lastAppliedContentRailTargetRequestID: UUID?
@@ -3241,6 +3300,11 @@ struct WebReaderRepresentable: ReaderRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "htmlResourceIssues", message.frameInfo.isMainFrame {
+                let missing = (message.body as? [String] ?? []).prefix(100).map { String($0.prefix(160)) }
+                Task { @MainActor in self.onResourceIssuesChange(missing) }
+                return
+            }
             if message.name == "selectionAskMark",
                let body = message.body as? [String: Any],
                let threadID = body["threadId"] as? String, !threadID.isEmpty {

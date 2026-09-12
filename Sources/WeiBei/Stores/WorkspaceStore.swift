@@ -4003,6 +4003,9 @@ final class WorkspaceStore: ObservableObject {
     private func confirmCourseImportPlan(
         _ sources: [URL], courseID: UUID, asNotes: Bool
     ) async -> Bool {
+        // Dragging a webpage already expresses the import intent. Actual filename
+        // conflicts still use the existing keep-both/replace decision below.
+        if !asNotes, sources.allSatisfy({ StudyItemKind.detect(from: $0) == .html }) { return true }
         guard let root = courseRootURL(for: courseID) else { return false }
         let role: CourseOwnedFileRole = asNotes ? .note : .material
         let mappings = sources.prefix(12).map {

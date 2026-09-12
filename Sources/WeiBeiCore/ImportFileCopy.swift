@@ -4,13 +4,24 @@ import Foundation
 ///
 /// Dedupe semantics: byte-identical content resolves to the existing library
 /// file; a real conflict copies to a unique name. File sizes are compared
-/// before any byte read and content comparison streams in 1 MB chunks, so a
-/// multi-GB import never enters memory whole.
+/// before any byte read; ordinary files compare in 1 MB chunks. HTML is prepared
+/// in memory so its local dependencies can travel with the document.
 public enum ImportFileCopy {
     /// Maximum bytes read at once when comparing a suspected duplicate.
     static let comparisonChunkSize = 1 << 20
 
     public static func copyPreservingOriginal(from sourceURL: URL, into directory: URL) throws -> URL {
+        if let html = try HTMLResourceImport.dataIfHTML(at: sourceURL) {
+            let preferred = directory.appendingPathComponent(sourceURL.lastPathComponent)
+            var target = preferred
+            if FileManager.default.fileExists(atPath: preferred.path) {
+                if try preferred.resourceValues(forKeys: [.fileSizeKey]).fileSize == html.count,
+                   try Data(contentsOf: preferred) == html { return preferred }
+                target = uniqueCopyURL(in: directory, preferred: preferred)
+            }
+            try html.write(to: target, options: .withoutOverwriting)
+            return target
+        }
         let preferred = directory.appendingPathComponent(sourceURL.lastPathComponent)
         if FileManager.default.fileExists(atPath: preferred.path) {
             if try filesHaveIdenticalContents(sourceURL, preferred) {

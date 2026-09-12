@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E8D5426043D667FCEFB05ECE /* HTMLResourceImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4D463AB3DF1747767439EE /* HTMLResourceImport.swift */; };
 		004F8002090467125BED834F /* WorkspaceStore+AppearancePreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EEF7E9FEA502120E8E40228 /* WorkspaceStore+AppearancePreference.swift */; };
 		010EE989523767D41B8DF8DB /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E27840D6749B827F2AB6D4 /* Theme.swift */; };
 		03162CB4422739D309CBFC48 /* WeiBeiPerfBudgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF3DAA422E058150AF832E99 /* WeiBeiPerfBudgets.swift */; };
@@ -269,6 +270,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		1D4D463AB3DF1747767439EE /* HTMLResourceImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLResourceImport.swift; sourceTree = "<group>"; };
 		00A8EB34B27E3EB46E8AC3A6 /* NativeStudyAgentRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStudyAgentRuntime.swift; sourceTree = "<group>"; };
 		00CC9A562BFCADF885FE9E32 /* CourseHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseHubView.swift; sourceTree = "<group>"; };
 		015665548EEE165E258A0617 /* ReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderView.swift; sourceTree = "<group>"; };
@@ -527,6 +529,7 @@
 				368DDA082CECEBE988711338 /* CoursePortableState.swift */,
 				3C7A6D43A91E2C8069D13AB1 /* CourseWorkspaceSummary.swift */,
 				6EA7DFEC6BAFDD75647B0EBD /* EmptyWorkspaceInspiration.swift */,
+				1D4D463AB3DF1747767439EE /* HTMLResourceImport.swift */,
 				88B02DEA510DB2A2E49B3411 /* ImportFileCopy.swift */,
 				14C690686718706D0103A549 /* LearningModels.swift */,
 				CCB783D278E86639C7206B82 /* MarkdownAttachmentGC.swift */,
@@ -1113,6 +1116,7 @@
 				AF89C237863FD096AA206336 /* CourseWorkspaceSummary.swift in Sources */,
 				34AF02AB978DD27D30126AE4 /* EmptyWorkspaceInspiration.swift in Sources */,
 				E2DF058DF5CCC403E5D1AC96 /* GoogleGenerativeAIProvider.swift in Sources */,
+				E8D5426043D667FCEFB05ECE /* HTMLResourceImport.swift in Sources */,
 				EB7A5FD5243C87DF137215D6 /* ImportFileCopy.swift in Sources */,
 				FE4370F09B81B6E9175D1492 /* LearningModels.swift in Sources */,
 				7405BD62E1B167B550038913 /* MarkdownAttachmentGC.swift in Sources */,
