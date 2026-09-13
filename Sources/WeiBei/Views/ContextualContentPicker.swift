@@ -3,6 +3,7 @@ import WeiBeiCore
 
 struct ContextualContentPicker: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     let kind: ContextualContentKind
     @State private var courseEntry: CourseProjectEntryPresentation?
     @State private var choosingImportTarget = false
@@ -45,6 +46,8 @@ struct ContextualContentPicker: View {
                     }
                 }
                 .frame(width: width)
+                // Animate discrete reflow; ordinary live resizing must keep tracking the pointer.
+                .animation(reduceMotion ? nil : WeiBeiMotion.panel, value: columns)
                 .padding(.top, min(100, max(28, geometry.size.height * 0.12)))
                 .padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
