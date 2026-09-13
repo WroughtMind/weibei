@@ -317,7 +317,7 @@ window.addEventListener('pagehide', () => {
   } catch {}
 });
 window.addEventListener('pageshow', event => {
-  if (event.persisted) return;
+  if (event.persisted || performance.getEntriesByType('navigation')[0]?.type === 'back_forward') return;
   const initialChapter = chapters.find(chapter => `#${chapter.id}` === location.hash);
   if (!initialChapter) return;
   let top = initialChapter.offsetTop;
