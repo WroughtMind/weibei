@@ -17,10 +17,12 @@ Thank you for helping improve WeiBei.
    duplicate post-merge run. Full candidate builds belong to an explicit App
    integration or candidate-acceptance task, not every merge.
 3. Describe the problem solved, verification performed, and remaining risks.
-   Record one focused real-App smoke check for user-visible App changes. Include
-   a real-App screenshot for substantial layout changes, new screens, or visual
-   bug fixes; add before screenshots only when comparison helps review. Do not
-   require screenshots for minor copy, style, or behavior-only changes.
+   Provide real-App evidence when the conclusion depends on layout, rendering,
+   or real interaction. Follow the [project collaboration rules](AGENTS.md) for
+   safe agent desktop access and available verification capabilities. If the
+   needed environment is unavailable, continue other checks and record the
+   unverified scenarios; required acceptance remains open. Screenshots or
+   recordings should help assess the result, not fill a fixed evidence matrix.
 4. Include targeted evidence for data safety, permissions, performance, or
    packaging when affected; do not fill unrelated verification sections.
 5. Do not commit course files, notes, credentials, model outputs containing
