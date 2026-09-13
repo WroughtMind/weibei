@@ -28,6 +28,10 @@ struct EmptyWorkspaceLauncherView: View {
 
     private var liveAppearanceMode: WeiBeiAppearanceMode { store.appearanceMode }
 
+    private var requiresLibraryPlacement: Bool {
+        !libraryPlacementConfirmed && store.courses.isEmpty && store.importedItems.isEmpty
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
             GeometryReader { geometry in
@@ -68,7 +72,7 @@ struct EmptyWorkspaceLauncherView: View {
                         .position(
                             x: contentCenterX,
                             y: geometry.size.height * (
-                                !libraryPlacementConfirmed ? 0.84 : EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
+                                requiresLibraryPlacement ? 0.84 : EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
                             )
                         )
                     }
@@ -120,7 +124,7 @@ struct EmptyWorkspaceLauncherView: View {
         )
         let showsInspirationBlock = store.showDailyInspiration && !store.inspirationAsWatermark
         let entryHeight: CGFloat = (
-            (compact ? 84 : 98) + (!libraryPlacementConfirmed ? (compact ? 188 : 178) : 0)
+            (compact ? 84 : 98) + (requiresLibraryPlacement ? (compact ? 188 : 178) : 0)
         ) * textScale
         let entryCenterY = clampedCenterY(
             ratio: showsInspirationBlock ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5,
@@ -190,9 +194,9 @@ struct EmptyWorkspaceLauncherView: View {
             greeting(at: date, compact: compact)
             EmptyWorkspaceEntryRow(
                 entryWidth: entryWidth,
-                isEnabled: libraryPlacementConfirmed
+                isEnabled: !requiresLibraryPlacement
             )
-            if store.canContinueLastWork && libraryPlacementConfirmed {
+            if store.canContinueLastWork && !requiresLibraryPlacement {
                 Button(store.ui("继续上次", "Continue where you left off")) {
                     store.continueLastWork()
                 }
@@ -201,12 +205,8 @@ struct EmptyWorkspaceLauncherView: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .padding(.top, 8)
             }
-            if store.courses.isEmpty && store.importedItems.isEmpty && !libraryPlacementConfirmed {
-                HStack(alignment: .top, spacing: compact ? 12 : 16) {
-                    if !libraryPlacementConfirmed {
-                        LibraryPlacementNoticeCard()
-                    }
-                }
+            if requiresLibraryPlacement {
+                LibraryPlacementNoticeCard()
             }
         }
     }
