@@ -8912,6 +8912,11 @@ final class WorkspaceStore: ObservableObject {
 
     func askSelection() {
         if let selectionContext {
+            if isConversationSurfaceVisible {
+                keepFloatingSelectionForAnswer = false
+                routeSelectionToConversation(selectionContext)
+                return
+            }
             // Expand the floating selection agent into a normal chat composer.
             // Do NOT invent a prompt or auto-send — user writes and sends themselves.
             withAnimation(WeiBeiMotion.panel) {

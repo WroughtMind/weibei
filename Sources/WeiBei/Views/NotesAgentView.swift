@@ -3067,11 +3067,10 @@ struct FloatingSelectionAgentView: View {
     private func openExpandedComposer() {
         withAnimation(WeiBeiMotion.panel) {
             interaction.floatingComposerMode = .ask
-            expanded = true
-            store.keepFloatingSelectionForAnswer = true
             // Do not invent a prompt or auto-send — only open a normal composer.
             store.askSelection()
-            draftFocused = true
+            expanded = store.keepFloatingSelectionForAnswer
+            draftFocused = expanded
         }
         focusAskComposer()
     }

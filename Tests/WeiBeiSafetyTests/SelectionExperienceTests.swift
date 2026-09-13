@@ -38,21 +38,76 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testAskKeepsThePassageAndFloatingInputInEveryReadingLayout() {
+    func testAskUsesExistingChatAndFloatsOnlyWhenChatIsHidden() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
-        for layout in [WorkspaceLayout.immersiveReading, .documentAgentNotes] {
-            store.layout = layout
-            store.showAgent = true
-            let anchor = SelectionPopoverAnchor(x: 320, y: 210)
-            store.updateSelection("原处提问", source: .document, anchor: anchor)
-            store.askSelection()
-            XCTAssertEqual(store.layout, layout)
-            XCTAssertEqual(store.agentSurface, .selectionFloat)
-            XCTAssertEqual(store.selectionAnchor, anchor)
-            XCTAssertTrue(store.keepFloatingSelectionForAnswer)
+        for layout in WorkspaceLayout.allCases {
+            for showAgent in [true, false] {
+                store.dismissFloatingSelectionAgent()
+                store.layout = layout
+                store.showAgent = showAgent
+                let usesChat = layout == .immersiveConversation || (layout.isDocumentThreePane && showAgent)
+                let anchor = SelectionPopoverAnchor(x: 320, y: 210)
+                store.updateSelection("原处提问", source: .document, anchor: anchor)
+                XCTAssertEqual(store.agentSurface, .selectionFloat, "选区仍应显示问/记按钮")
+                let focusRequest = store.focusRequest
+                store.askSelection()
+                XCTAssertEqual(store.layout, layout)
+                XCTAssertEqual(store.showAgent, showAgent)
+                XCTAssertEqual(store.agentSurface, usesChat ? .hidden : .selectionFloat)
+                XCTAssertEqual(store.selectionAnchor, usesChat ? nil : anchor)
+                XCTAssertEqual(store.keepFloatingSelectionForAnswer, !usesChat)
+                XCTAssertEqual(store.focusedPane, .agent)
+                XCTAssertEqual(store.focusRequest, focusRequest + 1)
+                XCTAssertEqual(store.selectionAttachments.map(\.text), ["原处提问"])
+            }
         }
+    }
+
+    @MainActor
+    func testAskInOpenChatPreservesDraftHistoryAndSelectionSource() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.layout = .documentAgentNotes
+        store.showAgent = true
+        store.activeStudySessionID = UUID()
+        let chatID = store.activeStudySessionID
+        store.agentDraft = "还没有写完的问题"
+        let history = [AgentMessage(role: .user, text: "之前的问题", source: nil)]
+        store.messages = history
+        store.selectionAttachments = [SelectionContext(text: "之前带入的摘录", source: .document, ownerTitle: "另一份资料", itemID: "previous")]
+        for source in [SelectionSource.document, .note] {
+            store.selectedItemID = "document"
+            store.activeNotebookItemID = "note"
+            let anchor = SelectionPopoverAnchor(x: 320, y: 210, textAnchor: SelectionTextAnchor(startOffset: 4, endOffset: 8))
+            store.updateSelection("这段原文", source: source, anchor: anchor, ownerTitle: "当前来源")
+            let selection = try XCTUnwrap(store.selectionContext)
+            // An already expanded or pinned float must yield to the open chat as well.
+            store.keepFloatingSelectionForAnswer = true
+            store.pinnedFloatingAgent = true
+            store.askSelection()
+            store.askSelection()
+            XCTAssertEqual(store.agentDraft, "还没有写完的问题")
+            XCTAssertEqual(store.messages, history)
+            XCTAssertEqual(store.activeStudySessionID, chatID)
+            XCTAssertFalse(store.isAgentRunningInActiveChat)
+            XCTAssertFalse(store.pinnedFloatingAgent)
+            XCTAssertFalse(store.keepFloatingSelectionForAnswer)
+            XCTAssertEqual(store.agentSurface, .hidden)
+            XCTAssertEqual(store.selectionAttachments.first?.itemID, "previous")
+            let quote = try XCTUnwrap(store.selectionAttachments.last)
+            XCTAssertEqual(quote.text, selection.text)
+            XCTAssertEqual(quote.source, selection.source)
+            XCTAssertEqual(quote.itemID, selection.itemID)
+            let thread = try XCTUnwrap(store.selectionAskThreads.first { $0.id == store.activeSelectionAskThreadID })
+            XCTAssertEqual(thread.documentAnchor, selection.documentAnchor)
+            XCTAssertEqual(thread.itemID, selection.itemID)
+            XCTAssertTrue(thread.messageIDs.isEmpty)
+        }
+        XCTAssertEqual(store.selectionAttachments.count, 3)
+        XCTAssertEqual(store.selectionAskThreads.count, 2)
     }
 
     @MainActor
