@@ -76,8 +76,30 @@ final class NotesTypographyHarness: NSObject, WKScriptMessageHandler {
         wait { js("window.fontsLoaded") as? Bool == true }
         check("document.fonts.check('16px Mplus1p') && document.fonts.check('16px \"Mplus1p Heading\"')", "Onigiri fonts load locally")
         js("window.savedMarkdown = window.WeiBeiEditor.getMarkdown(); window.css = s => getComputedStyle(document.querySelector(s)); 0")
-        js("window.WeiBeiEditor.setMarkdown('正文 **粗体中文 Bold**'); 0")
+        js("window.WeiBeiEditor.setMarkdown('正文 **中文笔记 Bold**\\n\\n## 标题 **中文笔记 Bold**'); 0")
+        js("window.fontsLoaded = false; document.fonts.ready.then(() => window.fontsLoaded = true); 0")
+        wait { js("window.fontsLoaded") as? Bool == true }
         check("parseFloat(css('.ProseMirror strong').fontWeight) >= 600", "bold notes select a bold weight instead of reusing the light body face")
+        check("""
+            (() => {
+              const body = css('.ProseMirror p'), heading = css('.ProseMirror h2');
+              const boldBody = css('.ProseMirror p strong'), boldHeading = css('.ProseMirror h2 strong');
+              const canvas = document.createElement('canvas'); canvas.width = 96; canvas.height = 96;
+              const context = canvas.getContext('2d');
+              const pixels = (character, style) => {
+                context.clearRect(0, 0, 96, 96);
+                context.font = `${style.fontWeight} 48px ${style.fontFamily}`;
+                context.fillText(character, 8, 64);
+                return context.getImageData(0, 0, 96, 96).data;
+              };
+              const same = (a, b) => a.every((value, index) => value === b[index]);
+              return Array.from('中文笔记经济学回归检验异方差Bold123').every(character => {
+                const bold = pixels(character, boldBody), titleBold = pixels(character, boldHeading);
+                return !same(pixels(character, body), bold)
+                  && !same(pixels(character, heading), titleBold) && same(bold, titleBold);
+              });
+            })()
+            """, "each Chinese and Latin glyph visibly becomes bold, with the same bold face in paragraphs and headings")
         capture("notes-bold")
         js("window.WeiBeiEditor.setMarkdown(window.savedMarkdown); 0")
         check("css('.ProseMirror').fontSize === '16px' && css('.ProseMirror p').lineHeight === '28px'", "notes use the measured Onigiri body size and line spacing")
