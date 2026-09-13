@@ -62,25 +62,48 @@ struct ContextualContentPicker: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text(store.ui("导入到哪里？", "Import into…")).weiBeiText(17, weight: .semibold)
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Button(commonTitle) { importFiles(into: nil) }
+                    VStack(alignment: .leading, spacing: 4) {
+                        importTargetButton(commonTitle, symbol: "tray", courseID: nil)
                         ForEach(store.courses) { course in
-                            Button(course.title) { importFiles(into: course.id) }
+                            importTargetButton(course.title, symbol: "folder", courseID: course.id)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(maxHeight: 300)
-                HStack { Spacer(); Button(store.ui("取消", "Cancel")) { choosingImportTarget = false }.keyboardShortcut(.cancelAction) }
+                HStack {
+                    Spacer()
+                    Button(store.ui("取消", "Cancel")) { choosingImportTarget = false }
+                        .buttonStyle(WeiBeiDialogButtonStyle())
+                        .keyboardShortcut(.cancelAction)
+                }
             }
-            .buttonStyle(.plain)
             .padding(24)
-            .frame(width: 320)
+            .frame(minWidth: 320, idealWidth: 400, maxWidth: .infinity)
+#if targetEnvironment(macCatalyst)
+            .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
+#endif
             .background(WeiBeiTheme.paper)
+            .foregroundStyle(WeiBeiTheme.ink)
         }
         .accessibilityIdentifier(kind == .note ? "contextual-note-picker" : "contextual-material-picker")
     }
 
     private var commonTitle: String {
         kind == .note ? store.ui("通用笔记", "Common Notes") : store.ui("通用资料", "Common Materials")
+    }
+
+    private func importTargetButton(_ title: String, symbol: String, courseID: UUID?) -> some View {
+        Button { importFiles(into: courseID) } label: {
+            HStack(spacing: 10) {
+                Label(title, systemImage: symbol)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").weiBeiText(10)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 13, height: 36))
+        .help(title)
     }
 
     private func courseBlock(_ group: Group) -> some View {
