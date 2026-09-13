@@ -32,7 +32,7 @@ if (!check) {
 }
 await mkdir(output, { recursive: true });
 if (check) {
-  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'diagram.html']) {
+  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html']) {
     await writeFile(resolve(output, name), await readFile(resolve(resources, name)));
   }
 }
