@@ -31,6 +31,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    deinit { convergence?.stop() }
     let store = ContentStore()
     let flow = ConversationLayout()
     lazy var collection = UICollectionView(frame: .zero, collectionViewLayout: flow)
@@ -1034,6 +1035,17 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
                 metrics.checks["drag_reflows_visible_only_then_converges"] = "passed"
 
+                // Closing a floating conversation during convergence must remove its
+                // display link from the run loop, even before the next slice fires.
+                weak var releasedWidthWorker: WidthConvergence?
+                autoreleasepool {
+                    let closing = ConversationController(fixtureMode: false)
+                    closing.convergence = WidthConvergence { [weak closing] in closing?.convergeWidthSlice() }
+                    releasedWidthWorker = closing.convergence
+                }
+                try expect(releasedWidthWorker == nil, "关闭会话后补排版计时器仍在运行")
+                metrics.checks["closing_conversation_releases_width_worker"] = "passed"
+
                 let message = LabMessage(author: "检查样本", markdown: "第一段：中文与 emoji 👩🏽‍💻。\n\n第二段尚在增长")
                 _ = await store.prepare(message, width: bodyWidth)
                 let first = message.blocks[0]
@@ -1347,7 +1359,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
                 metrics.checks["single_long_answer_complete_and_revisitable"] = "passed"
                 selection.clear()
-                status.text = "12 项必要行为检查通过 · 桌面手感仍需单独体验"
+                status.text = "13 项必要行为检查通过 · 桌面手感仍需单独体验"
             } catch {
                 metrics.checks["failure"] = error.localizedDescription
                 status.text = "行为检查未通过：\(error.localizedDescription)"
@@ -1362,7 +1374,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
             }
             catch { status.text = "检查记录写入失败：\(error.localizedDescription)" }
-            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 12)
+            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 13)
         }
     }
 #endif
