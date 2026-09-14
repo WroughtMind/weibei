@@ -1371,6 +1371,7 @@ struct AgentPaneView: View {
 #if targetEnvironment(macCatalyst)
                         CatalystConversationView(wideTypography: comfy,
                             bodyWidth: railOnly ? markdownContentWidth : contentWidth,
+                            onFocusComposer: { draftFocused = true },
                             onReadingMessage: updateAgentRailPosition)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
 #else
@@ -2816,7 +2817,7 @@ struct FloatingSelectionAgentView: View {
                     onContentHeight: { height in
                         guard userFeedHeight == nil, height > 1 else { return }
                         measuredFeedContentHeight = height
-                    }, onReadingMessage: { _ in })
+                    }, onFocusComposer: { draftFocused = true }, onReadingMessage: { _ in })
                     .frame(height: resolvedFloatingFeedHeight)
 #else
                 ScrollViewReader { proxy in

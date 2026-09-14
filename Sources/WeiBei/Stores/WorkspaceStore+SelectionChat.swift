@@ -87,7 +87,8 @@ extension WorkspaceStore {
                     throw AgentConversationTargetError(message: ui("原问答尚未完整读取，内容没有改动。", "The original discussion could not be fully read. Its content is unchanged."))
                 }
                 message.id = UUID()
-                message.origin?.chatID = thread.id
+                message.origin = AgentReplyOrigin(requestID: message.origin?.requestID ?? UUID(),
+                    chatID: thread.id, courseID: message.origin?.courseID)
                 history.append(message)
             }
             try NativeAgentLedger.importConversation(history, to: ledgerURL(for: thread.id))

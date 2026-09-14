@@ -124,6 +124,7 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertEqual(store.messages, original)
         XCTAssertEqual(separate.map(\.text), original.map(\.text))
         XCTAssertTrue(Set(separate.map(\.id)).isDisjoint(with: original.map(\.id)))
+        XCTAssertTrue(separate.allSatisfy { $0.origin?.chatID == thread.id }, "Restoring or retrying an old question must target its floating discussion")
         XCTAssertEqual(store.selectionAskThreads.first?.messageIDs, separate.map(\.id))
         XCTAssertTrue(store.flushPendingWorkspaceSave())
 

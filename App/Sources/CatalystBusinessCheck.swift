@@ -474,6 +474,9 @@ enum CatalystBusinessCheck {
             store.flushPendingNotePersistence(flushWorkspace: false)
             try check("original_answer_to_note", (try String(contentsOf: persistedNote, encoding: .utf8)).contains(finalMarker))
 
+            try await verifySelectionChat(store, material: material, mainComposer: composer, mainConversation: controller)
+            try check("selection_chat_composers_and_citation", true)
+
             store.agentDraft = "WB452_STOP：持续输出，检查停止时保留已收到正文。"
             store.pendingComposerDraft = store.agentDraft
             store.submitAgentDraft()
@@ -537,6 +540,92 @@ enum CatalystBusinessCheck {
             store.showImportantOperationError("候选业务检查失败：\(error.localizedDescription)")
             if CommandLine.arguments.contains("--exit-after-check") { exit(1) }
         }
+    }
+
+    private static func verifySelectionChat(_ store: WorkspaceStore, material: StudyItem,
+                                            mainComposer: AgentComposerTextEditor.ComposerTextView,
+                                            mainConversation: ConversationController) async throws {
+        guard let mainID = store.activeStudySessionID, let window = mainComposer.window else { throw Failure("main composer unavailable") }
+        let mainHistory = store.messages
+        let mainDraft = "主会话草稿：稍后比较这段解释。"
+        mainComposer.text = mainDraft
+        mainComposer.delegate?.textViewDidChange?(mainComposer)
+        store.select(itemID: material.id)
+        func reader() -> UITextView? {
+            descendants(window).compactMap { $0 as? UITextView }.first { $0.delegate is SelectablePlainTextReader.Coordinator }
+        }
+        func floatingComposer() -> AgentComposerTextEditor.ComposerTextView? {
+            descendants(window).compactMap { $0 as? AgentComposerTextEditor.ComposerTextView }.first { $0 !== mainComposer }
+        }
+        func capture(_ name: String) throws {
+            let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent(name))
+        }
+        try await until("selection reader and main draft ready") { reader() != nil && store.composerDraft(for: mainID) == mainDraft }
+        let textView = reader()!
+        let passage = "候选独立合成资料：内容增长时保留同一处文字。"
+        let range = (textView.text as NSString).range(of: passage)
+        guard range.location != NSNotFound else { throw Failure("selection passage unavailable") }
+        textView.selectedRange = range
+        textView.delegate?.textViewDidChangeSelection?(textView)
+        try await until("selection attached before asking") {
+            store.selectionAttachments.first?.text == passage && store.selectionAnchor != nil
+        }
+        guard store.activeSelectionAskThreadID == nil else { throw Failure("selection sent a question without asking") }
+        let attachments = store.selectionAttachments
+        store.askSelection()
+        try await until("floating composer receives focus") { floatingComposer()?.isFirstResponder == true }
+        guard let threadID = store.activeSelectionAskThreadID, let composer = floatingComposer(),
+              threadID != mainID, mainComposer.text == mainDraft, store.selectionAttachments == attachments else {
+            throw Failure("Ask changed the main composer or selection")
+        }
+        try capture("selection-composers.png")
+        composer.text = "解释刚才选中的原文。WB452_ITEM=\(material.id)"
+        composer.delegate?.textViewDidChange?(composer)
+        try await until("floating draft saved") { store.composerDraft(for: threadID) == composer.text }
+        _ = composer.delegate?.textView?(composer, shouldChangeTextIn: NSRange(location: composer.text.utf16.count, length: 0), replacementText: "\n")
+        try await until("floating answer displayed", seconds: 60) {
+            !store.isAgentRunning(in: threadID)
+                && store.conversationMessages(in: threadID).last?.text.contains(finalMarker) == true
+                && composer.text.isEmpty
+        }
+        guard store.messages == mainHistory, mainConversation.messages.last?.id == mainHistory.last?.id.uuidString,
+              mainComposer.text == mainDraft, store.selectionAttachments == attachments else {
+            throw Failure("floating send changed the main conversation")
+        }
+        let draft = "浮窗草稿：这一句再展开说明。"
+        composer.text = draft
+        composer.delegate?.textViewDidChange?(composer)
+        try await until("floating follow-up saved") { store.composerDraft(for: threadID) == draft }
+        let target = WorkspaceStore.AgentConversationTarget(sessionID: mainID, workingDirectory: store.workspaceDirectory, courseID: nil)
+        let discussion = try store.executeDiscussionTool(.discussionRead(chatID: threadID), target: target, focusItemIDs: [material.id])
+        guard let source = discussion.discussions?.first?.messages?.first?.source, let messageID = source.messageID else {
+            throw Failure("discussion citation unavailable")
+        }
+        store.dismissFloatingSelectionAgent()
+        try await until("floating composer closed") { floatingComposer() == nil }
+        guard store.openAgentReplySource(source) else { throw Failure("discussion citation did not open") }
+        try await until("citation revealed and floating draft restored") {
+            guard store.selectionChatRevealMessageID == nil, floatingComposer()?.text == draft,
+                  let controller = conversation(containing: messageID),
+                  let section = controller.messages.firstIndex(where: { $0.id == messageID.uuidString }) else { return false }
+            return controller.collection.indexPathsForVisibleItems.contains { $0.section == section }
+        }
+        guard store.activeStudySessionID == mainID, mainComposer.text == mainDraft else { throw Failure("citation replaced the main conversation") }
+        try capture("selection-discussion.png")
+        mainConversation.quoteText?("主会话引用片段")
+        try await until("main quote focuses its own composer") {
+            mainComposer.isFirstResponder && mainComposer.text == "> 主会话引用片段\n\n" && floatingComposer()?.text == draft
+        }
+        conversation(containing: messageID)?.quoteText?("浮窗引用片段")
+        try await until("floating quote focuses its own composer") {
+            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == "> 浮窗引用片段\n\n"
+                && mainComposer.text == "> 主会话引用片段\n\n"
+        }
+        store.dismissFloatingSelectionAgent()
+        store.clearSelectionAttachments()
     }
 
     private static func verifyDividerResize(_ controller: ConversationController) async throws {
@@ -685,10 +774,11 @@ enum CatalystBusinessCheck {
         }
         return nil
     }
-    private static func conversation() -> ConversationController? {
+    private static func conversation(containing messageID: UUID? = nil) -> ConversationController? {
         func children(_ controller: UIViewController) -> [UIViewController] { [controller] + controller.children.flatMap(children) }
         return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
-            .compactMap(\.rootViewController).flatMap(children).compactMap { $0 as? ConversationController }.first
+            .compactMap(\.rootViewController).flatMap(children).compactMap { $0 as? ConversationController }
+            .first { controller in messageID.map { id in controller.messages.contains { $0.id == id.uuidString } } ?? true }
     }
     private static func waitingStatus(in view: UIView) -> UIView? {
         descendants(view).first {

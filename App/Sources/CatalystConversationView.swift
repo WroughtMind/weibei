@@ -12,10 +12,11 @@ struct CatalystConversationView: View {
     var displayedMessages: [AgentMessage]? = nil
     var floatingThreadID: UUID? = nil
     var onContentHeight: (CGFloat) -> Void = { _ in }
+    var onFocusComposer: () -> Void
     var onReadingMessage: (UUID?) -> Void
     var body: some View { Bridge(workspace: store, streaming: store.streaming(in: floatingThreadID ?? store.activeStudySessionID), wideTypography: wideTypography, bodyWidth: bodyWidth,
         displayedMessages: displayedMessages, floatingThreadID: floatingThreadID, onContentHeight: onContentHeight,
-        onReadingMessage: onReadingMessage).contentShape(Rectangle()) }
+        onFocusComposer: onFocusComposer, onReadingMessage: onReadingMessage).contentShape(Rectangle()) }
     private struct Bridge: UIViewControllerRepresentable {
         @ObservedObject var workspace: WorkspaceStore
         @ObservedObject var streaming: AgentStreamingState
@@ -24,17 +25,13 @@ struct CatalystConversationView: View {
         var displayedMessages: [AgentMessage]?
         var floatingThreadID: UUID?
         var onContentHeight: (CGFloat) -> Void
+        var onFocusComposer: () -> Void
         var onReadingMessage: (UUID?) -> Void
         func makeCoordinator() -> Coordinator { Coordinator() }
         func makeUIViewController(context: Context) -> ConversationController {
             let controller = ConversationController(fixtureMode: false)
             controller.usesWorkspaceChrome = true
             controller.openSource = { [weak workspace] in _ = workspace?.openAgentReplySource($0) }
-            controller.quoteText = { [weak workspace] text in
-                guard let workspace else { return }
-                workspace.agentDraft = "> " + text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-                workspace.focus(.agent)
-            }
             controller.readingMessageChanged = onReadingMessage
             controller.contentHeightChanged = onContentHeight
             context.coordinator.observeNavigation(controller)
@@ -71,7 +68,7 @@ struct CatalystConversationView: View {
                 guard let workspace, let targetID else { return }
                 workspace.replaceComposerDraft("> " + text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n", for: targetID)
                 workspace.focusedPane = .agent
-                workspace.focusRequest += 1
+                onFocusComposer()
             }
             let reveal = floatingThreadID == nil ? nil : workspace.selectionChatRevealMessageID
             let revealChanged = coordinator.requestedMessageID != reveal
