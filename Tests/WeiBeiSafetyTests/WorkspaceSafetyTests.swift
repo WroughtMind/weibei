@@ -238,9 +238,12 @@ final class WorkspaceSafetyTests: XCTestCase {
             count: 120
         )
 
+        store.layout = .documentAgentNotes
+        store.showAgent = true
         store.updateSelection(selection, source: .document, ownerTitle: "课堂原文")
 
         XCTAssertEqual(store.selectionContext?.text, selection)
+        XCTAssertEqual(store.selectionAttachments.first?.text, selection)
         XCTAssertEqual(
             store.agentSelectionText,
             """
@@ -308,7 +311,7 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectionAskHistoryKeepsOlderThreads() {
+    func testSelectionAskHistoryKeepsOlderThreads() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiSelectionAsks-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -322,7 +325,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         }
         store.selectionAskThreads = existing
 
-        _ = store.beginOrReuseSelectionAskThread(for: SelectionContext(
+        _ = try store.beginOrReuseSelectionAskThread(for: SelectionContext(
             text: "新问题选区",
             source: .document,
             ownerTitle: "课堂资料"

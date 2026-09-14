@@ -56,28 +56,58 @@ public actor NativeAgentLedger {
         self.fileURL = fileURL
         encoder = JSONEncoder()
         decoder = JSONDecoder()
-        try Self.ensureSafeParent(for: fileURL)
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            let data = try Data(contentsOf: fileURL)
-            if !data.isEmpty {
-                var loaded: [NativeSessionEvent] = []
-                var offset = data.startIndex
-                while offset < data.endIndex {
-                    let slice: Data
-                    if let newline = data[offset...].firstIndex(of: 0x0A) {
-                        slice = data[offset..<newline]
-                        offset = data.index(after: newline)
-                    } else {
-                        slice = data[offset...]
-                        offset = data.endIndex
-                    }
-                    if slice.isEmpty { continue }
-                    loaded.append(try decoder.decode(NativeSessionEvent.self, from: slice))
-                }
-                events = loaded
-                nextSeq = (loaded.map(\.seq).max() ?? 0) + 1
+        events = try Self.readEvents(at: fileURL)
+        nextSeq = (events.map(\.seq).max() ?? 0) + 1
+    }
+
+    private static func readEvents(at url: URL) throws -> [NativeSessionEvent] {
+        try ensureSafeParent(for: url)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        let decoder = JSONDecoder()
+        return try Data(contentsOf: url).split(separator: 0x0A).map {
+            try decoder.decode(NativeSessionEvent.self, from: Data($0))
+        }
+    }
+
+    private static func writeEvents(_ events: [NativeSessionEvent], to url: URL) throws {
+        try ensureSafeParent(for: url)
+        let encoder = JSONEncoder()
+        var data = Data()
+        for event in events {
+            data.append(try encoder.encode(event))
+            data.append(0x0A)
+        }
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    /// Capture only completed turns, once when the selection conversation opens.
+    public static func forkCompletedHistory(from source: URL, to destination: URL) throws {
+        let events = try readEvents(at: source)
+        let end = events.lastIndex { $0.type == .turnEnd && $0.finishReason == .completed }
+        try writeEvents(end.map { Array(events[...$0]) } ?? [], to: destination)
+    }
+
+    /// Import saved visible Q&A when an older selection did not own a ledger.
+    public static func importConversation(_ messages: [AgentMessage], to url: URL) throws {
+        var events: [NativeSessionEvent] = []
+        var turn = 0
+        let end = messages.lastIndex { $0.role == .assistant && $0.completionState == .completed }
+        let completed = end.map { Array(messages[...$0]) } ?? []
+        for message in completed where message.role == .user || message.role == .assistant {
+            let time = Int64(message.createdAt.timeIntervalSince1970 * 1000)
+            if message.role == .user {
+                turn += 1
+                events.append(NativeSessionEvent(type: .turnStart, seq: events.count + 1, timeMS: time, turn: turn))
+            }
+            events.append(NativeSessionEvent(type: message.role == .user ? .userMessage : .assistantMessage,
+                seq: events.count + 1, timeMS: time, turn: turn, text: message.text))
+            if message.role == .assistant {
+                events.append(NativeSessionEvent(type: .turnEnd, seq: events.count + 1, timeMS: time,
+                    turn: turn, finishReason: .completed))
             }
         }
+        try writeEvents(events, to: url)
     }
 
     private static func ensureSafeParent(for fileURL: URL) throws {
@@ -283,22 +313,8 @@ public actor NativeAgentLedger {
 
     /// Fork = completed-turn prefix snapshot.
     public func forkPrefix(upToTurn turn: Int, to url: URL) throws -> NativeAgentLedger {
-        let prefix = events.filter { event in
-            guard let eventTurn = event.turn else { return event.type == .closer }
-            return eventTurn <= turn && event.type != .turnStart || eventTurn < turn
-                ? true
-                : eventTurn <= turn && event.type == .turnEnd
-        }
-        try Self.ensureSafeParent(for: url)
-        var data = Data()
-        for event in events where (event.turn ?? 0) <= turn {
-            if event.type == .turnStart, event.turn == turn { break }
-            var line = try encoder.encode(event)
-            line.append(0x0A)
-            data.append(line)
-        }
-        _ = prefix
-        try data.write(to: url, options: Data.WritingOptions.atomic)
+        let end = events.lastIndex { $0.type == .turnEnd && $0.finishReason == .completed && ($0.turn ?? 0) <= turn }
+        try Self.writeEvents(end.map { Array(events[...$0]) } ?? [], to: url)
         return try NativeAgentLedger(fileURL: url)
     }
 }

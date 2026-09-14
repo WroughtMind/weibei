@@ -319,6 +319,8 @@ public struct StudyAgentFocus: Codable, Equatable, Sendable {
 }
 
 public enum StudyAgentHostToolRequest: Equatable, Sendable {
+    case discussionSearch(query: String?, itemID: String?, allChats: Bool)
+    case discussionRead(chatID: UUID)
     case courseMap(scope: StudyAgentSourceScope, scopeID: String?, name: String?, cursor: String?, limit: Int)
     case workspaceSearch(query: String, scope: StudyAgentSourceScope, scopeID: String?, cursor: String?, limit: Int)
     case courseRead(itemID: String, page: Int?, location: String?, cursor: String?, maximumCharacters: Int)
@@ -379,7 +381,39 @@ public struct StudyAgentHostToolItem: Codable, Equatable, Sendable {
     }
 }
 
+public struct StudyAgentDiscussionMessage: Codable, Equatable, Sendable {
+    public var role: AgentRole
+    public var completionState: AgentReplyCompletionState
+    public var source: AgentReplySource
+
+    public init(role: AgentRole, completionState: AgentReplyCompletionState, source: AgentReplySource) {
+        self.role = role
+        self.completionState = completionState
+        self.source = source
+    }
+}
+
+public struct StudyAgentDiscussion: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var title: String
+    public var sourceTitle: String?
+    public var selection: String?
+    public var lastQuestionAt: Date?
+    public var messages: [StudyAgentDiscussionMessage]?
+
+    public init(id: UUID, title: String, sourceTitle: String? = nil, selection: String? = nil,
+                lastQuestionAt: Date? = nil, messages: [StudyAgentDiscussionMessage]? = nil) {
+        self.id = id
+        self.title = title
+        self.sourceTitle = sourceTitle
+        self.selection = selection
+        self.lastQuestionAt = lastQuestionAt
+        self.messages = messages
+    }
+}
+
 public struct StudyAgentHostToolResult: Codable, Equatable, Sendable {
+    public var discussions: [StudyAgentDiscussion]?
     public var scope: StudyAgentSourceScope?
     public var scopeID: String?
     public var coverage: [StudyAgentHostToolItem]?
@@ -399,11 +433,13 @@ public struct StudyAgentHostToolResult: Codable, Equatable, Sendable {
         sourceRevision: String? = nil,
         scope: StudyAgentSourceScope? = nil,
         scopeID: String? = nil,
-        coverage: [StudyAgentHostToolItem]? = nil
+        coverage: [StudyAgentHostToolItem]? = nil,
+        discussions: [StudyAgentDiscussion]? = nil
     ) {
         self.scope = scope
         self.scopeID = scopeID
         self.coverage = coverage
+        self.discussions = discussions
         self.query = query
         self.items = items
         self.webPages = webPages

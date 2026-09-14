@@ -2,6 +2,80 @@ import XCTest
 @testable import WeiBeiCore
 
 final class NativeAgentRuntimeTests: XCTestCase {
+    func testSelectionHistoryIncludesCompletedTurnsAndDiscussionCitationsReachTheModel() async throws {
+        struct DiscussionAdapter: NativeLLMAdapter {
+            let family = "mock"
+            let capture: RequestCapture
+            let discussionID: UUID
+            func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+                capture.requests.append(request)
+                let chunks: [NativeStreamChunk]
+                switch capture.requests.count {
+                case 1:
+                    chunks = [.toolCallDelta(index: 0, id: "find", name: "weibei_find_discussions", argumentsDelta: "{}"),
+                        .finish(reason: .toolCalls, replayState: nil)]
+                case 2:
+                    chunks = [.toolCallDelta(index: 0, id: "read", name: "weibei_read_discussion",
+                        argumentsDelta: "{\"chatID\":\"\(discussionID.uuidString)\"}"), .finish(reason: .toolCalls, replayState: nil)]
+                default:
+                    let source = request.messages.filter { $0.role == .tool }
+                        .flatMap { NativeAgentSources.fromToolText($0.content) }.first
+                    chunks = [.textDelta(index: 0, text: "结合刚才的解释继续：" + (source?.label ?? "")),
+                        .finish(reason: .stop, replayState: nil)]
+                }
+                return MockLLMAdapter(chunks: chunks).stream(request)
+            }
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ledgerRoot = root.appendingPathComponent("NativeAgent/Ledgers")
+        let parentURL = ledgerRoot.appendingPathComponent("parent/ledger.jsonl")
+        let parent = try NativeAgentLedger(fileURL: parentURL)
+        for turn in 1...2 {
+            _ = try await parent.append { NativeSessionEvent(type: .turnStart, seq: $0, timeMS: $1, turn: turn) }
+            _ = try await parent.append { NativeSessionEvent(type: .userMessage, seq: $0, timeMS: $1, turn: turn, text: "主问题\(turn)") }
+            _ = try await parent.append { NativeSessionEvent(type: .assistantMessage, seq: $0, timeMS: $1, turn: turn, text: "主回答\(turn)") }
+            try await parent.closeTurn(turn: turn, reason: .completed)
+            let prefix = try await parent.forkPrefix(upToTurn: turn, to: ledgerRoot.appendingPathComponent("prefix-\(turn)/ledger.jsonl"))
+            let inherited = await prefix.deriveMessages()
+            XCTAssertEqual(inherited.map(\.content), (1...turn).flatMap { ["主问题\($0)", "主回答\($0)"] })
+        }
+        _ = try await parent.append { NativeSessionEvent(type: .turnStart, seq: $0, timeMS: $1, turn: 3) }
+        _ = try await parent.append { NativeSessionEvent(type: .userMessage, seq: $0, timeMS: $1, turn: 3, text: "尚未完成的问题") }
+        let childID = UUID(), discussionID = UUID(), messageID = UUID()
+        try NativeAgentLedger.forkCompletedHistory(from: parentURL,
+            to: ledgerRoot.appendingPathComponent("\(childID.uuidString.lowercased())/ledger.jsonl"))
+        var source = AgentReplySource(itemID: nil, kind: .discussion, title: "公式的讨论", label: "", excerpt: "此前公式的实际解释")
+        source.discussionID = discussionID
+        source.messageID = messageID
+        let discussionSource = source
+        let capture = RequestCapture()
+        let runtime = NativeStudyAgentRuntime(model: "mock",
+            adapter: DiscussionAdapter(capture: capture, discussionID: discussionID), ledgerRoot: ledgerRoot,
+            systemPromptText: "学习助手", hostToolHandler: { request in
+                switch request {
+                case .discussionSearch:
+                    return StudyAgentHostToolResult(query: "", items: [], discussions: [StudyAgentDiscussion(id: discussionID, title: "公式的讨论")])
+                case let .discussionRead(id):
+                    XCTAssertEqual(id, discussionID)
+                    return StudyAgentHostToolResult(query: "", items: [], discussions: [StudyAgentDiscussion(id: id, title: "公式的讨论",
+                        messages: [StudyAgentDiscussionMessage(role: .assistant, completionState: .completed, source: discussionSource)])])
+                default: return StudyAgentHostToolResult(query: "", items: [])
+                }
+            })
+        var request = testRequest()
+        request.projectScope = StudyAgentProjectScope(kind: .global, chatID: childID.uuidString.lowercased())
+        let reply = try await runtime.respond(to: request)
+        let firstMessages = try XCTUnwrap(capture.requests.first).messages
+        XCTAssertEqual(Array(firstMessages.dropFirst().prefix(4)).map(\.content), ["主问题1", "主回答1", "主问题2", "主回答2"])
+        XCTAssertFalse(firstMessages.contains(where: { $0.content.contains("尚未完成的问题") }))
+        XCTAssertTrue(capture.requests.last?.messages.contains(where: { $0.content.contains("此前公式的实际解释") }) == true)
+        XCTAssertEqual(reply.sources.first?.discussionID, discussionID)
+        XCTAssertEqual(reply.sources.first?.messageID, messageID)
+        let stillParent = await parent.deriveMessages()
+        XCTAssertEqual(stillParent.last?.content, "尚未完成的问题")
+    }
+
     func testReadAllowanceAndOnlyCitedLocationsSurvivePersistence() async throws {
         let headings = CourseDocumentSearchIndex.markdownPassages("---\n# 文件头\n---\n\n```\n# 代码\n```\n\n$$\n# 公式\n$$\n\n#\n\n章节\n====\n\n## **末节**\n正文").filter { !$0.location.isEmpty }
         XCTAssertEqual(headings.map { $0.title ?? "" }, ["", "章节", "末节"])

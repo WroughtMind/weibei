@@ -41,7 +41,7 @@ struct AgentNativeContentAttachment: View {
     let onHeight: (CGFloat) -> Void
 
     private var blocks: [AgentMessageContentBlock] {
-        store.messages.first(where: { $0.id == messageID })?.contentBlocks ?? initialBlocks
+        store.studySessions.lazy.flatMap(\.messages).first(where: { $0.id == messageID })?.contentBlocks ?? initialBlocks
     }
 
     var body: some View {

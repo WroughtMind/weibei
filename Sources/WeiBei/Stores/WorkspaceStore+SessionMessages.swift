@@ -27,18 +27,20 @@ extension WorkspaceStore {
 
     func loadStudySessionForActivation(_ id: UUID?) -> StudySession? {
         guard let id else { return nil }
-        ensureStudySessionMessagesLoaded(id)
+        guard ensureStudySessionMessagesLoaded(id) else { return nil }
         return studySessions.first { $0.id == id }
     }
 
-    func ensureStudySessionMessagesLoaded(_ id: UUID) {
-        guard let index = studySessions.firstIndex(where: { $0.id == id }),
-              let messages = sessionMessagePersistence.messagesIfNeeded(for: id) else {
-            return
-        }
+    @discardableResult
+    func ensureStudySessionMessagesLoaded(_ id: UUID) -> Bool {
+        guard let index = studySessions.firstIndex(where: { $0.id == id }) else { return false }
+        guard let messages = sessionMessagePersistence.messagesIfNeeded(for: id) else { return true }
+        // A failed or partial read must not replace saved history with an empty chat.
+        guard messages.count >= studySessions[index].messageCount else { return false }
         studySessions[index].messages = interruptingGenerating(messages)
         studySessions[index].messageCount = studySessions[index].messages.count
         sessionMessagePersistence.didLoad(studySessions[index])
+        return true
     }
 
     func ensureAllStudySessionMessagesLoaded() {

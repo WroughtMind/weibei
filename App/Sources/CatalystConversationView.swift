@@ -12,10 +12,11 @@ struct CatalystConversationView: View {
     var displayedMessages: [AgentMessage]? = nil
     var floatingThreadID: UUID? = nil
     var onContentHeight: (CGFloat) -> Void = { _ in }
+    var onFocusComposer: () -> Void
     var onReadingMessage: (UUID?) -> Void
-    var body: some View { Bridge(workspace: store, streaming: store.agentStreaming, wideTypography: wideTypography, bodyWidth: bodyWidth,
+    var body: some View { Bridge(workspace: store, streaming: store.streaming(in: floatingThreadID ?? store.activeStudySessionID), wideTypography: wideTypography, bodyWidth: bodyWidth,
         displayedMessages: displayedMessages, floatingThreadID: floatingThreadID, onContentHeight: onContentHeight,
-        onReadingMessage: onReadingMessage).contentShape(Rectangle()) }
+        onFocusComposer: onFocusComposer, onReadingMessage: onReadingMessage).contentShape(Rectangle()) }
     private struct Bridge: UIViewControllerRepresentable {
         @ObservedObject var workspace: WorkspaceStore
         @ObservedObject var streaming: AgentStreamingState
@@ -24,17 +25,13 @@ struct CatalystConversationView: View {
         var displayedMessages: [AgentMessage]?
         var floatingThreadID: UUID?
         var onContentHeight: (CGFloat) -> Void
+        var onFocusComposer: () -> Void
         var onReadingMessage: (UUID?) -> Void
         func makeCoordinator() -> Coordinator { Coordinator() }
         func makeUIViewController(context: Context) -> ConversationController {
             let controller = ConversationController(fixtureMode: false)
             controller.usesWorkspaceChrome = true
             controller.openSource = { [weak workspace] in _ = workspace?.openAgentReplySource($0) }
-            controller.quoteText = { [weak workspace] text in
-                guard let workspace else { return }
-                workspace.agentDraft = "> " + text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-                workspace.focus(.agent)
-            }
             controller.readingMessageChanged = onReadingMessage
             controller.contentHeightChanged = onContentHeight
             context.coordinator.observeNavigation(controller)
@@ -65,16 +62,26 @@ struct CatalystConversationView: View {
                 controller.setImages(LabImages(loader: handler))
             }
             controller.view.backgroundColor = .clear
-            controller.setAnswering(workspace.isAgentRunningInActiveChat, status: streaming.activityText ?? "")
+            let targetID = floatingThreadID ?? workspace.activeStudySessionID
+            controller.setAnswering(targetID.map { workspace.isAgentRunning(in: $0) } ?? false, status: streaming.activityText ?? "")
+            controller.quoteText = { [weak workspace] text in
+                guard let workspace, let targetID else { return }
+                workspace.replaceComposerDraft("> " + text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n", for: targetID)
+                workspace.focusedPane = .agent
+                onFocusComposer()
+            }
+            let reveal = floatingThreadID == nil ? nil : workspace.selectionChatRevealMessageID
+            let revealChanged = coordinator.requestedMessageID != reveal
+            coordinator.requestedMessageID = reveal
             let changed = coordinator.needsSnapshot(workspace, streaming: streaming)
             let changedFloating = coordinator.floatingMessages != displayedMessages || coordinator.floatingThreadID != floatingThreadID
             coordinator.floatingMessages = displayedMessages; coordinator.floatingThreadID = floatingThreadID
-            guard changed || changedFloating || appearanceChanged else { return }
+            guard changed || changedFloating || appearanceChanged || revealChanged else { return }
             var session = workspace.activeStudySession ?? StudySession(id: Coordinator.emptyID, title: workspace.agentConversationSubtitle)
             session.id = floatingThreadID ?? session.id
             session.messages = displayedMessages ?? workspace.messages
             if let id = streaming.displayingMessageID,
-               streaming.displayingChatID == workspace.activeStudySessionID,
+               streaming.displayingChatID == targetID,
                let index = session.messages.firstIndex(where: { $0.id == id && $0.completionState == .generating }) {
                 session.messages[index].text = streaming.text
             }
@@ -85,6 +92,8 @@ struct CatalystConversationView: View {
     @MainActor private final class Coordinator {
         static let emptyID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
         var displayedSessionID: UUID?
+        var requestedMessageID: UUID?
+        weak var workspace: WorkspaceStore?
         var previous: [UUID: AgentMessage] = [:]
         var pending: StudySession?
         var worker: Task<Void, Never>?
@@ -111,11 +120,13 @@ struct CatalystConversationView: View {
             return changed
         }
         func bind(_ workspace: WorkspaceStore, controller: ConversationController) {
+            self.workspace = workspace
             messageSubscription = workspace.$messages.sink { [weak self] _ in self?.messageRevision += 1 }
             controller.auxiliaryView = { [weak self, weak workspace, weak controller] message in
                 guard let self, let workspace, let original = message.original else { return UIView() }
                 let root = CatalystMessageFooter(initial: original,
-                    streaming: original.completionState == .generating ? workspace.agentStreaming : inertAgentStreamingState,
+                    streaming: original.completionState == .generating
+                        ? workspace.streaming(in: original.origin?.chatID) : inertAgentStreamingState,
                     wideTypography: wideTypography, onHeight: { [weak controller, weak message] height in
                     // Geometry arrives during SwiftUI layout; resize the collection after that pass.
                     DispatchQueue.main.async {
@@ -140,7 +151,7 @@ struct CatalystConversationView: View {
             controller.store.workspaceAttachment = { [weak workspace] block, identifier, height in
                 guard let workspace, let messageID = UUID(uuidString: block.messageID) else { return UIView() }
                 return CatalystHostingView(AgentNativeContentAttachment(messageID: messageID,
-                    identifier: identifier, initialBlocks: workspace.messages.first { $0.id == messageID }?.contentBlocks ?? [],
+                    identifier: identifier, initialBlocks: workspace.studySessions.lazy.flatMap(\.messages).first { $0.id == messageID }?.contentBlocks ?? [],
                     onHeight: height).environmentObject(workspace)
                     .environment(\.weiBeiTextScale, workspace.interfaceTextScale.multiplier))
             }
@@ -194,6 +205,14 @@ struct CatalystConversationView: View {
                         await controller.refreshAppearance()
                     }
                     previous = Dictionary(uniqueKeysWithValues: session.messages.map { ($0.id, $0) })
+                    if let id = requestedMessageID,
+                       session.messages.contains(where: { $0.id == id }) {
+                        await controller.revealMessage(id)
+                        requestedMessageID = nil
+                        if workspace?.selectionChatRevealMessageID == id {
+                            workspace?.selectionChatRevealMessageID = nil
+                        }
+                    }
                 }
                 worker = nil
             }

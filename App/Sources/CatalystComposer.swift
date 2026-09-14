@@ -51,7 +51,7 @@ struct AgentComposerTextEditor: UIViewRepresentable {
         var appliedFocusRequest = 0
         init(_ parent: AgentComposerTextEditor) { self.parent = parent }
         func applyFocus(to view: UITextView) {
-            guard view.window != nil, parent.focused.wrappedValue || parent.focusRequest != appliedFocusRequest else { return }
+            guard view.window != nil, parent.focusRequest != appliedFocusRequest else { return }
             if !view.isFirstResponder { view.becomeFirstResponder() }
             appliedFocusRequest = parent.focusRequest
         }

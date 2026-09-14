@@ -96,11 +96,12 @@ extension WorkspaceStore {
     }
 
     func agentDisplayText(for message: AgentMessage) -> String {
-        guard message.id == activeAgentReplyMessageID,
+        let run = (message.origin?.chatID).flatMap { agentRuns[$0] } ?? agentRun
+        guard message.id == run.activeAgentReplyMessageID,
               message.completionState == .generating else {
             return message.text
         }
-        return latestAgentStreamingText
+        return run.latestAgentStreamingText
     }
 
     func agentReplyDisplayedStreamingText(_ message: AgentMessage) -> Bool {
@@ -123,19 +124,17 @@ extension WorkspaceStore {
         )
     }
 
-    func landAgentStreamingDisplayImmediately() {
-        guard agentStreaming.displayingMessageID != nil else { return }
-        agentStreamingDisplayPump.replaceImmediately(
-            cumulativeText: latestAgentStreamingText
+    func landAgentStreamingDisplayImmediately(in sessionID: UUID? = nil) {
+        let run = sessionID.flatMap { agentRuns[$0] } ?? agentRun
+        guard run.streaming.displayingMessageID != nil else { return }
+        run.pump.replaceImmediately(
+            cumulativeText: run.latestAgentStreamingText
         )
     }
 
-    func setAgentStreamingReduceMotion(_ enabled: Bool) {
+    func setAgentStreamingReduceMotion(_ enabled: Bool, in sessionID: UUID? = nil) {
         agentStreamingUsesReducedMotion = enabled
-        guard enabled, agentStreaming.displayingMessageID != nil else { return }
-        agentStreamingDisplayPump.replaceImmediately(
-            cumulativeText: latestAgentStreamingText
-        )
+        if enabled { landAgentStreamingDisplayImmediately(in: sessionID) }
     }
 
     func landAgentStreamingDisplayIfHidden() {
@@ -368,6 +367,8 @@ extension WorkspaceStore {
     ) async throws -> StudyAgentHostToolResult {
         try Task.checkCancellation()
         switch request {
+        case .discussionSearch, .discussionRead:
+            throw AgentConversationTargetError(message: "问答读取需要会话存储")
         case let .courseMap(scope, scopeID, name, cursor, limit):
             let offset = try sourcePageOffset(cursor)
             let selected = scopedToolSources(sources, scope: scope, id: scopeID).filter {

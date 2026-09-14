@@ -16,6 +16,7 @@
 		05B34CAB21481FB54B2A0FC5 /* CourseRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28228E2E2950801444E2EC73 /* CourseRecordsView.swift */; };
 		07010C7A1E98300267D925DC /* AgentModelListService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */; };
 		07AA0BFB1B0C7EB98204B0DA /* WorkspaceStore+SessionMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E73D78FF30845E50524C3B1 /* WorkspaceStore+SessionMessages.swift */; };
+		E74F27FD84A5744D031CE05E /* WorkspaceStore+SelectionChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CF453C08CC7FE075BE53DB1 /* WorkspaceStore+SelectionChat.swift */; };
 		07D7027AA2BB4385AED66397 /* CatalystBusinessCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB6903E77B7F89AD1758884 /* CatalystBusinessCheck.swift */; };
 		085C325D20F2C88BAA4CFFD4 /* NoteSourceRelations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13231B352EF000C1DAB3D58A /* NoteSourceRelations.swift */; };
 		086B2967FB0184E9A461076D /* CourseWorkspaceComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0EDCE031AC6A5ED5C2FC821 /* CourseWorkspaceComponents.swift */; };
@@ -326,6 +327,7 @@
 		3BD620A25B1F764E5801D4BC /* WorkspaceStore+Startup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+Startup.swift"; sourceTree = "<group>"; };
 		3CA222798F14870B9307D012 /* AgentResources */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AgentResources; path = ../Sources/WeiBeiCore/AgentResources; sourceTree = SOURCE_ROOT; };
 		3E73D78FF30845E50524C3B1 /* WorkspaceStore+SessionMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+SessionMessages.swift"; sourceTree = "<group>"; };
+		3CF453C08CC7FE075BE53DB1 /* WorkspaceStore+SelectionChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+SelectionChat.swift"; sourceTree = "<group>"; };
 		3F8AE41B74F7B80807871FAF /* WeiBei.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WeiBei.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		433E5657BF2C1DCD29347D42 /* NativeSessionTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSessionTitle.swift; sourceTree = "<group>"; };
 		435F8DC910B624960FFAD416 /* NativeAgentSkills.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentSkills.swift; sourceTree = "<group>"; };
@@ -569,6 +571,7 @@
 				5FB801ABB9BE25818268419F /* WorkspaceStore+NotesPersistence.swift */,
 				034D6D52BAEAD08A9A0FAEDE /* WorkspaceStore+SelectionRemark.swift */,
 				3E73D78FF30845E50524C3B1 /* WorkspaceStore+SessionMessages.swift */,
+				3CF453C08CC7FE075BE53DB1 /* WorkspaceStore+SelectionChat.swift */,
 				5BF617840FA3436FFFF504FA /* WorkspaceStore+SessionTitle.swift */,
 				C2736E07206739804FBB5FDA /* WorkspaceStore+SnapshotRecovery.swift */,
 				3BD620A25B1F764E5801D4BC /* WorkspaceStore+Startup.swift */,
@@ -1295,6 +1298,7 @@
 				E2A930C9BADF30856ECC07C3 /* WorkspaceStore+NotesPersistence.swift in Sources */,
 				79E32606B9DD0685D537E295 /* WorkspaceStore+SelectionRemark.swift in Sources */,
 				07AA0BFB1B0C7EB98204B0DA /* WorkspaceStore+SessionMessages.swift in Sources */,
+				E74F27FD84A5744D031CE05E /* WorkspaceStore+SelectionChat.swift in Sources */,
 				4ECFD2CCA6543550AE5EBE76 /* WorkspaceStore+SessionTitle.swift in Sources */,
 				9B832BBFF5F603DDA7533402 /* WorkspaceStore+SnapshotRecovery.swift in Sources */,
 				116D9E917B11D356389080AE /* WorkspaceStore+Startup.swift in Sources */,

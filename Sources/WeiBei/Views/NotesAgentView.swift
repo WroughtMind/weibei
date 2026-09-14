@@ -1252,6 +1252,7 @@ struct AgentPaneView: View {
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
+    @State private var composerFocusTrigger = 0
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
     @State private var sessionPendingDeletion: StudySession?
@@ -1371,6 +1372,7 @@ struct AgentPaneView: View {
 #if targetEnvironment(macCatalyst)
                         CatalystConversationView(wideTypography: comfy,
                             bodyWidth: railOnly ? markdownContentWidth : contentWidth,
+                            onFocusComposer: { composerFocusTrigger &+= 1 },
                             onReadingMessage: updateAgentRailPosition)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
 #else
@@ -2055,7 +2057,8 @@ struct AgentPaneView: View {
                     trailingPadding: wide ? 48 : 40,
                     sendTrailing: wide ? 8 : 10,
                     horizontalPadding: wide ? 16 : 12,
-                    verticalPadding: 8
+                    verticalPadding: 8,
+                    focusTrigger: composerFocusTrigger
                 ) {
                     submitAgentDraft()
                 }
@@ -2475,6 +2478,7 @@ struct FloatingSelectionAgentView: View {
     @State private var savingRemark = false
     @State private var remarkSaveFailed = false
     @FocusState private var draftFocused: Bool
+    @State private var composerFocusTrigger = 0
     @FocusState private var linkFocused: Bool
 
     var body: some View {
@@ -2550,7 +2554,7 @@ struct FloatingSelectionAgentView: View {
             if interaction.floatingComposerMode == .remark,
                store.selectionRemarkRecords.contains(where: { $0.id == interaction.selectionContext?.id }) {
                 closeFloatingAgent()
-            } else if showsExpandedBody && !store.isAgentRunningInActiveChat && !interaction.pinnedFloatingAgent {
+            } else if showsExpandedBody && !store.isFloatingChatRunning && !interaction.pinnedFloatingAgent {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = false
                     store.keepFloatingSelectionForAnswer = false
@@ -2816,57 +2820,64 @@ struct FloatingSelectionAgentView: View {
                     onContentHeight: { height in
                         guard userFeedHeight == nil, height > 1 else { return }
                         measuredFeedContentHeight = height
-                    }, onReadingMessage: { _ in })
+                    }, onFocusComposer: { composerFocusTrigger &+= 1 }, onReadingMessage: { _ in })
                     .frame(height: resolvedFloatingFeedHeight)
 #else
-                ScrollView(showsIndicators: false) {
-                    // Same order as immersive chat: messages → streaming → thinking.
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(visibleFloatingMessages) { message in
-                            FloatingSelectionMessageRow(
-                                message: message,
-                                streaming: message.completionState == .generating
-                                    || store.agentStreaming.isDisplaying(message.id)
-                                    ? store.agentStreaming
-                                    : inertAgentStreamingState
-                            )
-                        }
+                ScrollViewReader { proxy in
+                    ScrollView(showsIndicators: false) {
+                        // Same order as immersive chat: messages → streaming → thinking.
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(visibleFloatingMessages) { message in
+                                FloatingSelectionMessageRow(
+                                    message: message,
+                                    streaming: message.completionState == .generating
+                                        || floatingStreaming.isDisplaying(message.id)
+                                        ? floatingStreaming
+                                        : inertAgentStreamingState
+                                )
+                                .id(message.id)
+                            }
 
-                        if store.isAgentRunningInActiveChat
-                            && !store.hasPersistedGeneratingAgentReply {
-                            AgentLiveResponse(
-                                streaming: store.agentStreaming,
-                                compact: true
-                            )
+                            if store.isFloatingChatRunning
+                                && !visibleFloatingMessages.contains(where: { $0.completionState == .generating }) {
+                                AgentLiveResponse(
+                                    streaming: floatingStreaming,
+                                    compact: true
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
+                        .background {
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: FloatingSelectionFeedHeightKey.self,
+                                    value: proxy.size.height
+                                )
+                            }
                         }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: FloatingSelectionFeedHeightKey.self,
-                                value: proxy.size.height
-                            )
+                    .frame(height: resolvedFloatingFeedHeight)
+                    .onPreferenceChange(FloatingSelectionFeedHeightKey.self) { height in
+                        guard userFeedHeight == nil, !feedHeightLocked, height > 1,
+                              abs(height - measuredFeedContentHeight) > 1 else { return }
+                        // Two-state oscillation lock: the LazyVStack row set depends on the
+                        // frame height, so an A/B alternation means this measure-writeback
+                        // loop cannot converge. Lock instead of churning layout (and
+                        // re-entering the AttributeGraph cycle) on every frame.
+                        if let previousFeedContentHeight,
+                           abs(height - previousFeedContentHeight) <= 1 {
+                            feedHeightLocked = true
+                            return
                         }
+                        previousFeedContentHeight = measuredFeedContentHeight
+                        measuredFeedContentHeight = height
                     }
-                }
-                .frame(height: resolvedFloatingFeedHeight)
-                .onPreferenceChange(FloatingSelectionFeedHeightKey.self) { height in
-                    guard userFeedHeight == nil, !feedHeightLocked, height > 1,
-                          abs(height - measuredFeedContentHeight) > 1 else { return }
-                    // Two-state oscillation lock: the LazyVStack row set depends on the
-                    // frame height, so an A/B alternation means this measure-writeback
-                    // loop cannot converge. Lock instead of churning layout (and
-                    // re-entering the AttributeGraph cycle) on every frame.
-                    if let previousFeedContentHeight,
-                       abs(height - previousFeedContentHeight) <= 1 {
-                        feedHeightLocked = true
-                        return
+                    .onAppear { revealFloatingMessage(using: proxy) }
+                    .onChange(of: store.selectionChatRevealMessageID) { _, _ in
+                        revealFloatingMessage(using: proxy)
                     }
-                    previousFeedContentHeight = measuredFeedContentHeight
-                    measuredFeedContentHeight = height
                 }
 #endif
             }
@@ -2890,6 +2901,13 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
+    private func revealFloatingMessage(using proxy: ScrollViewProxy) {
+        guard let id = store.selectionChatRevealMessageID,
+              visibleFloatingMessages.contains(where: { $0.id == id }) else { return }
+        proxy.scrollTo(id, anchor: .center)
+        store.selectionChatRevealMessageID = nil
+    }
+
     /// 问/记共用同一浮层,底部输入框按模式切换;两种草稿互不覆盖。
     @ViewBuilder private var composerField: some View {
         if interaction.floatingComposerMode == .remark {
@@ -2904,6 +2922,10 @@ struct FloatingSelectionAgentView: View {
                     .weiBeiText(11).foregroundStyle(WeiBeiTheme.cinnabar)
                     .padding(.horizontal, 14)
             }
+        } else if let error = store.selectionChatError {
+            Text(error).weiBeiText(12).foregroundStyle(WeiBeiTheme.cinnabar)
+                .padding(.horizontal, 14)
+            Button(store.ui("重试", "Retry")) { store.askSelection() }
         } else {
             ComposerView(
                 prompt: showsFloatingFeed
@@ -2920,10 +2942,13 @@ struct FloatingSelectionAgentView: View {
                 horizontalPadding: 2,
                 verticalPadding: 4,
                 showsChrome: false,
-                focusesOnAppear: true
+                focusesOnAppear: true,
+                focusTrigger: composerFocusTrigger,
+                sessionID: interaction.activeSelectionAskThreadID
             ) {
                 sendDraft()
             }
+            .id(interaction.activeSelectionAskThreadID)
             .padding(.horizontal, 14)
             .padding(.bottom, 5)
         }
@@ -2935,14 +2960,11 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var visibleFloatingMessages: [AgentMessage] {
-        // Strict isolation: only messages belonging to the active selection-ask thread.
-        // Never fall back to the global conversation feed.
-        guard let threadID = store.activeSelectionAskThreadID,
-              let thread = store.selectionAskThreads.first(where: { $0.id == threadID }) else {
-            return []
-        }
-        let idSet = Set(thread.messageIDs)
-        return store.messages.filter { idSet.contains($0.id) }
+        store.conversationMessages(in: store.activeSelectionAskThreadID)
+    }
+
+    private var floatingStreaming: AgentStreamingState {
+        store.streaming(in: store.activeSelectionAskThreadID)
     }
 
     private var canPolishNoteSelection: Bool {
@@ -2950,7 +2972,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var showsFloatingFeed: Bool {
-        !visibleFloatingMessages.isEmpty || store.isAgentRunningInActiveChat
+        !visibleFloatingMessages.isEmpty || store.isFloatingChatRunning
     }
 
     private var resolvedFloatingFeedHeight: CGFloat {
@@ -3113,18 +3135,8 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func sendDraft() {
-        guard !store.isStoppingAgent,
-              !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        withAnimation(WeiBeiMotion.panel) {
-            expanded = true
-            store.keepFloatingSelectionForAnswer = true
-            if let selection = store.selectionContext {
-                store.addSelectionAttachment(selection)
-                let thread = store.beginOrReuseSelectionAskThread(for: selection)
-                store.activeSelectionAskThreadID = thread.id
-            }
-        }
-        store.submitAgentDraft()
+        guard let threadID = store.activeSelectionAskThreadID else { return }
+        store.submitAgentDraft(sessionID: threadID)
     }
 
     private func closeFloatingAgent() {
@@ -3263,14 +3275,14 @@ private struct FloatingSelectionMessageRow: View {
                     .padding(.vertical, 4)
             }
         }
-        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
+        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion, in: message.origin?.chatID) }
         .onDisappear {
             if streaming.isDisplaying(message.id) {
-                store.landAgentStreamingDisplayImmediately()
+                store.landAgentStreamingDisplayImmediately(in: message.origin?.chatID)
             }
         }
         .onChange(of: reduceMotion) { _, enabled in
-            store.setAgentStreamingReduceMotion(enabled)
+            store.setAgentStreamingReduceMotion(enabled, in: message.origin?.chatID)
         }
     }
 }
@@ -3300,14 +3312,14 @@ private struct AgentMessageBubble: View {
             isStreaming: isStreaming,
             isChatWideTypography: isChatWideTypography
         )
-        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
+        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion, in: message.origin?.chatID) }
         .onDisappear {
             if streaming.isDisplaying(message.id) {
-                store.landAgentStreamingDisplayImmediately()
+                store.landAgentStreamingDisplayImmediately(in: message.origin?.chatID)
             }
         }
         .onChange(of: reduceMotion) { _, enabled in
-            store.setAgentStreamingReduceMotion(enabled)
+            store.setAgentStreamingReduceMotion(enabled, in: message.origin?.chatID)
         }
     }
 }
@@ -3569,12 +3581,14 @@ struct AgentBubble: View {
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                     if store.canRetryAgentRequest(
                         question: message.retryQuestion,
-                        failureKind: message.failureKind
+                        failureKind: message.failureKind,
+                        sessionID: message.origin?.chatID
                     ), let question = message.retryQuestion {
                         Button(store.ui("重试", "Retry")) {
                             store.retryAgentRequest(
                                 question,
-                                targetCourseID: message.origin?.courseID
+                                targetCourseID: message.origin?.courseID,
+                                sessionID: message.origin?.chatID
                             )
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
@@ -3585,19 +3599,23 @@ struct AgentBubble: View {
                 HStack(spacing: 6) {
                     if store.canRetryAgentRequest(
                         question: message.retryQuestion,
-                        failureKind: message.failureKind
+                        failureKind: message.failureKind,
+                        sessionID: message.origin?.chatID
                     ), let question = message.retryQuestion {
                         Button(store.ui("重试", "Retry")) {
                             store.retryAgentRequest(
                                 question,
-                                targetCourseID: message.origin?.courseID
+                                targetCourseID: message.origin?.courseID,
+                                sessionID: message.origin?.chatID
                             )
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     }
                     if let question = message.retryQuestion, !question.isEmpty {
                         Button(store.ui("回填问题", "Restore question")) {
-                            store.agentDraft = question
+                            if let id = message.origin?.chatID ?? store.activeStudySessionID {
+                                store.replaceComposerDraft(question, for: id)
+                            }
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
@@ -4303,6 +4321,7 @@ private struct AgentReplySourceDetail: View {
 private extension AgentReplySourceKind {
     var sourceSystemImage: String {
         switch self {
+        case .discussion: return "bubble.left.and.bubble.right"
         case .material: return "doc.text"
         case .note: return "note.text"
         case .selection: return "text.quote"

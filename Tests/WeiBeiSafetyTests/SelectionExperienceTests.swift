@@ -12,6 +12,136 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticSelectionAndIndependentQuestionUseTheirOwnDraftsAndHistory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let mainID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
+        store.layout = .documentAgentNotes
+        store.showAgent = true
+        store.selectedItemID = "document-a"
+        store.saveComposerDraft("主会话未发送的草稿", for: mainID)
+        store.updateSelection("公式 A 的原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
+        let attachment = try XCTUnwrap(store.selectionAttachments.first)
+        XCTAssertEqual(attachment.text, "公式 A 的原文")
+        XCTAssertNil(store.activeSelectionAskThreadID)
+        store.askSelection()
+        let firstID = try XCTUnwrap(store.activeSelectionAskThreadID)
+        XCTAssertNotEqual(firstID, mainID)
+        XCTAssertEqual(store.selectionAttachments, [attachment])
+        XCTAssertEqual(store.composerDraft(for: mainID), "主会话未发送的草稿")
+        store.saveComposerDraft("解释公式 A", for: firstID)
+        var submitted: StudyAgentRequest?
+        store.selfCheckAgentResponder = { request in
+            submitted = request
+            return StudyAgentReply(text: "公式 A 的解释", backend: .native)
+        }
+        store.submitAgentDraft(sessionID: firstID)
+        let done = expectation(description: "independent question persisted")
+        Task { @MainActor in
+            await store.agentRuns[firstID]?.agentRequestTask?.value
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+        XCTAssertEqual(submitted?.projectScope.chatID, firstID.uuidString.lowercased())
+        XCTAssertEqual(submitted?.selectionSources.first?.excerpt, "公式 A 的原文")
+        XCTAssertTrue(store.messages.isEmpty)
+        XCTAssertEqual(store.conversationMessages(in: firstID).map(\.text), ["解释公式 A", "公式 A 的解释"])
+        XCTAssertEqual(store.composerDraft(for: firstID), "")
+        XCTAssertEqual(store.composerDraft(for: mainID), "主会话未发送的草稿")
+        XCTAssertEqual(store.selectionAttachments, [attachment])
+        store.dismissFloatingSelectionAgent()
+        XCTAssertEqual(store.selectionAttachments, [attachment])
+        store.removeSelectionAttachment(id: attachment.id)
+        store.updateSelection("公式 A 的原文", source: .document, anchor: nil)
+        XCTAssertTrue(store.selectionAttachments.isEmpty)
+        store.updateSelection("公式 B 的原文", source: .document, anchor: SelectionPopoverAnchor(x: 250, y: 150))
+        XCTAssertEqual(store.selectionAttachments.map(\.text), ["公式 B 的原文"])
+        store.askSelection()
+        let secondID = try XCTUnwrap(store.activeSelectionAskThreadID)
+        store.saveComposerDraft("还没问完 B", for: secondID)
+        XCTAssertNotEqual(firstID, secondID)
+        let target = WorkspaceStore.AgentConversationTarget(sessionID: mainID, workingDirectory: root, courseID: nil)
+        let found = try store.executeDiscussionTool(.discussionSearch(query: nil, itemID: nil, allChats: false),
+            target: target, focusItemIDs: ["document-a"])
+        XCTAssertTrue(found.discussions?.contains(where: { $0.id == firstID }) == true)
+        let read = try store.executeDiscussionTool(.discussionRead(chatID: firstID), target: target, focusItemIDs: [])
+        let replySource = try XCTUnwrap(read.discussions?.first?.messages?.last?.source)
+        XCTAssertEqual(replySource.excerpt, "公式 A 的解释")
+        XCTAssertTrue(store.openAgentReplySource(replySource))
+        XCTAssertEqual(store.activeStudySessionID, mainID)
+        XCTAssertEqual(store.activeSelectionAskThreadID, firstID)
+        XCTAssertEqual(store.selectionChatRevealMessageID, replySource.messageID)
+        store.retryAgentRequest("再解释公式 A", sessionID: firstID)
+        let retried = expectation(description: "retry stays in its discussion")
+        Task { @MainActor in
+            await store.agentRuns[firstID]?.agentRequestTask?.value
+            retried.fulfill()
+        }
+        wait(for: [retried], timeout: 10)
+        XCTAssertEqual(store.conversationMessages(in: firstID).suffix(2).map(\.text), ["再解释公式 A", "公式 A 的解释"])
+        XCTAssertTrue(store.messages.isEmpty)
+        XCTAssertEqual(store.composerDraft(for: mainID), "主会话未发送的草稿")
+        let (mainStream, mainContinuation) = AsyncStream<Void>.makeStream()
+        let (floatStream, floatContinuation) = AsyncStream<Void>.makeStream()
+        let mainTask = Task { for await _ in mainStream {} }
+        let floatTask = Task { for await _ in floatStream {} }
+        defer { mainContinuation.finish(); floatContinuation.finish(); mainTask.cancel(); floatTask.cancel() }
+        let mainRun = AgentConversationRun(chatID: mainID)
+        mainRun.agentRequestTask = mainTask
+        let floatRun = AgentConversationRun(chatID: firstID)
+        floatRun.agentRequestTask = floatTask
+        store.agentRuns[mainID] = mainRun
+        store.agentRuns[firstID] = floatRun
+        store.cancelAgentRequest(in: firstID)
+        XCTAssertTrue(floatTask.isCancelled)
+        XCTAssertFalse(mainTask.isCancelled)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        reopened.openSelectionAskThread(secondID)
+        XCTAssertEqual(reopened.composerDraft(for: secondID), "还没问完 B")
+        XCTAssertEqual(reopened.floatingAgentDraft, "还没问完 B")
+        reopened.openSelectionAskThread(firstID)
+        XCTAssertEqual(reopened.floatingAgentDraft, "")
+        XCTAssertEqual(reopened.conversationMessages(in: firstID).map(\.text), ["解释公式 A", "公式 A 的解释", "再解释公式 A", "公式 A 的解释"])
+        XCTAssertFalse(reopened.orderedStudySessions.contains(where: { $0.id == firstID || $0.id == secondID }))
+    }
+
+    @MainActor
+    func testOldSelectionDiscussionKeepsOriginalMessagesAndFailedReadsDoNotOverwriteHistory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let main = try XCTUnwrap(store.createStudySession(courseID: nil))
+        let original = [AgentMessage(role: .user, text: "旧问题", source: nil),
+                        AgentMessage(role: .assistant, text: "旧回答", source: nil)]
+        original.forEach(store.appendAgentMessage)
+        let thread = SelectionAskThread(selectionText: "旧原文", source: .document,
+            ownerTitle: "旧资料", messageIDs: original.map(\.id))
+        store.selectionAskThreads.append(thread)
+        try store.ensureSelectionChat(thread)
+        let separate = store.conversationMessages(in: thread.id)
+        XCTAssertEqual(store.messages, original)
+        XCTAssertEqual(separate.map(\.text), original.map(\.text))
+        XCTAssertTrue(Set(separate.map(\.id)).isDisjoint(with: original.map(\.id)))
+        XCTAssertTrue(separate.allSatisfy { $0.origin?.chatID == thread.id }, "Restoring or retrying an old question must target its floating discussion")
+        XCTAssertEqual(store.selectionAskThreads.first?.messageIDs, separate.map(\.id))
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+
+        let file = StudySessionMessageFile.fileURL(sessionID: thread.id, in: root)
+        let damaged = Data("{".utf8)
+        try damaged.write(to: file, options: .atomic)
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let target = WorkspaceStore.AgentConversationTarget(sessionID: main.id, workingDirectory: root, courseID: nil)
+        XCTAssertThrowsError(try reopened.executeDiscussionTool(.discussionRead(chatID: thread.id),
+            target: target, focusItemIDs: []))
+        XCTAssertTrue(reopened.flushPendingWorkspaceSave())
+        XCTAssertEqual(try Data(contentsOf: file), damaged)
+        XCTAssertEqual(reopened.studySessions.first(where: { $0.id == thread.id })?.messageCount, original.count)
+        XCTAssertEqual(reopened.conversationMessages(in: main.id), original)
+    }
+
+    @MainActor
     func testExcerptBooksPersistByCourseWithoutChangingTheNote() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -22,7 +152,7 @@ final class SelectionExperienceTests: XCTestCase {
         for (course, item) in [(firstCourse, "a.pdf"), (firstCourse, "b.pdf"), (secondCourse, "c.pdf")] {
             store.activeCourseID = course
             store.selectionContext = SelectionContext(text: "相同原文", source: .document, ownerTitle: item, itemID: item, documentAnchor: anchor)
-            _ = store.beginOrReuseSelectionAskThread(for: store.selectionContext!)
+            _ = try store.beginOrReuseSelectionAskThread(for: store.selectionContext!)
             let saved = saveRemark("我的批注", in: store)
             XCTAssertTrue(saved)
         }
@@ -228,7 +358,7 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testRepeatedPassagesStayIndependentAndRemarkFailureKeepsDraft() {
+    func testRepeatedPassagesStayIndependentAndRemarkFailureKeepsDraft() throws {
         struct CannotWrite: Error {}
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -237,7 +367,7 @@ final class SelectionExperienceTests: XCTestCase {
         for start in [0, 20] {
             let selection = SelectionContext(text: "同一句", source: .document, ownerTitle: "一篇文稿", itemID: "same.md", documentAnchor: SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: start, endOffset: start + 3)))
             store.selectionContext = selection
-            _ = store.beginOrReuseSelectionAskThread(for: selection)
+            _ = try store.beginOrReuseSelectionAskThread(for: selection)
             let saved = saveRemark(store.interaction.selectionNoteDraft, in: store)
             XCTAssertFalse(saved)
         }

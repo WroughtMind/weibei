@@ -829,6 +829,7 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
 /// A durable link between a selected text span the user asked about and the chat turns that followed.
 /// Used for underline marks in the reader/note and for reopening the floating selection agent.
 public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
+    public var parentSessionID: UUID?
     public var id: UUID
     public var selectionText: String
     public var source: SelectionSource
@@ -1390,12 +1391,15 @@ public enum AgentReplyCompletionState: String, Codable, Hashable, Sendable {
 }
 
 public enum AgentReplySourceKind: String, Codable, Hashable, Sendable {
+    case discussion
     case material
     case note
     case selection
 }
 
 public struct AgentReplySource: Identifiable, Codable, Hashable, Sendable {
+    public var discussionID: UUID?
+    public var messageID: UUID?
     public var id: UUID
     public var itemID: String?
     public var courseID: UUID?

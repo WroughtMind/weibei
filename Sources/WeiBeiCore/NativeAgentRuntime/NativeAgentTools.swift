@@ -258,6 +258,8 @@ public enum NativeBuiltinTools {
         await registry.register(courseMap)
         await registry.register(workspaceSearch)
         await registry.register(courseRead)
+        await registry.register(discussionSearch)
+        await registry.register(discussionRead)
         await registry.register(retryFailedPDFPages)
         await registry.register(webOpen)
         await registry.register(learningMemory)
@@ -591,6 +593,36 @@ public enum NativeBuiltinTools {
                 return .courseRead(itemID: context.persistentAssetIDsByContextID[id] ?? id,
                     page: page, location: location, cursor: string(arguments["cursor"]),
                     maximumCharacters: try positiveCount(arguments["maximumCharacters"], default: 12_000, maximum: 12_000))
+            }
+        )
+    }
+
+    private static var discussionSearch: NativeToolDefinition {
+        hostTool(
+            name: "weibei_find_discussions",
+            description: "查找之前的聊天和原文旁的问答。用户提到刚才、之前的解释或需要综合几段讨论时使用。省略 query 列出当前主会话及当前资料的相关讨论，按用户提问时间倒序；query 按文字查找，itemID 指定资料，allChats=true 查找其他会话。用返回的 id 读取实际问答。",
+            schema: NativeJSONSchema(["type": "object", "properties": [
+                "query": ["type": "string"], "itemID": ["type": "string"],
+                "allChats": ["type": "boolean"],
+            ]]),
+            makeRequest: { arguments, _ in
+                .discussionSearch(query: string(arguments["query"]), itemID: string(arguments["itemID"]),
+                    allChats: arguments["allChats"] as? Bool ?? false)
+            }
+        )
+    }
+
+    private static var discussionRead: NativeToolDefinition {
+        hostTool(
+            name: "weibei_read_discussion",
+            description: "按聊天 id 读取真实问答，包括追问、修正和回答状态。返回的讨论引用标签可以用于回答，让用户点回具体问答；原资料仍可通过资料读取工具查看。",
+            schema: NativeJSONSchema(["type": "object", "properties": ["chatID": ["type": "string"]],
+                "required": ["chatID"]]),
+            makeRequest: { arguments, _ in
+                guard let raw = string(arguments["chatID"]), let id = UUID(uuidString: raw) else {
+                    throw NativeLLMFailure(code: "invalid_arguments", message: "需要返回结果中的聊天编号")
+                }
+                return .discussionRead(chatID: id)
             }
         )
     }

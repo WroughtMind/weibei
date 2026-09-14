@@ -13,6 +13,8 @@ save_evidence() {
   for file in "$CHECK_DIR/server.log" "$CHECK_DIR/requests.jsonl" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-check.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-failure.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
     [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
   done
@@ -63,10 +65,12 @@ launch('--exit-after-check')
 verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')
-assert len(business['checks']) == 19, business
+assert len(business['checks']) == 20, business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
-print('13 项会话检查与 19 项原业务保存重开检查通过；不替代鼠标、输入法及触控板体验验收。')
+for filename in ['selection-composers.png', 'selection-discussion.png']:
+    shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
+print('13 项会话检查与 20 项原业务保存重开检查通过；含选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。')
 
 with tempfile.TemporaryDirectory(prefix='weibei-quit-check-') as scratch:
     helper = str(Path(scratch) / 'quit')
