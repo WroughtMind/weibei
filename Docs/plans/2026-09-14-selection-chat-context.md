@@ -29,7 +29,7 @@
 
 ## 验证与交付边界
 
-- `swift test --filter 'SelectionExperienceTests|NativeAgentRuntimeTests|ComposerDraftIsolationTests|SessionMessageExternalizationTests|WorkspaceSafetyTests.testSelectionAskHistoryKeepsOlderThreads' --jobs 4`：58 项通过。
+- `swift test --filter 'SelectionExperienceTests|NativeAgentRuntimeTests|ComposerDraftIsolationTests|SessionMessageExternalizationTests|WorkspaceSafetyTests.testAgentSelectionPreservesFullText|WorkspaceSafetyTests.testCourseProjectDataSafety|WorkspaceSafetyTests.testSelectionAskHistoryKeepsOlderThreads' --jobs 4`：60 项通过。
 - 检查覆盖选中即有标签、点击问保留标签、独立发送/重试/停止/草稿、旧问答保留、损坏文件不被空记录覆盖，以及历史继承和实际模型请求中的工具结果/引用。
 - 原有隐藏窗口检查通过，证明浮窗输入控件能取得焦点；它不等于真实窗口体验验收。
 - 应用构建、核心数据自检和远端检查结果记录在合并请求中。

@@ -7963,12 +7963,14 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         selectionAttachments = []
-        selectionContext = SelectionContext(
+        let selection = SelectionContext(
             text: "LEGACY_SELECTION_REQUEST_SECRET",
             source: .document,
             ownerTitle: "旧外部选区",
             itemID: selectionItemID
         )
+        selectionContext = selection
+        addSelectionAttachment(selection)
         agentDraft = "检查课程授权后的最终请求"
         agentDraftsBySessionID[session.id] = agentDraft
         selfCheckCapturedAgentRequest = nil
@@ -11480,7 +11482,9 @@ final class WorkspaceStore: ObservableObject {
             $0.id != freshlyCreatedEmptyStudySessionID || !$0.messages.isEmpty || !composerDraft(for: $0.id).isEmpty
         }.map { session in
             var persisted = sessionMessagePersistence.annotatingMessageCount(session)
-            persisted.draft = composerDraft(for: session.id)
+            persisted.draft = session.id == activeStudySessionID
+                ? pendingComposerDraft ?? agentDraft
+                : agentDraftsBySessionID[session.id] ?? session.draft
             return persisted
         }
     }

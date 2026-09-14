@@ -238,9 +238,12 @@ final class WorkspaceSafetyTests: XCTestCase {
             count: 120
         )
 
+        store.layout = .documentAgentNotes
+        store.showAgent = true
         store.updateSelection(selection, source: .document, ownerTitle: "课堂原文")
 
         XCTAssertEqual(store.selectionContext?.text, selection)
+        XCTAssertEqual(store.selectionAttachments.first?.text, selection)
         XCTAssertEqual(
             store.agentSelectionText,
             """
