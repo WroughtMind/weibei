@@ -19,9 +19,6 @@ struct SettingsView: View {
     // Visible to `internal` so the Settings sub-views in Views/Settings/*.swift
     // (same-target extensions) can bind to them.
     @EnvironmentObject var store: WorkspaceStore
-#if targetEnvironment(macCatalyst)
-    @Environment(\.dismiss) private var dismissSettings
-#endif
     @EnvironmentObject private var updateService: WeiBeiUpdateService
     @StateObject var oauthService = AgentAccountService.shared
     @State private var selectedSection: SettingsSection = .agent
@@ -119,12 +116,6 @@ struct SettingsView: View {
                 .ignoresSafeArea()
         }
 #if targetEnvironment(macCatalyst)
-        .overlay(alignment: .topTrailing) {
-            Button { dismissSettings() } label: { Image(systemName: "xmark") }
-                .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                .accessibilityLabel(store.ui("关闭设置", "Close Settings"))
-                .padding(12)
-        }
         .background {
             if let id = recordingShortcutID {
                 CatalystShortcutRecorder(onChord: { applyRecordedShortcut(id, chord: $0) }, onCancel: stopShortcutRecording)
