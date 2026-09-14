@@ -18,8 +18,8 @@
     },
     {
       "name": "index.html",
-      "bytes": 57965,
-      "sha256": "c5db72879f21f1182b5cb0bdf024136f1b93a2867b4ef023b7927445a8e4bb5a"
+      "bytes": 58283,
+      "sha256": "232a08988db43ef8956d51c643a06d046948433975b646c8f179d961a67b8ff2"
     },
     {
       "name": "KaTeX_AMS-Regular.woff2",
@@ -130,6 +130,11 @@
       "name": "mermaid-runtime.js",
       "bytes": 3453353,
       "sha256": "e82547b3e2dbc64cd91ee67f45b17d142b9ca60341acf8619b0a6d09fa356c3a"
+    },
+    {
+      "name": "Mplus1p-Bold.woff2",
+      "bytes": 745188,
+      "sha256": "00d2efa910d15d817c6decb3306998de29d64230b2ee20417db61e060907a32c"
     },
     {
       "name": "Mplus1p-Light.woff2",

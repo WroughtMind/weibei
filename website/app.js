@@ -269,9 +269,13 @@ themesLayer.addEventListener('focusout', event => {
   if (document.documentElement.dataset.scene === '3' && !enteringSceneFour() && !themesLayer.contains(event.relatedTarget)) resetThemePreview();
 });
 
-railButtons.forEach(button => {
-  button.addEventListener('click', () => {
-    document.getElementById(button.dataset.jump).scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth' });
+document.querySelectorAll('[data-jump], a[href^="#scene-"]').forEach(control => {
+  control.addEventListener('click', event => {
+    if (event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const hash = control.getAttribute('href');
+    if (hash && hash !== location.hash) history.pushState(null, '', hash);
+    document.getElementById(control.dataset.jump || hash.slice(1)).scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth' });
   });
 });
 
@@ -317,7 +321,7 @@ window.addEventListener('pagehide', () => {
   } catch {}
 });
 window.addEventListener('pageshow', event => {
-  if (event.persisted) return;
+  if (event.persisted || performance.getEntriesByType('navigation')[0]?.type === 'back_forward') return;
   const initialChapter = chapters.find(chapter => `#${chapter.id}` === location.hash);
   if (!initialChapter) return;
   let top = initialChapter.offsetTop;

@@ -10,7 +10,7 @@ from fontTools.pens.recordingPen import RecordingPen
 from fontTools.ttLib import TTFont
 
 root = Path(__file__).resolve().parent.parent
-for name in ["Mplus1p-Light", "Mplus1p-Regular"]:
+for name in ["Mplus1p-Light", "Mplus1p-Regular", "Mplus1p-Bold"]:
     source = root / "DesignSystem/assets/fonts" / (name + ".ttf")
     target = root / "Sources/WeiBei/Resources/Editor" / (name + ".woff2")
     original = TTFont(source, recalcTimestamp=False)

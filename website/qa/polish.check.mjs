@@ -79,3 +79,27 @@ export async function checkWebsitePolish() {
   assert(document.documentElement.scrollWidth <= innerWidth, '页面出现横向溢出');
   return { manualSelection: 'passed', sceneBoundaries: 'passed', viewport: [innerWidth, innerHeight] };
 }
+
+// 浏览器默认定位必须直接到位；只有主动点击场景入口才允许平滑滚动。
+export async function checkScrollIntent() {
+  await enter(4);
+  const target = scrollY;
+  scrollTo({top: 0, behavior: 'instant'});
+  scrollTo(0, target);
+  const positions = [];
+  const start = performance.now();
+  while (performance.now() - start < 1200) {
+    await new Promise(requestAnimationFrame);
+    positions.push(scrollY);
+  }
+  assert(positions.every(y => Math.abs(y - target) <= 1), '默认定位重播了整页滚动动画');
+  document.querySelector('.brand').click();
+  await waitFor(() => scrollY === 0);
+  document.querySelector('.nav-download').click();
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    await waitFor(() => scrollY > 0);
+    assert(scrollY < target, '主动点击的滚动动画消失了');
+  }
+  await waitFor(() => Math.abs(scrollY - target) <= 1);
+  return {implicitPosition: 'instant', deliberateNavigation: 'passed'};
+}

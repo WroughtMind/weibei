@@ -170,6 +170,11 @@
       "sha256": "42d0c9c2b49284a963ddb3bdf40fd751c2ce4e92114ac6b3001fdbec4f8fffc9"
     },
     {
+      "path": "assets/fonts/Mplus1p-Bold.ttf",
+      "bytes": 1766552,
+      "sha256": "76eb077b0a31ca33ca40238e47da5a17e2786741607cec09678d7d2e5ab1afc1"
+    },
+    {
       "path": "assets/fonts/Mplus1p-Light.ttf",
       "bytes": 1767352,
       "sha256": "1452047ac8cb749b2c3a8012bedf4f54e12c26f2288e093f2c8da1e91d97ed4b"
