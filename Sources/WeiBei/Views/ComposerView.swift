@@ -25,6 +25,7 @@ struct ComposerView: View {
     /// Floating paper surfaces already provide their own chrome.
     var showsChrome = true
     var focusesOnAppear = false
+    var focusTrigger = 0
     var sessionID: UUID? = nil
     var submit: () -> Void
 
@@ -115,6 +116,7 @@ struct ComposerView: View {
         .onChange(of: focused.wrappedValue) { _, focused in
             if focused { focusRequest &+= 1 }
         }
+        .onChange(of: focusTrigger) { _, _ in focusRequest &+= 1 }
         .onChange(of: targetID) { _, _ in draft = store.composerDraft(for: targetID) }
         .onReceive(store.$floatingAgentDraft) { newValue in
             guard let sessionID, sessionID == store.activeSelectionAskThreadID, draft != newValue else { return }

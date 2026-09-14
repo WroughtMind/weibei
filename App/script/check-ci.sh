@@ -13,6 +13,8 @@ save_evidence() {
   for file in "$CHECK_DIR/server.log" "$CHECK_DIR/requests.jsonl" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-check.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-failure.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
     [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
   done

@@ -1252,6 +1252,7 @@ struct AgentPaneView: View {
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
+    @State private var composerFocusTrigger = 0
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
     @State private var sessionPendingDeletion: StudySession?
@@ -1371,7 +1372,7 @@ struct AgentPaneView: View {
 #if targetEnvironment(macCatalyst)
                         CatalystConversationView(wideTypography: comfy,
                             bodyWidth: railOnly ? markdownContentWidth : contentWidth,
-                            onFocusComposer: { draftFocused = true },
+                            onFocusComposer: { composerFocusTrigger &+= 1 },
                             onReadingMessage: updateAgentRailPosition)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
 #else
@@ -2056,7 +2057,8 @@ struct AgentPaneView: View {
                     trailingPadding: wide ? 48 : 40,
                     sendTrailing: wide ? 8 : 10,
                     horizontalPadding: wide ? 16 : 12,
-                    verticalPadding: 8
+                    verticalPadding: 8,
+                    focusTrigger: composerFocusTrigger
                 ) {
                     submitAgentDraft()
                 }
@@ -2476,6 +2478,7 @@ struct FloatingSelectionAgentView: View {
     @State private var savingRemark = false
     @State private var remarkSaveFailed = false
     @FocusState private var draftFocused: Bool
+    @State private var composerFocusTrigger = 0
     @FocusState private var linkFocused: Bool
 
     var body: some View {
@@ -2817,7 +2820,7 @@ struct FloatingSelectionAgentView: View {
                     onContentHeight: { height in
                         guard userFeedHeight == nil, height > 1 else { return }
                         measuredFeedContentHeight = height
-                    }, onFocusComposer: { draftFocused = true }, onReadingMessage: { _ in })
+                    }, onFocusComposer: { composerFocusTrigger &+= 1 }, onReadingMessage: { _ in })
                     .frame(height: resolvedFloatingFeedHeight)
 #else
                 ScrollViewReader { proxy in
@@ -2940,6 +2943,7 @@ struct FloatingSelectionAgentView: View {
                 verticalPadding: 4,
                 showsChrome: false,
                 focusesOnAppear: true,
+                focusTrigger: composerFocusTrigger,
                 sessionID: interaction.activeSelectionAskThreadID
             ) {
                 sendDraft()
