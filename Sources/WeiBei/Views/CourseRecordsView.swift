@@ -409,6 +409,7 @@ private struct LearningMemoryEditSheet: View {
 
             TextEditor(text: $text)
                 .weiBeiText(13)
+                .scrollContentBackground(.hidden)
                 .frame(minHeight: 110)
                 .padding(8)
                 .background(WeiBeiTheme.paperInset.opacity(0.45))
