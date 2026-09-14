@@ -1094,6 +1094,7 @@ actor CourseProjectFileWorker {
                 portable.messages[index].toolTrace = []
                 portable.messages[index].sources =
                     portable.messages[index].sources.filter { source in
+                        guard source.kind != .discussion else { return false }
                         guard let itemID = source.itemID else {
                             return source.courseID.map {
                                 $0 == courseID
@@ -1106,6 +1107,7 @@ actor CourseProjectFileWorker {
                             return false
                         }
                         switch source.kind {
+                        case .discussion: return false
                         case .material:
                             return materialItemIDs.contains(itemID)
                         case .note:

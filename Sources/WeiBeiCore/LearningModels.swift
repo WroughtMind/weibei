@@ -241,6 +241,7 @@ public struct StudyFlowState: Codable, Hashable, Sendable {
 }
 
 public struct StudySession: Identifiable, Codable, Hashable, Sendable {
+    public var draft: String = ""
     public var id: UUID
     public var title: String
     public var titleSetByUser: Bool
@@ -331,6 +332,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         case createdAt
         case updatedAt
         case messageCount
+        case draft
     }
 
     public init(from decoder: Decoder) throws {
@@ -348,6 +350,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         flow = try values.decodeIfPresent(StudyFlowState.self, forKey: .flow) ?? StudyFlowState()
         createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        draft = try values.decodeIfPresent(String.self, forKey: .draft) ?? ""
         messageCount = try values.decodeIfPresent(Int.self, forKey: .messageCount)
             ?? messages.count
     }
@@ -357,6 +360,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         try values.encode(id, forKey: .id)
         try values.encode(title, forKey: .title)
         try values.encode(titleSetByUser, forKey: .titleSetByUser)
+        try values.encode(draft, forKey: .draft)
         try values.encode(messages, forKey: .messages)
         try values.encode(summary, forKey: .summary)
         try values.encode(relatedCourseIDs, forKey: .relatedCourseIDs)

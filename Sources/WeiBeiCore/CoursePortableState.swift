@@ -498,12 +498,15 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                     throw CoursePortableStateError.crossCourseReference
                 }
                 for source in message.sources {
-                    guard source.courseID.map({ $0 == courseID }) ?? true,
+                    guard source.kind != .discussion,
+                          source.courseID.map({ $0 == courseID }) ?? true,
                           source.itemID.map(itemIDs.contains) ?? true else {
                         throw CoursePortableStateError.crossCourseReference
                     }
                     if let sourceItemID = source.itemID {
                         switch source.kind {
+                        case .discussion:
+                            throw CoursePortableStateError.crossCourseReference
                         case .material:
                             guard materialItemIDs.contains(sourceItemID) else {
                                 throw CoursePortableStateError.crossCourseReference

@@ -771,7 +771,7 @@ struct ReaderView: View {
             Menu {
                 ForEach(threads) { thread in
                     Button {
-                        store.openSelectionAskThread(thread.id, jumpToConversation: false)
+                        store.openSelectionAskThread(thread.id)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(Self.truncatedAskMenuLabel(thread.selectionText))
@@ -1064,7 +1064,7 @@ struct ReaderView: View {
                         },
                         onAskUnderlineActivate: { threadID, anchor in
                             if let uuid = UUID(uuidString: threadID) {
-                                store.openSelectionAskThread(uuid, jumpToConversation: false, anchor: anchor)
+                                store.openSelectionAskThread(uuid, anchor: anchor)
                             }
                         },
                         remarkMarks: store.selectionRemarkRecords(forItemID: item.id).map {
@@ -1107,7 +1107,7 @@ struct ReaderView: View {
                         onContentRailActiveChange: applyHTMLContentRailActiveID,
                         onSelectionAskMark: { threadID, anchor in
                             if let uuid = UUID(uuidString: threadID) {
-                                store.openSelectionAskThread(uuid, jumpToConversation: false, anchor: anchor)
+                                store.openSelectionAskThread(uuid, anchor: anchor)
                             }
                         },
                         onSelectionRemarkMark: { recordID, anchor in
@@ -1193,7 +1193,7 @@ struct ReaderView: View {
             onSourceReference: { reference in store.openSourceReference(reference) },
             onSelectionAskMark: { threadID, anchor in
                 if let uuid = UUID(uuidString: threadID) {
-                    store.openSelectionAskThread(uuid, jumpToConversation: false, anchor: anchor)
+                    store.openSelectionAskThread(uuid, anchor: anchor)
                 }
             },
             onSelectionRemarkMark: { recordID, anchor in

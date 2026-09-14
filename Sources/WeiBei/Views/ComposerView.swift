@@ -25,16 +25,21 @@ struct ComposerView: View {
     /// Floating paper surfaces already provide their own chrome.
     var showsChrome = true
     var focusesOnAppear = false
+    var sessionID: UUID? = nil
     var submit: () -> Void
+
+    private var targetID: UUID? { sessionID ?? store.activeStudySessionID }
+    private var isRunning: Bool { targetID.map { store.isAgentRunning(in: $0) } ?? false }
+    private var isStopping: Bool { targetID.flatMap { store.agentRuns[$0]?.isStoppingAgent } ?? false }
 
     private var canSend: Bool {
         AgentProviderReadiness.isConfigured(for: store)
-            && !store.isStoppingAgent
+            && !isStopping
             && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var showsControl: Bool {
-        store.isAgentRunningInActiveChat || canSend
+        isRunning || canSend
     }
 
     var body: some View {
@@ -104,19 +109,23 @@ struct ComposerView: View {
             focusRequest &+= 1
         }
         .onAppear {
-            draft = store.agentDraft
-            store.pendingComposerDraft = draft
+            draft = store.composerDraft(for: targetID)
             if focusesOnAppear || focused.wrappedValue { focusRequest &+= 1 }
         }
         .onChange(of: focused.wrappedValue) { _, focused in
             if focused { focusRequest &+= 1 }
         }
+        .onChange(of: targetID) { _, _ in draft = store.composerDraft(for: targetID) }
+        .onReceive(store.$floatingAgentDraft) { newValue in
+            guard let sessionID, sessionID == store.activeSelectionAskThreadID, draft != newValue else { return }
+            draft = newValue
+        }
         .onReceive(store.$agentDraft) { newValue in
-            guard draft != newValue else { return }
+            guard sessionID == nil, draft != newValue else { return }
             draft = newValue
         }
         .onChange(of: draft) { _, newValue in
-            store.pendingComposerDraft = newValue
+            store.saveComposerDraft(newValue, for: targetID)
             guard focused.wrappedValue else { return }
             guard let span = WeiBeiPerf.begin(
                 "input.agent_to_next_main_queue_proxy"
@@ -137,25 +146,25 @@ struct ComposerView: View {
 
     private func commitAndSubmit() {
         guard AgentProviderReadiness.isConfigured(for: store) else { return }
-        store.pendingComposerDraft = draft
-        store.agentDraft = draft
+        store.saveComposerDraft(draft, for: targetID)
         submit()
     }
 
     private var sendButton: some View {
         Button {
-            store.isAgentRunningInActiveChat ? store.cancelAgentRequest() : commitAndSubmit()
+            if isRunning, let targetID { store.cancelAgentRequest(in: targetID) }
+            else { commitAndSubmit() }
         } label: {
-            Image(systemName: store.isAgentRunningInActiveChat ? "stop.fill" : "paperplane.fill")
+            Image(systemName: isRunning ? "stop.fill" : "paperplane.fill")
         }
         .buttonStyle(WeiBeiIconButtonStyle(
             size: sendButtonSize,
-            prominence: store.isAgentRunningInActiveChat ? .neutral : .primary,
+            prominence: isRunning ? .neutral : .primary,
             cornerRadius: sendButtonSize / 2
         ))
-        .accessibilityLabel(Text(store.isAgentRunningInActiveChat ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
-        .help(store.isAgentRunningInActiveChat ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
-        .keyboardShortcut(.return, modifiers: [.command])
+        .accessibilityLabel(Text(isRunning ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
+        .help(isRunning ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
+        .keyboardShortcut(focused.wrappedValue ? KeyboardShortcut(.return, modifiers: [.command]) : nil)
         .transition(WeiBeiTransition.floating)
         .animation(WeiBeiMotion.micro, value: showsControl)
     }

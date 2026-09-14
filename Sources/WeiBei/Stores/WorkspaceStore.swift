@@ -293,8 +293,16 @@ final class LibraryDrawerState: ObservableObject {
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
-    @Published var selectedItemID: String?
-    @Published var activeNotebookItemID: String?
+    @Published var selectedItemID: String? {
+        didSet { if oldValue != selectedItemID { clearAutomaticSelectionAttachment() } }
+    }
+    @Published var activeNotebookItemID: String? {
+        didSet {
+            if oldValue != activeNotebookItemID, automaticSelection?.source == .note {
+                clearAutomaticSelectionAttachment()
+            }
+        }
+    }
     @Published var courses: [Course] = []
     var courseLibraryRootPath: String?
     var courseLibraryRootIdentity: ImportedFileIdentity?
@@ -352,6 +360,7 @@ final class WorkspaceStore: ObservableObject {
     let sessionMessagePersistence: StudySessionMessagePersistence
     @Published var activeStudySessionID: UUID? {
         didSet {
+            if oldValue != activeStudySessionID { clearAutomaticSelectionAttachment() }
             if let chatID = agentStreaming.displayingChatID,
                activeStudySessionID != chatID {
                 landAgentStreamingDisplayImmediately()
@@ -538,6 +547,10 @@ final class WorkspaceStore: ObservableObject {
     }
     /// Durable selection→chat threads (underline marks + reopen floating Q&A).
     @Published var selectionAskThreads: [SelectionAskThread] = []
+    @Published var floatingAgentDraft = ""
+    @Published var selectionChatError: String?
+    @Published var selectionChatRevealMessageID: UUID?
+    var automaticSelection: SelectionContext?
     /// 选区"记"留痕(原文标记渲染与回访;管理逻辑在 WorkspaceStore+SelectionRemark)。
     @Published var excerptBookPresented = false
     @Published var excerptBookCourseID: UUID?
@@ -550,6 +563,7 @@ final class WorkspaceStore: ObservableObject {
         set {
             if interaction.activeSelectionAskThreadID != newValue {
                 interaction.activeSelectionAskThreadID = newValue
+                floatingAgentDraft = composerDraft(for: newValue)
             }
         }
     }
@@ -699,7 +713,7 @@ final class WorkspaceStore: ObservableObject {
     private var selfCheckCapturedAgentRequest: StudyAgentRequest?
 #endif
     var lastWork: WorkspaceResumePoint?
-    private var agentDraftsBySessionID: [UUID: String] = [:]
+    var agentDraftsBySessionID: [UUID: String] = [:]
     var pendingComposerDraft: String?
     /// Session-local identity of the one reusable, newly created empty Chat.
     /// Deliberately not persisted: reopening the App starts with a fresh empty Chat.
@@ -717,13 +731,11 @@ final class WorkspaceStore: ObservableObject {
     private var isRestoringNavigation = false
     private var lastSelectionAttachmentDate: Date?
     private var lastSelectionUpdateDate: Date?
-    private var pendingSelectionAttachmentTask: Task<Void, Never>?
     private var needsSelectionAskThreadsWorkspaceMigration = false
     private var shouldRemoveLegacySelectionAskThreadsAfterSave = false
     private var loadedSelectionAskThreadsFromWorkspaceSnapshot = false
     var recoveredInterruptedAgentReply = false
     private let selectionAttachmentMergeWindow: TimeInterval = 1.8
-    private let selectionAttachmentDebounceDelay: UInt64 = 520_000_000
     private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
     var pendingNotePersistenceByItemID: [String: PendingNotePersistence] = [:]
     var pendingNotePersistenceTasks: [String: Task<Void, Never>] = [:]
@@ -1336,7 +1348,7 @@ final class WorkspaceStore: ObservableObject {
                 courseResumePoints[index].noteItemID = nil
             }
         }
-        selectionAskThreads.removeAll { $0.itemID == itemID }
+        // Saved discussions survive removal of their original material.
         selectionRemarkRecords.removeAll { $0.itemID == itemID }
         if activeSelectionAskThreadID.map({ id in
             !selectionAskThreads.contains { $0.id == id }
@@ -1679,7 +1691,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var orderedStudySessions: [StudySession] {
-        studySessions.sorted { $0.updatedAt > $1.updatedAt }
+        let selectionIDs = Set(selectionAskThreads.map(\.id))
+        return studySessions.filter { !selectionIDs.contains($0.id) }.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     var historicalStudySessions: [StudySession] {
@@ -1876,6 +1889,8 @@ final class WorkspaceStore: ObservableObject {
         agentDraftsBySessionID.removeValue(forKey: id)
         sessionMessagePersistence.forget(id)
         studySessions.remove(at: index)
+        selectionAskThreads.removeAll { $0.id == id }
+        if activeSelectionAskThreadID == id { dismissFloatingSelectionAgent() }
         if deletingActiveSession {
             activeStudySessionID = nil
             messages = []
@@ -1972,6 +1987,7 @@ final class WorkspaceStore: ObservableObject {
             messages.append(message)
             syncActiveStudySession(titleSeed: message.role == .user ? message.text : nil)
         }
+        appendMessageToActiveSelectionAskThread(message.id)
         save()
     }
 
@@ -2036,7 +2052,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func restoreAgentDraft(for sessionID: UUID) {
-        agentDraft = agentDraftsBySessionID[sessionID] ?? ""; pendingComposerDraft = agentDraft.isEmpty ? nil : agentDraft
+        agentDraft = agentDraftsBySessionID[sessionID] ?? studySessions.first(where: { $0.id == sessionID })?.draft ?? ""
+        pendingComposerDraft = agentDraft.isEmpty ? nil : agentDraft
     }
 
     var agentReplyActionIDsInFlight = Set<UUID>()
@@ -3113,9 +3130,7 @@ final class WorkspaceStore: ObservableObject {
     private func currentAgentSelections(
         allowedItemIDs: Set<String>? = nil
     ) -> [SelectionContext] {
-        let selections = selectionAttachments.isEmpty
-            ? [selectionContext].compactMap { $0 }
-            : selectionAttachments
+        let selections = selectionAttachments
         return selections.filter { selection in
             guard !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return false
@@ -5064,6 +5079,17 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func openAgentReplySource(_ source: AgentReplySource) -> Bool {
+        if let discussionID = source.discussionID {
+            if selectionAskThreads.contains(where: { $0.id == discussionID }) {
+                openSelectionAskThread(discussionID, revealMessageID: source.messageID)
+                return selectionChatError == nil
+            }
+            guard activateStudySession(discussionID, expectedCourseID: nil, expectedScopeNeedsReview: false) else { return false }
+            if let messageID = source.messageID {
+                NotificationCenter.default.post(name: .weiBeiScrollAgentToMessage, object: messageID)
+            }
+            return true
+        }
         guard let item = agentReplySourceItem(source) else { return false }
         let chatID = activeStudySessionID
         if let courseID = source.courseID {
@@ -6207,8 +6233,6 @@ final class WorkspaceStore: ObservableObject {
 
     func updateSelection(_ text: String, source: SelectionSource, anchor: SelectionPopoverAnchor? = nil, ownerTitle: String? = nil, isEditable: Bool = true, documentAnchor: SelectionDocumentAnchor? = nil) {
         guard !courseWorkspacePresented else { return }
-        // Pin locks both the passage and its position until the user releases it.
-        guard !pinnedFloatingAgent else { return }
         let documentAnchor = documentAnchor ?? anchor?.textAnchor.map { SelectionDocumentAnchor(text: $0) }
         let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
@@ -6225,6 +6249,12 @@ final class WorkspaceStore: ObservableObject {
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
         let selectionItemID = source == .note ? activeNotebookItemID : selectedItemID
+        let composerSelection = SelectionContext(text: cleaned, source: source,
+            ownerTitle: resolvedOwnerTitle, itemID: selectionItemID, isEditable: isEditable,
+            documentAnchor: documentAnchor)
+        updateAutomaticSelection(composerSelection)
+        // The open floating conversation keeps its own original passage.
+        guard !pinnedFloatingAgent else { return }
         // Multi-pane and immersive both get the selection capsule when there is an anchor
         // (previously suppressed whenever the chat column was open — looked "broken").
         let shouldRevealSelectionPrompt = anchor != nil
@@ -6261,13 +6291,12 @@ final class WorkspaceStore: ObservableObject {
                     interaction.publishSelectionAnchorIfDue(minInterval: 0.05)
                 }
             }
-            cancelPendingSelectionAttachment()
+
             if shouldRevealSelectionPrompt {
                 if agentSurface != .selectionFloat {
                     withAnimation(WeiBeiMotion.panel) {
                         agentSurface = .selectionFloat
                     }
-                } else {
                 }
             } else if agentSurface == .selectionFloat {
                 withAnimation(WeiBeiMotion.panel) {
@@ -6278,20 +6307,13 @@ final class WorkspaceStore: ObservableObject {
         }
 
         invalidateAgentContext()
-        let nextSelection = SelectionContext(
-            text: cleaned,
-            source: source,
-            ownerTitle: resolvedOwnerTitle,
-            itemID: selectionItemID,
-            isEditable: isEditable,
-            documentAnchor: documentAnchor
-        )
+        let nextSelection = composerSelection
         // Continuous fields update immediately so the capsule tracks like a native selection tool.
         // Only agentSurface show/hide keeps a one-shot panel spring.
         selectionContext = nextSelection
         selectionAnchor = anchor
         floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
-        cancelPendingSelectionAttachment()
+
         // New passages start compact even if the previous reader unmounted its float.
         keepFloatingSelectionForAnswer = false
         activeSelectionAskThreadID = nil
@@ -6300,7 +6322,6 @@ final class WorkspaceStore: ObservableObject {
                 withAnimation(WeiBeiMotion.panel) {
                     agentSurface = .selectionFloat
                 }
-            } else {
             }
         } else if agentSurface == .selectionFloat {
             withAnimation(WeiBeiMotion.panel) {
@@ -6310,44 +6331,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func removeSelectionAttachment(id: UUID) {
-        // Instant remove — animation here made the chip absorb the first click while hover/popover settled.
-        cancelPendingSelectionAttachment()
-        let removed = selectionAttachments.first(where: { $0.id == id })
-        if removed != nil { invalidateAgentContext() }
         selectionAttachments.removeAll { $0.id == id }
-        if selectionContext?.id == id {
-                clearUnpinnedFloatingSelection(keepContext: false)
-        } else if selectionAttachments.isEmpty || removed.map({ selectionContext?.text == $0.text }) == true {
-            clearUnpinnedFloatingSelection(keepContext: false)
-        }
+        invalidateAgentContext()
     }
 
     func clearSelectionAttachments() {
-        // Instant clear so one click always wins over hover-popover dismissal races.
-        cancelPendingSelectionAttachment()
-        if !selectionAttachments.isEmpty { invalidateAgentContext() }
         selectionAttachments = []
-        lastSelectionAttachmentDate = nil
-        lastSelectionUpdateDate = nil
-        clearUnpinnedFloatingSelection(keepContext: false)
-    }
-
-    private func scheduleSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool) {
-        pendingSelectionAttachmentTask?.cancel()
-        pendingSelectionAttachmentTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: self?.selectionAttachmentDebounceDelay ?? 520_000_000)
-            guard !Task.isCancelled else { return }
-            guard self?.selectionContext?.id == selection.id else { return }
-            withAnimation(WeiBeiMotion.panel) {
-                self?.addSelectionAttachment(selection, withinSelectionGesture: withinSelectionGesture)
-            }
-            self?.pendingSelectionAttachmentTask = nil
-        }
-    }
-
-    private func cancelPendingSelectionAttachment() {
-        pendingSelectionAttachmentTask?.cancel()
-        pendingSelectionAttachmentTask = nil
+        invalidateAgentContext()
     }
 
     func addSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool = false) {
@@ -6359,7 +6349,8 @@ final class WorkspaceStore: ObservableObject {
             source: selection.source,
             ownerTitle: selection.ownerTitle,
             itemID: selection.itemID,
-            isEditable: selection.isEditable
+            isEditable: selection.isEditable,
+            documentAnchor: selection.documentAnchor
         )
         let now = Date()
         defer { lastSelectionAttachmentDate = now }
@@ -8035,6 +8026,12 @@ final class WorkspaceStore: ObservableObject {
         let searchIndex = courseDocumentSearchIndex
 
         return { [weak self] request in
+            switch request {
+            case .discussionSearch, .discussionRead:
+                guard let self else { throw CancellationError() }
+                return try await self.executeDiscussionTool(request, target: target, focusItemIDs: focusItemIDs)
+            default: break
+            }
             let currentSources = await MainActor.run { [weak self] in
                 guard let self else { return [AgentHostToolSource]() }
                 let current = Dictionary(uniqueKeysWithValues: self.makeAgentProjectAccessSnapshot(target: target)
@@ -8915,12 +8912,16 @@ final class WorkspaceStore: ObservableObject {
             // Expand the floating selection agent into a normal chat composer.
             // Do NOT invent a prompt or auto-send — user writes and sends themselves.
             withAnimation(WeiBeiMotion.panel) {
-                cancelPendingSelectionAttachment()
-                addSelectionAttachment(selectionContext)
                 floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
                 // Record underline mark when the user opens “问” on this selection.
-                let thread = beginOrReuseSelectionAskThread(for: selectionContext)
-                activeSelectionAskThreadID = thread.id
+                selectionChatError = nil
+                do {
+                    let thread = try beginOrReuseSelectionAskThread(for: selectionContext)
+                    activeSelectionAskThreadID = thread.id
+                } catch {
+                    activeSelectionAskThreadID = nil
+                    selectionChatError = error.localizedDescription
+                }
                 agentSurface = .selectionFloat
                 keepFloatingSelectionForAnswer = true
                 // Focusing a floating composer must not navigate away from the passage.
@@ -8947,11 +8948,8 @@ final class WorkspaceStore: ObservableObject {
         let context = selection ?? selectionContext
         withAnimation(WeiBeiMotion.panel) {
             if let context {
-                cancelPendingSelectionAttachment()
                 addSelectionAttachment(context)
                 floatingSelectionPrompt = context.label(language: interfaceLanguage)
-                let thread = beginOrReuseSelectionAskThread(for: context)
-                activeSelectionAskThreadID = thread.id
             }
             // Prefer keeping float if user is mid answer; otherwise collapse into chat.
             if !keepFloatingSelectionForAnswer, agentSurface == .selectionFloat {
@@ -8968,8 +8966,12 @@ final class WorkspaceStore: ObservableObject {
 
     /// Reopen the floating agent for a past selection-ask thread (hover / mark click / top menu).
     /// When `anchor` is provided (e.g. underline click), the expanded panel docks beside that point.
-    func openSelectionAskThread(_ threadID: UUID, jumpToConversation: Bool = false, anchor: SelectionPopoverAnchor? = nil) {
+    func openSelectionAskThread(_ threadID: UUID, anchor: SelectionPopoverAnchor? = nil, revealMessageID: UUID? = nil) {
         guard let thread = selectionAskThreads.first(where: { $0.id == threadID }) else { return }
+        selectionChatError = nil
+        selectionChatRevealMessageID = revealMessageID
+        do { try ensureSelectionChat(thread) }
+        catch { selectionChatError = error.localizedDescription }
         withAnimation(WeiBeiMotion.panel) {
             activeSelectionAskThreadID = thread.id
             floatingSelectionPrompt = thread.ownerTitle
@@ -8988,57 +8990,51 @@ final class WorkspaceStore: ObservableObject {
                 isEditable: thread.source == .note,
                 documentAnchor: thread.documentAnchor
             )
-            if jumpToConversation, isConversationSurfaceVisible,
-               let lastID = thread.messageIDs.last {
-                focusedPane = .agent
-                focusRequest += 1
-                NotificationCenter.default.post(
-                    name: .weiBeiScrollAgentToMessage,
-                    object: nil,
-                    userInfo: ["messageID": lastID.uuidString]
-                )
-            }
         }
     }
 
     @discardableResult
-    func beginOrReuseSelectionAskThread(for selection: SelectionContext) -> SelectionAskThread {
+    func beginOrReuseSelectionAskThread(for selection: SelectionContext) throws -> SelectionAskThread {
+        let parentID = isConversationSurfaceVisible ? activeStudySessionID : nil
         let normalized = SelectionAttachmentMerge.normalized(selection.text)
         let itemID = selection.itemID
             ?? (selection.source == .note ? activeNotebookItemID : selectedItemID)
         if let index = selectionAskThreads.firstIndex(where: {
-            guard $0.source == selection.source, $0.itemID == itemID else { return false }
+            guard $0.source == selection.source, $0.itemID == itemID,
+                  $0.parentSessionID == parentID else { return false }
             if let anchor = selection.documentAnchor, $0.documentAnchor != nil {
                 return anchor.matches($0.documentAnchor) && $0.normalizedText == normalized
             }
             return !normalized.isEmpty && $0.normalizedText == normalized
         }) {
+            try ensureSelectionChat(selectionAskThreads[index])
             selectionAskThreads[index].updatedAt = Date()
             selectionAskThreads[index].itemID = selectionAskThreads[index].itemID ?? itemID
             selectionAskThreads[index].documentAnchor = selectionAskThreads[index].documentAnchor ?? selection.documentAnchor
             save()
             return selectionAskThreads[index]
         }
-        let thread = SelectionAskThread(
+        var thread = SelectionAskThread(
             selectionText: selection.text,
             source: selection.source,
             ownerTitle: selection.ownerTitle,
             itemID: itemID,
             documentAnchor: selection.documentAnchor
         )
+        thread.parentSessionID = parentID
+        try ensureSelectionChat(thread)
         selectionAskThreads.insert(thread, at: 0)
         save()
         return thread
     }
 
-    func appendMessageToActiveSelectionAskThread(_ messageID: UUID) {
-        let threadID = AgentConversationExecution.run.map { $0.selectionThreadID } ?? activeSelectionAskThreadID
+    private func appendMessageToActiveSelectionAskThread(_ messageID: UUID) {
+        let threadID = AgentConversationExecution.run?.selectionThreadID
         guard let threadID,
               let index = selectionAskThreads.firstIndex(where: { $0.id == threadID }) else { return }
         if !selectionAskThreads[index].messageIDs.contains(messageID) {
             selectionAskThreads[index].messageIDs.append(messageID)
             selectionAskThreads[index].updatedAt = Date()
-            save()
         }
     }
 
@@ -9103,14 +9099,15 @@ final class WorkspaceStore: ObservableObject {
         focus(.notes)
     }
 
-    func submitAgentDraft(targetCourseID: UUID? = nil) {
-        if isAgentRunningInActiveChat {
-            cancelAgentRequest()
+    func submitAgentDraft(targetCourseID: UUID? = nil, sessionID: UUID? = nil) {
+        guard let id = sessionID ?? activeStudySessionID else { return }
+        if isAgentRunning(in: id) {
+            cancelAgentRequest(in: id)
             return
         }
-        let question = (pendingComposerDraft ?? agentDraft).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty, !isStoppingAgent else { return }
-        askAgent(targetCourseID: targetCourseID)
+        guard !composerDraft(for: id).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let selection = selectionAskThreads.first(where: { $0.id == id }).map(selectionChatContext)
+        askAgent(replayingSelections: selection.map { [$0] }, targetCourseID: targetCourseID, targetSessionID: id)
     }
 
     @discardableResult
@@ -9119,19 +9116,29 @@ final class WorkspaceStore: ObservableObject {
         replayingSelections: [SelectionContext]? = nil,
         targetCourseID: UUID? = nil,
         visibleQuestionOverride: String? = nil,
-        questionOverride: String? = nil
+        questionOverride: String? = nil,
+        targetSessionID: UUID? = nil
     ) -> String? {
-        let question = (questionOverride ?? pendingComposerDraft ?? agentDraft)
+        let id = targetSessionID ?? activeStudySessionID
+        let existingRun = id.flatMap { agentRuns[$0] }
+        let question = (questionOverride ?? composerDraft(for: id))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard agentRequestTask == nil,
-              !isStoppingAgent,
-              !isAskingAgent,
+        guard existingRun?.agentRequestTask == nil,
+              existingRun?.isStoppingAgent != true,
+              existingRun?.isAskingAgent != true,
               !question.isEmpty else {
             return ui("当前无法提交这条回答。", "This response cannot be submitted right now.")
         }
         let target: AgentConversationTarget
         do {
-            if (reusingLastUserMessage || targetCourseID != nil),
+            if let id, id != activeStudySessionID {
+                guard let thread = selectionAskThreads.first(where: { $0.id == id }) else {
+                    throw AgentConversationTargetError(message: "提问会话已不存在")
+                }
+                try ensureSelectionChat(thread)
+                let courseID = thread.itemID.flatMap { courseMembershipIndex.courseIDs(for: $0).first }
+                target = try makeAgentConversationTarget(sessionID: id, courseID: courseID)
+            } else if (reusingLastUserMessage || targetCourseID != nil),
                let session = activeStudySession {
                 target = try makeAgentConversationTarget(
                     sessionID: session.id,
@@ -9149,12 +9156,13 @@ final class WorkspaceStore: ObservableObject {
                 appendUserMessage: !reusingLastUserMessage,
                 targetCourseID: targetCourseID,
                 visibleQuestion: visibleQuestionOverride,
-                preserveComposerDraft: questionOverride != nil
+                preserveComposerDraft: questionOverride != nil,
+                targetSessionID: id
             )
             return reason
         }
         let run = AgentConversationRun(chatID: target.sessionID)
-        run.selectionThreadID = activeSelectionAskThreadID
+        run.selectionThreadID = selectionAskThreads.first(where: { $0.id == target.sessionID })?.id
         run.courseID = target.courseID
         run.baseURL = agentBaseURL
         run.modelName = modelName
@@ -9277,7 +9285,8 @@ final class WorkspaceStore: ObservableObject {
         mustBeActive: Bool
     ) throws {
         guard studySessions.contains(where: { $0.id == target.sessionID }),
-              (!mustBeActive || activeStudySessionID == target.sessionID) else {
+              (!mustBeActive || activeStudySessionID == target.sessionID
+                || (activeSelectionAskThreadID == target.sessionID && agentSurface == .selectionFloat)) else {
             throw AgentConversationTargetError(
                 message: ui(
                     mustBeActive
@@ -9307,47 +9316,52 @@ final class WorkspaceStore: ObservableObject {
         appendUserMessage: Bool = true,
         targetCourseID: UUID? = nil,
         visibleQuestion: String? = nil,
-        preserveComposerDraft: Bool = false
+        preserveComposerDraft: Bool = false,
+        targetSessionID: UUID? = nil
     ) {
-        ensureActiveStudySession()
-        guard let session = activeStudySession else { return }
-        let requestID = UUID()
-        let sourceTitle = agentMessageSourceTitle
-        lastAgentFailureKind = .generic
-        lastFailedAgentQuestion = question
-        if !preserveComposerDraft {
-            agentDraftsBySessionID[session.id] = question
-        }
-        focusedPane = .agent
-        if appendUserMessage {
-            let userMessage = AgentMessage(
-                role: .user,
-                text: visibleQuestion ?? question,
-                source: sourceTitle
+        if targetSessionID == nil { ensureActiveStudySession() }
+        guard let session = studySessions.first(where: { $0.id == (targetSessionID ?? activeStudySessionID) }) else { return }
+        let run = AgentConversationRun(chatID: session.id)
+        run.selectionThreadID = selectionAskThreads.first(where: { $0.id == session.id })?.id
+        AgentConversationExecution.$run.withValue(run) {
+            let requestID = UUID()
+            let sourceTitle = selectionAskThreads.first(where: { $0.id == session.id })?.ownerTitle ?? agentMessageSourceTitle
+            if session.id == activeStudySessionID {
+                lastAgentFailureKind = .generic
+                lastFailedAgentQuestion = question
+            }
+            if !preserveComposerDraft {
+                replaceComposerDraft(question, for: session.id)
+            }
+            focusedPane = .agent
+            if appendUserMessage {
+                let userMessage = AgentMessage(
+                    role: .user,
+                    text: visibleQuestion ?? question,
+                    source: sourceTitle
+                )
+                appendAgentMessage(userMessage)
+            }
+            let assistantMessage = AgentMessage(
+                role: .assistant,
+                text: AgentFailureKind.generic.userMessage(
+                    language: interfaceLanguage,
+                    userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
+                    draftPreserved: true
+                ),
+                source: sourceTitle,
+                completionState: .interrupted,
+                origin: AgentReplyOrigin(
+                    requestID: requestID,
+                    chatID: session.id,
+                    courseID: targetCourseID ?? session.courseID
+                ),
+                failureKind: .generic,
+                retryQuestion: question
             )
-            appendAgentMessage(userMessage)
-            appendMessageToActiveSelectionAskThread(userMessage.id)
+            appendAgentMessage(assistantMessage)
+            _ = flushPendingWorkspaceSave()
         }
-        let assistantMessage = AgentMessage(
-            role: .assistant,
-            text: AgentFailureKind.generic.userMessage(
-                language: interfaceLanguage,
-                userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
-                draftPreserved: true
-            ),
-            source: sourceTitle,
-            completionState: .interrupted,
-            origin: AgentReplyOrigin(
-                requestID: requestID,
-                chatID: session.id,
-                courseID: targetCourseID ?? session.courseID
-            ),
-            failureKind: .generic,
-            retryQuestion: question
-        )
-        appendAgentMessage(assistantMessage)
-        appendMessageToActiveSelectionAskThread(assistantMessage.id)
-        _ = flushPendingWorkspaceSave()
     }
 
     private func askAgentAndWait() async {
@@ -9424,7 +9438,7 @@ final class WorkspaceStore: ObservableObject {
         let requestProvider = agentProviderID
         let requestAuthMethod = agentAuthMethod
         if reusingLastUserMessage {
-            guard let userMessage = messages.last,
+            guard let userMessage = conversationMessages(in: target.sessionID).last,
                   userMessage.role == .user,
                   userMessage.text.trimmingCharacters(in: .whitespacesAndNewlines) == question else {
                 agentRequestTask = nil
@@ -9440,20 +9454,14 @@ final class WorkspaceStore: ObservableObject {
                 appendUserMessage: !reusingLastUserMessage,
                 targetCourseID: target.courseID,
                 visibleQuestion: visibleQuestionOverride,
-                preserveComposerDraft: questionOverride != nil
+                preserveComposerDraft: questionOverride != nil,
+                targetSessionID: target.sessionID
             )
             agentRequestTask = nil
             return nil
         }
 
         persistCurrentNote()
-        // Ensure live document selection is attached before we snapshot context for the request.
-        if replayingSelections == nil,
-           selectionAttachments.isEmpty,
-           let selectionContext,
-           !selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            addSelectionAttachment(selectionContext)
-        }
         var projectAccess = makeAgentProjectAccessSnapshot(target: target)
         let allowedItemIDs = Set(projectAccess.sources.map(\.item.id))
         // Focus materials/notes do not require project-file grants (legacyExternal etc.).
@@ -9463,12 +9471,13 @@ final class WorkspaceStore: ObservableObject {
         let replayNoteItemID = replayingSelections?
             .first(where: { $0.source == .note })?
             .itemID
+        let isSelectionChat = AgentConversationExecution.run?.selectionThreadID != nil
         let sentMaterialItem = replayMaterialItemID
             .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
-            ?? agentFocusMaterialItem(for: target)
+            ?? (isSelectionChat ? nil : agentFocusMaterialItem(for: target))
         let sentNoteItem = replayNoteItemID
             .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
-            ?? agentFocusNoteItem(for: target)
+            ?? (isSelectionChat ? nil : agentFocusNoteItem(for: target))
             ?? latestConfirmedAgentNoteItem(in: target)
         let focusAllowedItemIDs = allowedItemIDs.union(
             [sentMaterialItem?.id, sentNoteItem?.id].compactMap { $0 }
@@ -9496,21 +9505,20 @@ final class WorkspaceStore: ObservableObject {
         let shouldClearSentDocumentSelection = sentSelections.contains {
             $0.id == selectionContext?.id && $0.source == .document
         }
-        let sourceTitle = sentMaterialItem != nil
-            ? currentSourceReferenceTitle
-            : sentNoteItem.map(displayTitle)
+        let sourceTitle = sentSelections.first?.ownerTitle
+            ?? sentMaterialItem.map(displayTitle) ?? sentNoteItem.map(displayTitle)
         let requestID = UUID()
         let requestWorkspaceRevision = agentContextRevision
         let requestMemoryRevision = learningMemoryContextRevision(
             courseID: target.courseID
         )
-        let sentMaterialTitle = sentMaterialItem == nil
-            ? ui("未选择材料", "No material selected")
-            : currentSourceReferenceTitle
+        let sentMaterialTitle = sentSelections.first(where: { $0.source == .document })?.ownerTitle
+            ?? (sentMaterialItem?.id == selectedMaterialItem?.id && sentMaterialItem != nil
+                ? currentSourceReferenceTitle : sentMaterialItem.map(displayTitle))
+            ?? ui("未选择材料", "No material selected")
         let sentMaterialItemID = sentMaterialItem?.id
-        let sentNoteTitle = sentNoteItem == nil
-            ? ui("当前笔记", "Current Note")
-            : agentNoteTitle
+        let sentNoteTitle = sentSelections.first(where: { $0.source == .note })?.ownerTitle
+            ?? sentNoteItem.map(displayTitle) ?? ui("当前笔记", "Current Note")
         let capturedNoteText = sentNoteItem.flatMap { note in
             projectAccess.sources.first(where: { $0.item.id == note.id })?.memoryText
                 ?? loadedAgentNoteText(for: note)
@@ -9526,7 +9534,7 @@ final class WorkspaceStore: ObservableObject {
         let sentLearningContext = makeLearningContext(target: target)
         let sentCourseProfile = makeCourseProfileContext(courseID: target.courseID)
         let sentLanguage = interfaceLanguage
-        let visualItem = selectedMaterialItem
+        let visualItem = sentMaterialItem
         // Capture the editor request now, before another Chat or note can be selected.
         let (snapshots, continuation) = AsyncStream<NoteEditorSnapshotReadyEvent?>.makeStream()
         noteEditingSession.requestSnapshot { result in
@@ -9590,7 +9598,6 @@ final class WorkspaceStore: ObservableObject {
                         source: sourceTitle
                     )
                     appendAgentMessage(userMessage)
-                    appendMessageToActiveSelectionAskThread(userMessage.id)
                     didAppendUserMessage = true
                 }
                 if let courseID = target.courseID {
@@ -9632,7 +9639,6 @@ final class WorkspaceStore: ObservableObject {
                     chatID: target.sessionID
                 )
                 appendAgentMessage(assistantMessage)
-                appendMessageToActiveSelectionAskThread(assistantMessage.id)
                 guard await flushPendingWorkspaceSaveAsync() else {
                     throw AgentConversationTargetError(
                         message: ui(
@@ -9643,32 +9649,28 @@ final class WorkspaceStore: ObservableObject {
                 }
 
                 if questionOverride == nil {
-                    agentDraftsBySessionID[target.sessionID] = ""
-                    if activeStudySessionID == target.sessionID {
-                        agentDraft = ""; pendingComposerDraft = nil
-                    }
+                    replaceComposerDraft("", for: target.sessionID)
                 }
                 if activeStudySessionID == target.sessionID {
-                lastFailedAgentQuestion = nil
-                lastAgentFailureKind = nil
-                latestAgentLearningUpdate = nil
-                if !sentSelectionIDs.isEmpty {
-                    // No withAnimation here: animating attachment chrome while chat
-                    // PlatformViews remasure was part of the send-path main-thread freeze.
-                    cancelPendingSelectionAttachment()
-                    selectionAttachments.removeAll { sentSelectionIDs.contains($0.id) }
-                    if selectionAttachments.isEmpty {
-                        lastSelectionAttachmentDate = nil
-                        lastSelectionUpdateDate = nil
-                    }
-                }
-                // Opening another conversation pane does not dismiss the user's floating answer.
-                if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
-                    agentSurface = .selectionFloat
-                } else if shouldClearSentDocumentSelection {
-                    clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
-                }
+                    lastFailedAgentQuestion = nil
+                    lastAgentFailureKind = nil
+                    latestAgentLearningUpdate = nil
+                    if !sentSelectionIDs.isEmpty {
+                        // No withAnimation here: animating attachment chrome while chat
+                        // PlatformViews remasure was part of the send-path main-thread freeze.
 
+                        selectionAttachments.removeAll { sentSelectionIDs.contains($0.id) }
+                        if selectionAttachments.isEmpty {
+                            lastSelectionAttachmentDate = nil
+                            lastSelectionUpdateDate = nil
+                        }
+                    }
+                    // Opening another conversation pane does not dismiss the user's floating answer.
+                    if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
+                        agentSurface = .selectionFloat
+                    } else if shouldClearSentDocumentSelection {
+                        clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
+                    }
                 }
 
                 let courseBuild = try await makeCourseContext(
@@ -9857,7 +9859,7 @@ final class WorkspaceStore: ObservableObject {
                     )
                 }
                 if questionOverride == nil {
-                    agentDraftsBySessionID[target.sessionID] = question
+                    replaceComposerDraft(question, for: target.sessionID)
                 }
                 if questionOverride == nil,
                    activeStudySessionID == target.sessionID,
@@ -9887,7 +9889,7 @@ final class WorkspaceStore: ObservableObject {
                     )
                 }
                 if questionOverride == nil {
-                    agentDraftsBySessionID[target.sessionID] = question
+                    replaceComposerDraft(question, for: target.sessionID)
                 }
                 if activeStudySessionID == target.sessionID {
                     if questionOverride == nil {
@@ -9960,7 +9962,7 @@ final class WorkspaceStore: ObservableObject {
             $0.failureKind = kind
         }
         if restoreDraft, let question = updated?.retryQuestion {
-            agentDraftsBySessionID[chatID] = question
+            replaceComposerDraft(question, for: chatID)
         }
         settleAgentStreamingDisplayImmediately()
         guard activeStudySessionID == chatID else { return }
@@ -9971,6 +9973,11 @@ final class WorkspaceStore: ObservableObject {
            let question = updated?.retryQuestion {
             agentDraft = question
         }
+    }
+
+    func cancelAgentRequest(in sessionID: UUID) {
+        guard let run = agentRuns[sessionID] else { return }
+        AgentConversationExecution.$run.withValue(run) { stopAgent(restoreDraft: true) }
     }
 
     func cancelAgentRequest(restoreDraft: Bool = true) {
@@ -10018,15 +10025,19 @@ final class WorkspaceStore: ObservableObject {
 
     func retryAgentRequest(
         _ question: String,
-        targetCourseID: UUID? = nil
+        targetCourseID: UUID? = nil,
+        sessionID: UUID? = nil
     ) {
-        guard !isAgentRunningInActiveChat, !isStoppingAgent else { return }
+        guard let id = sessionID ?? activeStudySessionID,
+              !isAgentRunning(in: id), agentRuns[id]?.isStoppingAgent != true else { return }
         let cleaned = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
-        agentDraft = cleaned
-        lastFailedAgentQuestion = nil
-        lastAgentFailureKind = nil
-        submitAgentDraft(targetCourseID: targetCourseID)
+        replaceComposerDraft(cleaned, for: id)
+        if id == activeStudySessionID {
+            lastFailedAgentQuestion = nil
+            lastAgentFailureKind = nil
+        }
+        submitAgentDraft(targetCourseID: targetCourseID, sessionID: id)
     }
 
     func regenerateLastAssistantReply() {
@@ -10073,8 +10084,9 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    func canRetryAgentRequest(question: String?, failureKind: AgentFailureKind?) -> Bool {
-        guard !isAgentRunningInActiveChat, !isStoppingAgent else { return false }
+    func canRetryAgentRequest(question: String?, failureKind: AgentFailureKind?, sessionID: UUID? = nil) -> Bool {
+        guard let id = sessionID ?? activeStudySessionID,
+              !isAgentRunning(in: id), agentRuns[id]?.isStoppingAgent != true else { return false }
         if let failureKind, !failureKind.isRetryable { return false }
         let question = (question ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -10932,13 +10944,13 @@ final class WorkspaceStore: ObservableObject {
                 && !pinnedFloatingAgent
                 && agentSurface != .selectionFloat
             if alreadyClear {
-                cancelPendingSelectionAttachment()
+
                 return
             }
             if invalidatesAgentContext, selectionContext != nil {
                 invalidateAgentContext()
             }
-            cancelPendingSelectionAttachment()
+
             selectionContext = nil
             selectionAnchor = nil
             let clearedPrompt = ui("当前选区", "Current selection")
@@ -11465,12 +11477,17 @@ final class WorkspaceStore: ObservableObject {
 
     private var persistedStudySessions: [StudySession] {
         studySessions.filter {
-            $0.id != freshlyCreatedEmptyStudySessionID || !$0.messages.isEmpty
-        }.map(sessionMessagePersistence.annotatingMessageCount)
+            $0.id != freshlyCreatedEmptyStudySessionID || !$0.messages.isEmpty || !composerDraft(for: $0.id).isEmpty
+        }.map { session in
+            var persisted = sessionMessagePersistence.annotatingMessageCount(session)
+            persisted.draft = composerDraft(for: session.id)
+            return persisted
+        }
     }
 
     private var persistedActiveStudySessionID: UUID? {
-        let sessions = persistedStudySessions
+        let selectionIDs = Set(selectionAskThreads.map(\.id))
+        let sessions = persistedStudySessions.filter { !selectionIDs.contains($0.id) }
         guard sessions.contains(where: { $0.id == activeStudySessionID }) else {
             return sessions.max(by: { $0.updatedAt < $1.updatedAt })?.id
         }
