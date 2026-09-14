@@ -28,6 +28,10 @@ struct EmptyWorkspaceLauncherView: View {
 
     private var liveAppearanceMode: WeiBeiAppearanceMode { store.appearanceMode }
 
+    private var requiresLibraryPlacement: Bool {
+        !libraryPlacementConfirmed && store.courses.isEmpty && store.importedItems.isEmpty
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
             GeometryReader { geometry in
@@ -68,7 +72,7 @@ struct EmptyWorkspaceLauncherView: View {
                         .position(
                             x: contentCenterX,
                             y: geometry.size.height * (
-                                !libraryPlacementConfirmed ? 0.84 : EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
+                                requiresLibraryPlacement ? 0.84 : EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
                             )
                         )
                     }
@@ -120,7 +124,7 @@ struct EmptyWorkspaceLauncherView: View {
         )
         let showsInspirationBlock = store.showDailyInspiration && !store.inspirationAsWatermark
         let entryHeight: CGFloat = (
-            (compact ? 84 : 98) + (!libraryPlacementConfirmed ? (compact ? 188 : 178) : 0)
+            (compact ? 84 : 98) + (requiresLibraryPlacement ? (compact ? 188 : 178) : 0)
         ) * textScale
         let entryCenterY = clampedCenterY(
             ratio: showsInspirationBlock ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5,
@@ -190,9 +194,9 @@ struct EmptyWorkspaceLauncherView: View {
             greeting(at: date, compact: compact)
             EmptyWorkspaceEntryRow(
                 entryWidth: entryWidth,
-                isEnabled: libraryPlacementConfirmed
+                isEnabled: !requiresLibraryPlacement
             )
-            if store.canContinueLastWork && libraryPlacementConfirmed {
+            if store.canContinueLastWork && !requiresLibraryPlacement {
                 Button(store.ui("继续上次", "Continue where you left off")) {
                     store.continueLastWork()
                 }
@@ -201,12 +205,8 @@ struct EmptyWorkspaceLauncherView: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .padding(.top, 8)
             }
-            if store.courses.isEmpty && store.importedItems.isEmpty && !libraryPlacementConfirmed {
-                HStack(alignment: .top, spacing: compact ? 12 : 16) {
-                    if !libraryPlacementConfirmed {
-                        LibraryPlacementNoticeCard()
-                    }
-                }
+            if requiresLibraryPlacement {
+                LibraryPlacementNoticeCard()
             }
         }
     }
@@ -407,51 +407,28 @@ private struct EmptyWorkspaceEntryButton: View {
     }
 }
 
-/// Block presentation: quote + credit as content below the entries; the
-/// source/rights row stays mounted (fixed slot layout, VoiceOver reachable)
-/// but only paints on hover.
+/// Content-only presentation; attribution stays in the bundled source ledger.
 private struct EmptyWorkspaceInspirationView: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.weibeiReduceMotion) private var reduceMotion
 
     let inspiration: EmptyWorkspaceInspiration
     let compact: Bool
     let onAdvance: () -> Void
 
-    @State private var revealsSources = false
-
     var body: some View {
-        VStack(spacing: compact ? 7 : 9) {
+        VStack {
             Button(action: onAdvance) {
-                VStack(spacing: compact ? 8 : 11) {
-                    inspirationContent
-
-                    Text(inspiration.credit)
-                        .weiBeiText(compact ? 10.5 : 12, weight: .medium)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                }
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
+                inspirationContent
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text("\(inspiration.text)，\(inspiration.credit)"))
             .accessibilityHint(Text(store.ui("随机换一句", "Show another line")))
             .accessibilityIdentifier("empty-workspace-inspiration-next")
-
-            sourceAndRights
-                .opacity(revealsSources ? 1 : 0)
-                .allowsHitTesting(revealsSources)
         }
         .frame(maxWidth: compact ? 560 : 660)
-        .background {
-            HoverPassThroughRegion { isHovering in
-                revealsSources = isHovering
-            }
-        }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: revealsSources)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("empty-workspace-inspiration-\(inspiration.id)")
     }
@@ -523,43 +500,6 @@ private struct EmptyWorkspaceInspirationView: View {
             .accessibilityLabel(Text(inspiration.text))
     }
 
-    private var sourceAndRights: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 6) {
-                sourceLink
-                Text("·")
-                    .accessibilityHidden(true)
-                rightsLink
-            }
-
-            VStack(spacing: 3) {
-                sourceLink
-                rightsLink
-            }
-        }
-        .weiBeiText(compact ? 9 : 9.5, weight: .regular)
-        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-        .multilineTextAlignment(.center)
-        .lineLimit(2)
-    }
-
-    @ViewBuilder
-    private var sourceLink: some View {
-        if let url = inspiration.sourceURL {
-            Link(inspiration.sourceLabel, destination: url)
-        } else {
-            Text(inspiration.sourceLabel)
-        }
-    }
-
-    @ViewBuilder
-    private var rightsLink: some View {
-        if let url = inspiration.rightsURL {
-            Link(inspiration.rightsLabel, destination: url)
-        } else {
-            Text(inspiration.rightsLabel)
-        }
-    }
 }
 
 /// Faint ink impression of the daily line — paper grain, not content.
