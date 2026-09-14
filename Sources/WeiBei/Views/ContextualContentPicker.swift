@@ -81,8 +81,10 @@ struct ContextualContentPicker: View {
 #if targetEnvironment(macCatalyst)
             .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
 #endif
-            .background(WeiBeiTheme.paper)
+            .background(WeiBeiGlassForegroundSheet(mode: store.appearanceMode))
+            .background(WeiBeiThemeBackdrop(mode: store.appearanceMode))
             .foregroundStyle(WeiBeiTheme.ink)
+            .preferredColorScheme(store.appearanceMode.colorScheme)
         }
         .accessibilityIdentifier(kind == .note ? "contextual-note-picker" : "contextual-material-picker")
     }
