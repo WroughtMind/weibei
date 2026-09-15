@@ -31,6 +31,10 @@ export const officeVendorPatches = {
 ` + source.slice(end);
       } else {
         replace('o.textContent = `Slide ${t + 1}`', 'o.dataset.weibeiAnnotationUi = "true", o.textContent = `第 ${t + 1} 页`');
+        // Notes must occupy their final height before any slide navigation.
+        replace('return { item: i, wrapper: a };', 'window.WeiBeiOffice.attachNote(t, i);\n    return { item: i, wrapper: a };');
+        // Equal visibility must not replace the page the reader just chose.
+        replace('u > l && (l = u, s = c);', '(u > l || (u === l && c === this.currentSlide)) && (l = u, s = c);');
         // A hidden reader has no visible slide; keep its last reading position.
         replace('s >= 0 && s !== this.currentSlide', 's >= 0 && l > 0 && s !== this.currentSlide');
         // Rebuilding scaled slide wrappers changes their document offsets.

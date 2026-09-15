@@ -209,7 +209,6 @@ async function open(url: string | ArrayBuffer, format: string) {
         onSlideRendered: (index, element) => {
           const slide = viewer?.presentationData?.slides[index];
           if (slide) element.dataset.weibeiLocation = slide.slidePath;
-          attachNote(index, element.closest<HTMLElement>('[data-slide-index]'));
           post('officeReady', {});
         },
       });
@@ -256,5 +255,5 @@ window.addEventListener('scroll', () => {
   if (active) post('contentRailActive', { id: active.dataset.weibeiLocation, reason: 'scroll' });
 }, { passive: true });
 
-(window as any).WeiBeiOffice = { open, math, drawWMFText, goTo, find, sections, sourceOrder, applyMarks, get error() { return loadError; } };
+(window as any).WeiBeiOffice = { open, math, drawWMFText, goTo, find, sections, sourceOrder, applyMarks, attachNote, get error() { return loadError; } };
 (window as any).WeiBeiContentRail = { installed: true, scrollTo: (id: string) => { void goTo(id); }, scan: () => post('contentRailSections', sections()) };
