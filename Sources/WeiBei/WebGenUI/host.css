@@ -52,4 +52,6 @@ html, body { margin: 0; background: transparent; color: var(--dsw-alias-label-pr
 body { overflow-x: hidden; }
 button, input, select, textarea { font: inherit; }
 #genui-root { display: flow-root; width: 100%; padding: 2px 0; box-sizing: border-box; }
+#genui-root [role="tablist"] { flex-wrap: wrap; }
+#genui-root [role="tab"] { flex: 0 0 auto; white-space: nowrap; }
 #genui-status { margin: 8px 0 0; font-size: calc(12px * var(--weibei-scale, 1)); color: var(--dsw-alias-label-secondary); }
