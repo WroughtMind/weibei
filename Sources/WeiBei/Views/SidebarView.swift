@@ -274,7 +274,6 @@ struct CourseSidebarList: View {
                 )
                 .id("\(course.id.uuidString)-materials-empty")
                 .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 2, trailing: 6))
-                .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             } else {
                 ForEach(row.materials) { item in
@@ -305,7 +304,6 @@ struct CourseSidebarList: View {
                 )
                 .id("\(course.id.uuidString)-notes-empty")
                 .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 4, trailing: 6))
-                .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             } else {
                 ForEach(row.notes) { item in
@@ -505,6 +503,7 @@ private struct SidebarEmptyRow: View {
             }
         }
         .frame(minHeight: 28, alignment: .leading)
+        .listRowBackground(Color.clear)
         .onHover { isHovering in
             hovering = isHovering
         }
