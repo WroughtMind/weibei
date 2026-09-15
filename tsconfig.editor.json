@@ -11,6 +11,7 @@
   },
   "include": [
     "Sources/WeiBei/WebEditor/src/**/*.ts",
+    "Sources/WeiBei/OfficeReader/**/*.ts",
     "Sources/WeiBei/WebEditor/test/**/*.ts"
   ]
 }

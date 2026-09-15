@@ -147,14 +147,19 @@
       "sha256": "e7c4d6aa5fad5d614c3435cea91ba015bc1764260a6f1c000df91a3f26dfaa1b"
     },
     {
+      "name": "office-entry.js",
+      "bytes": 1331487,
+      "sha256": "4b89ace2d6150296126433759f5e97ddce135473801e6fef1b016017568caf35"
+    },
+    {
       "name": "prism-runtime.js",
       "bytes": 57564,
       "sha256": "24e3f8b3cd68966f4a70e62b6b878cc5030b38a17fee1feba0dc346501e62304"
     },
     {
       "name": "selection-runtime.js",
-      "bytes": 3706,
-      "sha256": "09944bbb41bcfc08f748256840d5e6badd5b4a7471c41787749249a86d4b71f3"
+      "bytes": 4846,
+      "sha256": "418c09345e46c65b98091ae995f408fa0e171e26e047ad88464a65beedfcec10"
     },
     {
       "name": "viewer-entry.js",

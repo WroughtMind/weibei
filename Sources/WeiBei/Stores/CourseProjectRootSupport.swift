@@ -5071,9 +5071,7 @@ actor CourseProjectFileWorker {
         return Int64((date.timeIntervalSince1970 * 1_000_000_000).rounded())
     }
 
-    private static let supportedExtensions = Set([
-        "pdf", "html", "htm", "md", "markdown", "txt", "text",
-    ])
+    private static let supportedExtensions = StudyItemKind.materialExtensions
 }
 
 extension CourseProjectFileWorker {

@@ -5,6 +5,13 @@ import Foundation
 import PDFKit
 import WeiBeiCore
 
+if CommandLine.arguments.contains("--office") {
+    try checkOfficeDocumentReading()
+    print("Office source, search and persisted-location check passed")
+    exit(0)
+}
+
+
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() {
         fputs("self-check failed: \(message)\n", stderr)

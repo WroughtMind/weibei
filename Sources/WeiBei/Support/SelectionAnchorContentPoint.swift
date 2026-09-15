@@ -15,7 +15,7 @@ enum SelectionAnchorContentPoint {
         if let anchor = payload["anchor"] as? [String: Any],
            let start = anchor["startOffset"] as? Int, let end = anchor["endOffset"] as? Int,
            start >= 0, end > start {
-            result.textAnchor = SelectionTextAnchor(startOffset: start, endOffset: end)
+            result.textAnchor = SelectionTextAnchor(startOffset: start, endOffset: end, location: anchor["location"] as? String, revision: (anchor["revision"] as? NSNumber)?.uint64Value, sourceOrder: anchor["sourceOrder"] as? [Int])
         }
         return result
     }

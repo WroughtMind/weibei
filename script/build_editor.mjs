@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { build } from 'esbuild';
+import { officeVendorPatches } from '../Sources/WeiBei/OfficeReader/vendor-patches.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const source = resolve(root, 'Sources/WeiBei/WebEditor/src');
@@ -11,7 +12,7 @@ const check = process.argv.includes('--check');
 const output = check ? await mkdtemp(join(tmpdir(), 'weibei-editor-')) : resources;
 const generated = new Set([
   'editor-entry.js', 'viewer-entry.js', 'katex-runtime.js', 'mermaid-runtime.js',
-  'prism-runtime.js', 'selection-runtime.js', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
+  'prism-runtime.js', 'selection-runtime.js', 'office-entry.js', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
 ]);
 
 const bundle = (entry, outfile, editable, globalName) => build({
@@ -44,6 +45,7 @@ const [editorMeta, viewerMeta] = await Promise.all([
   bundle('vendor/mermaid-runtime.ts', 'mermaid-runtime.js', false),
   bundle('vendor/prism-runtime.ts', 'prism-runtime.js', false),
   bundle('selection.ts', 'selection-runtime.js', false, 'WeiBeiSelection'),
+  build({ entryPoints: [resolve(root, 'Sources/WeiBei/OfficeReader/office.ts')], bundle: true, format: 'iife', minify: true, outfile: resolve(output, 'office-entry.js'), plugins: [officeVendorPatches], logLevel: 'warning' }),
   build({
     stdin: {
       contents: (await readFile(resolve(root, 'node_modules/katex/dist/katex.css'), 'utf8'))

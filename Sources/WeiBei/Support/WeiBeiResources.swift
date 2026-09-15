@@ -1,6 +1,14 @@
 import Foundation
 
 enum WeiBeiResources {
+    static var officeRuntimeURL: URL? {
+#if targetEnvironment(macCatalyst)
+        bundle.url(forResource: "office-entry", withExtension: "js", subdirectory: "Editor")
+#else
+        bundle.url(forResource: "office-entry", withExtension: "js")
+#endif
+    }
+
     static var selectionRuntimeURL: URL? {
 #if targetEnvironment(macCatalyst)
         bundle.url(forResource: "selection-runtime", withExtension: "js", subdirectory: "Editor")

@@ -1156,7 +1156,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 maximumSeconds: maximumNativePDFSeconds,
                 in: database
             )
-        case .html, .markdown, .text:
+        case .html, .markdown, .text, .docx, .pptx:
             indexTextFile(item: item, storageID: storageID, signature: signature, in: database)
             return false
         }
@@ -1985,7 +1985,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private static func scheduledItem(_ item: StudyItem) -> ScheduledItem? {
         guard item.url != nil,
               let metadata = VerifiedRegularFile(item: item)?.metadata else { return nil }
-        guard item.kind == .pdf || metadata.size <= maximumTextSourceBytes else { return nil }
+        let maximumBytes = item.kind.isOffice ? UInt64(OfficeDocumentText.maximumFileBytes) : maximumTextSourceBytes
+        guard item.kind == .pdf || metadata.size <= maximumBytes else { return nil }
         return ScheduledItem(
             item: item,
             storageID: storageID(for: item.id),
@@ -2011,6 +2012,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         switch item.kind {
         case .html:
             return Self.htmlSections(in: data)
+        case .docx, .pptx:
+            return try? OfficeDocumentText.sections(in: data, kind: item.kind).map {
+                TextSection(location: $0.location, heading: $0.heading, text: $0.text)
+            }
         case .markdown:
             return String(data: data, encoding: .utf8).map(Self.markdownSections)
         case .text:

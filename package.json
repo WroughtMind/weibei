@@ -12,12 +12,16 @@
     "test:editor": "node --import tsx --test Sources/WeiBei/WebEditor/test/*.test.ts"
   },
   "dependencies": {
+    "@aiden0z/pptx-renderer": "1.2.4",
     "@milkdown/kit": "7.21.3",
     "@milkdown/plugin-streaming": "7.21.3",
+    "docx-preview": "0.4.0",
+    "jszip": "3.10.1",
     "katex": "^0.17.0",
     "mermaid": "11.16.1",
     "prismjs": "^1.30.0",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "rtf.js": "3.0.9"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
