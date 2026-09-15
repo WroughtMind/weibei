@@ -3,6 +3,10 @@ options:
   deploymentTarget:
     iOS: '17.0'
   createIntermediateGroups: true
+settings:
+  configs:
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: -Osize
 packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
@@ -13,6 +17,9 @@ packages:
   SwiftMarkdown:
     url: https://github.com/swiftlang/swift-markdown.git
     revision: 7d9a5ce307528578dfa777d505496bd5f544ad94
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    exactVersion: 0.9.20
 targets:
   WeiBei:
     type: application
@@ -164,6 +171,8 @@ targets:
       - sdk: libsqlite3.tbd
       - package: SwiftMarkdown
         product: Markdown
+      - package: ZIPFoundation
+        product: ZIPFoundation
   WeiBeiPDFTextWorker:
     type: tool
     platform: macOS

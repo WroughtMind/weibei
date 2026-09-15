@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		0F01CE000000000000000001 /* OfficeDocumentText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F01CE000000000000000002 /* OfficeDocumentText.swift */; };
-		0F01CE000000000000000003 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 0F01CE000000000000000004 /* ZIPFoundation */; };
 		014CAA0987ACF6294F39D1A2 /* AgentAccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D92418B7C7756A863085B9D /* AgentAccountService.swift */; };
 		0251D244D2FD142022993345 /* NativeAgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */; };
 		034100326A738DEAC681BF7F /* ImageMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB49A5CAD7B99BDF0E8D6FAD /* ImageMarkdownView.swift */; };
@@ -509,7 +508,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				47213ABE61EFF39E269F8DA5 /* libsqlite3.tbd in Frameworks */,
-				0F01CE000000000000000003 /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1001,6 +999,7 @@
 			);
 			dependencies = (
 				49E6D4A20DE48D1533107998 /* PBXTargetDependency */,
+				0F01CE000000000000000003 /* PBXTargetDependency */,
 			);
 			name = WeiBeiCore;
 			packageProductDependencies = (
@@ -1321,6 +1320,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		0F01CE000000000000000003 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 0F01CE000000000000000004 /* ZIPFoundation */;
+		};
 		49E6D4A20DE48D1533107998 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			productRef = 2357C0DC96C864EA89194FC2 /* Markdown */;
@@ -1393,7 +1396,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
