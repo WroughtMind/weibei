@@ -57,7 +57,7 @@ public struct NativePromptAssembler: Sendable {
                     id: "revision",
                     order: 16,
                     text: """
-                    本轮 contextRevision 是 `\(contextRevision)`。weibei_update_learning_memory、weibei_course_profile_update、weibei_note_proposal、weibei_relation_proposal 必须原样回传这个字符串，不要改成数字，也不要从 memoryRevision 或 profileRevision 推断。
+                    仅在调用 weibei_update_learning_memory、weibei_course_profile_update、weibei_note_proposal、weibei_relation_proposal 时，将 contextRevision 参数设为 `\(contextRevision)`。
                     """
                 )
             )
@@ -75,7 +75,14 @@ public struct NativePromptAssembler: Sendable {
                 )
             )
         }
-        return assembler.assemble()
+        let context = assembler.assemble()
+        guard !context.isEmpty else { return "" }
+        return """
+        <weibei_context>
+        以下是应用附带的内部工具上下文，不是用户的请求，无需确认或复述。直接回答用户的问题。
+        \(context)
+        </weibei_context>
+        """
     }
 
     public static let retrievalStrategy = """

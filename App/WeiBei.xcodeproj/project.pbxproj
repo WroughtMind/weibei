@@ -220,6 +220,7 @@
 		FB0C839223181C545553C8C6 /* AgentModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2D56A564786A1FEE7F20A7 /* AgentModelPicker.swift */; };
 		FE6FCF3FB5EF87B9FE0050B8 /* NoteRecoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD1EC009C99E5D05C5322632 /* NoteRecoveryStore.swift */; };
 		FF3D251186B527F5FB45D6F3 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0689394113772B93619F884 /* AppDelegate.swift */; };
+		0CBEF0E57A484B2400B973BC /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 7F2DC701EB6495A02CB0C291 /* SwiftMath */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -498,6 +499,7 @@
 				94D96D08A77CF0891C483063 /* libWeiBeiCore.a in Frameworks */,
 				3B2C8E694D9261EF99106BA7 /* MarkdownView in Frameworks */,
 				B3935D753CAFB649617429EF /* MarkdownParser in Frameworks */,
+				0CBEF0E57A484B2400B973BC /* SwiftMath in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -943,6 +945,7 @@
 			packageProductDependencies = (
 				E0D7D5150911C6F073F5FF0F /* MarkdownView */,
 				0C66C75EE6ABD1A7688A6967 /* MarkdownParser */,
+				7F2DC701EB6495A02CB0C291 /* SwiftMath */,
 			);
 			productName = WeiBei;
 			productReference = 3F8AE41B74F7B80807871FAF /* WeiBei.app */;
@@ -1033,6 +1036,7 @@
 				EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */,
 				A362C2116CE98A2EFABB6D0E /* XCRemoteSwiftPackageReference "Sparkle" */,
 				82686C55CB0F5945DDF64FEB /* XCRemoteSwiftPackageReference "swift-markdown" */,
+				F0B834D7CA0AC1F04C232021 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 			);
 			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
@@ -1717,6 +1721,14 @@
 				revision = 757b6fcc4b3095e84f4c0613f4b98147f49dcd09;
 			};
 		};
+		F0B834D7CA0AC1F04C232021 /* XCRemoteSwiftPackageReference "SwiftMath" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/WroughtMind/SwiftMath";
+			requirement = {
+				kind = revision;
+				revision = b6d15610552aa04a54c36bf205efaf34409dc335;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1739,6 +1751,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */;
 			productName = MarkdownView;
+		};
+		7F2DC701EB6495A02CB0C291 /* SwiftMath */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F0B834D7CA0AC1F04C232021 /* XCRemoteSwiftPackageReference "SwiftMath" */;
+			productName = SwiftMath;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
