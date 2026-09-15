@@ -14,7 +14,7 @@ convert "$ROOT/assets/logo/reference/approved-textured-mark-1254.png" \
 convert "$TMP/full.png" -filter Lanczos -resize 920x920 -background none -gravity center \
   -extent 1024x1024 "$TMP/mark.png"
 convert "$TMP/mark.png" -channel A \
-  -fx 'a*(r>1.5*g && r>1.5*b)' +channel -strip "$ASSETS/02-Cinnabar.png"
+  -fx 'a*(r>1.5*g && r>1.5*b)' +channel -background none -alpha background -strip "$ASSETS/02-Cinnabar.png"
 convert "$TMP/mark.png" -channel A \
   -fx 'a*!(r>1.5*g && r>1.5*b)' +channel "$TMP/ink.png"
 
