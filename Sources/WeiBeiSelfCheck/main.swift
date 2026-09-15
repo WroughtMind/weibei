@@ -5,8 +5,8 @@ import Foundation
 import PDFKit
 import WeiBeiCore
 
+try checkOfficeDocumentReading()
 if CommandLine.arguments.contains("--office") {
-    try checkOfficeDocumentReading()
     print("Office source, search and persisted-location check passed")
     exit(0)
 }
