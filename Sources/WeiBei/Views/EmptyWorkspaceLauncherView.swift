@@ -152,8 +152,7 @@ struct EmptyWorkspaceLauncherView: View {
                 spacing: (showsInspirationBlock ? (compact ? 18 : 26) : (compact ? 16 : 29)) * textScale,
                 entryWidth: entryWidth
             )
-            // Keep the greeting anchored when the notice below gains another line.
-            .frame(width: contentWidth, height: entryHeight, alignment: .top)
+            .frame(width: contentWidth)
             .position(x: availableSize.width / 2, y: entryCenterY)
 
             if showsInspirationBlock {
