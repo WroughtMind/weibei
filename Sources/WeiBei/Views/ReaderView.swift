@@ -644,6 +644,9 @@ struct ReaderView: View {
     }
 
     private func applyHTMLContentRailActiveID(_ change: WebReaderContentRailActiveChange) {
+        // Every new position supersedes pending scroll work, even if its ID is unchanged.
+        pendingHTMLContentRailActiveCommit?.cancel()
+        pendingHTMLContentRailActiveCommit = nil
         let id = change.id
         // Jump must update the rail highlight immediately. Scroll updates are
         // coalesced so fast section crossings do not re-enter WebReader updateNSView.
@@ -665,7 +668,6 @@ struct ReaderView: View {
 
     private func scheduleHTMLContentRailActiveID(_ id: String?) {
         guard htmlContentRailActiveID != id else { return }
-        pendingHTMLContentRailActiveCommit?.cancel()
         pendingHTMLContentRailActiveCommit = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 120_000_000)
             guard !Task.isCancelled else { return }
