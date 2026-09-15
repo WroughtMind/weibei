@@ -30,8 +30,18 @@ zip.file('word/diagrams/drawing42.xml', `<dsp:drawing xmlns:dsp="http://schemas.
 zip.file('word/diagrams/_rels/drawing42.xml.rels', relationships([['photo', 'image', '../media/pixel.png']]));
 zip.file('word/media/pixel.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
 zip.file('word/media/rectangle.emf', Buffer.concat([emf, ...records]));
-zip.file('word/document.xml', `<w:document xmlns:w="${ns}/wordprocessingml/2006/main" xmlns:wp="${ns}/drawingml/2006/wordprocessingDrawing" xmlns:a="${a}" xmlns:c="${c}" xmlns:r="${rel}" xmlns:dgm="${ns}/drawingml/2006/diagram" xmlns:m="${ns}/officeDocument/2006/math" xmlns:pic="${ns}/drawingml/2006/picture"><w:body><w:p><w:r><w:t>图形回归检查</w:t></w:r></w:p>${graphic(c, '<c:chart r:id="flat"/>')}${graphic(c, '<c:chart r:id="deep"/>')}${graphic(c, '<c:chart r:id="pie"/>')}${graphic(`${ns}/drawingml/2006/diagram`, '<dgm:relIds r:dm="diagram"/>', 914400, 914400)}<w:p><m:oMath><m:r><m:rPr><m:scr m:val="double-struck"/></m:rPr><m:t>R</m:t></m:r></m:oMath></w:p>${graphic(`${ns}/drawingml/2006/picture`, '<pic:pic><pic:blipFill><a:blip r:embed="emf"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic>', 914400, 914400)}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`);
+zip.file('word/document.xml', `<w:document xmlns:w="${ns}/wordprocessingml/2006/main" xmlns:wp="${ns}/drawingml/2006/wordprocessingDrawing" xmlns:a="${a}" xmlns:c="${c}" xmlns:r="${rel}" xmlns:dgm="${ns}/drawingml/2006/diagram" xmlns:m="${ns}/officeDocument/2006/math" xmlns:pic="${ns}/drawingml/2006/picture"><w:body><w:p><w:r><w:t>图形回归检查</w:t></w:r></w:p>${graphic(c, '<c:chart r:id="flat"/>')}${graphic(c, '<c:chart r:id="deep"/>')}${graphic(c, '<c:chart r:id="pie"/>')}${graphic(`${ns}/drawingml/2006/diagram`, '<dgm:relIds r:dm="diagram"/>', 914400, 914400)}<w:p><m:oMath><m:r><m:rPr><m:scr m:val="double-struck"/></m:rPr><m:t>R</m:t></m:r></m:oMath></w:p>${graphic(`${ns}/drawingml/2006/picture`, '<pic:pic><pic:blipFill><a:blip r:embed="emf"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic>', 914400, 914400)}<w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:r><w:t>继续阅读下一页</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`);
+// A tall slide in a wide, short reading pane exposes page-centering that hides its title.
+const deck = new JSZip();
+const p = `${ns}/presentationml/2006/main`;
+deck.file('[Content_Types].xml', `<Types xmlns="${ns}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>${[1, 2].map(i => `<Override PartName="/ppt/slides/slide${i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`).join('')}</Types>`);
+deck.file('_rels/.rels', relationships([['office', 'officeDocument', 'ppt/presentation.xml']]));
+deck.file('ppt/presentation.xml', `<p:presentation xmlns:p="${p}" xmlns:r="${rel}"><p:sldIdLst><p:sldId id="256" r:id="s1"/><p:sldId id="257" r:id="s2"/></p:sldIdLst><p:sldSz cx="9144000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`);
+deck.file('ppt/_rels/presentation.xml.rels', relationships([1, 2].map(i => [`s${i}`, 'slide', `slides/slide${i}.xml`])));
+const textBox = (id, y, text) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="text${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="457200" y="${y}"/><a:ext cx="8229600" cy="457200"/></a:xfrm><a:prstGeom prst="rect"/></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr sz="2400"/><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
+for (const i of [1, 2]) deck.file(`ppt/slides/slide${i}.xml`, `<p:sld xmlns:p="${p}" xmlns:a="${a}" xmlns:r="${rel}"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>${textBox(2, 182880, `页首标题${i}`)}${textBox(3, 5943600, `页尾摘录${i}`)}</p:spTree></p:cSld></p:sld>`);
 try {
+  await writeFile(join(output, 'navigation.pptx'), await deck.generateAsync({ type: 'nodebuffer' }));
   for (const angle of [20, 65]) {
     zip.file('word/charts/chart2.xml', chart(true, angle));
     await writeFile(join(output, `${angle}.docx`), await zip.generateAsync({ type: 'nodebuffer' }));
@@ -67,7 +77,7 @@ page.web.loadHTMLString("""
 """, baseURL: nil)
 wait { page.loaded }
 var hashes: [String] = []
-for path in CommandLine.arguments.dropFirst(2) {
+for path in CommandLine.arguments.dropFirst(2).prefix(2) {
   let data = try Data(contentsOf: URL(fileURLWithPath: path))
   let hash = page.js("""
     const assert = (ok, why) => { if (!ok) throw Error(why); };
@@ -98,8 +108,39 @@ for path in CommandLine.arguments.dropFirst(2) {
   hashes.append(hash)
 }
 require(hashes.count == 2 && hashes[0] != hashes[1], "saved 3D rotation must change rendered geometry")
-print("Office graphics: native Word charts, 3D bar/pie images and rotation, diagram image/text, math alphabet and EMF passed")
+window.setContentSize(NSSize(width: 900, height: 600))
+_ = page.js("document.querySelector('math').scrollIntoView({block:'center',behavior:'instant'}); return true;", [:])
+for width in [600.0, 900.0] {
+  window.setContentSize(NSSize(width: width, height: 600))
+  _ = page.js("""
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const r = document.querySelector('math').getBoundingClientRect();
+    if (Math.abs((r.top+r.bottom)/2-innerHeight/2) > r.height) throw Error('Word resizing must preserve the formula being read: ' + JSON.stringify({ center: (r.top+r.bottom)/2, viewport: innerHeight, scroll: scrollY, limit: document.documentElement.scrollHeight-innerHeight }));
+    return true;
+    """, [:])
+}
+window.setContentSize(NSSize(width: 1200, height: 600))
+let deck = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments.last!))
+_ = page.js("""
+  const assert = (ok, why) => { if (!ok) throw Error(why); };
+  const visible = element => { const r = element.getBoundingClientRect(); return r.height > 0 && r.top >= 0 && r.bottom <= innerHeight; };
+  await WeiBeiOffice.open(Uint8Array.from(atob(bytes), c=>c.charCodeAt(0)).buffer, 'pptx');
+  assert(!WeiBeiOffice.error, WeiBeiOffice.error);
+  await WeiBeiOffice.goTo('ppt/slides/slide2.xml');
+  const title = document.querySelector('[data-weibei-location="ppt/slides/slide2.xml#p0"]');
+  assert(title && visible(title), 'PPT page navigation must keep the full title visible');
+  await WeiBeiOffice.find('页首标题2');
+  assert(visible(title), 'PPT search must reveal the matched title');
+  await WeiBeiOffice.find('页尾摘录2');
+  const excerpt = document.querySelector('[data-weibei-location="ppt/slides/slide2.xml#p1"]');
+  assert(excerpt && visible(excerpt), 'PPT search must reveal the matched text at the bottom');
+  await WeiBeiOffice.goTo('ppt/slides/slide1.xml');
+  await WeiBeiOffice.goTo('ppt/slides/slide2.xml#p1');
+  assert(visible(excerpt), 'PPT excerpt return must reveal its paragraph');
+  return true;
+  """, ["bytes": deck.base64EncodedString()])
+print("Office graphics and reading: Word charts, 3D bar/pie images and rotation, diagram, math, EMF; Word resize position; PPT title navigation, search and excerpt return passed")
 `);
   execFileSync('xcrun', ['swiftc', join(output, 'check.swift'), '-o', join(output, 'check')], { stdio: 'inherit' });
-  execFileSync(join(output, 'check'), [office, join(output, '20.docx'), join(output, '65.docx')], { stdio: 'inherit', timeout: 120000 });
+  execFileSync(join(output, 'check'), [office, join(output, '20.docx'), join(output, '65.docx'), join(output, 'navigation.pptx')], { stdio: 'inherit', timeout: 120000 });
 } finally { await rm(output, { recursive: true, force: true }); }

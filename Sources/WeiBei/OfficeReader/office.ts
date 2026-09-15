@@ -142,10 +142,10 @@ async function goTo(location: string) {
     const noteIndex = viewer.presentationData!.slides.findIndex(s => noteParts.get(s.slidePath) === location.split('#')[0]);
     const target = index >= 0 ? index : noteIndex;
     if (target < 0) return false;
-    await viewer.goToSlide(target, { behavior: 'instant' });
+    await viewer.goToSlide(target, { behavior: 'instant', block: 'start' });
   }
   const element = sourceElement(location);
-  if (element) element.scrollIntoView({ block: 'center', behavior: 'instant' });
+  if (element && (!viewer || location.includes('#'))) element.scrollIntoView({ block: 'center', behavior: 'instant' });
   else if (!viewer) return false;
   post('contentRailActive', { id: viewer ? location.split('#')[0] : location, reason: 'jump' });
   return true;
@@ -161,8 +161,9 @@ async function find(query: string) {
   if (!count) return false;
   searchResult = (searchResult + 1) % count;
   if (searchResult < results.length) {
-    await viewer.highlightSearchResult(results[searchResult]);
-    return true;
+    const match = await viewer.highlightSearchResult(results[searchResult], { scrollIntoView: false });
+    match?.element.scrollIntoView({ block: 'center', behavior: 'instant' });
+    return Boolean(match);
   }
   const location = noteResults[searchResult - results.length].getAttribute('data-weibei-location')!;
   await goTo(location);
@@ -228,9 +229,18 @@ async function open(url: string | ArrayBuffer, format: string) {
     if (format === 'docx') {
       const fitPages = () => {
         if (root.clientWidth <= 32) return;
-        root.querySelectorAll<HTMLElement>('section.docx').forEach(page => {
+        const pages = Array.from(root.querySelectorAll<HTMLElement>('section.docx'));
+        const center = window.innerHeight / 2;
+        // Keep the same point on the page when an already fitted document changes width.
+        const anchor = pages.find(page => page.style.zoom && page.getBoundingClientRect().bottom >= center);
+        const before = anchor?.getBoundingClientRect();
+        pages.forEach(page => {
           page.style.zoom = String(Math.min(1, (root.clientWidth - 32) / page.offsetWidth));
         });
+        if (anchor && before && before.height > 0) {
+          const after = anchor.getBoundingClientRect();
+          window.scrollBy({ top: after.top + (center - before.top) * after.height / before.height - center, behavior: 'instant' });
+        }
       };
       pageSizing = new ResizeObserver(fitPages); pageSizing.observe(root); fitPages();
     }
