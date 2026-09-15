@@ -369,7 +369,7 @@ struct ReaderView: View {
             htmlIssueDetailsPresented = false
             adaptsHTMLColors = false
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         // Width/height probe as background sibling — never parent of WKWebView/PDFView.
         .background {
             GeometryReader { geo in
