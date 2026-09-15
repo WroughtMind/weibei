@@ -4,8 +4,9 @@
   script.textContent = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
   document.head.append(script);
   script.remove();
+})().then(() => {
   if (!window.WeiBeiGenUIHost) throw new Error('GenUI initialization failed');
-})().catch(error => {
+}).catch(error => {
   const status = document.getElementById('genui-status');
   status.textContent = '互动界面加载失败'; status.hidden = false;
   window.webkit?.messageHandlers?.weibeiGenUI?.postMessage({ type: 'error', message: String(error) });

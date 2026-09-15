@@ -47,32 +47,44 @@ await build({ ...options,
 // Keep all syntax grammars offline; WebKit supplies gzip decoding on our OS targets.
 const scriptPath = resolve(resources, 'genui.js');
 const source = await readFile(scriptPath);
-// Three already ships fflate; its JS encoder gives identical bytes across CI hosts.
-const compressed = Buffer.from(gzipSync(source, { level: 9, mtime: 0 })).toString('base64');
-await writeFile(scriptPath, `(async () => {
+const scriptHashes = [];
+function packedProgram(program) {
+  scriptHashes.push(`'sha256-${createHash('sha256').update(program).digest('base64')}'`);
+  // Three already ships fflate; its JS encoder gives identical bytes across CI hosts.
+  const compressed = Buffer.from(gzipSync(program, { level: 9, mtime: 0 })).toString('base64');
+  return `(async () => {
   const bytes = Uint8Array.from(atob(${JSON.stringify(compressed)}), c => c.charCodeAt(0));
   const script = document.createElement('script');
   script.textContent = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
   document.head.append(script);
   script.remove();
+})()`;
+}
+await writeFile(scriptPath, `${packedProgram(source)}.then(() => {
   if (!window.WeiBeiGenUIHost) throw new Error('GenUI initialization failed');
-})().catch(error => {
+}).catch(error => {
   const status = document.getElementById('genui-status');
   status.textContent = '互动界面加载失败'; status.hidden = false;
   window.webkit?.messageHandlers?.weibeiGenUI?.postMessage({ type: 'error', message: String(error) });
 });\n`);
-// Authorize only this exact bundled program; arbitrary inline scripts stay blocked.
-const htmlPath = resolve(resources, 'genui.html');
-const html = await readFile(htmlPath, 'utf8');
-const policy = /script-src 'self'(?: 'sha256-[^']+')?;/;
-assert(policy.test(html), 'GenUI script policy changed');
-await writeFile(htmlPath, html.replace(policy, `script-src 'self' 'sha256-${createHash('sha256').update(source).digest('base64')}';`));
 for (const [name, entry] of Object.entries({ three: 'three', 'echarts-full': 'echarts' })) {
+  const outfile = resolve(resources, `${name}.js`);
   await build({ ...options,
     entryPoints: [require.resolve(`@changfenhuang/dsh-genui/assets/${entry}`)],
-    outfile: resolve(resources, `${name}.js`),
+    outfile,
   });
+  if (name === 'echarts-full') {
+    // The shared asset loader adopts this promise; charts still load only on demand.
+    const program = await readFile(outfile);
+    await writeFile(outfile, `(window.__GenuiAssets__ ??= {}).echartsFull = ${packedProgram(program)}.then(() => window.__GenuiAssets__.echartsFull);\n`);
+  }
 }
+// Authorize only the exact bundled programs; arbitrary inline scripts stay blocked.
+const htmlPath = resolve(resources, 'genui.html');
+const html = await readFile(htmlPath, 'utf8');
+const policy = /script-src 'self'(?: 'sha256-[^']+')*;/;
+assert(policy.test(html), 'GenUI script policy changed');
+await writeFile(htmlPath, html.replace(policy, `script-src 'self' ${scriptHashes.join(' ')};`));
 
 const skill = await readFile(require.resolve('@changfenhuang/dsh-genui/skill'), 'utf8');
 const folder = resolve(root, 'Sources/WeiBeiCore/AgentResources/skills/genui');

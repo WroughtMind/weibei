@@ -268,6 +268,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
         await Promise.all(Array.from(document.fonts, font => font.load()));
         const engines = Array.from(document.scripts, script => script.src);
         return typeof window.WeiBeiMermaid.render === 'function'
+          && typeof window.__GenuiAssets__.echartsFull.createChart === 'function'
           && engines.filter(src => src.endsWith('/echarts-full.js')).length === 1
           && !engines.some(src => src.endsWith('/echarts-core.js') || src.endsWith('/mermaid.js'))
           && [...document.fonts].length > 0
