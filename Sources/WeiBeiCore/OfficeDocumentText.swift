@@ -21,6 +21,13 @@ public enum OfficeDocumentText {
     public static func sections(in data: Data, kind: StudyItemKind) throws -> [Section] {
         guard data.count <= maximumFileBytes else { throw ReadError.oversizedPart("document") }
         let archive = try Archive(data: data, accessMode: .read)
+        var remainingBytes = UInt64(maximumFileBytes)
+        for (index, entry) in archive.lazy.filter({ $0.type != .directory }).enumerated() {
+            guard index < 4_000, entry.uncompressedSize <= remainingBytes else {
+                throw ReadError.oversizedPart("document")
+            }
+            remainingBytes -= entry.uncompressedSize
+        }
         func xml(_ path: String) throws -> OfficeXMLNode {
             guard let entry = archive[path] else { throw ReadError.missingPart(path) }
             let limit = 32 * 1_024 * 1_024

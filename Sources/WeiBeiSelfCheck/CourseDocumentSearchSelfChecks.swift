@@ -776,6 +776,26 @@ func checkOfficeDocumentReading() throws {
     expect(sections.count == 4 && sections[0].heading == "课程定义", "Word headings and paragraphs")
     expect(sections[1].text == sections[2].text && sections[1].location != sections[2].location, "repeated passages keep distinct source locations")
     expect(sections[3].text == "$\\frac{α+βx}{n}$", "native formula source preserves numerator and denominator")
+    var oversizedParts = ["_rels/.rels": mainRel, "word/document.xml": "<w:document xmlns:w=\"\(word)\"/>"]
+    for index in 0..<9 { oversizedParts["word/media/image\(index).bin"] = "" }
+    var oversized = try archive(oversizedParts)
+    var offset = 0
+    while let header = oversized.range(of: Data([0x50, 0x4b, 0x01, 0x02]), in: offset..<oversized.endIndex) {
+        let start = header.lowerBound
+        let nameLength = Int(oversized[start + 28]) | Int(oversized[start + 29]) << 8
+        let name = String(data: oversized[(start + 46)..<(start + 46 + nameLength)], encoding: .utf8)!
+        if name.hasPrefix("word/media/") {
+            // Declared sizes exercise the budget without allocating a 288 MiB fixture.
+            oversized.replaceSubrange((start + 24)..<(start + 28), with: [0, 0, 0, 2])
+        }
+        offset = start + 46 + nameLength
+    }
+    do {
+        _ = try OfficeDocumentText.sections(in: oversized, kind: .docx)
+        expect(false, "Office index accepted an archive over the reader's total unpacked-size budget")
+    } catch OfficeDocumentText.ReadError.oversizedPart(let path) {
+        expect(path == "document", "Office total budget is checked before extracting XML")
+    }
     let slideText = { (text: String) in "<p:sld xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:p><a:r><a:t>\(text)</a:t></a:r></a:p></p:sld>" }
     let pptx = try archive([
         "_rels/.rels": mainRel.replacingOccurrences(of: "word/document.xml", with: "ppt/presentation.xml"),
