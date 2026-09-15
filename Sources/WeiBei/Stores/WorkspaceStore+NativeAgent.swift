@@ -142,6 +142,48 @@ extension WorkspaceStore {
         landAgentStreamingDisplayImmediately()
     }
 
+    func displayNativeVisualization(
+        _ visualization: AgentVisualization, blocks: [AgentMessageContentBlock],
+        requestID: UUID, messageID: UUID, chatID: UUID
+    ) async -> NativeToolExecutionResult {
+        guard !Task.isCancelled else { return NativeToolExecutionResult(text: "显示已取消。", isError: true) }
+        let renderedMessageID = historicalAgentMessageID(containingVisualization: visualization.id,
+            in: chatID, excluding: messageID) ?? messageID
+        let token = UUID()
+        let timeout = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(8)) } catch { return }
+            self?.completeNativeVisualization(messageID: renderedMessageID, token: token, visualization: visualization,
+                error: "互动内容未收到显示回执；界面未打开或加载超时，尚未确认展示。")
+        }
+        defer { timeout.cancel() }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                nativeVisualizationWaiters[renderedMessageID] = (token, requestID, messageID, visualization, continuation)
+                Task { @MainActor in
+                    await applyAgentProgress(.visualization(visualization, blocks),
+                        requestID: requestID, replyMessageID: messageID, chatID: chatID)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.completeNativeVisualization(messageID: renderedMessageID, token: token, visualization: visualization, error: "显示已取消。")
+            }
+        }
+    }
+
+    func completeNativeVisualization(messageID: UUID, token: UUID?, visualization: AgentVisualization, error: String?) {
+        guard let pending = nativeVisualizationWaiters[messageID],
+              pending.token == token,
+              pending.visualization.id == visualization.id,
+              pending.visualization.specJSON == visualization.specJSON else { return }
+        nativeVisualizationWaiters.removeValue(forKey: messageID)
+        let currentRequest = studySessions.lazy.flatMap(\.messages).first(where: { $0.id == pending.replyMessageID })?.origin?.requestID
+        let failure = currentRequest == pending.requestID ? error : "这次显示请求已失效。"
+        pending.continuation.resume(returning: NativeToolExecutionResult(
+            text: failure.map { "互动界面 \(visualization.id) 显示失败：" + $0 } ?? "互动界面 \(visualization.id) 已显示。",
+            details: ["status": failure == nil ? "displayed" : "failed"], isError: failure != nil))
+    }
+
     func dispatchStudyAgentRequest(
         _ request: StudyAgentRequest,
         provider selectedProvider: AgentProviderID,
@@ -182,36 +224,61 @@ extension WorkspaceStore {
         let resources = try AgentResources.bundled()
         let liveStores = NativeLiveStores(
             learning: { [weak self] in
-                await MainActor.run {
-                    self?.makeLearningContext(target: target) ?? .empty
-                }
+                await self?.makeLearningContext(target: target) ?? .empty
             },
             profile: { [weak self] in
-                await MainActor.run {
-                    self?.refreshCourseProfileContext(target: target) ?? .empty
-                }
+                await self?.refreshCourseProfileContext(target: target) ?? .empty
             },
             persistLearningUpdate: { [weak self] update in
                 guard let self else {
                     return NativeStorePersistReceipt.rejected("工作区已关闭")
                 }
-                return await self.persistNativeLearningUpdate(
+                let receipt = await self.persistNativeLearningUpdate(
                     update,
                     expectedContextRevision: request.contextRevision,
                     expectedUserQuestion: request.question,
                     target: target,
                     messageID: replyMessageID
                 )
+                if receipt.accepted, let update = receipt.memoryUpdate {
+                    await self.updateAgentMessage(replyMessageID, in: target.sessionID) { $0.memoryUpdate = update }
+                }
+                return receipt
             },
             persistCourseProfileUpdate: { [weak self] update in
                 guard let self else {
                     return NativeStorePersistReceipt.rejected("工作区已关闭")
                 }
-                return await self.persistNativeCourseProfileUpdate(
+                let receipt = await self.persistNativeCourseProfileUpdate(
                     update,
                     expectedContextRevision: request.contextRevision,
                     target: target
                 )
+                if receipt.accepted, let update = receipt.profileUpdate {
+                    await self.updateAgentMessage(replyMessageID, in: target.sessionID) { $0.profileUpdate = update }
+                }
+                return receipt
+            },
+            performNoteProposal: { [weak self] proposal in
+                guard let self else { return .rejected("工作区已关闭") }
+                return await self.performNativeAgentAction(
+                    AgentReplyAction(kind: .writeNote, targetItemID: request.noteItemID,
+                        sourceItemID: request.focus?.materialItemID, proposedMarkdown: proposal.markdown,
+                        evidence: proposal.evidence, contextRevision: proposal.contextRevision,
+                        baselineContentDigest: request.noteBaselineContentDigest),
+                    userRequested: proposal.userRequested, request: request, target: target, messageID: replyMessageID)
+            },
+            performRelationProposal: { [weak self] proposal in
+                guard let self else { return .rejected("工作区已关闭") }
+                return await self.performNativeAgentAction(
+                    AgentReplyAction(kind: .createRelation, targetItemID: proposal.noteItemID,
+                        sourceItemID: proposal.sourceItemID, contextRevision: proposal.contextRevision),
+                    userRequested: proposal.userRequested, request: request, target: target, messageID: replyMessageID)
+            },
+            displayVisualization: { [weak self] visualization, blocks in
+                guard let self else { return NativeToolExecutionResult(text: "工作区已关闭，互动内容未显示。", isError: true) }
+                return await self.displayNativeVisualization(visualization, blocks: blocks,
+                    requestID: request.id, messageID: replyMessageID, chatID: target.sessionID)
             },
             documentsRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Documents", isDirectory: true),
             skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL),

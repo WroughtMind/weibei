@@ -3,42 +3,6 @@ import Foundation
 /// Shared proposal-details decoders used by Agent side effects.
 /// Shape only — no mechanical limits.
 public enum StudyAgentProposalDecoding {
-    public static func noteProposal(from details: [String: Any]) -> StudyAgentNoteProposal? {
-        guard details["kind"] as? String == "note_proposal",
-              let markdown = details["markdown"] as? String,
-              let revision = details["contextRevision"] as? String else {
-            return nil
-        }
-        let evidence: [String]
-        if let list = details["evidence"] as? [String] {
-            evidence = list
-        } else if let single = details["evidence"] as? String, !single.isEmpty {
-            evidence = [single]
-        } else {
-            evidence = []
-        }
-        return StudyAgentNoteProposal(
-            markdown: markdown,
-            evidence: evidence,
-            contextRevision: revision,
-            userRequested: details["userRequested"] as? Bool == true
-        )
-    }
-
-    public static func relationProposal(from details: [String: Any]) -> StudyAgentRelationProposal? {
-        guard details["kind"] as? String == "relation_proposal",
-              let noteItemID = details["noteItemID"] as? String,
-              let sourceItemID = details["sourceItemID"] as? String,
-              let revision = details["contextRevision"] as? String else {
-            return nil
-        }
-        return StudyAgentRelationProposal(
-            noteItemID: noteItemID,
-            sourceItemID: sourceItemID,
-            contextRevision: revision
-        )
-    }
-
     public static func learningUpdate(from details: [String: Any]) -> StudyAgentLearningUpdate? {
         guard details["kind"] as? String == "learning_update",
               let revision = details["contextRevision"] as? String,

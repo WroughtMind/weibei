@@ -336,6 +336,35 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testGlobalMemoryDedupKeepsIdentifierAndRevision() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("global-memory-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let session = try XCTUnwrap(store.createStudySession(courseID: nil))
+        let target = WorkspaceStore.AgentConversationTarget(sessionID: session.id, workingDirectory: root, courseID: nil)
+        var update = StudyAgentLearningUpdate(contextRevision: "r1",
+            memoryRevision: store.makeLearningContext(target: target).memoryRevision,
+            entries: [StudyAgentMemoryUpdateEntry(kind: .preference, text: "喜欢先举例",
+                evidence: "[用户：本轮] 我一直喜欢先举例", origin: .userStatement)])
+        let first = await store.persistNativeLearningUpdate(update, expectedContextRevision: "r1",
+            expectedUserQuestion: "我一直喜欢先举例", target: target, messageID: UUID())
+        XCTAssertEqual(first.status, .saved, first.message)
+        let before = store.makeLearningContext(target: target)
+        update.memoryRevision = before.memoryRevision
+        let second = await store.persistNativeLearningUpdate(update, expectedContextRevision: "r1",
+            expectedUserQuestion: "我一直喜欢先举例", target: target, messageID: UUID())
+        XCTAssertEqual(second.status, .unchanged, second.message)
+        XCTAssertEqual(first.memoryUpdate?.memoryIDs, second.memoryUpdate?.memoryIDs)
+        XCTAssertEqual(store.makeLearningContext(target: target).memoryRevision, before.memoryRevision)
+        XCTAssertEqual(store.makeLearningContext(target: target).memories.count, 1)
+        update.memoryRevision = 0
+        let conflict = await store.persistNativeLearningUpdate(update, expectedContextRevision: "r1",
+            expectedUserQuestion: "我一直喜欢先举例", target: target, messageID: UUID())
+        XCTAssertEqual(conflict.status, .rejected)
+        XCTAssertTrue(conflict.message.contains("重新读取"))
+    }
+
+    @MainActor
     func testLearningContextIncludesEverySavedMemory() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiLearningContext-\(UUID().uuidString)", isDirectory: true)

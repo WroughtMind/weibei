@@ -93,43 +93,35 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
             }
         }
         await loop.reset()
-        do {
-            let result = try await loop.run(
-                request: request,
-                ledger: ledger,
-                registry: registry,
-                adapter: adapter,
-                model: model,
-                contextWindow: contextWindow,
-                hostToolHandler: hostToolHandler,
-                systemPrompt: prompt,
-                liveStores: stores,
-                mode: mode,
-                progress: progress
-            )
-            await scheduleSessionTitleIfNeeded(
-                question: request.question,
-                answer: result.text,
-                ledger: ledger
-            )
-            return StudyAgentReply(
-                text: result.text,
-                contentBlocks: result.contentBlocks,
-                backend: .native,
-                sources: result.sources,
-                noteProposal: result.noteProposal,
-                relationProposal: result.relationProposal,
-                learningUpdate: result.learningUpdate,
-                courseProfileUpdate: result.courseProfileUpdate,
-                appliedMemoryUpdate: result.appliedMemoryUpdate,
-                appliedProfileUpdate: result.appliedProfileUpdate,
-                loadedSkills: result.loadedSkills,
-                readItemIDs: result.readItemIDs,
-                toolTrace: result.toolTrace
-            )
-        } catch let failure as NativeLLMFailure {
-            throw mapped(failure)
-        }
+        let result = try await loop.run(
+            request: request,
+            ledger: ledger,
+            registry: registry,
+            adapter: adapter,
+            model: model,
+            contextWindow: contextWindow,
+            hostToolHandler: hostToolHandler,
+            systemPrompt: prompt,
+            liveStores: stores,
+            mode: mode,
+            progress: progress
+        )
+        await scheduleSessionTitleIfNeeded(
+            question: request.question,
+            answer: result.text,
+            ledger: ledger
+        )
+        return StudyAgentReply(
+            text: result.text,
+            contentBlocks: result.contentBlocks,
+            backend: .native,
+            sources: result.sources,
+            appliedMemoryUpdate: result.appliedMemoryUpdate,
+            appliedProfileUpdate: result.appliedProfileUpdate,
+            loadedSkills: result.loadedSkills,
+            readItemIDs: result.readItemIDs,
+            toolTrace: result.toolTrace
+        )
     }
 
     public func cancel() async {
@@ -177,12 +169,4 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         didRegisterTools = true
     }
 
-    private func mapped(_ failure: NativeLLMFailure) -> Error {
-        let kind = failure.asAgentFailureKind
-        return NSError(
-            domain: "WeiBei.NativeAgent",
-            code: failure.status ?? 0,
-            userInfo: [NSLocalizedDescriptionKey: kind.userMessage(language: .chinese, userFacingDetail: failure.message)]
-        )
-    }
 }

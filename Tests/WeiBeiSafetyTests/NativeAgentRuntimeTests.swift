@@ -205,13 +205,89 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(messages, [
             NativeModelMessage(role: .user, content: "第一问"),
             NativeModelMessage(role: .assistant, content: "第一答"),
-            NativeModelMessage(role: .user, content: "第二问\n\n" + NativePromptAssembler.turnContext(contextRevision: "r2")),
+            NativeModelMessage(role: .user, content: "第二问"),
             NativeModelMessage(role: .assistant, content: "第二答"),
         ])
         XCTAssertTrue(result.contentBlocks.isEmpty)
     }
 
     // 连续追问、笔记确认和工具续跑只追加上下文，保留已经发给模型的完整前缀。
+    func testRegenerationKeepsRealWritesAndReplacesHistoryAfterReload() async throws {
+        struct RegenerationAdapter: NativeLLMAdapter {
+            let family = "mock"
+            func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+                XCTAssertFalse(request.messages.contains { $0.content.contains("被替换的旧回答") })
+                XCTAssertEqual(request.messages.filter { $0.content == "写入后解释" }.count, 1)
+                XCTAssertTrue(request.messages.contains { $0.role == .tool && $0.content.contains("real-note") })
+                let chunks: [NativeStreamChunk] = request.messages.contains { $0.toolCallID == "repeat" }
+                    ? [.textDelta(index: 0, text: "新的解释[选区：r1.1]"), .finish(reason: .stop, replayState: nil)]
+                    : [.toolCallDelta(index: 0, id: "repeat", name: "weibei_note_proposal", argumentsDelta: "{}"),
+                       .finish(reason: .toolCalls, replayState: nil)]
+                return MockLLMAdapter(chunks: chunks).stream(request)
+            }
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-regenerate-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("NativeAgent/Ledgers/chat/ledger.jsonl")
+        let ledger = try NativeAgentLedger(fileURL: url)
+        _ = try await ledger.append { NativeSessionEvent(type: .userMessage, seq: $0, timeMS: $1, turn: 1, text: "写入后解释") }
+        _ = try await ledger.append { NativeSessionEvent(type: .assistantMessage, seq: $0, timeMS: $1, turn: 1, text: "被替换的旧回答") }
+        _ = try await ledger.append { NativeSessionEvent(type: .toolCall, seq: $0, timeMS: $1, turn: 1,
+            toolCallID: "saved", toolName: "weibei_note_proposal", argumentsJSON: "{}") }
+        _ = try await ledger.append { NativeSessionEvent(type: .toolResult, seq: $0, timeMS: $1, turn: 1,
+            text: #"{"status":"saved","action":{"targetItemID":"real-note"}}"#,
+            toolCallID: "saved", toolName: "weibei_note_proposal") }
+        _ = try await ledger.append { NativeSessionEvent(type: .contextCompaction, seq: $0, timeMS: $1,
+            summary: "被替换的旧回答", firstKeptSeq: 4) }
+        try await ledger.closeTurn(turn: 1, reason: .completed)
+        var request = testRequest()
+        request.question = "写入后解释"
+        request.reusingLastUserMessage = true
+        request.selectionSources = [AgentReplySource(itemID: "source", kind: .selection, title: "原始选区", label: "", excerpt: "选区原文")]
+        let reply = try await NativeAgentLoop().run(request: request, ledger: ledger, registry: NativeToolRegistry(),
+            adapter: RegenerationAdapter(), model: "mock", hostToolHandler: nil, systemPrompt: "test", progress: nil)
+        XCTAssertEqual(reply.sources.first?.label, "[选区：r1.1]")
+        let reopened = try NativeAgentLedger(fileURL: url)
+        let messages = await reopened.deriveMessages()
+        XCTAssertTrue(messages.contains { $0.content == "新的解释[选区：r1.1]" })
+        XCTAssertFalse(messages.contains { $0.content.contains("被替换的旧回答") })
+        let audit = await reopened.allEvents()
+        XCTAssertEqual(audit.filter { $0.type == .userMessage }.count, 1)
+        XCTAssertEqual(audit.filter { $0.type == .toolResult }.count, 2)
+        let repeated = try XCTUnwrap(audit.first { $0.type == .toolResult && $0.toolCallID == "repeat" })
+        XCTAssertFalse(repeated.isError)
+        XCTAssertTrue(repeated.text?.contains("此前的操作已经完成") == true)
+        XCTAssertTrue(audit.contains { $0.text == "被替换的旧回答" })
+        request.reusingLastUserMessage = false
+        request.question = "继续解释"
+        _ = try await NativeAgentLoop().run(request: request, ledger: reopened, registry: NativeToolRegistry(),
+            adapter: MockLLMAdapter(chunks: [.finish(reason: .stop, replayState: nil)], inspect: { request in
+                XCTAssertTrue(request.messages.contains { $0.content == "新的解释[选区：r1.1]" })
+                XCTAssertFalse(request.messages.contains { $0.content.contains("被替换的旧回答") })
+            }), model: "mock", hostToolHandler: nil, systemPrompt: "test", progress: nil)
+    }
+
+    func testProvidersKeepTruncationPauseRefusalAndFinalText() throws {
+        for (raw, expected) in [("end_turn", NativeFinishReason.stop), ("tool_use", .toolCalls),
+                                ("max_tokens", .length), ("pause_turn", .paused), ("refusal", .refused)] {
+            let chunks = try AnthropicMessagesProvider.translate("{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"\(raw)\"}}")
+                + AnthropicMessagesProvider.translate(#"{"type":"message_stop"}"#)
+            XCTAssertEqual(chunks.last, .finish(reason: expected, replayState: nil))
+        }
+        for (raw, expected) in [("STOP", NativeFinishReason.stop), ("MAX_TOKENS", .length), ("SAFETY", .refused), ("MALFORMED_FUNCTION_CALL", .error)] {
+            let chunks = try GoogleGenerativeAIProvider.translate("{\"candidates\":[{\"finishReason\":\"\(raw)\"}]}")
+            XCTAssertEqual(chunks.last, .finish(reason: expected, replayState: nil))
+        }
+        var textIndex = 0
+        let chat = try OpenAIChatCompletionsProvider.translate(payload: #"{"choices":[{"delta":{"content":"最后一句"},"finish_reason":"length"}]}"#, textIndex: &textIndex)
+        XCTAssertTrue(chat.contains(.textDelta(index: 0, text: "最后一句")))
+        XCTAssertEqual(chat.last, .finish(reason: .length, replayState: nil))
+        let responses = try OpenAIResponsesProvider.translate(#"{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#)
+        XCTAssertEqual(responses.last, .finish(reason: .length, replayState: nil))
+        XCTAssertEqual(NativeLLMFailure(code: "length", message: "").asAgentFailureKind, .truncated)
+        XCTAssertEqual(NativeLLMFailure(code: "paused", message: "").asAgentFailureKind, .paused)
+    }
+
     func testPromptCachePrefixSurvivesToolStepsAndNewTurns() async throws {
         struct CacheSequenceAdapter: NativeLLMAdapter {
             let family = "mock"
@@ -260,9 +336,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(codex.makeURLRequest(last).value(forHTTPHeaderField: "session-id"), "cache-chat")
         XCTAssertFalse(first.messages[0].content.contains("first-turn-revision"))
         XCTAssertFalse(last.messages[0].content.contains("second-turn-revision"))
-        XCTAssertTrue(first.messages.last?.content.contains("first-turn-revision") == true)
-        XCTAssertTrue(last.messages.last?.content.contains("second-turn-revision") == true)
-        XCTAssertTrue(last.messages.last?.content.contains("confirmed-note") == true)
+        XCTAssertFalse(first.messages.contains { $0.content.contains("first-turn-revision") })
+        XCTAssertFalse(last.messages.contains { $0.content.contains("second-turn-revision") })
+        XCTAssertTrue(last.messages.contains { $0.content.contains("confirmed-note") })
+        XCTAssertEqual(last.messages.last?.content, request.question)
         let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("cache-chat/ledger.jsonl"))
         let persisted = await ledger.deriveMessages()
         XCTAssertEqual(Array(persisted.prefix(last.messages.count - 1)), Array(last.messages.dropFirst()))
@@ -271,7 +348,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(capture.requests.last?.promptCacheKey, "another-chat")
     }
 
-    // 长工具链压缩到本轮内部后，仍能使用本轮修订号和已确认笔记，且重读会话时不丢失。
+    // 长工具链压缩后保留问题与已确认笔记，内部修订号始终不进入模型输入。
     func testStepCompactionPreservesCurrentTurnContext() async throws {
         struct StepCompactionAdapter: NativeLLMAdapter {
             let family = "mock"
@@ -323,7 +400,8 @@ final class NativeAgentRuntimeTests: XCTestCase {
             let user = try XCTUnwrap(events.first { $0.type == .userMessage })
             XCTAssertGreaterThan(try XCTUnwrap(checkpoint.firstKeptSeq), user.seq)
             for messages in [last.messages, await ledger.deriveMessages()] {
-                XCTAssertTrue(messages.contains { $0.content.contains(request.contextRevision) })
+                XCTAssertFalse(messages.contains { $0.content.contains(request.contextRevision) })
+                XCTAssertTrue(messages.contains { $0.content.contains(request.question) })
                 XCTAssertTrue(messages.contains { $0.content.contains("confirmed-step-note") })
             }
             XCTAssertEqual(last.promptCacheKey, "step-context")
@@ -420,6 +498,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
                  .finish(reason: .toolCalls, replayState: nil)],
                 [.textDelta(index: 0, text: "tail"), .finish(reason: .stop, replayState: nil)]
             ]), model: "mock", hostToolHandler: nil, systemPrompt: "test",
+            liveStores: NativeLiveStores(displayVisualization: { visualization, blocks in
+                await capture.append(.visualization(visualization, blocks))
+                return NativeToolExecutionResult(text: "displayed")
+            }),
             progress: { await capture.append($0) }
         )
         let progress = await capture.values
@@ -890,18 +972,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let questionSentence = "请结合选中文字说明上下文如何影响判断，并指出论证、转折与证据之间的关系。"
         let selection = String(repeating: selectionSentence, count: 96)
         let question = String(repeating: questionSentence, count: 128)
-        let expectedUserMessage = """
-        [选中文字：课堂阅读节选]
-        \(selection)
-
-        [问题]
-        \(question)
-        """
         let adapter = MockLLMAdapter(
             chunks: [.finish(reason: .stop, replayState: nil)],
             inspect: { request in
-                let firstUserMessage = request.messages.first { $0.role == .user }?.content
-                XCTAssertTrue(firstUserMessage?.hasPrefix(expectedUserMessage) == true)
+                let inputs = request.messages.filter { $0.role == .user }
+                XCTAssertEqual(inputs.last?.content, question)
+                XCTAssertTrue(inputs.first?.content.contains(selection) == true)
+                XCTAssertFalse(inputs.last?.content.contains("contextRevision") == true)
             }
         )
         let request = StudyAgentRequest(
@@ -1245,7 +1322,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(NativeVisualAssetMagic.matches(webp, mediaType: "image/webp"))
     }
 
-    func testTurnLocationIsPersistedWithTheUserMessage() async throws {
+    func testTurnLocationIsPersistedSeparatelyFromTheUserMessage() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-location-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
         let ledger = try NativeAgentLedger(fileURL: url)
@@ -1287,13 +1364,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
             progress: nil
         )
         let outgoing = capture.request?.messages.last { $0.role == .user }?.content ?? ""
-        XCTAssertTrue(outgoing.contains("利率讲义"))
-        XCTAssertTrue(outgoing.contains("这段什么意思"))
+        XCTAssertEqual(outgoing, "这段什么意思")
         XCTAssertEqual(NativeTurnLocation.displayPage(11), 12)
-        XCTAssertTrue(outgoing.contains("12"))
+        let reference = await ledger.allEvents().first { $0.type == .turnContext }?.text ?? ""
+        XCTAssertTrue(reference.contains("利率讲义"))
+        XCTAssertTrue(reference.contains("12"))
         let logged = await ledger.deriveMessages().last { $0.role == .user }?.content ?? ""
         XCTAssertEqual(logged, outgoing)
-        XCTAssertTrue(logged.contains("12"))
     }
 
     func testVisualAssetPutsPixelsOnToolResult() async throws {

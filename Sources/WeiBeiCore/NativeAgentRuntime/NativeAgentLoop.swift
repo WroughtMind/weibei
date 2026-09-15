@@ -31,48 +31,32 @@ public actor NativeAgentLoop {
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: turn)
         }
+        let previousEvents = request.reusingLastUserMessage ? await ledger.allEvents() : []
+        let originalUser = previousEvents.last { $0.type == .userMessage }
         var sources = request.knownSources
+        sources += previousEvents.filter { $0.type == .toolResult && $0.seq > (originalUser?.seq ?? Int.max) }
+            .flatMap { NativeAgentSources.fromToolText($0.text ?? "") }
         var sourceIndex = 0
-        var userMessage: String
-        if let selection = request.selectionText,
-           !selection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let title = request.selectionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let selectionTitle = title.flatMap { $0.isEmpty ? nil : $0 }
-                ?? request.language.text("当前选区", "Current selection")
-            userMessage = request.language.text(
-                "[选中文字：\(selectionTitle)]\n\(selection)\n\n[问题]\n\(request.question)",
-                "[Selected text: \(selectionTitle)]\n\(selection)\n\n[Question]\n\(request.question)"
-            )
-        } else {
-            userMessage = request.question
-        }
-        if let location = NativeTurnLocation.block(for: request) {
-            userMessage += "\n\n\(location)"
-        }
         let selections = request.selectionSources.filter { !$0.excerpt.isEmpty }.map { source in
             sourceIndex += 1
-            return NativeAgentSources.label(source, turn: turn, index: sourceIndex)
+            return NativeAgentSources.label(source, turn: originalUser?.turn ?? turn, index: sourceIndex)
         }
         sources += selections
-        if !selections.isEmpty, let data = try? JSONEncoder().encode(selections),
-           let text = String(data: data, encoding: .utf8) {
-            userMessage += "\n\n选区引用：\n" + text
-        }
-        let turnContext = NativePromptAssembler.turnContext(
-            contextRevision: request.contextRevision,
-            confirmedNotes: request.confirmedNotes
-        )
-        if !turnContext.isEmpty {
-            userMessage += "\n\n" + turnContext
-        }
-        let userMessageEvent = try await ledger.append { seq, time in
-            NativeSessionEvent(
-                type: .userMessage,
-                seq: seq,
-                timeMS: time,
-                turn: turn,
-                text: userMessage
-            )
+        let referenceContext = try NativePromptAssembler.turnContext(for: request, selections: selections)
+        let turnContext = referenceContext + "\n\n用户问题：\n" + request.question
+        let userMessageEvent: NativeSessionEvent
+        if let original = originalUser {
+            try await ledger.replaceLastAnswer(question: request.question)
+            userMessageEvent = original
+        } else {
+            if !referenceContext.isEmpty {
+                _ = try await ledger.append { seq, time in
+                    NativeSessionEvent(type: .turnContext, seq: seq, timeMS: time, turn: turn, text: referenceContext)
+                }
+            }
+            userMessageEvent = try await ledger.append { seq, time in
+                NativeSessionEvent(type: .userMessage, seq: seq, timeMS: time, turn: turn, text: request.question)
+            }
         }
 
         var context = NativeToolExecutionContext(
@@ -84,15 +68,20 @@ public actor NativeAgentLoop {
             ),
             liveStores: liveStores
         )
+        context.request.knownSources = sources
         let scope = NativeToolScope.session(request.id.uuidString)
         let tools = await registry.resolved(scope: scope)
 
+        let completedWrites = request.reusingLastUserMessage ? (await ledger.allEvents()).filter { event in
+            guard event.type == .toolResult, event.seq > userMessageEvent.seq, !event.isError,
+                  ["weibei_note_proposal", "weibei_relation_proposal", "weibei_update_learning_memory", "weibei_course_profile_update"].contains(event.toolName),
+                  let text = event.text,
+                  let receipt = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return false }
+            return ["saved", "unchanged"].contains(receipt["status"] as? String ?? "")
+        } : []
+
         var collectedText = ""
         var toolTrace: [String] = []
-        var noteProposal: StudyAgentNoteProposal?
-        var relationProposal: StudyAgentRelationProposal?
-        var learningUpdate: StudyAgentLearningUpdate?
-        var courseProfileUpdate: StudyAgentCourseProfileUpdate?
         var appliedMemoryUpdate: AgentReplyMemoryUpdate?
         var appliedProfileUpdate: AgentReplyProfileUpdate?
         var loadedSkills: [StudyAgentLoadedSkill] = []
@@ -283,10 +272,10 @@ public actor NativeAgentLoop {
                         NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: turn, step: step)
                     }
                     guard finish == .stop else {
-                        try await ledger.closeTurn(turn: turn, reason: .error)
+                        try await ledger.closeTurn(turn: turn, reason: finish == .refused ? .rejected : .error)
                         throw NativeLLMFailure(
                             code: finish?.rawValue ?? "incomplete",
-                            message: "模型回答未正常结束，请继续。"
+                            message: (finish == .length ? AgentFailureKind.truncated : finish == .paused ? .paused : finish == .refused ? .refused : .generic).title(language: request.language)
                         )
                     }
                     break
@@ -312,12 +301,13 @@ public actor NativeAgentLoop {
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
                     var result: NativeToolExecutionResult
-                    let previousBlocks = contentBlocks
                     if let failure = callResult.failure {
                         result = NativeToolExecutionResult(text: failure.localizedDescription, isError: true)
                     } else if call.name == "$web_search" {
                         // Kimi 内置搜索:把模型给出的搜索参数原样回传,服务端执行检索。
                         result = NativeToolExecutionResult(text: call.arguments)
+                    } else if let previous = completedWrites.last(where: { $0.toolName == call.name }) {
+                        result = NativeToolExecutionResult(text: "此前的操作已经完成；重新生成保留这些写入，不重复执行。原始回执：\n" + (previous.text ?? ""))
                     } else {
                         do {
                             result = try await registry.execute(
@@ -334,10 +324,6 @@ public actor NativeAgentLoop {
                         name: call.name,
                         result: result,
                         contextRevision: request.contextRevision,
-                        noteProposal: &noteProposal,
-                        relationProposal: &relationProposal,
-                        learningUpdate: &learningUpdate,
-                        courseProfileUpdate: &courseProfileUpdate,
                         appliedMemoryUpdate: &appliedMemoryUpdate,
                         appliedProfileUpdate: &appliedProfileUpdate,
                         loadedSkills: &loadedSkills,
@@ -348,14 +334,18 @@ public actor NativeAgentLoop {
                     )
                     if call.name == "weibei_visualize", !result.isError,
                        let changed = contentBlocks.first(where: { block in
-                           if case .visualization = block { return !previousBlocks.contains(block) }
+                           if case let .visualization(value) = block { return value.id == result.details["id"] as? String }
                            return false
                        }), case let .visualization(visualization) = changed {
                         // Preserve text before the first figure, then append later text in place.
                         if contentBlocks.count == 1, !collectedText.isEmpty {
                             contentBlocks.insert(.text(collectedText), at: 0)
                         }
-                        await progress?(.visualization(visualization, contentBlocks))
+                        if let display = liveStores.displayVisualization {
+                            result = await display(visualization, contentBlocks)
+                        } else {
+                            result = NativeToolExecutionResult(text: "互动内容已生成，但当前没有显示界面，尚未展示。", isError: true)
+                        }
                     }
                     _ = try await ledger.append { seq, time in
                         NativeSessionEvent(
@@ -383,10 +373,6 @@ public actor NativeAgentLoop {
                 contentBlocks: contentBlocks,
                 sources: NativeAgentSources.used(in: collectedText, available: sources),
                 toolTrace: toolTrace,
-                noteProposal: noteProposal,
-                relationProposal: relationProposal,
-                learningUpdate: learningUpdate,
-                courseProfileUpdate: courseProfileUpdate,
                 appliedMemoryUpdate: appliedMemoryUpdate,
                 appliedProfileUpdate: appliedProfileUpdate,
                 loadedSkills: loadedSkills,
@@ -441,10 +427,6 @@ public actor NativeAgentLoop {
         name: String,
         result: NativeToolExecutionResult,
         contextRevision: String,
-        noteProposal: inout StudyAgentNoteProposal?,
-        relationProposal: inout StudyAgentRelationProposal?,
-        learningUpdate: inout StudyAgentLearningUpdate?,
-        courseProfileUpdate: inout StudyAgentCourseProfileUpdate?,
         appliedMemoryUpdate: inout AgentReplyMemoryUpdate?,
         appliedProfileUpdate: inout AgentReplyProfileUpdate?,
         loadedSkills: inout [StudyAgentLoadedSkill],
@@ -455,11 +437,20 @@ public actor NativeAgentLoop {
     ) {
         if result.isError { return }
         let details = result.details
-        if name == "weibei_course_read" || name == "weibei_search_workspace" {
+        if name == "weibei_course_read" || name == "weibei_search_workspace" || name == "weibei_read_discussion" {
             for source in NativeAgentSources.fromToolText(result.text) {
                 if !sources.contains(where: { $0.label == source.label }) { sources.append(source) }
+                if !context.request.knownSources.contains(where: { $0.label == source.label }) {
+                    context.request.knownSources.append(source)
+                }
                 if name == "weibei_course_read", let id = source.itemID, !readItemIDs.contains(id) {
                     readItemIDs.append(id)
+                }
+            }
+            if name == "weibei_read_discussion",
+               let payload = try? JSONDecoder().decode(StudyAgentHostToolResult.self, from: Data(result.text.utf8)) {
+                for message in (payload.discussions ?? []).flatMap({ $0.messages ?? [] }) where message.role == .user {
+                    context.userEvidence[message.source.label] = message.source.excerpt
                 }
             }
         }
@@ -472,23 +463,15 @@ public actor NativeAgentLoop {
                 context.currentRunSourceURLs.append(link)
             }
         }
-        if name == "weibei_note_proposal" {
-            noteProposal = StudyAgentProposalDecoding.noteProposal(from: details)
-        }
-        if name == "weibei_relation_proposal" {
-            relationProposal = StudyAgentProposalDecoding.relationProposal(from: details)
-        }
         if name == "weibei_read_learning_memory" {
-            context.lastReadMemoryRevision = context.request.learningContext.memoryRevision
+            context.lastReadMemoryRevision = (details["memoryRevision"] as? NSNumber)?.uint64Value
         }
         if name == "weibei_update_learning_memory" {
-            learningUpdate = StudyAgentProposalDecoding.learningUpdate(from: details)
             if let applied = memoryApplyReceipt(from: details) {
                 appliedMemoryUpdate = applied
             }
         }
         if name == "weibei_course_profile_update" {
-            courseProfileUpdate = StudyAgentProposalDecoding.courseProfileUpdate(from: details)
             if let applied = profileApplyReceipt(from: details) {
                 appliedProfileUpdate = applied
             }
@@ -562,10 +545,6 @@ public struct NativeLoopResult: Sendable {
     public var contentBlocks: [AgentMessageContentBlock]
     public var sources: [AgentReplySource]
     public var toolTrace: [String]
-    public var noteProposal: StudyAgentNoteProposal?
-    public var relationProposal: StudyAgentRelationProposal?
-    public var learningUpdate: StudyAgentLearningUpdate?
-    public var courseProfileUpdate: StudyAgentCourseProfileUpdate?
     public var appliedMemoryUpdate: AgentReplyMemoryUpdate?
     public var appliedProfileUpdate: AgentReplyProfileUpdate?
     public var loadedSkills: [StudyAgentLoadedSkill]
