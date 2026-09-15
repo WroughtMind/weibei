@@ -395,12 +395,6 @@ struct ReaderView: View {
             syncReaderLocationTitle()
             capturePendingPDFPageRequest()
             htmlContentRailActiveID = store.readerLocationID
-            // Reattaching the resident reader can reset its native scroll offset.
-            if store.selectedMaterialItem?.kind.isWebDocument == true,
-               store.readerTargetLocationID == nil,
-               let id = store.readerLocationID {
-                htmlContentRailTarget = WebReaderContentRailTarget(id: id)
-            }
             applyPendingPDFPageIfReady()
             applyPendingHTMLLocationIfReady()
             rebuildPDFContentRail()

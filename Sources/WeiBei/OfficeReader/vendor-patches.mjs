@@ -33,6 +33,9 @@ export const officeVendorPatches = {
         replace('o.textContent = `Slide ${t + 1}`', 'o.dataset.weibeiAnnotationUi = "true", o.textContent = `第 ${t + 1} 页`');
         // A hidden reader has no visible slide; keep its last reading position.
         replace('s >= 0 && s !== this.currentSlide', 's >= 0 && l > 0 && s !== this.currentSlide');
+        // Rebuilding scaled slide wrappers changes their document offsets.
+        replace('const { scale: i, displayWidth: a, displayHeight: o } = this.getDisplayMetrics();', 'const weibeiSlide = this.currentSlide;\n          const { scale: i, displayWidth: a, displayHeight: o } = this.getDisplayMetrics();');
+        replace('this.activeRenderMode !== "slide" && this.correctListMetricsIfNeeded(), this.emitSlideChange(this.currentSlide);', 'this.activeRenderMode !== "slide" && (this.correctListMetricsIfNeeded(), await this.goToSlide(weibeiSlide, { behavior: "instant", block: "start" })), this.emitSlideChange(this.currentSlide);');
         // DOM batching must complete even when the reader is in a background tab.
         replace('await new Promise((b) => requestAnimationFrame(() => b()))', 'await new Promise((b) => setTimeout(b, 0))');
         replace('(o) => requestAnimationFrame(() => {\n          this.suppressScrollChange = !1, o();\n        })', '(o) => setTimeout(() => {\n          this.suppressScrollChange = !1, o();\n        }, 0)');

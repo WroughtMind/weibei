@@ -22,6 +22,56 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testFileRevisionTracksContentAcrossAtomicSave() throws {
+        for isCommon in [true, false] {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("WeiBeiContentRevision-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let library = root.appendingPathComponent("资料库")
+            try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+            let source = root.appendingPathComponent("讲义.txt")
+            let contents = Data("原文摘录的位置不变".utf8)
+            try contents.write(to: source)
+            let store = WorkspaceStore(
+                workspaceDirectory: root.appendingPathComponent("workspace"),
+                startsAtBlankEntries: true
+            )
+            try store.configureCourseLibrary(at: library)
+            let courseID = try store.createCourseInLibrary(title: "课程")
+            let itemID = try store.importFileIntoCourseForSelfCheck(
+                source, courseID: courseID, role: .material
+            ).item.id
+            if isCommon {
+                try store.promoteCourseOwnedItemToCommonForSelfCheck(itemID: itemID)
+            }
+            let original = try XCTUnwrap(store.importedItems.first { $0.id == itemID })
+            let target = try XCTUnwrap(original.url)
+            XCTAssertNotNil(original.contentDigest)
+
+            try contents.write(to: target, options: .atomic)
+            try store.reconcileCourseFilesForSelfCheck()
+            let saved = try XCTUnwrap(store.importedItems.first { $0.id == itemID })
+            XCTAssertNotEqual(saved.importedFileIdentity, original.importedFileIdentity)
+            XCTAssertEqual(saved.contentDigest, original.contentDigest)
+            XCTAssertEqual(saved.contentRevision, original.contentRevision,
+                           "相同内容的原子保存不应让原文摘录失效")
+
+            let renamed = target.deletingLastPathComponent().appendingPathComponent("讲义改名.txt")
+            try FileManager.default.moveItem(at: target, to: renamed)
+            try store.reconcileCourseFilesForSelfCheck()
+            let moved = try XCTUnwrap(store.importedItems.first { $0.id == itemID })
+            XCTAssertEqual(moved.url, renamed)
+            XCTAssertEqual(moved.contentRevision, original.contentRevision)
+
+            try Data("原文已经发生修改".utf8).write(to: renamed, options: .atomic)
+            try store.reconcileCourseFilesForSelfCheck()
+            let edited = try XCTUnwrap(store.importedItems.first { $0.id == itemID })
+            XCTAssertNotEqual(edited.contentDigest, original.contentDigest)
+            XCTAssertEqual(edited.contentRevision, original.contentRevision + 1)
+        }
+    }
+
+    @MainActor
     func testPortableCourseStateRetryUsesFolderTruth() throws {
         try CourseProjectRootSelfCheck.runPortableCourseStateRetryOnly()
     }
