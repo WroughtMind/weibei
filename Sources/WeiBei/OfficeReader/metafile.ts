@@ -1,5 +1,6 @@
 import { Renderer, loggingEnabled } from 'rtf.js/dist/WMFJS.bundle.js';
 import symbols from './symbol-encoding.json';
+import { renderEmf } from 'emf-renderer';
 loggingEnabled(false);
 const svgNS = 'http://www.w3.org/2000/svg';
 let clipID = 0;
@@ -84,4 +85,19 @@ export function renderWMF(bytes: Uint8Array): string {
   const svg = new Renderer(bytes).render({ width: `${width}px`, height: `${height}px`, xExt: width, yExt: height, mapMode: 8 });
   svg.setAttribute('xmlns', svgNS);
   return svg.outerHTML;
+}
+
+export async function renderEMF(bytes: Uint8Array): Promise<Uint8Array> {
+  const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.length < 88 || header.getUint32(0, true) !== 1 || header.getUint32(40, true) !== 0x464d4520) throw new Error('EMF 图形文件损坏');
+  const width = header.getInt32(16, true) - header.getInt32(8, true);
+  const height = header.getInt32(20, true) - header.getInt32(12, true);
+  if (width <= 0 || height <= 0) throw new Error('EMF 图形缺少有效尺寸');
+  // Keep the original aspect ratio and cap the transient RGBA surface at 32 MiB.
+  const scale = Math.min(2, Math.sqrt(8 * 1024 * 1024 / (width * height)), 8192 / Math.max(width, height));
+  const result = await renderEmf(bytes, { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) });
+  try {
+    if (result.meta.unsupported.length || result.meta.warnings.length) throw new Error(`无法完整显示 EMF 图形：${[...result.meta.unsupported, ...result.meta.warnings].join('；')}`);
+    return new Uint8Array(await (await result.toBlob()).arrayBuffer());
+  } finally { result.canvas.width = result.canvas.height = 0; }
 }

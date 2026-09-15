@@ -576,6 +576,8 @@ Redistributors must review and preserve the terms that apply to each asset.
 
 Original DOCX/PPTX files are parsed locally. No Office program or cloud conversion service is bundled.
 
+Additional graphics components: `emf-renderer` 0.1.0 and the chart parser / 3-D renderer from `@silurus/ooxml` 0.87.0 (MIT). Their license texts and bundled dependency notices are in `Sources/WeiBei/Resources/Editor/office-licenses.txt`, shipped as `Contents/Resources/Editor/office-licenses.txt`.
+
 ### docx-preview 0.4.0 — Apache-2.0; modified paragraph anchors, inline legacy objects and native math rendering
 
 ```text

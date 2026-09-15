@@ -148,8 +148,13 @@
     },
     {
       "name": "office-entry.js",
-      "bytes": 1331619,
-      "sha256": "800607fe11ba6343de6a74ffc331e1f585b747e6a840ca228eb2ebec93d94b13"
+      "bytes": 4017962,
+      "sha256": "5cfd33d10f499a5a817a8418b95a8afcd802e3ccccb134a600aae8ac70870b9a"
+    },
+    {
+      "name": "office-licenses.txt",
+      "bytes": 25051,
+      "sha256": "a0623a0143f56c591c42276d46e34314b96241c8dafa908e1c110a8863fff04a"
     },
     {
       "name": "prism-runtime.js",

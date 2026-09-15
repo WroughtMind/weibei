@@ -33,7 +33,7 @@ if (!check) {
 }
 await mkdir(output, { recursive: true });
 if (check) {
-  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html']) {
+  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html', 'office-licenses.txt']) {
     await writeFile(resolve(output, name), await readFile(resolve(resources, name)));
   }
 }
@@ -58,6 +58,9 @@ const [editorMeta, viewerMeta] = await Promise.all([
     assetNames: '[name]', logLevel: 'warning',
   }),
 ]);
+
+const officeBundle = resolve(output, 'office-entry.js');
+await writeFile(officeBundle, (await readFile(officeBundle, 'utf8')).replace(/[ \t]+$/gm, ''));
 
 const walk = async (directory) => (await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {
   const path = join(directory, entry.name);

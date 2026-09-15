@@ -2,7 +2,8 @@ import JSZip from 'jszip';
 import { renderAsync } from 'docx-preview';
 import { PptxViewer, RECOMMENDED_ZIP_LIMITS } from '@aiden0z/pptx-renderer/browser';
 import { renderOmml } from './math';
-import { drawWMFText, renderWMF } from './metafile';
+import { prepareGraphics, mountWordGraphics, renderGraphic, graphicRelations, has3DChart, render3DChart, disposeGraphics } from './graphics';
+import { drawWMFText, renderWMF, renderEMF } from './metafile';
 
 const mathNS = 'http://schemas.openxmlformats.org/officeDocument/2006/math';
 const drawingNS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
@@ -28,7 +29,7 @@ const clean = (text?: string | null) => (text ?? '').replace(/\s+/g, ' ').trim()
 
 function fail(error: unknown) {
   loadError = error instanceof Error ? error.message : String(error);
-  viewer?.destroy();
+  viewer?.destroy(); disposeGraphics();
   const message = document.createElement('p');
   message.setAttribute('role', 'alert');
   message.style.cssText = 'font:15px/1.8 -apple-system;padding:24px;white-space:pre-wrap';
@@ -50,28 +51,35 @@ async function prepare(bytes: ArrayBuffer, format: string) {
     total += size;
     if (size > limits.maxEntryUncompressedBytes || total > limits.maxTotalUncompressedBytes) throw new Error('文档解压后的内容超过阅读组件容量');
   }
-  const renamed = new Set<string>();
+  const renamed = new Map<string, string>();
   for (const file of entries.filter(f => /\.(wmf|emf)$/i.test(f.name))) {
-    if (/\.emf$/i.test(file.name)) throw new Error('文档包含尚未支持的 EMF 图形');
-    zip.file(`${file.name}.svg`, renderWMF(await file.async('uint8array')));
-    renamed.add(file.name); zip.remove(file.name);
+    const emf = /\.emf$/i.test(file.name);
+    const name = `${file.name}.${emf ? 'png' : 'svg'}`;
+    const data = await file.async('uint8array');
+    zip.file(name, emf ? await renderEMF(data) : renderWMF(data));
+    renamed.set(file.name, name); zip.remove(file.name);
   }
   for (const file of entries.filter(f => /\.(xml|rels)$/i.test(f.name))) {
     const doc = parse(await file.async('string'));
-    const charts = Array.from(doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/chart', '*'));
-    if (charts.some(c => c.localName.endsWith('3DChart'))) throw new Error('文档中的三维图表尚未支持完整显示');
-    if (format === 'docx' && charts.some(c => c.localName === 'chart')) throw new Error('文档中的 Word 原生图表尚未支持完整显示');
     for (const relation of Array.from(doc.getElementsByTagName('Relationship'))) {
       const target = relation.getAttribute('Target');
       if (target && relation.getAttribute('Type')?.endsWith('/notesSlide')) {
         const slidePart = file.name.replace('/_rels/', '/').replace(/\.rels$/, '');
         noteParts.set(slidePart, new URL(target, `https://office.invalid/${slidePart}`).pathname.slice(1));
       }
-      if (target && /\.wmf$/i.test(target) && relation.getAttribute('TargetMode') !== 'External') relation.setAttribute('Target', `${target}.svg`);
+      if (target && relation.getAttribute('TargetMode') !== 'External') {
+        const part = file.name.replace('/_rels/', '/').replace(/\.rels$/, '');
+        const resolved = new URL(target, `https://office.invalid/${part}`).pathname.slice(1);
+        const replacement = renamed.get(resolved);
+        if (replacement) relation.setAttribute('Target', `/${replacement}`);
+      }
     }
     if (file.name === '[Content_Types].xml' && renamed.size) {
-      const type = doc.createElementNS(doc.documentElement.namespaceURI, 'Default');
-      type.setAttribute('Extension', 'svg'); type.setAttribute('ContentType', 'image/svg+xml'); doc.documentElement.append(type);
+      for (const [extension, mime] of [['svg', 'image/svg+xml'], ['png', 'image/png']]) {
+        if (Array.from(doc.documentElement.children).some(e => e.getAttribute('Extension') === extension)) continue;
+        const type = doc.createElementNS(doc.documentElement.namespaceURI, 'Default');
+        type.setAttribute('Extension', extension); type.setAttribute('ContentType', mime); doc.documentElement.append(type);
+      }
     }
     // OOXML stores alternate representations of the same object; render exactly one.
     for (const alternate of Array.from(doc.getElementsByTagNameNS('*', 'AlternateContent')).reverse()) {
@@ -103,6 +111,7 @@ async function prepare(bytes: ArrayBuffer, format: string) {
     }
     zip.file(file.name, serialize(doc));
   }
+  await prepareGraphics(zip, format);
   return zip;
 }
 
@@ -199,6 +208,7 @@ async function open(url: string | ArrayBuffer, format: string) {
     if (format === 'docx') {
       root.dataset.weibeiLocation = 'word/document.xml';
       await renderAsync(zip, root, undefined, { useBase64URL: true, renderAltChunks: false, renderComments: true, ignoreWidth: false, ignoreHeight: false });
+      await mountWordGraphics(root);
     } else {
       delete root.dataset.weibeiLocation;
       viewer = new PptxViewer(root, {
@@ -255,5 +265,5 @@ window.addEventListener('scroll', () => {
   if (active) post('contentRailActive', { id: active.dataset.weibeiLocation, reason: 'scroll' });
 }, { passive: true });
 
-(window as any).WeiBeiOffice = { open, math, drawWMFText, goTo, find, sections, sourceOrder, applyMarks, attachNote, get error() { return loadError; } };
+(window as any).WeiBeiOffice = { open, math, drawWMFText, renderGraphic, graphicRelations, has3DChart, render3DChart, goTo, find, sections, sourceOrder, applyMarks, attachNote, get error() { return loadError; } };
 (window as any).WeiBeiContentRail = { installed: true, scrollTo: (id: string) => { void goTo(id); }, scan: () => post('contentRailSections', sections()) };

@@ -36,8 +36,8 @@ export function renderOmml(e: Element): Element {
       const result = node('mrow', tokens.map(t => node(/^\d/.test(t) ? 'mn' : /^\p{L}/u.test(t) ? 'mi' : /^\s+$/.test(t) ? 'mtext' : 'mo', [t])));
       const style = rPr && value(child(rPr, 'sty'));
       const script = rPr && value(child(rPr, 'scr'));
-      const variant = script === 'double-struck' ? 'double-struck' : script === 'fraktur' ? (style === 'b' ? 'bold-fraktur' : 'fraktur') : script === 'script' ? (style === 'b' ? 'bold-script' : 'script') : script === 'monospace' ? 'monospace' : style === 'b' ? 'bold' : style === 'bi' ? 'bold-italic' : style === 'p' ? 'normal' : undefined;
-      if (variant) result.setAttribute('mathvariant', variant);
+      const variant = script === 'double-struck' ? 'double-struck' : script === 'fraktur' ? (style === 'b' ? 'bold-fraktur' : 'fraktur') : script === 'script' ? (style === 'b' ? 'bold-script' : 'script') : script === 'monospace' ? 'monospace' : script === 'sans-serif' ? (style === 'bi' ? 'sans-serif-bold-italic' : style === 'b' ? 'bold-sans-serif' : style === 'i' ? 'sans-serif-italic' : 'sans-serif') : style === 'b' ? 'bold' : style === 'bi' ? 'bold-italic' : style === 'p' ? 'normal' : undefined;
+      if (variant) for (const token of Array.from(result.children)) token.setAttribute('mathvariant', variant);
       return result;
     }
     case 't': return node('mtext', [e.textContent ?? '']);
