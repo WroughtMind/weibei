@@ -2,19 +2,11 @@ import Foundation
 
 enum WeiBeiResources {
     static var selectionRuntimeURL: URL? {
-#if targetEnvironment(macCatalyst)
         bundle.url(forResource: "selection-runtime", withExtension: "js", subdirectory: "Editor")
-#else
-        bundle.url(forResource: "selection-runtime", withExtension: "js")
-#endif
     }
 
     static var editorURL: URL? {
-#if targetEnvironment(macCatalyst)
         bundle.url(forResource: "index", withExtension: "html", subdirectory: "Editor")
-#else
-        bundle.url(forResource: "index", withExtension: "html")
-#endif
     }
 
     static let bundle: Bundle = {

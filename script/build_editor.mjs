@@ -22,6 +22,7 @@ const bundle = (entry, outfile, editable, globalName) => build({
     '@milkdown/kit/plugin/upload', '@milkdown/kit/prose/history', '@milkdown/kit/prose/inputrules',
   ].map((name) => [name, resolve(source, 'viewerEditorStubs.ts')])),
   metafile: true, logLevel: 'warning', globalName,
+  ...(entry === 'vendor/mermaid-runtime.ts' ? { supported: { 'template-literal': false } } : {}),
 });
 
 if (!check) {
@@ -52,7 +53,7 @@ const [editorMeta, viewerMeta] = await Promise.all([
     },
     bundle: true, minify: true,
     outfile: resolve(output, 'editor.css'), loader: { '.woff2': 'file' },
-    // SPM .process 会把 bundle 内目录拍平;字体平铺输出 + css 同级相对路径才能在拍平后仍可解析。
+    // 字体和编辑器样式同级，原生 App 与 SwiftPM 保持相同的 Editor 目录结构。
     assetNames: '[name]', logLevel: 'warning',
   }),
 ]);

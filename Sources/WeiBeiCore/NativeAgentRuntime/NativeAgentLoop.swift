@@ -346,7 +346,7 @@ public actor NativeAgentLoop {
                         contentBlocks: &contentBlocks,
                         context: &context
                     )
-                    if call.name == "weibei_visualize", !result.isError,
+                    if call.name == "render_ui", !result.isError,
                        let changed = contentBlocks.first(where: { block in
                            if case .visualization = block { return !previousBlocks.contains(block) }
                            return false
@@ -493,7 +493,7 @@ public actor NativeAgentLoop {
                 appliedProfileUpdate = applied
             }
         }
-        if name == "weibei_visualize",
+        if name == "render_ui",
            let id = details["id"] as? String,
            let spec = details["spec"],
            let specData = try? JSONSerialization.data(withJSONObject: spec),

@@ -10,6 +10,26 @@ import UniformTypeIdentifiers
 import WebKit
 import WeiBeiCore
 
+func agentVisualizationTheme(for mode: WeiBeiAppearanceMode, textScale: CGFloat) -> [String: String] {
+    func css(_ color: WeiBeiPlatformColor) -> String {
+        let rgb = color.cgColor.converted(to: CGColorSpace(name: CGColorSpace.sRGB)!, intent: .defaultIntent, options: nil)!
+        let channels = rgb.components!
+        return String(format: "rgba(%.0f,%.0f,%.0f,%.4f)", channels[0] * 255, channels[1] * 255, channels[2] * 255, channels[3])
+    }
+    return [
+        "surface": css(WeiBeiNativePalette.paperRaised(for: mode)),
+        "ink": css(WeiBeiNativePalette.ink(for: mode)),
+        "muted": css(WeiBeiNativePalette.secondaryInk(for: mode)),
+        "soft": css(WeiBeiNativePalette.tertiaryInk(for: mode)),
+        "border": css(WeiBeiNativePalette.hairline(for: mode)),
+        "accent": css(WeiBeiNativePalette.cinnabar(for: mode)),
+        "success": css(WeiBeiNativePalette.moss(for: mode)),
+        "link": css(WeiBeiNativePalette.link(for: mode)),
+        "scale": String(Double(textScale)),
+        "radius": "\(Int(WeiBeiMetric.controlRadius))px",
+    ]
+}
+
 struct AgentVisualizationLoadState: Equatable {
     private(set) var attempt = 0
     private(set) var failure: String?
@@ -31,13 +51,12 @@ struct AgentVisualizationLoadState: Equatable {
 
 struct AgentVisualizationView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
     let messageID: UUID
     let visualization: AgentVisualization
 
     @State private var contentHeight: CGFloat = 180
     @State private var loadState = AgentVisualizationLoadState()
-    /// Phase 4：离开可视区域时卸下 WebView，回到时再创建。
-    @State private var webViewAttached = true
 
     var body: some View {
         Group {
@@ -52,10 +71,11 @@ struct AgentVisualizationView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-            } else if webViewAttached {
+            } else {
                 AgentVisualizationWebView(
                     visualization: visualization,
-                    appearance: store.appearanceMode.isDark ? "dark" : "light",
+                    appearance: store.appearanceMode,
+                    textScale: textScale,
                     loadAttempt: loadState.attempt,
                     actionStatus: store.isAgentRunningInActiveChat ? "processing" : "ready",
                     actionUnavailableReason: actionUnavailableReason,
@@ -74,17 +94,8 @@ struct AgentVisualizationView: View {
                 )
                 .id(loadState.attempt)
                 .frame(height: max(contentHeight, 120))
-            } else {
-                Color.clear.frame(height: max(contentHeight, 120))
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(WeiBeiTheme.hairline.opacity(0.58), lineWidth: 1)
-        }
-        .onAppear { webViewAttached = true }
-        .onDisappear { webViewAttached = false }
     }
 
     private var actionUnavailableReason: String? {
@@ -111,7 +122,8 @@ struct AgentVisualizationView: View {
 
 private struct AgentVisualizationWebView: VisualizationRepresentable {
     var visualization: AgentVisualization
-    var appearance: String
+    var appearance: WeiBeiAppearanceMode
+    var textScale: CGFloat
     var loadAttempt: Int
     var actionStatus: String
     var actionUnavailableReason: String?
@@ -139,7 +151,7 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
 
         let configuration = WeiBeiWebViewConfiguration.make(
             surface: .genui,
-            allowingInlineMedia: false,
+            allowingInlineMedia: true,
             nonPersistent: true
         )
         configuration.userContentController = controller
@@ -209,16 +221,20 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
                 return
             }
             let fingerprint = [
+                parent.visualization.id,
                 parent.visualization.specJSON,
-                parent.appearance,
+                parent.appearance.rawValue,
+                String(Double(parent.textScale)),
                 parent.actionStatus,
                 parent.actionUnavailableReason ?? "",
             ].joined(separator: "|")
             guard fingerprint != sentFingerprint else { return }
 
             var payload: [String: Any] = [
+                "id": parent.visualization.id,
                 "spec": spec,
-                "appearance": parent.appearance,
+                "appearance": parent.appearance.isDark ? "dark" : "light",
+                "theme": agentVisualizationTheme(for: parent.appearance, textScale: parent.textScale),
                 "actionStatus": parent.actionStatus,
             ]
             payload["actionUnavailableReason"] = parent.actionUnavailableReason
@@ -312,6 +328,17 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
+            if navigationAction.navigationType == .linkActivated,
+               let url = navigationAction.request.url,
+               ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+#if targetEnvironment(macCatalyst)
+                UIApplication.shared.open(url)
+#else
+                NSWorkspace.shared.open(url)
+#endif
+                decisionHandler(.cancel)
+                return
+            }
             let allowed = navigationAction.request.url?.isFileURL == true
                 && navigationAction.targetFrame?.isMainFrame != false
             decisionHandler(allowed ? .allow : .cancel)
@@ -323,6 +350,12 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
             withError error: Error
         ) {
             parent.onFailure(parent.loadAttempt, error.localizedDescription)
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            isReady = false
+            sentFingerprint = nil
+            parent.onFailure(parent.loadAttempt, "互动界面进程已退出")
         }
 
         func webView(

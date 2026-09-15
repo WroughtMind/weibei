@@ -95,9 +95,9 @@ enum NativeScenarioPair {
                 [.textDelta(index: 0, text: "笔记和关系都是待确认建议。"), .finish(reason: .stop, replayState: nil)],
             ]
         ))
-        rows.append(try await row(id: "07-visualize", tools: ["weibei_visualize"], chunks: [
+        rows.append(try await row(id: "07-visualize", tools: ["render_ui"], chunks: [
             [
-                .toolCallDelta(index: 0, id: "v1", name: "weibei_visualize", argumentsDelta: "{\"id\":\"real-rate\",\"spec\":{\"items\":[{\"type\":\"text\",\"content\":\"实际利率\"}]}}"),
+                .toolCallDelta(index: 0, id: "v1", name: "render_ui", argumentsDelta: "{\"id\":\"real-rate\",\"spec\":{\"items\":[{\"type\":\"text\",\"content\":\"实际利率\"}]}}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
             [.textDelta(index: 0, text: "互动界面已显示。"), .finish(reason: .stop, replayState: nil)],

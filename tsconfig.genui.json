@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2024",
+    "lib": ["es2024", "dom"],
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
+  },
+  "include": ["Sources/WeiBei/WebGenUI/**/*.ts", "Sources/WeiBei/WebGenUI/**/*.tsx"]
+}
