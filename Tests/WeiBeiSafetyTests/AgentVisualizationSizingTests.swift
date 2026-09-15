@@ -200,8 +200,10 @@ final class AgentVisualizationSizingTests: XCTestCase {
           {"type":"scene3d","meshes":[{"shape":"box"}]}
         ]}
         """#
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec)})")
-        let ready = "Object.keys(window.__GenuiAssets__ || {}).length === 4 && document.querySelectorAll('svg .node').length === 2 && document.querySelectorAll('canvas').length >= 3"
+        let themeData = try JSONSerialization.data(withJSONObject: agentVisualizationTheme(for: .paper, textScale: 1))
+        let theme = try XCTUnwrap(String(data: themeData, encoding: .utf8))
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), theme: \(theme)})")
+        let ready = "['mermaid','echartsFull','three'].every(name => window.__GenuiAssets__?.[name]) && document.querySelectorAll('svg .node').length === 2 && document.querySelectorAll('canvas').length >= 3"
         var rendered = false
         for _ in 0..<100 {
             rendered = try await webView.evaluateJavaScript(ready) as? Bool == true
@@ -210,6 +212,16 @@ final class AgentVisualizationSizingTests: XCTestCase {
         }
         let detail = try await webView.evaluateJavaScript("document.getElementById('genui-root').innerText") as? String
         XCTAssertTrue(rendered, detail ?? "本地图表资源未完成渲染")
+        let sharedResources = try await webView.callAsyncJavaScript("""
+        await Promise.all(Array.from(document.fonts, font => font.load()));
+        const engines = Array.from(document.scripts, script => script.src);
+        return typeof window.WeiBeiMermaid.render === 'function'
+          && engines.filter(src => src.endsWith('/echarts-full.js')).length === 1
+          && !engines.some(src => src.endsWith('/echarts-core.js') || src.endsWith('/mermaid.js'))
+          && [...document.fonts].length > 0
+          && [...document.fonts].every(font => font.status === 'loaded');
+        """, arguments: [:], in: nil, contentWorld: .page) as? Bool
+        XCTAssertEqual(sharedResources, true, "共享引擎和完整数学字体必须离线加载")
         withExtendedLifetime(navigationProbe) {}
     }
 

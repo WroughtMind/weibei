@@ -352,6 +352,12 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
             parent.onFailure(parent.loadAttempt, error.localizedDescription)
         }
 
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            isReady = false
+            sentFingerprint = nil
+            parent.onFailure(parent.loadAttempt, "互动界面进程已退出")
+        }
+
         func webView(
             _ webView: WKWebView,
             didFailProvisionalNavigation navigation: WKNavigation!,
