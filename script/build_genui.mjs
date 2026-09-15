@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
-import { gzipSync } from 'node:zlib';
+import { gzipSync } from 'three/addons/libs/fflate.module.js';
 import { build } from 'esbuild';
 import { tsImport } from 'tsx/esm/api';
 
@@ -47,7 +47,8 @@ await build({ ...options,
 // Keep all syntax grammars offline; WebKit supplies gzip decoding on our OS targets.
 const scriptPath = resolve(resources, 'genui.js');
 const source = await readFile(scriptPath);
-const compressed = gzipSync(source, { level: 9 }).toString('base64');
+// Three already ships fflate; its JS encoder gives identical bytes across CI hosts.
+const compressed = Buffer.from(gzipSync(source, { level: 9, mtime: 0 })).toString('base64');
 await writeFile(scriptPath, `(async () => {
   const bytes = Uint8Array.from(atob(${JSON.stringify(compressed)}), c => c.charCodeAt(0));
   const script = document.createElement('script');
