@@ -3261,13 +3261,14 @@ struct WebReaderRepresentable: ReaderRepresentable {
                 return
             }
             let fileURL = baseURL.appendingPathComponent(url.lastPathComponent)
+            let nonce = UUID().uuidString
             let html = """
             <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src weibeihtml:; base-uri 'none'; frame-src 'none'">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-\(nonce)'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src weibeihtml:; base-uri 'none'; frame-src 'none'">
             <style>html,body{margin:0;padding:0}body{font:15px/1.7 -apple-system}#office-document{padding:16px;box-sizing:border-box;min-height:100vh}.docx-wrapper{padding:0!important;background:transparent!important}.docx-wrapper>section.docx{margin-bottom:16px;box-shadow:none!important}aside[data-note-part]{padding:16px 20px;max-width:100%;box-sizing:border-box;background:white;color:#222;overflow-wrap:anywhere}math{font-family:"Cambria Math","STIX Two Math",serif}a{color:#91261b}</style>
             </head><body data-weibei-revision="\(revision)"><main id="office-document"><p role="status">正在读取文档…</p></main>
-            <script>\(Self.officeRuntime)</script>
-            <script>window.WeiBeiOffice.open(\(Self.json(fileURL.absoluteString)),\(Self.json(url.pathExtension.lowercased())));</script>
+            <script nonce="\(nonce)">\(Self.officeRuntime)</script>
+            <script nonce="\(nonce)">window.WeiBeiOffice.open(\(Self.json(fileURL.absoluteString)),\(Self.json(url.pathExtension.lowercased())));</script>
             </body></html>
             """
             view.loadHTMLString(html, baseURL: baseURL)
