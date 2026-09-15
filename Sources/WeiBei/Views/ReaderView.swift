@@ -284,7 +284,9 @@ struct ReaderView: View {
             VStack(spacing: 0) {
                 readerBody
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Collapsed split hosts have zero width; retain the last measured reader viewport.
+            .frame(width: availableWidth)
+            .frame(maxHeight: .infinity)
             .opacity(railOnly ? 0 : 1)
             .allowsHitTesting(!railOnly)
 
