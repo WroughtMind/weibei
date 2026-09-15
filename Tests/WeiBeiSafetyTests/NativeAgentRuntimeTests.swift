@@ -240,7 +240,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         _ = try await ledger.append { NativeSessionEvent(type: .contextCompaction, seq: $0, timeMS: $1,
             summary: "被替换的旧回答", firstKeptSeq: 4) }
         try await ledger.closeTurn(turn: 1, reason: .completed)
-        try await ledger.replaceLastAnswer(question: "写入后解释")
         var request = testRequest()
         request.question = "写入后解释"
         request.reusingLastUserMessage = true

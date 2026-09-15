@@ -45,10 +45,8 @@ public actor NativeAgentLoop {
         let referenceContext = try NativePromptAssembler.turnContext(for: request, selections: selections)
         let turnContext = referenceContext + "\n\n用户问题：\n" + request.question
         let userMessageEvent: NativeSessionEvent
-        if request.reusingLastUserMessage {
-            guard let original = originalUser else {
-                throw NativeLLMFailure(code: "missing_history", message: "没有找到原始提问，未重新发送。")
-            }
+        if let original = originalUser {
+            try await ledger.replaceLastAnswer(question: request.question)
             userMessageEvent = original
         } else {
             if !referenceContext.isEmpty {

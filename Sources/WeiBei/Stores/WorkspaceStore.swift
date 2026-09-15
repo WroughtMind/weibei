@@ -339,7 +339,6 @@ final class WorkspaceStore: ObservableObject {
     @Published var showLoadingIndicatorSamples = false
     /// Last failed user question for precise one-tap retry.
     @Published private(set) var lastFailedAgentQuestion: String?
-    var agentAnswerReplacementSessions: Set<UUID> = []
     var nativeVisualizationWaiters: [UUID: (token: UUID, requestID: UUID, replyMessageID: UUID, visualization: AgentVisualization,
         continuation: CheckedContinuation<NativeToolExecutionResult, Never>)] = [:]
     @Published private(set) var lastAgentFailureKind: AgentFailureKind?
@@ -9712,7 +9711,8 @@ final class WorkspaceStore: ObservableObject {
                         chatID: target.sessionID,
                         courseID: target.courseID
                     ),
-                    retryQuestion: question
+                    retryQuestion: question,
+                    requestContext: previousReply?.requestContext
                 )
                 replyMessageID = assistantMessage.id
                 activeAgentReplyMessageID = assistantMessage.id
@@ -9778,7 +9778,9 @@ final class WorkspaceStore: ObservableObject {
                 let request = StudyAgentRequest(
                     id: requestID,
                     purpose: .conversation,
-                    reusingLastUserMessage: reusingLastUserMessage,
+                    // Local preparation failures never entered the model ledger.
+                    reusingLastUserMessage: reusingLastUserMessage
+                        && (previousReply?.requestContext != nil || previousReply?.completionState == .completed),
                     question: question,
                     materialTitle: sentMaterialTitle,
                     materialText: "",
@@ -9953,6 +9955,13 @@ final class WorkspaceStore: ObservableObject {
                         fallbackText: failureText,
                         restoreDraft: questionOverride == nil
                     )
+                } else if let previousReply {
+                    _ = updateAgentMessage(previousReply.id, in: target.sessionID) {
+                        $0.text = failureText
+                        $0.completionState = .interrupted
+                        $0.failureKind = kind
+                        $0.retryQuestion = question
+                    }
                 } else {
                     appendAgentMessage(
                         AgentMessage(
@@ -10095,37 +10104,15 @@ final class WorkspaceStore: ObservableObject {
     private func replaceAgentAnswer(_ reply: AgentMessage, in sessionID: UUID) {
         guard !isAgentRunning(in: sessionID),
               let questionMessage = conversationMessages(in: sessionID).dropLast().last,
-              questionMessage.role == .user,
-              agentAnswerReplacementSessions.insert(sessionID).inserted else { return }
+              questionMessage.role == .user else { return }
         let question = reply.requestContext?.question ?? reply.retryQuestion ?? questionMessage.text
         let selections = selectionAskThreads.first(where: { $0.messageIDs.contains(questionMessage.id) }).map { thread in
             [SelectionContext(id: thread.id, text: thread.selectionText, source: thread.source,
                 ownerTitle: thread.ownerTitle, itemID: thread.itemID, isEditable: thread.source == .note)]
         } ?? []
-        Task { @MainActor in
-            defer { agentAnswerReplacementSessions.remove(sessionID) }
-            do {
-                let url = workspaceDirectory.appendingPathComponent("NativeAgent/Ledgers", isDirectory: true)
-                    .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
-                    .appendingPathComponent("ledger.jsonl")
-                let ledger = try NativeAgentLedger(fileURL: url)
-                try await ledger.replaceLastAnswer(question: question)
-                // Keep completed actions attached while replacing the visible answer, including on cancellation.
-                _ = updateAgentMessage(reply.id, in: sessionID) {
-                    $0.text = ""
-                    $0.contentBlocks = []
-                    $0.completionState = .interrupted
-                    $0.failureKind = .cancelled
-                    $0.retryQuestion = question
-                }
-                guard await flushPendingWorkspaceSaveAsync() else { return }
-                replaceComposerDraft(question, for: sessionID)
-                _ = askAgent(reusingLastUserMessage: true, replayingSelections: selections,
-                    targetCourseID: reply.origin?.courseID, questionOverride: question, targetSessionID: sessionID)
-            } catch {
-                showImportantOperationError(error.localizedDescription)
-            }
-        }
+        replaceComposerDraft(question, for: sessionID)
+        _ = askAgent(reusingLastUserMessage: true, replayingSelections: selections,
+            targetCourseID: reply.origin?.courseID, questionOverride: question, targetSessionID: sessionID)
     }
 
     func canRetryAgentRequest(question: String?, failureKind: AgentFailureKind?, sessionID: UUID? = nil) -> Bool {
