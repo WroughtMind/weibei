@@ -382,14 +382,17 @@ struct HoverPassThroughRegion: UIViewRepresentable {
 
 struct CatalystWindowChrome: UIViewRepresentable {
     let appearanceMode: WeiBeiAppearanceMode
+    var initialSize = CGSize(width: 1240, height: 792)
     func makeUIView(context: Context) -> Probe {
         let view = Probe()
+        view.initialSize = initialSize
         view.isUserInteractionEnabled = false
         return view
     }
     func updateUIView(_ view: Probe, context: Context) { view.mode = appearanceMode; view.configure() }
     final class Probe: UIView {
         var mode: WeiBeiAppearanceMode = .paper
+        var initialSize = CGSize.zero
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         func configure() {
             CatalystDesktopWindow.configure(mode: mode)
@@ -398,6 +401,22 @@ struct CatalystWindowChrome: UIViewRepresentable {
             scene.titlebar?.toolbar = nil
             scene.titlebar?.separatorStyle = .none
             scene.sizeRestrictions?.minimumSize = CGSize(width: 520, height: 720)
+            let initialSizeKey = "weibeiInitialWindowSizeApplied"
+            if scene.session.userInfo?[initialSizeKey] as? Bool != true {
+                var info = scene.session.userInfo ?? [:]
+                info[initialSizeKey] = true
+                scene.session.userInfo = info
+                var frame = scene.effectiveGeometry.systemFrame
+                if frame.isNull || frame.isEmpty { frame = scene.screen.bounds }
+                let size = CGSize(width: min(initialSize.width, scene.screen.bounds.width),
+                                  height: min(initialSize.height, scene.screen.bounds.height))
+                frame = CGRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2,
+                               width: size.width, height: size.height)
+                // A geometry request sets the opening frame, not permanent min/max constraints.
+                scene.requestGeometryUpdate(.Mac(systemFrame: frame)) { error in
+                    WeiBeiLog.workspace.error("Initial window geometry request failed: \(WeiBeiLog.code(error), privacy: .public)")
+                }
+            }
             window.isOpaque = !mode.isGlass
             window.backgroundColor = WeiBeiNativePalette.paper(for: mode)
             // A nonzero root surface keeps Catalyst pointer events in transparent gaps.
