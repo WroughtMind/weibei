@@ -50,9 +50,32 @@ check_size "$ICON/icon_256x256.png" 256
 check_size "$ICON/icon_256x256@2x.png" 512
 check_size "$ICON/icon_512x512.png" 512
 check_size "$ICON/icon_512x512@2x.png" 1024
-check_size "$ICON_COMPOSER/Assets/01-Mark.png" 1024
+for layer in 01-Ink 02-Cinnabar; do
+  check_size "$ICON_COMPOSER/Assets/$layer.png" 1024
+  has_alpha "$ICON_COMPOSER/Assets/$layer.png"
+done
 
-has_alpha "$ICON_COMPOSER/Assets/01-Mark.png"
+# Check the visible contract: varying translucent ink, an opaque red anchor,
+# and empty notches. This also catches accidental grayscale conversion.
+python3 - "$ICON_COMPOSER/Assets" <<'PY_CHECK'
+from pathlib import Path
+import subprocess, sys
+assets = Path(sys.argv[1])
+def pixel(name, x, y):
+    channels = " ".join(f"%[fx:p{{{x},{y}}}.{c}]" for c in ("r", "g", "b", "a"))
+    return list(map(float, subprocess.check_output(["convert", str(assets / name),
+        "-format", channels, "info:"], text=True).split()))
+ink = [pixel("01-Ink.png", x, 400)[3] for x in (250, 500, 740)]
+assert all(0.79 < a < 0.97 for a in ink), ink
+assert max(ink) - min(ink) > 0.04, ink
+r, g, b, a = pixel("02-Cinnabar.png", 840, 825)
+assert a > 0.99 and r > 3 * g and r > 3 * b, (r, g, b, a)
+assert pixel("01-Ink.png", 840, 825)[3] == 0
+assert pixel("02-Cinnabar.png", 500, 400)[3] == 0
+for x, y in ((398, 400), (630, 400), (50, 50)):
+    assert pixel("01-Ink.png", x, y)[3] == 0, (x, y)
+print("glass W alpha, cinnabar color, and notch checks passed")
+PY_CHECK
 jq empty "$ICON_COMPOSER/icon.json"
 
 COMPILED_ICON="$(mktemp -d "${TMPDIR:-/tmp}/weibei-icon-verify.XXXXXX")"

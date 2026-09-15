@@ -4,12 +4,12 @@
   },
   "groups": [
     {
-      "name": "拓印字标",
+      "name": "中透墨色玻璃 W",
       "layers": [
         {
-          "image-name": "01-Mark.png",
-          "name": "W 与朱砂",
-          "glass": false,
+          "image-name": "01-Ink.png",
+          "name": "拓印玻璃 W",
+          "glass": true,
           "fill-specializations": [
             {
               "appearance": "dark",
@@ -17,6 +17,32 @@
                 "solid": "display-p3:0.94902,0.88627,0.79216,1.00000"
               }
             },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.1
+      }
+    },
+    {
+      "name": "朱砂",
+      "layers": [
+        {
+          "image-name": "02-Cinnabar.png",
+          "name": "不透明朱砂",
+          "glass": false,
+          "fill-specializations": [
             {
               "appearance": "tinted",
               "value": {
