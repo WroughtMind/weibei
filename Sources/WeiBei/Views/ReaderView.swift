@@ -2774,7 +2774,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     static let selectionScript = """
     (() => {
-      let frame = 0;
+      let selectionReportTimer = 0;
+      let selectionEndTimer = 0;
       let lastPayload = { text: "", x: null, y: null };
       // Scroll must not stream selection → WorkspaceStore. Sample 2026-08-01:
       // selectionchange during HTML scroll published selectionAnchor and froze
@@ -2791,8 +2792,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
       }
 
       function reportSelection() {
-        window.cancelAnimationFrame(frame);
-        frame = window.requestAnimationFrame(() => {
+        window.clearTimeout(selectionReportTimer);
+        // Selection is application state; background readers may suspend animation frames.
+        selectionReportTimer = window.setTimeout(() => {
           if (window.weiBeiSuppressSelectionReport) return;
           if (Date.now() < scrollQuietUntil) return;
           const selection = window.getSelection();
@@ -2814,20 +2816,26 @@ struct WebReaderRepresentable: ReaderRepresentable {
           }
           lastPayload = payload;
           window.webkit.messageHandlers.selection.postMessage(payload);
-        });
+        }, 16);
+      }
+
+      function reportFinishedSelection() {
+        window.clearTimeout(selectionEndTimer);
+        selectionEndTimer = window.setTimeout(reportSelection, Math.max(0, scrollQuietUntil - Date.now()) + 1);
       }
 
       document.addEventListener("selectionchange", reportSelection);
       document.addEventListener("pointerdown", () => {
         if (window.weiBeiSuppressSelectionReport) return;
-        window.cancelAnimationFrame(frame);
+        window.clearTimeout(selectionReportTimer);
+        window.clearTimeout(selectionEndTimer);
         lastPayload = { text: "", x: null, y: null };
         window.webkit.messageHandlers.selection.postMessage(lastPayload);
       }, true);
-      document.addEventListener("pointerup", reportSelection);
-      document.addEventListener("mouseup", reportSelection);
-      document.addEventListener("keyup", reportSelection);
-      document.addEventListener("touchend", reportSelection);
+      document.addEventListener("pointerup", reportFinishedSelection);
+      document.addEventListener("mouseup", reportFinishedSelection);
+      document.addEventListener("keyup", reportFinishedSelection);
+      document.addEventListener("touchend", reportFinishedSelection);
       window.addEventListener("wheel", markScrollQuiet, { passive: true });
       window.addEventListener("scroll", markScrollQuiet, { passive: true });
       window.addEventListener("touchmove", markScrollQuiet, { passive: true });
