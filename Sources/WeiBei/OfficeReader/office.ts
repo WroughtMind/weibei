@@ -145,7 +145,12 @@ async function goTo(location: string) {
     await viewer.goToSlide(target, { behavior: 'instant', block: 'start' });
   }
   const element = sourceElement(location);
-  if (element && (!viewer || location.includes('#'))) element.scrollIntoView({ block: 'center', behavior: 'instant' });
+  const note = element?.closest<HTMLElement>('[data-note-part]');
+  if (note) {
+    note.previousElementSibling!.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    note.showPopover();
+    element!.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  } else if (element && (!viewer || location.includes('#'))) element.scrollIntoView({ block: 'center', behavior: 'instant' });
   else if (!viewer) return false;
   post('contentRailActive', { id: viewer ? location.split('#')[0] : location, reason: 'jump' });
   return true;
@@ -174,16 +179,48 @@ async function find(query: string) {
   return (window as any).find(query, false, false, false, false, true, false);
 }
 
+function positionNote(note: HTMLElement) {
+  const rect = note.previousElementSibling!.getBoundingClientRect();
+  if (rect.bottom <= 0 || rect.top >= innerHeight) {
+    if (note.matches(':popover-open')) note.hidePopover();
+    return;
+  }
+  const above = rect.top > innerHeight / 2;
+  note.style.right = `${Math.max(12, innerWidth - rect.right)}px`;
+  note.style.maxWidth = `${Math.max(0, rect.right - 12)}px`;
+  note.style.top = above ? 'auto' : `${rect.bottom + 8}px`;
+  note.style.bottom = above ? `${innerHeight - rect.top + 8}px` : 'auto';
+  note.style.maxHeight = `${Math.max(0, (above ? rect.top : innerHeight - rect.bottom) - 20)}px`;
+}
+function positionOpenNote() {
+  const note = root?.querySelector<HTMLElement>('[data-note-part]:popover-open');
+  if (note) positionNote(note);
+}
+window.addEventListener('scroll', positionOpenNote, { passive: true });
+window.addEventListener('resize', positionOpenNote);
+
 function attachNote(index: number, wrapper: HTMLElement | null) {
   const slide = viewer?.presentationData?.slides[index];
   if (!slide || !wrapper || wrapper.querySelector('[data-note-part]')) return;
   const path = noteParts.get(slide.slidePath);
   const paragraphs = path && notes.get(path);
   if (!paragraphs || !paragraphs.some(p => clean(p.textContent))) return;
-  const aside = document.createElement('aside'); aside.dataset.notePart = path;
-  aside.style.width = (wrapper.firstElementChild as HTMLElement)?.style.width; aside.style.maxWidth = '100%';
-  aside.setAttribute('aria-label', `第 ${index + 1} 页备注`);
-  const title = document.createElement('strong'); title.textContent = `第 ${index + 1} 页 · 备注`; title.dataset.weibeiAnnotationUi = 'true'; aside.append(title);
+  wrapper.style.position = 'relative';
+  const note = document.createElement('aside'); note.dataset.notePart = path;
+  note.id = `office-note-${index}`; note.className = 'office-note'; note.popover = 'auto';
+  note.setAttribute('aria-label', `第 ${index + 1} 页备注`);
+  const button = document.createElement('button'); button.type = 'button'; button.className = 'office-note-trigger';
+  button.setAttribute('popovertarget', note.id); button.title = `查看第 ${index + 1} 页备注`;
+  button.setAttribute('aria-label', button.title); button.dataset.weibeiAnnotationUi = 'true';
+  button.style.top = `calc(${(wrapper.firstElementChild as HTMLElement).style.height} - 34px)`;
+  button.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 3H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Zm0 0v5h5M6 11h8M6 14h5"/></svg>';
+  const header = document.createElement('header'); header.dataset.weibeiAnnotationUi = 'true';
+  const title = document.createElement('strong'); title.textContent = `第 ${index + 1} 页备注`;
+  const close = document.createElement('button'); close.type = 'button'; close.setAttribute('aria-label', '关闭备注');
+  close.setAttribute('popovertarget', note.id); close.setAttribute('popovertargetaction', 'hide');
+  close.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>';
+  header.append(title, close); note.append(header);
+  const body = document.createElement('div'); body.className = 'office-note-body'; note.append(body);
   for (const p of paragraphs) {
     const block = document.createElement('p'); block.dataset.weibeiLocation = p.getAttribute('data-weibei-location')!;
     for (const run of Array.from(p.children)) {
@@ -191,9 +228,10 @@ function attachNote(index: number, wrapper: HTMLElement | null) {
       else if (run.localName === 'br') block.append(document.createElement('br'));
       else if (run.localName === 'r' || run.localName === 'fld') block.append(run.getElementsByTagNameNS(drawingNS, 't')[0]?.textContent ?? '');
     }
-    aside.append(block);
+    body.append(block);
   }
-  wrapper.append(aside);
+  note.addEventListener('beforetoggle', event => { if ((event as ToggleEvent).newState === 'open') positionNote(note); });
+  wrapper.append(button, note);
 }
 
 async function open(url: string | ArrayBuffer, format: string) {

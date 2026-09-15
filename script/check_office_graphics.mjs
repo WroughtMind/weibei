@@ -1,7 +1,7 @@
 // macOS: node script/check_office_graphics.mjs [office-entry.js.deflate]
 // One offline rendering check; generated documents and the invisible WebKit host live in a temporary directory.
 import JSZip from 'jszip';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -9,6 +9,8 @@ import { execFileSync } from 'node:child_process';
 const root = resolve(import.meta.dirname, '..');
 const output = await mkdtemp(join(tmpdir(), 'weibei-office-graphics-'));
 const office = resolve(process.argv[2] ?? join(root, 'Sources/WeiBei/Resources/Editor/office-entry.js.deflate'));
+const reader = await readFile(join(root, 'Sources/WeiBei/Views/ReaderView.swift'), 'utf8');
+const officeCSS = reader.match(/<style>(html,body\{margin:0;padding:0\}[\s\S]*?)<\/style>/)[1];
 const ns = 'http://schemas.openxmlformats.org';
 const rel = `${ns}/officeDocument/2006/relationships`;
 const a = `${ns}/drawingml/2006/main`, c = `${ns}/drawingml/2006/chart`;
@@ -34,12 +36,15 @@ zip.file('word/document.xml', `<w:document xmlns:w="${ns}/wordprocessingml/2006/
 // A tall slide in a wide, short reading pane exposes page-centering that hides its title.
 const deck = new JSZip();
 const p = `${ns}/presentationml/2006/main`;
-deck.file('[Content_Types].xml', `<Types xmlns="${ns}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>${[1, 2].map(i => `<Override PartName="/ppt/slides/slide${i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`).join('')}</Types>`);
+deck.file('[Content_Types].xml', `<Types xmlns="${ns}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>${[1, 2].map(i => `<Override PartName="/ppt/slides/slide${i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`).join('')}${[1, 2].map(i => `<Override PartName="/ppt/notesSlides/notesSlide${i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>`).join('')}</Types>`);
 deck.file('_rels/.rels', relationships([['office', 'officeDocument', 'ppt/presentation.xml']]));
 deck.file('ppt/presentation.xml', `<p:presentation xmlns:p="${p}" xmlns:r="${rel}"><p:sldIdLst><p:sldId id="256" r:id="s1"/><p:sldId id="257" r:id="s2"/></p:sldIdLst><p:sldSz cx="9144000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`);
 deck.file('ppt/_rels/presentation.xml.rels', relationships([1, 2].map(i => [`s${i}`, 'slide', `slides/slide${i}.xml`])));
 const textBox = (id, y, text) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="text${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="457200" y="${y}"/><a:ext cx="8229600" cy="457200"/></a:xfrm><a:prstGeom prst="rect"/></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr sz="2400"/><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
 for (const i of [1, 2]) deck.file(`ppt/slides/slide${i}.xml`, `<p:sld xmlns:p="${p}" xmlns:a="${a}" xmlns:r="${rel}"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>${textBox(2, 182880, `页首标题${i}`)}${textBox(3, 5943600, `页尾摘录${i}`)}</p:spTree></p:cSld></p:sld>`);
+for (const i of [1, 2]) deck.file(`ppt/slides/_rels/slide${i}.xml.rels`, relationships([['notes', 'notesSlide', `../notesSlides/notesSlide${i}.xml`]]));
+deck.file('ppt/notesSlides/notesSlide1.xml', `<p:notes xmlns:p="${p}" xmlns:a="${a}" xmlns:r="${rel}"><p:cSld><p:spTree>${textBox(2, 0, '   ')}</p:spTree></p:cSld></p:notes>`);
+deck.file('ppt/notesSlides/notesSlide2.xml', `<p:notes xmlns:p="${p}" xmlns:a="${a}" xmlns:r="${rel}"><p:cSld><p:spTree>${textBox(2, 0, '老师说明：选看内容')}${textBox(3, 0, '这一页补充说明图中的课程成绩。'.repeat(80))}</p:spTree></p:cSld></p:notes>`);
 try {
   await writeFile(join(output, 'navigation.pptx'), await deck.generateAsync({ type: 'nodebuffer' }));
   for (const angle of [20, 65]) {
@@ -73,7 +78,7 @@ let compressed = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments
 let decoded = try (compressed as NSData).decompressed(using: .zlib) as Data
 let source = String(decoding: decoded, as: UTF8.self).replacingOccurrences(of: "</script", with: "<\\\\/script")
 page.web.loadHTMLString("""
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-check' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; connect-src 'none'"><body><main id="office-document"></main><script nonce="check">\\(source)</script></body>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-check' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; connect-src 'none'"><style>${officeCSS}:root{--weibei-note-fill:#f9f1de;--weibei-note-ink:#1d1814;--weibei-note-muted:#665c54;--weibei-note-accent:#91261c}</style><body><main id="office-document"></main><script nonce="check">\\(source)</script></body>
 """, baseURL: nil)
 wait { page.loaded }
 var hashes: [String] = []
@@ -134,12 +139,41 @@ _ = page.js("""
   await WeiBeiOffice.find('页尾摘录2');
   const excerpt = document.querySelector('[data-weibei-location="ppt/slides/slide2.xml#p1"]');
   assert(excerpt && visible(excerpt), 'PPT search must reveal the matched text at the bottom');
+  const note = document.querySelector('[data-note-part]');
+  assert(note && !note.matches(':popover-open'), 'PPT notes must start closed');
+  assert(!document.querySelector('[data-slide-index="0"] [data-note-part], [data-slide-index="0"] .office-note-trigger'), 'an empty note must not add a panel or trigger');
+  const trigger = note.previousElementSibling;
+  trigger.scrollIntoView({block:'nearest',behavior:'instant'});
+  const slideFrame = note.parentElement.firstElementChild;
+  const before = slideFrame.getBoundingClientRect();
+  const icon = trigger.getBoundingClientRect();
+  assert(icon.left >= before.left && icon.right <= before.right && icon.top >= before.top && icon.bottom <= before.bottom, 'the note trigger must stay inside its PPT page');
+  trigger.click();
+  assert(note.matches(':popover-open'), 'the note button must open its panel');
+  const panel = note.getBoundingClientRect();
+  assert(panel.left >= 0 && panel.right <= innerWidth && panel.top >= 0 && panel.bottom <= innerHeight, 'note panel must fit the reading viewport');
+  assert(slideFrame.getBoundingClientRect().top === before.top, 'opening a note must not move the slide');
+  const noteBody = note.querySelector('.office-note-body');
+  assert(noteBody.scrollHeight > noteBody.clientHeight, 'long notes must scroll inside their panel');
+  const originalTitleColor = getComputedStyle(title).color;
+  const paper = getComputedStyle(note).backgroundColor;
+  document.documentElement.style.setProperty('--weibei-note-fill', 'rgba(27,35,48,.40)');
+  document.documentElement.style.setProperty('--weibei-note-ink', '#e8eef9');
+  assert(getComputedStyle(note).backgroundColor !== paper && getComputedStyle(title).color === originalTitleColor, 'note theme must change without recoloring PPT text');
+  note.querySelector('[popovertargetaction="hide"]').click();
+  assert(!note.matches(':popover-open'), 'close control must dismiss the note');
+  await WeiBeiOffice.goTo('ppt/notesSlides/notesSlide2.xml#p0');
+  const noteText = note.querySelector('[data-weibei-location]');
+  assert(note.matches(':popover-open') && visible(noteText), 'a note excerpt return must open and reveal the source');
+  note.hidePopover();
+  await WeiBeiOffice.find('老师说明');
+  assert(note.matches(':popover-open') && visible(noteText), 'PPT search must open and reveal matching notes');
   await WeiBeiOffice.goTo('ppt/slides/slide1.xml');
   await WeiBeiOffice.goTo('ppt/slides/slide2.xml#p1');
   assert(visible(excerpt), 'PPT excerpt return must reveal its paragraph');
   return true;
   """, ["bytes": deck.base64EncodedString()])
-print("Office graphics and reading: Word charts, 3D bar/pie images and rotation, diagram, math, EMF; Word resize position; PPT title navigation, search and excerpt return passed")
+print("Office graphics and reading: Word charts, 3D bar/pie images and rotation, diagram, math, EMF; Word resize position; PPT title navigation, search, excerpt return and themed note popovers passed")
 `);
   execFileSync('xcrun', ['swiftc', join(output, 'check.swift'), '-o', join(output, 'check')], { stdio: 'inherit' });
   execFileSync(join(output, 'check'), [office, join(output, '20.docx'), join(output, '65.docx'), join(output, 'navigation.pptx')], { stdio: 'inherit', timeout: 120000 });
