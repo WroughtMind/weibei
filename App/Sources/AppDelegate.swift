@@ -201,7 +201,8 @@ struct CatalystWeiBeiApp: App {
             workspaceContent
 #endif
         }
-        .defaultSize(width: 1240, height: 760)
+        // Catalyst turns defaultSize into fixed native size constraints on macOS 27.
+        // Leave sizing to the window scene so system edge resizing and tiling remain available.
         WindowGroup("设置", id: "weibei-settings") {
             SettingsView()
                 .weiBeiMotionScoped()
@@ -211,7 +212,6 @@ struct CatalystWeiBeiApp: App {
                 .background(CatalystWindowChrome(appearanceMode: AppDelegate.workspace.appearanceMode))
                 .ignoresSafeArea(.container, edges: .top)
         }
-        .defaultSize(width: 900, height: 640)
     }
 
     private var workspaceContent: some View {
