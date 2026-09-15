@@ -1,0 +1,57 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: calc(14px * var(--weibei-scale, 1));
+  line-height: 1.6;
+  --dsw-alias-bg-base: transparent;
+  --dsw-alias-bg-layer-1: var(--weibei-surface, Canvas);
+  --dsw-alias-bg-layer-2: var(--dsw-alias-bg-layer-1);
+  --dsw-alias-bg-layer-3: color-mix(in srgb, var(--weibei-ink, CanvasText) 4%, var(--dsw-alias-bg-layer-1));
+  --dsw-alias-label-primary: var(--weibei-ink, CanvasText);
+  --dsw-alias-label-secondary: var(--weibei-muted, CanvasText);
+  --dsw-alias-label-tertiary: var(--weibei-soft, GrayText);
+  --dsw-alias-label-caption: var(--dsw-alias-label-tertiary);
+  --dsw-alias-border-l1: var(--weibei-border, transparent);
+  --dsw-alias-border-l2: var(--dsw-alias-border-l1);
+  --dsw-alias-state-business-primary: var(--weibei-accent, AccentColor);
+  --dsw-alias-state-success-primary: var(--weibei-success, CanvasText);
+  --dsw-alias-state-warn-primary: var(--weibei-accent, AccentColor);
+  --dsw-alias-state-error-primary: var(--weibei-accent, AccentColor);
+  --dsw-alias-state-success-secondary: var(--dsw-alias-state-success-primary);
+  --dsw-alias-state-warn-secondary: var(--dsw-alias-state-warn-primary);
+  --dsw-alias-markdown-code-block: var(--dsw-alias-bg-layer-1);
+  --dsw-alias-markdown-hr: var(--dsw-alias-border-l1);
+  --dsw-static-deepseek-300: var(--dsw-alias-state-business-primary);
+  --dsw-static-deepseek-400: var(--dsw-alias-state-business-primary);
+  --dsw-static-deepseek-450: var(--dsw-alias-state-business-primary);
+  --dsw-static-blue-450: var(--weibei-link, LinkText);
+  --dsw-static-green-400: var(--dsw-alias-state-success-primary);
+  --dsw-static-amber-400: var(--dsw-alias-state-warn-primary);
+  --dsw-static-red-400: var(--dsw-alias-state-error-primary);
+  --dsw-static-neutral-bluish-400: var(--dsw-alias-label-tertiary);
+}
+/* The shared renderer owns components; this host maps its design tokens to WeiBei. */
+#genui-root [data-genui] {
+  --dsl-g-surface: var(--dsw-alias-bg-layer-1);
+  --dsl-g-shadow-card: none;
+  --dsl-g-border-surface: var(--dsw-alias-border-l1);
+  --dsl-g-border-strong: var(--dsw-alias-border-l1);
+  --dsl-g-radius-surface: var(--weibei-radius, 8px);
+  --dsl-g-radius-control: var(--weibei-radius, 8px);
+  --dsl-g-font-hero: calc(28px * var(--weibei-scale, 1));
+  --dsl-g-font-display: calc(24px * var(--weibei-scale, 1));
+  --dsl-g-font-h1: calc(22px * var(--weibei-scale, 1));
+  --dsl-g-font-h2: calc(18px * var(--weibei-scale, 1));
+  --dsl-g-font-h3: calc(16px * var(--weibei-scale, 1));
+  --dsl-g-font-body: calc(14px * var(--weibei-scale, 1));
+  --dsl-g-font-title: calc(14px * var(--weibei-scale, 1));
+  --dsl-g-font-meta: calc(12px * var(--weibei-scale, 1));
+  --dsl-g-font-data: calc(12px * var(--weibei-scale, 1));
+  --dsl-g-zebra: transparent;
+}
+html, body { margin: 0; background: transparent; color: var(--dsw-alias-label-primary); }
+body { overflow-x: hidden; }
+button, input, select, textarea { font: inherit; }
+#genui-root { display: flow-root; width: 100%; padding: 2px 0; box-sizing: border-box; }
+#genui-root [role="tablist"] { flex-wrap: wrap; }
+#genui-root [role="tab"] { flex: 0 0 auto; white-space: nowrap; }
+#genui-status { margin: 8px 0 0; font-size: calc(12px * var(--weibei-scale, 1)); color: var(--dsw-alias-label-secondary); }

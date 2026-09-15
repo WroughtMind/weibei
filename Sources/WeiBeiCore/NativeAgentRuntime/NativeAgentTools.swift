@@ -253,7 +253,7 @@ public enum NativeBuiltinTools {
         await registry.register(loadSkill)
         await registry.register(createDocument)
         await registry.register(delegate)
-        await registry.register(visualize)
+        await registry.register(genui)
         await registry.register(visualAsset)
         await registry.register(courseMap)
         await registry.register(workspaceSearch)
@@ -435,10 +435,10 @@ public enum NativeBuiltinTools {
         )
     }
 
-    private static var visualize: NativeToolDefinition {
+    private static var genui: NativeToolDefinition {
         NativeToolDefinition(
-            name: "weibei_visualize",
-            description: "把一个 Visualize 互动片段立即穿插显示在当前回答中。",
+            name: "render_ui",
+            description: "把一个 dshGenUI 互动片段立即穿插显示在当前回答中。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
@@ -453,14 +453,14 @@ public enum NativeBuiltinTools {
                       let spec = arguments["spec"] as? [String: Any],
                       let items = spec["items"] as? [Any],
                       !items.isEmpty else {
-                    throw NativeLLMFailure(code: "invalid_visualize", message: "Visualize 界面必须包含稳定 id 和完整组件树")
+                    throw NativeLLMFailure(code: "invalid_genui", message: "dshGenUI 界面必须包含稳定 id 和完整组件树")
                 }
                 let specJSON = try JSONSerialization.data(withJSONObject: spec)
                 if specJSON.count > 1_000_000 {
-                    throw NativeLLMFailure(code: "invalid_visualize", message: "Visualize 界面必须包含稳定 id 和完整组件树")
+                    throw NativeLLMFailure(code: "invalid_genui", message: "dshGenUI 界面必须包含稳定 id 和完整组件树")
                 }
                 return NativeToolExecutionResult(
-                    text: "互动界面 \(id) 已显示。",
+                    text: "互动界面 \(id) 已提交。",
                     details: ["kind": "weibei_visualization", "id": id, "spec": spec]
                 )
             }

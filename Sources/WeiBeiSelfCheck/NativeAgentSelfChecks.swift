@@ -437,14 +437,14 @@ private func checkProviderRouting() throws {
 private func checkSkillCatalogAndLoad() throws {
     let root = try AgentResources.bundled().skillsURL
     let registry = try NativeSkillRegistry.load(from: root)
-    try nativeRequire(registry.pack(named: "visualize") != nil, "visualize skill pack exists")
+    try nativeRequire(registry.pack(named: "genui") != nil, "genui skill pack exists")
     try nativeRequire(registry.pack(named: "socratic-questioning") != nil, "socratic skill pack exists")
-    try nativeRequire(registry.catalogSummary().contains("visualize"), "catalog lists visualize")
+    try nativeRequire(registry.catalogSummary().contains("genui"), "catalog lists genui")
     let before = registry.packs.map(\.id)
     let loaded = registry.pack(named: "socratic-questioning")
     try nativeRequire(loaded?.body.contains("苏格拉底") == true, "socratic body loads")
     try nativeRequire(registry.packs.map(\.id) == before, "load is instruction-only and does not change registration")
-    try nativeRequire(NativeSkillRegistry.isSignedBuiltin("visualize"), "visualize is a signed builtin")
+    try nativeRequire(NativeSkillRegistry.isSignedBuiltin("genui"), "genui is a signed builtin")
     let toolRegistry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: toolRegistry, skillRoot: root) }
     let tools = try waitFor { await toolRegistry.resolved(scope: .global) }

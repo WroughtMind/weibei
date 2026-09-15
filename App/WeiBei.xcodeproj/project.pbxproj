@@ -191,7 +191,6 @@
 		D348A95E5B126E2C1EBB5950 /* AgentComposerTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 343CB37ECF7BC6AFFA2D37D5 /* AgentComposerTextEditor.swift */; };
 		D6BA247946096A39F5229522 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 766B57114F6E85A15E7FAD69 /* main.swift */; };
 		D8B5BA6E3F2C57B1EF3FCD5C /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97A83429CDF84C7C8F761A53 /* WorkspaceStore.swift */; };
-		D96CE7E3D2D35F68B2B3431B /* genui-math.js in Resources */ = {isa = PBXBuildFile; fileRef = 810A9D2DAC83F19AD7592E1A /* genui-math.js */; };
 		DADF8C6CC9C1C7ADF547541A /* AgentCredentialProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65D2BBEF06237DE4E74042AC /* AgentCredentialProfiles.swift */; };
 		DC5601FB1DD389C85C3F5781 /* CourseRelationGraphModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02185276C9215FEAC69B14AD /* CourseRelationGraphModel.swift */; };
 		DDC76DED2BFA19180F5AF2B8 /* CourseDocumentPassage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E08D00DB025C254B8D14BA1 /* CourseDocumentPassage.swift */; };
@@ -221,6 +220,8 @@
 		FB0C839223181C545553C8C6 /* AgentModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2D56A564786A1FEE7F20A7 /* AgentModelPicker.swift */; };
 		FE6FCF3FB5EF87B9FE0050B8 /* NoteRecoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD1EC009C99E5D05C5322632 /* NoteRecoveryStore.swift */; };
 		FF3D251186B527F5FB45D6F3 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0689394113772B93619F884 /* AppDelegate.swift */; };
+		140F42A96634A9FE89C189F4 /* three.js in Resources */ = {isa = PBXBuildFile; fileRef = 1B035DA5CDBB5DD49E9DE885 /* three.js */; };
+		8AEFB6F1D755EABEF77A3B91 /* echarts-full.js in Resources */ = {isa = PBXBuildFile; fileRef = 10DA09B7D678CA3F93ED0D0A /* echarts-full.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -381,7 +382,6 @@
 		7AF269002BDFD3B79CD7A33C /* WeiBeiAgentDataPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiAgentDataPaths.swift; sourceTree = "<group>"; };
 		7EAC09AC59D2879EFE130E0F /* WorkspaceStore+CourseLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+CourseLibrary.swift"; sourceTree = "<group>"; };
 		7FEBE4390A6A8FE583C648F3 /* CourseSidebarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseSidebarModel.swift; sourceTree = "<group>"; };
-		810A9D2DAC83F19AD7592E1A /* genui-math.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "genui-math.js"; sourceTree = "<group>"; };
 		81330F2474351960F7D4B5D4 /* CourseLibraryVolatility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseLibraryVolatility.swift; sourceTree = "<group>"; };
 		82CD5F2664D21427B67643BE /* CourseWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseWorkspaceView.swift; sourceTree = "<group>"; };
 		851F281152AB3195E523BF46 /* LatestFirstSerialQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatestFirstSerialQueue.swift; sourceTree = "<group>"; };
@@ -482,6 +482,8 @@
 		FA378A62D30B6A6251AD9DA6 /* EmptyWorkspaceInspiration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyWorkspaceInspiration.swift; sourceTree = "<group>"; };
 		FA8D6B87981493A3017160C4 /* StudyAgentRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudyAgentRuntime.swift; sourceTree = "<group>"; };
 		FD7373826FAD5979B3D11A95 /* SOURCES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SOURCES.md; sourceTree = "<group>"; };
+		10DA09B7D678CA3F93ED0D0A /* echarts-full.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "echarts-full.js"; sourceTree = "<group>"; };
+		1B035DA5CDBB5DD49E9DE885 /* three.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = three.js; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -896,10 +898,11 @@
 			children = (
 				32C245CD2CC84C2F2CE3198E /* Editor */,
 				ED88B9D6F5730A4FD0467B53 /* Fonts */,
-				810A9D2DAC83F19AD7592E1A /* genui-math.js */,
 				EF4F5B2280039DF184FE8267 /* genui.css */,
 				9728A6162237E35605EC9A86 /* genui.html */,
 				24C681E3896A34D48AA1F02F /* genui.js */,
+				10DA09B7D678CA3F93ED0D0A /* echarts-full.js */,
+				1B035DA5CDBB5DD49E9DE885 /* three.js */,
 				E5F9E2996B278F1D2A9E6BB4 /* Inspiration */,
 			);
 			path = Resources;
@@ -1064,10 +1067,11 @@
 				B27EA9DA746F1D2CC4D6F834 /* Mermaid-LICENSE.txt in Resources */,
 				14907F96CC2BA5EA280F9156 /* SOURCES.md in Resources */,
 				8E2B32B3E58E4AD9A6373C6D /* ThirdPartyNotices.txt in Resources */,
-				D96CE7E3D2D35F68B2B3431B /* genui-math.js in Resources */,
 				53CC6B0B8FA7EC4B2BC2C313 /* genui.css in Resources */,
 				EB4A792333288D22548B9A85 /* genui.html in Resources */,
 				3E13BEBA9519613FC404B41E /* genui.js in Resources */,
+				8AEFB6F1D755EABEF77A3B91 /* echarts-full.js in Resources */,
+				140F42A96634A9FE89C189F4 /* three.js in Resources */,
 				BFF0F15140DDB6156E503CE3 /* landscape.png in Resources */,
 				452B038A4F23FC8F44AE7CE5 /* lanting-clear-breeze.png in Resources */,
 				E498931F372E542246CCF1E8 /* lanting-observe-kinds.png in Resources */,

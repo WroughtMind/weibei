@@ -126,7 +126,7 @@ npm ci
 | `make package` | `./script/build_and_run.sh package` |
 | `make verify` | `./script/build_and_run.sh verify`（仅 CI 独立桌面自动启动；本机使用画中画验收） |
 | `make editor-build` | `npm run build:editor` |
-| `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
+| `make genui-build` | `npm run build:genui` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)`（用法：`make perf-p95 LOG=<perf日志> METRIC=<指标名>`） |
 | `make release` | `./script/build_release_dmg.sh`（构建当前架构未公证的正式 DMG） |
 | `make clean` | `swift package clean && rm -rf dist`（保留 `node_modules` 与用户数据） |

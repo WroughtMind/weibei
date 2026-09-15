@@ -43,9 +43,17 @@ let package = Package(
                 .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftMath", package: "SwiftMath")
             ],
-            exclude: ["WebEditor", "OfficeReader"],
+            exclude: ["WebEditor", "OfficeReader", "WebGenUI"],
             resources: [
-                .process("Resources")
+                .copy("Resources/Editor"),
+                .process("Resources/Fonts"),
+                .process("Resources/Inspiration"),
+                .process("Resources/NativeChat"),
+                .process("Resources/genui.html"),
+                .process("Resources/genui.css"),
+                .process("Resources/genui.js"),
+                .process("Resources/echarts-full.js"),
+                .process("Resources/three.js")
             ],
             linkerSettings: [
                 .linkedFramework("PDFKit"),
