@@ -1,4 +1,4 @@
-// macOS: node script/check_office_graphics.mjs [office-entry.js]
+// macOS: node script/check_office_graphics.mjs [office-entry.js.deflate]
 // One offline rendering check; generated documents and the invisible WebKit host live in a temporary directory.
 import JSZip from 'jszip';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 
 const root = resolve(import.meta.dirname, '..');
 const output = await mkdtemp(join(tmpdir(), 'weibei-office-graphics-'));
-const office = resolve(process.argv[2] ?? join(root, 'Sources/WeiBei/Resources/Editor/office-entry.js'));
+const office = resolve(process.argv[2] ?? join(root, 'Sources/WeiBei/Resources/Editor/office-entry.js.deflate'));
 const ns = 'http://schemas.openxmlformats.org';
 const rel = `${ns}/officeDocument/2006/relationships`;
 const a = `${ns}/drawingml/2006/main`, c = `${ns}/drawingml/2006/chart`;
@@ -58,7 +58,9 @@ let page = Page()
 let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 900, height: 1200), styleMask: .borderless, backing: .buffered, defer: false)
 window.isReleasedWhenClosed = false; window.contentView = page.web; window.orderBack(nil)
 defer { window.orderOut(nil); window.close() }
-let source = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8).replacingOccurrences(of: "</script", with: "<\\\\/script")
+let compressed = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
+let decoded = try (compressed as NSData).decompressed(using: .zlib) as Data
+let source = String(decoding: decoded, as: UTF8.self).replacingOccurrences(of: "</script", with: "<\\\\/script")
 page.web.loadHTMLString("""
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-check' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; connect-src 'none'"><body><main id="office-document"></main><script nonce="check">\\(source)</script></body>
 """, baseURL: nil)

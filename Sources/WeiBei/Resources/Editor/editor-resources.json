@@ -147,9 +147,9 @@
       "sha256": "e7c4d6aa5fad5d614c3435cea91ba015bc1764260a6f1c000df91a3f26dfaa1b"
     },
     {
-      "name": "office-entry.js",
-      "bytes": 4017962,
-      "sha256": "5cfd33d10f499a5a817a8418b95a8afcd802e3ccccb134a600aae8ac70870b9a"
+      "name": "office-entry.js.deflate",
+      "bytes": 1442228,
+      "sha256": "74b79584930b6773fefb2ebfe885f963ce4e41eb6f7cb206988ba87fc5aaaee2"
     },
     {
       "name": "office-licenses.txt",

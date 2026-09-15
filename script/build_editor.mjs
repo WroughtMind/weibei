@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { build } from 'esbuild';
+import { deflateRawSync } from 'node:zlib';
 import { officeVendorPatches } from '../Sources/WeiBei/OfficeReader/vendor-patches.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -12,7 +13,7 @@ const check = process.argv.includes('--check');
 const output = check ? await mkdtemp(join(tmpdir(), 'weibei-editor-')) : resources;
 const generated = new Set([
   'editor-entry.js', 'viewer-entry.js', 'katex-runtime.js', 'mermaid-runtime.js',
-  'prism-runtime.js', 'selection-runtime.js', 'office-entry.js', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
+  'prism-runtime.js', 'selection-runtime.js', 'office-entry.js', 'office-entry.js.deflate', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
 ]);
 
 const bundle = (entry, outfile, editable, globalName) => build({
@@ -60,7 +61,9 @@ const [editorMeta, viewerMeta] = await Promise.all([
 ]);
 
 const officeBundle = resolve(output, 'office-entry.js');
-await writeFile(officeBundle, (await readFile(officeBundle, 'utf8')).replace(/[ \t]+$/gm, ''));
+// Foundation inflates this bundled runtime once, before WebKit loads it.
+await writeFile(`${officeBundle}.deflate`, deflateRawSync((await readFile(officeBundle, 'utf8')).replace(/[ \t]+$/gm, ''), { level: 9 }));
+await rm(officeBundle);
 
 const walk = async (directory) => (await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {
   const path = join(directory, entry.name);

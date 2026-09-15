@@ -3249,7 +3249,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
         private static let officeRuntime: String = {
             guard let url = WeiBeiResources.officeRuntimeURL,
-                  let script = try? String(contentsOf: url, encoding: .utf8) else {
+                  let compressed = try? Data(contentsOf: url),
+                  let decoded = try? (compressed as NSData).decompressed(using: .zlib),
+                  let script = String(data: decoded as Data, encoding: .utf8) else {
                 preconditionFailure("The bundled Office reader is missing")
             }
             return script.replacingOccurrences(of: "</script", with: "<\\/script")
