@@ -65,14 +65,19 @@
       "sha256": "ff7ca603e3ef24b77b570d2823757e14a8dd25a72f1f02e4e49456743beb638f"
     },
     {
-      "path": "assets/app-icon/AppIcon.icon/Assets/01-Mark.png",
-      "bytes": 1030585,
-      "sha256": "d39155ec38fb35a251e02e4cf2ebd0b9f69853a5eb5d94722a2e32f508718e82"
+      "path": "assets/app-icon/AppIcon.icon/Assets/01-Ink.png",
+      "bytes": 1020206,
+      "sha256": "b368e54facc1de38265adeb9fdd808b6b811906fafad5c5ca851297d1c2894e5"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.icon/Assets/02-Cinnabar.png",
+      "bytes": 997669,
+      "sha256": "ba949547a253dfbce5d89cfaee4fdf638e0c2419496140a3f7d784bf3a171370"
     },
     {
       "path": "assets/app-icon/AppIcon.icon/icon.json",
-      "bytes": 1052,
-      "sha256": "821a1ff6829e5557e84ab06e155d00955094831c8d7e579294535a29acd49bd3"
+      "bytes": 1616,
+      "sha256": "b2dc9c15b148e4a9884bce3d1591d0cc985bae28b8c186cf19ab79bbd3aba4f7"
     },
     {
       "path": "assets/app-icon/AppIcon.iconset/icon_128x128.png",
