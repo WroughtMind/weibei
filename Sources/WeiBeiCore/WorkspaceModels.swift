@@ -39,6 +39,13 @@ public enum StudyItemKind: String, Codable, CaseIterable, Identifiable, Sendable
     case pdf
     case markdown
     case text
+    case docx
+    case pptx
+
+    public var isOffice: Bool { self == .docx || self == .pptx }
+    public var isWebDocument: Bool { self == .html || isOffice }
+
+    public static let materialExtensions = Set(["pdf", "html", "htm", "md", "markdown", "txt", "text", "docx", "pptx"])
 
     public var id: String { rawValue }
 
@@ -52,6 +59,10 @@ public enum StudyItemKind: String, Codable, CaseIterable, Identifiable, Sendable
             return "Markdown"
         case .text:
             return language.text("文本", "Text")
+        case .docx:
+            return "Word"
+        case .pptx:
+            return "PPT"
         }
     }
 
@@ -61,6 +72,8 @@ public enum StudyItemKind: String, Codable, CaseIterable, Identifiable, Sendable
         case .pdf: "doc.richtext"
         case .markdown: "note.text"
         case .text: "doc.text"
+        case .docx: "doc.richtext"
+        case .pptx: "rectangle.on.rectangle"
         }
     }
 
@@ -72,6 +85,10 @@ public enum StudyItemKind: String, Codable, CaseIterable, Identifiable, Sendable
             return .pdf
         case "md", "markdown":
             return .markdown
+        case "docx":
+            return .docx
+        case "pptx":
+            return .pptx
         default:
             return .text
         }
@@ -314,7 +331,7 @@ public enum SourceReferenceTitle {
 
         var sectionLocationID: String?
         if let range = text.range(
-            of: #"(?:，章节标识：\s*[A-Za-z0-9-]+|,\s*section\s*(?:id|identifier):?\s*[A-Za-z0-9-]+)$"#,
+            of: #"(?:，章节标识：\s*[A-Za-z0-9._/#%+-]+|,\s*section\s*(?:id|identifier):?\s*[A-Za-z0-9._/#%+-]+)$"#,
             options: [.regularExpression, .caseInsensitive]
         ) {
             let suffix = String(text[range])

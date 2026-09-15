@@ -284,7 +284,9 @@ struct ReaderView: View {
             VStack(spacing: 0) {
                 readerBody
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Collapsed split hosts have zero width; retain the last measured reader viewport.
+            .frame(width: availableWidth)
+            .frame(maxHeight: .infinity)
             .opacity(railOnly ? 0 : 1)
             .allowsHitTesting(!railOnly)
 
@@ -337,18 +339,22 @@ struct ReaderView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            if store.selectedMaterialItem?.kind == .html, !htmlResourceIssues.isEmpty {
+            if store.selectedMaterialItem?.kind.isWebDocument == true, !htmlResourceIssues.isEmpty {
                 Button { htmlIssueDetailsPresented.toggle() } label: {
                     Circle().fill(.orange).frame(width: 7, height: 7)
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(store.ui("部分网页资源未能带入", "Some webpage resources could not be imported"))
-                .help(store.ui("部分图片、排版或交互未能加载，正文已导入。", "Some images, styles or interactions are unavailable. The document was imported."))
+                .accessibilityLabel(store.selectedMaterialItem?.kind.isOffice == true ? store.ui("原文位置已变化", "Source location changed") : store.ui("部分网页资源未能带入", "Some webpage resources could not be imported"))
+                .help(store.selectedMaterialItem?.kind.isOffice == true ? htmlResourceIssues.joined(separator: "\n") : store.ui("部分图片、排版或交互未能加载，正文已导入。", "Some images, styles or interactions are unavailable. The document was imported."))
                 .popover(isPresented: $htmlIssueDetailsPresented) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(store.ui("部分网页资源未能带入", "Some webpage resources could not be imported")).font(.headline)
-                        Text(store.ui("正文已保存。以下配套文件未能读取，部分排版、图片或交互可能不完整：", "The document is saved. These supporting files could not be read, so some styles, images or interactions may be incomplete:"))
+                        if store.selectedMaterialItem?.kind.isOffice == true {
+                            Text(store.ui("原文位置已变化", "Source location changed")).font(.headline)
+                        } else {
+                            Text(store.ui("部分网页资源未能带入", "Some webpage resources could not be imported")).font(.headline)
+                            Text(store.ui("正文已保存。以下配套文件未能读取，部分排版、图片或交互可能不完整：", "The document is saved. These supporting files could not be read, so some styles, images or interactions may be incomplete:"))
+                        }
                         Text(htmlResourceIssues.prefix(12).joined(separator: "\n")).font(.caption)
                     }
                     .lineLimit(nil)
@@ -363,7 +369,7 @@ struct ReaderView: View {
             htmlIssueDetailsPresented = false
             adaptsHTMLColors = false
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         // Width/height probe as background sibling — never parent of WKWebView/PDFView.
         .background {
             GeometryReader { geo in
@@ -467,7 +473,11 @@ struct ReaderView: View {
                     "text": thread.selectionText,
                 ]
                 if let anchor = thread.documentAnchor?.text {
-                    mark["anchor"] = ["startOffset": anchor.startOffset, "endOffset": anchor.endOffset]
+                    var values: [String: Any] = ["startOffset": anchor.startOffset, "endOffset": anchor.endOffset]
+                    if let location = anchor.location { values["location"] = location }
+                    if let revision = anchor.revision { values["revision"] = revision }
+                    if let order = anchor.sourceOrder { values["sourceOrder"] = order }
+                    mark["anchor"] = values
                 }
                 return mark
             }
@@ -487,7 +497,7 @@ struct ReaderView: View {
             return
         }
         let displayTitle = store.displayTitle(for: item)
-        if item.kind == .html {
+        if item.kind.isWebDocument {
             if store.readerLocationTitle == nil {
                 store.updateReaderLocationTitle(displayTitle)
             }
@@ -505,14 +515,14 @@ struct ReaderView: View {
 
     private var supportsContentRail: Bool {
         guard let kind = store.selectedMaterialItem?.kind else { return false }
-        return kind == .pdf || kind == .html
+        return kind == .pdf || kind.isWebDocument
     }
 
     private var contentRailItems: [ContentRailItem] {
         switch store.selectedMaterialItem?.kind {
         case .pdf:
             return pdfContentRailItems
-        case .html:
+        case .html, .docx, .pptx:
             return htmlContentRailItems
         default:
             return []
@@ -523,7 +533,7 @@ struct ReaderView: View {
         switch store.selectedMaterialItem?.kind {
         case .pdf:
             return Self.pdfContentRailID(pageIndex: pdfPageIndex)
-        case .html:
+        case .html, .docx, .pptx:
             return htmlContentRailActiveID
         default:
             return nil
@@ -556,7 +566,7 @@ struct ReaderView: View {
                 pdfRailTargetPageIndex = pageIndex
                 schedulePDFLocationCommit(pageIndex)
             }
-        case .html:
+        case .html, .docx, .pptx:
             htmlContentRailTarget = WebReaderContentRailTarget(id: item.id)
         default:
             break
@@ -634,6 +644,9 @@ struct ReaderView: View {
     }
 
     private func applyHTMLContentRailActiveID(_ change: WebReaderContentRailActiveChange) {
+        // Every new position supersedes pending scroll work, even if its ID is unchanged.
+        pendingHTMLContentRailActiveCommit?.cancel()
+        pendingHTMLContentRailActiveCommit = nil
         let id = change.id
         // Jump must update the rail highlight immediately. Scroll updates are
         // coalesced so fast section crossings do not re-enter WebReader updateNSView.
@@ -655,7 +668,6 @@ struct ReaderView: View {
 
     private func scheduleHTMLContentRailActiveID(_ id: String?) {
         guard htmlContentRailActiveID != id else { return }
-        pendingHTMLContentRailActiveCommit?.cancel()
         pendingHTMLContentRailActiveCommit = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 120_000_000)
             guard !Task.isCancelled else { return }
@@ -697,8 +709,14 @@ struct ReaderView: View {
     }
 
     private func applyPendingHTMLLocationIfReady() {
-        guard store.selectedMaterialItem?.kind == .html,
+        guard store.selectedMaterialItem?.kind.isWebDocument == true,
               !htmlContentRailItems.isEmpty else { return }
+        if store.selectedMaterialItem?.kind.isOffice == true, let id = store.readerTargetLocationID {
+            let requestID = store.readerTargetLocationRequestID
+            guard htmlContentRailTarget?.requestID != requestID else { return }
+            htmlContentRailTarget = WebReaderContentRailTarget(id: id, requestID: requestID)
+            return
+        }
         let targetID: String?
         if let savedID = store.readerTargetLocationID,
            let savedSection = htmlContentRailItems.first(where: { $0.id == savedID }),
@@ -748,7 +766,7 @@ struct ReaderView: View {
         if supportsImportedDocumentColorAdaptation {
             Button {
                 withAnimation(WeiBeiMotion.appearance) {
-                    if store.selectedMaterialItem?.kind == .html {
+                    if store.selectedMaterialItem?.kind.isWebDocument == true {
                         adaptsHTMLColors.toggle()
                     } else {
                         store.toggleImportedDocumentColorAdaptation()
@@ -1092,13 +1110,14 @@ struct ReaderView: View {
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
                 }
-            case .html:
+            case .html, .docx, .pptx:
                 if let url = item.url {
                     WebReaderRepresentable(
                         url: url,
+                        contentRevision: item.contentRevision,
                         searchQuery: store.effectiveReaderSearch,
                         appearanceMode: store.appearanceMode,
-                        adaptsDocumentColors: adaptsHTMLColors,
+                        adaptsDocumentColors: item.kind.isOffice ? false : adaptsHTMLColors,
                         onResourceIssuesChange: { htmlResourceIssues = $0 },
                         contentRailTarget: htmlContentRailTarget,
                         selectionAskMarks: selectionAskMarksJSON(for: item.id),
@@ -2424,7 +2443,7 @@ final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler {
                 let data = try CourseProjectFileWorker.readBoundedRegularFile(
                     at: fileURL,
                     inside: root,
-                    maximumByteCount: CourseProjectFileWorker.markdownMaximumByteCount
+                    maximumByteCount: StudyItemKind.detect(from: fileURL).isOffice ? OfficeDocumentText.maximumFileBytes : CourseProjectFileWorker.markdownMaximumByteCount
                 )
                 let response = URLResponse(
                     url: requestURL,
@@ -2508,6 +2527,7 @@ final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler {
 struct WebReaderRepresentable: ReaderRepresentable {
     var html: String?
     var url: URL?
+    var contentRevision: UInt64 = 0
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
@@ -2525,6 +2545,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     private static let scriptMessageNames = [
         "htmlResourceIssues",
+        "officeReady",
+        "officeSourceChanged",
         "selection",
         "selectionAskMark",
         "remarkMark",
@@ -2563,6 +2585,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     init(
         url: URL,
+        contentRevision: UInt64 = 0,
         searchQuery: String = "",
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = false,
@@ -2579,6 +2602,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.html = nil
         self.onResourceIssuesChange = onResourceIssuesChange
         self.url = url
+        self.contentRevision = contentRevision
         self.searchQuery = searchQuery
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
@@ -2706,11 +2730,13 @@ struct WebReaderRepresentable: ReaderRepresentable {
             view.evaluateJavaScript(Self.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors))
         }
         if let url {
-            let signature = "file:\(url.path)"
+            let office = StudyItemKind.detect(from: url).isOffice
+            let signature = "file:\(url.path)" + (office ? ":\(contentRevision)" : "")
             if context.coordinator.loadedSignature != signature {
                 context.coordinator.loadedSignature = signature
                 context.coordinator.lastAppliedSelectionAskMarks = ""
-                context.coordinator.loadUTF8HTML(at: url, signature: signature, into: view)
+                if office { context.coordinator.loadOffice(at: url, revision: contentRevision, into: view) }
+                else { context.coordinator.loadUTF8HTML(at: url, signature: signature, into: view) }
             } else {
                 context.coordinator.scheduleSearchAndMarksApply(in: view)
             }
@@ -2752,7 +2778,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     static let selectionScript = """
     (() => {
-      let frame = 0;
+      let selectionReportTimer = 0;
+      let selectionEndTimer = 0;
       let lastPayload = { text: "", x: null, y: null };
       // Scroll must not stream selection → WorkspaceStore. Sample 2026-08-01:
       // selectionchange during HTML scroll published selectionAnchor and froze
@@ -2769,8 +2796,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
       }
 
       function reportSelection() {
-        window.cancelAnimationFrame(frame);
-        frame = window.requestAnimationFrame(() => {
+        window.clearTimeout(selectionReportTimer);
+        // Selection is application state; background readers may suspend animation frames.
+        selectionReportTimer = window.setTimeout(() => {
           if (window.weiBeiSuppressSelectionReport) return;
           if (Date.now() < scrollQuietUntil) return;
           const selection = window.getSelection();
@@ -2792,20 +2820,26 @@ struct WebReaderRepresentable: ReaderRepresentable {
           }
           lastPayload = payload;
           window.webkit.messageHandlers.selection.postMessage(payload);
-        });
+        }, 16);
+      }
+
+      function reportFinishedSelection() {
+        window.clearTimeout(selectionEndTimer);
+        selectionEndTimer = window.setTimeout(reportSelection, Math.max(0, scrollQuietUntil - Date.now()) + 1);
       }
 
       document.addEventListener("selectionchange", reportSelection);
       document.addEventListener("pointerdown", () => {
         if (window.weiBeiSuppressSelectionReport) return;
-        window.cancelAnimationFrame(frame);
+        window.clearTimeout(selectionReportTimer);
+        window.clearTimeout(selectionEndTimer);
         lastPayload = { text: "", x: null, y: null };
         window.webkit.messageHandlers.selection.postMessage(lastPayload);
       }, true);
-      document.addEventListener("pointerup", reportSelection);
-      document.addEventListener("mouseup", reportSelection);
-      document.addEventListener("keyup", reportSelection);
-      document.addEventListener("touchend", reportSelection);
+      document.addEventListener("pointerup", reportFinishedSelection);
+      document.addEventListener("mouseup", reportFinishedSelection);
+      document.addEventListener("keyup", reportFinishedSelection);
+      document.addEventListener("touchend", reportFinishedSelection);
       window.addEventListener("wheel", markScrollQuiet, { passive: true });
       window.addEventListener("scroll", markScrollQuiet, { passive: true });
       window.addEventListener("touchmove", markScrollQuiet, { passive: true });
@@ -3213,8 +3247,42 @@ struct WebReaderRepresentable: ReaderRepresentable {
             self.onSelectionAskMark = onSelectionAskMark
         }
 
+        private static let officeRuntime: String = {
+            guard let url = WeiBeiResources.officeRuntimeURL,
+                  let compressed = try? Data(contentsOf: url),
+                  let decoded = try? (compressed as NSData).decompressed(using: .zlib),
+                  let script = String(data: decoded as Data, encoding: .utf8) else {
+                preconditionFailure("The bundled Office reader is missing")
+            }
+            return script.replacingOccurrences(of: "</script", with: "<\\/script")
+        }()
+
+        @MainActor
+        func loadOffice(at url: URL, revision: UInt64, into view: WKWebView) {
+            isOfficeDocument = true
+            view.stopLoading()
+            cancelHTMLLoad()
+            guard let baseURL = htmlResourceSchemeHandler.activate(rootDirectory: url.deletingLastPathComponent()) else {
+                view.loadHTMLString("<p>无法访问这份文档，请确认文件仍在课程目录中。</p>", baseURL: nil)
+                return
+            }
+            let fileURL = baseURL.appendingPathComponent(url.lastPathComponent)
+            let nonce = UUID().uuidString
+            let html = """
+            <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-\(nonce)' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src weibeihtml:; base-uri 'none'; frame-src 'none'">
+            <style>html,body{margin:0;padding:0}body{font:15px/1.7 -apple-system}#office-document{padding:16px;box-sizing:border-box;min-height:100vh}.docx-wrapper{padding:0!important;background:transparent!important}.docx-wrapper>section.docx{margin-bottom:16px;box-shadow:none!important}aside[data-note-part]{padding:16px 20px;max-width:100%;box-sizing:border-box;background:white;color:#222;overflow-wrap:anywhere}math{font-family:"Cambria Math","STIX Two Math",serif}a{color:#91261b}</style>
+            </head><body data-weibei-revision="\(revision)"><main id="office-document"><p role="status">正在读取文档…</p></main>
+            <script nonce="\(nonce)">\(Self.officeRuntime)</script>
+            <script nonce="\(nonce)">window.WeiBeiOffice.open(\(Self.json(fileURL.absoluteString)),\(Self.json(url.pathExtension.lowercased())));</script>
+            </body></html>
+            """
+            view.loadHTMLString(html, baseURL: baseURL)
+        }
+
         @MainActor
         func loadUTF8HTML(at url: URL, signature: String, into view: WKWebView) {
+            isOfficeDocument = false
             view.stopLoading()
             cancelHTMLLoad()
             let requestID = UUID()
@@ -3287,8 +3355,17 @@ struct WebReaderRepresentable: ReaderRepresentable {
             }
         }
 
+        private var isOfficeDocument = false
+
         func applySelectionMarksIfNeeded() {
             guard let webView else { return }
+            if isOfficeDocument {
+                guard selectionAskMarks != lastAppliedSelectionAskMarks || selectionRemarkMarks != lastAppliedSelectionRemarkMarks else { return }
+                lastAppliedSelectionAskMarks = selectionAskMarks
+                lastAppliedSelectionRemarkMarks = selectionRemarkMarks
+                webView.evaluateJavaScript("window.WeiBeiOffice?.applyMarks(\(selectionAskMarks), \(selectionRemarkMarks));")
+                return
+            }
             if selectionAskMarks != lastAppliedSelectionAskMarks {
                 lastAppliedSelectionAskMarks = selectionAskMarks
                 webView.evaluateJavaScript("window.WeiBeiSelectionAskMarks && window.WeiBeiSelectionAskMarks.apply(\(selectionAskMarks));", completionHandler: nil)
@@ -3317,6 +3394,22 @@ struct WebReaderRepresentable: ReaderRepresentable {
                let recordID = body["recordId"] as? String, !recordID.isEmpty {
                 let anchor = Self.anchor(from: body["rect"] as? [String: Any] ?? [:], in: webView)
                 Task { @MainActor in self.onSelectionRemarkMark(recordID, anchor) }
+                return
+            }
+
+            if message.name == "officeSourceChanged" {
+                onResourceIssuesChange(["原文已更新，这条摘录的原位置需要重新确认。摘录内容仍保留在笔记中。"])
+                return
+            }
+            if message.name == "officeReady" {
+                lastAppliedSelectionAskMarks = ""
+                lastAppliedSelectionRemarkMarks = ""
+                if (message.body as? [String: Any])?["loaded"] as? Bool == true {
+                    lastAppliedSearchQuery = ""
+                    lastAppliedContentRailTargetRequestID = nil
+                    if let webView { applySearch(in: webView); applyContentRailTarget(in: webView) }
+                }
+                applySelectionMarksIfNeeded()
                 return
             }
 
@@ -3406,9 +3499,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
                 x: null,
                 y: null
               });
-              if (!query) return false;
+              if (!query) { window.WeiBeiOffice?.find(""); return false; }
               window.weiBeiSuppressSelectionReport = true;
-              const found = window.find(query, false, false, true, false, true, false);
+              const found = window.WeiBeiOffice ? window.WeiBeiOffice.find(query) : window.find(query, false, false, true, false, true, false);
               window.setTimeout(() => { window.weiBeiSuppressSelectionReport = false; }, 80);
               return found;
             })();
