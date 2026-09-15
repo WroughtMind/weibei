@@ -5,6 +5,42 @@ import XCTest
 
 final class AgentVisualizationSizingTests: XCTestCase {
     @MainActor
+    func testGenUICardsInRowsKeepChartWidth() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let spec = #"""
+        {"items":[
+          {"type":"row","items":[
+            {"type":"card","title":"材料数量","items":[{"type":"chart","kind":"bars","horizontal":true,"data":[{"label":"教材","value":3},{"label":"论文","value":20},{"label":"笔记","value":7}]}]},
+            {"type":"card","title":"阅读路径","items":[{"type":"steps","steps":[{"title":"阅读"},{"title":"整理"},{"title":"讨论"}]}]}
+          ]},
+          {"type":"card","title":"材料清单","items":[{"type":"table","columns":["材料","数量"],"rows":[["教材",3],["论文",20],["笔记",7]]}]}
+        ]}
+        """#
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec)})")
+        for width in [420, 960] {
+            webView.frame.size.width = CGFloat(width)
+            let result = try await webView.evaluateJavaScript("""
+            (() => {
+              const chart = document.querySelector('[data-genui-chart]');
+              const group = chart.parentElement, row = group.parentElement;
+              const bars = [...chart.querySelectorAll('[style*="width:"]')].map(e => e.getBoundingClientRect().width);
+              return {
+                chartWidth: chart.getBoundingClientRect().width, rowWidth: row.getBoundingClientRect().width,
+                minBar: Math.min(...bars), maxBar: Math.max(...bars)};
+            })()
+            """) as? [String: Any]
+            let chartWidth = try XCTUnwrap(result?["chartWidth"] as? Double)
+            let rowWidth = try XCTUnwrap(result?["rowWidth"] as? Double)
+            XCTAssertGreaterThan(chartWidth / rowWidth, width == 420 ? 0.85 : 0.4)
+            let minBar = try XCTUnwrap(result?["minBar"] as? Double)
+            let maxBar = try XCTUnwrap(result?["maxBar"] as? Double)
+            XCTAssertGreaterThan(minBar, 0)
+            XCTAssertEqual(maxBar / minBar, 20.0 / 3, accuracy: 0.1)
+        }
+        withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
     func testGenUIAllowsBundledProgramButBlocksOtherInlineScripts() async throws {
         let (webView, navigationProbe) = try await loadGenUI()
         let blocked = try await webView.evaluateJavaScript("""
