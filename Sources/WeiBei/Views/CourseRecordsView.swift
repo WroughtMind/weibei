@@ -409,6 +409,8 @@ private struct LearningMemoryEditSheet: View {
 
             TextEditor(text: $text)
                 .weiBeiText(13)
+                .foregroundColor(WeiBeiTheme.ink)
+                .scrollContentBackground(.hidden)
                 .frame(minHeight: 110)
                 .padding(8)
                 .background(WeiBeiTheme.paperInset.opacity(0.45))
@@ -434,5 +436,7 @@ private struct LearningMemoryEditSheet: View {
         }
         .padding(22)
         .frame(width: 460)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .background(WeiBeiTheme.paper)
     }
 }
