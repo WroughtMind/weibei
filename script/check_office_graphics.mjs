@@ -22,14 +22,15 @@ const emf = Buffer.alloc(108);
 const zip = new JSZip();
 zip.file('[Content_Types].xml', `<Types xmlns="${ns}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="emf" ContentType="image/x-emf"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`);
 zip.file('_rels/.rels', relationships([['office', 'officeDocument', 'word/document.xml']]));
-zip.file('word/_rels/document.xml.rels', relationships([['flat', 'chart', 'charts/chart1.xml'], ['deep', 'chart', 'charts/chart2.xml'], ['diagram', 'diagramData', 'diagrams/data7.xml'], ['drawing', 'diagramDrawing', 'diagrams/drawing42.xml'], ['emf', 'image', 'media/rectangle.emf']]));
+zip.file('word/_rels/document.xml.rels', relationships([['flat', 'chart', 'charts/chart1.xml'], ['deep', 'chart', 'charts/chart2.xml'], ['pie', 'chart', 'charts/chart3.xml'], ['diagram', 'diagramData', 'diagrams/data7.xml'], ['drawing', 'diagramDrawing', 'diagrams/drawing42.xml'], ['emf', 'image', 'media/rectangle.emf']]));
 zip.file('word/charts/chart1.xml', chart(false, 0));
+zip.file('word/charts/chart3.xml', chart(true, 35).replaceAll('bar3DChart', 'pie3DChart').replace(/<c:barDir[^>]*\/>|<c:grouping[^>]*\/>/g, ''));
 zip.file('word/diagrams/data7.xml', `<dgm:dataModel xmlns:dgm="${ns}/drawingml/2006/diagram" xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram"><dgm:extLst><dgm:ext uri="test"><dsp:dataModelExt relId="drawing"/></dgm:ext></dgm:extLst></dgm:dataModel>`);
 zip.file('word/diagrams/drawing42.xml', `<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="${a}" xmlns:r="${rel}"><dsp:spTree><dsp:grpSpPr/><dsp:sp><dsp:nvSpPr><dsp:cNvPr id="1" name="图片示意图"/><dsp:cNvSpPr/></dsp:nvSpPr><dsp:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="ellipse"/><a:blipFill><a:blip r:embed="photo"/><a:stretch><a:fillRect/></a:stretch></a:blipFill></dsp:spPr><dsp:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>图中文字</a:t></a:r></a:p></dsp:txBody></dsp:sp></dsp:spTree></dsp:drawing>`);
 zip.file('word/diagrams/_rels/drawing42.xml.rels', relationships([['photo', 'image', '../media/pixel.png']]));
 zip.file('word/media/pixel.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
 zip.file('word/media/rectangle.emf', Buffer.concat([emf, ...records]));
-zip.file('word/document.xml', `<w:document xmlns:w="${ns}/wordprocessingml/2006/main" xmlns:wp="${ns}/drawingml/2006/wordprocessingDrawing" xmlns:a="${a}" xmlns:c="${c}" xmlns:r="${rel}" xmlns:dgm="${ns}/drawingml/2006/diagram" xmlns:m="${ns}/officeDocument/2006/math" xmlns:pic="${ns}/drawingml/2006/picture"><w:body><w:p><w:r><w:t>图形回归检查</w:t></w:r></w:p>${graphic(c, '<c:chart r:id="flat"/>')}${graphic(c, '<c:chart r:id="deep"/>')}${graphic(`${ns}/drawingml/2006/diagram`, '<dgm:relIds r:dm="diagram"/>', 914400, 914400)}<w:p><m:oMath><m:r><m:rPr><m:scr m:val="double-struck"/></m:rPr><m:t>R</m:t></m:r></m:oMath></w:p>${graphic(`${ns}/drawingml/2006/picture`, '<pic:pic><pic:blipFill><a:blip r:embed="emf"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic>', 914400, 914400)}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`);
+zip.file('word/document.xml', `<w:document xmlns:w="${ns}/wordprocessingml/2006/main" xmlns:wp="${ns}/drawingml/2006/wordprocessingDrawing" xmlns:a="${a}" xmlns:c="${c}" xmlns:r="${rel}" xmlns:dgm="${ns}/drawingml/2006/diagram" xmlns:m="${ns}/officeDocument/2006/math" xmlns:pic="${ns}/drawingml/2006/picture"><w:body><w:p><w:r><w:t>图形回归检查</w:t></w:r></w:p>${graphic(c, '<c:chart r:id="flat"/>')}${graphic(c, '<c:chart r:id="deep"/>')}${graphic(c, '<c:chart r:id="pie"/>')}${graphic(`${ns}/drawingml/2006/diagram`, '<dgm:relIds r:dm="diagram"/>', 914400, 914400)}<w:p><m:oMath><m:r><m:rPr><m:scr m:val="double-struck"/></m:rPr><m:t>R</m:t></m:r></m:oMath></w:p>${graphic(`${ns}/drawingml/2006/picture`, '<pic:pic><pic:blipFill><a:blip r:embed="emf"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic>', 914400, 914400)}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`);
 try {
   for (const angle of [20, 65]) {
     zip.file('word/charts/chart2.xml', chart(true, angle));
@@ -72,9 +73,13 @@ for path in CommandLine.arguments.dropFirst(2) {
     const assert = (ok, why) => { if (!ok) throw Error(why); };
     await WeiBeiOffice.open(Uint8Array.from(atob(bytes), c=>c.charCodeAt(0)).buffer, 'docx');
     assert(!WeiBeiOffice.error, WeiBeiOffice.error);
-    const charts = [...document.querySelectorAll('canvas')];
-    assert(charts.length === 2, 'Word must render both native charts');
-    const signatures = charts.map(canvas => {
+    const charts = [...document.querySelectorAll('canvas, img')].slice(0, 3);
+    assert(charts.length === 3, 'Word must render the native 2D, 3D bar and 3D pie charts');
+    const signatures = charts.map(chart => {
+      const canvas = document.createElement('canvas');
+      canvas.width = chart instanceof HTMLImageElement ? chart.naturalWidth : chart.width;
+      canvas.height = chart instanceof HTMLImageElement ? chart.naturalHeight : chart.height;
+      canvas.getContext('2d').drawImage(chart, 0, 0);
       const rgba = canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
       let colored = 0, hash = 2166136261;
       for(let i=0;i<rgba.length;i+=4) { if(rgba[i+3] && Math.max(rgba[i],rgba[i+1],rgba[i+2])-Math.min(rgba[i],rgba[i+1],rgba[i+2])>30) colored++; hash=Math.imul(hash^rgba[i],16777619); }
@@ -93,7 +98,7 @@ for path in CommandLine.arguments.dropFirst(2) {
   hashes.append(hash)
 }
 require(hashes.count == 2 && hashes[0] != hashes[1], "saved 3D rotation must change rendered geometry")
-print("Office graphics: native Word charts, 3D rotation, diagram image/text, math alphabet and EMF passed")
+print("Office graphics: native Word charts, 3D bar/pie images and rotation, diagram image/text, math alphabet and EMF passed")
 `);
   execFileSync('xcrun', ['swiftc', join(output, 'check.swift'), '-o', join(output, 'check')], { stdio: 'inherit' });
   execFileSync(join(output, 'check'), [office, join(output, '20.docx'), join(output, '65.docx')], { stdio: 'inherit', timeout: 120000 });

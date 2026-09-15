@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { build } from 'esbuild';
-import { deflateRawSync } from 'node:zlib';
+import pako from 'pako';
 import { officeVendorPatches } from '../Sources/WeiBei/OfficeReader/vendor-patches.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -61,8 +61,9 @@ const [editorMeta, viewerMeta] = await Promise.all([
 ]);
 
 const officeBundle = resolve(output, 'office-entry.js');
+// Use the existing pinned JSZip compressor for identical bytes across build hosts.
 // Foundation inflates this bundled runtime once, before WebKit loads it.
-await writeFile(`${officeBundle}.deflate`, deflateRawSync((await readFile(officeBundle, 'utf8')).replace(/[ \t]+$/gm, ''), { level: 9 }));
+await writeFile(`${officeBundle}.deflate`, pako.deflateRaw((await readFile(officeBundle, 'utf8')).replace(/[ \t]+$/gm, ''), { level: 9 }));
 await rm(officeBundle);
 
 const walk = async (directory) => (await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {

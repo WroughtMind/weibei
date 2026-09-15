@@ -157,8 +157,13 @@ export function render3DChart(path: string, size: { w: number; h: number }) {
   const canvas = document.createElement('canvas');
   const scale = Math.min(2, Math.sqrt(8 * 1024 * 1024 / (size.w * size.h)));
   canvas.width = Math.ceil(size.w * scale); canvas.height = Math.ceil(size.h * scale);
-  canvas.style.width = `${size.w}px`; canvas.style.height = `${size.h}px`;
   const context = canvas.getContext('2d')!; context.scale(scale, scale);
   if (!threeD.render(context, charts3D.get(path)!, { x: 0, y: 0, w: size.w, h: size.h }, 96 / 72)) throw new Error('三维图表未能完整显示');
-  return canvas;
+  // A static chart belongs to the document image cache, not a retained drawing surface.
+  const image = new Image();
+  image.alt = '三维图表';
+  image.style.width = `${size.w}px`; image.style.height = `${size.h}px`;
+  image.src = canvas.toDataURL('image/png');
+  canvas.width = canvas.height = 0;
+  return image;
 }
