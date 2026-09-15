@@ -3,6 +3,8 @@
 
 本技能只说明界面组件的规格和呈现方式。Webi 的身份、交流方式、回答长短、材料检索、引用、学习记忆和笔记写入继续遵循系统契约与现有工具。界面文案跟随用户要求的语言，字段名、组件类型、id 和 action 保持原样。是否使用组件取决于它能否帮助回答当前问题，不按回答行数或组件数量强制使用。
 
+围绕当前阅读、整理或讨论选择组件。只有用户明确要求练习、自测或探索参数变化时，才安排题目、判分或调参控件；不要把解释自动改成做题，不编造学习进度和掌握程度。
+
 ## 调用方式
 
 调用 `render_ui` 将组件插入当前回答，参数包含稳定的 `id` 和完整组件树 `spec`；spec 必须含 items，可选 title 和 gap。下文 JSON 示例都是工具参数，不作为回答正文输出。文字可以自然穿插在工具调用前后。
@@ -10,7 +12,7 @@
 调用 `render_ui`，参数示例：
 
 ```json
-{"id":"comparison","spec":{"title":"方案对比","gap":14,"items":[{"type":"table","columns":["方案","特点"],"rows":[["方案一","即时查看"],["方案二","可交互筛选"]]}]}}
+{"id":"concept-comparison","spec":{"title":"观点与证据","items":[{"type":"table","columns":["区别","观点","证据"],"rows":[["作用","说明作者的判断","支撑判断的事实或资料"],["例子","这本书适合入门","前两章使用了生活中的例子"]]}]}}
 ```
 
 - 同一条回答中用相同 id 更新原界面，用不同 id 插入另一块界面；id 只使用小写字母、数字和连字符。
@@ -30,7 +32,7 @@
 - text: `{"type":"text","size":"h1|h2|h3|body|muted|caption","content":"...","center":true?}`
 - row / col: `{"type":"row"|"col","items":[...],"wrap":true?,"spacer":true?,"gap":n?}`
 - grid: `{"type":"grid","cols":n,"items":[...]}`
-- hero: `{"type":"hero","title":"...","subtitle":"...","value":"99.96%","label":"可用率","delta":"+0.02%","spark":[...],"tone":"accent|success|warning|danger"}` — **封面块**：eyebrow + 超大数字（52px，带入场计数）+ 标题 + 副标题 + tone 渐变底色。**一条回答最多用一个**，放在最前面当视觉锚点
+- hero: `{"type":"hero","title":"...","subtitle":"...","value":"99.96%","label":"可用率","delta":"+0.02%","spark":[...],"tone":"accent|success|warning|danger"}` — **封面块**：eyebrow + 突出数字（字号跟随魏碑主题，带入场计数）+ 标题 + 副标题 + tone 渐变底色。**一条回答最多用一个**，放在最前面当视觉锚点
 - span: 任意节点都可加 `"span":2`（grid 子节点占几列）——bento 排版的唯一原语：一张 `span:2` 宽卡配一张窄卡，比一列方块堆下去好看得多
 - card: `{"type":"card","title":"...","items":[...]}`；`"accent":"#f59e0b"` 指定强调色（边框 + 标题 + 极淡底色）
 - palette: `chart` / `echart` 都支持 `"palette":["#ff8800","#3ecf8e"]` 覆盖分类色板（默认跟随宿主主题）。**只有语义上需要指定颜色时才写**（成本=红、收益=绿），否则跟随主题更稳；`"tone":"info|success|warning|danger"` 给卡片底色（用于结论卡/风险卡）
@@ -64,7 +66,7 @@
 **full option 模式**：传 `"option":{...}` 直接写 ECharts 原生配置（支持 dataZoom/visualMap/radar/gauge/heatmap 等所有图表类型），option 中的函数会被过滤（只接受数据）。选择原则：**chart 轻量（无需加载额外引擎）适合 ≤8 点的快速对比；echart 视觉更丰富（渐变、tooltip、图例交互、dataZoom），引擎随魏碑安装并按需加载，多序列/大屏/交互场景优先**
 
 ### 交互
-**本地优先（v2.6）**：UI 自己能做的状态变化——判卷、判题、重置、展开、选中——一律本地即时完成，**零模型往返**。action 只用于必须模型参与的事（生成新内容、执行工具、下一步建议）。**需要模型处理的操作才设置 action；按钮需要 action 才能触发。本地选择、筛选和展开无需逐次请求模型。**
+**本地优先（v2.6）**：UI 自己能做的状态变化——排序、筛选、展开、选中、重置——一律本地即时完成，**零模型往返**。action 只用于必须模型参与的事（生成新内容、执行工具、下一步建议）。**需要模型处理的操作才设置 action；按钮需要 action 才能触发。本地选择、筛选和展开无需逐次请求模型。**
 - button: `{"type":"button","label":"...","tone":"primary|danger|success|ghost","full":true?,"small":true?,"icon":"emoji?","action":"refresh"?}`
 - **秘密禁令**：不得索取或生成密码、API Key、访问令牌、恢复码等秘密输入；遇到此类需求直接拒绝并解释
 - input: `{"type":"input","label":"...","placeholder":"...","inputType":"text|email|color","value":"...","action":"name"?,"id":"field-id"?}` — `color` 使用浏览器原生取色器，值使用 `#RRGGBB`；action 在失焦**和回车**时触发（回车带 `submit:true`）；**blur 仅值有变化才发送**（聚焦又离开不产生空往返）；payload 带 `id` 帮模型定位字段；带 `id` 的值刷新后保留、并被 submit 收集进 `fields`
@@ -73,16 +75,16 @@
 - slider: `{"type":"slider","label":"...","min":0,"max":100,"step":1,"value":n?,"action":"name"?,"id":"field-id"?}` — 数值表单滑块：实时显示数值；带 `id` 跨刷新保留并进 submit 的 `fields`（拖拽经防抖合并成一次 action）
 - radio: `{"type":"radio","label":"...","options":["...","..."],"selected":n?,"action":"pick"?}` — 单选；**加 `"group":"题目名"` 进入聚合模式**：选择只本地记录、不发往返；**加 `"answer":正确下标或标签` + `"explanation":"解析"` 后，交卷在本地判卷**
 - link: `{"type":"link","label":"...","href":"https://..."?}` — 仅 http(s)/mailto 协议被接受；无 `href` 时渲染为纯文本样式（不会假装可点）
-- submit: `{"type":"submit","label":"交卷","action":"grade","groups":["q1","styles"],"resetAction":"redo"?}` — 聚合按钮：纯 radio 且题目带 `answer` 时仍本地立即判卷（得分 + 每题 ✓/✗ + 解析，零往返）；其余聚合场景一次发送 互动操作请求，payload 为 `{answers:{q1:选项A,styles:[选项1,选项2]},fields:{id:值},total,answered}`。`groups` 中每个 radio 必须已选择、每个 checkbox 组必须至少勾选一项才可提交
+- submit: `{"type":"submit","label":"继续讨论","action":"discuss","groups":["topics"]?,"resetAction":"redo"?}` — 聚合按钮：纯 radio 且题目带 `answer` 时仍本地立即判卷（得分 + 每题 ✓/✗ + 解析，零往返）；其余聚合场景一次发送 互动操作请求，payload 为 `{answers:{q1:选项A,styles:[选项1,选项2]},fields:{id:值},total,answered}`。`groups` 中每个 radio 必须已选择、每个 checkbox 组必须至少勾选一项才可提交
 - switch: `{"type":"switch","label":"...","checked":true?,"action":"toggle"?}`
 - textarea: `{"type":"textarea","label":"...","placeholder":"...","rows":n?,"value":"...","action":"save"?,"id":"field-id"?}` — action 在失焦和 **Ctrl/Cmd+Enter** 时触发；blur 仅值有变化才发送；带 `id` 的值刷新后保留
 - tabs: `{"type":"tabs","tabs":[{"label":"...","items":[...]}]}`
 - accordion: `{"type":"accordion","items":[{"title":"...","items":[...]}]}`
 - copy: `{"type":"copy","label":"复制","text":"..."}`
 
-**状态保存**：选择、输入和交卷状态由魏碑随当前会话中的界面保存。同一块界面保持稳定 id；不要把重新提交相同 id 当成重置用户输入。
+**状态保存**：选择、输入和提交状态由魏碑随当前会话中的界面保存。同一块界面保持稳定 id；不要把重新提交相同 id 当成重置用户输入。
 
-**卷子模式（多道选择题）**：每题一个 radio（带唯一 `group` + `answer` + `explanation`），最后放一个 submit（`groups` 列出全部题号）——用户全部选完点交卷，**分数和对错当场在 UI 里出现**，不用等你。只有换新题/进阶建议才发 action。不要每题单独发 action（会刷屏）。
+**用户明确要求自测时**，可用 quiz；多道选择题使用带唯一 group、answer、explanation 的 radio，最后用 submit 汇总，本地显示结果。普通解释不附加题目。
 
 ### 高级
 - mermaid: `{"type":"mermaid","code":"graph TD\\nA-->B"}` — flowchart/sequence/class/gantt/pie/er/state/journey；主题自动跟随宿主（暗/浅）
@@ -111,7 +113,7 @@
 | 图片 / 截图 / 图表预览 | `image` |
 | 语音 / 音乐 / AI 视频 / 演示录像 | `audio`、`video` |
 | 两个方案 / 选项对比 | `table`、`tabs`、`diff` |
-| 教学 / 自测 / 判断题 | `quiz` |
+| 用户明确要求自测 / 判断题 | `quiz` |
 | 数学函数 / 曲线关系 | `plot`（可带参数滑块、动画） |
 | 需要用户操作 / 筛选 / 反馈 | `button`、`input`、`select`、`checkbox`、`radio`、`switch`、`tabs` |
 | 3D 物体 / 空间布局 | `scene3d` |
@@ -137,7 +139,7 @@
 
 1. **必要性**：这个组件承载的信息，用文字表达会明显更差吗？数字对比、趋势、空间关系、代码/数据原文才算过关，否则删掉。
 2. **焦点唯一**：一条回答只有一个视觉焦点（最大那张图或那组数字）；其余组件的视觉权重必须明显更低，靠尺寸/位置/色彩强度拉开，**不是靠数组件个数**。
-3. **不重复**：同一批数据不做两种表达（表格与图表二选一）。
+3. **不重复**：避免无意义复述。图表看差异或趋势，表格查明细；用户明确要求两者时照做。
 
 ### 卡片（`card`）只在两种场合用
 
@@ -146,13 +148,9 @@
 
 单段文字、单个列表、已经自带边界的表格/图表，**不要包卡**。用 `h3` 标题 + 正文 + 间距代替。
 
-### 层级靠字，不靠框
+### 跟随魏碑主题与阅读宽度
 
-- 卡片标题 16px / 字重 650 / 句首大小写（**不是** 12.5px 全大写小标签）；
-- 12.5px 全大写只用于 eyebrow（如 hero 上方那一行）；
-- 大字号带负字距（≥32px 约 -0.022em，20–28px 约 -0.012em），数字列 `tabular-nums`；
-- CJK 正文行高 1.7，长段落行宽 ≤68ch；
-- 表面对比遵循规范：浅色相邻表面明度差 ≥4%，或阴影 ≥ `0 1px 3px rgba(0,0,0,0.10)`；深色靠半透明白叠加（卡片约 4%，抬升面 8%），投影在深色几乎无效。
+字号、颜色、边界和表面由魏碑主题统一处理，不指定固定底色、阴影或再套整块外框。用标题、段落和间距区分层级。图表、长表格和流程优先纵向铺开；并排使用 grid，row 只放短按钮、标签等内容，避免把图表挤进窄行。
 
 ### 不要
 
@@ -160,75 +158,34 @@
 - 同一套骨架每条回答复用（标题栏 → 卡片网格 → 表格 → callout）；
 - 为了"显得丰富"堆组件：读者找不到重点就是失败。
 
-## 范例：示范「判断」，不要照抄组件序列
 
-每个范例后面都跟着**什么时候不要这样**。组件多是好事——只要每个都在承载不同信息、并且有焦点和层次；真正的毛病是重复表达、以及把纯文字段落包进卡片。
+## 阅读与讨论示例：按内容选择，不照抄顺序
 
-### 1. 状态汇报（多点 + 有构图）
+### 阅读材料：看数量差异，再安排整理步骤
 
-调用 `render_ui`，参数示例：
-
-```json
-{"id":"example-1","spec":{"items":[{"type":"grid","cols":4,"items":[{"type":"stat","label":"已合并","value":"26","delta":"#123–#148"},{"type":"stat","label":"未合并","value":"0"},{"type":"stat","label":"测试","value":"556","delta":"全绿"},{"type":"stat","label":"组件","value":"45"}]},{"type":"table","columns":["层","状态","生效方式"],"types":["text","badge","text"],"rows":[["组件与样式","已生效","每次从磁盘读"],["系统提示","待重启","Node 半只在启动时加载"]]},{"type":"callout","tone":"info","title":"结论","content":"改动都上了，但 **效果还没证据**。"}]}}
-```
-
-不要这样：把同一句话既写进正文又放进卡片；也不要为每条信息配一张卡（4 个 stat 排一行就够）。
-
-### 2. 解释/教学（文字为主，一个点睛组件）
-
-调用 `render_ui`，参数示例：
+用户给出教材 3 份、论文 20 篇、笔记 7 份，想看看材料构成并整理阅读顺序。图表占据完整阅读宽度，步骤放在下一段：
 
 ```json
-{"id":"example-2","spec":{"items":[{"type":"text","size":"body","content":"根因不是记性，是规则自相矛盾：一条说「≥3 条并列 → 出 list」，另一条说「组件只在 ==文字表达会更差== 时出现」。"},{"type":"list","items":[{"title":"先修规则","desc":"把闸门限定为「不要包卡片」，而不是「少用组件」"},{"title":"再看数据","desc":"如果漏发率不降，才考虑兜底手段"}]},{"type":"callout","tone":"warning","title":"别急着加监控","content":"事后提醒来得太晚，还会逼人在不需要组件的地方硬塞。"}]}}
+{"id":"reading-materials","spec":{"items":[{"type":"chart","kind":"bars","data":[{"label":"教材","value":3},{"label":"论文","value":20},{"label":"笔记","value":7}]},{"type":"steps","steps":[{"title":"梳理材料","desc":"标出各份材料讨论的问题"},{"title":"整理观点","desc":"把判断与支持它的证据分开"},{"title":"继续讨论","desc":"从尚未理解的地方开始"}]}]}}
 ```
 
-不要这样：每段都配一个组件；把一句话拆成好几个 text 节点（用行内标记就够了）。
+不要这样：用户只问数量，就额外安排阅读计划；用 row 把图表和长步骤挤在一起；材料没有给出时编造篇数。
 
-### 3. 对比选型
+### 继续讨论：输入后由用户明确提交
 
-调用 `render_ui`，参数示例：
+用户需要在界面中记下疑问再继续讨论。textarea 设置稳定 id，不带 action；submit 收集 fields 并发送一次请求。读取 fields.question 回答当前问题，按实际需要使用原有检索和笔记工具。
 
 ```json
-{"id":"example-3","spec":{"items":[{"type":"table","columns":["方案","代价","判断"],"types":["text","text","badge"],"rows":[["改规则","改一行字","推荐"],["加看门狗","事后才提醒，会变噪音","不推荐"]]},{"type":"callout","tone":"success","title":"选前者","content":"成本一行，且解决根因。"}]}}
+{"id":"reading-question","spec":{"items":[{"type":"textarea","id":"question","label":"记下疑问","placeholder":"哪一处还没想明白？","rows":3},{"type":"submit","label":"继续讨论","action":"discuss"}]}}
 ```
 
-不要这样：表格里放同一批数据后又画一张图。
+不要这样：给输入框和提交按钮同时设置 action，导致离开输入框就发送；把普通疑问框命名为考试或交卷；每条回答都强塞一个讨论入口。
 
-反例（这条会被渲染器直接拒绝，所以别抄）：
+### 简短解释：直接回答
 
-错误参数示例（不要调用）：
+用户说“用两句话解释观点和证据”，直接回答：观点是你对一件事的判断。证据是用来支持这个判断的事实或资料。
 
-```json
-{"id":"example-4","spec":{"items":[{"type":"chart","kind":"donut","data":[{"label":"A","value":1}],"series":[{"label":"B","data":[{"label":"B","value":2}]}]}]}}
-```
-
-为什么拒：`series` 只对 `bars`/`line` 有效；环形图给了 `series` 属于契约冲突，渲染器会报告错误，修正后重新调用 `render_ui`。
-
-### 4. 排查诊断（顺序即叙事）
-
-调用 `render_ui`，参数示例：
-
-```json
-{"id":"example-5","spec":{"items":[{"type":"steps","current":1,"steps":[{"title":"复现","desc":"滚动页面时光标压在图上"},{"title":"定位","desc":"onWheel 无条件 preventDefault"},{"title":"修复","desc":"改为仅 ⌘/Ctrl + 滚轮缩放"}]},{"type":"diff","diffs":[{"path":"PlotBlock.tsx","oldText":"e.preventDefault()","newText":"if (!e.metaKey && !e.ctrlKey) return"}]},{"type":"callout","tone":"info","title":"另外补了退路","content":"视图偏离时显示当前区间并提供 ==回到初始区间==。"}]}}
-```
-
-不要这样：把"复现/定位/修复"写成三个卡片并列（那是流程，用 steps）。
-
-### 5. 数据结论（一个主图 + 明细）
-
-调用 `render_ui`，参数示例：
-
-```json
-{"id":"example-6","spec":{"items":[{"type":"chart","kind":"line","data":[],"series":[{"label":"本周","data":[{"label":"一","value":8},{"label":"二","value":12},{"label":"三","value":9}]}]},{"type":"table","columns":["时段","量","环比"],"types":["text","num","delta"],"rows":[["周一","8","-4%"],["周二","12","+50%"]]}]}}
-```
-
-不要这样：图与表用同一粒度表达同一批数据（图看趋势、表看明细才不重复）。
-
-### 6. 短回答：正确地不套组件
-
-> 这个改动我先不做了——它要动宿主的输入组件，而你说了不碰宿主。
-
-不要这样：一句话的结论配 stat + 表格 + callout。**没有内容就不发组件，这是对的，不算漏发。**
+不要这样：把两句话包进卡片，或反问用户来测试掌握程度。若用户之后要求比较多个具体例子，再用表格帮助看区别。
 
 ## 使用规则
 

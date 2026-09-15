@@ -5,6 +5,22 @@ import XCTest
 
 final class AgentVisualizationSizingTests: XCTestCase {
     @MainActor
+    func testGenUIAllowsBundledProgramButBlocksOtherInlineScripts() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let blocked = try await webView.evaluateJavaScript("""
+        (() => {
+          const script = document.createElement('script');
+          script.textContent = 'window.untrustedScriptRan = true';
+          document.head.append(script);
+          script.remove();
+          return typeof window.WeiBeiGenUIHost.render === 'function' && !window.untrustedScriptRan;
+        })()
+        """) as? Bool
+        XCTAssertEqual(blocked, true)
+        withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
     func testGenUIFollowsNativeThemesAndTextScaleWithoutLosingInput() async throws {
         let (webView, navigationProbe) = try await loadGenUI()
         let spec: [String: Any] = ["items": [["type": "textarea", "id": "question"]]]
@@ -437,6 +453,16 @@ private final class GenUINavigationProbe: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        onFinish()
+        Task { @MainActor in
+            for _ in 0..<100 {
+                if (try? await webView.evaluateJavaScript("Boolean(window.WeiBeiGenUIHost)")) as? Bool == true {
+                    onFinish()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            XCTFail("GenUI did not become ready after loading")
+            onFinish()
+        }
     }
 }

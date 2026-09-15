@@ -1,8 +1,11 @@
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { build } from 'esbuild';
+import { tsImport } from 'tsx/esm/api';
 
 const root = resolve(import.meta.dirname, '..');
 const require = createRequire(resolve(root, 'package.json'));
@@ -41,6 +44,28 @@ await build({ ...options,
   outfile: resolve(resources, 'genui.js'),
   jsx: 'automatic',
 });
+// Keep all syntax grammars offline; WebKit supplies gzip decoding on our OS targets.
+const scriptPath = resolve(resources, 'genui.js');
+const source = await readFile(scriptPath);
+const compressed = gzipSync(source, { level: 9 }).toString('base64');
+await writeFile(scriptPath, `(async () => {
+  const bytes = Uint8Array.from(atob(${JSON.stringify(compressed)}), c => c.charCodeAt(0));
+  const script = document.createElement('script');
+  script.textContent = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  document.head.append(script);
+  script.remove();
+  if (!window.WeiBeiGenUIHost) throw new Error('GenUI initialization failed');
+})().catch(error => {
+  const status = document.getElementById('genui-status');
+  status.textContent = '互动界面加载失败'; status.hidden = false;
+  window.webkit?.messageHandlers?.weibeiGenUI?.postMessage({ type: 'error', message: String(error) });
+});\n`);
+// Authorize only this exact bundled program; arbitrary inline scripts stay blocked.
+const htmlPath = resolve(resources, 'genui.html');
+const html = await readFile(htmlPath, 'utf8');
+const policy = /script-src 'self'(?: 'sha256-[^']+')?;/;
+assert(policy.test(html), 'GenUI script policy changed');
+await writeFile(htmlPath, html.replace(policy, `script-src 'self' 'sha256-${createHash('sha256').update(source).digest('base64')}';`));
 for (const [name, entry] of Object.entries({ three: 'three', 'echarts-full': 'echarts' })) {
   await build({ ...options,
     entryPoints: [require.resolve(`@changfenhuang/dsh-genui/assets/${entry}`)],
@@ -55,6 +80,8 @@ const host = `# GenUI — 魏碑界面组件规范
 
 本技能只说明界面组件的规格和呈现方式。Webi 的身份、交流方式、回答长短、材料检索、引用、学习记忆和笔记写入继续遵循系统契约与现有工具。界面文案跟随用户要求的语言，字段名、组件类型、id 和 action 保持原样。是否使用组件取决于它能否帮助回答当前问题，不按回答行数或组件数量强制使用。
 
+围绕当前阅读、整理或讨论选择组件。只有用户明确要求练习、自测或探索参数变化时，才安排题目、判分或调参控件；不要把解释自动改成做题，不编造学习进度和掌握程度。
+
 ## 调用方式
 
 调用 \`render_ui\` 将组件插入当前回答，参数包含稳定的 \`id\` 和完整组件树 \`spec\`；spec 必须含 items，可选 title 和 gap。下文 JSON 示例都是工具参数，不作为回答正文输出。文字可以自然穿插在工具调用前后。
@@ -62,7 +89,7 @@ const host = `# GenUI — 魏碑界面组件规范
 调用 \`render_ui\`，参数示例：
 
 \`\`\`json
-{"id":"comparison","spec":{"title":"方案对比","gap":14,"items":[{"type":"table","columns":["方案","特点"],"rows":[["方案一","即时查看"],["方案二","可交互筛选"]]}]}}
+{"id":"concept-comparison","spec":{"title":"观点与证据","items":[{"type":"table","columns":["区别","观点","证据"],"rows":[["作用","说明作者的判断","支撑判断的事实或资料"],["例子","这本书适合入门","前两章使用了生活中的例子"]]}]}}
 \`\`\`
 
 - 同一条回答中用相同 id 更新原界面，用不同 id 插入另一块界面；id 只使用小写字母、数字和连字符。
@@ -71,15 +98,22 @@ const host = `# GenUI — 魏碑界面组件规范
 
 `;
 const start = skill.indexOf('富文本字段');
-const end = skill.indexOf('\n## 使用规则\n', start);
+const end = skill.indexOf('\n## 范例', start);
 assert(start >= 0 && end > start, '上游 GenUI 技能结构已变化，请核对魏碑接入说明');
 // Keep upstream component documentation; replace only host delivery and workflow rules.
 let body = skill.slice(start, end)
   .replace('组件词汇（只允许这些 type）', '组件词汇（先列常用类型，完整规格见后文）')
   .replace(/\*\*硬触发[^\n]*\n[\s\S]*?(?=\| 你要呈现的内容)/, '')
   .replace(/\*\*规则来自设计规范[\s\S]*?(?=### 三条判据)/, '')
-  .replace(/### 怎么验证没模板化\n[\s\S]*?(?=## 范例)/, '')
-  .replace(/\*\*状态持久化[^\n]*/, '**状态保存**：选择、输入和交卷状态由魏碑随当前会话中的界面保存。同一块界面保持稳定 id；不要把重新提交相同 id 当成重置用户输入。')
+  .replace(/### 怎么验证没模板化\n[\s\S]*$/, '')
+  .replace(/\*\*状态持久化[^\n]*/, '**状态保存**：选择、输入和提交状态由魏碑随当前会话中的界面保存。同一块界面保持稳定 id；不要把重新提交相同 id 当成重置用户输入。')
+  .replace('判卷、判题、重置、展开、选中', '排序、筛选、展开、选中、重置')
+  .replace('"label":"交卷","action":"grade","groups":["q1","styles"],"resetAction":"redo"?', '"label":"继续讨论","action":"discuss","groups":["topics"]?,"resetAction":"redo"?')
+  .replace(/\*\*卷子模式[^\n]*/, '**用户明确要求自测时**，可用 quiz；多道选择题使用带唯一 group、answer、explanation 的 radio，最后用 submit 汇总，本地显示结果。普通解释不附加题目。')
+  .replace('同一批数据不做两种表达（表格与图表二选一）。', '避免无意义复述。图表看差异或趋势，表格查明细；用户明确要求两者时照做。')
+  .replace(/### 层级靠字，不靠框\n[\s\S]*?(?=### 不要)/, '### 跟随魏碑主题与阅读宽度\n\n字号、颜色、边界和表面由魏碑主题统一处理，不指定固定底色、阴影或再套整块外框。用标题、段落和间距区分层级。图表、长表格和流程优先纵向铺开；并排使用 grid，row 只放短按钮、标签等内容，避免把图表挤进窄行。\n\n')
+  .replace('超大数字（52px，带入场计数）', '突出数字（字号跟随魏碑主题，带入场计数）')
+  .replace('| 教学 / 自测 / 判断题 |', '| 用户明确要求自测 / 判断题 |')
   .replaceAll('/mmx-files/', 'https://example.com/')
   .replace('http(s) 或同源相对图片地址', 'HTTPS 图片地址')
   .replace('仅 http(s) 或同源相对地址', '仅已确认的 HTTPS 地址')
@@ -89,11 +123,35 @@ let body = skill.slice(start, end)
   .replace('`[genui-action]`', '互动操作请求')
   .replace('围栏校验直接拒绝', '渲染器直接拒绝')
   .replace('围栏会**静默降级为代码块**', '渲染器会报告错误，修正后重新调用 `render_ui`');
-let exampleCount = 0;
-body = body.replace(/```json dsh-ui(-bad)?\n([\s\S]*?)\n```/g, (_, bad, raw) => {
-  const argumentsJSON = JSON.stringify({ id: `example-${++exampleCount}`, spec: JSON.parse(raw) });
-  return `${bad ? '错误参数示例（不要调用）' : '调用 `render_ui`，参数示例'}：\n\n\`\`\`json\n${argumentsJSON}\n\`\`\``;
-});
+const examples = `
+## 阅读与讨论示例：按内容选择，不照抄顺序
+
+### 阅读材料：看数量差异，再安排整理步骤
+
+用户给出教材 3 份、论文 20 篇、笔记 7 份，想看看材料构成并整理阅读顺序。图表占据完整阅读宽度，步骤放在下一段：
+
+\`\`\`json
+{"id":"reading-materials","spec":{"items":[{"type":"chart","kind":"bars","data":[{"label":"教材","value":3},{"label":"论文","value":20},{"label":"笔记","value":7}]},{"type":"steps","steps":[{"title":"梳理材料","desc":"标出各份材料讨论的问题"},{"title":"整理观点","desc":"把判断与支持它的证据分开"},{"title":"继续讨论","desc":"从尚未理解的地方开始"}]}]}}
+\`\`\`
+
+不要这样：用户只问数量，就额外安排阅读计划；用 row 把图表和长步骤挤在一起；材料没有给出时编造篇数。
+
+### 继续讨论：输入后由用户明确提交
+
+用户需要在界面中记下疑问再继续讨论。textarea 设置稳定 id，不带 action；submit 收集 fields 并发送一次请求。读取 fields.question 回答当前问题，按实际需要使用原有检索和笔记工具。
+
+\`\`\`json
+{"id":"reading-question","spec":{"items":[{"type":"textarea","id":"question","label":"记下疑问","placeholder":"哪一处还没想明白？","rows":3},{"type":"submit","label":"继续讨论","action":"discuss"}]}}
+\`\`\`
+
+不要这样：给输入框和提交按钮同时设置 action，导致离开输入框就发送；把普通疑问框命名为考试或交卷；每条回答都强塞一个讨论入口。
+
+### 简短解释：直接回答
+
+用户说“用两句话解释观点和证据”，直接回答：观点是你对一件事的判断。证据是用来支持这个判断的事实或资料。
+
+不要这样：把两句话包进卡片，或反问用户来测试掌握程度。若用户之后要求比较多个具体例子，再用表格帮助看区别。
+`;
 const usage = `
 ## 使用规则
 
@@ -104,10 +162,18 @@ const usage = `
 5. \`plot\` 给出合理的 xMin/xMax；3D 只用于几何或空间内容，mesh 少而精。
 6. 完整 spec 不超过 1 MB，组件树不超过 200 个节点、8 层嵌套；同一份信息避免重复表达。
 `;
-const adaptedSkill = `${host}${body}${usage}`;
+const adaptedSkill = `${host}${body}${examples}${usage}`;
 // Prevent retired DSH delivery paths from returning when the upstream skill changes.
-assert(exampleCount > 0, '上游 GenUI 调用示例缺失');
 assert(!/dsh-ui|validate_dsh_ui|\/mmx-files\/|genui-usage-audit|design-reference|\[genui-action\]|硬触发/.test(adaptedSkill), 'GenUI 技能仍包含未适配的宿主说明');
+const { processGenuiSpec } = await tsImport(resolve(dirname(require.resolve('@changfenhuang/dsh-genui/package.json')), 'src/client/guard.ts'), import.meta.url);
+const examplesJSON = [...adaptedSkill.matchAll(/```json\n([\s\S]*?)\n```/g)];
+assert(examplesJSON.length >= 3, '魏碑 GenUI 示例缺失');
+for (const [, raw] of examplesJSON) {
+  const { id, spec } = JSON.parse(raw);
+  assert(/^[a-z0-9-]+$/.test(id), '示例必须有稳定 id');
+  const result = processGenuiSpec(spec);
+  assert(result.spec && result.errors.length === 0 && result.warnings.length === 0, JSON.stringify(result));
+}
 await writeFile(resolve(folder, 'SKILL.md'), `<!-- Generated from @changfenhuang/dsh-genui; edit script/build_genui.mjs for host integration. -->\n${adaptedSkill}`);
 await writeFile(resolve(folder, 'manifest.json'), `${JSON.stringify({
   id: 'genui', name: 'GenUI', version: genuiPackage.version,
