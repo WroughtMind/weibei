@@ -3,7 +3,6 @@ import SwiftUI
 import WeiBeiCore
 
 private enum EmptyWorkspaceLayoutMetrics {
-    static let compactWidthThreshold: CGFloat = 1140
     static let compactHeightThreshold: CGFloat = 680
     static let entryCenterRatio: CGFloat = 0.402
     static let inspirationCenterRatio: CGFloat = 0.66
@@ -40,8 +39,8 @@ struct EmptyWorkspaceLauncherView: View {
                     width: max(1, geometry.size.width - drawerWidth),
                     height: geometry.size.height
                 )
-                let compact = contentSize.width < EmptyWorkspaceLayoutMetrics.compactWidthThreshold
-                    || contentSize.height < EmptyWorkspaceLayoutMetrics.compactHeightThreshold
+                // Horizontal resizing must not switch vertical spacing or type sizes.
+                let compact = contentSize.height < EmptyWorkspaceLayoutMetrics.compactHeightThreshold
                 let horizontalPadding: CGFloat = compact ? 24 : 52
                 let contentCenterX = drawerWidth + contentSize.width / 2
                 let entryWidth = min(116, max(76, (contentSize.width - (horizontalPadding * 2) - 2) / 3))
@@ -153,7 +152,8 @@ struct EmptyWorkspaceLauncherView: View {
                 spacing: (showsInspirationBlock ? (compact ? 18 : 26) : (compact ? 16 : 29)) * textScale,
                 entryWidth: entryWidth
             )
-            .frame(width: contentWidth)
+            // Keep the greeting anchored when the notice below gains another line.
+            .frame(width: contentWidth, height: entryHeight, alignment: .top)
             .position(x: availableSize.width / 2, y: entryCenterY)
 
             if showsInspirationBlock {
