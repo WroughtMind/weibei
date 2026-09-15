@@ -23,23 +23,39 @@ final class AgentReplyActionPersistenceTests: XCTestCase {
             try "原始讲义".write(to: sourceURL, atomically: true, encoding: .utf8)
             let material = try await store.importFileIntoCourse(sourceURL, courseID: courseID, role: .material)
 
-            let write = AgentReplyAction(kind: .writeNote, targetItemID: noteID, proposedMarkdown: "追加正文")
+            let write = AgentReplyAction(kind: .writeNote, targetItemID: noteID, proposedMarkdown: "追加正文", contextRevision: "request")
             let writeReply = try await self.append(write, to: store, courseID: courseID, chatID: chatID)
-            await store.confirmAgentReplyAction(messageID: writeReply.id, actionID: write.id)
+            let request = StudyAgentRequest(id: try XCTUnwrap(writeReply.origin?.requestID), purpose: .conversation,
+                question: "追加正文并关联讲义", materialTitle: "", materialText: "", noteTitle: "", noteText: "", contextRevision: "request")
+            let target = WorkspaceStore.AgentConversationTarget(sessionID: chatID, workingDirectory: root, courseID: courseID)
+            let pending = await store.performNativeAgentAction(write, userRequested: false,
+                request: request, target: target, messageID: writeReply.id)
+            XCTAssertEqual(pending.status, .pending)
+            XCTAssertEqual(try String(contentsOf: noteURL, encoding: .utf8), "原始正文")
+            let saved = await store.performNativeAgentAction(write, userRequested: true,
+                request: request, target: target, messageID: writeReply.id)
+            XCTAssertEqual(saved.status, .saved, saved.message)
+            XCTAssertEqual(saved.action?.targetItemID, noteID)
             XCTAssertEqual(try self.persistedAction(writeReply, in: store, chatID: chatID).state, .executed)
             XCTAssertTrue(try String(contentsOf: noteURL, encoding: .utf8).contains("追加正文"))
+            let second = AgentReplyAction(kind: .writeNote, targetItemID: noteID, proposedMarkdown: "第二次追加", contextRevision: "request")
+            let secondSaved = await store.performNativeAgentAction(second, userRequested: true,
+                request: request, target: target, messageID: writeReply.id)
+            XCTAssertEqual(secondSaved.status, .saved, secondSaved.message)
+            XCTAssertTrue(try String(contentsOf: noteURL, encoding: .utf8).contains("第二次追加"))
+            await store.undoAgentReplyAction(messageID: writeReply.id, actionID: second.id)
             await store.undoAgentReplyAction(messageID: writeReply.id, actionID: write.id)
             XCTAssertEqual(try self.persistedAction(writeReply, in: store, chatID: chatID).state, .cancelled)
             XCTAssertEqual(try String(contentsOf: noteURL, encoding: .utf8), "原始正文")
 
-            let relation = AgentReplyAction(kind: .createRelation, targetItemID: noteID, sourceItemID: material.item.id)
-            let relationReply = try await self.append(relation, to: store, courseID: courseID, chatID: chatID)
-            await store.confirmAgentReplyAction(messageID: relationReply.id, actionID: relation.id)
-            XCTAssertEqual(try self.persistedAction(relationReply, in: store, chatID: chatID).state, .executed)
+            let relation = AgentReplyAction(kind: .createRelation, targetItemID: noteID, sourceItemID: material.item.id, contextRevision: "request")
+            let relationSaved = await store.performNativeAgentAction(relation, userRequested: true,
+                request: request, target: target, messageID: writeReply.id)
+            XCTAssertEqual(relationSaved.status, .saved, relationSaved.message)
+            XCTAssertEqual(relationSaved.action?.state, .executed)
             let linked = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(contentsOf: store.storageURL))
             XCTAssertTrue(linked.noteSourceLinks?.contains { $0.id == relation.id } == true)
-            await store.undoAgentReplyAction(messageID: relationReply.id, actionID: relation.id)
-            XCTAssertEqual(try self.persistedAction(relationReply, in: store, chatID: chatID).state, .cancelled)
+            await store.undoAgentReplyAction(messageID: writeReply.id, actionID: relation.id)
             let unlinked = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(contentsOf: store.storageURL))
             XCTAssertFalse(unlinked.noteSourceLinks?.contains { $0.id == relation.id } == true)
 

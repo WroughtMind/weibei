@@ -8,6 +8,7 @@
   let spec = { items: [] };
   let state = {};
   let nodeCount = 0;
+  let renderToken = null;
   let actionStatus = 'ready';
   let actionUnavailableReason = '';
   let queuedActionKey = null;
@@ -436,7 +437,7 @@
       case 'copy': { const button=el('button','button',node.label||'复制'); button.onclick=()=>navigator.clipboard?.writeText(string(node.text)).then(()=>{button.textContent='已复制'; setTimeout(()=>button.textContent=node.label||'复制',1200);}).catch(()=>{}); return button; }
       case 'chart': return chartNode(node); case 'plot': return plotNode(node,key); case 'scene3d': return sceneNode(node,key);
       case 'formula': return formulaNode(node,key); case 'quiz': return quizNode(node,key); case 'sort': return sortNode(node,key); case 'match': return matchNode(node,key); case 'classify': return classifyNode(node,key); case 'simulation': return simulationNode(node,key);
-      default: return null;
+      default: return el('div','error',`不支持的互动组件：${string(node.type)}`);
     }
   }
 
@@ -451,13 +452,28 @@
 
   window.WeiBeiGenUIHost = {
     render(payload) {
-      if (!payload || typeof payload.spec !== 'object' || !Array.isArray(payload.spec.items)) return;
+      renderToken = payload?.renderToken;
+      if (!payload || typeof payload.spec !== 'object' || !Array.isArray(payload.spec.items)) {
+        post({ type: 'error', renderToken, message: '互动界面规格无效。' });
+        return;
+      }
       spec = { ...payload.spec, appearance: payload.appearance === 'dark' ? 'dark' : 'light' };
       state = payload.state && typeof payload.state === 'object' && !Array.isArray(payload.state) ? payload.state : {};
       if (actionStatus === 'processing' && payload.actionStatus === 'ready') queuedActionKey = null;
       actionStatus = payload.actionStatus === 'processing' ? 'processing' : 'ready';
       actionUnavailableReason = string(payload.actionUnavailableReason, 500);
-      render();
+      try {
+        render();
+        const token = renderToken;
+        requestAnimationFrame(() => {
+          if (token !== renderToken) return;
+          const error = root.querySelector('.error');
+          post(error ? { type: 'error', renderToken: token, message: error.textContent }
+            : { type: 'rendered', renderToken: token });
+        });
+      } catch (error) {
+        post({ type: 'error', renderToken, message: String(error?.message || error) });
+      }
     },
     actionResult(result) {
       if (!pendingAction || Number(result?.requestID) !== pendingAction.requestID) return;
@@ -468,5 +484,6 @@
     },
     snapshot() { return state; },
   };
+  window.addEventListener('error', event => post({ type: 'error', renderToken, message: event.message }));
   post({ type: 'ready' });
 })();

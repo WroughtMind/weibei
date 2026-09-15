@@ -102,6 +102,10 @@ final class OneShotFileReplacement: @unchecked Sendable {
 
 
 try runNativeAgentSelfChecks()
+if CommandLine.arguments.contains("--native-agent") {
+    print("Native Agent self-check passed")
+    exit(0)
+}
 checkCourseLibraryVolatility()
 checkUnavailableCourseUnregister()
 try checkNotePersistenceScenes()

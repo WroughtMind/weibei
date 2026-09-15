@@ -80,6 +80,7 @@ public struct NativeToolExecutionContext: Sendable {
     public var persistentAssetIDsByContextID: [String: String]
     public var currentRunSourceURLs: [String]
     public var lastReadMemoryRevision: UInt64?
+    public var userEvidence: [String: String] = [:]
     public var courseProfileUpdated: Bool
     public var loadedSkillIDs: Set<String>
     public var liveStores: NativeLiveStores
@@ -96,6 +97,7 @@ public struct NativeToolExecutionContext: Sendable {
         liveStores: NativeLiveStores = .empty
     ) {
         self.request = request
+        self.userEvidence = request.userEvidence
         self.mode = mode
         self.hostToolHandler = hostToolHandler
         self.persistentAssetIDsByContextID = persistentAssetIDsByContextID
@@ -236,12 +238,6 @@ enum NativeToolGuard {
                 throw NativeLLMFailure(code: "guard_denied", message: "该网页地址不在本轮可访问来源中")
             }
         }
-        if ["weibei_course_profile_update", "weibei_relation_proposal"].contains(name) {
-            let courseID = context.request.projectScope.courseID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if courseID.isEmpty {
-                throw NativeLLMFailure(code: "guard_denied", message: "当前没有打开的课程，课程档案没有保存位置；向用户说明后跳过即可")
-            }
-        }
     }
 }
 
@@ -264,6 +260,7 @@ public enum NativeBuiltinTools {
         await registry.register(webOpen)
         await registry.register(learningMemory)
         await registry.register(learningUpdate)
+        await registry.register(courseProfileRead)
         await registry.register(courseProfileUpdate)
         await registry.register(noteProposal)
         await registry.register(relationProposal)
@@ -460,7 +457,7 @@ public enum NativeBuiltinTools {
                     throw NativeLLMFailure(code: "invalid_visualize", message: "Visualize 界面必须包含稳定 id 和完整组件树")
                 }
                 return NativeToolExecutionResult(
-                    text: "互动界面 \(id) 已显示。",
+                    text: "互动界面 \(id) 已接收，等待显示结果。",
                     details: ["kind": "weibei_visualization", "id": id, "spec": spec]
                 )
             }
@@ -675,13 +672,15 @@ public enum NativeBuiltinTools {
     private static var learningMemory: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_read_learning_memory",
-            description: "只读取本课程学习记忆和上次位置，不会写入或改变任何内容。每条记忆都带 memoryID。更新已有记忆时把这个 memoryID 原样抄到 weibei_update_learning_memory；新建不要自己编 ID。其余明确要求记下、记住或更新进度时改用 weibei_update_learning_memory。",
+            description: "只读取当前可用的全局记忆、课程记忆和上次位置，不会写入或改变任何内容。每条记忆都带 memoryID。更新已有记忆时把这个 memoryID 原样抄到 weibei_update_learning_memory；新建不要自己编 ID。其余明确要求记下、记住或更新进度时改用 weibei_update_learning_memory。",
             schema: NativeJSONSchema(["type": "object", "properties": [:]]),
             execute: { _, context in
                 let learning = context.request.learningContext
                 let data = try JSONEncoder().encode(learning)
                 var object = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-                object["contextRevision"] = context.request.contextRevision
+                var evidence = context.userEvidence
+                evidence["[用户：本轮]"] = context.request.question
+                object["availableUserEvidence"] = evidence
                 if let rawMemories = object["memories"] as? [Any] {
                     object["memories"] = rawMemories.map { raw -> Any in
                         guard var entry = raw as? [String: Any] else { return raw }
@@ -708,12 +707,13 @@ public enum NativeBuiltinTools {
     private static var learningUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_update_learning_memory",
-            description: "记录或更新本课程学习记忆的唯一入口。读取请用 weibei_read_learning_memory。memoryID 只从读取结果或上次写成功回执抄写，不要自己编，不要传空字符串；新建省略该字段，魏碑会分配 id 并在回执里返回。其余明确要求记下/记住/更新进度或掌握情况时调用。每条记忆只提交 kind 标签和记住的内容；同一轮要更新或新建多条就写多条。",
+            description: "记录或更新学习记忆的唯一入口。未选课程时保存到全局；已选课程时保存到该课程。先读取记忆再更新。读取请用 weibei_read_learning_memory。memoryID 只从读取结果或上次写成功回执抄写，不要自己编，不要传空字符串；新建省略该字段，魏碑会分配 id 并在回执里返回。其余明确要求记下/记住/更新进度或掌握情况时调用。每条含 kind、text、origin 和 evidence；每次最多 12 条。origin 区分 userStatement（用户自述）、observed（用户实际作答）和 agentInference（推断）。evidence 必须是可用来源标签加逐字引用；用户证据标签见读取结果，当前提问可用 [用户：本轮]。助手讲解不能证明用户已掌握。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
                     "entries": [
                         "type": "array",
+                        "maxItems": 12,
                         "items": [
                             "type": "object",
                             "properties": [
@@ -734,12 +734,15 @@ public enum NativeBuiltinTools {
                                     ],
                                 ],
                                 "text": ["type": "string"],
+                                "origin": ["type": "string", "enum": ["userStatement", "observed", "agentInference"]],
+                                "evidence": ["type": "string", "description": "真实来源标签加原文摘录，不得自行生成引文"],
                             ],
-                            "required": ["kind", "text"],
+                            "required": ["kind", "text", "origin", "evidence"],
                         ],
                     ],
                     "resolutions": [
                         "type": "array",
+                        "maxItems": 12,
                         "items": [
                             "type": "object",
                             "properties": [
@@ -748,8 +751,9 @@ public enum NativeBuiltinTools {
                                     "description": "必须是 weibei_read_learning_memory 返回的现有 memoryID，不能为空，不能自己编。",
                                 ],
                                 "text": ["type": "string"],
+                                "evidence": ["type": "string"],
                             ],
-                            "required": ["memoryID"],
+                            "required": ["memoryID", "evidence"],
                         ],
                     ],
                 ],
@@ -757,41 +761,39 @@ public enum NativeBuiltinTools {
             ]),
             execute: { arguments, context in
                 try requireNonBlankResolutionIDs(arguments["resolutions"] as? [Any] ?? [])
-                let turnEvidence = "[用户：本轮] \(context.request.question)"
-                let entries = (arguments["entries"] as? [Any] ?? []).map { raw -> Any in
-                    guard var entry = raw as? [String: Any] else { return raw }
-                    entry["evidence"] = turnEvidence
-                    entry["origin"] = LearningMemoryOrigin.userStatement.rawValue
-                    return entry
+                guard let revision = context.lastReadMemoryRevision else {
+                    throw NativeLLMFailure(code: "read_required", message: "请先读取学习记忆，再提交更新。")
                 }
-                let resolutions = (arguments["resolutions"] as? [Any] ?? []).map { raw -> Any in
-                    guard var resolution = raw as? [String: Any] else { return raw }
-                    if resolution["text"] == nil {
-                        resolution["text"] = turnEvidence
-                    }
-                    resolution["evidence"] = turnEvidence
-                    return resolution
+                guard revision == context.request.learningContext.memoryRevision else {
+                    throw NativeLLMFailure(code: "revision_mismatch", message: "学习记忆已变化，请重新读取后更新。")
+                }
+                let entries = arguments["entries"] as? [Any] ?? []
+                let resolutions = arguments["resolutions"] as? [Any] ?? []
+                guard entries.count <= 12, resolutions.count <= 12 else {
+                    throw NativeLLMFailure(code: "entry_limit", message: "每次最多更新 12 条记忆、解决 12 条记录。")
                 }
                 var details: [String: Any] = [
                     "kind": "learning_update",
                     "contextRevision": context.request.contextRevision,
-                    "memoryRevision": NSNumber(value: context.request.learningContext.memoryRevision),
+                    "memoryRevision": NSNumber(value: revision),
                     "suggestedNext": [],
                     "entries": omittingBlankIDs(in: entries, key: "memoryID"),
                     "resolutions": resolutions,
                 ]
                 try requireDecodableLearningUpdate(details)
-                let queued = "学习状态更新已校验并交给魏碑；魏碑只会保存当前作用域中的实际变化。"
                 guard let persist = context.liveStores.persistLearningUpdate,
                       let update = StudyAgentProposalDecoding.learningUpdate(from: details) else {
-                    return NativeToolExecutionResult(text: queued, details: details)
+                    throw NativeLLMFailure(code: "store_unavailable", message: "当前无法保存学习记忆。")
+                }
+                for entry in update.entries {
+                    try validateMemoryEvidence(entry.evidence, origin: entry.origin, kind: entry.kind, context: context)
+                }
+                for resolution in update.resolutions {
+                    try validateMemoryEvidence(resolution.evidence, origin: .observed, kind: .progress, context: context)
                 }
                 let receipt = await persist(update)
                 guard receipt.accepted, let applied = receipt.memoryUpdate else {
-                    throw NativeLLMFailure(
-                        code: "store_rejected",
-                        message: receipt.message
-                    )
+                    return NativeToolExecutionResult(text: try receiptText(receipt), isError: true)
                 }
                 details["appliedMemoryUpdate"] = [
                     "memoryIDs": applied.memoryIDs.map { $0.uuidString.lowercased() },
@@ -799,9 +801,28 @@ public enum NativeBuiltinTools {
                     "texts": applied.texts,
                 ]
                 return NativeToolExecutionResult(
-                    text: learningPersistSuccessText(applied),
+                    text: try receiptText(receipt),
                     details: details
                 )
+            }
+        )
+    }
+
+    private static var courseProfileRead: NativeToolDefinition {
+        NativeToolDefinition(
+            name: "weibei_course_profile_read",
+            description: "读取本次提问所属课程的知识档案，返回条目 id 和 profileRevision。更新前先读取；未选课程时不能读取课程档案。",
+            schema: NativeJSONSchema(["type": "object", "properties": [:]]),
+            execute: { _, context in
+                guard let courseID = context.request.projectScope.courseID else {
+                    throw NativeLLMFailure(code: "missing_course", message: "当前没有课程，请先选择要更新档案的课程。")
+                }
+                let data = try JSONEncoder().encode(context.request.courseProfile.entries)
+                return NativeToolExecutionResult(text: String(decoding: try JSONSerialization.data(withJSONObject: [
+                    "courseID": courseID,
+                    "profileRevision": NSNumber(value: context.request.courseProfile.revision),
+                    "entries": try JSONSerialization.jsonObject(with: data),
+                ], options: [.sortedKeys]), as: UTF8.self))
             }
         )
     }
@@ -809,11 +830,10 @@ public enum NativeBuiltinTools {
     private static var courseProfileUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_course_profile_update",
-            description: "把用户自述掌握状态写入课程知识档案，供后续出题和复习使用。用户明确要求提交时调用；其余时机自行判断。entryID 只从当前档案已有条目的 id 抄写；新建省略，不要传空字符串，不要自己编。kind=concept，text 以「用户自述：」开头写清对哪个概念掌握到什么程度，checkpoint 用 userRequested。不要把学习记忆的 origin userStatement 当成档案 kind。contextRevision 必须原样回传本轮字符串。",
+            description: "把用户自述掌握状态写入课程知识档案，供后续出题和复习使用。用户明确要求提交时调用；其余时机自行判断。先调用 weibei_course_profile_read 获取当前条目与版本。entryID 只从当前档案已有条目的 id 抄写；新建省略，不要传空字符串，不要自己编。kind=concept，text 以「用户自述：」开头写清对哪个概念掌握到什么程度，checkpoint 用 userRequested。不要把学习记忆的 origin userStatement 当成档案 kind。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
-                    "contextRevision": ["type": "string"],
                     "profileRevision": ["type": "integer"],
                     "checkpoint": [
                         "type": "string",
@@ -845,18 +865,16 @@ public enum NativeBuiltinTools {
                     ],
                     "removedEntryIDs": ["type": "array", "items": ["type": "string"]],
                 ],
-                "required": ["contextRevision", "profileRevision", "checkpoint"],
+                "required": ["profileRevision", "checkpoint"],
             ]),
             execute: { arguments, context in
-                try requireMatchingRevision(
-                    arguments["contextRevision"],
-                    expected: context.request.contextRevision,
-                    message: "课程知识档案版本已变化；当前 contextRevision 为 \(context.request.contextRevision)，请原样回传"
-                )
+                guard context.request.projectScope.courseID != nil else {
+                    throw NativeLLMFailure(code: "missing_course", message: "当前没有课程，不能更新课程档案。")
+                }
                 try requireMatchingIntegerRevision(
                     arguments["profileRevision"],
                     expected: context.request.courseProfile.revision,
-                    message: "课程知识档案版本已变化；当前 profileRevision 为 \(context.request.courseProfile.revision)，请原样回传"
+                    message: "课程知识档案已变化，请调用 weibei_course_profile_read 重新读取后更新。"
                 )
                 guard let checkpoint = arguments["checkpoint"] as? String else {
                     throw NativeLLMFailure(
@@ -875,17 +893,13 @@ public enum NativeBuiltinTools {
                         ?? [],
                 ]
                 try requireDecodableCourseProfileUpdate(details)
-                let queued = "本轮阶段性课程认识已提交保存。"
                 guard let persist = context.liveStores.persistCourseProfileUpdate,
                       let update = StudyAgentProposalDecoding.courseProfileUpdate(from: details) else {
-                    return NativeToolExecutionResult(text: queued, details: details)
+                    throw NativeLLMFailure(code: "store_unavailable", message: "当前无法保存课程档案。")
                 }
                 let receipt = await persist(update)
                 guard receipt.accepted, let applied = receipt.profileUpdate else {
-                    throw NativeLLMFailure(
-                        code: "store_rejected",
-                        message: receipt.message
-                    )
+                    return NativeToolExecutionResult(text: try receiptText(receipt), isError: true)
                 }
                 details["appliedProfileUpdate"] = [
                     "entryIDs": applied.entryIDs.map { $0.uuidString.lowercased() },
@@ -893,7 +907,7 @@ public enum NativeBuiltinTools {
                     "texts": applied.texts,
                 ]
                 return NativeToolExecutionResult(
-                    text: profilePersistSuccessText(applied),
+                    text: try receiptText(receipt),
                     details: details
                 )
             }
@@ -903,41 +917,30 @@ public enum NativeBuiltinTools {
     private static var noteProposal: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_note_proposal",
-            description: "整理笔记内容并交给魏碑执行。contextRevision 必须原样回传本轮字符串。evidence 是字符串数组，每条须以当前材料、笔记或选区的真实来源标签开头。userRequested 只有两种取值：用户明确要求把内容写进笔记（如“写进笔记”“整理成笔记”“补充进去”）时传 true，魏碑会直接写入并告知写到了哪里；用户没有明确要求时传 false，魏碑把内容作为建议卡交给用户自行采用或忽略。不确定用户是否明确要求时一律传 false，不要根据内容自行猜测。",
+            description: "整理笔记内容并交给魏碑执行。evidence 是字符串数组，每条须以当前材料、笔记或选区的真实来源标签开头。userRequested 只有两种取值：用户明确要求把内容写进笔记（如“写进笔记”“整理成笔记”“补充进去”）时传 true，魏碑会直接写入并告知写到了哪里；用户没有明确要求时传 false，魏碑把内容作为建议卡交给用户自行采用或忽略。不确定用户是否明确要求时一律传 false，不要根据内容自行猜测。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
                     "markdown": ["type": "string"],
                     "evidence": ["type": "array", "items": ["type": "string"]],
-                    "contextRevision": ["type": "string"],
                     "userRequested": ["type": "boolean"],
                 ],
-                "required": ["markdown", "evidence", "contextRevision"],
+                "required": ["markdown", "evidence", "userRequested"],
             ]),
             execute: { arguments, context in
-                try requireMatchingRevision(
-                    arguments["contextRevision"],
-                    expected: context.request.contextRevision,
-                    message: "笔记建议的 contextRevision 不匹配；当前修订号为 \(context.request.contextRevision)，请原样回传"
-                )
                 let markdown = arguments["markdown"] as? String ?? ""
                 let evidence = stringList(arguments["evidence"])
                 let userRequested = arguments["userRequested"] as? Bool == true
                 guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !evidence.isEmpty else {
                     throw NativeLLMFailure(code: "empty_proposal", message: "笔记建议必须包含非空 Markdown 和至少一条证据")
                 }
-                return NativeToolExecutionResult(
-                    text: userRequested
-                        ? "写入请求已登记，魏碑会直接写入目标笔记并在完成后告知位置；用户之后可以撤销。"
-                        : "笔记建议格式与上下文修订号已校验；这仍是待确认建议，尚未写回任何笔记。",
-                    details: [
-                        "kind": "note_proposal",
-                        "markdown": markdown,
-                        "evidence": evidence,
-                        "contextRevision": context.request.contextRevision,
-                        "userRequested": userRequested,
-                    ]
-                )
+                let proposal = StudyAgentNoteProposal(markdown: markdown, evidence: evidence,
+                    contextRevision: context.request.contextRevision, userRequested: userRequested)
+                guard let perform = context.liveStores.performNoteProposal else {
+                    throw NativeLLMFailure(code: "store_unavailable", message: "当前无法提交笔记内容，尚未保存。")
+                }
+                let receipt = await perform(proposal)
+                return NativeToolExecutionResult(text: try receiptText(receipt), isError: !receipt.accepted)
             }
         )
     }
@@ -945,33 +948,62 @@ public enum NativeBuiltinTools {
     private static var relationProposal: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_relation_proposal",
-            description: "返回一份当前课程内笔记与材料的待确认关联。noteItemID 必须是已经落库的笔记条目 ID；笔记还只是待确认提案时不要调用本工具，应先请用户确认写入。contextRevision 必须原样回传本轮字符串。",
+            description: "关联本次提问所属课程内已保存的笔记与材料。用户明确要求建立关联时 userRequested=true，实际建立后返回结果；否则只保留待采用建议。noteItemID 必须是已经落库的笔记条目 ID；笔记还只是待确认提案时不要调用本工具，应先请用户确认写入。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
                     "noteItemID": ["type": "string"],
                     "sourceItemID": ["type": "string"],
-                    "contextRevision": ["type": "string"],
+                    "userRequested": ["type": "boolean"],
                 ],
-                "required": ["noteItemID", "sourceItemID", "contextRevision"],
+                "required": ["noteItemID", "sourceItemID", "userRequested"],
             ]),
             execute: { arguments, context in
-                try requireMatchingRevision(
-                    arguments["contextRevision"],
-                    expected: context.request.contextRevision,
-                    message: "关系建议的 contextRevision 不匹配；当前修订号为 \(context.request.contextRevision)，请原样回传"
-                )
-                return NativeToolExecutionResult(
-                    text: "关系建议已校验并交给魏碑；这仍是待确认建议，尚未建立关系。",
-                    details: [
-                        "kind": "relation_proposal",
-                        "noteItemID": arguments["noteItemID"] as? String ?? "",
-                        "sourceItemID": arguments["sourceItemID"] as? String ?? "",
-                        "contextRevision": context.request.contextRevision,
-                    ]
-                )
+                guard let noteID = string(arguments["noteItemID"]),
+                      let sourceID = string(arguments["sourceItemID"]) else {
+                    throw NativeLLMFailure(code: "missing_target", message: "关联需要已保存的笔记编号和材料编号。")
+                }
+                let proposal = StudyAgentRelationProposal(noteItemID: noteID, sourceItemID: sourceID,
+                    contextRevision: context.request.contextRevision, userRequested: arguments["userRequested"] as? Bool == true)
+                guard let perform = context.liveStores.performRelationProposal else {
+                    throw NativeLLMFailure(code: "store_unavailable", message: "当前无法提交关联，尚未建立。")
+                }
+                let receipt = await perform(proposal)
+                return NativeToolExecutionResult(text: try receiptText(receipt), isError: !receipt.accepted)
             }
         )
+    }
+
+    private static func receiptText(_ receipt: NativeStorePersistReceipt) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var object = try JSONSerialization.jsonObject(with: encoder.encode(receipt)) as! [String: Any]
+        if let action = receipt.action {
+            var result: [String: Any] = ["id": action.id.uuidString.lowercased(), "state": action.state.rawValue]
+            result["targetItemID"] = action.targetItemID
+            result["sourceItemID"] = action.sourceItemID
+            result["relationID"] = action.createdRelationID?.uuidString.lowercased()
+            object["action"] = result
+        }
+        return String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private static func validateMemoryEvidence(
+        _ evidence: String, origin: LearningMemoryOrigin, kind: LearningMemoryKind,
+        context: NativeToolExecutionContext
+    ) throws {
+        var userEvidence = context.userEvidence
+        userEvidence["[用户：本轮]"] = context.request.question
+        func quotes(_ label: String, _ text: String) -> Bool {
+            guard evidence.hasPrefix(label) else { return false }
+            let quote = evidence.dropFirst(label.count).trimmingCharacters(in: .whitespacesAndNewlines)
+            return !quote.isEmpty && text.contains(quote)
+        }
+        if userEvidence.contains(where: { quotes($0.key, $0.value) }) { return }
+        if origin == .agentInference, kind != .understood,
+           context.request.knownSources.contains(where: { quotes($0.label, $0.excerpt) }) { return }
+        throw NativeLLMFailure(code: "invalid_evidence",
+            message: "证据必须逐字引用实际用户消息或已读取来源。自述、作答表现和已经掌握必须有用户原话，不能用助手讲解代替。")
     }
 
     private static func hostTool(
@@ -1009,17 +1041,6 @@ public enum NativeBuiltinTools {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func revisionValue(_ raw: Any?) -> String? {
-        if let text = string(raw) { return text }
-        if let number = raw as? NSNumber, !(raw is Bool) {
-            return number.stringValue
-        }
-        if let value = raw as? Int {
-            return String(value)
-        }
-        return nil
-    }
-
     private static func stringList(_ raw: Any?) -> [String] {
         if let values = raw as? [String] {
             return values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
@@ -1053,17 +1074,6 @@ public enum NativeBuiltinTools {
                 )
             }
         }
-    }
-
-    private static func learningPersistSuccessText(_ update: AgentReplyMemoryUpdate) -> String {
-        let ids = update.memoryIDs.map { $0.uuidString.lowercased() }.joined(separator: "、")
-        return "已写入学习记忆：\(update.summary)。memoryID：\(ids)。这些 id 由魏碑分配；下次更新同一条时从 weibei_read_learning_memory 抄写，不要自己编，也不要传空字符串。"
-    }
-
-    private static func profilePersistSuccessText(_ update: AgentReplyProfileUpdate) -> String {
-        let ids = update.entryIDs.map { $0.uuidString.lowercased() }.joined(separator: "、")
-        let body = update.texts.isEmpty ? update.summary : update.texts.joined(separator: "；")
-        return "已写入课程知识档案：\(body)。entryID：\(ids)。这些 id 由魏碑分配；下次更新同一条时从当前档案已有条目抄写，不要自己编，也不要传空字符串。"
     }
 
     private static func requireDecodableLearningUpdate(_ details: [String: Any]) throws {
@@ -1137,12 +1147,6 @@ public enum NativeBuiltinTools {
             return "课程知识档案写入无法解析。期望 entries 每条含 kind=concept 和 text（以「用户自述：」开头）。"
         }
         return "课程知识档案写入无法解析：\(problems.joined(separator: "；"))。自述掌握用 kind=concept、text 以「用户自述：」开头。"
-    }
-
-    fileprivate static func requireMatchingRevision(_ raw: Any?, expected: String, message: String) throws {
-        guard revisionValue(raw) == expected else {
-            throw NativeLLMFailure(code: "revision_mismatch", message: message)
-        }
     }
 
     fileprivate static func requireMatchingIntegerRevision(_ raw: Any?, expected: UInt64, message: String) throws {

@@ -4,12 +4,13 @@ import XCTest
 @testable import WeiBei
 
 final class AgentVisualizationSizingTests: XCTestCase {
-    func testGenUILoadFailureRetriesOnceThenWaitsForUserReload() {
+    func testGenUILoadFailureWaitsForUserReload() {
         var state = AgentVisualizationLoadState()
         let firstAttempt = state.attempt
 
         state.fail("首次失败", from: firstAttempt)
-        XCTAssertNil(state.failure)
+        XCTAssertEqual(state.failure, "首次失败")
+        XCTAssertEqual(state.attempt, firstAttempt)
 
         let retriedAttempt = state.attempt
         state.fail("再次失败", from: retriedAttempt)
@@ -25,6 +26,11 @@ final class AgentVisualizationSizingTests: XCTestCase {
         let messages = WKUserContentController()
         let actionProbe = GenUIActionProbe()
         messages.add(actionProbe, name: "weibeiGenUI")
+        // Drive frames in the detached WebView; this checks receipts, not on-screen visibility.
+        messages.addUserScript(WKUserScript(
+            source: "window.requestAnimationFrame = callback => { callback(); return 1; };",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true
+        ))
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = messages
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 240), configuration: configuration)
@@ -36,7 +42,14 @@ final class AgentVisualizationSizingTests: XCTestCase {
         await fulfillment(of: [loaded], timeout: 3)
 
         let spec = #"{"items":[{"type":"button","label":"继续解释","action":"explain"}]}"#
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('.button').click()")
+        let rendered = expectation(description: "display receipt")
+        actionProbe.onDisplay = { body in
+            XCTAssertEqual(body["type"] as? String, "rendered")
+            XCTAssertEqual(body["renderToken"] as? String, "valid")
+            rendered.fulfill()
+        }
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), renderToken: 'valid', actionStatus: 'ready'}); document.querySelector('.button').click()")
+        await fulfillment(of: [rendered], timeout: 3)
         let requestID = try XCTUnwrap(actionProbe.requestID)
         XCTAssertEqual(actionProbe.action, "explain")
         let rejection = "当前无法提交这条回答。"
@@ -51,6 +64,14 @@ final class AgentVisualizationSizingTests: XCTestCase {
         let rejectedText = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
         XCTAssertEqual(rejectedDisabled, false)
         XCTAssertTrue(rejectedText?.contains(rejection) == true)
+        let failed = expectation(description: "invalid component receipt")
+        actionProbe.onDisplay = { body in
+            XCTAssertEqual(body["type"] as? String, "error")
+            XCTAssertEqual(body["renderToken"] as? String, "invalid")
+            failed.fulfill()
+        }
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: {items: [{type: 'unknown'}]}, renderToken: 'invalid'})")
+        await fulfillment(of: [failed], timeout: 3)
         withExtendedLifetime(navigationProbe) {}
     }
 
@@ -324,13 +345,15 @@ final class AgentVisualizationSizingTests: XCTestCase {
 private final class GenUIActionProbe: NSObject, WKScriptMessageHandler {
     private(set) var requestID: Int?
     private(set) var action: String?
+    var onDisplay: (([String: Any]) -> Void)?
 
     func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        guard let body = message.body as? [String: Any],
-              body["type"] as? String == "action",
+        guard let body = message.body as? [String: Any] else { return }
+        if ["rendered", "error"].contains(body["type"] as? String ?? "") { onDisplay?(body) }
+        guard body["type"] as? String == "action",
               let requestID = body["requestID"] as? NSNumber,
               let action = body["action"] as? String else { return }
         self.requestID = requestID.intValue

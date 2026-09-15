@@ -213,13 +213,24 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             let delta = object["delta"] as? String ?? ""
             let id = object["call_id"] as? String ?? ""
             return [.toolCallDelta(index: index, id: id, name: nil, argumentsDelta: delta)]
-        case "response.completed":
+        case "response.completed", "response.incomplete":
             let response = object["response"] as? [String: Any]
             let status = response?["status"] as? String
             let hasTools = ((response?["output"] as? [[String: Any]]) ?? []).contains {
                 $0["type"] as? String == "function_call"
             }
-            let reason: NativeFinishReason = hasTools ? .toolCalls : (status == "incomplete" ? .length : .stop)
+            let incompleteReason = (response?["incomplete_details"] as? [String: Any])?["reason"] as? String
+            let refused = ((response?["output"] as? [[String: Any]]) ?? []).contains { output in
+                (output["content"] as? [[String: Any]] ?? []).contains { $0["type"] as? String == "refusal" }
+            }
+            let reason: NativeFinishReason
+            if status == "incomplete" || type == "response.incomplete" {
+                reason = incompleteReason == "content_filter" ? .refused : .length
+            } else if refused {
+                reason = .refused
+            } else {
+                reason = hasTools ? .toolCalls : .stop
+            }
             var chunks: [NativeStreamChunk] = []
             if let usage = response?["usage"] as? [String: Any] {
                 let inputDetails = usage["input_tokens_details"] as? [String: Any]
