@@ -22,7 +22,7 @@
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
-    "@changfenhuang/dsh-genui": "https://codeload.github.com/omdsh-dev/dsh-genui/tar.gz/472bbbe5e31485b7b7369d777e3d0e152596f1b8",
+    "@changfenhuang/dsh-genui": "https://codeload.github.com/omdsh-dev/dsh-genui/tar.gz/2ba0b5420befbfcb7627dc219b33692b6047902a",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.2-rc.1",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.28",

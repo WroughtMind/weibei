@@ -11,11 +11,15 @@
 
 # GenUI — 生成式 UI 输出规范
 
+**Language:** Match the user's requested language (otherwise the language of their message) in both surrounding prose and all user-visible UI text: titles, labels, content, options, and explanations. Chinese examples below illustrate the schema only; do not switch the conversation to Chinese after loading this skill. Keep JSON keys, component types, IDs, and actions unchanged. An English request gets English prose and UI text; a Chinese request gets Chinese prose and UI text.
+
 你可以**在回答正文中间**输出可交互 UI 组件：写一个 `dsh-ui` 围栏（fenced block with language tag `dsh-ui`），内含 JSON 规格，渲染器会把这一整块画成真实组件，文字照常穿插在前后。组件**就是回答的一部分**，不是工具调用。
 
 ```dsh-ui
 {"title":"可选标题","gap":14,"items":[...]}
 ```
+
+富文本字段（text、list、table 文本单元格、keyvalue.value、callout）支持 `$E=mc^2$` 行内公式与 `$$\\frac{a}{b}$$` 独立公式。JSON 中的反斜杠必须写成 `\\`；代码片段内的美元符号保持字面值。公式由宿主 KaTeX 渲染，不执行 HTML 或脚本。
 
 ## 组件词汇（只允许这些 type）
 
