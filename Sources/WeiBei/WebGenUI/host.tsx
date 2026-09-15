@@ -11,6 +11,7 @@ type Payload = {
   spec: unknown;
   state?: BlockInteractionState;
   appearance?: string;
+  theme?: Record<string, string>;
   actionStatus?: string;
   actionUnavailableReason?: string;
 };
@@ -82,6 +83,9 @@ window.WeiBeiGenUIHost = {
     }
     payload = next;
     spec = result.spec;
+    for (const [name, value] of Object.entries(next.theme ?? {})) {
+      document.body.style.setProperty(`--weibei-${name}`, value);
+    }
     document.body.toggleAttribute('data-ds-dark-theme', next.appearance === 'dark');
     document.documentElement.style.colorScheme = next.appearance === 'dark' ? 'dark' : 'light';
     showStatus(next.actionUnavailableReason || (next.actionStatus === 'processing' ? '正在生成回答…' : ''));

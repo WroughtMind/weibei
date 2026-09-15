@@ -4,6 +4,54 @@ import XCTest
 @testable import WeiBei
 
 final class AgentVisualizationSizingTests: XCTestCase {
+    @MainActor
+    func testGenUIFollowsNativeThemesAndTextScaleWithoutLosingInput() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let spec: [String: Any] = ["items": [["type": "textarea", "id": "question"]]]
+        var surfaces = Set<String>()
+        for mode in WeiBeiAppearanceMode.allCases {
+            let theme = agentVisualizationTheme(for: mode, textScale: 1.25)
+            surfaces.insert(try XCTUnwrap(theme["surface"]))
+            let data = try JSONSerialization.data(withJSONObject: [
+                "id": "theme-check", "spec": spec, "theme": theme,
+                "appearance": mode.isDark ? "dark" : "light",
+            ])
+            let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
+            let result = try await webView.evaluateJavaScript("""
+            (() => {
+              const payload = \(payload);
+              window.WeiBeiGenUIHost.render(payload);
+              const input = document.querySelector('textarea');
+              if (\(mode == .paper)) {
+                Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '保留阅读疑问');
+                input.dispatchEvent(new Event('input', {bubbles:true}));
+              }
+              const expected = document.createElement('i');
+              expected.style.backgroundColor = payload.theme.surface;
+              expected.style.color = payload.theme.ink;
+              document.body.append(expected);
+              const actual = getComputedStyle(input), colors = getComputedStyle(expected);
+              const result = {
+                surface: actual.backgroundColor === colors.backgroundColor,
+                ink: actual.color === colors.color,
+                size: actual.fontSize,
+                value: input.value,
+                shadow: getComputedStyle(document.querySelector('[data-genui]')).getPropertyValue('--dsl-g-shadow-card').trim(),
+              };
+              expected.remove();
+              return result;
+            })()
+            """) as? [String: Any]
+            XCTAssertEqual(result?["surface"] as? Bool, true, mode.rawValue)
+            XCTAssertEqual(result?["ink"] as? Bool, true, mode.rawValue)
+            XCTAssertEqual(result?["size"] as? String, "17.5px", mode.rawValue)
+            XCTAssertEqual(result?["value"] as? String, "保留阅读疑问", mode.rawValue)
+            XCTAssertEqual(result?["shadow"] as? String, "none", mode.rawValue)
+        }
+        XCTAssertEqual(surfaces.count, WeiBeiAppearanceMode.allCases.count)
+        withExtendedLifetime(navigationProbe) {}
+    }
+
     func testGenUILoadFailureRetriesOnceThenWaitsForUserReload() {
         var state = AgentVisualizationLoadState()
         let firstAttempt = state.attempt

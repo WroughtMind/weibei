@@ -1,48 +1,55 @@
 body {
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: calc(14px * var(--weibei-scale, 1));
+  line-height: 1.6;
   --dsw-alias-bg-base: transparent;
-  --dsw-alias-bg-layer-1: #fffaf0;
-  --dsw-alias-bg-layer-2: #fffaf0;
-  --dsw-alias-bg-layer-3: #eee4cf;
-  --dsw-alias-label-primary: #261e18;
-  --dsw-alias-label-secondary: #665c50;
-  --dsw-alias-label-tertiary: #938777;
+  --dsw-alias-bg-layer-1: var(--weibei-surface, Canvas);
+  --dsw-alias-bg-layer-2: var(--dsw-alias-bg-layer-1);
+  --dsw-alias-bg-layer-3: color-mix(in srgb, var(--weibei-ink, CanvasText) 4%, var(--dsw-alias-bg-layer-1));
+  --dsw-alias-label-primary: var(--weibei-ink, CanvasText);
+  --dsw-alias-label-secondary: var(--weibei-muted, CanvasText);
+  --dsw-alias-label-tertiary: var(--weibei-soft, GrayText);
   --dsw-alias-label-caption: var(--dsw-alias-label-tertiary);
-  --dsw-alias-border-l1: rgba(67, 52, 38, .18);
-  --dsw-alias-border-l2: rgba(67, 52, 38, .28);
-  --dsw-alias-state-business-primary: #a84932;
-  --dsw-alias-state-success-primary: #39785b;
-  --dsw-alias-state-warn-primary: #9a6a21;
-  --dsw-alias-state-error-primary: #a33f35;
+  --dsw-alias-border-l1: var(--weibei-border, transparent);
+  --dsw-alias-border-l2: var(--dsw-alias-border-l1);
+  --dsw-alias-state-business-primary: var(--weibei-accent, AccentColor);
+  --dsw-alias-state-success-primary: var(--weibei-success, CanvasText);
+  --dsw-alias-state-warn-primary: var(--weibei-accent, AccentColor);
+  --dsw-alias-state-error-primary: var(--weibei-accent, AccentColor);
   --dsw-alias-state-success-secondary: var(--dsw-alias-state-success-primary);
   --dsw-alias-state-warn-secondary: var(--dsw-alias-state-warn-primary);
   --dsw-alias-markdown-code-block: var(--dsw-alias-bg-layer-1);
   --dsw-alias-markdown-hr: var(--dsw-alias-border-l1);
-  --dsw-static-deepseek-300: #c16a52;
-  --dsw-static-deepseek-400: #a84932;
-  --dsw-static-deepseek-450: #913d2a;
-  --dsw-static-blue-450: #386d72;
-  --dsw-static-green-400: #4b7650;
-  --dsw-static-amber-400: #a0782f;
-  --dsw-static-red-400: #a33f35;
-  --dsw-static-neutral-bluish-400: #777c83;
+  --dsw-static-deepseek-300: var(--dsw-alias-state-business-primary);
+  --dsw-static-deepseek-400: var(--dsw-alias-state-business-primary);
+  --dsw-static-deepseek-450: var(--dsw-alias-state-business-primary);
+  --dsw-static-blue-450: var(--weibei-link, LinkText);
+  --dsw-static-green-400: var(--dsw-alias-state-success-primary);
+  --dsw-static-amber-400: var(--dsw-alias-state-warn-primary);
+  --dsw-static-red-400: var(--dsw-alias-state-error-primary);
+  --dsw-static-neutral-bluish-400: var(--dsw-alias-label-tertiary);
 }
-body[data-ds-dark-theme] {
-  --dsw-alias-bg-layer-1: #29221d;
-  --dsw-alias-bg-layer-2: #302823;
-  --dsw-alias-bg-layer-3: #3c332b;
-  --dsw-alias-label-primary: #f2e8d7;
-  --dsw-alias-label-secondary: #c8bba8;
-  --dsw-alias-label-tertiary: #948778;
-  --dsw-alias-border-l1: rgba(245, 225, 199, .16);
-  --dsw-alias-border-l2: rgba(245, 225, 199, .26);
-  --dsw-alias-state-business-primary: #d4785e;
-  --dsw-alias-state-success-primary: #73aa8a;
-  --dsw-alias-state-warn-primary: #c99b55;
-  --dsw-alias-state-error-primary: #d77b70;
+/* The shared renderer owns components; this host maps its design tokens to WeiBei. */
+#genui-root [data-genui] {
+  --dsl-g-surface: var(--dsw-alias-bg-layer-1);
+  --dsl-g-shadow-card: none;
+  --dsl-g-border-surface: var(--dsw-alias-border-l1);
+  --dsl-g-border-strong: var(--dsw-alias-border-l1);
+  --dsl-g-radius-surface: var(--weibei-radius, 8px);
+  --dsl-g-radius-control: var(--weibei-radius, 8px);
+  --dsl-g-font-hero: calc(28px * var(--weibei-scale, 1));
+  --dsl-g-font-display: calc(24px * var(--weibei-scale, 1));
+  --dsl-g-font-h1: calc(22px * var(--weibei-scale, 1));
+  --dsl-g-font-h2: calc(18px * var(--weibei-scale, 1));
+  --dsl-g-font-h3: calc(16px * var(--weibei-scale, 1));
+  --dsl-g-font-body: calc(14px * var(--weibei-scale, 1));
+  --dsl-g-font-title: calc(14px * var(--weibei-scale, 1));
+  --dsl-g-font-meta: calc(12px * var(--weibei-scale, 1));
+  --dsl-g-font-data: calc(12px * var(--weibei-scale, 1));
+  --dsl-g-zebra: transparent;
 }
 html, body { margin: 0; background: transparent; color: var(--dsw-alias-label-primary); }
 body { overflow-x: hidden; }
 button, input, select, textarea { font: inherit; }
-#genui-root { display: flow-root; width: 100%; padding: 4px 3px 8px; box-sizing: border-box; }
-#genui-status { margin: 8px 0 0; font-size: 12px; color: var(--dsw-alias-label-secondary); }
+#genui-root { display: flow-root; width: 100%; padding: 2px 0; box-sizing: border-box; }
+#genui-status { margin: 8px 0 0; font-size: calc(12px * var(--weibei-scale, 1)); color: var(--dsw-alias-label-secondary); }
