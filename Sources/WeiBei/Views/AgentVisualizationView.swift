@@ -139,7 +139,7 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
 
         let configuration = WeiBeiWebViewConfiguration.make(
             surface: .genui,
-            allowingInlineMedia: false,
+            allowingInlineMedia: true,
             nonPersistent: true
         )
         configuration.userContentController = controller
@@ -209,6 +209,7 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
                 return
             }
             let fingerprint = [
+                parent.visualization.id,
                 parent.visualization.specJSON,
                 parent.appearance,
                 parent.actionStatus,
@@ -217,6 +218,7 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
             guard fingerprint != sentFingerprint else { return }
 
             var payload: [String: Any] = [
+                "id": parent.visualization.id,
                 "spec": spec,
                 "appearance": parent.appearance,
                 "actionStatus": parent.actionStatus,
@@ -312,6 +314,17 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
+            if navigationAction.navigationType == .linkActivated,
+               let url = navigationAction.request.url,
+               ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+#if targetEnvironment(macCatalyst)
+                UIApplication.shared.open(url)
+#else
+                NSWorkspace.shared.open(url)
+#endif
+                decisionHandler(.cancel)
+                return
+            }
             let allowed = navigationAction.request.url?.isFileURL == true
                 && navigationAction.targetFrame?.isMainFrame != false
             decisionHandler(allowed ? .allow : .cancel)

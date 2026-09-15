@@ -413,10 +413,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
             request: testRequest(), ledger: ledger, registry: registry,
             adapter: SequenceAdapter(steps: [
                 [.textDelta(index: 0, text: "before"),
-                 .toolCallDelta(index: 0, id: "v1", name: "weibei_visualize", argumentsDelta: #"{"id":"figure","spec":{"items":[{"value":1}]}}"#),
+                 .toolCallDelta(index: 0, id: "v1", name: "render_ui", argumentsDelta: #"{"id":"figure","spec":{"items":[{"value":1}]}}"#),
                  .finish(reason: .toolCalls, replayState: nil)],
                 [.textDelta(index: 0, text: "after"),
-                 .toolCallDelta(index: 0, id: "v2", name: "weibei_visualize", argumentsDelta: #"{"id":"figure","spec":{"items":[{"value":2}]}}"#),
+                 .toolCallDelta(index: 0, id: "v2", name: "render_ui", argumentsDelta: #"{"id":"figure","spec":{"items":[{"value":2}]}}"#),
                  .finish(reason: .toolCalls, replayState: nil)],
                 [.textDelta(index: 0, text: "tail"), .finish(reason: .stop, replayState: nil)]
             ]), model: "mock", hostToolHandler: nil, systemPrompt: "test",
@@ -1032,10 +1032,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(chunks.first, .textDelta(index: 0, text: "利率"))
     }
 
-    func testSkillRegistryLoadsVisualizeAndSocratic() throws {
+    func testSkillRegistryLoadsGenuiAndSocratic() throws {
         let root = try AgentResources.bundled().skillsURL
         let registry = try NativeSkillRegistry.load(from: root)
-        XCTAssertNotNil(registry.pack(named: "visualize"))
+        XCTAssertNotNil(registry.pack(named: "genui"))
         XCTAssertNotNil(registry.pack(named: "socratic-questioning"))
         XCTAssertTrue(registry.catalogSummary().contains("socratic-questioning"))
     }

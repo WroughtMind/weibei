@@ -42,7 +42,7 @@ let package = Package(
                 .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftMath", package: "SwiftMath")
             ],
-            exclude: ["WebEditor"],
+            exclude: ["WebEditor", "WebGenUI"],
             resources: [
                 .process("Resources")
             ],

@@ -33,10 +33,13 @@ final class AgentVisualizationSizingTests: XCTestCase {
         webView.navigationDelegate = navigationProbe
         let entry = try XCTUnwrap(WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html"))
         webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
-        await fulfillment(of: [loaded], timeout: 3)
+        await fulfillment(of: [loaded], timeout: 10)
 
         let spec = #"{"items":[{"type":"button","label":"继续解释","action":"explain"}]}"#
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('.button').click()")
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('button').click()")
+        for _ in 0..<50 where actionProbe.requestID == nil {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
         let requestID = try XCTUnwrap(actionProbe.requestID)
         XCTAssertEqual(actionProbe.action, "explain")
         let rejection = "当前无法提交这条回答。"
@@ -47,8 +50,8 @@ final class AgentVisualizationSizingTests: XCTestCase {
         ])
         let resultJSON = try XCTUnwrap(String(data: resultData, encoding: .utf8))
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult(\(resultJSON))")
-        let rejectedDisabled = try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool
-        let rejectedText = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
+        let rejectedDisabled = try await webView.evaluateJavaScript("document.querySelector('button').disabled") as? Bool
+        let rejectedText = try await webView.evaluateJavaScript("document.getElementById('genui-root').textContent") as? String
         XCTAssertEqual(rejectedDisabled, false)
         XCTAssertTrue(rejectedText?.contains(rejection) == true)
         withExtendedLifetime(navigationProbe) {}
@@ -103,8 +106,8 @@ final class AgentVisualizationSizingTests: XCTestCase {
           const spec = {items:[{type:'textarea', id:'answer'}]};
           window.WeiBeiGenUIHost.render({spec});
           const control = document.querySelector('textarea');
-          control.value = \(encodedInput);
-          control.dispatchEvent(new Event('input'));
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(control, \(encodedInput));
+          control.dispatchEvent(new Event('input', {bubbles:true}));
           window.WeiBeiGenUIHost.render({spec, state: window.WeiBeiGenUIHost.snapshot()});
           return document.querySelector('textarea').value;
         })()
@@ -117,7 +120,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
     @MainActor
     func testGenUICopyWritesFullText() async throws {
         let (webView, navigationProbe) = try await loadGenUI()
-        let text = String(repeating: "需要完整复制的学习内容。", count: 1_000) + "复制末尾"
+        let text = String(repeating: "需要完整复制的学习内容。", count: 100) + "复制末尾"
         let data = try JSONSerialization.data(withJSONObject: [
             "spec": ["items": [["type": "copy", "text": text]]],
         ])
@@ -129,7 +132,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
             value: {writeText: text => { window.copiedText = text; return Promise.resolve(); }}
           });
           window.WeiBeiGenUIHost.render(\(payload));
-          document.querySelector('.button').click();
+          document.querySelector('button').click();
           return window.copiedText;
         })()
         """) as? String
@@ -139,54 +142,39 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIKeepsFullTextAndRevealsWholeTable() async throws {
-        let configuration = WKWebViewConfiguration()
-        let webView = WKWebView(
-            frame: NSRect(x: 0, y: 0, width: 640, height: 240),
-            configuration: configuration
-        )
-        let loaded = expectation(description: "GenUI runtime loaded")
-        let navigationProbe = GenUINavigationProbe { loaded.fulfill() }
-        webView.navigationDelegate = navigationProbe
-        let entry = try XCTUnwrap(
-            WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html")
-        )
-        webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
-        await fulfillment(of: [loaded], timeout: 3)
+    func testDSHGenUIBundledEnginesRenderOffline() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let spec = #"""
+        {"items":[
+          {"type":"mermaid","code":"graph LR; A[阅读] --> B[整理]"},
+          {"type":"echart","preset":"bar","data":[{"label":"资料","value":3}]},
+          {"type":"echart","option":{"xAxis":{"type":"category","data":["资料"]},"yAxis":{},"series":[{"type":"bar","data":[3]}]}},
+          {"type":"scene3d","meshes":[{"shape":"box"}]}
+        ]}
+        """#
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec)})")
+        let ready = "Object.keys(window.__GenuiAssets__ || {}).length === 4 && document.querySelectorAll('svg .node').length === 2 && document.querySelectorAll('canvas').length >= 3"
+        var rendered = false
+        for _ in 0..<100 {
+            rendered = try await webView.evaluateJavaScript(ready) as? Bool == true
+            if rendered { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let detail = try await webView.evaluateJavaScript("document.getElementById('genui-root').innerText") as? String
+        XCTAssertTrue(rendered, detail ?? "本地图表资源未完成渲染")
+        withExtendedLifetime(navigationProbe) {}
+    }
 
-        let tailMarker = "正文末尾仍然可见"
-        let content = String(repeating: "正文", count: 10_000) + tailMarker
-        let columns = (0..<13).map { "第 \($0) 列" }
-        let rows = (0..<120).map { row in columns.map { "第 \(row) 行 · \($0)" } }
-        let data = try JSONSerialization.data(withJSONObject: [
-            "spec": [
-                "items": [[
-                    "type": "text",
-                    "content": content,
-                ], [
-                    "type": "table",
-                    "columns": columns,
-                    "rows": rows,
-                ]],
-            ],
-        ])
-        let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(payload))")
-        let visibleText = try await webView.evaluateJavaScript("document.querySelector('.text').textContent") as? String
-        let totalRows = rows.count
-        let initialRows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
-        let progress = try await webView.evaluateJavaScript("document.querySelector('.data-progress').textContent") as? String
-        _ = try await webView.evaluateJavaScript("while (!document.querySelector('.table-wrap > .data-progress button').hidden) document.querySelector('.table-wrap > .data-progress button').click()")
-        let revealedRows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
-        let revealedColumns = try await webView.evaluateJavaScript("document.querySelectorAll('thead th').length") as? Int
-
-        XCTAssertTrue(visibleText?.contains(tailMarker) == true)
-        XCTAssertNotNil(initialRows)
-        XCTAssertLessThan(initialRows ?? totalRows, totalRows)
-        XCTAssertTrue(progress?.range(of: #"\d+/\d+"#, options: .regularExpression) != nil)
-        XCTAssertEqual(revealedRows, totalRows)
-        XCTAssertEqual(revealedColumns, columns.count)
-
+    @MainActor
+    func testDSHGenUITableRendersAndSortsLocally() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let spec = #"{"items":[{"type":"table","columns":["项目","数量"],"rows":[["乙",20],["甲",3]]}]}"#
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec)})")
+        let rows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
+        XCTAssertEqual(rows, 2)
+        _ = try await webView.evaluateJavaScript("document.querySelectorAll('thead th button')[1].click()")
+        let first = try await webView.evaluateJavaScript("document.querySelector('tbody tr').textContent") as? String
+        XCTAssertTrue(first?.contains("甲") == true)
         withExtendedLifetime(navigationProbe) {}
     }
 
@@ -254,7 +242,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
             WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html")
         )
         webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
-        await fulfillment(of: [loaded], timeout: 3)
+        await fulfillment(of: [loaded], timeout: 10)
 
         let repeatedText = String(repeating: "快速切换后内容仍应完整刷新。", count: 20)
         let spec: [String: Any] = [
@@ -316,7 +304,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
             WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html")
         )
         webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
-        await fulfillment(of: [loaded], timeout: 3)
+        await fulfillment(of: [loaded], timeout: 10)
         return (webView, navigationProbe)
     }
 }

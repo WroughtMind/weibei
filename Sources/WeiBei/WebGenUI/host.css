@@ -1,0 +1,48 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  --dsw-alias-bg-base: transparent;
+  --dsw-alias-bg-layer-1: #fffaf0;
+  --dsw-alias-bg-layer-2: #fffaf0;
+  --dsw-alias-bg-layer-3: #eee4cf;
+  --dsw-alias-label-primary: #261e18;
+  --dsw-alias-label-secondary: #665c50;
+  --dsw-alias-label-tertiary: #938777;
+  --dsw-alias-label-caption: var(--dsw-alias-label-tertiary);
+  --dsw-alias-border-l1: rgba(67, 52, 38, .18);
+  --dsw-alias-border-l2: rgba(67, 52, 38, .28);
+  --dsw-alias-state-business-primary: #a84932;
+  --dsw-alias-state-success-primary: #39785b;
+  --dsw-alias-state-warn-primary: #9a6a21;
+  --dsw-alias-state-error-primary: #a33f35;
+  --dsw-alias-state-success-secondary: var(--dsw-alias-state-success-primary);
+  --dsw-alias-state-warn-secondary: var(--dsw-alias-state-warn-primary);
+  --dsw-alias-markdown-code-block: var(--dsw-alias-bg-layer-1);
+  --dsw-alias-markdown-hr: var(--dsw-alias-border-l1);
+  --dsw-static-deepseek-300: #c16a52;
+  --dsw-static-deepseek-400: #a84932;
+  --dsw-static-deepseek-450: #913d2a;
+  --dsw-static-blue-450: #386d72;
+  --dsw-static-green-400: #4b7650;
+  --dsw-static-amber-400: #a0782f;
+  --dsw-static-red-400: #a33f35;
+  --dsw-static-neutral-bluish-400: #777c83;
+}
+body[data-ds-dark-theme] {
+  --dsw-alias-bg-layer-1: #29221d;
+  --dsw-alias-bg-layer-2: #302823;
+  --dsw-alias-bg-layer-3: #3c332b;
+  --dsw-alias-label-primary: #f2e8d7;
+  --dsw-alias-label-secondary: #c8bba8;
+  --dsw-alias-label-tertiary: #948778;
+  --dsw-alias-border-l1: rgba(245, 225, 199, .16);
+  --dsw-alias-border-l2: rgba(245, 225, 199, .26);
+  --dsw-alias-state-business-primary: #d4785e;
+  --dsw-alias-state-success-primary: #73aa8a;
+  --dsw-alias-state-warn-primary: #c99b55;
+  --dsw-alias-state-error-primary: #d77b70;
+}
+html, body { margin: 0; background: transparent; color: var(--dsw-alias-label-primary); }
+body { overflow-x: hidden; }
+button, input, select, textarea { font: inherit; }
+#genui-root { display: flow-root; width: 100%; padding: 4px 3px 8px; box-sizing: border-box; }
+#genui-status { margin: 8px 0 0; font-size: 12px; color: var(--dsw-alias-label-secondary); }

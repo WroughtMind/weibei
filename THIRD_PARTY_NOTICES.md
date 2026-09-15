@@ -17,9 +17,12 @@ Exact package versions and declared licenses are recorded in:
 Generated JavaScript bundles retain embedded copyright and license notices.
 Rebuilds must preserve those notices.
 
-The safe mathematical expression evaluator used by the inline generative UI
-is adapted from `dsh-external/dsh-genui`, copyright 2026 dsh-external, under
-the MIT License.
+The inline generative UI uses `@changfenhuang/dsh-genui` from
+`omdsh-dev/dsh-genui`, copyright 2026 dsh-external (MIT), together with the
+DSH UI primitives (MIT), React (MIT), Three.js (MIT), and Apache ECharts and
+ZRender (Apache-2.0). Its component renderer, safe mathematical evaluator,
+validation, and model instructions are built from the same upstream package.
+The bundled engine scripts retain their copyright and license notices.
 
 ## Native conversation rendering
 
