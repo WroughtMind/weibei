@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { build } from 'esbuild';
 import pako from 'pako';
+import { packedWebScript } from './packed_web_script.mjs';
 import { officeVendorPatches } from '../Sources/WeiBei/OfficeReader/vendor-patches.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -67,6 +68,13 @@ const officeBundle = resolve(output, 'office-entry.js');
 await writeFile(`${officeBundle}.deflate`, pako.deflateRaw((await readFile(officeBundle, 'utf8')).replace(/[ \t]+$/gm, ''), { level: 9 }));
 await rm(officeBundle);
 
+// The editor and GenUI share one lazy relationship-diagram engine.
+const mermaidBundle = resolve(output, 'mermaid-runtime.js');
+const mermaid = packedWebScript(await readFile(mermaidBundle));
+await writeFile(mermaidBundle, `window.WeiBeiMermaid = ${mermaid.source}.then(() => window.WeiBeiMermaid);
+(window.__GenuiAssets__ ??= {}).mermaid = window.WeiBeiMermaid.then(() => window.__GenuiAssets__.mermaid);
+`);
+
 const walk = async (directory) => (await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {
   const path = join(directory, entry.name);
   return entry.isDirectory() ? walk(path) : [path];
@@ -79,7 +87,7 @@ const entries = await Promise.all(manifestFiles.map(async (path) => {
   return { name, bytes: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex') };
 }));
 entries.sort((a, b) => a.name.localeCompare(b.name));
-const manifest = `${JSON.stringify({ schemaVersion: 1, assets: entries }, null, 2)}\n`;
+const manifest = `${JSON.stringify({ schemaVersion: 1, inlineScripts: [mermaid.hash], assets: entries }, null, 2)}\n`;
 await writeFile(resolve(output, 'editor-resources.json'), manifest);
 
 if (check) {

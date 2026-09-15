@@ -1,10 +1,13 @@
 {
   "schemaVersion": 1,
+  "inlineScripts": [
+    "'sha256-/Q7VUHZ+U6FCYUsHCtl/w3Is/xwvhiqHP86ympq/1/A='"
+  ],
   "assets": [
     {
       "name": "diagram.html",
-      "bytes": 2122,
-      "sha256": "b888032f8c36f885bd0c76422a6f3361f185821ad3c6934c7bde116129fdbed5"
+      "bytes": 2207,
+      "sha256": "296f05e368ee036c5276875f2e5e089a63d84b28af46e51a4861d61825c1eeed"
     },
     {
       "name": "editor-entry.js",
@@ -128,8 +131,8 @@
     },
     {
       "name": "mermaid-runtime.js",
-      "bytes": 3489655,
-      "sha256": "fd0ed550767e53a142614b070ad97fc3722cff1c2f862a873fceb29a9abfd7f0"
+      "bytes": 1317906,
+      "sha256": "fb87cf1a9c92584d9111643c5f5cfedff6d19c9e38302856f21e655f490a9e7d"
     },
     {
       "name": "Mplus1p-Bold.woff2",
