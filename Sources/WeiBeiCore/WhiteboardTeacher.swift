@@ -36,7 +36,7 @@ public enum WhiteboardTeacher {
         let finished = try await readLines(adapter: adapter, request: request, kind: "teach", index: index, record: record) { line in
             let action: WhiteboardAction
             do {
-                action = try compile(line, index: index, nextBoard: &nextBoard, known: lesson.actions, source: session.source)
+                action = try compile(line, index: index, nextBoard: &nextBoard, known: lesson.actions)
                 var proposed = lesson; proposed.actions.append(action)
                 try proposed.validate(source: session.source)
                 try await validate(action)
@@ -47,7 +47,7 @@ public enum WhiteboardTeacher {
             lesson.actions.append(action); result.actions.append(action)
             return true
         }
-        if finished && result.actions.contains(where: { $0.leaves.contains { [.board, .graph, .speak, .ask].contains($0.type) } }) {
+        if finished && result.actions.contains(where: { $0.leaves.contains { [.board, .graph, .ask].contains($0.type) } }) {
             var completion = WhiteboardAction(type: .keypointComplete, stepID: UUID().uuidString)
             completion.index = index; completion.keypointIndex = index
             result.actions.append(completion); try await receive(completion)
@@ -68,7 +68,7 @@ public enum WhiteboardTeacher {
         _ = try await readLines(adapter: adapter, request: request, kind: correction ? "correction" : "reply", record: record) { line in
             let action: WhiteboardAction
             do {
-                action = try compile(line, index: session.currentAction?.keypointIndex, nextBoard: &nextBoard, known: session.lesson.actions, source: session.source)
+                action = try compile(line, index: session.currentAction?.keypointIndex, nextBoard: &nextBoard, known: session.lesson.actions)
                 guard action.type == .speak || (!correction && action.type == .board && boardCount == 0) else { return false }
                 if action.type == .speak {
                     guard let text = action.text, !text.isEmpty, text.count <= (correction ? 80 : 2_000), textCount < (correction ? 1 : 3) else { return false }
@@ -107,7 +107,7 @@ public enum WhiteboardTeacher {
     }
 
     /// Assign every identifier here; annotations name a card or default to the latest one.
-    private static func compile(_ line: String, index: Int?, nextBoard: inout Int, known: [WhiteboardAction], source: WhiteboardSource) throws -> WhiteboardAction {
+    private static func compile(_ line: String, index: Int?, nextBoard: inout Int, known: [WhiteboardAction]) throws -> WhiteboardAction {
         guard let object = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { throw WhiteboardFailure("动作必须是对象") }
         var available = known.flatMap(\.leaves)
         func number(_ object: [String: Any]) throws -> [String: Any] {
@@ -124,8 +124,6 @@ public enum WhiteboardTeacher {
                 raw["actions"] = try children.map(number)
             }
             if kind == .board || kind == .graph {
-                // A single supplied page is unambiguous; never guess between source pages.
-                if raw["source_page"] == nil && source.pages.count == 1 { raw["source_page"] = source.pages[0].number }
                 raw["board_uid"] = nextBoard; nextBoard += 1
                 if kind == .graph, let graph = raw["mermaid"] as? String,
                    graph.range(of: #"%%\{|\bclick\s|<\/?(?:script|iframe|img)|https?://"#, options: .regularExpression) != nil {

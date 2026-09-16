@@ -317,17 +317,22 @@ final class WhiteboardLessonTests: XCTestCase {
         let graph = #"{"type":"diagram","title":"比较实际和预测","mermaid":"flowchart LR\nA[实际]-->B[预测]"}"#
         let capture = WhiteboardRequestCapture()
         let drawing = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(
-            text: graph + "\n" + String(graph.dropLast()) + #","source_page":99}"#,
+            text: String(graph.dropLast()) + #","source_page":12}"# + "\n" + String(graph.dropLast()) + #","source_page":99}"#,
             finish: .stop, capture: capture), model: "fixture", session: value, index: 0,
             record: { capture.measurements.append($0) }, receive: { _ in })
         XCTAssertEqual(drawing.actions.map(\.type), [.graph, .keypointComplete])
         XCTAssertEqual(drawing.actions.first?.sourcePage, 12)
         XCTAssertEqual(capture.measurements.first?.skippedLines, 1, "图示规范化后仍须拒绝不存在的来源页")
-        var ambiguous = value
-        ambiguous.source.pages.append(.init(number: 13, text: "另一页"))
-        let rejected = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(text: graph,
-            finish: .stop, capture: capture), model: "fixture", session: ambiguous, index: 0, receive: { _ in })
-        XCTAssertTrue(rejected.actions.isEmpty, "多页材料不能替模型猜来源，也不能把丢弃内容当成完成")
+        for pages in [source.pages, source.pages + [.init(number: 13, text: "另一页")]] {
+            var unsourced = value; unsourced.source.pages = pages
+            let rejected = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(text: graph,
+                finish: .stop, capture: capture), model: "fixture", session: unsourced, index: 0, receive: { _ in })
+            XCTAssertTrue(rejected.actions.isEmpty, "即使只有一页，也不能替模型猜来源或把丢弃内容当成完成")
+        }
+        let narrationOnly = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(
+            text: graph + "\n" + #"{"type":"speak","spoken_text":"先比较实际与预测。"}"#,
+            finish: .stop, capture: capture), model: "fixture", session: value, index: 0, receive: { _ in })
+        XCTAssertEqual(narrationOnly.actions.map(\.type), [.speak], "板书被拒后剩下的讲稿不能完成关键点")
         value.lesson.actions += drawing.actions
         let question = #"{"type":"ask","mode":"choice","question":"实际9，预测6，残差是多少？","options":["3","-3"],"correct_index":0,"explanation":"实际减预测，9−6=3。"}"#
         let assessment = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(text: question,
