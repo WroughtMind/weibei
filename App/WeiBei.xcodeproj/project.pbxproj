@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FACAB0010000000000000001 /* WhiteboardCanvasTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = FACAB0010000000000000002 /* WhiteboardCanvasTools.swift */; };
+		FACAB0010000000000000003 /* WhiteboardCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = FACAB0010000000000000004 /* WhiteboardCorrection.swift */; };
 		FABC01230000000000000004 /* ReadAloudControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FABC01230000000000000003 /* ReadAloudControls.swift */; };
 		FABC01230000000000000002 /* ReadAloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = FABC01230000000000000001 /* ReadAloud.swift */; };
 		FAED00100000000000000001 /* WorkspaceStore+Whiteboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAED00100000000000000002 /* WorkspaceStore+Whiteboard.swift */; };
@@ -284,6 +286,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		FACAB0010000000000000002 /* WhiteboardCanvasTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardCanvasTools.swift; sourceTree = "<group>"; };
+		FACAB0010000000000000004 /* WhiteboardCorrection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardCorrection.swift; sourceTree = "<group>"; };
 		FABC01230000000000000003 /* ReadAloudControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadAloudControls.swift; sourceTree = "<group>"; };
 		FABC01230000000000000001 /* ReadAloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadAloud.swift; sourceTree = "<group>"; };
 		FAED00100000000000000002 /* WorkspaceStore+Whiteboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+Whiteboard.swift"; sourceTree = "<group>"; };
@@ -691,6 +695,7 @@
 				6466DFC31FC844340EE76AA1 /* WeiBeiLog.swift */,
 				895661426136DBC4F464D6BE /* WeiBeiPerfBudgets.swift */,
 				6B11447A1642767ECA654631 /* WhiteboardLesson.swift */,
+				FACAB0010000000000000004 /* WhiteboardCorrection.swift */,
 				A5FA25861D22C2E846AC3AB4 /* WhiteboardMedia.swift */,
 				CCC4E193DC17BA9AF9E52E3C /* WhiteboardTeacher.swift */,
 				2B36FBF40C988CDB377C7075 /* WorkspaceModels.swift */,
@@ -773,6 +778,7 @@
 				77E24C9301A7E73D1A60BF02 /* WhiteboardSessionView.swift */,
 				FABC01230000000000000003 /* ReadAloudControls.swift */,
 				40805DD7B77A4C164CA3E1ED /* WhiteboardCanvasView.swift */,
+				FACAB0010000000000000002 /* WhiteboardCanvasTools.swift */,
 				B70D1158336BFF2387EA4B24 /* ReaderView.swift */,
 				CD62172095286419347BAD3C /* ReaderWebRemarkMarks.swift */,
 				128917445B9A5AAAD21DDFD8 /* RichMarkdownEditorView.swift */,
@@ -1215,6 +1221,7 @@
 				B1077BB5214A97ABDACC3055 /* WeiBeiLog.swift in Sources */,
 				7827AF14F4882BBF9FCC9DF7 /* WeiBeiPerfBudgets.swift in Sources */,
 				631FB50B853C3BAB05DDDA0B /* WhiteboardLesson.swift in Sources */,
+				FACAB0010000000000000003 /* WhiteboardCorrection.swift in Sources */,
 				D3B9B36D787C85E8759539F4 /* WhiteboardMedia.swift in Sources */,
 				33F2B17FBA0FA0106D198350 /* WhiteboardTeacher.swift in Sources */,
 				483969E85BDE060DE0E0E0A8 /* WorkspaceModels.swift in Sources */,
@@ -1310,6 +1317,7 @@
 				A4283641713B8BF9F6B629CB /* WhiteboardSessionView.swift in Sources */,
 				FABC01230000000000000004 /* ReadAloudControls.swift in Sources */,
 				F9D8349D02F42B25ECC8B0AB /* WhiteboardCanvasView.swift in Sources */,
+				FACAB0010000000000000001 /* WhiteboardCanvasTools.swift in Sources */,
 				4EF5FF4C48360845B139AF97 /* ReaderView.swift in Sources */,
 				BAED75D670CA5D37AC28EC72 /* ReaderWebRemarkMarks.swift in Sources */,
 				8AD5703AE2BB476ABF376A4B /* RichMarkdownEditorView.swift in Sources */,

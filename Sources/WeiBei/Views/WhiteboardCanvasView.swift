@@ -59,6 +59,7 @@ struct WhiteboardCanvasView: WhiteboardRepresentable {
         }
         private func send(_ method: String, _ values: [String: Any]) {
             let statements: [String: String] = [
+                "canvasCommand": "window.WeiBeiWhiteboard.canvasCommand(command)",
                 "restore": "return await window.WeiBeiWhiteboard.restore(actions, state, requestID)",
                 "receive": "return await window.WeiBeiWhiteboard.receive(envelope)",
                 "pause": "window.WeiBeiWhiteboard.pause(value)",

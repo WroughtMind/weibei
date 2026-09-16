@@ -48,7 +48,6 @@ struct ReadAloudControls: View {
                     }
                 }
         }.buttonStyle(.borderless)
-        .onDisappear { reader.stop(id: id) }
         .onChange(of: id) { previous, _ in reader.stop(id: previous) }
     }
     private func start(_ body: @escaping () async throws -> String) {
@@ -115,6 +114,7 @@ struct NoteReadAloudControls: View {
 struct SpeechSettingsFields: View {
     @Binding var settings: WhiteboardMediaSettings
     @Binding var speechKey: String
+    @State private var showsCloud = false
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Picker("声音", selection: $settings.voice) {
@@ -127,7 +127,7 @@ struct SpeechSettingsFields: View {
                 Text("语速"); Slider(value: $settings.speed, in: 0.5...2, step: 0.25)
                 Text("\(settings.speed, specifier: "%.2f")×").monospacedDigit()
             }
-            DisclosureGroup("高级：云端语音") {
+            DisclosureGroup("云端语音配置", isExpanded: $showsCloud) {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("兼容接口根地址（例如以 /v1 结尾）", text: $settings.speech.baseURL)
                     TextField("模型名称", text: $settings.speech.model)
@@ -135,10 +135,12 @@ struct SpeechSettingsFields: View {
                     SecureField("密钥（留空保留）", text: $speechKey)
                 }.textFieldStyle(.roundedBorder)
             }
-            Text("系统中文与动物语无需接口；云端语音按填写的服务合成。声音在下一次朗读生效，语速和服务配置共用。")
+            Text("系统中文与动物语无需接口。白板与正文朗读各自记住声音选择，语速和云端配置共用。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("中文音节：Chen Wang；Hugo Lopez、Nicolas Vion 整理。CC BY-SA 3.0。")
                 .font(.caption2).foregroundStyle(.secondary)
-        }
+        }.tint(WeiBeiTheme.cinnabar)
+            .onAppear { showsCloud = settings.voice == .cloud }
+            .onChange(of: settings.voice) { _, voice in if voice == .cloud { showsCloud = true } }
     }
 }

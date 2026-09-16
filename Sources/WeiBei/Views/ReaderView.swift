@@ -329,13 +329,6 @@ struct ReaderView: View {
                 ) {
                     HStack(spacing: 8) {
                         ContextualContentListButton(kind: .material)
-                        if let item = store.selectedMaterialItem { MaterialReadAloudControls(store: store, item: item) }
-                        Button { showsWhiteboardClassroom = true } label: {
-                            Image(systemName: "rectangle.and.pencil.and.ellipsis")
-                        }
-                        .buttonStyle(.plain)
-                        .help(store.ui("白板讲解", "Whiteboard lesson"))
-                        .accessibilityLabel(store.ui("白板讲解", "Whiteboard lesson"))
                         selectionAskThreadsMenu
                         if let item = store.selectedMaterialItem,
                            !store.selectionRemarkRecords(forItemID: item.id).isEmpty {
@@ -346,13 +339,20 @@ struct ReaderView: View {
                 }
             }
         }
-        .overlay(alignment: .topTrailing) {
-            if !showsFloatingTitle, store.selectedMaterialItem != nil {
-                HStack {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !railOnly, store.selectedMaterialItem != nil {
+                HStack(spacing: 14) {
+                    Spacer(minLength: 0)
                     if let item = store.selectedMaterialItem { MaterialReadAloudControls(store: store, item: item) }
-                    Button(store.ui("白板讲解", "Whiteboard lesson")) { showsWhiteboardClassroom = true }.buttonStyle(.bordered)
-                }.padding(8)
+                    Button { showsWhiteboardClassroom = true } label: {
+                        Image(systemName: "rectangle.and.pencil.and.ellipsis")
+                    }.help(store.ui("白板讲解", "Whiteboard lesson"))
+                        .accessibilityLabel(store.ui("白板讲解", "Whiteboard lesson"))
+                }.buttonStyle(.borderless).padding(.horizontal, 16).frame(height: 36)
+                    .background(WeiBeiTheme.paper)
             }
+        }
+        .overlay(alignment: .topTrailing) {
             if store.selectedMaterialItem?.kind.isWebDocument == true, !htmlResourceIssues.isEmpty {
                 Button { htmlIssueDetailsPresented.toggle() } label: {
                     Circle().fill(.orange).frame(width: 7, height: 7)

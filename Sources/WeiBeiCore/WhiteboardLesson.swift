@@ -200,14 +200,18 @@ public struct WhiteboardCanvasState: Codable, Equatable, Sendable {
         public var activeIndex: Int
         public var lp: Parameters
     }
+    public struct InkPoint: Codable, Equatable, Sendable { public var x, y: Double }
+    public struct InkStroke: Codable, Equatable, Sendable { public var id: String; public var points: [InkPoint] }
     public struct Page: Codable, Equatable, Sendable {
         public var id, title: String
         public var overlayItems: [Item]
         public var columnLayout: Layout
+        public var strokes: [InkStroke]?
     }
     public var version: Int
     public var revision: Int
     public var activePageId: String?
+    public var zoom, scrollX, scrollY: Double?
     public var pages: [Page]
 }
 
@@ -219,8 +223,10 @@ public struct WhiteboardDiscussion: Codable, Equatable, Identifiable, Sendable {
     public var card: WhiteboardAction?
     public var insertionCursor: Int
     public var completed = false
-    public init(stepID: String, question: String, insertionCursor: Int) {
+    public var correctionFor: String?
+    public init(stepID: String, question: String, insertionCursor: Int, correctionFor: String? = nil) {
         self.stepID = stepID; self.question = question; self.insertionCursor = insertionCursor
+        self.correctionFor = correctionFor
     }
 }
 
@@ -253,8 +259,17 @@ public struct WhiteboardSession: Codable, Equatable, Identifiable, Sendable {
         guard (0...lesson.actions.count).contains(cursor) else { throw WhiteboardFailure("课堂进度损坏，原记录已保留。") }
         if let canvas {
             let items = canvas.pages.flatMap(\.overlayItems)
+            let strokes = canvas.pages.flatMap { $0.strokes ?? [] }
             guard canvas.version == 1, canvas.revision >= 0, canvas.pages.count <= 160, items.count <= 256,
+                  (0.5...2).contains(canvas.zoom ?? 1),
+                  [canvas.scrollX ?? 0, canvas.scrollY ?? 0].allSatisfy({ $0.isFinite && (0...2_000_000).contains($0) }),
                   Set(canvas.pages.map(\.id)).count == canvas.pages.count,
+                  Set(strokes.map(\.id)).count == strokes.count, strokes.count <= 2_000,
+                  strokes.reduce(0, { $0 + $1.points.count }) <= 200_000,
+                  strokes.allSatisfy({ !$0.id.isEmpty && $0.id.count <= 100 && !$0.points.isEmpty && $0.points.allSatisfy {
+                      $0.x.isFinite && $0.y.isFinite && (0...1_000_000).contains($0.x) && (0...1_000_000).contains($0.y)
+                  }}),
+                  canvas.pages.allSatisfy({ (260...360).contains($0.columnLayout.lp.tileW) }),
                   canvas.activePageId == nil || canvas.pages.contains(where: { $0.id == canvas.activePageId }),
                   items.allSatisfy({ card in
                       [card.x, card.y, card.w, card.h].allSatisfy { $0.isFinite && (0...1_000_000).contains($0) }

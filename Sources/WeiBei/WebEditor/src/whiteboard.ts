@@ -1,6 +1,7 @@
 import type * as Voice from './animalVoice';
 const voice = () => (globalThis as unknown as {WeiBeiVoice:typeof Voice}).WeiBeiVoice;
 import { createWebiCompanion, webiMouthForPinyin } from './webiCompanion';
+import { WhiteboardInteraction, relativeRect, type CanvasSnapshot, type InkStroke } from './whiteboardInteraction';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
@@ -16,7 +17,7 @@ type Action = { type: string; step_id: string; title?: string; page_id?: string;
 type Envelope = { action: Action; ticket: string; audio: Record<string, string>; voice?:string; silent?:boolean; speed?:number };
 type Card = { action: Action; node: HTMLElement; revealed: boolean; page: number; column: number; x: number; y: number; decorations:Action[] };
 type Deferred = { resolve: () => void; reject: (error: Error) => void };
-type Page = { id:string; title:string; overlayItems:unknown[];
+type Page = { id:string; title:string; overlayItems:unknown[]; strokes:InkStroke[];
   columnLayout:{columns:{w:number;nextY:number}[];activeIndex:number;lp:{tileW:number}} };
 const host = window as unknown as { webkit?: { messageHandlers?: { whiteboard?: { postMessage: (data: unknown) => void } } };
   WeiBeiKaTeX: { renderToString: (text: string, options: unknown) => string };
@@ -32,6 +33,9 @@ let entries: ({type:'page'|'column';id?:string;title?:string} | Card)[] = [], ca
 let pages:Page[] = [], activePageId:string|undefined, layoutJSON='';
 let epoch = 0, camera = 0, revision = 0, active: Envelope | undefined, paused = false, pausedAt = 0, pauseTotal = 0;
 let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
+let layoutWidth:number|undefined;
+const interaction=new WhiteboardInteraction(viewport,canvas,(immediate)=>{revision++;snapshot(immediate);},()=>{camera++;},
+  state=>send({type:'canvas_controls',...state}));
 const revealing = new Map<number, Deferred>(), speeches = new Map<string, Deferred>(), questions = new Map<string, Deferred>();
 const preparedVoice=new Map<string,Awaited<ReturnType<typeof Voice.animalSpeech>>>();
 const speechClocks=new Map<string,{progress:number;finished:boolean;audio?:HTMLAudioElement;error?:string}>();
@@ -69,21 +73,26 @@ function markdown(text: string): string {
   return DOMPurify.sanitize(html, {FORBID_TAGS: ['img','iframe','script','style','a','input','button','form']});
 }
 
-function snapshot() {
+function snapshot(immediate=false) {
   clearTimeout(snapshotTimer);
-  snapshotTimer = setTimeout(() => send({type:'sync_whiteboard_state', whiteboard_state:{
-    version:1,revision,activePageId:activePageId ?? null,pages,
-  }}), 500);
+  const write=()=>send({type:'sync_whiteboard_state', whiteboard_state:{
+    version:1,revision,activePageId:interaction.currentPage() ?? activePageId ?? null,
+    zoom:interaction.scale,scrollX:viewport.scrollLeft,scrollY:viewport.scrollTop,
+    pages:pages.map(page=>({...page,strokes:interaction.strokes(page.id)})),
+  }});
+  if(immediate)write();else snapshotTimer=setTimeout(write,500);
 }
 
 function layout() {
-  const width = Math.max(260, Math.min(360, (viewport.clientWidth - 60) / 2));
+  // Keep page geometry stable while zooming or resizing; handwriting shares these coordinates.
+  const width = layoutWidth ?? Math.max(260, Math.min(360, (viewport.clientWidth/interaction.scale - 60) / 2));
+  if(entries.length)layoutWidth=width;
   const stride=2*width+72;
   pages=[];
   let page=-1,column=0,nextY=66,maxY=900;
   const addPage=(id?:string,title?:string) => {
     page++;column=0;nextY=66;
-    pages.push({id:id ?? 'page-'+page,title:title ?? '续页',overlayItems:[],columnLayout:{
+    pages.push({id:id ?? 'page-'+page,title:title ?? '续页',overlayItems:[],strokes:interaction.strokes(id ?? 'page-'+page),columnLayout:{
       columns:[{w:width,nextY:66},{w:width,nextY:66}],activeIndex:0,lp:{tileW:width},
     }});
   };
@@ -119,7 +128,9 @@ function layout() {
     pages[page].columnLayout.columns[column].nextY=nextY;pages[page].columnLayout.activeIndex=column;
     if(wide)pages[page].columnLayout.columns[1].nextY=nextY;
   }
-  canvas.style.width=Math.max(viewport.clientWidth,(page+1)*stride)+'px';canvas.style.height=maxY+'px';
+  const canvasWidth=Math.max(width*2+72,(page+1)*stride);
+  canvas.style.width=canvasWidth+'px';canvas.style.height=maxY+'px';
+  interaction.resize(canvasWidth,maxY,stride,pages.map(p=>p.id));
   canvas.querySelectorAll('.page-title').forEach(node=>node.remove());
   pages.forEach((p,i)=>{
     const label=document.createElement('div');label.className='page-title';label.textContent=`${i+1} / ${p.title}`;
@@ -154,8 +165,9 @@ async function prepare(a: Action, restoring = false): Promise<Card> {
 }
 
 function follow(card: Pick<Card,'x'|'y'|'page'>) {
+  if(interaction.inking)return;
   const fromX=viewport.scrollLeft,fromY=viewport.scrollTop;
-  const toX=Math.max(0,card.x-20),toY=Math.max(0,card.y-70),start=performance.now(),token=++camera;
+  const toX=Math.max(0,card.x*interaction.scale-20),toY=Math.max(0,card.y*interaction.scale-70),start=performance.now(),token=++camera;
   activePageId=pages[card.page]?.id;revision++;snapshot();
   if(reduced()){viewport.scrollTo(toX,toY);return;}
   const tick=(t:number)=>{
@@ -218,8 +230,8 @@ async function reveal(card:Card,track=true,speech?:RevealSpeech) {
         const clock=speechClocks.get(card.action.step_id);if(clock)clock.progress=Math.max(clock.progress,Math.min(.999,(i+1)/units.length));
       }
       if(i===0){await paint();visible();}
-      const rect=u.node.getBoundingClientRect(),base=card.node.getBoundingClientRect();
-      pen.style.left=rect.right-base.left+'px';pen.style.top=rect.bottom-base.top+'px';pen.style.opacity='1';
+      const rect=relativeRect(u.node.getBoundingClientRect(),card.node.getBoundingClientRect(),track?interaction.scale:1);
+      pen.style.left=rect.right+'px';pen.style.top=rect.bottom+'px';pen.style.opacity='1';
       if(i===lastTitle&&marker)markerFinished=animate(marker,[{backgroundSize:'0% 100%'},{backgroundSize:'100% 100%'}],420)
         .then(()=>{marker.style.backgroundSize='100% 100%';});
     }));
@@ -240,7 +252,7 @@ function annotationRect(card:Card,a:Action):DOMRect {
     const start=text.indexOf(a.snippet ?? '');if(start<0||!a.snippet)throw new Error('没有找到要标注的原文');
     const end=start+a.snippet.length,range=document.createRange();let offset=0;
     for(const node of nodes){const next=offset+node.length;if(start>=offset&&start<next)range.setStart(node,start-offset);if(end>offset&&end<=next)range.setEnd(node,end-offset);offset=next;}
-    const rect=range.getBoundingClientRect(),base=card.node.getBoundingClientRect();r=new DOMRect(rect.x-base.x,rect.y-base.y,rect.width,rect.height);
+    r=relativeRect(range.getBoundingClientRect(),card.node.getBoundingClientRect(),interaction.scale);
   }
   return r;
 }
@@ -329,6 +341,7 @@ async function execute(a:Action,env:Envelope,restoring=false):Promise<void> {
 }
 
 const api={
+  canvasCommand(command:string){interaction.command(command);},
   async receive(env:Envelope){
     if(active)throw new Error('上一步尚未完成');active=env;const token=epoch;
     companion.setAction(env.action.type==='new_page'?'hi':env.action.type==='ask'?'wait':env.action.type==='keypoint_complete'?'celebrate':env.action.type==='highlight'||env.action.type==='circle'?'point':'think');
@@ -395,19 +408,21 @@ const api={
     });}
     paused=value;document.documentElement.dataset.paused=String(value);for(const animation of animations)value?animation.pause():animation.play();
   },
-  async restore(actions:Action[],state:{revision?:number;activePageId?:string}|undefined,requestID:string){
+  async restore(actions:Action[],state:CanvasSnapshot|undefined,requestID:string){
     companion.setPaused(false);companion.setMouth(0);companion.setAction('idle');
     epoch++;camera++;active=undefined;audio.onplaying=null;audio.onended=null;audio.onerror=null;audio.pause();audio.removeAttribute('src');audio.load();opened.clear();preparedVoice.clear();speechClocks.clear();api.generationWaiting(false);
     clearTimeout(snapshotTimer);
     for(const map of [revealing,speeches,questions]){for(const d of map.values())d.reject(new Error('课堂已切换'));map.clear();}
     for(const animation of animations)animation.cancel();animations.clear();
     sizes.disconnect();cards.clear();entries=[];canvas.replaceChildren();revision=state?.revision ?? 0;layoutJSON='';activePageId=state?.activePageId;
+    layoutWidth=state?.pages?.[0]?.columnLayout?.lp.tileW;interaction.reset(state);
     paused=false;pauseTotal=0;document.documentElement.dataset.paused='false';
     const token=epoch;
     for(const action of actions){assertEpoch(token);await execute(action,{action,ticket:'restore',audio:{}},true);}
     assertEpoch(token);layout();
     const page=pages.findIndex(p=>p.id===state?.activePageId),width=pages[0]?.columnLayout.lp.tileW ?? 360;
-    viewport.scrollTo(Math.max(0,page)*(2*width+72),0);send({type:'restored',request_id:requestID});
+    viewport.scrollTo(state?.scrollX ?? Math.max(0,page)*(2*width+72)*interaction.scale,state?.scrollY ?? 0);
+    send({type:'restored',request_id:requestID});
   },
 };
 host.WeiBeiWhiteboard=api;

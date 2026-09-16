@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-/Q7VUHZ+U6FCYUsHCtl/w3Is/xwvhiqHP86ympq/1/A=' 'sha256-v/zJFsgJHxx/72F28ZtDAisaKyjCM2mXTAr/pznK3qQ=' 'sha256-KvxvCgBt77BbFD12RSVlaWP6vz0UX1fVZgHlW7shJEw=' 'sha256-q+LvCbyA66qYS3pM3vbehLB36+2OxWWRUpAqzKRi3GA='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src data:; connect-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-/Q7VUHZ+U6FCYUsHCtl/w3Is/xwvhiqHP86ympq/1/A=' 'sha256-v/zJFsgJHxx/72F28ZtDAisaKyjCM2mXTAr/pznK3qQ=' 'sha256-KvxvCgBt77BbFD12RSVlaWP6vz0UX1fVZgHlW7shJEw=' 'sha256-CzilgdH5WEYXW+yGhG6h3GIm+/1h80+dSpAYO3trQbs='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src data:; connect-src 'none'; frame-src 'none'">
 <link rel="stylesheet" href="editor.css">
 <style>
 @font-face{font-family:Virgil;src:url("Virgil.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
@@ -12,7 +12,9 @@
 #viewport{position:absolute;inset:0 var(--webi-width,156px) 0 0;overflow:auto;background-image:radial-gradient(var(--dot) .65px,transparent .65px);background-size:20px 20px}
 #webi-host{position:fixed;right:6px;bottom:12px;width:144px;z-index:9}
 #generation-waiting{position:fixed;right:8px;bottom:190px;width:140px;font-size:14px;line-height:1.7;text-align:center;color:var(--muted)}
-#canvas{position:relative;min-height:100%}.card{position:absolute;padding:4px 12px 8px;--type-color:var(--definition)}
+#canvas-space{position:relative;overflow:hidden}#canvas{position:relative;transform-origin:0 0}.card{position:absolute;padding:4px 12px 8px;--type-color:var(--definition)}
+.ink-layer{position:absolute;inset:0;z-index:5;pointer-events:none;overflow:visible;fill:none;stroke:var(--ink);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+#viewport.inking{touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none}
 .card.formula{--type-color:var(--formula)}.card.example{--type-color:var(--example)}.card.diagram{--type-color:var(--diagram)}.card.summary{--type-color:var(--ink)}
 .page-title{font-size:14px;color:var(--muted);letter-spacing:.08em}
 .card>h2{font:400 23px/1.55 var(--hand);text-align:center;color:var(--type-color);margin:0 0 16px}
@@ -27,6 +29,6 @@
 .speech-caption{position:fixed;bottom:0;left:0;right:var(--webi-width,156px);padding:16px 24px;background:var(--paper);z-index:8;font:16px/1.65 var(--hand)}.speech-caption .speaking{color:var(--red)}
 .silent-caption{position:fixed;bottom:0;left:0;right:var(--webi-width,156px);padding:16px 24px;background:var(--paper);z-index:8}.silent-caption .content{font-size:16px;line-height:1.65}
 </style>
-<main id="viewport" aria-label="白板画布"><div id="canvas"></div></main><div id="webi-host" aria-label="Webi 课堂伙伴"></div><div id="generation-waiting" role="status" hidden>正在准备下一页…<br>准备好后自动继续</div><audio id="narration"></audio>
+<main id="viewport" aria-label="白板画布"><div id="canvas-space"><div id="canvas"></div></div></main><div id="webi-host" aria-label="Webi 课堂伙伴"></div><div id="generation-waiting" role="status" hidden>正在准备下一页…<br>准备好后自动继续</div><audio id="narration"></audio>
 <script src="voice-runtime.js"></script><script src="katex-runtime.js"></script><script src="mermaid-runtime.js"></script><script src="whiteboard-runtime.js"></script>
 </html>

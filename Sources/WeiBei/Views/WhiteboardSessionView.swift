@@ -7,12 +7,16 @@ struct WhiteboardSessionView: View {
     let selection: SelectionContext?
     @StateObject private var classroom: WhiteboardClassroom
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var firstPage: Int
     @State private var lastPage: Int
     @State private var selectionOnly: Bool
     @State private var showsSettings = false
+    @State private var resumeAfterSettings = false
     @State private var sourceBusy = false
     @State private var savedNote = false
+    @State private var showsSource = false
+    @State private var showsDiscussion = true
 
     init(store: WorkspaceStore, item: StudyItem, selection: SelectionContext?, pageIndex: Int) {
         self.store = store; self.item = item
@@ -32,11 +36,9 @@ struct WhiteboardSessionView: View {
                 preparation
             } else {
                 HStack(spacing: 0) {
-                    sourcePane.frame(width: 230)
-                    Divider()
+                    if showsSource { sourcePane.frame(width: 230); Divider() }
                     boardPane.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    Divider()
-                    discussionPane.frame(width: 260)
+                    if showsDiscussion { Divider(); discussionPane.frame(width: 280) }
                 }
             }
             if let failure = classroom.failure {
@@ -53,10 +55,16 @@ struct WhiteboardSessionView: View {
         .frame(minWidth: 920, idealWidth: 1160, minHeight: 650, idealHeight: 780)
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
-        .sheet(isPresented: $showsSettings) { WhiteboardSettingsView(classroom: classroom) }
+        .sheet(isPresented: $showsSettings, onDismiss: {
+            if resumeAfterSettings { classroom.play() }
+            resumeAfterSettings = false
+        }) { WhiteboardSettingsView(classroom: classroom) }
         .task { await loadSource() }
         .onDisappear { classroom.close() }
         .onChange(of: classroom.session?.id) { _, _ in savedNote = false }
+        .onChange(of: classroom.session?.discussions.count) { _, _ in
+            if classroom.session?.discussions.last?.correctionFor != nil { showsDiscussion = true }
+        }
     }
 
     private var header: some View {
@@ -66,6 +74,10 @@ struct WhiteboardSessionView: View {
             Text(classroom.session?.lesson.title ?? item.title).lineLimit(1).foregroundStyle(WeiBeiTheme.secondaryInk)
             Spacer()
             if classroom.session != nil {
+                Button { showsSource.toggle() } label: { Label("原文", systemImage: "sidebar.leading") }
+                    .accessibilityValue(showsSource ? "已展开" : "已收起")
+                Button { showsDiscussion.toggle() } label: { Label("问答", systemImage: "sidebar.trailing") }
+                    .accessibilityValue(showsDiscussion ? "已展开" : "已收起")
                 Button("重新编排") { classroom.generate() }.disabled(classroom.busy)
             }
             Menu {
@@ -75,7 +87,7 @@ struct WhiteboardSessionView: View {
                 }
             } label: { Label("历史", systemImage: "clock.arrow.circlepath") }
             .disabled(classroom.busy)
-            Button { classroom.pause(); showsSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+            Button { resumeAfterSettings = classroom.playing; classroom.pause(); showsSettings = true } label: { Image(systemName: "slider.horizontal.3") }
                 .help("讲解语音设置").accessibilityLabel("讲解语音设置")
             Button("完成") { classroom.close(); dismiss() }
         }.buttonStyle(.borderless).padding(16)
@@ -192,6 +204,7 @@ struct WhiteboardSessionView: View {
                 Text(classroom.settings.voice == .animalese ? "中文动物语" : classroom.settings.voice == .system ? "系统语音" : classroom.settings.voice == .cloud ? "云端语音" : "静音阅读")
                     .font(.caption).foregroundStyle(WeiBeiTheme.secondaryInk)
             }.padding(16)
+            WhiteboardCanvasTools(classroom: classroom)
             WhiteboardCanvasView(classroom: classroom, isDark: store.appearanceMode.isDark)
             if let narration = classroom.currentAction?.narration, !narration.isEmpty, classroom.settings.voice == .system || classroom.settings.voice == .cloud {
                 ScrollView { Text(narration).font(.callout).lineSpacing(4).textSelection(.enabled)
@@ -205,24 +218,31 @@ struct WhiteboardSessionView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("随时追问").font(.headline)
             Text("回答会直接显示在这里，结束后接着讲。").font(.caption).foregroundStyle(WeiBeiTheme.secondaryInk)
-            ScrollView {
+            ScrollViewReader { proxy in
+              ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     ForEach(classroom.session?.questions ?? []) { action in
                         WhiteboardQuestionView(classroom: classroom, action: action)
                         Divider()
                     }
                     ForEach(classroom.session?.discussions ?? []) { discussion in
-                        Text(discussion.question).font(.headline).textSelection(.enabled)
+                        Text(discussion.correctionFor == nil ? discussion.question : "刚才这道题").font(.headline).textSelection(.enabled)
                         if !discussion.text.isEmpty {
-                            MarkdownPreviewView(markdown: discussion.text, appearanceMode: store.appearanceMode,
-                                compact: true, preservesHeightAcrossMarkdownChanges: true)
+                            discussionText(discussion)
                         }
                         if !discussion.completed {
                             Text(classroom.replying ? "正在回答…" : "回答尚未完成").font(.caption)
                         }
-                        Divider()
+                        Divider().id(discussion.id)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
+              }
+              .onChange(of: classroom.session?.discussions.last?.id) { _, id in
+                  if let id { proxy.scrollTo(id, anchor: .bottom) }
+              }
+              .onChange(of: classroom.session?.discussions.last?.text) { _, _ in
+                  if let id = classroom.session?.discussions.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+              }
             }
             TextField("这一步哪里没听懂？", text: $classroom.question, axis: .vertical)
                 .lineLimit(2...6).textFieldStyle(.roundedBorder)
@@ -237,6 +257,18 @@ struct WhiteboardSessionView: View {
                 }
             }.disabled(savedNote || classroom.busy)
         }.padding(16)
+    }
+
+    @ViewBuilder private func discussionText(_ discussion: WhiteboardDiscussion) -> some View {
+        // Reuse chat's native renderer: a short answer must not boot another editor WebView.
+        #if targetEnvironment(macCatalyst)
+        CatalystMessageMarkdown(markdown: discussion.text, fontSize: 14,
+            appearanceMode: store.appearanceMode, openLink: { openURL($0) })
+        #else
+        NativeChatMarkdownView(markdown: discussion.text, messageID: discussion.id, fontSize: 14,
+            isDark: store.appearanceMode.isDark, appearanceKey: store.appearanceMode.rawValue,
+            onOpenURL: { openURL($0) })
+        #endif
     }
 
     private var controls: some View {
@@ -292,27 +324,32 @@ private struct WhiteboardSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var speechKey = ""
     @State private var error: String?
+    @State private var settings: WhiteboardMediaSettings
+    init(classroom: WhiteboardClassroom) {
+        self.classroom = classroom; _settings = State(initialValue: classroom.settings)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("白板讲解语音").font(.title2)
             Text("中文动物语离线合成，适合轻松的课堂氛围；想听清楚每句话可选系统中文语音。").font(.callout).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    SpeechSettingsFields(settings: $classroom.settings, speechKey: $speechKey)
+                    SpeechSettingsFields(settings: $settings, speechKey: $speechKey)
                 }
             }
             if let error { Text(error).foregroundStyle(.red).font(.callout) }
             HStack {
+                Button("取消") { dismiss() }
                 Spacer()
                 Button("保存") {
                     do {
-                        try classroom.settings.save(speechKey: speechKey)
-                        classroom.replay(); classroom.pause()
+                        try settings.save(speechKey: speechKey)
+                        classroom.applyMediaSettings(settings)
                         dismiss()
                     } catch { self.error = error.localizedDescription }
                 }.buttonStyle(.borderedProminent)
             }
-        }.padding(24).frame(width: 520, height: 570).background(WeiBeiTheme.paper)
+        }.padding(24).frame(width: 460, height: 500).background(WeiBeiTheme.paper).tint(WeiBeiTheme.cinnabar)
     }
 
 }

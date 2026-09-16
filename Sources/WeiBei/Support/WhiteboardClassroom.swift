@@ -17,11 +17,15 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     @Published var replying = false
     @Published var playing = false
     @Published var firstBoardSeconds: Double?
+    @Published var canvasZoom = 1.0
+    @Published var handwriting = false
+    @Published var canUndoInk = false
     var busy: Bool { generating || replying }
     var currentAction: WhiteboardAction? { session?.currentAction }
     let archive: WhiteboardSessionStore
     private let provider: AgentProviderID
     private let baseURL, model: String
+    private let suppliedAdapter: (any NativeLLMAdapter)?
     private var speechID: String?
     private var gate = WhiteboardActionGate()
     private var runID = UUID(), dispatchID = UUID(), replyID = UUID()
@@ -33,10 +37,12 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     private var startedAt: Date?
     private var pauseVersion = 0
     private var resumeAfterReply: Int?
+    private var replyQueue: [WhiteboardDiscussion] = []
 
-    init(directory: URL, provider: AgentProviderID, baseURL: String, model: String) {
+    init(directory: URL, provider: AgentProviderID, baseURL: String, model: String, adapter: (any NativeLLMAdapter)? = nil) {
         archive = WhiteboardSessionStore(directory: directory)
         self.provider = provider; self.baseURL = baseURL
+        suppliedAdapter = adapter
         self.model = model.isEmpty ? NativeProviderRouting.route(provider).defaultModel : model
         super.init()
         if let data = UserDefaults.standard.data(forKey: "whiteboard.media.settings") {
@@ -50,6 +56,7 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
         catch { failure = "历史课堂读取失败：\(error.localizedDescription)" }
     }
     private func adapter() async throws -> any NativeLLMAdapter {
+        if let suppliedAdapter { return suppliedAdapter }
         guard !model.isEmpty else { throw WhiteboardFailure("请先在设置中选择对话模型。") }
         return try await NativeLLMAdapterFactory.make(provider: provider, model: model,
             endpoint: AgentProviderEndpoint(provider: provider, baseURL: baseURL))
@@ -199,6 +206,11 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     }
     func receive(_ message: [String: Any]) {
         guard !closed, let type = message["type"] as? String else { return }
+        if type == "canvas_controls" {
+            if let zoom = message["zoom"] as? Double, (0.5...2).contains(zoom) { canvasZoom = zoom }
+            handwriting = message["inking"] as? Bool == true; canUndoInk = message["canUndo"] as? Bool == true
+            return
+        }
         if type == "restored" {
             guard message["request_id"] as? String == restoreID else { return }
             restoring = false; renderer?("pause", ["value": !playing]); pump(); return
@@ -236,6 +248,12 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
         }
     }
     private func claimSpeech() { SpeechFocus.claim(self) { [weak self] in self?.pause() } }
+    func canvasCommand(_ command: String) { renderer?("canvasCommand", ["command": command]) }
+    func applyMediaSettings(_ value: WhiteboardMediaSettings) {
+        guard value != settings else { return }
+        stopPlayback(); settings = value
+        gate = .init(cursor: session?.cursor ?? 0); rehydrate()
+    }
     private func speak(_ action: WhiteboardAction) {
         guard settings.voice == .system else { renderer?("speechFinished", ["id": action.stepID, "error": "语音模式不匹配"]); return }
         speechID = action.stepID
@@ -258,22 +276,30 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     }
     func answer(_ text: String, to action: WhiteboardAction, correct: Bool? = nil) {
         guard session?.presentedQuestionIDs.contains(action.stepID) == true, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        session?.answers[action.stepID] = text; persist()
+        let correction = session?.recordAnswer(text, to: action, correct: correct)
+        persist()
         if let correct { renderer?("feedback", ["correct": correct]) }
+        if let correction { replyQueue.append(correction); if !replying { beginReply() } }
     }
     func ask() {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text.count <= 8_000, !replying, let value = session,
               value.lesson.actions.prefix(value.cursor).contains(where: { $0.type == .newPage }) else { return }
-        resumeAfterReply = playing ? pauseVersion : nil; pausePlayback()
-        failure = nil; replying = true; status = "正在回答…"
         let discussion = WhiteboardDiscussion(stepID: currentAction?.stepID ?? "finished", question: text, insertionCursor: value.cursor)
         session?.discussions.append(discussion); persist(); question = ""
+        replyQueue.append(discussion); beginReply()
+    }
+    private func beginReply(continuing: Bool = false) {
+        guard !replyQueue.isEmpty, let value = session else { return }
+        let discussion = replyQueue.removeFirst(), text = discussion.question
+        if !continuing { resumeAfterReply = playing ? pauseVersion : nil }
+        pausePlayback(); failure = nil; replying = true
+        status = discussion.correctionFor == nil ? "正在回答…" : "正在针对这道题讲解…"
         let token = UUID(); replyID = token
         replyWork = Task { [weak self] in
             guard let self else { return }
             do {
-                try await WhiteboardTeacher.reply(adapter: adapter(), model: model, session: value, question: text,
+                try await WhiteboardTeacher.reply(adapter: adapter(), model: model, session: value, question: text, correction: discussion.correctionFor != nil,
                     receive: { [weak self] action in try await self?.appendReply(action, discussionID: discussion.id, token: token) })
                 try Task.checkCancellation()
                 guard replyID == token, let index = session?.discussions.firstIndex(where: { $0.id == discussion.id }) else { return }
@@ -282,7 +308,7 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
                     renderer?("supplement", ["action": try json(card), "replyID": token.uuidString])
                 } else { finishReply() }
             } catch is CancellationError {}
-            catch { if replyID == token { replying = false; fail(error.localizedDescription); question = text } }
+            catch { if replyID == token { replying = false; fail(error.localizedDescription); if discussion.correctionFor == nil { question = text } } }
         }
     }
     private func appendReply(_ value: WhiteboardAction, discussionID: UUID, token: UUID) throws {
@@ -299,17 +325,20 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     }
     private func finishReply() {
         replying = false; status = "回答已显示"
+        if !replyQueue.isEmpty { beginReply(continuing: true); return }
         if resumeAfterReply == pauseVersion { resumeAfterReply = nil; play() }
     }
     func fail(_ message: String) { guard !closed else { return }; failure = message; pausePlayback(); status = "尚未完成，可重试当前步骤或继续编排" }
     func cancel() {
         runID = UUID(); replyID = UUID(); generationWork?.cancel(); replyWork?.cancel()
+        replyQueue = []
         generating = false; replying = false; autoStartPending = false; generationStopped = true
         stopPlayback(); gate = .init(cursor: session?.cursor ?? 0); rehydrate(); status = "已停止，收到的课堂内容保留"
     }
     func close() {
         guard !closed else { return }
         runID = UUID(); replyID = UUID(); generationWork?.cancel(); replyWork?.cancel()
+        replyQueue = []
         generating = false; replying = false; stopPlayback(); closed = true; renderer = nil; persist()
     }
 }

@@ -155,7 +155,6 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
         let source = """
-        document.documentElement.setAttribute("writingsuggestions", "false");
         window.initialMarkdown = \(json(sampleMarkdown));
         window.weiBeiDocumentID = "web-editor-check";
         window.weiBeiMarkdownEditable = true;
@@ -164,6 +163,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         window.weiBeiMarkdownBaseURL = \(json(URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor/").absoluteString));
         """
         controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // Set DOM attributes after parsing; WebKit may replace the initial root.
+        controller.addUserScript(WKUserScript(
+            source: "document.documentElement.setAttribute('writingsuggestions', 'false');",
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         super.init()
@@ -3530,7 +3533,6 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: """
-        document.documentElement.setAttribute("writingsuggestions", "false");
         window.initialMarkdown = \(json(markdown));
         window.weiBeiDocumentID = \(json(fixture));
         window.weiBeiMarkdownEditable = true;
@@ -3538,6 +3540,9 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
         window.weiBeiLocalImageScheme = "weibeiimage";
         window.weiBeiMarkdownBaseURL = \(json(URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor/").absoluteString));
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(
+            source: "document.documentElement.setAttribute('writingsuggestions', 'false');",
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         panel = NSPanel(

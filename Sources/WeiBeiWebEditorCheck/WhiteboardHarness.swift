@@ -298,6 +298,43 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
       assert(endedAt>0&&performance.now()-endedAt<3000,'The final board finishes within three seconds of speech');
       assert(messages('action_step_complete','voice-group')[0].ticket==='new-ticket','Only the current playback ticket completes');
       await api.restore([page,group,graph,{type:'circle',step_id:'visual-circle',target_board_id:0,snippet:'残差',color:'red'}],null,'visual');
+      window.wbStage='zoom and ink';
+      const viewport=document.getElementById('viewport'),canvas=document.getElementById('canvas');
+      const originalCard=document.querySelector('[data-board="0"]');
+      const logicalX=parseFloat(originalCard.style.left),logicalWidth=originalCard.offsetWidth;
+      const zoom=()=>Number(getComputedStyle(canvas).transform.match(/matrix\(([^,]+)/)?.[1] ?? 1);
+      api.canvasCommand('zoom_out');api.canvasCommand('zoom_out');assert(zoom()===.5,'Zoom reaches 0.5');
+      await dispatch({type:'highlight',step_id:'zoom-highlight',target_board_id:0,rect:{x:.1,y:.2,w:.4,h:.2},color:'red'});
+      for(let i=0;i<6;i++)api.canvasCommand('zoom_in');assert(zoom()===2,'Zoom reaches 2');
+      assert(originalCard.offsetWidth===logicalWidth&&parseFloat(originalCard.style.left)===logicalX,'Zoom cannot reflow cards away from handwriting');
+      await dispatch({type:'circle',step_id:'zoom-circle',target_board_id:0,rect:{x:.1,y:.2,w:.4,h:.2},color:'red'});
+      const mark=originalCard.querySelector('[data-step="zoom-circle"]'),markRect=mark.getBoundingClientRect(),cardRect=originalCard.getBoundingClientRect();
+      assert(Math.abs(markRect.x-cardRect.x-(logicalWidth*.1-6)*2)<1,'Annotations use unscaled local coordinates');
+      api.canvasCommand('zoom_out');api.canvasCommand('zoom_out');assert(zoom()===1.5,'Ink fixture uses 1.5');
+      api.canvasCommand('toggle_ink');viewport.scrollTo(0,0);
+      // Synthetic pointers exercise the production handlers; actual pointer capture is checked in the visible window.
+      const capture=viewport.setPointerCapture.bind(viewport),release=viewport.releasePointerCapture.bind(viewport);
+      viewport.setPointerCapture=()=>{};viewport.releasePointerCapture=()=>{};
+      const origin=viewport.getBoundingClientRect();
+      for(let i=0;i<3;i++){
+        const x=origin.x+75+i*60,y=origin.y+540;
+        viewport.dispatchEvent(new PointerEvent('pointerdown',{pointerId:i+1,isPrimary:true,button:0,clientX:x,clientY:y,bubbles:true}));
+        viewport.dispatchEvent(new PointerEvent('pointermove',{pointerId:i+1,isPrimary:true,clientX:x+30,clientY:y+30,bubbles:true}));
+        viewport.dispatchEvent(new PointerEvent('pointerup',{pointerId:i+1,isPrimary:true,clientX:x+30,clientY:y+30,bubbles:true}));
+      }
+      viewport.setPointerCapture=capture;viewport.releasePointerCapture=release;
+      await wait(()=>messages('sync_whiteboard_state').at(-1)?.whiteboard_state.pages[0].strokes.length===3);
+      const inkState=messages('sync_whiteboard_state').at(-1).whiteboard_state;
+      assert(inkState.zoom===1.5&&inkState.pages[0].strokes[0].points[0].x===50&&inkState.pages[0].strokes[0].points[0].y===360,'Ink coordinates divide by the same zoom');
+      const scrollBefore=viewport.scrollLeft;
+      await dispatch({...page,step_id:'ink-next',page_id:'ink-next'});
+      await new Promise(resolve=>setTimeout(resolve,550));
+      assert(viewport.scrollLeft===scrollBefore,'Handwriting disables the automatic camera');
+      await api.restore([page,group,graph],inkState,'restore-ink');
+      assert(zoom()===1.5&&document.querySelectorAll('.ink-layer path').length===3,'Three strokes and zoom survive restoration');
+      api.canvasCommand('undo');assert(document.querySelectorAll('.ink-layer path').length===2,'Undo removes the last stroke');
+      api.canvasCommand('clear_page');assert(document.querySelectorAll('.ink-layer path').length===0,'Clear removes only this page ink');
+      await api.restore([page,group,graph],inkState,'ink-visual');
       window.wbResult='passed';window.webkit.messageHandlers.whiteboard.postMessage({type:'harness_result',status:'passed'});
     })().catch(error=>{window.wbResult=String(error);window.webkit.messageHandlers.whiteboard.postMessage({type:'harness_result',status:String(error)});}); void 0;
     """#

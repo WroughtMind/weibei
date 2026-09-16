@@ -348,6 +348,12 @@ struct NotePaneView: View {
                     immersiveNoteHeader
                 }
             }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !showsPaneHeader && hasNoteContent && !railOnly {
+                    HStack { Spacer(minLength: 0); NoteReadAloudControls(store: store) }
+                        .padding(.horizontal, 16).frame(height: 36).background(WeiBeiTheme.paper)
+                }
+            }
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -424,7 +430,6 @@ struct NotePaneView: View {
                 titleRename: noteTabRename
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
-                NoteReadAloudControls(store: store)
                 typewriterButton
                 ContextualContentListButton(kind: .note)
                 ExcerptBookButton()
