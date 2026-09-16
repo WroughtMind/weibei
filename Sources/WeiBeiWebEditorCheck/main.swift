@@ -155,7 +155,6 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
         let source = """
-        document.documentElement.setAttribute("writingsuggestions", "false");
         window.initialMarkdown = \(json(sampleMarkdown));
         window.weiBeiDocumentID = "web-editor-check";
         window.weiBeiMarkdownEditable = true;
@@ -164,6 +163,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         window.weiBeiMarkdownBaseURL = \(json(URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor/").absoluteString));
         """
         controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: "document.documentElement.setAttribute('writingsuggestions', 'false')", injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         super.init()
@@ -1489,8 +1489,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const editor = window.WeiBeiEditor;
           const fail = (message) => { throw new Error(message); };
           const key = (element, name, options = {}) => element.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true, ...options }));
-          const sourceHidden = (node) => node.classList.contains('weibei-math-adjacent')
-            || getComputedStyle(node.querySelector('.weibei-math-source')).display === 'none';
+          const sourceHidden = (node) => getComputedStyle(node.querySelector('.weibei-math-source')).display === 'none';
           const visible = (node) => { const style = getComputedStyle(node); const rect = node.getBoundingClientRect(); return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0; };
 
           editor.setDocumentID('math-node-interactions');
@@ -1502,9 +1501,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           if (![inline, block, invalid].every((node) => node && visible(node) && sourceHidden(node))) fail('formula source was visible by default or its container was hidden');
           if (!invalid?.classList.contains('weibei-math-invalid') || invalid.querySelector('.katex-error') || invalid.querySelector('.weibei-math-preview')?.textContent !== \(json(invalidFormula))) fail('invalid formula did not preserve its original source without katex-error');
 
-          inline.querySelector('.weibei-math-preview').click();
+          inline.querySelector('.weibei-math-preview').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
           let input = inline.querySelector('.weibei-math-source');
-          if (!inline.classList.contains('weibei-math-editing') || document.activeElement !== input || getComputedStyle(input).display === 'none') fail('click did not open inline formula editing');
+          if (!inline.classList.contains('weibei-math-editing') || document.activeElement !== input || getComputedStyle(input).display === 'none') fail('double click did not open inline formula editing');
           input.value = 'x^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter');
           if (!editor.getMarkdown().includes('$x^3$') || inline.classList.contains('weibei-math-editing')) fail('inline Enter did not save the formula');
 
@@ -1518,12 +1517,12 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           input = block.querySelector('.weibei-math-source');
           input.value = 'y^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter', { metaKey: true });
           if (!editor.getMarkdown().includes('y^3') || block.classList.contains('weibei-math-editing')) fail('block Command-Enter did not save the formula');
-          block.querySelector('.weibei-math-preview').click(); input = block.querySelector('.weibei-math-source'); input.value = 'y^4'; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('blur'));
+          block.querySelector('.weibei-math-preview').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); input = block.querySelector('.weibei-math-source'); input.value = 'y^4'; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('blur'));
           if (!editor.getMarkdown().includes('y^4')) fail('block blur did not save the formula');
-          inline.querySelector('.weibei-math-preview').click(); input = inline.querySelector('.weibei-math-source'); input.value = 'x^4'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Escape');
-          if (!editor.getMarkdown().includes('$x^4$')) fail('Escape did not save the formula');
+          inline.querySelector('.weibei-math-preview').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); input = inline.querySelector('.weibei-math-source'); input.value = 'x^4'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Escape');
+          if (!editor.getMarkdown().includes('$x^3$') || inline.dataset.value !== 'x^3') fail('Escape did not cancel the formula draft');
           const savedFormulas = editor.getMarkdown(); editor.setMarkdown(savedFormulas);
-          if (!editor.getMarkdown().includes('$x^4$') || !editor.getMarkdown().includes('y^4') || !document.querySelector('.weibei-math-inline[data-value="x^4"]') || !document.querySelector('.weibei-math-block[data-value="y^4"]')) fail('formula edits did not survive serialization and reload');
+          if (!editor.getMarkdown().includes('$x^3$') || !editor.getMarkdown().includes('y^4') || !document.querySelector('.weibei-math-inline[data-value="x^3"]') || !document.querySelector('.weibei-math-block[data-value="y^4"]')) fail('formula edits did not survive serialization and reload');
 
           editor.setDocumentID('math-render-scope');
           editor.setMarkdown('first $a^2$ and second $b^2$');
@@ -1531,7 +1530,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const untouchedPreview = formulas[1]?.querySelector('.weibei-math-preview');
           const untouchedHTML = untouchedPreview?.innerHTML;
           editor.resetCheckMetrics();
-          formulas[0]?.querySelector('.weibei-math-preview')?.click(); input = formulas[0]?.querySelector('.weibei-math-source'); input.value = 'a^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter');
+          formulas[0]?.querySelector('.weibei-math-preview')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); input = formulas[0]?.querySelector('.weibei-math-source'); input.value = 'a^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter');
           const editedMetrics = editor.getCheckMetrics();
           if (editedMetrics.katexRenders < 1 || formulas[1]?.querySelector('.weibei-math-preview') !== untouchedPreview || untouchedPreview?.innerHTML !== untouchedHTML) fail('editing one formula rerendered an untouched formula');
           editor.setMarkdown('ordinary paragraph without formulas'); editor.resetCheckMetrics(); editor.typeTextForCheck(' plus text');
@@ -3530,7 +3529,6 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: """
-        document.documentElement.setAttribute("writingsuggestions", "false");
         window.initialMarkdown = \(json(markdown));
         window.weiBeiDocumentID = \(json(fixture));
         window.weiBeiMarkdownEditable = true;

@@ -83,21 +83,6 @@ const closestAncestorOfName = (resolved: any, typeName: string) => {
   return null;
 };
 
-const adjacentMathDom = (view: any): HTMLElement | null => {
-  const { $from, $to } = view.state.selection;
-  const before = $from.nodeBefore;
-  if (before && before.type.name === 'math_inline') {
-    const dom = view.nodeDOM($from.pos - before.nodeSize) as HTMLElement | null;
-    if (dom instanceof HTMLElement) return dom;
-  }
-  const after = $to.nodeAfter;
-  if (after && after.type.name === 'math_inline') {
-    const dom = view.nodeDOM($to.pos) as HTMLElement | null;
-    if (dom instanceof HTMLElement) return dom;
-  }
-  return null;
-};
-
 /**
  * ProseMirror associates a boundary caret with the mark inside the run, so
  * typing just outside bold still produced bold text — the caret felt "sucked
@@ -123,14 +108,6 @@ const boundaryEscapeTransaction = (state: any) => {
 export interface SyntaxMarksDeps {
   isEditable: () => boolean;
   isStreaming: () => boolean;
-  /**
-   * Position where the inline-math input rule just landed the caret. Real
-   * WebKit typing fires extra normalization updates after the input
-   * transaction, so the adjacent-source peek must stay suppressed while the
-   * caret RESTS on the landing (cleared once it moves away).
-   */
-  mathLanding: () => number | null;
-  clearMathLanding: () => void;
 }
 
 interface SyntaxMarksCache {
@@ -149,13 +126,6 @@ interface SyntaxMarksCache {
 export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
   const candidateCache = new Map<string, any>();
   let cache: SyntaxMarksCache | null = null;
-  let adjacentDom: HTMLElement | null = null;
-
-  const clearAdjacent = () => {
-    adjacentDom?.classList.remove('weibei-math-adjacent');
-    adjacentDom = null;
-  };
-
   return new Plugin({
     key: syntaxMarksKey,
     // Pre-typed `$…$` pairs stay literal while the caret edits inside them, then
@@ -192,31 +162,10 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
       tr.setMeta(mathCompletionKey, true);
       return tr;
     },
-    view: () => ({
-      update(view: any) {
-        const landing = deps.mathLanding();
-        if (landing !== null) {
-          if (view.state.selection.from === landing) {
-            clearAdjacent();
-            return;
-          }
-          deps.clearMathLanding();
-        }
-        const next = adjacentMathDom(view);
-        if (next === adjacentDom) return;
-        clearAdjacent();
-        adjacentDom = next;
-        adjacentDom?.classList.add('weibei-math-adjacent');
-      },
-      destroy() {
-        clearAdjacent();
-      },
-    }),
     props: {
       decorations(state: any) {
         if (!deps.isEditable() || deps.isStreaming() || isCodeContext(state)) {
           cache = null;
-          clearAdjacent();
           return DecorationSet.empty;
         }
         const { doc, selection } = state;

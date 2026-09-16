@@ -118,7 +118,6 @@ const weiBeiStrikethroughInputRule = $inputRule((ctx) => markRule(
   /(?<![\w:/~])(~{1,2})([^~\n]+?)\1(?![\w/~])$/,
   strikethroughSchema.type(ctx),
 ));
-let mathTypedLandingPosition: number | null = null;
 const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => nodeRule(
   inlineMathInputPattern,
   mathInlineSchema.type(ctx),
@@ -129,7 +128,6 @@ const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => no
       if (content) tr.insertText(content, start + 1);
       const landing = start + content.length + 2;
       tr.setSelection(TextSelection.create(tr.doc, landing));
-      mathTypedLandingPosition = landing;
     },
   },
 )) : null;
@@ -1814,6 +1812,7 @@ const createMathNodeView = (initialNode: any, view: any, getPos: any) => {
   dom.dataset.type = node.type.name;
   dom.contentEditable = 'false';
   dom.tabIndex = 0;
+  dom.setAttribute('aria-description', currentLanguage === 'en' ? 'Double-click or press Enter to edit formula' : '双击或按回车编辑公式');
   const preview = document.createElement(isBlock ? 'div' : 'span');
   preview.className = 'weibei-math-preview';
   const input = document.createElement(isBlock ? 'textarea' : 'input') as HTMLInputElement | HTMLTextAreaElement;
@@ -1864,30 +1863,36 @@ const createMathNodeView = (initialNode: any, view: any, getPos: any) => {
     }
   };
 
-  const commit = () => {
+  const finish = (save: boolean, returnToEditor = false) => {
+    if (!editing) return;
     const value = input.value;
+    // Clear the flag before hiding the focused input: hiding can fire blur again.
     setEditing(false);
     const pos = getPos();
     if (typeof pos !== 'number') return;
-    if (value === source()) {
-      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
-      render();
-      view.focus();
-      return;
+    const tr = view.state.tr;
+    if (save && value !== source()) {
+      const nextNode = isBlock
+        ? node.type.create({ ...node.attrs, value })
+        : node.type.create(node.attrs, value ? view.state.schema.text(value) : null, node.marks);
+      tr.replaceWith(pos, pos + node.nodeSize, nextNode);
     }
-    const nextNode = isBlock
-      ? node.type.create({ ...node.attrs, value })
-      : node.type.create(node.attrs, value ? view.state.schema.text(value) : null, node.marks);
-    const tr = view.state.tr.replaceWith(pos, pos + node.nodeSize, nextNode);
-    tr.setSelection(NodeSelection.create(tr.doc, pos));
-    view.dispatch(tr.scrollIntoView());
-    view.focus();
+    if (returnToEditor) {
+      const current = tr.doc.nodeAt(pos);
+      tr.setSelection(Selection.near(tr.doc.resolve(pos + (current?.nodeSize || 0)), 1));
+    }
+    if (tr.docChanged || tr.selectionSet) view.dispatch(tr.scrollIntoView());
+    render();
+    if (returnToEditor) view.focus();
   };
 
-  dom.addEventListener('click', (event) => { if (!editing && event.target !== input) setEditing(true); });
+  dom.addEventListener('dblclick', (event) => {
+    if (!editing && event.target !== input) { event.preventDefault(); setEditing(true); }
+  });
   dom.addEventListener('weibei-edit-math', () => setEditing(true));
   dom.addEventListener('keydown', (event) => {
     const keyEvent = event as KeyboardEvent;
+    if (keyEvent.isComposing || keyEvent.keyCode === 229) return;
     if (!editing && keyEvent.key === 'Enter') {
       event.preventDefault();
       setEditing(true);
@@ -1896,11 +1901,11 @@ const createMathNodeView = (initialNode: any, view: any, getPos: any) => {
     if (!editing) return;
     if (keyEvent.key === 'Escape' || (keyEvent.key === 'Enter' && (!isBlock || keyEvent.metaKey || keyEvent.ctrlKey))) {
       event.preventDefault();
-      commit();
+      finish(keyEvent.key !== 'Escape', true);
     }
   });
   input.addEventListener('input', () => render(input.value));
-  input.addEventListener('blur', commit);
+  input.addEventListener('blur', () => finish(true));
   render();
 
   return {
@@ -2358,6 +2363,18 @@ const insertCodeBlockTab = (view: any, event: any) => {
   return true;
 };
 
+/** Paragraph indentation is text, so Markdown must not reinterpret it as a code block. */
+const insertParagraphTab = (view: any, event: KeyboardEvent) => {
+  if (!isEditable || event.key !== 'Tab' || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing || event.keyCode === 229 || slashMenuElement.dataset.show === 'true') return false;
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection) || selection.$from.parent !== selection.$to.parent || !['paragraph', 'heading'].includes(selection.$from.parent.type.name)) return false;
+  for (let depth = selection.$from.depth; depth > 0; depth -= 1) {
+    if (['list_item', 'task_list_item', 'table_cell', 'table_header'].includes(selection.$from.node(depth).type.name)) return false;
+  }
+  view.dispatch(view.state.tr.insertText('\u00a0'.repeat(4)).scrollIntoView());
+  return true;
+};
+
 const literalCodeBlockCharacters = new Set(['-', "'", '"']);
 
 /** Inserts ASCII punctuation directly so WebKit cannot apply smart substitutions. */
@@ -2575,6 +2592,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       if (event.target !== view.dom || !view.hasFocus()) return;
       const handled = insertCodeBlockTab(view, event)
         || insertLiteralCodeBlockCharacter(view, event)
+        || insertParagraphTab(view, event)
         || (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && !event.isComposing && event.keyCode !== 229
           && sinkListItem(view.state.schema.nodes.list_item)(view.state, view.dispatch, view));
       if (!handled) return;
@@ -3922,8 +3940,6 @@ if (WEIBEI_EDITOR_RUNTIME) {
     .use($prose(() => createSyntaxMarksPlugin({
       isEditable: () => isEditable,
       isStreaming: () => streamingMarkdownBuffer !== null,
-      mathLanding: () => mathTypedLandingPosition,
-      clearMathLanding: () => { mathTypedLandingPosition = null; },
     })))
     .use($prose(createTypewriterPlugin))
     .use($prose(() => columnResizing()))

@@ -11,6 +11,51 @@ const reset = async (markdown = '') => {
   editor.selectDocumentEndForCheck();
   await pause();
 };
+// A native Tab in the empty line before text/math must indent that line, not focus the next node.
+for (const nextLine of ['下一行文字', '$x^2$', '$$\ny^2\n$$']) {
+  await reset('占位\n\n' + nextLine);
+  editor.selectFirstTextForCheck('占位');
+  await native('key', '\u007f', { keyCode: 51 });
+  const root = document.querySelector('.ProseMirror');
+  await native('key', '\t', { keyCode: 48 });
+  expect(root.firstElementChild.textContent === '\u00a0'.repeat(4) && document.activeElement === root,
+    'Tab left the empty paragraph before ' + nextLine);
+  await native('insert', '当前行');
+  const saved = editor.getMarkdown();
+  expect(root.firstElementChild.textContent.replaceAll('\u00a0', ' ') === '    当前行', 'Text did not stay after indentation: ' + JSON.stringify({text: root.firstElementChild.textContent, markdown: editor.getMarkdown(), html: root.innerHTML}));
+  editor.setMarkdown(saved);
+  expect(root.firstElementChild.tagName === 'P' && root.firstElementChild.textContent.replaceAll('\u00a0', ' ') === '    当前行',
+    'Paragraph indentation was lost or became a code block after reload');
+}
+await reset('前 $x^2$ 后');
+const math = document.querySelector('.weibei-math-inline');
+const preview = math.querySelector('.weibei-math-preview');
+const input = math.querySelector('.weibei-math-source');
+const root = document.querySelector('.ProseMirror');
+getSelection().collapse(math.parentNode, Array.from(math.parentNode.childNodes).indexOf(math) + 1);
+await pause();
+expect(getComputedStyle(input).display === 'none' && getComputedStyle(preview).display !== 'none', 'Caret beside formula hid its preview');
+preview.click();
+expect(!math.classList.contains('weibei-math-editing'), 'Single click unexpectedly opened formula editing');
+preview.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+await pause();
+expect(document.activeElement === input && getComputedStyle(preview).display !== 'none'
+  && input.getBoundingClientRect().top >= preview.getBoundingClientRect().bottom, 'Formula editor did not keep preview above source');
+input.value = 'x^3'; input.dispatchEvent(new Event('input', { bubbles: true }));
+input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+await pause();
+await native('insert', '续');
+expect(editor.getMarkdown().includes('$x^3$续'), 'Saving formula did not place caret after it');
+preview.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+input.value = 'discard'; input.dispatchEvent(new Event('input', { bubbles: true }));
+input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+expect(editor.getMarkdown().includes('$x^3$') && math.dataset.value === 'x^3', 'Escape saved or displayed a canceled draft');
+preview.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+input.value = 'x^4'; input.dispatchEvent(new Event('input', { bubbles: true }));
+const outside = document.createElement('button'); outside.textContent = 'outside'; document.body.append(outside); outside.focus();
+await pause();
+expect(document.activeElement === outside && editor.getMarkdown().includes('$x^4$'), 'Blur stole focus or failed to save');
+outside.remove();
 // Every inline format accepts pre-typed pairs, ordinary input and committed Chinese.
 for (const [marker, selector] of [
   ['**', 'strong'], ['__', 'strong'], ['*', 'em'], ['_', 'em'],
