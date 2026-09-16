@@ -83,10 +83,17 @@ public struct SelectionDocumentAnchor: Codable, Hashable, Sendable {
 public struct SelectionTextAnchor: Codable, Hashable, Sendable {
     public var startOffset: Int
     public var endOffset: Int
+    /// Office package part and paragraph; offsets are relative to this source block.
+    public var location: String?
+    public var revision: UInt64?
+    public var sourceOrder: [Int]?
 
-    public init(startOffset: Int, endOffset: Int) {
+    public init(startOffset: Int, endOffset: Int, location: String? = nil, revision: UInt64? = nil, sourceOrder: [Int]? = nil) {
         self.startOffset = startOffset
         self.endOffset = endOffset
+        self.location = location
+        self.revision = revision
+        self.sourceOrder = sourceOrder
     }
 }
 
@@ -111,7 +118,9 @@ public struct SelectionRemarkRecord: Identifiable, Codable, Hashable, Sendable {
             if let pdf = record.documentAnchor?.pdf {
                 return (0, pdf.pageIndex, -(pdf.lineRects.first?.y ?? 0), pdf.lineRects.first?.x ?? 0)
             }
-            if let text = record.documentAnchor?.text { return (1, 0, Double(text.startOffset), 0) }
+            if let text = record.documentAnchor?.text {
+                return (1, text.sourceOrder?.first ?? 0, Double(text.sourceOrder?.dropFirst().first ?? 0), Double(text.startOffset))
+            }
             return (2, 0, 0, 0)
         }
         if position(left) != position(right) { return position(left) < position(right) }

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0F01CE000000000000000001 /* OfficeDocumentText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F01CE000000000000000002 /* OfficeDocumentText.swift */; };
 		014CAA0987ACF6294F39D1A2 /* AgentAccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D92418B7C7756A863085B9D /* AgentAccountService.swift */; };
 		0251D244D2FD142022993345 /* NativeAgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */; };
 		034100326A738DEAC681BF7F /* ImageMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB49A5CAD7B99BDF0E8D6FAD /* ImageMarkdownView.swift */; };
@@ -273,6 +274,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0F01CE000000000000000002 /* OfficeDocumentText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeDocumentText.swift; sourceTree = "<group>"; };
 		00FB03E91469CACE2F8CEF89 /* CoursePortableState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoursePortableState.swift; sourceTree = "<group>"; };
 		0143654F5459DD613936A2D2 /* CourseProjectRootSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseProjectRootSupport.swift; sourceTree = "<group>"; };
 		01EDB37E094162897A3C510E /* CourseSidebarTagSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseSidebarTagSupport.swift; sourceTree = "<group>"; };
@@ -655,6 +657,7 @@
 				F4B2307F2390AA8433E3E782 /* PDFOCRTextExtractor.swift */,
 				909B209624E66CFAFB738B90 /* PDFSelectionReportGate.swift */,
 				8FA2D0FE3CC2CBF581233C41 /* SelectionAnchors.swift */,
+				0F01CE000000000000000002 /* OfficeDocumentText.swift */,
 				A3963B746660AA068E194F5D /* SelectionPopoverAnchor.swift */,
 				1F6EC54172A6313CD916B32C /* StudyAgentProposalDecoding.swift */,
 				FA8D6B87981493A3017160C4 /* StudyAgentRuntime.swift */,
@@ -999,10 +1002,12 @@
 			);
 			dependencies = (
 				49E6D4A20DE48D1533107998 /* PBXTargetDependency */,
+				0F01CE000000000000000003 /* PBXTargetDependency */,
 			);
 			name = WeiBeiCore;
 			packageProductDependencies = (
 				2357C0DC96C864EA89194FC2 /* Markdown */,
+				0F01CE000000000000000004 /* ZIPFoundation */,
 			);
 			productName = WeiBeiCore;
 			productReference = AB4D551D5F0841FA7DC2C881 /* libWeiBeiCore.a */;
@@ -1033,6 +1038,7 @@
 			mainGroup = CD245EE5BAF3B71C96D5FFE0;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 				EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */,
 				A362C2116CE98A2EFABB6D0E /* XCRemoteSwiftPackageReference "Sparkle" */,
 				82686C55CB0F5945DDF64FEB /* XCRemoteSwiftPackageReference "swift-markdown" */,
@@ -1165,6 +1171,7 @@
 				BD408EC22829820BC290DB13 /* PDFOCRTextExtractor.swift in Sources */,
 				1BACBE16408835D31B827081 /* PDFSelectionReportGate.swift in Sources */,
 				765704D7BFF91EB3DB3C9134 /* SelectionAnchors.swift in Sources */,
+				0F01CE000000000000000001 /* OfficeDocumentText.swift in Sources */,
 				0F140575A7E125E6A4FB9C3E /* SelectionPopoverAnchor.swift in Sources */,
 				406E0EC71BA38245FBDF9D92 /* StudyAgentProposalDecoding.swift in Sources */,
 				385096A3F75C6CA95D93F663 /* StudyAgentRuntime.swift in Sources */,
@@ -1317,6 +1324,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		0F01CE000000000000000003 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 0F01CE000000000000000004 /* ZIPFoundation */;
+		};
 		49E6D4A20DE48D1533107998 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			productRef = 2357C0DC96C864EA89194FC2 /* Markdown */;
@@ -1697,6 +1708,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
+			requirement = {kind = exactVersion; version = 0.9.20; };
+		};
 		82686C55CB0F5945DDF64FEB /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
@@ -1724,6 +1740,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		0F01CE000000000000000004 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
 		0C66C75EE6ABD1A7688A6967 /* MarkdownParser */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */;

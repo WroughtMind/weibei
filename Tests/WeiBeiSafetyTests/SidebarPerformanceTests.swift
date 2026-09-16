@@ -142,6 +142,8 @@ final class SidebarPerformanceTests: XCTestCase {
             ["苹果材料", "香蕉材料"]
         )
 
+        // Finish the launch save before attributing notifications to search.
+        XCTAssertTrue(fixture.store.flushPendingWorkspaceSave())
         var workspaceChanges = 0
         let workspaceObservation = fixture.store.objectWillChange.sink {
             workspaceChanges += 1
@@ -364,6 +366,9 @@ final class SidebarPerformanceTests: XCTestCase {
 
     @MainActor
     private func pumpMainRunLoop(for duration: TimeInterval = 0.08) {
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: duration))
+        // Initial SwiftUI layout can consume one deadline before animation callbacks run.
+        for _ in 0..<Int(ceil(duration / 0.01)) {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
     }
 }
