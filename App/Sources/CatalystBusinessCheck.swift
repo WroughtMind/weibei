@@ -626,6 +626,19 @@ enum CatalystBusinessCheck {
         }
         store.dismissFloatingSelectionAgent()
         store.clearSelectionAttachments()
+        // Exercise the real composer with a documented model, using only the isolated fixture endpoint.
+        let provider = store.agentProviderID
+        let model = store.modelName
+        defer { store.setAgentProviderID(provider); store.updateModelName(model) }
+        store.setAgentProviderID(.azureOpenAI)
+        store.updateModelName("gpt-5.4")
+        AgentAccountService.shared.startAPIKeyLogin("catalyst-test-only", provider: .azureOpenAI, baseURL: store.agentBaseURL)
+        try await until("reasoning composer configured") {
+            AgentProviderReadiness.isConfigured(for: store) && store.agentReasoningEffort == "low"
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        try capture("reasoning-composer.png")
     }
 
     private static func verifyDividerResize(_ controller: ConversationController) async throws {

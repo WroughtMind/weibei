@@ -3,7 +3,7 @@ import WeiBeiCore
 
 /// Chat 输入框。草稿放在本地 `@State`，打字不写 `store.agentDraft`，避免整棵对话树刷新。
 struct ComposerView: View {
-    static let reasoningControlHeight: CGFloat = 26
+    static let reasoningControlHeight: CGFloat = 18
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
     @ObservedObject private var agentAccount = AgentAccountService.shared
@@ -41,6 +41,10 @@ struct ComposerView: View {
             && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var hasReasoningControl: Bool {
+        showsReasoningEffort && !store.agentReasoningLevels.isEmpty
+    }
+
     private var showsControl: Bool {
         isRunning || canSend
     }
@@ -74,13 +78,13 @@ struct ComposerView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .padding(.top, verticalPadding)
-            .padding(.bottom, verticalPadding)
-            .padding(.trailing, trailingPadding)
+            .padding(.top, hasReasoningControl ? 10 : verticalPadding)
+            .padding(.bottom, hasReasoningControl ? 0 : verticalPadding)
+            .padding(.trailing, hasReasoningControl ? 0 : trailingPadding)
             .padding(.horizontal, horizontalPadding)
             .frame(
                 maxWidth: .infinity,
-                minHeight: max(
+                minHeight: hasReasoningControl ? height - Self.reasoningControlHeight : max(
                     CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
                         composerMinimumHeight: Double(height)
                     )),
@@ -89,16 +93,21 @@ struct ComposerView: View {
                 alignment: .leading
             )
             .overlay(alignment: .trailing) {
-                if showsControl {
+                if showsControl && !hasReasoningControl {
                     sendButton
                         .padding(.trailing, sendTrailing)
                 }
             }
-            if showsReasoningEffort {
-                reasoningEffortPicker
-                    .frame(height: Self.reasoningControlHeight - 8)
-                    .padding(.horizontal, horizontalPadding)
-                    .padding(.bottom, 8)
+            if hasReasoningControl {
+                HStack {
+                    reasoningEffortPicker
+                    Spacer(minLength: 12)
+                    if showsControl { sendButton }
+                }
+                .frame(height: sendButtonSize * textScale)
+                .padding(.leading, horizontalPadding)
+                .padding(.trailing, sendTrailing)
+                .padding(.bottom, 8)
             }
         }
         .frame(
@@ -173,15 +182,23 @@ struct ComposerView: View {
                 }
             }
         } label: {
-            Text(store.agentReasoningEffort.map {
-                store.ui("推理：", "Reasoning: ") + AgentReasoningEffort.label($0, language: store.interfaceLanguage)
-            } ?? store.ui("推理：模型默认", "Reasoning: model default"))
-                .weiBeiText(11, weight: .medium)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            HStack(spacing: 4) {
+                Text(store.agentReasoningEffort.map {
+                    let label = AgentReasoningEffort.label($0, language: store.interfaceLanguage)
+                    return store.ui($0 == "none" ? "关闭推理" : label + "强度", label + " effort")
+                } ?? "")
+                    .weiBeiText(11, weight: .medium)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .frame(minHeight: sendButtonSize * textScale)
+            .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(levels.isEmpty)
+        .accessibilityLabel(store.ui("推理强度", "Reasoning effort"))
         .help(store.ui("强度越高，思考通常越久。仅对支持推理强度的模型生效。", "Higher effort usually takes longer. Applies only to models that support reasoning effort."))
         .accessibilityIdentifier("agent-reasoning-effort")
     }
