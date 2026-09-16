@@ -41,6 +41,8 @@
 
 **用户明确要求自测时**，才用带唯一 group、answer、explanation 的 radio 和汇总 submit；普通解释不附题。
 
+Diagram 默认省略 `variant`，让配色自动跟随宿主的深色或浅色主题；只有用户明确要求固定视觉主题时，才指定 `light`、`dark` 或 `editorial`。
+
 ## 容量与宿主边界
 
 - 完整 spec 不超过 1 MB，组件树不超过 200 个节点、8 层嵌套。

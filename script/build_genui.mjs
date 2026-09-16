@@ -217,6 +217,8 @@ const advancedSkill = `# GenUI Advanced — 魏碑高级界面规范
 
 ${advancedSpecs}
 
+Diagram 默认省略 \`variant\`，让配色自动跟随宿主的深色或浅色主题；只有用户明确要求固定视觉主题时，才指定 \`light\`、\`dark\` 或 \`editorial\`。
+
 ## 容量与宿主边界
 
 - 完整 spec 不超过 1 MB，组件树不超过 200 个节点、8 层嵌套。
@@ -243,6 +245,7 @@ const echartPresets = ['bar', 'line', 'area', 'pie', 'scatter', 'radar', 'gauge'
 assert(echartPresets.every(preset => advancedOutput.includes(`\`${preset}\``)), '高级技能缺少 13 种 ECharts 预设');
 assert(advancedOutput.includes('full option'), '高级技能缺少 ECharts full option');
 assert(advancedOutput.includes('27 种') || advancedOutput.includes('27种'), '高级技能缺少 Diagram 27 种 kind');
+assert(advancedOutput.includes('Diagram 默认省略 `variant`'), '高级技能缺少 Diagram 宿主主题规则');
 for (const output of [mainOutput, advancedOutput]) {
   assert(!/dsh-ui|validate_dsh_ui|\/mmx-files\/|genui-usage-audit|design-reference|\[genui-action\]|硬触发/.test(output), 'GenUI 技能仍包含未适配的宿主说明');
 }
