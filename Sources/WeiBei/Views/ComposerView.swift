@@ -3,6 +3,7 @@ import WeiBeiCore
 
 /// Chat 输入框。草稿放在本地 `@State`，打字不写 `store.agentDraft`，避免整棵对话树刷新。
 struct ComposerView: View {
+    static let reasoningControlHeight: CGFloat = 26
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
     @ObservedObject private var agentAccount = AgentAccountService.shared
@@ -26,6 +27,7 @@ struct ComposerView: View {
     var showsChrome = true
     var focusesOnAppear = false
     var focusTrigger = 0
+    var showsReasoningEffort = false
     var sessionID: UUID? = nil
     var submit: () -> Void
 
@@ -92,6 +94,12 @@ struct ComposerView: View {
                         .padding(.trailing, sendTrailing)
                 }
             }
+            if showsReasoningEffort {
+                reasoningEffortPicker
+                    .frame(height: Self.reasoningControlHeight - 8)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.bottom, 8)
+            }
         }
         .frame(
             maxWidth: .infinity,
@@ -143,7 +151,39 @@ struct ComposerView: View {
             }
         }
         .animation(WeiBeiMotion.micro, value: showsControl)
+        .task(id: store.activeAgentProfileID.uuidString + store.agentProviderID.rawValue + store.agentBaseURL) {
+            guard showsReasoningEffort else { return }
+            agentAccount.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        }
         .accessibilityIdentifier("agent-composer-compact")
+    }
+
+    private var reasoningEffortPicker: some View {
+        let levels = store.agentReasoningLevels
+        return Menu {
+            ForEach(levels, id: \.self) { effort in
+                Button {
+                    store.agentReasoningEfforts[store.agentReasoningModelKey] = effort
+                } label: {
+                    if effort == store.agentReasoningEffort {
+                        Label(AgentReasoningEffort.label(effort, language: store.interfaceLanguage), systemImage: "checkmark")
+                    } else {
+                        Text(AgentReasoningEffort.label(effort, language: store.interfaceLanguage))
+                    }
+                }
+            }
+        } label: {
+            Text(store.agentReasoningEffort.map {
+                store.ui("推理：", "Reasoning: ") + AgentReasoningEffort.label($0, language: store.interfaceLanguage)
+            } ?? store.ui("推理：模型默认", "Reasoning: model default"))
+                .weiBeiText(11, weight: .medium)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(levels.isEmpty)
+        .help(store.ui("强度越高，思考通常越久。仅对支持推理强度的模型生效。", "Higher effort usually takes longer. Applies only to models that support reasoning effort."))
+        .accessibilityIdentifier("agent-reasoning-effort")
     }
 
     private func commitAndSubmit() {

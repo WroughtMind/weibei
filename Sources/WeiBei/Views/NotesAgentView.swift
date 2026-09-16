@@ -1348,7 +1348,7 @@ struct AgentPaneView: View {
 #endif
             let comfy = wide
                 || typographyWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
-            let composerHeight = AgentChatLayoutMetrics.composerHeight
+            let composerHeight = AgentChatLayoutMetrics.composerHeight + ComposerView.reasoningControlHeight
             let headerHeight: CGFloat = showsPaneHeader
                 ? (liveAvailableWidth < 420 ? 44 : 54)
                 : 0
@@ -2058,7 +2058,8 @@ struct AgentPaneView: View {
                     sendTrailing: wide ? 8 : 10,
                     horizontalPadding: wide ? 16 : 12,
                     verticalPadding: 8,
-                    focusTrigger: composerFocusTrigger
+                    focusTrigger: composerFocusTrigger,
+                    showsReasoningEffort: true
                 ) {
                     submitAgentDraft()
                 }
