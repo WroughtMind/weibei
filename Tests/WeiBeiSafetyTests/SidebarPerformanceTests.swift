@@ -364,6 +364,9 @@ final class SidebarPerformanceTests: XCTestCase {
 
     @MainActor
     private func pumpMainRunLoop(for duration: TimeInterval = 0.08) {
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: duration))
+        // Initial SwiftUI layout can consume one deadline before animation callbacks run.
+        for _ in 0..<Int(ceil(duration / 0.01)) {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
     }
 }
