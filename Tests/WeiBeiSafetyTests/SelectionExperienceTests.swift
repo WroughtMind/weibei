@@ -6,6 +6,46 @@ import XCTest
 import WeiBeiCore
 
 final class SelectionExperienceTests: XCTestCase {
+    @MainActor
+    func testClearingReaderSelectionRemovesCapsuleAndAutomaticAttachment() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.layout = .documentAgentNotes
+        store.showAgent = true
+        store.updateSelection("刚选中的原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
+        XCTAssertEqual(store.selectionAttachments.count, 1)
+        XCTAssertEqual(store.agentSurface, .selectionFloat)
+        store.updateSelection("", source: .document)
+        XCTAssertNil(store.selectionContext)
+        XCTAssertNil(store.selectionAnchor)
+        XCTAssertNotEqual(store.agentSurface, .selectionFloat)
+        XCTAssertNil(store.automaticSelection)
+        XCTAssertTrue(store.selectionAttachments.isEmpty)
+    }
+
+    @MainActor
+    func testSelectionClearPreservesManualAttachmentsAndOpenedQuestion() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.layout = .documentAgentNotes
+        store.showAgent = true
+        let manual = SelectionContext(text: "手动保留的另一段", source: .note, ownerTitle: "笔记")
+        store.addSelectionAttachment(manual)
+        store.updateSelection("准备提问的原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
+        store.updateSelection("", source: .note)
+        XCTAssertEqual(store.selectionAttachments.count, 2, "Another reader's empty event must not remove the active passage")
+        store.askSelection()
+        let threadID = try XCTUnwrap(store.activeSelectionAskThreadID)
+        store.updateSelection("", source: .document)
+        XCTAssertNil(store.automaticSelection)
+        XCTAssertEqual(store.selectionAttachments.map(\.text), [manual.text])
+        XCTAssertEqual(store.activeSelectionAskThreadID, threadID)
+        XCTAssertEqual(store.selectionContext?.text, "准备提问的原文")
+        XCTAssertEqual(store.agentSurface, .selectionFloat)
+    }
+
     override class func setUp() {
         super.setUp()
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
