@@ -19,7 +19,7 @@ type Page = { id:string; title:string; overlayItems:unknown[];
   columnLayout:{columns:{w:number;nextY:number}[];activeIndex:number;lp:{tileW:number}} };
 const host = window as unknown as { webkit?: { messageHandlers?: { whiteboard?: { postMessage: (data: unknown) => void } } };
   WeiBeiKaTeX: { renderToString: (text: string, options: unknown) => string };
-  WeiBeiMermaid: { initialize: (options: unknown) => void; render: (id: string, text: string) => Promise<{svg:string}> };
+  WeiBeiMermaid: Promise<{ initialize: (options: unknown) => void; render: (id: string, text: string) => Promise<{svg:string}> }>;
   WeiBeiWhiteboard: typeof api; initialWhiteboardDark?:boolean };
 const send = (data: unknown) => host.webkit?.messageHandlers?.whiteboard?.postMessage(data);
 const canvas = document.getElementById('canvas')!;
@@ -142,7 +142,7 @@ async function prepare(a: Action, restoring = false): Promise<Card> {
   cards.set(a.board_uid,card);entries.push(card);node.style.opacity=restoring?'1':'0';
   if(a.type==='graph') {
     if (/%%\{|\bclick\s|<\/?(?:script|iframe|img)/i.test(a.mermaid ?? '')) throw new Error('图示包含不支持的指令');
-    const value=await host.WeiBeiMermaid.render('graph-'+a.step_id.replace(/[^a-z0-9]/gi,'')+'-'+epoch,a.mermaid ?? '');
+    const value=await (await host.WeiBeiMermaid).render('graph-'+a.step_id.replace(/[^a-z0-9]/gi,'')+'-'+epoch,a.mermaid ?? '');
     assertEpoch(token);
     body.innerHTML=DOMPurify.sanitize(value.svg,{USE_PROFILES:{svg:true,svgFilters:true}});
     body.querySelector('svg')?.setAttribute('width','100%');
@@ -342,9 +342,9 @@ const api={
   },
   async setAppearance(dark:boolean){
     if(document.documentElement.dataset.theme===(dark?'dark':'light'))return;
-    setAppearance(dark);const token=epoch;
+    await setAppearance(dark);const token=epoch;
     for(const card of cards.values())if(card.action.type==='graph'){
-      const value=await host.WeiBeiMermaid.render('theme-'+card.action.step_id.replace(/[^a-z0-9]/gi,'')+'-'+token,card.action.mermaid ?? '');
+      const value=await (await host.WeiBeiMermaid).render('theme-'+card.action.step_id.replace(/[^a-z0-9]/gi,'')+'-'+token,card.action.mermaid ?? '');
       assertEpoch(token);card.node.querySelector('.content')!.innerHTML=DOMPurify.sanitize(value.svg,{USE_PROFILES:{svg:true,svgFilters:true}});
       card.node.querySelector('svg')?.setAttribute('width','100%');
     }
@@ -375,13 +375,13 @@ const api={
   },
 };
 host.WeiBeiWhiteboard=api;
-function setAppearance(dark:boolean){
+async function setAppearance(dark:boolean){
   document.documentElement.dataset.theme=dark?'dark':'light';
-  host.WeiBeiMermaid.initialize({startOnLoad:false,securityLevel:'strict',look:'handDrawn',fontFamily:'Virgil, Kaiti SC, STKaiti, serif',flowchart:{htmlLabels:false},theme:'base',themeVariables:{
+  (await host.WeiBeiMermaid).initialize({startOnLoad:false,securityLevel:'strict',look:'handDrawn',fontFamily:'Virgil, Kaiti SC, STKaiti, serif',flowchart:{htmlLabels:false},theme:'base',themeVariables:{
     darkMode:dark,background:'transparent',primaryColor:dark?'#263e50':'#dbeafe',primaryTextColor:dark?'#cee2ed':'#25435b',primaryBorderColor:dark?'#86abc2':'#5488a8',
     secondaryColor:dark?'#44374f':'#ede9fe',tertiaryColor:dark?'#27453f':'#ccfbf1',lineColor:dark?'#b0aba0':'#716b60',textColor:dark?'#e7e2d7':'#36332e',
     mainBkg:dark?'#263e50':'#dbeafe',nodeTextColor:dark?'#cee2ed':'#25435b',edgeLabelBackground:dark?'#242421':'#faf8f2',
   }});
 }
-setAppearance(host.initialWhiteboardDark ?? matchMedia('(prefers-color-scheme: dark)').matches);
-send({type:'ready'});
+void setAppearance(host.initialWhiteboardDark ?? matchMedia('(prefers-color-scheme: dark)').matches)
+  .then(()=>send({type:'ready'})).catch(error=>send({type:'initialization_failed',message:String(error)}));

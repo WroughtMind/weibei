@@ -404,7 +404,7 @@ extension WorkspaceStore {
                     let fileSnapshot = try await courseProjectFileWorker.snapshot(
                         at: observation.url
                     )
-                    if identityChanged || digest != fileSnapshot.sha256 {
+                    if digest != fileSnapshot.sha256 {
                         revision &+= 1
                     }
                     digest = fileSnapshot.sha256
@@ -736,7 +736,7 @@ extension WorkspaceStore {
             if identityChanged || metadataChanged {
                 do {
                     let snapshot = try await courseProjectFileWorker.snapshot(at: observation.url)
-                    if identityChanged || item.contentDigest != snapshot.sha256 {
+                    if item.contentDigest != snapshot.sha256 {
                         nextRevision &+= 1
                     }
                     nextDigest = snapshot.sha256

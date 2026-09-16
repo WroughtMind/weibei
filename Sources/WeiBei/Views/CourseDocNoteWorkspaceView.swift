@@ -326,8 +326,8 @@ struct CourseDocNoteWorkspaceView: View {
             CourseEmptyState(
                 title: store.ui("还没有文稿", "No docs yet"),
                 detail: store.ui(
-                    "点这一列顶部的加号导入 PDF、HTML、Markdown 或文本。",
-                    "Use the plus on this column to import PDF, HTML, Markdown, or text."
+                    "点这一列顶部的加号导入 Word、PPT、PDF、HTML、Markdown 或文本。",
+                    "Use the plus on this column to import Word, PowerPoint, PDF, HTML, Markdown, or text."
                 ),
                 systemImage: "doc.badge.plus"
             )

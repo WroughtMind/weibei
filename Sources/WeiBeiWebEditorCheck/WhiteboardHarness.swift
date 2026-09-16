@@ -113,6 +113,7 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
                 NSButton(title: "深色板面", target: self, action: #selector(dark)), NSButton(title: "模型首屏计时", target: self, action: #selector(live))])
             controls.heightAnchor.constraint(equalToConstant: 34).isActive = true
             let content = NSStackView(views: [controls, web]); content.orientation = .vertical; content.spacing = 0
+            web.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
             value.title = "魏碑白板 · 渲染验收"; value.contentView = content; value.orderFront(nil); window = value
         }
         let resources = URL(fileURLWithPath: Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String ?? FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor")

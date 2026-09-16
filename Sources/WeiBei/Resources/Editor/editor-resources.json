@@ -1,5 +1,8 @@
 {
   "schemaVersion": 1,
+  "inlineScripts": [
+    "'sha256-/Q7VUHZ+U6FCYUsHCtl/w3Is/xwvhiqHP86ympq/1/A='"
+  ],
   "assets": [
     {
       "name": "chinese-voice-index.js",
@@ -2128,8 +2131,8 @@
     },
     {
       "name": "diagram.html",
-      "bytes": 2122,
-      "sha256": "b888032f8c36f885bd0c76422a6f3361f185821ad3c6934c7bde116129fdbed5"
+      "bytes": 2207,
+      "sha256": "296f05e368ee036c5276875f2e5e089a63d84b28af46e51a4861d61825c1eeed"
     },
     {
       "name": "editor-entry.js",
@@ -2253,8 +2256,8 @@
     },
     {
       "name": "mermaid-runtime.js",
-      "bytes": 3489655,
-      "sha256": "fd0ed550767e53a142614b070ad97fc3722cff1c2f862a873fceb29a9abfd7f0"
+      "bytes": 1317906,
+      "sha256": "fb87cf1a9c92584d9111643c5f5cfedff6d19c9e38302856f21e655f490a9e7d"
     },
     {
       "name": "Mplus1p-Bold.woff2",
@@ -2270,6 +2273,16 @@
       "name": "Mplus1p-Regular.woff2",
       "bytes": 700008,
       "sha256": "e7c4d6aa5fad5d614c3435cea91ba015bc1764260a6f1c000df91a3f26dfaa1b"
+    },
+    {
+      "name": "office-entry.js.deflate",
+      "bytes": 1445560,
+      "sha256": "7e86e6ad1764528b55fa0dca691ff7d7c47ccfd26a52be169b702b47c14ee927"
+    },
+    {
+      "name": "office-licenses.txt",
+      "bytes": 25051,
+      "sha256": "a0623a0143f56c591c42276d46e34314b96241c8dafa908e1c110a8863fff04a"
     },
     {
       "name": "prism-runtime.js",
@@ -2288,8 +2301,8 @@
     },
     {
       "name": "selection-runtime.js",
-      "bytes": 3706,
-      "sha256": "09944bbb41bcfc08f748256840d5e6badd5b4a7471c41787749249a86d4b71f3"
+      "bytes": 4846,
+      "sha256": "418c09345e46c65b98091ae995f408fa0e171e26e047ad88464a65beedfcec10"
     },
     {
       "name": "viewer-entry.js",
@@ -2323,13 +2336,13 @@
     },
     {
       "name": "whiteboard-runtime.js",
-      "bytes": 687328,
-      "sha256": "ff31c72b3d31f809f121575a55fe0a1ee39471dd4abf4c31d8254875bcfa77f1"
+      "bytes": 687435,
+      "sha256": "a4e34608487a08e594b776f0ab75bc07f66cdd0cd05dee57ff568101ea282cc9"
     },
     {
       "name": "whiteboard.html",
-      "bytes": 3686,
-      "sha256": "1fe111876667f973762c45d62324b397b03db71533c395a29f742118c7b1eb79"
+      "bytes": 3740,
+      "sha256": "31de906dc04bea08dbd7c0a4bdf7eca561fc84583b34849fb3acda3f64e1b156"
     }
   ]
 }

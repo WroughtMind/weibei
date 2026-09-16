@@ -3076,6 +3076,10 @@ final class WorkspaceStore: ObservableObject {
         switch item.kind {
         case .pdf:
             return ui("\(itemTitle)，第 \(readerPageIndex + 1) 页", "\(itemTitle), page \(readerPageIndex + 1)")
+        case .docx, .pptx:
+            guard let locationID = readerLocationID else { return itemTitle }
+            return ui("\(itemTitle)，章节标识：\(locationID)，章节：\(readerLocationTitle ?? itemTitle)",
+                      "\(itemTitle), section id: \(locationID), section: \(readerLocationTitle ?? itemTitle)")
         case .html:
             guard let locationTitle = readerLocationTitle,
                   locationTitle != itemTitle else { return itemTitle }
@@ -4290,7 +4294,7 @@ final class WorkspaceStore: ObservableObject {
                 readerLocationTitle = location.locationTitle ?? location.itemTitle
                 if selectedMaterialItem?.kind == .pdf {
                     requestReaderPDFPage(location.pageIndex, recordsLocation: false)
-                } else if selectedMaterialItem?.kind == .html {
+                } else if selectedMaterialItem?.kind.isWebDocument == true {
                     requestReaderHTMLLocation(
                         id: location.locationID,
                         title: location.locationTitle
@@ -4874,7 +4878,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateReaderHTMLLocation(id: String?, title: String?, reason: String) {
-        guard selectedMaterialItem?.kind == .html else { return }
+        guard selectedMaterialItem?.kind.isWebDocument == true else { return }
         let cleanedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextID = cleanedID.isEmpty ? nil : String(cleanedID.prefix(500))
@@ -4950,7 +4954,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let previous = studyLocation(for: item.id, in: activeCourseID)
         let itemTitle = sourceReferenceBaseTitle(for: item)
-        let locationID = item.kind == .html ? readerLocationID : nil
+        let locationID = item.kind.isWebDocument ? readerLocationID : nil
         let pageIndex = item.kind == .pdf ? readerPageIndex : nil
         let locationChanged = incrementVisit
             || previous?.itemTitle != itemTitle
@@ -5010,12 +5014,12 @@ final class WorkspaceStore: ObservableObject {
             clearReaderHTMLLocationTarget()
             return
         }
-        readerLocationID = item.kind == .html ? location.locationID : nil
+        readerLocationID = item.kind.isWebDocument ? location.locationID : nil
         readerLocationTitle = location.locationTitle ?? displayTitle(for: item)
         if item.kind == .pdf {
             readerPageIndex = max(location.pageIndex ?? 0, 0)
             requestReaderPDFPage(location.pageIndex, recordsLocation: false)
-        } else if item.kind == .html {
+        } else if item.kind.isWebDocument {
             requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         }
     }
@@ -5065,13 +5069,13 @@ final class WorkspaceStore: ObservableObject {
             item.kind == .pdf ? reference.pageIndex : nil,
             recordsLocation: item.kind == .pdf && reference.pageIndex != nil
         )
-        let htmlTargetID = item.kind == .html
+        let htmlTargetID = item.kind.isWebDocument
             ? reference.sectionLocationID
-                ?? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" }
+                ?? (item.kind == .html ? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind == .html ? reference.sectionTitle : nil
+            title: item.kind.isWebDocument ? reference.sectionTitle : nil
         )
         focus(.reader)
         return true
@@ -5129,13 +5133,13 @@ final class WorkspaceStore: ObservableObject {
             item.kind == .pdf ? source.pageIndex : nil,
             recordsLocation: item.kind == .pdf && source.pageIndex != nil
         )
-        let htmlTargetID = item.kind == .html
+        let htmlTargetID = item.kind.isWebDocument
             ? source.sectionLocationID
-                ?? source.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" }
+                ?? (item.kind == .html ? source.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind == .html ? source.sectionTitle : nil
+            title: item.kind.isWebDocument ? source.sectionTitle : nil
         )
         readerSourceHighlight = source.highlightQuery
         readerSourceHighlightPageIndex = item.kind == .pdf ? source.pageIndex : nil
@@ -5466,8 +5470,8 @@ final class WorkspaceStore: ObservableObject {
             recordsLocation: false
         )
         requestReaderHTMLLocation(
-            id: selectedMaterialItem?.kind == .html ? snapshot.readerLocationID : nil,
-            title: selectedMaterialItem?.kind == .html ? snapshot.readerLocationTitle : nil
+            id: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationID : nil,
+            title: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationTitle : nil
         )
         latestAgentLearningUpdate = nil
         syncActiveStudySession()
@@ -5779,7 +5783,7 @@ final class WorkspaceStore: ObservableObject {
         Task { @MainActor in
             let types: [UTType] = markdownOnly
                 ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
-                : [.pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
+                : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
             let urls = await WorkspaceFileDialog.pick(
                 title: panelTitle ?? ui("选择学习资料或课程文件夹", "Choose study materials or a course folder"),
                 types: types, multiple: true
@@ -5811,7 +5815,7 @@ final class WorkspaceStore: ObservableObject {
         panel.canChooseFiles = true
         panel.allowedContentTypes = markdownOnly
             ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
-            : [.pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
+            : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
 
         guard panel.runModal() == .OK else { return }
         if let assigningToCourseID {
@@ -5989,8 +5993,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     static func isSupportedCourseFile(_ url: URL) -> Bool {
-        ["pdf", "html", "htm", "md", "markdown", "txt", "text"]
-            .contains(url.pathExtension.lowercased())
+        StudyItemKind.materialExtensions.contains(url.pathExtension.lowercased())
     }
 
     func openOrCreateWikiNote(title rawTitle: String) {

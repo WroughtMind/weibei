@@ -1,6 +1,10 @@
 import Foundation
 
 enum WeiBeiResources {
+    static var officeRuntimeURL: URL? {
+        bundle.url(forResource: "office-entry", withExtension: "js.deflate", subdirectory: "Editor")
+    }
+
     static var selectionRuntimeURL: URL? {
         bundle.url(forResource: "selection-runtime", withExtension: "js", subdirectory: "Editor")
     }

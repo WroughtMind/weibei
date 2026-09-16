@@ -33,7 +33,7 @@ classify_path() {
   esac
 
   case "$path" in
-    Sources/WeiBei/WebGenUI/*|Sources/WeiBei/WebEditor/*|Sources/WeiBei/Resources/Editor/*|Sources/WeiBeiWebEditorCheck/*|Sources/WeiBei/Support/AgentChatKaTeXMarkdown.swift|Sources/WeiBei/Views/*Markdown*|Sources/WeiBei/Views/NotesAgentView.swift|Sources/WeiBeiCore/Markdown*.swift|package.json|package-lock.json|tsconfig.genui.json|script/build_genui.mjs|tsconfig.editor.json|script/build_editor.mjs|script/convert_editor_fonts.py|script/editor-font-requirements.txt|DesignSystem/assets/fonts/*.ttf)
+    Sources/WeiBei/WebGenUI/*|Sources/WeiBei/WebEditor/*|Sources/WeiBei/Resources/Editor/*|Sources/WeiBeiWebEditorCheck/*|Sources/WeiBei/Support/AgentChatKaTeXMarkdown.swift|Sources/WeiBei/Views/*Markdown*|Sources/WeiBei/Views/NotesAgentView.swift|Sources/WeiBeiCore/Markdown*.swift|package.json|package-lock.json|tsconfig.genui.json|script/build_genui.mjs|tsconfig.editor.json|script/build_editor.mjs|script/packed_web_script.mjs|script/convert_editor_fonts.py|script/editor-font-requirements.txt|DesignSystem/assets/fonts/*.ttf)
       editor=true
       ;;
   esac

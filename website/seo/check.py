@@ -69,7 +69,7 @@ for url in sorted(expected):
                 assert target.is_file() and target.stat().st_size, f'{url}: missing resource {value}'
     for image in nodes(document, 'img'):
         assert 'alt' in image.attrs, f'{url}: image needs an alt decision'
-        for attr in ('src', 'srcset'):
+        for attr in ('src', 'srcset', 'data-src', 'data-srcset'):
             for entry in image.attrs.get(attr, '').split(','):
                 value = entry.strip().split(' ')[0]
                 if not value:

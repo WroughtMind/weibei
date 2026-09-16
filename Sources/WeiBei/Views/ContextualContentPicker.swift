@@ -7,6 +7,7 @@ struct ContextualContentPicker: View {
     let kind: ContextualContentKind
     @State private var courseEntry: CourseProjectEntryPresentation?
     @State private var choosingImportTarget = false
+    @State private var pendingImport: (() -> Void)?
 
     private struct Group: Identifiable {
         let course: Course?
@@ -61,7 +62,11 @@ struct ContextualContentPicker: View {
                 openCourse: { _ in courseEntry = nil }
             ).environmentObject(store)
         }
-        .sheet(isPresented: $choosingImportTarget) {
+        .sheet(isPresented: $choosingImportTarget, onDismiss: {
+            let action = pendingImport
+            pendingImport = nil
+            action?()
+        }) {
             VStack(alignment: .leading, spacing: 16) {
                 Text(store.ui("导入到哪里？", "Import into…")).weiBeiText(17, weight: .semibold)
                 ScrollView {
@@ -187,11 +192,15 @@ struct ContextualContentPicker: View {
     }
 
     private func importFiles(into courseID: UUID?) {
-        choosingImportTarget = false
-        // Let the target sheet dismiss before presenting the system file panel.
-        DispatchQueue.main.async {
+        let action = { [store, kind] in
             if kind == .note { store.importCourseNotesFromPanel(courseID: courseID) }
             else { store.importCourseMaterialsFromPanel(courseID: courseID) }
+        }
+        if choosingImportTarget {
+            pendingImport = action
+            choosingImportTarget = false
+        } else {
+            action()
         }
     }
 }

@@ -14,6 +14,7 @@ public enum WhiteboardTeacher {
         var result = WhiteboardLesson(title: session.lesson.title)
         var combined = session.lesson
         try await readActions(adapter: adapter, request: request) { action in
+            guard action.leaves.allSatisfy({ ($0.boardUID ?? 0) < 100_000 }) else { throw WhiteboardFailure("模型板书编号超出范围。") }
             combined.actions.append(action); try combined.validate(source: source)
             result.actions.append(action); try await receive(action)
         }

@@ -2,6 +2,7 @@ import Combine
 import Darwin
 import Foundation
 import XCTest
+import ZIPFoundation
 @testable import WeiBei
 import WeiBeiCore
 
@@ -19,6 +20,118 @@ final class WorkspaceSafetyTests: XCTestCase {
     @MainActor
     func testCourseProjectDataSafety() throws {
         try CourseProjectRootSelfCheck.run()
+    }
+
+    @MainActor
+    func testFileRevisionTracksContentAcrossAtomicSave() throws {
+        for isCommon in [true, false] {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("WeiBeiContentRevision-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let library = root.appendingPathComponent("资料库")
+            try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+            let source = root.appendingPathComponent("讲义.txt")
+            let contents = Data("原文摘录的位置不变".utf8)
+            try contents.write(to: source)
+            let store = WorkspaceStore(
+                workspaceDirectory: root.appendingPathComponent("workspace"),
+                startsAtBlankEntries: true
+            )
+            try store.configureCourseLibrary(at: library)
+            let courseID = try store.createCourseInLibrary(title: "课程")
+            let itemID = try store.importFileIntoCourseForSelfCheck(
+                source, courseID: courseID, role: .material
+            ).item.id
+            if isCommon {
+                try store.promoteCourseOwnedItemToCommonForSelfCheck(itemID: itemID)
+            }
+            let original = try XCTUnwrap(store.importedItems.first { $0.id == itemID })
+            let target = try XCTUnwrap(original.url)
+            XCTAssertNotNil(original.contentDigest)
+
+            try contents.write(to: target, options: .atomic)
+            try store.reconcileCourseFilesForSelfCheck()
+            let saved = try XCTUnwrap(store.importedItems.first { $0.id == itemID })
+            XCTAssertNotEqual(saved.importedFileIdentity, original.importedFileIdentity)
+            XCTAssertEqual(saved.contentDigest, original.contentDigest)
+            XCTAssertEqual(saved.contentRevision, original.contentRevision,
+                           "相同内容的原子保存不应让原文摘录失效")
+
+            let renamed = target.deletingLastPathComponent().appendingPathComponent("讲义改名.txt")
+            try FileManager.default.moveItem(at: target, to: renamed)
+            try store.reconcileCourseFilesForSelfCheck()
+            let moved = try XCTUnwrap(store.importedItems.first { $0.id == itemID })
+            XCTAssertEqual(moved.url, renamed)
+            XCTAssertEqual(moved.contentRevision, original.contentRevision)
+
+            try Data("原文已经发生修改".utf8).write(to: renamed, options: .atomic)
+            try store.reconcileCourseFilesForSelfCheck()
+            let edited = try XCTUnwrap(store.importedItems.first { $0.id == itemID })
+            XCTAssertNotEqual(edited.contentDigest, original.contentDigest)
+            XCTAssertEqual(edited.contentRevision, original.contentRevision + 1)
+        }
+    }
+
+    @MainActor
+    func testOfficeCourseImportExportAndReopen() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiOfficeCourse-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = root.appendingPathComponent("资料库")
+        let destination = root.appendingPathComponent("接收资料库")
+        for directory in [library, destination] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let store = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("workspace"), startsAtBlankEntries: true)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "Office 课程")
+        let otherCourseID = try store.createCourseInLibrary(title: "共享课程")
+        let ns = "http://schemas.openxmlformats.org"
+        let rel = "\(ns)/officeDocument/2006/relationships"
+        var originals: [String: (StudyItemKind, Data)] = [:]
+        for kind in [StudyItemKind.docx, .pptx] {
+            let main = kind == .docx ? "word/document.xml" : "ppt/presentation.xml"
+            let parts = [
+                "[Content_Types].xml": "<Types xmlns=\"\(ns)/package/2006/content-types\"><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/></Types>",
+                "_rels/.rels": "<Relationships xmlns=\"\(ns)/package/2006/relationships\"><Relationship Id=\"main\" Type=\"\(rel)/officeDocument\" Target=\"\(main)\"/></Relationships>",
+                "word/document.xml": "<w:document xmlns:w=\"\(ns)/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>课程原文</w:t></w:r></w:p></w:body></w:document>",
+                "ppt/presentation.xml": "<p:presentation xmlns:p=\"\(ns)/presentationml/2006/main\" xmlns:r=\"\(rel)\"><p:sldIdLst><p:sldId id=\"256\" r:id=\"slide\"/></p:sldIdLst></p:presentation>",
+                "ppt/_rels/presentation.xml.rels": "<Relationships xmlns=\"\(ns)/package/2006/relationships\"><Relationship Id=\"slide\" Type=\"\(rel)/slide\" Target=\"slides/slide1.xml\"/></Relationships>",
+                "ppt/slides/slide1.xml": "<p:sld xmlns:p=\"\(ns)/presentationml/2006/main\" xmlns:a=\"\(ns)/drawingml/2006/main\"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>课程原文</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>",
+            ]
+            let zip = try Archive(data: Data(), accessMode: .create)
+            for (path, xml) in parts {
+                let bytes = Data(xml.utf8)
+                try zip.addEntry(with: path, type: .file, uncompressedSize: Int64(bytes.count)) { offset, count in
+                    bytes.subdata(in: Int(offset)..<(Int(offset) + count))
+                }
+            }
+            let data = try XCTUnwrap(zip.data)
+            let source = root.appendingPathComponent("课程.\(kind.rawValue)")
+            try data.write(to: source)
+            let item = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material).item
+            XCTAssertEqual(item.kind, kind)
+            originals[item.id] = (kind, data)
+            // The same format check also protects common material references.
+            try store.shareCourseOwnedItemForSelfCheck(itemID: item.id, withCourseID: otherCourseID)
+        }
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let exportedRoot = destination.appendingPathComponent("导出课程")
+        _ = try store.exportPortableCourseCopyForSelfCheck(courseID: courseID, to: exportedRoot)
+        let exportedState = try JSONDecoder().decode(CoursePortableState.self,
+            from: Data(contentsOf: exportedRoot.appendingPathComponent(".weibei/course-state.json")))
+        XCTAssertEqual(Set(exportedState.items.map(\.itemID)), Set(originals.keys))
+        let reopened = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("reopened"), startsAtBlankEntries: true)
+        try reopened.configureCourseLibrary(at: destination)
+        XCTAssertEqual(try reopened.adoptCourseFolder(at: exportedRoot, title: "Office 课程"), courseID)
+        for (id, original) in originals {
+            let item = try XCTUnwrap(reopened.importedItems.first { $0.id == id },
+                "expected \(id); restored \(reopened.importedItems.map { $0.id + ":" + $0.kind.rawValue })")
+            XCTAssertEqual(item.kind, original.0)
+            XCTAssertEqual(try Data(contentsOf: XCTUnwrap(item.url)), original.1)
+            XCTAssertEqual(try OfficeDocumentText.sections(in: original.1, kind: item.kind).first?.text, "课程原文")
+        }
+        XCTAssertTrue(reopened.flushPendingWorkspaceSave())
     }
 
     @MainActor

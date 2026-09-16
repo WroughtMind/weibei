@@ -3896,6 +3896,51 @@ private func runBenchmarks(completion: @escaping (Result<String, Error>) -> Void
     runFixture(at: 0)
 }
 
+final class SharedDiagramHarness: NSObject, WKScriptMessageHandler {
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {}
+
+    func run() {
+        let resources = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/WeiBei/Resources")
+        let source = json("graph TD\nA[阅读] --> B[整理]")
+        for (page, start) in [
+            ("Editor/diagram.html", "if (typeof renderDiagram !== 'function') return false; renderDiagram(\(source), 1);"),
+            ("genui.html", "if (!window.WeiBeiGenUIHost) return false; window.WeiBeiGenUIHost.render({id:'shared-diagram',theme:{surface:'rgba(255,255,255,1)',ink:'rgba(30,30,30,1)',muted:'rgba(80,80,80,1)',soft:'rgba(120,120,120,1)',border:'rgba(0,0,0,0.1)'},spec:{items:[{type:'mermaid',code:\(source)}]}});")
+        ] {
+            let configuration = WKWebViewConfiguration()
+            configuration.userContentController.add(self, name: "size")
+            let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+            view.loadFileURL(resources.appendingPathComponent(page), allowingReadAccessTo: resources)
+            let script = """
+            (() => {
+              if (!window.diagramCheckStarted) { \(start) window.diagramCheckStarted = true; }
+              const svg = document.querySelector('#diagram svg, #genui-content svg');
+              return Boolean(svg && svg.textContent.includes('阅读') && svg.textContent.includes('整理') && svg.getBoundingClientRect().height > 0);
+            })()
+            """
+            let deadline = Date().addingTimeInterval(20)
+            var rendered = false
+            while !rendered && Date() < deadline {
+                var result: Bool?
+                view.evaluateJavaScript(script) { value, _ in result = value as? Bool ?? false }
+                repeat { RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05)) }
+                while result == nil && Date() < deadline
+                rendered = result == true
+            }
+            if !rendered {
+                var detail: String?
+                view.callAsyncJavaScript("try { await window.__GenuiAssets__.mermaid.renderMermaid(\(source)); return 'rendered'; } catch(error) { return String(error); }", arguments: [:], in: nil, in: .page) { result in detail = String(describing: result) }
+                let timeout = Date().addingTimeInterval(2)
+                while detail == nil && Date() < timeout { RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05)) }
+                print("shared diagram detail: \(detail ?? "no response")")
+            }
+            expect(rendered, "shared diagram runtime did not render in \(page)")
+            view.stopLoading()
+        }
+        print("Shared diagram runtime: relationship view and GenUI passed")
+    }
+}
+
 let benchmarkMode = CommandLine.arguments.dropFirst().contains("--benchmark")
 if benchmarkMode {
     NSApplication.shared.setActivationPolicy(.accessory)
@@ -3936,6 +3981,7 @@ if CommandLine.arguments.contains("--notes-typography") {
     NotesTypographyHarness().run()
     exit(0)
 }
+SharedDiagramHarness().run()
 NotesTypographyHarness().run()
 verifyAgentChatMarkdownSourceContract()
 UTF8HTMLReaderHarness().run()

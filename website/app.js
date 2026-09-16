@@ -12,11 +12,8 @@ const themePreviews = [...document.querySelectorAll('.theme-preview')];
 const themesLayer = document.querySelector('.themes-layer');
 const downloadLink = document.querySelector('[data-download-link]');
 const downloadTitle = document.querySelector('[data-download-title]');
-const downloadCaption = document.querySelector('[data-download-caption]');
 const downloadLabel = document.querySelector('[data-download-label]');
 const downloadControl = document.querySelector('[data-download-control]');
-const downloadToggle = document.querySelector('[data-download-toggle]');
-const downloadMenu = document.querySelector('[data-download-menu]');
 const downloadOptions = [...document.querySelectorAll('[data-download-target]')];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const mobileLayout = matchMedia('(max-width: 760px)');
@@ -49,15 +46,15 @@ const detectDownloadEnvironment = async () => {
 };
 
 function renderDownloadControl() {
-  if (!downloadLink || !downloadTitle || !downloadCaption || !downloadLabel) return;
+  if (!downloadLink || !downloadTitle || !downloadLabel) return;
   const english = document.documentElement.lang === 'en';
   const target = downloadTargets.find(item => item.id === selectedDownloadId) || downloadTargets[0];
   const asset = matchedDownloads[target.id];
 
-  downloadTitle.textContent = english ? 'Download WeiBei' : '下载 WeiBei';
-  downloadCaption.textContent = english ? 'Version' : '版本';
+  downloadTitle.textContent = asset?.download_url
+    ? (english ? 'Download installer' : '下载安装包')
+    : (english ? 'View releases' : '查看发布版本');
   downloadLabel.textContent = target.label[english ? 'en' : 'zh'];
-  downloadToggle.setAttribute('aria-label', english ? 'Choose download version' : '选择下载版本');
   if (asset?.download_url) {
     downloadLink.href = new URL(asset.download_url, document.baseURI).href;
     downloadLink.download = asset.name;
@@ -68,35 +65,26 @@ function renderDownloadControl() {
 
   downloadOptions.forEach(option => {
     const optionTarget = downloadTargets.find(item => item.id === option.dataset.downloadTarget);
-    option.querySelector('span').textContent = optionTarget.menuLabel[english ? 'en' : 'zh'];
-    option.classList.toggle('is-selected', option.dataset.downloadTarget === selectedDownloadId);
+    option.querySelector('span').textContent = optionTarget.label[english ? 'en' : 'zh'];
+    option.setAttribute('aria-pressed', String(option.dataset.downloadTarget === selectedDownloadId));
   });
 }
 
-const closeDownloadMenu = () => {
-  if (!downloadMenu || !downloadToggle) return;
-  downloadMenu.hidden = true;
-  downloadToggle.setAttribute('aria-expanded', 'false');
+const closeDownloadPaper = () => {
+  if (!downloadControl?.open) return;
+  const focusInside = downloadControl.contains(document.activeElement);
+  downloadControl.open = false;
+  if (focusInside) downloadControl.querySelector('summary').focus({ preventScroll: true });
 };
-
-downloadToggle?.addEventListener('click', () => {
-  const opening = downloadMenu.hidden;
-  downloadMenu.hidden = !opening;
-  downloadToggle.setAttribute('aria-expanded', String(opening));
-});
 
 downloadOptions.forEach(option => option.addEventListener('click', () => {
   downloadSelected = true;
   selectedDownloadId = option.dataset.downloadTarget;
   renderDownloadControl();
-  closeDownloadMenu();
 }));
 
-document.addEventListener('pointerdown', event => {
-  if (!downloadControl?.contains(event.target)) closeDownloadMenu();
-});
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape') closeDownloadMenu();
+  if (event.key === 'Escape') closeDownloadPaper();
 });
 
 detectDownloadEnvironment().then(async environment => {
@@ -280,17 +268,24 @@ document.querySelectorAll('[data-jump], a[href^="#scene-"]').forEach(control => 
 });
 
 const ratios = new Map(chapters.map(chapter => [chapter, 0]));
-let sceneFourPreloaded = false;
-const preloadSceneFour = () => {
-  if (sceneFourPreloaded) return;
-  sceneFourPreloaded = true;
-  // Decode the displayed elements (including their selected srcset), not detached copies.
-  document.querySelectorAll('.release-layer img').forEach(img => {
-    img.loading = 'eager';
-    img.decoding = 'async';
-    img.decode().catch(() => {});
-  });
-};
+// Fixed, overlapping scene layers are all near the viewport: native lazy loading
+// cannot distinguish them. Request each scene's images as its chapter approaches.
+const imageObserver = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    document.querySelectorAll(`img[data-image-scene="${entry.target.dataset.scene}"]`).forEach(img => {
+      img.loading = 'eager';
+      img.decoding = 'async';
+      if (img.dataset.srcset) img.srcset = img.dataset.srcset;
+      img.src = img.dataset.src;
+      delete img.dataset.src;
+      delete img.dataset.srcset;
+      delete img.dataset.imageScene;
+    });
+    imageObserver.unobserve(entry.target);
+  }
+}, { rootMargin: '25% 0px' });
+chapters.forEach(chapter => imageObserver.observe(chapter));
 const observer = new IntersectionObserver(entries => {
   entries.forEach(entry => ratios.set(entry.target, entry.intersectionRatio));
   const activeChapter = chapters.reduce((best, chapter) => ratios.get(chapter) > ratios.get(best) ? chapter : best);
@@ -302,8 +297,7 @@ const observer = new IntersectionObserver(entries => {
   themesLayer.inert = activeIndex !== 2;
   document.querySelector('.release-layer').inert = activeIndex !== 3;
   if (activeIndex !== 2) resetThemePreview();
-  if (activeIndex !== 3) closeDownloadMenu();
-  if (activeIndex >= 1) preloadSceneFour();
+  if (activeIndex !== 3) closeDownloadPaper();
   railButtons.forEach((button, index) => {
     button.classList.toggle('is-active', index === activeIndex);
     if (index === activeIndex) button.setAttribute('aria-current', 'step');

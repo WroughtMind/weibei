@@ -49,6 +49,8 @@ struct WhiteboardCanvasView: WhiteboardRepresentable {
             guard let value = message.body as? [String: Any], message.frameInfo.isMainFrame else { return }
             if value["type"] as? String == "ready" {
                 classroom?.attachRenderer { [weak self] method, arguments in self?.send(method, arguments) }
+            } else if value["type"] as? String == "initialization_failed" {
+                classroom?.fail("白板图示资源初始化失败：" + String(describing: value["message"] ?? ""))
             } else { classroom?.receive(value) }
         }
         private func send(_ method: String, _ values: [String: Any]) {
