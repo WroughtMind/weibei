@@ -142,6 +142,8 @@ final class SidebarPerformanceTests: XCTestCase {
             ["苹果材料", "香蕉材料"]
         )
 
+        // Finish the launch save before attributing notifications to search.
+        XCTAssertTrue(fixture.store.flushPendingWorkspaceSave())
         var workspaceChanges = 0
         let workspaceObservation = fixture.store.objectWillChange.sink {
             workspaceChanges += 1
