@@ -61,6 +61,7 @@ public enum NativeSubagentRunner {
         _ request: NativeSubagentRequest,
         adapter: NativeLLMAdapter,
         model: String,
+        providerID: String? = nil,
         contextWindow: Int? = nil,
         systemPrompt: String,
         ledgerRoot: URL,
@@ -87,6 +88,7 @@ public enum NativeSubagentRunner {
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
+            providerID: providerID,
             contextWindow: contextWindow,
             ledgerRoot: childRoot,
             systemPromptText: systemPrompt,
