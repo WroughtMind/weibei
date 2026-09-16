@@ -2316,8 +2316,8 @@
     },
     {
       "name": "whiteboard-runtime.js",
-      "bytes": 687428,
-      "sha256": "4c2ab4d81591ae2cabc7603433060c39d3427bd69c0ac57c719702ea522575eb"
+      "bytes": 687416,
+      "sha256": "00aac0acb7e20f6afb735360b63a0f4670943bf66b2c5660e2003b1d26f44ebe"
     },
     {
       "name": "whiteboard.html",

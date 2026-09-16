@@ -164,7 +164,8 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
       await dispatch({type:'highlight',step_id:'h1',target_board_id:0,snippet:'观测值与预测值',color:'red'});
       assert(card.querySelector('.highlight'),'Annotation must match text across Markdown nodes');
       window.wbStage='graph';const graph={type:'graph',step_id:'g1',board_uid:1,title:'因果关系',card_type:'diagram',source_page:12,mermaid:'flowchart LR\nA[观测值] --> B[残差]'};
-      await dispatch(graph);assert(document.querySelector('[data-board="1"] svg'),'Actual Mermaid SVG must render');
+      await dispatch(graph);const diagram=document.querySelector('[data-board="1"] svg');assert(diagram,'Actual Mermaid SVG must render');
+      assert(diagram.textContent.includes('观测值')&&diagram.textContent.includes('残差'),'Sanitized Mermaid must retain visible node labels');
       window.wbStage='ask';let answered=false;
       const asking=dispatch({type:'ask',step_id:'q1',mode:'open',question:'为什么平方？'}).then(()=>answered=true);
       await wait(()=>window.wbMessages.some(m=>m.type==='question'));

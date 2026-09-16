@@ -377,7 +377,7 @@ const api={
 host.WeiBeiWhiteboard=api;
 async function setAppearance(dark:boolean){
   document.documentElement.dataset.theme=dark?'dark':'light';
-  (await host.WeiBeiMermaid).initialize({startOnLoad:false,securityLevel:'strict',look:'handDrawn',fontFamily:'Virgil, Kaiti SC, STKaiti, serif',flowchart:{htmlLabels:false},theme:'base',themeVariables:{
+  (await host.WeiBeiMermaid).initialize({startOnLoad:false,securityLevel:'strict',look:'handDrawn',fontFamily:'Virgil, Kaiti SC, STKaiti, serif',htmlLabels:false,theme:'base',themeVariables:{
     darkMode:dark,background:'transparent',primaryColor:dark?'#263e50':'#dbeafe',primaryTextColor:dark?'#cee2ed':'#25435b',primaryBorderColor:dark?'#86abc2':'#5488a8',
     secondaryColor:dark?'#44374f':'#ede9fe',tertiaryColor:dark?'#27453f':'#ccfbf1',lineColor:dark?'#b0aba0':'#716b60',textColor:dark?'#e7e2d7':'#36332e',
     mainBkg:dark?'#263e50':'#dbeafe',nodeTextColor:dark?'#cee2ed':'#25435b',edgeLabelBackground:dark?'#242421':'#faf8f2',
