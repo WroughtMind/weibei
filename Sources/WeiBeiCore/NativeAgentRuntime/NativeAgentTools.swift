@@ -59,6 +59,7 @@ public struct NativeToolExecutionResult: @unchecked Sendable {
     public var details: [String: Any]
     public var isError: Bool
     public var image: NativeImagePart?
+    var stateAliases: NativeStateAliases?
 
     public init(
         text: String,
@@ -70,6 +71,7 @@ public struct NativeToolExecutionResult: @unchecked Sendable {
         self.details = details
         self.isError = isError
         self.image = image
+        stateAliases = nil
     }
 }
 
@@ -209,7 +211,15 @@ public actor NativeToolRegistry {
         let arguments = try parseArguments(request.argumentsJSON)
         try NativeToolSchemaValidation.validate(arguments: arguments, schema: tool.schema)
         try NativeToolGuard.enforce(name: tool.name, arguments: arguments, context: context)
-        let result = try await tool.execute(arguments, context)
+        var result = try await tool.execute(arguments, context)
+        if let refresh = context.liveStores.learning {
+            context.request.learningContext = await refresh()
+        }
+        if let refresh = context.liveStores.profile {
+            context.request.courseProfile = await refresh()
+        }
+        context.stateAliases = context.stateAliases?.refreshed(for: context.request)
+        result.stateAliases = context.stateAliases
         return result
     }
 

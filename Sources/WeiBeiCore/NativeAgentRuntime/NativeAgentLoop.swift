@@ -34,7 +34,7 @@ public actor NativeAgentLoop {
             $0.stateAliasScope == aliasScope && $0.stateAliases != nil
         }?.stateAliases ?? [:]
         let reservedAliases = Set(existingEvents.compactMap(\.stateAliases).flatMap(\.values))
-        let aliases = NativeStateAliases(
+        var aliases = NativeStateAliases(
             request: request,
             persisted: persistedAliases,
             reservedAliases: reservedAliases
@@ -348,6 +348,10 @@ public actor NativeAgentLoop {
                             result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
                         }
                     }
+                    if let refreshedAliases = result.stateAliases {
+                        aliases = refreshedAliases
+                        context.stateAliases = refreshedAliases
+                    }
                     NativeAgentSources.attach(to: &result, name: call.name, turn: turn, index: &sourceIndex)
                     applySideEffects(
                         name: call.name,
@@ -388,7 +392,9 @@ public actor NativeAgentLoop {
                             toolName: call.name,
                             isError: result.isError,
                             imageMediaType: result.image?.mediaType,
-                            imageBase64: result.image?.base64
+                            imageBase64: result.image?.base64,
+                            stateAliasScope: aliasScope,
+                            stateAliases: aliases.persistedSnapshot
                         )
                     }
                 }

@@ -148,16 +148,16 @@ struct NativeStateAliases: Sendable {
         var projection = projection
         projection.summaryMessage = projection.summaryMessage.map { message in
             var message = message
-            message.content = sanitizedText(message.content, hidesUnknownUUIDs: true)
+            message.content = sanitizedText(message.content)
             return message
         }
         projection.records = projection.records.map { record in
             var record = record
             var message = record.message
             if message.role == .user {
-                message.content = sanitizedText(message.content, hidesUnknownUUIDs: false)
+                message.content = sanitizedText(message.content)
             } else if message.role == .assistant {
-                message.content = sanitizedText(message.content, hidesUnknownUUIDs: true)
+                message.content = sanitizedText(message.content)
             }
             if let calls = message.toolCalls {
                 message.toolCalls = calls.map { call in
@@ -194,7 +194,7 @@ struct NativeStateAliases: Sendable {
         ].contains(toolName),
         let data = text.data(using: .utf8),
         var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return sanitizedText(text, hidesUnknownUUIDs: true)
+            return sanitizedText(text)
         }
         object.removeValue(forKey: "contextRevision")
         object.removeValue(forKey: "memoryRevision")
@@ -214,14 +214,14 @@ struct NativeStateAliases: Sendable {
             "weibei_note_proposal",
             "weibei_relation_proposal",
         ].contains(toolName)
-        guard hidesUUIDs else { return sanitizedText(text, hidesUnknownUUIDs: false) }
+        guard hidesUUIDs else { return sanitizedText(text) }
         guard let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) else {
-            return sanitizedText(text, hidesUnknownUUIDs: true)
+            return sanitizedText(text)
         }
         let sanitized = replacingStateIDs(in: object)
         guard let encoded = try? JSONSerialization.data(withJSONObject: sanitized, options: [.sortedKeys]) else {
-            return sanitizedText(text, hidesUnknownUUIDs: true)
+            return sanitizedText(text)
         }
         return String(data: encoded, encoding: .utf8) ?? "{}"
     }
@@ -231,28 +231,37 @@ struct NativeStateAliases: Sendable {
             for key in ["contextRevision", "memoryRevision", "profileRevision", "revisions"] {
                 object.removeValue(forKey: key)
             }
-            if let id = object.removeValue(forKey: "id") as? String,
-               let alias = memoryAlias(for: id) {
-                object["memoryID"] = alias
-            }
-            for key in ["memoryID", "entryID", "noteItemID"] {
-                if let id = object[key] as? String {
-                    object[key] = memoryAlias(for: id)
-                        ?? profileAlias(for: id)
-                        ?? noteAlias(for: id)
-                        ?? (Self.isUUID(id) ? "已隐藏" : id)
+            if let id = object["id"] as? String {
+                if let alias = memoryAlias(for: id) {
+                    object.removeValue(forKey: "id")
+                    object["memoryID"] = alias
+                } else if let alias = profileAlias(for: id) {
+                    object.removeValue(forKey: "id")
+                    object["entryID"] = alias
+                } else if let alias = noteAlias(for: id) {
+                    object.removeValue(forKey: "id")
+                    object["noteItemID"] = alias
                 }
+            }
+            if let id = object["memoryID"] as? String {
+                object["memoryID"] = memoryAlias(for: id) ?? (Self.isUUID(id) ? "已隐藏" : id)
+            }
+            if let id = object["entryID"] as? String {
+                object["entryID"] = profileAlias(for: id) ?? (Self.isUUID(id) ? "已隐藏" : id)
+            }
+            if let id = object["noteItemID"] as? String {
+                object["noteItemID"] = noteAlias(for: id) ?? (Self.isUUID(id) ? "已隐藏" : id)
             }
             return object.mapValues(replacingStateIDs)
         }
         if let array = value as? [Any] { return array.map(replacingStateIDs) }
         if let string = value as? String {
-            return sanitizedText(string, hidesUnknownUUIDs: true)
+            return sanitizedText(string)
         }
         return value
     }
 
-    private func sanitizedText(_ text: String, hidesUnknownUUIDs: Bool) -> String {
+    private func sanitizedText(_ text: String) -> String {
         var text = text
         for (id, alias) in memoryAliasByID.merging(profileAliasByID, uniquingKeysWith: { left, _ in left })
             .merging(noteAliasByID, uniquingKeysWith: { left, _ in left }) {
@@ -263,13 +272,6 @@ struct NativeStateAliases: Sendable {
             with: "",
             options: .regularExpression
         )
-        if hidesUnknownUUIDs {
-            text = text.replacingOccurrences(
-                of: #"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b"#,
-                with: "已隐藏",
-                options: .regularExpression
-            )
-        }
         return text
     }
 
@@ -305,7 +307,7 @@ struct NativeStateAliases: Sendable {
             aliases[normalized] = alias
             idsByAlias[alias] = id
         }
-        return (aliases, idsByAlias, persistedForPrefix)
+        return (persistedForPrefix, idsByAlias, persistedForPrefix)
     }
 
     private static func aliasIndex(_ alias: String, prefix: String) -> Int? {
