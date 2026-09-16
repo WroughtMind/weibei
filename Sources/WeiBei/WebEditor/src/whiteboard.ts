@@ -21,7 +21,7 @@ type Page = { id:string; title:string; overlayItems:unknown[]; strokes:InkStroke
   columnLayout:{columns:{w:number;nextY:number}[];activeIndex:number;lp:{tileW:number}} };
 const host = window as unknown as { webkit?: { messageHandlers?: { whiteboard?: { postMessage: (data: unknown) => void } } };
   WeiBeiKaTeX: { renderToString: (text: string, options: unknown) => string };
-  WeiBeiMermaid: Promise<{ initialize: (options: unknown) => void; render: (id: string, text: string) => Promise<{svg:string}> }>;
+  WeiBeiMermaid: Promise<{ parse: (text: string) => Promise<unknown>; initialize: (options: unknown) => void; render: (id: string, text: string) => Promise<{svg:string}> }>;
   WeiBeiWhiteboard: typeof api; initialWhiteboardDark?:boolean };
 const send = (data: Record<string,unknown>) => host.webkit?.messageHandlers?.whiteboard?.postMessage({...data,at:performance.now()/1000});
 const canvas = document.getElementById('canvas')!;
@@ -92,7 +92,7 @@ function layout() {
   let page=-1,column=0,nextY=66,maxY=900;
   const addPage=(id?:string,title?:string) => {
     page++;column=0;nextY=66;
-    pages.push({id:id ?? 'page-'+page,title:title ?? '续页',overlayItems:[],strokes:interaction.strokes(id ?? 'page-'+page),columnLayout:{
+    pages.push({id:id ?? 'page-'+page,title:title ?? '课堂板书',overlayItems:[],strokes:interaction.strokes(id ?? 'page-'+page),columnLayout:{
       columns:[{w:width,nextY:66},{w:width,nextY:66}],activeIndex:0,lp:{tileW:width},
     }});
   };
@@ -167,7 +167,10 @@ async function prepare(a: Action, restoring = false): Promise<Card> {
 function follow(card: Pick<Card,'x'|'y'|'page'>) {
   if(interaction.inking)return;
   const fromX=viewport.scrollLeft,fromY=viewport.scrollTop;
-  const toX=Math.max(0,card.x*interaction.scale-20),toY=Math.max(0,card.y*interaction.scale-70),start=performance.now(),token=++camera;
+  const stride=(pages[card.page]?.columnLayout.lp.tileW ?? 360)*2+72;
+  const toX=Math.max(0,(stride*interaction.scale<=viewport.clientWidth?card.page*stride*interaction.scale:card.x*interaction.scale-20));
+  const toY=card.y*interaction.scale>=fromY+60&&card.y*interaction.scale<fromY+viewport.clientHeight*.65?fromY:Math.max(0,card.y*interaction.scale-70);
+  const start=performance.now(),token=++camera;
   activePageId=pages[card.page]?.id;revision++;snapshot();
   if(reduced()){viewport.scrollTo(toX,toY);return;}
   const tick=(t:number)=>{
@@ -342,6 +345,12 @@ async function execute(a:Action,env:Envelope,restoring=false):Promise<void> {
 }
 
 const api={
+  async validate(action:Action){
+    for(const a of action.type==='group'?action.actions ?? []:[action]){
+      if(a.type==='graph')await (await host.WeiBeiMermaid).parse(a.mermaid ?? '');
+      if(a.type==='board')markdown(a.board_content ?? '');
+    }
+  },
   canvasCommand(command:string){interaction.command(command);},
   async receive(env:Envelope){
     if(active)throw new Error('上一步尚未完成');active=env;const token=epoch;

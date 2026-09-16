@@ -52,7 +52,11 @@ struct WhiteboardCanvasView: WhiteboardRepresentable {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let value = message.body as? [String: Any], message.frameInfo.isMainFrame else { return }
             if value["type"] as? String == "ready" {
-                classroom?.attachRenderer { [weak self] method, arguments in self?.send(method, arguments) }
+                classroom?.attachRenderer(validate: { [weak self] action in
+                    guard let web = self?.web else { throw CancellationError() }
+                    let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(action))
+                    _ = try await web.callAsyncJavaScript("return await window.WeiBeiWhiteboard.validate(action)", arguments: ["action": value], in: nil, contentWorld: .page)
+                }) { [weak self] method, arguments in self?.send(method, arguments) }
             } else if value["type"] as? String == "initialization_failed" {
                 classroom?.fail("白板图示资源初始化失败：" + String(describing: value["message"] ?? ""))
             } else { classroom?.receive(value) }

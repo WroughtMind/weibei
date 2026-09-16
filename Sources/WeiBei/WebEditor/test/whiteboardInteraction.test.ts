@@ -46,5 +46,9 @@ test('Zoom anchors the pointer; ink stays on its page and redraws after same-siz
   camera.command('clear_page');assert.equal(camera.strokes('p2').length,0);assert.equal(camera.strokes('p1').length,3);
   viewport.scrollTo(0,0);camera.command('undo');assert.equal(camera.strokes('p1').length,2);
   camera.zoom(.1);assert.equal(camera.scale,.5);camera.zoom(4);assert.equal(camera.scale,2);
+  camera.command('fit_page');assert.equal(camera.scale,588/800);assert.equal(viewport.scrollLeft,0);
+  camera.command('next_page');assert.equal(camera.currentPage(),'p2');assert.equal(viewport.scrollLeft,588);
+  camera.command('previous_page');assert.equal(camera.currentPage(),'p1');assert.equal(viewport.scrollLeft,0);
+  assert.equal(camera.strokes('p1').length,2,'Page navigation and fit never change content coordinates');
   assert.ok(saves>3);
 });

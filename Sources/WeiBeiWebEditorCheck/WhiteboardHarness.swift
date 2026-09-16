@@ -104,15 +104,19 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
                     endpoint: AgentProviderEndpoint(provider: .openaiCodex, baseURL: ""))
                 let source = WhiteboardSource(itemID: "timing-fixture", title: "计量经济学",
                     pages: [.init(number: 12, text: "最小二乘法使残差平方和最小。残差等于观测值减去预测值；平方避免正负抵消，且更重地惩罚较大误差。")])
-                var session = WhiteboardSession(source: source, goal: "恰好安排五页与五个关键点：残差定义、正负抵消、平方的作用、大误差惩罚、选择拟合直线。每页主要用一卡一组短讲解，包含公式和一张关系图，最后出一道选择题。", lesson: .init(title: "残差"))
-                for page in 1...5 {
+                var session = WhiteboardSession(source: source, goal: "恰好安排五个关键点：残差定义、正负抵消、平方的作用、大误差惩罚、选择拟合直线。每个关键点主要用一卡一组短讲解，包含公式和一张关系图，最后出一道选择题。", lesson: .init(title: "残差"))
+                if let outline = try await WhiteboardTeacher.plan(adapter: adapter, model: model, session: session) {
+                    session.lesson.title = outline.title ?? session.lesson.title
+                    session.lesson.actions.append(outline); liveActions.append(outline)
+                }
+                for page in 1...session.keyPoints.count {
                     let measured = WhiteboardMeasuredAdapter(base: adapter) { bytes in
                         Task { @MainActor in self.requestBytes[page] = bytes; self.writeLiveEvidence() }
                     }
-                    let part = try await WhiteboardTeacher.generatePage(adapter: measured, model: model, source: source, goal: session.goal, page: page, session: session) { action in
+                    let part = try await WhiteboardTeacher.teach(adapter: measured, model: model, session: session, index: page - 1) { action in
                         await MainActor.run { self.liveActions.append(action); self.dispatchLive() }
                     }
-                    session.lesson.actions += part.actions; session.generatedPages = page; liveSession = session
+                    session.lesson.actions += part.actions; liveSession = session
                     if let folder = Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String {
                         try WhiteboardSessionStore(directory: URL(fileURLWithPath: folder).appendingPathComponent("dist-whiteboard-check/live-lesson")).save(session)
                     }
@@ -144,11 +148,11 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
         guard let folder = Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String, let liveStart else { return }
         let finished = generationFinished && liveGate.cursor == liveActions.count
         let groups = liveActions.filter { $0.type == .group && $0.leaves.contains(where: { $0.type == .board || $0.type == .graph }) }.count
-        let passed = finished && liveFailure == nil && (liveSession?.generatedPages ?? 0) >= 3 && (firstSeconds ?? 999) <= 15
+        let passed = finished && liveFailure == nil && (liveSession?.generatedKeyPoints.count ?? 0) >= 3 && (firstSeconds ?? 999) <= 15
             && pageGaps.count >= 2 && pageGaps.allSatisfy { $0 <= 10 } && synchronization.count == groups
             && synchronization.allSatisfy { (0...3).contains($0) }
         let report: [String: Any] = ["finished": finished, "passed": passed, "first_visible_seconds": firstSeconds as Any? ?? NSNull(),
-            "pages": liveSession?.generatedPages ?? 0, "requests_bytes": Dictionary(uniqueKeysWithValues: requestBytes.map { (String($0.key), $0.value) }),
+            "pages": liveSession?.generatedKeyPoints.count ?? 0, "requests_bytes": Dictionary(uniqueKeysWithValues: requestBytes.map { (String($0.key), $0.value) }),
             "page_gap_seconds": pageGaps, "board_after_speech_seconds": synchronization, "groups": groups,
             "elapsed_seconds": Date().timeIntervalSince(liveStart), "action_types": liveActions.map(\.type.rawValue),
             "failure": liveFailure as Any? ?? NSNull()]

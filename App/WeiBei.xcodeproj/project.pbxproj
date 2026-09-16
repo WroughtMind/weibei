@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		60A9A179ACA50D4BC991328C /* WhiteboardTeaching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63D1147C4D5D722040950ECA /* WhiteboardTeaching.swift */; };
 		FACAB0010000000000000001 /* WhiteboardCanvasTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = FACAB0010000000000000002 /* WhiteboardCanvasTools.swift */; };
 		FACAB0010000000000000003 /* WhiteboardCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = FACAB0010000000000000004 /* WhiteboardCorrection.swift */; };
 		FABC01230000000000000004 /* ReadAloudControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FABC01230000000000000003 /* ReadAloudControls.swift */; };
@@ -286,6 +287,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		63D1147C4D5D722040950ECA /* WhiteboardTeaching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardTeaching.swift; sourceTree = "<group>"; };
 		FACAB0010000000000000002 /* WhiteboardCanvasTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardCanvasTools.swift; sourceTree = "<group>"; };
 		FACAB0010000000000000004 /* WhiteboardCorrection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardCorrection.swift; sourceTree = "<group>"; };
 		FABC01230000000000000003 /* ReadAloudControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadAloudControls.swift; sourceTree = "<group>"; };
@@ -697,6 +699,7 @@
 				6B11447A1642767ECA654631 /* WhiteboardLesson.swift */,
 				FACAB0010000000000000004 /* WhiteboardCorrection.swift */,
 				A5FA25861D22C2E846AC3AB4 /* WhiteboardMedia.swift */,
+				63D1147C4D5D722040950ECA /* WhiteboardTeaching.swift */,
 				CCC4E193DC17BA9AF9E52E3C /* WhiteboardTeacher.swift */,
 				2B36FBF40C988CDB377C7075 /* WorkspaceModels.swift */,
 				E03CCE789A98C2C282869A38 /* WorkspaceResumePoint.swift */,
@@ -1223,6 +1226,7 @@
 				631FB50B853C3BAB05DDDA0B /* WhiteboardLesson.swift in Sources */,
 				FACAB0010000000000000003 /* WhiteboardCorrection.swift in Sources */,
 				D3B9B36D787C85E8759539F4 /* WhiteboardMedia.swift in Sources */,
+				60A9A179ACA50D4BC991328C /* WhiteboardTeaching.swift in Sources */,
 				33F2B17FBA0FA0106D198350 /* WhiteboardTeacher.swift in Sources */,
 				483969E85BDE060DE0E0E0A8 /* WorkspaceModels.swift in Sources */,
 				B01B6EC4450499712E9CA674 /* WorkspaceResumePoint.swift in Sources */,

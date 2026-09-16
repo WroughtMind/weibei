@@ -27,11 +27,13 @@ struct ReadAloudControls: View {
                         Text("按段朗读，不改动原文。公式和代码暂时略过；中文动物语保留发音轮廓，系统语音更清晰。").font(.caption).foregroundStyle(.secondary)
                         if let error = reader.failure { Text(error).font(.callout).foregroundStyle(WeiBeiTheme.cinnabar) }
                         HStack {
-                            Button("朗读正文") { start(load) }
+                            Button("保存设置") { if saveSettings() { showsDetails = false } }
+                            Spacer()
+                            Button("朗读正文") { start(load) }.disabled(settings.voice == .silent)
                             if let selection, !selection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                Button("朗读选文") { start { selection } }
+                                Button("朗读选文") { start { selection } }.disabled(settings.voice == .silent)
                             }
-                        }.disabled(settings.voice == .silent)
+                        }
                         if reader.sourceID == id { Text(reader.status).font(.caption) }
                         if reader.sourceID == id, let web = reader.web {
                             ReadAloudCompanionView(web: web).frame(height: 174)
@@ -49,8 +51,12 @@ struct ReadAloudControls: View {
                 }
         }.buttonStyle(.borderless)
         .onChange(of: id) { previous, _ in reader.stop(id: previous) }
+        .onChange(of: reader.failure) { _, text in if let text { AccessibilityNotification.Announcement(text).post() } }
     }
     private func start(_ body: @escaping () async throws -> String) {
+        if saveSettings() { reader.start(id: id, load: body) }
+    }
+    private func saveSettings() -> Bool {
         do {
             var shared = settings
             let voice = settings.voice
@@ -61,8 +67,8 @@ struct ReadAloudControls: View {
             try settings.validate()
             try shared.save(speechKey: speechKey)
             UserDefaults.standard.set(voice.rawValue, forKey: "readAloud.voice")
-            reader.start(id: id, load: body)
-        } catch { reader.failure = error.localizedDescription }
+            reader.failure = nil; return true
+        } catch { reader.failure = error.localizedDescription; return false }
     }
 }
 

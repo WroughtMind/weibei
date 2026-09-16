@@ -28,6 +28,7 @@ public struct WhiteboardAction: Codable, Equatable, Identifiable, Sendable {
     public enum CardType: String, Codable, Sendable { case definition, formula, example, diagram, summary }
     public enum QuestionMode: String, Codable, Sendable { case choice, open }
     public struct Rect: Codable, Equatable, Sendable { public var x, y, w, h: Double }
+    public var keypointIndex: Int?
     public var keyPoints: [String]?
     public var index: Int?
     public var pageID: String?
@@ -57,7 +58,7 @@ public struct WhiteboardAction: Codable, Equatable, Identifiable, Sendable {
     public var label: String { title ?? leaves.compactMap(\.title).first ?? question ?? String(narration.prefix(40)) }
     enum CodingKeys: String, CodingKey {
         case type, title, mermaid, snippet, rect, color, question, options, explanation, actions, mode, index
-        case keyPoints = "key_points"
+        case keyPoints = "key_points", keypointIndex = "keypoint_index"
         case markdown = "board_content", text = "spoken_text", pageID = "page_id"
         case stepID = "step_id", boardUID = "board_uid", cardType = "card_type", sourcePage = "source_page"
         case targetBoardID = "target_board_id", correctIndex = "correct_index"
@@ -75,7 +76,7 @@ public struct WhiteboardLesson: Codable, Equatable, Sendable {
         }
         try check(!title.isEmpty && title.count <= 200 && actions.count <= 160, "标题或动作数量超限")
         var ids = Set<String>(), boards = Set<Int>(), pageIDs = Set<String>()
-        var page = 0, boardPages: [Int: Int] = [:], completedPoints = Set<Int>(), outlineSeen = false
+        var page = 1, boardContent: [Int: String] = [:], completedPoints = Set<Int>(), outlineSeen = false
         let outline = actions.first { $0.type == .sessionReady }
         for root in actions {
             let children = root.type == .group ? root.actions ?? [] : [root]
@@ -98,24 +99,24 @@ public struct WhiteboardLesson: Codable, Equatable, Sendable {
                     try check((3...6).contains(a.keyPoints?.count ?? 0) && a.keyPoints!.allSatisfy { !$0.isEmpty && $0.count <= 80 }, "关键点应为 3–6 条简短目标")
                 case .keypointComplete:
                     guard let index = a.index else { throw WhiteboardFailure("缺少关键点编号") }
-                    try check(page > 0 && index == page - 1 && (outline?.keyPoints?.indices.contains(index) == true)
-                        && completedPoints.insert(index).inserted, "关键点编号与当前页不符或重复")
+                    try check(outline?.keyPoints?.indices.contains(index) == true && completedPoints.insert(index).inserted, "关键点编号无效或重复")
                 case .newPage:
                     page += 1; try check(page <= 12, "页面过多")
                     try check(pageIDs.insert(a.pageID ?? a.stepID).inserted, "页面编号重复")
                 case .newColumn: try check(page > 0, "请先创建页面")
                 case .board, .graph:
-                    try check(page > 0 && a.sourcePage != nil, "板书缺少页面或来源")
+                    try check(a.sourcePage != nil, "板书缺少来源")
                     guard let id = a.boardUID else { throw WhiteboardFailure("板书缺少 board_uid") }
                     try check(id >= 0 && id <= 1_000_000 && boards.insert(id).inserted, "重复板书编号")
-                    boardPages[id] = page
+                    boardContent[id] = (a.markdown ?? "") + (a.mermaid ?? "")
                     try check((a.markdown?.count ?? 0) <= 1_200, "每张板书最多 1,200 字")
                     try check(a.type == .board ? !(a.markdown ?? "").isEmpty : !(a.mermaid ?? "").isEmpty, "板书内容为空")
                 case .speak:
                     try check(!(a.text ?? "").isEmpty, "讲稿为空")
                     try check((a.text?.count ?? 0) <= 600, "每段讲稿最多 600 字")
                 case .highlight, .circle:
-                    try check(a.targetBoardID.flatMap { boardPages[$0] } == page, "标注目标不在当前页或尚未出现")
+                    try check(a.targetBoardID.flatMap { boardContent[$0] } != nil, "标注目标尚未出现")
+                    if let snippet = a.snippet { try check(a.targetBoardID.flatMap { boardContent[$0] }?.contains(snippet) == true, "标注文字不在板书正文中") }
                     try check(a.color == nil || ["red", "green", "blue", "ink"].contains(a.color!), "标注颜色无效")
                     if let r = a.rect {
                         try check([r.x, r.y, r.w, r.h].allSatisfy { $0.isFinite && (0...1).contains($0) }
@@ -237,7 +238,9 @@ public struct WhiteboardSession: Codable, Equatable, Identifiable, Sendable {
     public var lesson: WhiteboardLesson
     public var cursor = 0
     public var generationComplete = false
-    public var generatedPages = 0
+    public var studentEvents: [WhiteboardStudentEvent]? = []
+    public var teachingRequests: [WhiteboardTeachingRequest]? = []
+    public var consumedEventCount: Int? = 0
     public var presentedQuestionIDs: [String] = []
     public var answers: [String: String] = [:]
     public var discussions: [WhiteboardDiscussion] = []
@@ -277,18 +280,14 @@ public struct WhiteboardSession: Codable, Equatable, Identifiable, Sendable {
                   })
             else { throw WhiteboardFailure("画布布局损坏，原记录已保留。") }
         }
-        guard (0...6).contains(generatedPages) else { throw WhiteboardFailure("课堂页面进度损坏。") }
+        guard (0...(studentEvents?.count ?? 0)).contains(consumedEventCount ?? 0) else { throw WhiteboardFailure("课堂事件进度损坏。") }
         for discussion in discussions {
             guard (0...lesson.actions.count).contains(discussion.insertionCursor), discussion.text.count <= 32_000 else {
                 throw WhiteboardFailure("追问存档损坏。")
             }
             if let card = discussion.card {
                 guard card.type == .board else { throw WhiteboardFailure("补充板书类型无效。") }
-                // Validate the same source/content boundary as main-lesson cards, in an explicit page context.
-                var page = lesson.actions.first { $0.type == .newPage }
-                page?.stepID = "supplement-page"
-                if let page { try WhiteboardLesson(title: "补充", actions: [page, card]).validate(source: source) }
-                else { throw WhiteboardFailure("补充板书缺少课堂页面。") }
+                try WhiteboardLesson(title: "补充", actions: [card]).validate(source: source)
             }
         }
         return self

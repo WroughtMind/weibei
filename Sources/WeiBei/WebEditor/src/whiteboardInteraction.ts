@@ -30,7 +30,7 @@ export class WhiteboardInteraction {
   private lastControls='';
   constructor(private viewport:HTMLElement,private canvas:HTMLElement,
     private changed:(immediate?:boolean)=>void,private interrupt:()=>void,
-    private controls:(state:{zoom:number;inking:boolean;canUndo:boolean;pageID?:string})=>void) {
+    private controls:(state:{zoom:number;inking:boolean;canUndo:boolean;pageID?:string;pageIndex:number;pageCount:number})=>void) {
     this.layer=this.makeLayer();
     viewport.addEventListener('wheel',event=>{
       interrupt();
@@ -67,7 +67,7 @@ export class WhiteboardInteraction {
   currentPage(){return this.pages[this.pageIndex()];}
   strokes(id:string){return this.ink.get(id) ?? [];}
   private report(){
-    const state={zoom:this.scale,inking:this.inking,canUndo:this.strokes(this.currentPage()).length>0,pageID:this.currentPage()},key=JSON.stringify(state);
+    const state={zoom:this.scale,inking:this.inking,canUndo:this.strokes(this.currentPage()).length>0,pageID:this.currentPage(),pageIndex:this.pageIndex(),pageCount:this.pages.length},key=JSON.stringify(state);
     if(key!==this.lastControls){this.lastControls=key;this.controls(state);}
   }
   private extent() {
@@ -95,6 +95,12 @@ export class WhiteboardInteraction {
     if(command==='zoom_in')this.zoom(this.scale+.25);
     else if(command==='zoom_out')this.zoom(this.scale-.25);
     else if(command==='reset_zoom')this.zoom(1);
+    else if(command==='fit_page'||command==='previous_page'||command==='next_page'){
+      this.finish();this.interrupt();
+      const page=Math.max(0,Math.min(this.pages.length-1,this.pageIndex()+(command==='previous_page'?-1:command==='next_page'?1:0)));
+      if(command==='fit_page')this.zoom((this.viewport.clientWidth-12)/this.stride);
+      this.viewport.scrollTo(Math.max(0,page)*this.stride*this.scale,0);this.report();this.changed(true);
+    }
     else if(command==='toggle_ink'){
       this.finish();this.inking=!this.inking;this.interrupt();
       this.viewport.classList.toggle('inking',this.inking);this.report();
