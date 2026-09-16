@@ -6,8 +6,10 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
     private var done = false
     private var web: WKWebView!
     private var window: NSWindow!
+    private var scriptName = "native-selection-writing.js"
 
-    func run() {
+    func run(scriptName: String = "native-selection-writing.js") {
+        self.scriptName = scriptName
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.userContentController.add(self, name: "editorReady")
@@ -71,7 +73,7 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
             return
         }
         let path = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Sources/WeiBei/WebEditor/test/native-selection-writing.js")
+            .appendingPathComponent("Sources/WeiBei/WebEditor/test/\(scriptName)")
         let script = try! String(contentsOf: path, encoding: .utf8)
         web.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { result in
             if case .failure(let error) = result { expect(false, "native selection/writing check: \(error)") }

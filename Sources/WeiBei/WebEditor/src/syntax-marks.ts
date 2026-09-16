@@ -1,9 +1,8 @@
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { findCompleteInlineMathSpans, findPendingSyntaxMarkers, PendingSyntaxKind } from './syntax-scanner';
+import { findPendingSyntaxMarkers, PendingSyntaxKind } from './syntax-scanner';
 
 const syntaxMarksKey = new PluginKey('weibeiSyntaxMarks');
-const mathCompletionKey = new PluginKey('weibeiInlineMathCompletion');
 
 const revealMarkCandidates: Array<{ typeNames: string[]; marker: string; kind: PendingSyntaxKind }> = [
   { typeNames: ['strong'], marker: '**', kind: 'bold' },
@@ -128,39 +127,10 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
   let cache: SyntaxMarksCache | null = null;
   return new Plugin({
     key: syntaxMarksKey,
-    // Pre-typed `$…$` pairs stay literal while the caret edits inside them, then
-    // convert to a rendered atom once the caret leaves — the closing-`$`-at-line-end
-    // input rule is not the only way to finish a formula.
-    // Navigation-only transactions move the caret to a mark boundary without
-    // changing the doc — that arrival is the moment to escape the mark's
-    // forward association, so typing beside a run continues the plain
-    // surroundings (Typora-style). Typing transactions never escape, so a mark
-    // just applied keeps flowing under continued input.
     appendTransaction: (trs: readonly any[], _oldState: any, newState: any) => {
       if (!deps.isEditable() || deps.isStreaming()) return null;
-      if (trs.some((tr: any) => tr.getMeta(mathCompletionKey))) return null;
-      const navigated = trs.some((tr: any) => !tr.docChanged && tr.selectionSet);
-      const edited = trs.some((tr: any) => tr.docChanged);
-      if (!navigated || edited) return null;
-      const escapeTr = boundaryEscapeTransaction(newState);
-      const { $from } = newState.selection;
-      const block = $from.parent;
-      const blockText = block.textBetween(0, block.content.size, '\n', '\n');
-      const spans = (block.type.spec.code || !newState.schema.nodes.math_inline || !blockText.includes('$'))
-        ? []
-        : findCompleteInlineMathSpans(blockText).filter((span) => {
-          const from = $from.start($from.depth) + span.from;
-          const to = $from.start($from.depth) + span.to;
-          return newState.selection.from < from || newState.selection.from >= to;
-        });
-      if (spans.length === 0) return escapeTr;
-      const tr = escapeTr ?? newState.tr;
-      for (const span of [...spans].reverse()) {
-        const node = newState.schema.nodes.math_inline.create(null, newState.schema.text(span.source));
-        tr.replaceWith($from.start($from.depth) + span.from, $from.start($from.depth) + span.to, node);
-      }
-      tr.setMeta(mathCompletionKey, true);
-      return tr;
+      return trs.some((tr: any) => tr.selectionSet) && !trs.some((tr: any) => tr.docChanged)
+        ? boundaryEscapeTransaction(newState) : null;
     },
     props: {
       decorations(state: any) {

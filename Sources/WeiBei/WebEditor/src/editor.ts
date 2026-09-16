@@ -21,7 +21,7 @@ import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
 import { closeHistory, redo, undo } from '@milkdown/kit/prose/history';
-import { markRule, nodeRule } from '@milkdown/kit/prose';
+import { markRule } from '@milkdown/kit/prose';
 import { Fragment } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
@@ -29,6 +29,7 @@ import { addColumn, addColumnAfter, addRow, addRowAfter, columnResizing, deleteC
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $inputRule, $prose } from '@milkdown/kit/utils';
 import {
+  createMathEditingPlugin,
   mathBlockInputRule,
   mathBlockSchema,
   mathInlineSchema,
@@ -37,7 +38,6 @@ import {
 import { loadedKaTeX, loadKaTeX, loadMermaid, loadPrism } from './localRuntime';
 import {
   calloutTypePattern,
-  inlineMathInputPattern,
   joinFrontmatter,
   looksLikeMarkdownSyntax,
   normalizeMarkdownSource,
@@ -118,24 +118,11 @@ const weiBeiStrikethroughInputRule = $inputRule((ctx) => markRule(
   /(?<![\w:/~])(~{1,2})([^~\n]+?)\1(?![\w/~])$/,
   strikethroughSchema.type(ctx),
 ));
-const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => nodeRule(
-  inlineMathInputPattern,
-  mathInlineSchema.type(ctx),
-  {
-    updateCaptured: (captured: any) => ({ group: String(captured.group || '').trim() }),
-    beforeDispatch: ({ tr, match, start }: any) => {
-      const content = String(match[1] || '').trim();
-      if (content) tr.insertText(content, start + 1);
-      const landing = start + content.length + 2;
-      tr.setSelection(TextSelection.create(tr.doc, landing));
-    },
-  },
-)) : null;
 const weiBeiMath = [
   remarkMathPlugin,
   mathInlineSchema,
   mathBlockSchema,
-  ...(WEIBEI_EDITOR_RUNTIME ? [mathBlockInputRule, weiBeiMathInlineInputRule] : []),
+  ...(WEIBEI_EDITOR_RUNTIME ? [mathBlockInputRule] : []),
 ].flat();
 let currentContentGeneration = 0;
 let streamingMarkdownBuffer: string | null = null;
@@ -587,7 +574,7 @@ const slashReplacement = (commandID: any, schema: any, options: any = {}) => {
   }
   if (commandID === 'blockMath') {
     const mathBlock = schema.nodes.math_block;
-    const node = mathBlock?.create({ value: 'x' });
+    const node = mathBlock?.create(null, schema.text('x'));
     return node ? { content: Fragment.from(node), selectionOffset: 0 } : null;
   }
   if (commandID === 'divider') {
@@ -1777,7 +1764,7 @@ const createReadOnlyMathNodeView = (initialNode: any) => {
   dom.className = `weibei-math-node ${isBlock ? 'weibei-math-block' : 'weibei-math-inline'}`;
   dom.dataset.type = node.type.name;
   let renderRequest = 0;
-  const source = () => isBlock ? String(node.attrs.value || '') : node.textContent;
+  const source = () => node.textContent;
   const render = async () => {
     const request = renderRequest += 1;
     const value = source();
@@ -1803,124 +1790,60 @@ const createReadOnlyMathNodeView = (initialNode: any) => {
   };
 };
 
-/** Renders and edits one math node without scanning the document. */
+/** The source stays in ProseMirror's document; there is no separate form or save state. */
 const createMathNodeView = (initialNode: any, view: any, getPos: any) => {
   let node = initialNode;
   const isBlock = node.type.name === 'math_block';
   const dom = document.createElement(isBlock ? 'div' : 'span');
   dom.className = `weibei-math-node ${isBlock ? 'weibei-math-block' : 'weibei-math-inline'}`;
   dom.dataset.type = node.type.name;
-  dom.contentEditable = 'false';
-  dom.tabIndex = 0;
-  dom.setAttribute('aria-description', currentLanguage === 'en' ? 'Double-click or press Enter to edit formula' : '双击或按回车编辑公式');
   const preview = document.createElement(isBlock ? 'div' : 'span');
   preview.className = 'weibei-math-preview';
-  const input = document.createElement(isBlock ? 'textarea' : 'input') as HTMLInputElement | HTMLTextAreaElement;
-  input.className = 'weibei-math-source';
-  input.setAttribute('aria-label', isBlock ? editorLabel('slashBlockMath') : editorLabel('slashInlineMath'));
-  input.setAttribute('autocapitalize', 'none');
-  input.setAttribute('autocomplete', 'off');
-  input.setAttribute('spellcheck', 'false');
-  if (input instanceof HTMLInputElement) input.type = 'text';
-  dom.append(preview, input);
-  let editing = false;
+  preview.contentEditable = 'false';
+  const source = document.createElement(isBlock ? 'div' : 'span');
+  source.className = 'weibei-math-source';
+  const contentDOM = document.createElement(isBlock ? 'div' : 'span');
+  contentDOM.className = 'weibei-math-content';
+  source.append(contentDOM);
+  dom.append(source, preview);
   let renderRequest = 0;
-
-  const source = () => isBlock ? String(node.attrs.value || '') : node.textContent;
-  const render = async (value = source()) => {
-    const request = renderRequest += 1;
+  const render = async () => {
+    const request = ++renderRequest;
+    const value = node.textContent;
     dom.dataset.value = value;
-    preview.replaceChildren();
-    preview.textContent = value || '公式';
-    const apply = (katex: any, requireConnected = false) => {
-      if (request !== renderRequest || (requireConnected && !dom.isConnected)) return;
-      preview.replaceChildren();
+    try {
+      const katex = loadedKaTeX() || await loadKaTeX();
+      if (request !== renderRequest) return;
       addEditorMetric(checkMetrics, 'katexRenders');
       katex.render(value, preview, { throwOnError: true, strict: false, trust: false, displayMode: isBlock });
       dom.classList.remove('weibei-math-invalid');
-      dom.removeAttribute('title');
-    };
-    try {
-      const katex = loadedKaTeX();
-      if (katex) apply(katex);
-      else apply(await loadKaTeX(), true);
     } catch {
       if (request !== renderRequest) return;
       preview.textContent = value || '公式';
       dom.classList.add('weibei-math-invalid');
-      dom.title = currentLanguage === 'en' ? 'Not displayable yet; keep editing.' : '暂时无法显示，继续编辑即可';
     }
   };
-
-  const setEditing = (next: boolean) => {
-    if (!isEditable && next) return;
-    editing = next;
-    dom.classList.toggle('weibei-math-editing', next);
-    if (next) {
-      input.value = source();
-      input.focus();
-      input.select();
-    }
-  };
-
-  const finish = (save: boolean, returnToEditor = false) => {
-    if (!editing) return;
-    const value = input.value;
-    // Clear the flag before hiding the focused input: hiding can fire blur again.
-    setEditing(false);
+  const enter = () => {
+    if (!isEditable) return;
     const pos = getPos();
     if (typeof pos !== 'number') return;
-    const tr = view.state.tr;
-    if (save && value !== source()) {
-      const nextNode = isBlock
-        ? node.type.create({ ...node.attrs, value })
-        : node.type.create(node.attrs, value ? view.state.schema.text(value) : null, node.marks);
-      tr.replaceWith(pos, pos + node.nodeSize, nextNode);
-    }
-    if (returnToEditor) {
-      const current = tr.doc.nodeAt(pos);
-      tr.setSelection(Selection.near(tr.doc.resolve(pos + (current?.nodeSize || 0)), 1));
-    }
-    if (tr.docChanged || tr.selectionSet) view.dispatch(tr.scrollIntoView());
-    render();
-    if (returnToEditor) view.focus();
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos + node.nodeSize - 1)));
+    view.focus();
   };
-
-  dom.addEventListener('dblclick', (event) => {
-    if (!editing && event.target !== input) { event.preventDefault(); setEditing(true); }
-  });
-  dom.addEventListener('weibei-edit-math', () => setEditing(true));
-  dom.addEventListener('keydown', (event) => {
-    const keyEvent = event as KeyboardEvent;
-    if (keyEvent.isComposing || keyEvent.keyCode === 229) return;
-    if (!editing && keyEvent.key === 'Enter') {
-      event.preventDefault();
-      setEditing(true);
-      return;
-    }
-    if (!editing) return;
-    if (keyEvent.key === 'Escape' || (keyEvent.key === 'Enter' && (!isBlock || keyEvent.metaKey || keyEvent.ctrlKey))) {
-      event.preventDefault();
-      finish(keyEvent.key !== 'Escape', true);
-    }
-  });
-  input.addEventListener('input', () => render(input.value));
-  input.addEventListener('blur', () => finish(true));
+  preview.addEventListener('mousedown', (event) => { if (isEditable) event.preventDefault(); });
+  preview.addEventListener('click', enter);
+  dom.addEventListener('weibei-edit-math', enter);
   render();
-
   return {
-    dom,
+    dom, contentDOM,
     update(nextNode: any) {
       if (nextNode.type !== node.type) return false;
-      const changed = (isBlock ? nextNode.attrs.value : nextNode.textContent) !== source();
+      const changed = nextNode.textContent !== node.textContent;
       node = nextNode;
-      if (changed && !editing) render();
+      if (changed) render();
       return true;
     },
-    selectNode() { dom.classList.add('ProseMirror-selectednode'); },
-    deselectNode() { dom.classList.remove('ProseMirror-selectednode'); },
-    stopEvent(event: Event) { return event.target === input || input.contains(event.target as Node); },
-    ignoreMutation() { return true; },
+    ignoreMutation(mutation: any) { return mutation.type !== 'selection' && !contentDOM.contains(mutation.target); },
   };
 };
 
@@ -3941,6 +3864,7 @@ if (WEIBEI_EDITOR_RUNTIME) {
       isEditable: () => isEditable,
       isStreaming: () => streamingMarkdownBuffer !== null,
     })))
+    .use($prose(() => createMathEditingPlugin(() => isEditable && streamingMarkdownBuffer === null)))
     .use($prose(createTypewriterPlugin))
     .use($prose(() => columnResizing()))
     .use(weiBeiSlash)
