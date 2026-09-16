@@ -18,6 +18,7 @@ struct WhiteboardSessionView: View {
     @State private var savedNote = false
     @State private var showsSource = false
     @State private var showsDiscussion = true
+    @State private var showsAnsweredQuestions = false
 
     init(store: WorkspaceStore, item: StudyItem, selection: SelectionContext?, pageIndex: Int) {
         self.store = store; self.item = item
@@ -62,7 +63,7 @@ struct WhiteboardSessionView: View {
         }) { WhiteboardSettingsView(classroom: classroom) }
         .task(id: "\(firstPage)-\(lastPage)-\(selectionOnly)") { if classroom.session == nil { await loadSource() } }
         .onDisappear { classroom.close() }
-        .onChange(of: classroom.session?.id) { _, _ in savedNote = false }
+        .onChange(of: classroom.session?.id) { _, _ in savedNote = false; showsAnsweredQuestions = false }
         .onChange(of: classroom.session?.discussions.count) { _, _ in showsDiscussion = true }
         .onChange(of: classroom.session?.presentedQuestionIDs.count) { _, _ in showsDiscussion = true }
         .onChange(of: classroom.status) { _, text in if !text.isEmpty { AccessibilityNotification.Announcement(text).post() } }
@@ -248,14 +249,20 @@ struct WhiteboardSessionView: View {
                     }
                     let answered = (classroom.session?.questions ?? []).filter { classroom.session?.answers[$0.stepID] != nil }
                     if !answered.isEmpty {
-                        DisclosureGroup("已答自测 · \(answered.count)") {
-                            ForEach(answered) { action in WhiteboardQuestionView(classroom: classroom, action: action).padding(.vertical, 8) }
+                        DisclosureGroup("已答自测 · \(answered.count)", isExpanded: $showsAnsweredQuestions) {
+                            ForEach(answered.reversed()) { action in WhiteboardQuestionView(classroom: classroom, action: action).padding(.vertical, 8).id(action.stepID) }
                         }.font(.callout)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
               }
               .onChange(of: classroom.session?.discussions.last?.id) { _, id in
                   if let id { DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) } }
+              }
+              .onChange(of: classroom.session?.answers) { previous, current in
+                  guard !classroom.restoring, let previous, let current,
+                        let id = current.keys.first(where: { previous[$0] == nil }) else { return }
+                  showsAnsweredQuestions = true
+                  DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
               }
             }
             HStack(alignment: .bottom, spacing: 8) {

@@ -196,8 +196,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 return
             }
             // The compressed editor boots asynchronously. Configure the actual
-            // editable surface after its ready event, before any typing checks.
-            webView.evaluateJavaScript("document.querySelector('.ProseMirror').setAttribute('writingsuggestions', 'false')") { [weak self] _, error in
+            // document after ready so rebuilt editor nodes inherit the setting.
+            webView.evaluateJavaScript("document.documentElement.setAttribute('writingsuggestions', 'false')") { [weak self] _, error in
                 guard let self else { return }
                 if let error { self.fail("could not configure editor input checks: \(error.localizedDescription)"); return }
                 self.validateInitialMarkdown()
@@ -3586,7 +3586,7 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
                 return
             }
             readyMilliseconds = (ProcessInfo.processInfo.systemUptime - loadStarted) * 1_000
-            webView.evaluateJavaScript("document.querySelector('.ProseMirror').setAttribute('writingsuggestions', 'false')") { [weak self] _, error in
+            webView.evaluateJavaScript("document.documentElement.setAttribute('writingsuggestions', 'false')") { [weak self] _, error in
                 guard let self else { return }
                 if let error { self.finish(.failure(error)); return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.beginActions() }
