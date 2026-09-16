@@ -2,7 +2,7 @@ import AppKit
 import WebKit
 import WeiBeiCore
 
-/// Real bundled WebKit runtime. Animation checks require the isolated window option; no model calls or shared clipboard.
+/// Real bundled WebKit runtime. Model timing runs only through its explicit button; never uses the shared clipboard.
 final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
     private var ready = false
     private var failure: String?
@@ -141,7 +141,9 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
       const board={type:'board',step_id:'b1',board_uid:0,title:'为什么要平方',card_type:'formula',source_page:12,
         board_content:'**观测值**与预测值之差是残差。\n\n$$e_i=y_i-\\hat{y}_i$$\n\n平方避免正负抵消。'};
       const speak={type:'speak',step_id:'s1',spoken_text:'观察误差。'};
-      const extra=[1,2].map(i=>({...board,step_id:'extra'+i,board_uid:10+i,board_content:'这是第'+(i+1)+'块依次写出的板书。'}));
+      const extra=[{title:'先看一个例子',card_type:'example',board_content:'观测值是 8，预测值是 6。残差为 +2；反过来，残差为 −2。'},
+        {title:'记住这一点',card_type:'summary',board_content:'直接相加会抵消；平方后都是 4。误差越大，平方的惩罚越重。'}]
+        .map((content,i)=>({...board,...content,step_id:'extra'+(i+1),board_uid:11+i}));
       const group={type:'group',step_id:'group1',actions:[board,...extra,speak]};
       const dispatch=(action,ticket=action.step_id)=>api.receive({action,ticket,audio:{}});
       window.wbStage='restore start';await api.restore([],null,'start');window.wbStage='page';await dispatch(page);window.wbStage='group';
@@ -199,7 +201,11 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
       const pausedEvent=new Promise(resolve=>audio.addEventListener('pause',resolve,{once:true}));
       api.pause(true);await pausedEvent;const time=audio.currentTime;
       await new Promise(resolve=>setTimeout(resolve,300));
-      assert(Math.abs(audio.currentTime-time)<.06,'Pause freezes the real media clock: '+time+' -> '+audio.currentTime+' paused='+audio.paused);
+      // WebKit may correct its estimated clock backwards after the hardware stops.
+      assert(audio.paused&&audio.currentTime<=time+.06,'Paused audio must not continue forward: '+time+' -> '+audio.currentTime);
+      const settledTime=audio.currentTime;
+      await new Promise(resolve=>setTimeout(resolve,300));
+      assert(audio.paused&&Math.abs(audio.currentTime-settledTime)<.01,'Paused media clock must remain stopped: '+settledTime+' -> '+audio.currentTime);
       assert(document.querySelector('.webi-companion').dataset.mouth==='0','Paused Webi closes its mouth');
       api.pause(false);await wait(()=>audio.currentTime>time+.15);
       await api.restore([page],null,'cancel-audio');await audible;

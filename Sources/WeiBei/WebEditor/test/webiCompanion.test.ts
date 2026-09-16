@@ -4,8 +4,8 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { createWebiCompanion, webiActions, webiFrame, webiMouthAt, webiMouthForPinyin } from '../src/webiCompanion';
 
 test('Webi preserves every frame and mouth within its 500 KiB offline resource budget', async () => {
-  const path = 'Sources/WeiBei/Resources/Editor/Webi/';
-  const names = (await readdir(path)).sort();
+  const path = 'Sources/WeiBei/Resources/Editor/';
+  const names = (await readdir(path)).filter(name => /Webi|webi|动作|口型|素材清单/.test(name)).sort();
   assert.deepEqual(names, ['情绪动作.webp', '独立口型.png', '素材清单.json', '课堂动作.webp'].sort());
   const sizes = await Promise.all(names.map(async name => (await stat(path + name)).size));
   assert.ok(sizes.reduce((sum, size) => sum + size, 0) <= 500 * 1024);

@@ -11,7 +11,7 @@ test('Chinese offline synthesis retains character boundaries, punctuation and ca
   vm.runInNewContext(await readFile('Sources/WeiBei/Resources/Editor/chinese-voice-index.js','utf8'),scope);
   const index=scope.window.WeiBeiChineseVoiceIndex as Record<string,string>;
   for(const group of new Set(mandarinUnits(text).flatMap(u=>u.phonemes).map(key=>index[key.replace(/[05]$/,'1')]))){
-    assert.ok(group);vm.runInNewContext(await readFile('Sources/WeiBei/Resources/Editor/ChineseVoice/'+group+'.js','utf8'),scope);
+    assert.ok(group);vm.runInNewContext(await readFile('Sources/WeiBei/Resources/Editor/chinese-voice-'+group+'.js','utf8'),scope);
   }
   Object.assign(globalThis,scope.window);
   const original=globalThis.fetch;globalThis.fetch=async()=>{throw new Error('No network in offline synthesis');};

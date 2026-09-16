@@ -25,7 +25,7 @@ async function samples(phonemes:string[]){
   if(!groups.size)throw new Error('没有可朗读的文字');
   const samplers=await Promise.all(Array.from(groups,group=>{
     if(!loading.has(group))loading.set(group,(async()=>{
-      if(!voiceHost.WeiBeiChineseVoices?.[group])await script('ChineseVoice/'+group+'.js');
+      if(!voiceHost.WeiBeiChineseVoices?.[group])await script('chinese-voice-'+group+'.js');
       const pack=voiceHost.WeiBeiChineseVoices?.[group];if(!pack)throw new Error('中文音节包缺失：'+group);
       const compressed=Uint8Array.from(atob(pack.gzip),c=>c.charCodeAt(0));
       const stream=new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'));

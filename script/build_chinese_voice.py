@@ -46,7 +46,7 @@ for i,path in enumerate(files):
     name,pcm=read(path)
     groups.setdefault(name[:-1],[]).append((name,pcm))
     if i%200 == 0: print('verified samples', i, flush=True)
-pack_dir=resources/'ChineseVoice'; pack_dir.mkdir(exist_ok=True)
+pack_dir=resources
 index={}
 for group,clips in groups.items():
     parts=[]; sprites={}; length=0
@@ -56,10 +56,10 @@ for group,clips in groups.items():
     with wave.open(output,'wb') as wav:
         wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(b''.join(parts))
     pack={'sampleRate':16000,'sprites':sprites,'gzip':base64.b64encode(gzip.compress(output.getvalue(),mtime=0)).decode()}
-    (pack_dir/(group+'.js')).write_text('/* CC BY-SA 3.0. Chen Wang, Hugo Lopez, Nicolas Vion. See ../chinese-voice-LICENSE.txt. */\nwindow.WeiBeiChineseVoices['+json.dumps(group)+']='+json.dumps(pack,separators=(',',':'))+';\n')
+    (pack_dir/('chinese-voice-'+group+'.js')).write_text('/* CC BY-SA 3.0. Chen Wang, Hugo Lopez, Nicolas Vion. See chinese-voice-LICENSE.txt. */\nwindow.WeiBeiChineseVoices['+json.dumps(group)+']='+json.dumps(pack,separators=(',',':'))+';\n')
 (resources/'chinese-voice-index.js').write_text('window.WeiBeiChineseVoices={};window.WeiBeiChineseVoiceIndex='+json.dumps(index,separators=(',',':'))+';\n')
 license_file=cache/'CC-BY-SA-3.0.txt'
 if not license_file.exists(): license_file.write_bytes(download('https://raw.githubusercontent.com/spdx/license-list-data/main/text/CC-BY-SA-3.0.txt'))
 license_text=license_file.read_text()
 (resources/'chinese-voice-LICENSE.txt').write_text('中文动物语音节素材\n\nRecording: Chen Wang\nCopyright 2013 Wang Chen, Lopez Hugo, Vion Nicolas\nSource: https://github.com/hugolpz/audio-cmn/tree/'+COMMIT+'/64k/syllabs\n1707 source files; each verified against the Git blob SHA and its embedded CC-BY-SA-3.0 license.\nChanges by WeiBei: trim outer silence, normalize gain, downsample to mono 16000 Hz, concatenate and gzip. The transformed sample pack remains CC BY-SA 3.0.\nRebuild: script/build_chinese_voice.py (numpy, soundfile).\nNeutral tones use the first-tone sample, following upstream removal of duplicated tone-5 recordings; no English or game audio is included.\n\n'+license_text)
-print('packs',len(groups),'bytes',sum(p.stat().st_size for p in pack_dir.glob('*.js')),flush=True)
+print('packs',len(groups),'bytes',sum((pack_dir/('chinese-voice-'+group+'.js')).stat().st_size for group in groups),flush=True)

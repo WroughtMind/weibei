@@ -92,7 +92,7 @@ export function createWebiCompanion(host: HTMLElement) {
       status.textContent = 'Webi 素材加载失败';element.dataset.error = name;
       clearTimeout(timer);
     };
-    image.src = new URL('Webi/' + name, document.baseURI).href;
+    image.src = new URL(name, document.baseURI).href;
     return image;
   }
   function refresh() {

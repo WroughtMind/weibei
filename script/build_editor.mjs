@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, cp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -36,9 +36,7 @@ if (!check) {
 }
 await mkdir(output, { recursive: true });
 if (check) {
-  await cp(resolve(resources, 'ChineseVoice'), resolve(output, 'ChineseVoice'), { recursive: true });
-  await cp(resolve(resources, 'Webi'), resolve(output, 'Webi'), { recursive: true });
-  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html', 'office-licenses.txt', 'whiteboard.html', 'reading-voice.html', 'chinese-voice-index.js', 'chinese-voice-LICENSE.txt']) {
+  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html', 'office-licenses.txt', 'whiteboard.html', 'reading-voice.html', '课堂动作.webp', '情绪动作.webp', '独立口型.png', '素材清单.json', ...(await readdir(resources)).filter(name => name.startsWith('chinese-voice-'))]) {
     await writeFile(resolve(output, name), await readFile(resolve(resources, name)));
   }
 }
