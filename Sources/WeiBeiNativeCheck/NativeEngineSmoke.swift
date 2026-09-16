@@ -237,11 +237,16 @@ enum NativeEngineSmoke {
             provider: provider, model: model,
             endpoint: AgentProviderEndpoint(provider: provider, baseURL: "")
         )
+        let window = adapter.contextWindow ?? NativeProviderRouting.contextWindow(provider: provider, model: model)
+        print("native-cache-smoke context_window=\(window.map(String.init) ?? "unknown")")
+        if provider == .openaiCodex, window == nil {
+            throw NativeLLMFailure(code: "model_context_unknown", message: "官方目录未返回当前模型窗口，提前压缩未验证")
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-cache-smoke-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let chatID = UUID().uuidString.lowercased()
         let runtime = NativeStudyAgentRuntime(
-            model: model, adapter: adapter, ledgerRoot: root,
+            model: model, adapter: adapter, providerID: provider.rawValue, ledgerRoot: root,
             systemPromptText: try AgentResources.bundled().systemPrompt
         )
         // 第二轮补充足够长的合成资料，第三轮命中必须越过首轮长度，避免只测到固定提示预热。
@@ -282,6 +287,20 @@ enum NativeEngineSmoke {
         guard let firstInputTokens, let lastCacheRead, lastCacheRead > firstInputTokens else {
             throw NativeLLMFailure(code: "cache_not_observed", message: "本次连续请求未观察到缓存随历史增长；不能据此声明对话缓存已验证")
         }
+        let usageURL = root.appendingPathComponent("\(chatID)/usage.jsonl")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let records = try Data(contentsOf: usageURL).split(separator: 0x0A).map {
+            try decoder.decode(NativeModelCallUsage.self, from: Data($0))
+        }
+        let calls = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }).values
+        guard calls.count == questions.count,
+              calls.allSatisfy({ $0.state == .completed && $0.usage != nil && $0.provider == provider.rawValue }) else {
+            throw NativeLLMFailure(code: "usage_not_recorded", message: "模型调用用量未完整记录")
+        }
+        let input = calls.reduce(0) { $0 + ($1.usage?.inputTokens ?? 0) + ($1.usage?.cacheReadTokens ?? 0) + ($1.usage?.cacheWriteTokens ?? 0) }
+        let cached = calls.reduce(0) { $0 + ($1.usage?.cacheReadTokens ?? 0) }
+        print("native-cache-smoke accounting calls=\(calls.count) input=\(input) cache_read=\(cached)")
         print("native-cache-smoke passed")
     }
 

@@ -18,7 +18,7 @@ public enum NativeSessionTitle {
         question: String,
         answer: String
     ) async -> String? {
-        let request = NativeLLMRequest(
+        var request = NativeLLMRequest(
             model: model,
             messages: [
                 NativeModelMessage(role: .system, content: systemPrompt),
@@ -28,6 +28,7 @@ public enum NativeSessionTitle {
                 ),
             ]
         )
+        request.purpose = .title
         do {
             return try await collectText(adapter.stream(request)).flatMap(normalizedTitle)
         } catch {

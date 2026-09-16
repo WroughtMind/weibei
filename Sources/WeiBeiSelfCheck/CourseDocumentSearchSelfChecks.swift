@@ -202,6 +202,18 @@ func checkCourseDocumentSearchReadiness() throws {
         },
         pdfOCRPageLoader: { _, pageIndex in retryProbe.ocrOutcome(for: pageIndex) }
     )
+    // 前台搜索与后台 OCR 同时使用索引，不能让查询事务打断失败页的写入或重试。
+    let concurrentReaders = DispatchGroup()
+    for _ in 0..<2 {
+        concurrentReaders.enter()
+        DispatchQueue.global().async {
+            for _ in 0..<100 {
+                _ = retryIndex.lookup(items: [retryPDF], query: "绝不命中")
+            }
+            concurrentReaders.leave()
+        }
+    }
+    defer { concurrentReaders.wait() }
     retryIndex.schedule([retryPDF])
     let failedResult = waitForSearchResult(until: Date().addingTimeInterval(8)) {
         retryIndex.lookup(items: [retryPDF], query: "绝不命中")[retryPDF.id]
@@ -227,7 +239,7 @@ func checkCourseDocumentSearchReadiness() throws {
             && failedResult?.failedPageReasons == [0: PDFOCRFailureReason.recognition.rawValue]
             && retryProbe.counts == (native: 1, ocr: 1)
             && failedContext.items.first?.failedPageReasons == [1: "文字识别失败，可重试"],
-        "PDF 失败页、内部诊断或 Agent 人话原因不真实"
+        "PDF 失败页、内部诊断或 Agent 人话原因不真实：result=\(String(reflecting: failedResult)), calls=\(retryProbe.counts), reasons=\(String(reflecting: failedContext.items.first?.failedPageReasons))"
     )
     retryProbe.allowRecovery()
     try requireSearchCheck(retryIndex.retryFailedPDFPages(in: retryPDF), "当前失败页不能手动重试")
@@ -238,7 +250,7 @@ func checkCourseDocumentSearchReadiness() throws {
         recovered?.text?.contains("手动重试恢复") == true
             && retryProbe.counts == (native: 2, ocr: 1)
             && !retryIndex.retryFailedPDFPages(in: retryPDF),
-        "手动重试没有只重新处理当前失败页，或后端未复核当前失败状态"
+        "手动重试没有只重新处理当前失败页，或后端未复核当前失败状态：result=\(String(reflecting: recovered)), calls=\(retryProbe.counts)"
     )
 
     let courseID = UUID()
@@ -443,7 +455,7 @@ private func checkDirectSourceReading() throws {
                                                nativePDFTextLoader: nativeLoader)
     let body = mixedIndex.read(item: mixed, page: 1, location: nil)
     try requireSearchCheck(body.text?.contains("SCANNED BODY") == true && body.text?.split(separator: "\n").contains("1") == true,
-                           "带原生页码的扫描页漏掉图片正文或原生文字")
+                           "带原生页码的扫描页漏掉图片正文或原生文字：\(String(reflecting: body))")
     let background = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("mixed-background.sqlite3"),
                                                nativePDFTextLoader: nativeLoader)
     background.schedule([mixed])
@@ -451,7 +463,7 @@ private func checkDirectSourceReading() throws {
         background.searchPassages(item: mixed, query: "SCANNED BODY")
     } where: { !$0.passages.isEmpty }
     try requireSearchCheck(backgroundBody?.passages.first?.text.contains("SCANNED BODY") == true,
-                           "后台索引把混合扫描页误当成完整原生页")
+                           "后台索引未返回扫描页正文：\(String(reflecting: backgroundBody))")
     let failedIndex = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("mixed-failed.sqlite3"),
         nativePDFTextLoader: nativeLoader, pdfOCRPageLoader: { _, page in .failed(pageIndex: page, reason: .recognition) })
     let failed = failedIndex.read(item: mixed, page: 1, location: nil)

@@ -2,6 +2,7 @@ import Foundation
 
 public struct NativeLLMRequest: Sendable {
     public var model: String
+    public var purpose: NativeModelCallPurpose = .answer
     public var messages: [NativeModelMessage]
     public var tools: [NativeToolDefinition]
     public var temperature: Double?
@@ -36,5 +37,10 @@ public struct NativeLLMRequest: Sendable {
 
 public protocol NativeLLMAdapter: Sendable {
     var family: String { get }
+    var contextWindow: Int? { get }
     func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error>
+}
+
+public extension NativeLLMAdapter {
+    var contextWindow: Int? { nil }
 }

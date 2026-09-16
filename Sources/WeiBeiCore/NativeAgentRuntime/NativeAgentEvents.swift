@@ -84,6 +84,7 @@ public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Senda
     public var status: Int?
     public var retryAfterMs: Int?
     public var requestID: String?
+    public var usage: NativeTokenUsage?
     public var message: String
 
     public var errorDescription: String? { message }
@@ -113,12 +114,14 @@ public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Senda
         status: Int? = nil,
         retryAfterMs: Int? = nil,
         requestID: String? = nil,
+        usage: NativeTokenUsage? = nil,
         message: String
     ) {
         self.code = code
         self.status = status
         self.retryAfterMs = retryAfterMs
         self.requestID = requestID
+        self.usage = usage
         self.message = message
     }
 

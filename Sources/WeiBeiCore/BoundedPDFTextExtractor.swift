@@ -118,13 +118,18 @@ public enum BoundedPDFTextExtractor {
 
 #if DEBUG
     public static func runSafetySelfCheck() -> Bool {
+        func failed(_ probe: String, since start: Date) -> Bool {
+            fputs("PDF worker safety probe failed: \(probe), elapsed=\(Date().timeIntervalSince(start))s\n", stderr)
+            return false
+        }
+        let normalStart = Date()
         guard runWorker(
             arguments: ["--safety-probe", "normal"],
             timeout: 1,
             maximumResidentBytes: maximumWorkerResidentBytes,
             maximumOutputBytes: 1_024,
             environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
-        ) == Data("verification-ok\n".utf8) else { return false }
+        ) == Data("verification-ok\n".utf8) else { return failed("normal output", since: normalStart) }
 
         let timeoutStart = Date()
         guard runWorker(
@@ -133,7 +138,7 @@ public enum BoundedPDFTextExtractor {
             maximumResidentBytes: maximumWorkerResidentBytes,
             maximumOutputBytes: 1_024,
             environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
-        ) == nil, Date().timeIntervalSince(timeoutStart) < 1 else { return false }
+        ) == nil, Date().timeIntervalSince(timeoutStart) < 1 else { return failed("timeout", since: timeoutStart) }
 
         let outputStart = Date()
         guard runWorker(
@@ -142,7 +147,7 @@ public enum BoundedPDFTextExtractor {
             maximumResidentBytes: maximumWorkerResidentBytes,
             maximumOutputBytes: 1_024,
             environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
-        ) == nil, Date().timeIntervalSince(outputStart) < 1 else { return false }
+        ) == nil, Date().timeIntervalSince(outputStart) < 1 else { return failed("output limit", since: outputStart) }
 
         let memoryStart = Date()
         guard runWorker(
@@ -151,7 +156,7 @@ public enum BoundedPDFTextExtractor {
             maximumResidentBytes: 128 * 1_024 * 1_024,
             maximumOutputBytes: 1_024,
             environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
-        ) == nil, Date().timeIntervalSince(memoryStart) < 1.5 else { return false }
+        ) == nil, Date().timeIntervalSince(memoryStart) < 1.5 else { return failed("memory limit", since: memoryStart) }
 
         let cancellationCompletion = DispatchSemaphore(value: 0)
         let cancellationTask = Task.detached {
@@ -167,8 +172,9 @@ public enum BoundedPDFTextExtractor {
         Thread.sleep(forTimeInterval: 0.05)
         let cancellationStart = Date()
         cancellationTask.cancel()
-        return cancellationCompletion.wait(timeout: .now() + 1) == .success
-            && Date().timeIntervalSince(cancellationStart) < 1
+        guard cancellationCompletion.wait(timeout: .now() + 1) == .success,
+              Date().timeIntervalSince(cancellationStart) < 1 else { return failed("cancellation", since: cancellationStart) }
+        return true
     }
 #endif
 

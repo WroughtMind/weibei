@@ -130,12 +130,7 @@ public actor NativeAgentLoop {
                 if adapter.family.contains("responses") {
                     llmRequest.reasoningEffort = "low"
                 }
-                #if DEBUG
-                let effectiveContextWindow = (adapter as? NativeContextWindowTestingAdapter)?.contextWindowForTesting
-                    ?? contextWindow
-                #else
-                let effectiveContextWindow = contextWindow
-                #endif
+                let effectiveContextWindow = contextWindow ?? adapter.contextWindow
                 if let effectiveContextWindow {
                     let candidate: NativeContextCompactionCandidate?
                     do {

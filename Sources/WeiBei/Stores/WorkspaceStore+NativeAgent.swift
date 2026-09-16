@@ -238,6 +238,7 @@ extension WorkspaceStore {
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
+            providerID: selectedProvider.rawValue,
             contextWindow: NativeProviderRouting.contextWindow(
                 provider: selectedProvider,
                 model: model
