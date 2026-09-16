@@ -2,6 +2,2131 @@
   "schemaVersion": 1,
   "assets": [
     {
+      "name": "chinese-voice-index.js",
+      "bytes": 23043,
+      "sha256": "cfbfd868e7f03bcc8bcf0737f810f11342cf96e8828129da25972f3ab3e63300"
+    },
+    {
+      "name": "chinese-voice-LICENSE.txt",
+      "bytes": 22896,
+      "sha256": "fc0ce9706a9c3f46d342381ec1cf1ce71aac75514cda62f0dd17d2bea9ec66c0"
+    },
+    {
+      "name": "ChineseVoice/_hm.js",
+      "bytes": 99084,
+      "sha256": "4697c54bd57d44670e2f519a61fddf52adeb51cad6fa63300e05b1cb5824c44b"
+    },
+    {
+      "name": "ChineseVoice/_hng.js",
+      "bytes": 97148,
+      "sha256": "776491611c45fbfe17c81285253d39fa59be0b6253cbfa640fe034efff2c01e5"
+    },
+    {
+      "name": "ChineseVoice/_lvan.js",
+      "bytes": 114892,
+      "sha256": "e723073aa53fbdf3c59399d8d8d2eb1dae9d3e202ee580779134fe1b4ddb2a8d"
+    },
+    {
+      "name": "ChineseVoice/_m.js",
+      "bytes": 83084,
+      "sha256": "5095de9a7e0c5284509bb556bfa7a8fa1b6232bbce74ec9f84a784377ab123c0"
+    },
+    {
+      "name": "ChineseVoice/_n.js",
+      "bytes": 95120,
+      "sha256": "aae976d4f0592e8fcab2339ffe4fdae9863d1e3edf8f4ce94774478e5a9f3302"
+    },
+    {
+      "name": "ChineseVoice/_ng.js",
+      "bytes": 104982,
+      "sha256": "47b18f2946c457865006f155cf0f0bfb38ef5acaa2a5cf94d5dab69db41856a9"
+    },
+    {
+      "name": "ChineseVoice/_nia.js",
+      "bytes": 104172,
+      "sha256": "b96ef2071aa8741c4388b3c6f9ba2066dac289ac2646c537710824ba2e2d8150"
+    },
+    {
+      "name": "ChineseVoice/a.js",
+      "bytes": 179468,
+      "sha256": "75acabc5592e2d534a2dc8d63f8f862c76f400cc77f123e8ad1b81ffa9743c64"
+    },
+    {
+      "name": "ChineseVoice/ai.js",
+      "bytes": 224163,
+      "sha256": "f51c8d1ca4f6a8c58e57a05359633e20f19670950169293017e4d3e22c624b81"
+    },
+    {
+      "name": "ChineseVoice/an.js",
+      "bytes": 212523,
+      "sha256": "9837c6fe4a025f09d7196694d4fe62a1cf96d4a326b812bebdf020774df53bb0"
+    },
+    {
+      "name": "ChineseVoice/ang.js",
+      "bytes": 216596,
+      "sha256": "8682b92a54040e8e174e217711364ccc0c75d8e2a25fd766fb37c473ce126668"
+    },
+    {
+      "name": "ChineseVoice/ao.js",
+      "bytes": 151284,
+      "sha256": "29c3d9adf1a0976f33347769dfe27737c310659b84eac4c82304037c8c1dc944"
+    },
+    {
+      "name": "ChineseVoice/ba.js",
+      "bytes": 288372,
+      "sha256": "bb4bda9a7feda772e60deecf7316be44fcc3e71d018f2a0e54ed0cb8b7ad6efd"
+    },
+    {
+      "name": "ChineseVoice/bai.js",
+      "bytes": 134561,
+      "sha256": "d892497de144dd82d940a169a16f1d1533b1b5092e800ee95d0e9ad4928cbbc5"
+    },
+    {
+      "name": "ChineseVoice/ban.js",
+      "bytes": 278322,
+      "sha256": "7fa40692d42d2b59c06005de39ee735876b2413c1213a66a645966add4530eda"
+    },
+    {
+      "name": "ChineseVoice/bang.js",
+      "bytes": 137652,
+      "sha256": "384c2e9e00e137a0a45fc235a07ce84a3851c755352825d86335d1859397042f"
+    },
+    {
+      "name": "ChineseVoice/bao.js",
+      "bytes": 214224,
+      "sha256": "5a7f533d5ac7488e11494f525555565d580c0376ecf3829dcd627b2808ff4aff"
+    },
+    {
+      "name": "ChineseVoice/bei.js",
+      "bytes": 262934,
+      "sha256": "0d74bff06fb3b9cabab382b5dd1933277eda394d7145fcd8c95ae9c87e8f6a6e"
+    },
+    {
+      "name": "ChineseVoice/ben.js",
+      "bytes": 207774,
+      "sha256": "ba22d097a3de59374987df57d39e7cf525fafa7aba0ee6bbd5685aae17019b96"
+    },
+    {
+      "name": "ChineseVoice/beng.js",
+      "bytes": 198226,
+      "sha256": "c4ed0f2212ee2b0680e07309794176dc9a5e2a9f45810805407f249f3612a65e"
+    },
+    {
+      "name": "ChineseVoice/bi.js",
+      "bytes": 157296,
+      "sha256": "92f18fb780ae3506dd58e3ed90f7367e7e8ac3968df1de79afc9746dfb41e3c1"
+    },
+    {
+      "name": "ChineseVoice/bian.js",
+      "bytes": 152109,
+      "sha256": "b315129e8c56791860f0ec18a0579eba04322e9f457677568953c12bed5aa17f"
+    },
+    {
+      "name": "ChineseVoice/biao.js",
+      "bytes": 147569,
+      "sha256": "b4652cf15d2ea453ae334b4f0ffb02148d670bd46b5fcd18742d9c8db8e3903d"
+    },
+    {
+      "name": "ChineseVoice/bie.js",
+      "bytes": 142239,
+      "sha256": "af1bafc29a5dfb3aa391bf64489b967b86e651f0197c353e151b807a3426a617"
+    },
+    {
+      "name": "ChineseVoice/bin.js",
+      "bytes": 184210,
+      "sha256": "e18bf3ba973cbd11b437193d7e839cb4e9e66a2f6b2e82a1edbe5b75a133ce82"
+    },
+    {
+      "name": "ChineseVoice/bing.js",
+      "bytes": 179108,
+      "sha256": "20f6ae9edfa0c7dce4c1a4234a7e5d211dbe11cc9499c4a6ac244ea0fe981bcb"
+    },
+    {
+      "name": "ChineseVoice/bo.js",
+      "bytes": 99103,
+      "sha256": "528ba6e010bb81b66a5332f5a962dc5ab228d8245d37ed7439028ec9a6ede027"
+    },
+    {
+      "name": "ChineseVoice/bu.js",
+      "bytes": 99985,
+      "sha256": "a67dba2d1efc6a2aa677c82f6132cb0f103944086949431829993d78cb27f420"
+    },
+    {
+      "name": "ChineseVoice/ca.js",
+      "bytes": 132836,
+      "sha256": "70d031259aa64c1ba046f10a1b322b128d2e0dcdc78e5968b13e0ef74751bde1"
+    },
+    {
+      "name": "ChineseVoice/cai.js",
+      "bytes": 121946,
+      "sha256": "15042e2792032d986ef4f20abfe05c6c8cb73af7090f7f50d0c7a383ab509ae5"
+    },
+    {
+      "name": "ChineseVoice/can.js",
+      "bytes": 133029,
+      "sha256": "66924a1af8492b500c6a0e8aeb72af3f23e95adf1890b93251a61a073b4da77b"
+    },
+    {
+      "name": "ChineseVoice/cang.js",
+      "bytes": 134749,
+      "sha256": "d6a3eef77e57c0206ff37c419dd71e31073d5f134e34aff2a3a468b68dcfdf4e"
+    },
+    {
+      "name": "ChineseVoice/cao.js",
+      "bytes": 127384,
+      "sha256": "d7001bec59fabf5dc9d690980b77c56868f6ccbb95dac9da5f79644840743915"
+    },
+    {
+      "name": "ChineseVoice/ce.js",
+      "bytes": 119361,
+      "sha256": "3db88985d087aa516a83c01b934e5d971287a056fba24be9f463e95186898d40"
+    },
+    {
+      "name": "ChineseVoice/cei.js",
+      "bytes": 122319,
+      "sha256": "89fecf8d8d7d8656058ff96abcbd881f9a211f531c87dcd6a499b91668061186"
+    },
+    {
+      "name": "ChineseVoice/cen.js",
+      "bytes": 112106,
+      "sha256": "03edf3e9363e6574917f062da2de243c2af8694b6da57c029b6678f089a2a28b"
+    },
+    {
+      "name": "ChineseVoice/ceng.js",
+      "bytes": 100678,
+      "sha256": "464e8aac4e768d7af058f01ca005c2814756fa940604e03ffec3b524816b5da6"
+    },
+    {
+      "name": "ChineseVoice/cha.js",
+      "bytes": 120009,
+      "sha256": "302368caffa49b7102606542a2e6693fd4382aba436094d21a50c3f0a6e5ee4d"
+    },
+    {
+      "name": "ChineseVoice/chai.js",
+      "bytes": 108837,
+      "sha256": "c2778170a3ae24645e2445ad1b9f029b1d5772a8f7229e448921f3d7a15636a5"
+    },
+    {
+      "name": "ChineseVoice/chan.js",
+      "bytes": 132778,
+      "sha256": "ce545a10f4dfd09a77929a66ac93b280e3e2d4e9c22ddfb3d018bb7e2cefde7e"
+    },
+    {
+      "name": "ChineseVoice/chang.js",
+      "bytes": 120564,
+      "sha256": "d191225091a95b7f0ad4826e8a88f81d6cc98df048df37bf1aacd3a3a314ccaf"
+    },
+    {
+      "name": "ChineseVoice/chao.js",
+      "bytes": 125956,
+      "sha256": "02ab2d294722801fe8a5a0b82500a252a513e8f320f77dae2d8877cc3dd99d6e"
+    },
+    {
+      "name": "ChineseVoice/che.js",
+      "bytes": 104651,
+      "sha256": "fa8b518692e9c81ab69c6d0d7a7ae884f8eea759011e33ef76da5c1364ef0ccc"
+    },
+    {
+      "name": "ChineseVoice/chen.js",
+      "bytes": 104607,
+      "sha256": "2c615dded42dad3ce1532d58d59dc64441ee77b9576d2f1a35a4a9a538fb91f0"
+    },
+    {
+      "name": "ChineseVoice/cheng.js",
+      "bytes": 119462,
+      "sha256": "3667fa0dbcab639d4ff40a740f5ec9b47d58029f3e92c4006872beaf94bbb71b"
+    },
+    {
+      "name": "ChineseVoice/chi.js",
+      "bytes": 117393,
+      "sha256": "b54f4596ba8a0d9ab5e8334c6135962bdf443e3dbacf0540f1b360f01c3d4e3b"
+    },
+    {
+      "name": "ChineseVoice/chong.js",
+      "bytes": 97845,
+      "sha256": "3ea81809f1161522276bdc116c8322fe634e47b4843d1b143b2b0da888589658"
+    },
+    {
+      "name": "ChineseVoice/chou.js",
+      "bytes": 96859,
+      "sha256": "39e8707deed09e3e31b4768f6a5999766bb306d34d519303ec2c55f38af836f7"
+    },
+    {
+      "name": "ChineseVoice/chu.js",
+      "bytes": 123156,
+      "sha256": "8c7ddca65662d1088c7428625b627f9e890f47fdad9886bff9356caca6530fc4"
+    },
+    {
+      "name": "ChineseVoice/chua.js",
+      "bytes": 111109,
+      "sha256": "a275fdea2ea1874036636a612c4e19cda311f409f2d2e258f419d4cefa8923e5"
+    },
+    {
+      "name": "ChineseVoice/chuai.js",
+      "bytes": 102219,
+      "sha256": "7463bbe6f98f3381b70ac2dc8d551ff13865b930a201cced99e66e98dcedd68e"
+    },
+    {
+      "name": "ChineseVoice/chuan.js",
+      "bytes": 106754,
+      "sha256": "3ac143134971be103650b7dc626020e485f901e0433acc1eb112d80a37574a13"
+    },
+    {
+      "name": "ChineseVoice/chuang.js",
+      "bytes": 111786,
+      "sha256": "a10915f3f064e8c633e70776228f89ba171c8397cd20104cf714efc8be685061"
+    },
+    {
+      "name": "ChineseVoice/chui.js",
+      "bytes": 110276,
+      "sha256": "56e97e8663fd6a88d615ccedec420447e61719b3c0bf0f79750f45cef71a8f21"
+    },
+    {
+      "name": "ChineseVoice/chun.js",
+      "bytes": 117445,
+      "sha256": "3a7e4bd65d775fb5ec14f8eb396774a4b6fcbdaa07d23c3237b242ddd8c06989"
+    },
+    {
+      "name": "ChineseVoice/chuo.js",
+      "bytes": 124232,
+      "sha256": "535880a8a9f9535339011c05d27d0a18f147c9cb38c3a0625341e3171f2cae27"
+    },
+    {
+      "name": "ChineseVoice/ci.js",
+      "bytes": 143001,
+      "sha256": "61127b2394a8265578740512e0cca737cfa66d893bc23d5b37efb8aaa0f5dfd3"
+    },
+    {
+      "name": "ChineseVoice/cong.js",
+      "bytes": 119954,
+      "sha256": "cf18c74484e22ffd1ccb8911627cbcabe1d1c32872d2c91465721c63f1eccfcd"
+    },
+    {
+      "name": "ChineseVoice/cou.js",
+      "bytes": 116610,
+      "sha256": "111db43ace139180d41f36c4e683e521e25ab895b62f4b6ae576244398d6343e"
+    },
+    {
+      "name": "ChineseVoice/cu.js",
+      "bytes": 130527,
+      "sha256": "abe1d9b771b5b842227b0603104aa5071aa30000a3afd8a56fd44b4c63a01763"
+    },
+    {
+      "name": "ChineseVoice/cuan.js",
+      "bytes": 139748,
+      "sha256": "78ce69a48f936ec8b9bc3b7ecc3a48e8b9496e53c646c90902b5439554ac5c21"
+    },
+    {
+      "name": "ChineseVoice/cui.js",
+      "bytes": 150344,
+      "sha256": "48c27242175aa936645e4765231c16bf0c0756cc5cbbc05e9d04ecf18fd12344"
+    },
+    {
+      "name": "ChineseVoice/cun.js",
+      "bytes": 118871,
+      "sha256": "5858e1d1f9c25bccd7ee0b968586b2c9598de182a5b110bf9e9b5ddf73255be3"
+    },
+    {
+      "name": "ChineseVoice/cuo.js",
+      "bytes": 131020,
+      "sha256": "c2cefdc8b48f3db9855795cfc16607121bcf510a7313c05cdb225b03c2a8d55b"
+    },
+    {
+      "name": "ChineseVoice/da.js",
+      "bytes": 75592,
+      "sha256": "28554f2621ee846c834194b0efec9e058b47e2c4afb53bab462a76f2c16dc234"
+    },
+    {
+      "name": "ChineseVoice/dai.js",
+      "bytes": 77584,
+      "sha256": "e83d3cbb50e63e0427bdbf6f836d0174a728163398a02260b2beaca1f46dbaac"
+    },
+    {
+      "name": "ChineseVoice/dan.js",
+      "bytes": 81653,
+      "sha256": "2f88483887566a3bf28e19280b954059c2432fd47ef10ef1c7dbdf7f7fe02054"
+    },
+    {
+      "name": "ChineseVoice/dang.js",
+      "bytes": 76533,
+      "sha256": "c718acf1010c3557696cfdcb2d99ec68bbac01f598a9b4e10e09b72ccb4fade4"
+    },
+    {
+      "name": "ChineseVoice/dao.js",
+      "bytes": 86524,
+      "sha256": "9cdf9d2fee972053ad80e2d7043484c67221e06643b1c291e4a27d684b943bd1"
+    },
+    {
+      "name": "ChineseVoice/de.js",
+      "bytes": 93605,
+      "sha256": "db974d84422e05040cf49f3c7f9d9c06147181f49ddeaaa14ce3c173a9d54e10"
+    },
+    {
+      "name": "ChineseVoice/dei.js",
+      "bytes": 90245,
+      "sha256": "b379e879bb9e8e646921ac3880e983577abf30b1f7047d099a6f7c35d845d207"
+    },
+    {
+      "name": "ChineseVoice/den.js",
+      "bytes": 84530,
+      "sha256": "67ba71fd66a30b99a45bfb4af85221563cc9294fc4446697e81390a55b99d648"
+    },
+    {
+      "name": "ChineseVoice/deng.js",
+      "bytes": 72238,
+      "sha256": "454ac237dfd1e0e0ce3e40af9c41bc208894c2475a6dfba63d20f46ffb786571"
+    },
+    {
+      "name": "ChineseVoice/di.js",
+      "bytes": 110256,
+      "sha256": "68ba6287296aab40baa2ffeac167ec0233d3a857dad01ac695106122ae231132"
+    },
+    {
+      "name": "ChineseVoice/dia.js",
+      "bytes": 111422,
+      "sha256": "42221fa138244384ed2df6327fc6c585bda7eb38db2634c6813fcbaa428f5e24"
+    },
+    {
+      "name": "ChineseVoice/dian.js",
+      "bytes": 110019,
+      "sha256": "dcb68533e0b0ffb48563ea8fafc5ef6d8306e1b02a3880cc9a5ab7ecb5eebbda"
+    },
+    {
+      "name": "ChineseVoice/diao.js",
+      "bytes": 109894,
+      "sha256": "f4c8038b4b59465cde9253c6d5b8e323342428cb0fe52c206ca07e91659b5cf6"
+    },
+    {
+      "name": "ChineseVoice/die.js",
+      "bytes": 120863,
+      "sha256": "23dde3dfa37cca912706d6e8a63e44e0c607771e4c7fac5e78891ca8fbecdfce"
+    },
+    {
+      "name": "ChineseVoice/ding.js",
+      "bytes": 96630,
+      "sha256": "920a84c016d2434a78ba2c01f9d690f6c53050f523a8a201e7c2c1dc01258c84"
+    },
+    {
+      "name": "ChineseVoice/diu.js",
+      "bytes": 121251,
+      "sha256": "409b3b9d486e85c83b9619c852853a73f5a6416dc9c5178f2d8306fa04178ae9"
+    },
+    {
+      "name": "ChineseVoice/dong.js",
+      "bytes": 72112,
+      "sha256": "73fb7b9d112496b42e2c6b90a3e7033e11eea6d1e31a57b81e788c6588542a74"
+    },
+    {
+      "name": "ChineseVoice/dou.js",
+      "bytes": 79891,
+      "sha256": "7a1da4955054e2380ffb08d6d999f8e32642912196f69b743a34082ba714b4f5"
+    },
+    {
+      "name": "ChineseVoice/du.js",
+      "bytes": 109950,
+      "sha256": "b62185cde8936df37b65fc1d0f7e8bc17339fd7b03feddfdd9a484c04df409c2"
+    },
+    {
+      "name": "ChineseVoice/duan.js",
+      "bytes": 106376,
+      "sha256": "7a6d250ef1fa19d9336985326f675809363e838acbf35837023b058c7ad34b69"
+    },
+    {
+      "name": "ChineseVoice/dui.js",
+      "bytes": 103459,
+      "sha256": "e18d91b30232edb64c85f277249891afea1fc583db5fff5d87094c53285bf91f"
+    },
+    {
+      "name": "ChineseVoice/dun.js",
+      "bytes": 93513,
+      "sha256": "1a0603018343fdbade3d007939571e9b03f340cf63ff71ec404e899a2d2566a6"
+    },
+    {
+      "name": "ChineseVoice/duo.js",
+      "bytes": 107231,
+      "sha256": "9a1ab945f5b63a75d9beda419a5268d79ef1ec95caa95e8a18301248398bebeb"
+    },
+    {
+      "name": "ChineseVoice/e.js",
+      "bytes": 94311,
+      "sha256": "3ae6caba45f7559dbda4835d9e0e6899afd50aa79d41d5637b57276c41e18dae"
+    },
+    {
+      "name": "ChineseVoice/ei.js",
+      "bytes": 81445,
+      "sha256": "9686e0c526d760d96c867bcd85b8988e166137795e689d50f1222b5598f4cc4b"
+    },
+    {
+      "name": "ChineseVoice/en.js",
+      "bytes": 71883,
+      "sha256": "385521160336bd0e0701f86dc885a226a443a1463c3d7f516646f3e86de9c1f0"
+    },
+    {
+      "name": "ChineseVoice/eng.js",
+      "bytes": 89041,
+      "sha256": "1b920af0b1dcdfcea70da673d5593ccd747e0a8994047f517765c22e38a4317b"
+    },
+    {
+      "name": "ChineseVoice/er.js",
+      "bytes": 69306,
+      "sha256": "15ba8c57faec748269c089dc187c4c6c862d79cfc53b091ea8cd0331940fe562"
+    },
+    {
+      "name": "ChineseVoice/fa.js",
+      "bytes": 71772,
+      "sha256": "57d2d2ec3d7cd9a865a3134a857aba2f14b2ad84aa17f76081ac13b99891b64b"
+    },
+    {
+      "name": "ChineseVoice/fan.js",
+      "bytes": 100158,
+      "sha256": "774f4b416b52bca1976f1961b8bb885452a7f70a08293bf885e35567b6fbb3c6"
+    },
+    {
+      "name": "ChineseVoice/fang.js",
+      "bytes": 96888,
+      "sha256": "9c2e868ce57b2e7e2fc6e5a5574a59a1291500a4956f250cdb68e145685b562a"
+    },
+    {
+      "name": "ChineseVoice/fe.js",
+      "bytes": 117729,
+      "sha256": "57a1175b74d0cb4370422bdb60ac9f606c6739c9fa31b517583bb5039b9a19e8"
+    },
+    {
+      "name": "ChineseVoice/fei.js",
+      "bytes": 88975,
+      "sha256": "72e74836bbe51d033c4916419d231d92de37cff1f0566ebc72a5011f75b5007f"
+    },
+    {
+      "name": "ChineseVoice/fen.js",
+      "bytes": 101221,
+      "sha256": "84aa0c5e56f910dcc6860b6242f4be08ceba429b550e5fb02e901ef0484d4e25"
+    },
+    {
+      "name": "ChineseVoice/feng.js",
+      "bytes": 113848,
+      "sha256": "a331f5bdd20bf23691a934c9d5b8377d56542c23d8dd1680b221853e98ec20c3"
+    },
+    {
+      "name": "ChineseVoice/fiao.js",
+      "bytes": 127980,
+      "sha256": "f7b1b5e2f7a5663ec8229ffae7ce817ef6825809f78bf844d9197a355ad4e231"
+    },
+    {
+      "name": "ChineseVoice/fo.js",
+      "bytes": 104709,
+      "sha256": "cdcce21e00e21895221dfc90915164e2095faad8e6d59a2d52132318eff2cd7e"
+    },
+    {
+      "name": "ChineseVoice/fou.js",
+      "bytes": 105828,
+      "sha256": "b000746808d1729d90da3b2f107a192b46f9b5ae4cf448ee9dbc519b01da162f"
+    },
+    {
+      "name": "ChineseVoice/fu.js",
+      "bytes": 151225,
+      "sha256": "ac1acb71ab32af23e029c0eb2fc6bbf660e4969df3da4de23dc3c1daeff4a2e7"
+    },
+    {
+      "name": "ChineseVoice/ga.js",
+      "bytes": 91554,
+      "sha256": "5115399521a1551f995ded412923ded212f27947a74327ffead928cd6960e11e"
+    },
+    {
+      "name": "ChineseVoice/gai.js",
+      "bytes": 103163,
+      "sha256": "898e54fb120a7976a868fbede17a9625bac6d74c238182db074120878b972049"
+    },
+    {
+      "name": "ChineseVoice/gan.js",
+      "bytes": 112365,
+      "sha256": "a5ca225b41d139e7641557f4ac29fd9c259f8ab5ef80d4fc2b5c7f3f012d3ab6"
+    },
+    {
+      "name": "ChineseVoice/gang.js",
+      "bytes": 81194,
+      "sha256": "1c966d685c3d0ac45288110547f66796b6a4e50586aa5faeb81441d31ecd771a"
+    },
+    {
+      "name": "ChineseVoice/gao.js",
+      "bytes": 93759,
+      "sha256": "524993ce8de4665fef8046e92c44b6d34c5319835d11f198361377b8fb816c33"
+    },
+    {
+      "name": "ChineseVoice/ge.js",
+      "bytes": 106902,
+      "sha256": "7d7b9e74d0944b5e7e85817d527f90f7a08af1e22cbb3a34bdc434060dd78aad"
+    },
+    {
+      "name": "ChineseVoice/gei.js",
+      "bytes": 106823,
+      "sha256": "55bc279a82f5fe43bf17a725ddcfb47565d52f3b1171931e9079172ebbf25e7b"
+    },
+    {
+      "name": "ChineseVoice/gen.js",
+      "bytes": 73948,
+      "sha256": "955b2d42478f64b99dd8d941e483afec2ac305338063c4fd23d5ca7ee3ef6dc5"
+    },
+    {
+      "name": "ChineseVoice/geng.js",
+      "bytes": 84399,
+      "sha256": "548fe50e2a83355e2382a6f9159308461673884b547904e78c67a4af5f7067c3"
+    },
+    {
+      "name": "ChineseVoice/gong.js",
+      "bytes": 81443,
+      "sha256": "1f28101a96ac4b03128298233a9221c1d787f00dff116e3220633d0c74b607d6"
+    },
+    {
+      "name": "ChineseVoice/gou.js",
+      "bytes": 87097,
+      "sha256": "20eea39c51cb5ff443e0672484ff45e19d628a70a165b48d7b828b7327499948"
+    },
+    {
+      "name": "ChineseVoice/gu.js",
+      "bytes": 103219,
+      "sha256": "02da9a387c7d4d9013deb6f2a02635bac910ddc6d5874522b06e2431bdb898d1"
+    },
+    {
+      "name": "ChineseVoice/gua.js",
+      "bytes": 101279,
+      "sha256": "6a02c134eb41322284c85559e3c60bddd1968165d66a4e91b821790b6c86815d"
+    },
+    {
+      "name": "ChineseVoice/guai.js",
+      "bytes": 105143,
+      "sha256": "37ec010fd050abc6097f9400dfe6aba6c8eacc80d28443bec7d985614aea900f"
+    },
+    {
+      "name": "ChineseVoice/guan.js",
+      "bytes": 81417,
+      "sha256": "6a57efd648927a7241aabd45adab57a27a406c0cf454648c10ccb152e461ac75"
+    },
+    {
+      "name": "ChineseVoice/guang.js",
+      "bytes": 88769,
+      "sha256": "43c14ac8f9694571802e96f8dbf82cbaff83043576bd49fc1a2759aff2be29dc"
+    },
+    {
+      "name": "ChineseVoice/gui.js",
+      "bytes": 98373,
+      "sha256": "3eb0db3d49d1f47e23962b73e8bc726197e45066926ceb7de0f6e29a55a4da02"
+    },
+    {
+      "name": "ChineseVoice/gun.js",
+      "bytes": 87761,
+      "sha256": "5fbac3e47be6e9cfd05427b8253b43dc7b4041f0f152a6067acee17a49522bd3"
+    },
+    {
+      "name": "ChineseVoice/guo.js",
+      "bytes": 93375,
+      "sha256": "2483e14e9da8465744090a280e23eb54b29d15365b905624011d254eddc5bd2b"
+    },
+    {
+      "name": "ChineseVoice/ha.js",
+      "bytes": 111792,
+      "sha256": "cb5b3295a04644cfda8e68e9849cca490b26fe7e51ac2387badb2377115de5b7"
+    },
+    {
+      "name": "ChineseVoice/hai.js",
+      "bytes": 119458,
+      "sha256": "516d731350396ea4c956d6ca925d53532ac24101c7944b5ecfd1316d2223fa4c"
+    },
+    {
+      "name": "ChineseVoice/han.js",
+      "bytes": 97279,
+      "sha256": "195a3a6e4e9e3b9d717c93838da6f9e3b380dc428ba726678d20edc1f3a0f292"
+    },
+    {
+      "name": "ChineseVoice/hang.js",
+      "bytes": 105342,
+      "sha256": "b492892fd835ff4961d618ef8186defcc8968d53e5ab204721f0243882b30096"
+    },
+    {
+      "name": "ChineseVoice/hao.js",
+      "bytes": 91396,
+      "sha256": "ee9523e071d0e8575a6e38e1a8b121349bddec38833c52ccaee6768d6d39bd94"
+    },
+    {
+      "name": "ChineseVoice/he.js",
+      "bytes": 105764,
+      "sha256": "e0874a579009049407da825dd88968884bc443fddac7ecda412630fd0efa187b"
+    },
+    {
+      "name": "ChineseVoice/hei.js",
+      "bytes": 102629,
+      "sha256": "4111c1a8522cff7e2fa574b182aebbc2d70dd1055768fee2c1da9189bb0e30ef"
+    },
+    {
+      "name": "ChineseVoice/hen.js",
+      "bytes": 90139,
+      "sha256": "dbf6395f9e27b44551badacd7ae151110e26a0b4073777574cb0d7318959b8a9"
+    },
+    {
+      "name": "ChineseVoice/heng.js",
+      "bytes": 92623,
+      "sha256": "254f338597045a309f1b453a4432b73fdba06a1e7277b077635c0ca4f15e9b84"
+    },
+    {
+      "name": "ChineseVoice/hong.js",
+      "bytes": 84881,
+      "sha256": "a7e60b5197ea5f741319d8202ad21b9c983f1e65486e4393b76123bab79ed02b"
+    },
+    {
+      "name": "ChineseVoice/hou.js",
+      "bytes": 97520,
+      "sha256": "63180392ffcd97c8fe18eeaf6ca4765cc72f0ded3fde678f5dda9a5401f5ec66"
+    },
+    {
+      "name": "ChineseVoice/hu.js",
+      "bytes": 118638,
+      "sha256": "ed52aa0b0aabd62f766b091abf51e8e623f4ec94c6e4e311ab719ea4bf6b601a"
+    },
+    {
+      "name": "ChineseVoice/hua.js",
+      "bytes": 92104,
+      "sha256": "3d911d21b66272fbe608cc465eb7e1ce9e309bce9dc5dd0692492707c4a56ab0"
+    },
+    {
+      "name": "ChineseVoice/huai.js",
+      "bytes": 79180,
+      "sha256": "7ea7fe98799894e1f14bd1657c32aefec9f37b78b781951350d8d1d30cf2f246"
+    },
+    {
+      "name": "ChineseVoice/huan.js",
+      "bytes": 94164,
+      "sha256": "a59818155434f15f5f1eb0ace364496211f7c633208d6fc76b86114bb02250f3"
+    },
+    {
+      "name": "ChineseVoice/huang.js",
+      "bytes": 95538,
+      "sha256": "e441e8312f964f9b753f5d6760e89067c329a830f77e2829b72fd123fb0cac6b"
+    },
+    {
+      "name": "ChineseVoice/hui.js",
+      "bytes": 122139,
+      "sha256": "6174589aa9b772f0d95f834f5c6284dd4b1f5c2eb048126a097133181c8ca92a"
+    },
+    {
+      "name": "ChineseVoice/hun.js",
+      "bytes": 120316,
+      "sha256": "ce75ea2b701c1b0efd70b5b94ce39b273c85f7422849fc6f784ccd68765df441"
+    },
+    {
+      "name": "ChineseVoice/huo.js",
+      "bytes": 114853,
+      "sha256": "0bc44173551df2cad76db4435e3f042a615a1fe6ace183ab04b697e1149d4747"
+    },
+    {
+      "name": "ChineseVoice/ji.js",
+      "bytes": 147626,
+      "sha256": "71338960d88e074f5f58ecfb4e2c8dc5fd7885d066094658ab71e83fb21ade7a"
+    },
+    {
+      "name": "ChineseVoice/jia.js",
+      "bytes": 124402,
+      "sha256": "960c0cea8cbff86507cb5d89e5dc08a0764997db0983a2eab53507894a1d1d3a"
+    },
+    {
+      "name": "ChineseVoice/jian.js",
+      "bytes": 108692,
+      "sha256": "f7e921f488feb119516a058d6c6f3cb4e2fa635c0a914bc83bc96f6ee570352b"
+    },
+    {
+      "name": "ChineseVoice/jiang.js",
+      "bytes": 123713,
+      "sha256": "490b6364c88e4c0a1d1cd4d161a6caa794a1be61a50e81838b52a55dbda38c56"
+    },
+    {
+      "name": "ChineseVoice/jiao.js",
+      "bytes": 112784,
+      "sha256": "bbb19023a411cdd24e83a517f8d687aa52bb24ea074b504da657ead13d3dbf6f"
+    },
+    {
+      "name": "ChineseVoice/jie.js",
+      "bytes": 115403,
+      "sha256": "497254433d7a1be19cdc4424166a0332b061fb822d24155d9818837b9bc1800e"
+    },
+    {
+      "name": "ChineseVoice/jin.js",
+      "bytes": 110833,
+      "sha256": "c0a94b813d4360a68b9bd6a74e2323ee0028c562452d25ce6af56b797cb5cadf"
+    },
+    {
+      "name": "ChineseVoice/jing.js",
+      "bytes": 97319,
+      "sha256": "62ddea58adbefb8803eaf8681c83fcda6f83a2ff8a10fd22755ed472935da6b0"
+    },
+    {
+      "name": "ChineseVoice/jiong.js",
+      "bytes": 105715,
+      "sha256": "3f02d91accefe6d4d804a0f733a87fdbb3727b1dc2891b6f532aae3ab09ad6e5"
+    },
+    {
+      "name": "ChineseVoice/jiu.js",
+      "bytes": 101568,
+      "sha256": "a26a4d05acec5e50c8969f926f18d7f90f0c19a092a431e11656d7a364566ae0"
+    },
+    {
+      "name": "ChineseVoice/ju.js",
+      "bytes": 110778,
+      "sha256": "e304937b868eb5ff92095a4342137eb4d1978e8134ed18425b0a4b16c6e7c204"
+    },
+    {
+      "name": "ChineseVoice/juan.js",
+      "bytes": 99304,
+      "sha256": "2fff6e5b8359b5e4ea77016dae572d5e960778dbb4a3c22f700559a682fdb760"
+    },
+    {
+      "name": "ChineseVoice/jue.js",
+      "bytes": 109499,
+      "sha256": "57a5e291a7e3e86ad187435d405aa1d7abc1f884e0b5618e4c76ae1fa7c66a26"
+    },
+    {
+      "name": "ChineseVoice/jun.js",
+      "bytes": 117131,
+      "sha256": "30b92f2fd2a8efa5d54116c9335d545d11f7260d83f7d9d0a48d9bf327e7f7ff"
+    },
+    {
+      "name": "ChineseVoice/jv.js",
+      "bytes": 22244,
+      "sha256": "84e9403a88aac20aab3593fa54bc6f66af7b4c48c98cbe807c62d1e7995ad7e0"
+    },
+    {
+      "name": "ChineseVoice/ka.js",
+      "bytes": 83485,
+      "sha256": "827b10f860d2804729920b76d4bb5f164349419b292293255f9297c176240c75"
+    },
+    {
+      "name": "ChineseVoice/kai.js",
+      "bytes": 108143,
+      "sha256": "4b66bb4fc30a9019e9b179434aa1dba9613707008d9af4acc6e66db19aad30de"
+    },
+    {
+      "name": "ChineseVoice/kan.js",
+      "bytes": 105607,
+      "sha256": "a86bea1935ae82aa1a56ab2857450f77844b91f00bdb0b5ca7d27fc3c2d5458b"
+    },
+    {
+      "name": "ChineseVoice/kang.js",
+      "bytes": 91350,
+      "sha256": "2bd93672d07f0971db214c0c6f8c38926a1c924bf8e25223ef305a70e23d6e8b"
+    },
+    {
+      "name": "ChineseVoice/kao.js",
+      "bytes": 97154,
+      "sha256": "3ccf7d8e1acb2064922d8343693fb90897365978b07a3b2c40ff6042dd76d786"
+    },
+    {
+      "name": "ChineseVoice/ke.js",
+      "bytes": 113008,
+      "sha256": "f3365d8d33631228d603e76dc7fe53ead12357f77c65052fd10c2b84f5498943"
+    },
+    {
+      "name": "ChineseVoice/kei.js",
+      "bytes": 125544,
+      "sha256": "0f4540c9bcbe961ccf9a99b679712a5c5fc1bf422b718a079fc3912bffca96e1"
+    },
+    {
+      "name": "ChineseVoice/ken.js",
+      "bytes": 104830,
+      "sha256": "5016b6b2592e4f393b7e57bc4ca3760c94848c77f914b89cb43fa2caf84b68a9"
+    },
+    {
+      "name": "ChineseVoice/keng.js",
+      "bytes": 92662,
+      "sha256": "59d0aa13e0268da7e68d6a357f30c59f1b3186dfae383178b6d5491ac6b122b5"
+    },
+    {
+      "name": "ChineseVoice/kong.js",
+      "bytes": 93338,
+      "sha256": "1ebbcec874b6fba3bdf4bf97d9a3ef3ef89484bbb2a91c622d50f768fac83662"
+    },
+    {
+      "name": "ChineseVoice/kou.js",
+      "bytes": 82526,
+      "sha256": "d0c9d2fe2368b3f8b41523a9143f95dc17de5841507e0db463d6485ad673b5a9"
+    },
+    {
+      "name": "ChineseVoice/ku.js",
+      "bytes": 115746,
+      "sha256": "0b853badce02bbbcacfdd97d406121473f79d41cf83fb9ed466406f06b92ec4e"
+    },
+    {
+      "name": "ChineseVoice/kua.js",
+      "bytes": 113545,
+      "sha256": "a11e9c266ba406697c08326d520a6964d5d307ecbb98c7d0c60d8f17b8f167b0"
+    },
+    {
+      "name": "ChineseVoice/kuai.js",
+      "bytes": 88261,
+      "sha256": "ea0bd9a2457f11f47b93c7a19a792a78ab3288fbb8c327b92b2c92af245032ca"
+    },
+    {
+      "name": "ChineseVoice/kuan.js",
+      "bytes": 114665,
+      "sha256": "e5543996628953356b028c31280423f26581ae3f30c02b0480834233ddbddec0"
+    },
+    {
+      "name": "ChineseVoice/kuang.js",
+      "bytes": 81827,
+      "sha256": "93a8e519facbaa516828cb68909e7769170a9c0c7c4fb0854ba6d7cb5af36ad5"
+    },
+    {
+      "name": "ChineseVoice/kui.js",
+      "bytes": 115910,
+      "sha256": "9c8e8a8808fd2ed4da0384b8c4b720f3ce840bdec68cf9889af4d815cdcb3312"
+    },
+    {
+      "name": "ChineseVoice/kun.js",
+      "bytes": 106214,
+      "sha256": "9080bf2c3102598213f7b6635229cdab33da964589f8dfde13407c340ae8e397"
+    },
+    {
+      "name": "ChineseVoice/kuo.js",
+      "bytes": 89643,
+      "sha256": "02f642b5149668746c4629c2a342ba1b8742afa1c40004b110cecd4f6ed52b3b"
+    },
+    {
+      "name": "ChineseVoice/la.js",
+      "bytes": 99071,
+      "sha256": "120940107ea50b89b716842a8b9c3d3b74e3184ce4b8c72cc5953b81fd6aa564"
+    },
+    {
+      "name": "ChineseVoice/lai.js",
+      "bytes": 111952,
+      "sha256": "d522412141506a1f204fad17c36d9a72cdf600204552783c7885f8c3d5b70fff"
+    },
+    {
+      "name": "ChineseVoice/lan.js",
+      "bytes": 92260,
+      "sha256": "4eb3f0573ce1215c0722e8aec6bbf655d51680a7aade74655bbefc51771baa53"
+    },
+    {
+      "name": "ChineseVoice/lang.js",
+      "bytes": 80172,
+      "sha256": "7274d00a2f77a5283c1f30e6adb58244c94a95e3f72e0be286b35a3d2f5e9b5d"
+    },
+    {
+      "name": "ChineseVoice/lao.js",
+      "bytes": 107102,
+      "sha256": "c9684ccaf18f179d358e210d07b8e404e4c53786f805fb11a55b0abeb46d894b"
+    },
+    {
+      "name": "ChineseVoice/le.js",
+      "bytes": 89765,
+      "sha256": "a392539f134e440429dc4d834dfc9cacf43b91c2c22862e3d946b415d391267d"
+    },
+    {
+      "name": "ChineseVoice/lei.js",
+      "bytes": 103605,
+      "sha256": "d8b5ef7fa699fde83b4ed86cd9bb77246bf6619d7ae91bfb31b418c7642a3eb1"
+    },
+    {
+      "name": "ChineseVoice/leng.js",
+      "bytes": 79785,
+      "sha256": "48628d0a4a8e6319e3d48eecb3de38d3fde0d7ab67eab7e56cb5ce5bcc62396d"
+    },
+    {
+      "name": "ChineseVoice/li.js",
+      "bytes": 93838,
+      "sha256": "bc2f1eabe0fb4d7d5fc32405a8905ce0202d991d8bae761b0418e46e344569de"
+    },
+    {
+      "name": "ChineseVoice/lia.js",
+      "bytes": 100976,
+      "sha256": "576b2b577c1b843a4ea1d2e4bfdcca7621ec5cb51a9cf52ae61d81a7ed68e754"
+    },
+    {
+      "name": "ChineseVoice/lian.js",
+      "bytes": 101542,
+      "sha256": "4ce8d06e7af836128340bdf465a5a5704428a520ab3d3926f66aee6b07e988fa"
+    },
+    {
+      "name": "ChineseVoice/liang.js",
+      "bytes": 77879,
+      "sha256": "bae484058a65b216c17817f36e4a251d196d62aae6d4214ce011933742908df4"
+    },
+    {
+      "name": "ChineseVoice/liao.js",
+      "bytes": 109483,
+      "sha256": "2fb31892330521342fd8868f2825b5c25fc776e78a912a2fdec4fe9a52bb7183"
+    },
+    {
+      "name": "ChineseVoice/lie.js",
+      "bytes": 101620,
+      "sha256": "a68ddb2caa5756af9c18f03371fbacf979d7df2b3cba79d622e9a51c92e36d97"
+    },
+    {
+      "name": "ChineseVoice/lin.js",
+      "bytes": 109918,
+      "sha256": "e7224d09dba4b1cd4851eb8ec912915f424d066160529a8e21eeaf7874b85d21"
+    },
+    {
+      "name": "ChineseVoice/ling.js",
+      "bytes": 106298,
+      "sha256": "752760e6e933a2d871957223696571d94fe716dbbf0f40b6d9eb8d6e120b42e7"
+    },
+    {
+      "name": "ChineseVoice/liu.js",
+      "bytes": 107497,
+      "sha256": "7f6cd8e64126506a839ee1b254e4472939562afd6055fc7539b2f3fae6e8c398"
+    },
+    {
+      "name": "ChineseVoice/lo.js",
+      "bytes": 112797,
+      "sha256": "b27f300ae34243d16b86977c1db83d4cf27f2f2f6b0c71515bcc31fe5da17dfc"
+    },
+    {
+      "name": "ChineseVoice/long.js",
+      "bytes": 92009,
+      "sha256": "6453d6bcda5adbdde5f00fb6870bfee6e5b9b8bd93c541703bf3714c2d84aef5"
+    },
+    {
+      "name": "ChineseVoice/lou.js",
+      "bytes": 84817,
+      "sha256": "f2fe84bc08516f94da14114071a79b54c3594ba9ec9c7f4d21b80924ed49463c"
+    },
+    {
+      "name": "ChineseVoice/lu.js",
+      "bytes": 98958,
+      "sha256": "f988f5ce169eb8ffd7df97c2d4a45246e589783a790cc4da0670f01c98ae5d1f"
+    },
+    {
+      "name": "ChineseVoice/luan.js",
+      "bytes": 119627,
+      "sha256": "b048ade6ffef513530886de64ccc7c79b225c0c842c028cbca7f959f7c651618"
+    },
+    {
+      "name": "ChineseVoice/lun.js",
+      "bytes": 103554,
+      "sha256": "41451e52dbbe8193d1b200fca40dd5ac8e43d525596c90954b12b7e738c2b0d9"
+    },
+    {
+      "name": "ChineseVoice/luo.js",
+      "bytes": 95505,
+      "sha256": "6284a88578a8a31dd14274a6452a83c12c2934e1b7afb6bcca83abaea74ce9b8"
+    },
+    {
+      "name": "ChineseVoice/lv.js",
+      "bytes": 126762,
+      "sha256": "aefc04c9490bf236eb2dbe3aec78f6d7f7b83a24525dab6eb24602c4fd1a0529"
+    },
+    {
+      "name": "ChineseVoice/lve.js",
+      "bytes": 95508,
+      "sha256": "244fddbda3a5aa1794451ba973aa9dcea90449615eb7452ae07b6311c6336709"
+    },
+    {
+      "name": "ChineseVoice/ma.js",
+      "bytes": 84206,
+      "sha256": "538627a29689f10a56b3cc3790f6988ba583e77d0d9eca9d793244d2fa7ab0ee"
+    },
+    {
+      "name": "ChineseVoice/mai.js",
+      "bytes": 104611,
+      "sha256": "a1e56d9a60e2a08c616350b35b489eed2eb05e9816c46240dfcd7c6695c9e77f"
+    },
+    {
+      "name": "ChineseVoice/man.js",
+      "bytes": 101919,
+      "sha256": "0802489407cfdaafe2b9b5560160c432a6a4aa7e05a6a2f20ae57b9b09d92fcd"
+    },
+    {
+      "name": "ChineseVoice/mang.js",
+      "bytes": 85014,
+      "sha256": "2eb601ee2b8a1f4142d5525334d3c55ac59293950bb730d91c4d1d9d1895189a"
+    },
+    {
+      "name": "ChineseVoice/mao.js",
+      "bytes": 93028,
+      "sha256": "c652f3a70b5fe6fb25d6fda50ac86d608c5687138ccc3dff780c3ce54e5e8657"
+    },
+    {
+      "name": "ChineseVoice/me.js",
+      "bytes": 71450,
+      "sha256": "897f126148434674d65e82bf843b18be50224a9d1ac784ca0cdb7e9add20d043"
+    },
+    {
+      "name": "ChineseVoice/mei.js",
+      "bytes": 100412,
+      "sha256": "a015dde4d84b3e3b4fabfe960bec469186f72f40ee3cba7c4497861ec413101c"
+    },
+    {
+      "name": "ChineseVoice/men.js",
+      "bytes": 101571,
+      "sha256": "6cdb9a485f0d26baa93bfe7c0a665bd970b5a8409d294f76ee9626def6fffb08"
+    },
+    {
+      "name": "ChineseVoice/meng.js",
+      "bytes": 72829,
+      "sha256": "428cd342c69bdcbbfc187b552a46993a7ee8156b0dddc411e107372554ff6ba2"
+    },
+    {
+      "name": "ChineseVoice/mi.js",
+      "bytes": 84619,
+      "sha256": "cc6432d91368c787dc058b0e9237f16da8d1238172ff2e4d2720a4212a920683"
+    },
+    {
+      "name": "ChineseVoice/mian.js",
+      "bytes": 101929,
+      "sha256": "39b069d086865efe2611b630f767022954e57f2ae22be931f7968912c7f10fe9"
+    },
+    {
+      "name": "ChineseVoice/miao.js",
+      "bytes": 107846,
+      "sha256": "7451863f1fd2fcbce7fb5a3e1a0b92342d6fc8d09384a8b7481b15118e4e38d4"
+    },
+    {
+      "name": "ChineseVoice/mie.js",
+      "bytes": 103937,
+      "sha256": "9b35cf5a6f67a00bb96dccbadfdb70fc4c429510d3f684f839f7608c0c4ae98b"
+    },
+    {
+      "name": "ChineseVoice/min.js",
+      "bytes": 99272,
+      "sha256": "effd16b5b7d99c0d3756027590f3d3608f226205f9445862658debceeadab82d"
+    },
+    {
+      "name": "ChineseVoice/ming.js",
+      "bytes": 88567,
+      "sha256": "3a1002b215300fd257a60402a5aa698b3395b820fbd473a8e3bff03e4d6af1cf"
+    },
+    {
+      "name": "ChineseVoice/miu.js",
+      "bytes": 87049,
+      "sha256": "96163cc03b2e445444fe3ee6601dec546e128aa198425be12e1c56d0c84a5a10"
+    },
+    {
+      "name": "ChineseVoice/mo.js",
+      "bytes": 94297,
+      "sha256": "d58e8237860417a42ae82b9cc5b997dbf9fe0f3c89fee42a6b5205ca7f716dba"
+    },
+    {
+      "name": "ChineseVoice/mou.js",
+      "bytes": 87635,
+      "sha256": "27e11c2c334225822dbee457aef2d12f0f5f39c62c01be2e4e3a6c49cfae0aeb"
+    },
+    {
+      "name": "ChineseVoice/mu.js",
+      "bytes": 82841,
+      "sha256": "51019a112dba16520e9e7c250c19591ac7fc60e8f713de4a7e416d1e90f8b0b2"
+    },
+    {
+      "name": "ChineseVoice/na.js",
+      "bytes": 85133,
+      "sha256": "2f403d718c30e47a04f3e29d10b37bc474bcaab45de84c708073899d98ade362"
+    },
+    {
+      "name": "ChineseVoice/nai.js",
+      "bytes": 95161,
+      "sha256": "29379f32acbbd190e4ca02b730d0b24e44d674d390837e795ad024a140e68569"
+    },
+    {
+      "name": "ChineseVoice/nan.js",
+      "bytes": 88905,
+      "sha256": "4ee76c8815d13e128785c96e1cc392ac7ba71d333d2abe6a8d051fc5953228e9"
+    },
+    {
+      "name": "ChineseVoice/nang.js",
+      "bytes": 77693,
+      "sha256": "652d802ca33fcd9f57ef24c57d30ac701a62b215b260b8318f8222bb172cbc42"
+    },
+    {
+      "name": "ChineseVoice/nao.js",
+      "bytes": 98729,
+      "sha256": "27419f452c991bcb2305ebf49d0459468d284c7e71293969187776623c5bb311"
+    },
+    {
+      "name": "ChineseVoice/ne.js",
+      "bytes": 93051,
+      "sha256": "0b780320fc4dc49dc7e0f21b0504b397d63840a18b909449348556131a774ef5"
+    },
+    {
+      "name": "ChineseVoice/nei.js",
+      "bytes": 108276,
+      "sha256": "1b414e4e8b354a92cbd8b644d10d59c7e58a66a5b87341586eceb5362227f2d5"
+    },
+    {
+      "name": "ChineseVoice/nen.js",
+      "bytes": 85276,
+      "sha256": "d0856fe6da78d362565f50bf865d94c933aa955010fc0ebcbe78c59fc602db76"
+    },
+    {
+      "name": "ChineseVoice/neng.js",
+      "bytes": 102912,
+      "sha256": "cfcc7b378c4fb60fcce9a9c0f729621d6d5b09de8e963ce8ada8b670f5a46520"
+    },
+    {
+      "name": "ChineseVoice/ni.js",
+      "bytes": 78108,
+      "sha256": "f12276e0fadb3209db209f2bdab9bb5406255a04680513854bebb268872a6251"
+    },
+    {
+      "name": "ChineseVoice/nian.js",
+      "bytes": 100208,
+      "sha256": "96bbb73c6eb38b31c801df2e3ca2691c7f59b6c2c091fa337d2f81e356a49e37"
+    },
+    {
+      "name": "ChineseVoice/niang.js",
+      "bytes": 98776,
+      "sha256": "3e2c0af76e87ffa3c5e9f834371c444067117c36a06dda2e046b689bc807aace"
+    },
+    {
+      "name": "ChineseVoice/niao.js",
+      "bytes": 101409,
+      "sha256": "1bacd20e6578066ad4384bdecf20f240d6182d74a51af7b7e55b25c338414342"
+    },
+    {
+      "name": "ChineseVoice/nie.js",
+      "bytes": 80150,
+      "sha256": "e507b84ac1ac4596f9abede6e8a206deb3ae881132b2329228d1640a64ff0071"
+    },
+    {
+      "name": "ChineseVoice/nin.js",
+      "bytes": 89358,
+      "sha256": "42afcb606337ac3b14c98fd2672d8af383ebe3ea68b6976d69ae0174ca6e12a8"
+    },
+    {
+      "name": "ChineseVoice/ning.js",
+      "bytes": 87093,
+      "sha256": "4b6450a03584542e3d69ada00ac0187a4f92520a4ced98489113e1f8c1891681"
+    },
+    {
+      "name": "ChineseVoice/niu.js",
+      "bytes": 93198,
+      "sha256": "de58edf6de95ef826af7cbdba8411ee1f291107ce32c2aafda58a56673af04fb"
+    },
+    {
+      "name": "ChineseVoice/nong.js",
+      "bytes": 88107,
+      "sha256": "94a6a20a60467534bb288bb81bdb946755e4e3190d836c02f9b312e351d61c45"
+    },
+    {
+      "name": "ChineseVoice/nou.js",
+      "bytes": 102045,
+      "sha256": "f9dda352ee012df227d91fcb98e39223d13485ed71d16b5f5912fd5c9fc2f2d2"
+    },
+    {
+      "name": "ChineseVoice/nu.js",
+      "bytes": 94590,
+      "sha256": "4a8c50e8af61f3f613293fd45d6f4f81763d12ef8ccca64a41e6cd4852c838ac"
+    },
+    {
+      "name": "ChineseVoice/nuan.js",
+      "bytes": 124247,
+      "sha256": "4a11f76c11d89ace4738b881ea01e60e62831524a48cdf6574a885b1e9b68fb3"
+    },
+    {
+      "name": "ChineseVoice/nun.js",
+      "bytes": 126039,
+      "sha256": "1291a32a58c6cc75e7d03979a04f07655241a83484cec6c464044412eba70819"
+    },
+    {
+      "name": "ChineseVoice/nuo.js",
+      "bytes": 102160,
+      "sha256": "c0e6bf11f671396b902dbec0794dc01796df576fa55e378aaceb9935fe2283f6"
+    },
+    {
+      "name": "ChineseVoice/nv.js",
+      "bytes": 95320,
+      "sha256": "f3c762f64c38ed8fb9e64eb859049332297e500c6b68a13ec5cc9027604dbedf"
+    },
+    {
+      "name": "ChineseVoice/nve.js",
+      "bytes": 98951,
+      "sha256": "2d21e4243dd3503860c2cfac7418dfd378912f9b3f079479771d9131a8a8811a"
+    },
+    {
+      "name": "ChineseVoice/o.js",
+      "bytes": 82954,
+      "sha256": "39116be7fe6cb3fdcefd7652fdc660bfd1c580c799940c591f787bb616a8bbe9"
+    },
+    {
+      "name": "ChineseVoice/ou.js",
+      "bytes": 88528,
+      "sha256": "d23bbe3aef009ac2e8560276ece7374fced55dc15c717298c2c524a34f74cc37"
+    },
+    {
+      "name": "ChineseVoice/pa.js",
+      "bytes": 92592,
+      "sha256": "0ddab5cee47feed0c83a6461b0356ca467f282b4bcdcc9e67e4abec9595923a1"
+    },
+    {
+      "name": "ChineseVoice/pai.js",
+      "bytes": 112828,
+      "sha256": "c821d84261613a85cd34f679226bbcdfca7a59247bffd0a2a3491085dc41e866"
+    },
+    {
+      "name": "ChineseVoice/pan.js",
+      "bytes": 103577,
+      "sha256": "5e472f3bd0a25924050ea2aee4c99d64b0351c7947a1631476416c0d21ad525f"
+    },
+    {
+      "name": "ChineseVoice/pang.js",
+      "bytes": 94670,
+      "sha256": "c7de4485dd9fcf7b2764ec234725b6fa6d67fe675afbfeb20fa210084db602ca"
+    },
+    {
+      "name": "ChineseVoice/pao.js",
+      "bytes": 96186,
+      "sha256": "e9a1e370d505ea9d1c3e4af6ac4a0435fb2401d50139e541f7c3b595bec50d47"
+    },
+    {
+      "name": "ChineseVoice/pei.js",
+      "bytes": 119725,
+      "sha256": "2d6ec4e920dd5b0c52aa8e87821a2893511847fe0bd96d10c49516dfdfff9d28"
+    },
+    {
+      "name": "ChineseVoice/pen.js",
+      "bytes": 94262,
+      "sha256": "dafdaf2c968b39d293322c11f711f4fc30e0e6b33c0e56903c09a1e990c8bad3"
+    },
+    {
+      "name": "ChineseVoice/peng.js",
+      "bytes": 99761,
+      "sha256": "c07ecb651d0c1316103538faabc9865f10d08cc876201c248099504e2371a6bc"
+    },
+    {
+      "name": "ChineseVoice/pi.js",
+      "bytes": 123959,
+      "sha256": "1b06a6088862fa537e780acdccc85f0818c141c8cbc4c79fd4900c3da46313bf"
+    },
+    {
+      "name": "ChineseVoice/pian.js",
+      "bytes": 110176,
+      "sha256": "6ae68f12935da78fd306130329aa093cea410a73b71b182f496b1675a78f9814"
+    },
+    {
+      "name": "ChineseVoice/piao.js",
+      "bytes": 104960,
+      "sha256": "361665db8b5f501092d4fb5a5ccf2aa21e34077d8a86c9cc0171d70645c94a1c"
+    },
+    {
+      "name": "ChineseVoice/pie.js",
+      "bytes": 129041,
+      "sha256": "b28876bf15cb623fe64e0dbda8aa952e52b473d574129c1c92b3aee5efb8fe59"
+    },
+    {
+      "name": "ChineseVoice/pin.js",
+      "bytes": 103015,
+      "sha256": "2431a173ac2877275b80493dbda839f45b9e9d48a84078fa4f13f0b26e8aad6e"
+    },
+    {
+      "name": "ChineseVoice/ping.js",
+      "bytes": 115859,
+      "sha256": "c241c25df3998fb6efe6339e2799a469a168436a39f86531d54b422b1ced5617"
+    },
+    {
+      "name": "ChineseVoice/po.js",
+      "bytes": 111769,
+      "sha256": "d309a148eff7c4425ed1ca337a1b200a7cccce65f1cd135ed273527a79467c02"
+    },
+    {
+      "name": "ChineseVoice/pou.js",
+      "bytes": 98729,
+      "sha256": "d92b26827f782ec01c1c05bc8049b12578b143b51077020d01241aec6f4b8b9b"
+    },
+    {
+      "name": "ChineseVoice/pu.js",
+      "bytes": 129941,
+      "sha256": "ac79cd9f40e847c052f9505de642f26a2d49e601e4e7c385ad0e58869fa63edc"
+    },
+    {
+      "name": "ChineseVoice/qi.js",
+      "bytes": 143721,
+      "sha256": "bbc50ec46ab5316b335d61ca81118c253b089246c3f5fbd61ce65d68f24cfd67"
+    },
+    {
+      "name": "ChineseVoice/qia.js",
+      "bytes": 122345,
+      "sha256": "c436df7650b930ef15cba859841462e6c32d4fc8d4db1a6f41e54a38726b0a78"
+    },
+    {
+      "name": "ChineseVoice/qian.js",
+      "bytes": 125931,
+      "sha256": "02b44f45ab40b34dd0fccf82c2d3562720dee4092e4a9ef92522ea847eea542c"
+    },
+    {
+      "name": "ChineseVoice/qiang.js",
+      "bytes": 107918,
+      "sha256": "59e7bfc781c59e9f5c32901fe80452ebe73be271869d64e685cbeb53e510a4a9"
+    },
+    {
+      "name": "ChineseVoice/qiao.js",
+      "bytes": 119342,
+      "sha256": "bb198356c8dd873bb23645988e1eba90b852a46634259b333ebf157888b50b4d"
+    },
+    {
+      "name": "ChineseVoice/qie.js",
+      "bytes": 134243,
+      "sha256": "4edeaff98e97365fbccb154aa1686b83627d23d24f8e4c8204c9b080de564aa6"
+    },
+    {
+      "name": "ChineseVoice/qin.js",
+      "bytes": 122087,
+      "sha256": "4b10816ddec98b3025c05b6307e93fc6a4d6f0be695b02268d0d0ee7d9e9ca40"
+    },
+    {
+      "name": "ChineseVoice/qing.js",
+      "bytes": 130554,
+      "sha256": "706d7e1c18238f861f043d5aba11357194cee2a00e65b5de50ce321a28d52ae1"
+    },
+    {
+      "name": "ChineseVoice/qiong.js",
+      "bytes": 121288,
+      "sha256": "a44d3a6bcabdaf4eba6c6bced2d659609be376131056ef27a33eb9599da7ca10"
+    },
+    {
+      "name": "ChineseVoice/qiu.js",
+      "bytes": 128781,
+      "sha256": "494991e5813593b86c99bc6830e01cbb727899a6fbfa49a38f52c728e0f9879e"
+    },
+    {
+      "name": "ChineseVoice/qu.js",
+      "bytes": 127792,
+      "sha256": "e816bc3e394d5fac90a0edff671562d683b498a62a622ae667facac514c887e7"
+    },
+    {
+      "name": "ChineseVoice/quan.js",
+      "bytes": 102161,
+      "sha256": "9bcc82c9bbf08560f0c04b6c297f362da3412a8127bd057c18affae1b8943cc2"
+    },
+    {
+      "name": "ChineseVoice/que.js",
+      "bytes": 124256,
+      "sha256": "2c998f905fe26ac10c9d3656142adddea7634c9fa2f7080b5f006a6aa3ae1eb4"
+    },
+    {
+      "name": "ChineseVoice/qun.js",
+      "bytes": 134423,
+      "sha256": "e41b6484d688339186fa401266d28dbd7f1fa017eec5aedc4f9dbed6758b9ea1"
+    },
+    {
+      "name": "ChineseVoice/ran.js",
+      "bytes": 106547,
+      "sha256": "2877590f9d177fda9f1306572b298e2ae45e8e7b1a91c8fa61b949652843adde"
+    },
+    {
+      "name": "ChineseVoice/rang.js",
+      "bytes": 115181,
+      "sha256": "350dd3f8629c237674556182ec1a8546fdc229103b95d56c06b07425314706b8"
+    },
+    {
+      "name": "ChineseVoice/rao.js",
+      "bytes": 113082,
+      "sha256": "c0471396b505a9f02b21234d9e239e37c9cdd32d0e9f1c14c127215c4cd7e81d"
+    },
+    {
+      "name": "ChineseVoice/re.js",
+      "bytes": 113305,
+      "sha256": "addfa6eb544e264ed761804a1bd9b75ea370468ef54f057f2114d149afd6d360"
+    },
+    {
+      "name": "ChineseVoice/ren.js",
+      "bytes": 124552,
+      "sha256": "3ab5832d07f2cc3d9773b282c882f9753fd7ac05c12404246ca2d728f064ebd5"
+    },
+    {
+      "name": "ChineseVoice/reng.js",
+      "bytes": 90373,
+      "sha256": "753d7afb8a079c2a376cf3eb8e2f3832a9037d5d4ad6011c03b3a0e449597d6f"
+    },
+    {
+      "name": "ChineseVoice/ri.js",
+      "bytes": 144261,
+      "sha256": "ce283311677865e8a45394256d5cfe552e2e53087f40214ee1025300b9a30355"
+    },
+    {
+      "name": "ChineseVoice/rong.js",
+      "bytes": 101430,
+      "sha256": "b1847bdf50915d07ff6cb7933c898b2d693c5c694c323604521d7ae0ed10a743"
+    },
+    {
+      "name": "ChineseVoice/rou.js",
+      "bytes": 105506,
+      "sha256": "3d7c4b07719d3be30880c94cc24c69d0f515c71f85b7bb23080f0547c49969d2"
+    },
+    {
+      "name": "ChineseVoice/ru.js",
+      "bytes": 118159,
+      "sha256": "32d2e729306bec4fbd8c02839ac4618c21d3e86dab381a77fc942b09d43377f9"
+    },
+    {
+      "name": "ChineseVoice/rua.js",
+      "bytes": 110765,
+      "sha256": "cbfda277e4bb04be90701ebcccfbaa118a88a3d0ec1a3cc06a316540715141c9"
+    },
+    {
+      "name": "ChineseVoice/ruan.js",
+      "bytes": 123132,
+      "sha256": "d2a6e294827c8229ed4f35780db65cbc88387aa48ac19f8d2cc9e78648f43c39"
+    },
+    {
+      "name": "ChineseVoice/rui.js",
+      "bytes": 93442,
+      "sha256": "f82d54873516aea22bb7febde5dee210d15772a004bbad325ef3ef2188a3e3b1"
+    },
+    {
+      "name": "ChineseVoice/run.js",
+      "bytes": 106152,
+      "sha256": "f10360f3cbaf2fbb5ea80601c9853787cde4265fdfe31cc807cd9b953c33cf33"
+    },
+    {
+      "name": "ChineseVoice/ruo.js",
+      "bytes": 137351,
+      "sha256": "320acd9807fd797b553a277ed217c13fbbbae3d3c98b617c83f035d8c5781bd9"
+    },
+    {
+      "name": "ChineseVoice/sa.js",
+      "bytes": 112736,
+      "sha256": "ca9560fda2a5498171d191ffd20520e2ecf4a637e09bc00b24f73705b7315cbf"
+    },
+    {
+      "name": "ChineseVoice/sai.js",
+      "bytes": 110660,
+      "sha256": "c5645393b3dfc6e82de4a4a0926cd4b20fe0dbb71847445cf3a9a33880056d09"
+    },
+    {
+      "name": "ChineseVoice/san.js",
+      "bytes": 123773,
+      "sha256": "4f46afc7b79750d3543a8f7833480676ea8fa2759c59438f703788f1cf8bf98b"
+    },
+    {
+      "name": "ChineseVoice/sang.js",
+      "bytes": 124358,
+      "sha256": "d5e77f9ba57503f483d01954411a844207abfde82a2bbd8efc64736cc87053c7"
+    },
+    {
+      "name": "ChineseVoice/sao.js",
+      "bytes": 109505,
+      "sha256": "a7287b064f2146b1d3412b1652a695bf1bed96908f4f5576a325b18070f61dc5"
+    },
+    {
+      "name": "ChineseVoice/se.js",
+      "bytes": 112849,
+      "sha256": "78d7d7469633e450acca646604ca59fc79150db579148c2e381b737f2fb92729"
+    },
+    {
+      "name": "ChineseVoice/sen.js",
+      "bytes": 97658,
+      "sha256": "a125d634f90d7e16cfbcf0020d9d156c06bd4cbacd57102d987e8e2e7bf6aab3"
+    },
+    {
+      "name": "ChineseVoice/seng.js",
+      "bytes": 109295,
+      "sha256": "22f0647af3c6d7f31750f03c93da71761684b32170261f43d284125a46a688d9"
+    },
+    {
+      "name": "ChineseVoice/sha.js",
+      "bytes": 127951,
+      "sha256": "8edeb59f380f0c250fb37d231004336c838245c953cba4f012925881bcaa48b5"
+    },
+    {
+      "name": "ChineseVoice/shai.js",
+      "bytes": 126009,
+      "sha256": "08595cd11a2a032c452d3a5d0e0dc98fd602ca6f43f608a0d50103117cb8cadf"
+    },
+    {
+      "name": "ChineseVoice/shan.js",
+      "bytes": 118109,
+      "sha256": "6100a40aecb668ed7446fee6ae1af500164868f14ad4b95c8342f80e71111cc2"
+    },
+    {
+      "name": "ChineseVoice/shang.js",
+      "bytes": 115770,
+      "sha256": "65da3a13b84c89eddea92c8d7bd3f1192938016cd1cf94836a9a6b328f091ca4"
+    },
+    {
+      "name": "ChineseVoice/shao.js",
+      "bytes": 119704,
+      "sha256": "a73858cccf516e3cc8230f932498f7bc07703669f26019ad1f1b882ea7bbf16d"
+    },
+    {
+      "name": "ChineseVoice/she.js",
+      "bytes": 135937,
+      "sha256": "3149dd8f12c250afc0694807360ec6991641df02e12cc99ebedf23ad7cb801fe"
+    },
+    {
+      "name": "ChineseVoice/shei.js",
+      "bytes": 138835,
+      "sha256": "96c9594ef8a61789980784c86edb6efaf602a9bc35b504da894b40534e7fb07b"
+    },
+    {
+      "name": "ChineseVoice/shen.js",
+      "bytes": 121699,
+      "sha256": "aa460b3cfb215d0f53c274e01de493ae1ce73df35c638322eee1352683d48512"
+    },
+    {
+      "name": "ChineseVoice/sheng.js",
+      "bytes": 97475,
+      "sha256": "179802b4b9798b4b2456cd5a1b476d90e9f8ba11fedbfdd2e0f6fa6b9512281a"
+    },
+    {
+      "name": "ChineseVoice/shi.js",
+      "bytes": 147694,
+      "sha256": "4c65e966d0b97c8c3ccff7a0f002c0e78868862bae90a3c2a88a3dbe103a14a3"
+    },
+    {
+      "name": "ChineseVoice/shou.js",
+      "bytes": 118259,
+      "sha256": "50c09ba5e2bab4961f9d5f7d652e66b1372457ccf94132ceeb9e74f8bfbbe13b"
+    },
+    {
+      "name": "ChineseVoice/shu.js",
+      "bytes": 135551,
+      "sha256": "d3407f5db671b2c34291ed9d04180686272bcb96cb80c81f44ea4ffcad31bbf1"
+    },
+    {
+      "name": "ChineseVoice/shua.js",
+      "bytes": 128653,
+      "sha256": "2b051aa87dff89374ad916ba8ae41d1ee90c140a1e0843ec6bb48f58ade1ca92"
+    },
+    {
+      "name": "ChineseVoice/shuai.js",
+      "bytes": 126847,
+      "sha256": "a5f23f5b5b4b8c3a7bd4b6653a2c2b3acbbb3b7e01a9e88cdcf34cdbc4c32b3b"
+    },
+    {
+      "name": "ChineseVoice/shuan.js",
+      "bytes": 131839,
+      "sha256": "f0a6da7aad4c0f42f00ad5ddc73a44443cd82d6bb6ba388f89805b8c15b619f3"
+    },
+    {
+      "name": "ChineseVoice/shuang.js",
+      "bytes": 128149,
+      "sha256": "b4b79385e6ef46b8ef4c34c62579a470835fd1d921942cfff44f6deff2f4c3ba"
+    },
+    {
+      "name": "ChineseVoice/shui.js",
+      "bytes": 130037,
+      "sha256": "8af080c37d301150f6a1e53c42e54f6d73d5168628406aca2e82d8b07376b388"
+    },
+    {
+      "name": "ChineseVoice/shun.js",
+      "bytes": 129423,
+      "sha256": "a6af3bffca9460ffecad4c1ba2b23f20af17d48a3d4f6a0671b265934c07fc4d"
+    },
+    {
+      "name": "ChineseVoice/shuo.js",
+      "bytes": 127434,
+      "sha256": "0e4a173e8924ea067ebada7436eb74541a97195fcdb9c0747694b98299c41878"
+    },
+    {
+      "name": "ChineseVoice/si.js",
+      "bytes": 162611,
+      "sha256": "6b64ff41b7dd0a6ab57e68a1bf959d086ac5d319ba6361e548cfd5a5b653432b"
+    },
+    {
+      "name": "ChineseVoice/song.js",
+      "bytes": 113320,
+      "sha256": "7bb3d54932ecfbb817201ffb37053651af1ccb304f4cc0d3306c7e543b56d815"
+    },
+    {
+      "name": "ChineseVoice/sou.js",
+      "bytes": 119105,
+      "sha256": "b6399249c10f9d6b5cd703b67c1112f67f8e4b7552a31f7eabdfa55ca8943581"
+    },
+    {
+      "name": "ChineseVoice/su.js",
+      "bytes": 141144,
+      "sha256": "faaabc80ca1687be56e44a8c3e7e3aab41c748befe3130877fac837864fedbf6"
+    },
+    {
+      "name": "ChineseVoice/suan.js",
+      "bytes": 121590,
+      "sha256": "9aa8518dc7c266ec0f6bef3801af1d3087f88e683dd6dca8785b9d60e3939caf"
+    },
+    {
+      "name": "ChineseVoice/sui.js",
+      "bytes": 122875,
+      "sha256": "f86eebe559e06cbbf7b6376746a8be9c0b1fb4f7d99afd8e910127dff3a2885f"
+    },
+    {
+      "name": "ChineseVoice/sun.js",
+      "bytes": 135465,
+      "sha256": "68c180e4dd1bd3e084a41c6c896606c85afdf1cd4b832d853b7f2ce061bbfc73"
+    },
+    {
+      "name": "ChineseVoice/suo.js",
+      "bytes": 131552,
+      "sha256": "5db6609f2b9cb6448f586eb98e4a972e162dba148326f3139c27283f15b044a6"
+    },
+    {
+      "name": "ChineseVoice/ta.js",
+      "bytes": 108263,
+      "sha256": "6dcba10475c4686896e394081bfdade70051fb50265295cabfdca705b803d982"
+    },
+    {
+      "name": "ChineseVoice/tai.js",
+      "bytes": 125095,
+      "sha256": "38ab9137dc55aa09359030e2a3a3c7cd0117e3ab0169fcfe57bde7ddf53431b3"
+    },
+    {
+      "name": "ChineseVoice/tan.js",
+      "bytes": 130706,
+      "sha256": "6afffabfd5f52560efd526738260bb20dbf08f4077faa8893805ed40f15ba3ee"
+    },
+    {
+      "name": "ChineseVoice/tang.js",
+      "bytes": 105007,
+      "sha256": "73adc2d893560805de830caaded774acb191098be03082a66af1ef9c3da5e97d"
+    },
+    {
+      "name": "ChineseVoice/tao.js",
+      "bytes": 100582,
+      "sha256": "4336d42ddd02558c3dc4506adf05f237ba1cc2ccee5ac35c7e23f5f8e8593882"
+    },
+    {
+      "name": "ChineseVoice/te.js",
+      "bytes": 114614,
+      "sha256": "04620c8314a6ae313a23013012e3a004e17ade002310c1d9cf350f6aeb4ac88e"
+    },
+    {
+      "name": "ChineseVoice/tei.js",
+      "bytes": 85440,
+      "sha256": "6e60afc0fb57564df3a7f956941519cbbe97b8fb77e014bf9edeedc4e51b884b"
+    },
+    {
+      "name": "ChineseVoice/teng.js",
+      "bytes": 91082,
+      "sha256": "cde0d79162384e32ee7e12f3e90a9685ebff5c0eb4bda8428526b993fab4ef12"
+    },
+    {
+      "name": "ChineseVoice/ti.js",
+      "bytes": 112330,
+      "sha256": "a361f5caf14fba93832169db972d95b8b64160efb961a2b4be5b5dfe54af5006"
+    },
+    {
+      "name": "ChineseVoice/tian.js",
+      "bytes": 98570,
+      "sha256": "216ddea253f98d1f50a4bd298ebdd907aefb3cd726f49969d16354d167c554db"
+    },
+    {
+      "name": "ChineseVoice/tiao.js",
+      "bytes": 104623,
+      "sha256": "c4054853fddf6d0ae5f2c5245b6ca84b79d38d4d96cdb2010cfa0388304c01af"
+    },
+    {
+      "name": "ChineseVoice/tie.js",
+      "bytes": 107202,
+      "sha256": "8a66cae904d2b7411904e16d8ad2ef0383e236f8a179c19a0cafec2d709f065d"
+    },
+    {
+      "name": "ChineseVoice/ting.js",
+      "bytes": 140073,
+      "sha256": "fc14d193258ac91e0ade57ac09aa301be033ed902e1fc203355dd0c899ab2e6e"
+    },
+    {
+      "name": "ChineseVoice/tong.js",
+      "bytes": 110582,
+      "sha256": "8ce61b407155f0750ab2f33484afdc204cc5a062fd88a528af9777e50d583330"
+    },
+    {
+      "name": "ChineseVoice/tou.js",
+      "bytes": 118235,
+      "sha256": "11b8a8b6d19b0aa9ad1b30b0c276229ba13e69951b66c07903cff0719a888d94"
+    },
+    {
+      "name": "ChineseVoice/tu.js",
+      "bytes": 114897,
+      "sha256": "daf9c259f3411b29d8df319dfaf03906ac86208907d9035f5b8ea9ea325fde6d"
+    },
+    {
+      "name": "ChineseVoice/tuan.js",
+      "bytes": 116237,
+      "sha256": "cb68a579b69d604133dc5de8420bc2516d4cea621d894ebf6e6eb7fefb6876f3"
+    },
+    {
+      "name": "ChineseVoice/tui.js",
+      "bytes": 132107,
+      "sha256": "fc29059dad9d82aa52cc50044ee58f2e72215ed31ede38bf8fbe54eb074dab20"
+    },
+    {
+      "name": "ChineseVoice/tun.js",
+      "bytes": 118226,
+      "sha256": "6c079495028a4bb002ae9c1efe5ff934d53ab814e2e26f432f44f09d99c26c7c"
+    },
+    {
+      "name": "ChineseVoice/tuo.js",
+      "bytes": 112626,
+      "sha256": "452c625ca35f33195b35dbecda1bc46e275b58f9b359c674c3bfd9339161b5b9"
+    },
+    {
+      "name": "ChineseVoice/wa.js",
+      "bytes": 94395,
+      "sha256": "8957ead91e855b51c7c6f308c8bb80dd6e03859009b98789f9bee7a23baf360c"
+    },
+    {
+      "name": "ChineseVoice/wai.js",
+      "bytes": 105319,
+      "sha256": "e1f0e220111c4ba6e1809289639dd35c9e66d34e33a68365908a61469a59f2f9"
+    },
+    {
+      "name": "ChineseVoice/wan.js",
+      "bytes": 86668,
+      "sha256": "db1256afe070c2ca7eac1f7d47c23a069bbe3bf2fec004277f7153651e8dc84e"
+    },
+    {
+      "name": "ChineseVoice/wang.js",
+      "bytes": 101115,
+      "sha256": "80e9e9edf03fbe5eee69ca39bbf1fcaece0e0ffc2b917b5caea03ea5fd8a992b"
+    },
+    {
+      "name": "ChineseVoice/wei.js",
+      "bytes": 137694,
+      "sha256": "e563fe4d04cc2cda029fbd895c8dbd583075f60757f9f400ce0d918c568e24a2"
+    },
+    {
+      "name": "ChineseVoice/wen.js",
+      "bytes": 96441,
+      "sha256": "55a80637cf63a91ce8d4633bd4de0dd6e71adbe0fec46a6b57a56999f92e1127"
+    },
+    {
+      "name": "ChineseVoice/weng.js",
+      "bytes": 98292,
+      "sha256": "5ad4ef6b34ed5c948cd3a6b21d49e25cb1161583f443ed598feaa0795e0eac57"
+    },
+    {
+      "name": "ChineseVoice/wo.js",
+      "bytes": 85163,
+      "sha256": "791e059c21d84cf40ac0ffb4deeee491819021c5349156f7baba18315717c159"
+    },
+    {
+      "name": "ChineseVoice/wu.js",
+      "bytes": 137058,
+      "sha256": "3cc2218698d7458f0a357e02474d83ea01c0a69c18b0c87fc4c9a6f4119427da"
+    },
+    {
+      "name": "ChineseVoice/xi.js",
+      "bytes": 147693,
+      "sha256": "0fa1dbdf9b75b118a30c899d0b27e8e7bc7052b6aa498de295d671d2f7db1edf"
+    },
+    {
+      "name": "ChineseVoice/xia.js",
+      "bytes": 122331,
+      "sha256": "46cfd692c0c133a866be33366d2b3c0b084cabe437a1d2413d2653d48f4054d2"
+    },
+    {
+      "name": "ChineseVoice/xian.js",
+      "bytes": 143564,
+      "sha256": "da9a319939226e09477f5c71997e6af2ce3cdf9ba703b6e8e64a1ccf776ca3cd"
+    },
+    {
+      "name": "ChineseVoice/xiang.js",
+      "bytes": 130871,
+      "sha256": "afb963dc68f3b2344c6cd41be2fd91a68885b0e2a44034c4b99e9c57cb67574a"
+    },
+    {
+      "name": "ChineseVoice/xiao.js",
+      "bytes": 130464,
+      "sha256": "fb894eb238315e6838dc45a5744c471bdf4e6bf5f2a5475a6cdfd8f677ccd1b1"
+    },
+    {
+      "name": "ChineseVoice/xie.js",
+      "bytes": 140566,
+      "sha256": "7179e98a55a1e63562120388897b152dc66a65bcd849454bccc358eb0e6d5d22"
+    },
+    {
+      "name": "ChineseVoice/xin.js",
+      "bytes": 125393,
+      "sha256": "1073c1455faf98d6c795283fabbef14f1d17c57851dbcd06dcdb0639b34e1d35"
+    },
+    {
+      "name": "ChineseVoice/xing.js",
+      "bytes": 134514,
+      "sha256": "615e884e188975455de04776827fcdf60d965cecb587671a1d5550c6f9ea0d57"
+    },
+    {
+      "name": "ChineseVoice/xiong.js",
+      "bytes": 122411,
+      "sha256": "1f21f8a642db074aaba51831165c200d042785bd51b8a58bd5f2f6ea53022613"
+    },
+    {
+      "name": "ChineseVoice/xiu.js",
+      "bytes": 128488,
+      "sha256": "72788622d450c3e50ee1cd480fec4471fc98c1f5d47885317a6bef5f22af1f3b"
+    },
+    {
+      "name": "ChineseVoice/xu.js",
+      "bytes": 151203,
+      "sha256": "80d2cb24db949dc91a742ca2f57420c7843cd0a0324ff822a3a100ea73b15273"
+    },
+    {
+      "name": "ChineseVoice/xuan.js",
+      "bytes": 139685,
+      "sha256": "2643a4e7a9f876568ecf44962efbd9e5215d554ddc1ed2b89fbdd7782c0352d5"
+    },
+    {
+      "name": "ChineseVoice/xue.js",
+      "bytes": 137986,
+      "sha256": "64b7bb40bb9fbaeb4fd9738e4e491407adbe6c57af90f617a4f5d4dc8f8e95f3"
+    },
+    {
+      "name": "ChineseVoice/xun.js",
+      "bytes": 161629,
+      "sha256": "d4434c9912cc3af8079bce249e43e018fe18b642da330405b3a4d8f5d84e86a7"
+    },
+    {
+      "name": "ChineseVoice/ya.js",
+      "bytes": 119722,
+      "sha256": "3e81e9c8321828059e22fe2f489887bc7b0aa4e2c5ba14122a068f1d7a26bb48"
+    },
+    {
+      "name": "ChineseVoice/yai.js",
+      "bytes": 108630,
+      "sha256": "6ececacde7f70161e32d5bbccbdce1d3e99123879cfa857b670108906e53939d"
+    },
+    {
+      "name": "ChineseVoice/yan.js",
+      "bytes": 87407,
+      "sha256": "9744e8fd0a91eaebf51921ac0898b385752904f4a58a715a378ce12efd97fb9d"
+    },
+    {
+      "name": "ChineseVoice/yang.js",
+      "bytes": 116643,
+      "sha256": "e823098e3893fef83ee4f186092916a0bbccc99b903da48a83766b3553b59aee"
+    },
+    {
+      "name": "ChineseVoice/yao.js",
+      "bytes": 92218,
+      "sha256": "70b9253a00888e419313a8f97eb390762c8be865750578ae5bd24b3fb3d9c0e4"
+    },
+    {
+      "name": "ChineseVoice/ye.js",
+      "bytes": 103051,
+      "sha256": "860e02095bcf4d828363d75cc055828ed830176bf1b001a3cb71c87e290e1b02"
+    },
+    {
+      "name": "ChineseVoice/yi.js",
+      "bytes": 132438,
+      "sha256": "ca5432bc540e35fbd76601888954465cd9e1a5d311410a6f424b59999e71f574"
+    },
+    {
+      "name": "ChineseVoice/yin.js",
+      "bytes": 105754,
+      "sha256": "8afa65914e0c12f0eccf90dacacce076479189dc7f879786a540f79d97e36d58"
+    },
+    {
+      "name": "ChineseVoice/ying.js",
+      "bytes": 110904,
+      "sha256": "e5a733572da186697639bacc9b7c76cd54176eee76c21d1ff9bba52d367086fd"
+    },
+    {
+      "name": "ChineseVoice/yong.js",
+      "bytes": 107445,
+      "sha256": "b96aa2b4563b57d1f78366582bcca2057f1925844f5b4092d648674bbff1aaa7"
+    },
+    {
+      "name": "ChineseVoice/you.js",
+      "bytes": 97775,
+      "sha256": "5ff7799aa1d459178c5c5b2caef9baae59ec83b3dd331b817ddc9143f44b63b1"
+    },
+    {
+      "name": "ChineseVoice/yu.js",
+      "bytes": 102728,
+      "sha256": "60f9ea995ec219043a22a613aafa03d6efa5cac83c22cdd12c2d3b72d78cd69c"
+    },
+    {
+      "name": "ChineseVoice/yuan.js",
+      "bytes": 96778,
+      "sha256": "0511ff49b59ace99be8d0748b078cacf48f776fb89132c4d22ee51ed5a14abe9"
+    },
+    {
+      "name": "ChineseVoice/yue.js",
+      "bytes": 108763,
+      "sha256": "6ce49a493e4020325e6fd8f9ae72353cc3c02003bc538917585df947c72197ed"
+    },
+    {
+      "name": "ChineseVoice/yun.js",
+      "bytes": 111014,
+      "sha256": "001a49ba5f8d946dc1bb36c86d791ebd963ad83bb96d135696d1901ae68391cf"
+    },
+    {
+      "name": "ChineseVoice/za.js",
+      "bytes": 104859,
+      "sha256": "0bf39f80dceacacab55e5d6ef96ed1bc687c4aa727a58c8ca63d5b62cebb01ac"
+    },
+    {
+      "name": "ChineseVoice/zai.js",
+      "bytes": 96818,
+      "sha256": "af9e3be2081322ce3fdc3a48aea650151499f65cf8f2152ee8845225ef8e4a54"
+    },
+    {
+      "name": "ChineseVoice/zan.js",
+      "bytes": 80767,
+      "sha256": "b770599f136131b32746914791ed5a209ceb013285694cc24aaa5146646caafb"
+    },
+    {
+      "name": "ChineseVoice/zang.js",
+      "bytes": 107570,
+      "sha256": "39e2803169f63b0856041e6a72c7fc13baf6362dd6da4c5e02ff1dc9dfd68dd0"
+    },
+    {
+      "name": "ChineseVoice/zao.js",
+      "bytes": 81123,
+      "sha256": "db9e57dd81687c0c92c14c533fbd253881c16dbebeabd78f0e51483198dcf94c"
+    },
+    {
+      "name": "ChineseVoice/ze.js",
+      "bytes": 111282,
+      "sha256": "dcc72ba11555d67522dce2528a83506dfd5f8d0ee9715213061a0577ba0d9d37"
+    },
+    {
+      "name": "ChineseVoice/zei.js",
+      "bytes": 96112,
+      "sha256": "4fdbb1cdfcfea6d48f1347ea81411fe2c3b134b6994fc21220518eac4baca289"
+    },
+    {
+      "name": "ChineseVoice/zen.js",
+      "bytes": 108860,
+      "sha256": "739a58d3b4b135899b021d816080403a60965875b21736397d8541d1d45ddbd4"
+    },
+    {
+      "name": "ChineseVoice/zeng.js",
+      "bytes": 91758,
+      "sha256": "edb7c65bb2a2a9b639e1f5e478570f32fcadd4cb11e43eec6bb923172dfca7bb"
+    },
+    {
+      "name": "ChineseVoice/zha.js",
+      "bytes": 99216,
+      "sha256": "cc16a99fc1c5289c48b0f47067ac3d9353fb562f60f08b8a763968d9ed3da741"
+    },
+    {
+      "name": "ChineseVoice/zhai.js",
+      "bytes": 108458,
+      "sha256": "72f3d5ce42cc09108f72afc3f061d3990dd4ebeec585b4610f88964e45c40dde"
+    },
+    {
+      "name": "ChineseVoice/zhan.js",
+      "bytes": 98308,
+      "sha256": "39ddfcb205f6c395036d74b2c8bee17089ec349f57d9d547bf79d6ce6aa320df"
+    },
+    {
+      "name": "ChineseVoice/zhang.js",
+      "bytes": 99102,
+      "sha256": "34f04b127cc6aa0a0c92db9726d7875170d95dcee12f1551043e86ec3dcb6fef"
+    },
+    {
+      "name": "ChineseVoice/zhao.js",
+      "bytes": 90238,
+      "sha256": "df312ba80eabdeeadd07d188e1056b06a22188379f947a0d37a937be6170151e"
+    },
+    {
+      "name": "ChineseVoice/zhe.js",
+      "bytes": 96301,
+      "sha256": "0f766e14f0503de0584ac241ca79d8cf132fbe922d5c68657b9ab0a2331d55d2"
+    },
+    {
+      "name": "ChineseVoice/zhei.js",
+      "bytes": 105101,
+      "sha256": "6efc89268e12fe0244cf231c3f14d33335bd8b4edfaf2f8e1e1d8bdad9e4147c"
+    },
+    {
+      "name": "ChineseVoice/zhen.js",
+      "bytes": 99789,
+      "sha256": "4e31208d5145e2c0cb4f229ec5d69828eff7a217fe8b889188cba7f59c1eea95"
+    },
+    {
+      "name": "ChineseVoice/zheng.js",
+      "bytes": 110420,
+      "sha256": "23e7f5deaac1c1fefbcf778a273905a732c49cb201fe41788df45ab4a83b84d8"
+    },
+    {
+      "name": "ChineseVoice/zhi.js",
+      "bytes": 128846,
+      "sha256": "84106ca95d319c897e08815faa53937f26600a57e4087a454d3d4f5b30c56df6"
+    },
+    {
+      "name": "ChineseVoice/zhong.js",
+      "bytes": 98375,
+      "sha256": "9a76c744ffa1fbbc072dac78ae4d0f53629ee8bb528da24ab48fdaf5193ec82a"
+    },
+    {
+      "name": "ChineseVoice/zhou.js",
+      "bytes": 92505,
+      "sha256": "378d6a376f28d312f9404d6268fb45a77e7b9ad22761448ee33a8ac45a47d786"
+    },
+    {
+      "name": "ChineseVoice/zhu.js",
+      "bytes": 113025,
+      "sha256": "378471e8d60830e57fb4d233b2d78566e790da4abaf4c701aebf05c305cb115e"
+    },
+    {
+      "name": "ChineseVoice/zhua.js",
+      "bytes": 90012,
+      "sha256": "fd5b35f627e67032763f1beb2e6b78b36b776cd9b74c199c794bfae8d9e15add"
+    },
+    {
+      "name": "ChineseVoice/zhuai.js",
+      "bytes": 114237,
+      "sha256": "fc0b55647718e687e63034d95919957f62581b75870c2d3e43a541c498455000"
+    },
+    {
+      "name": "ChineseVoice/zhuan.js",
+      "bytes": 97275,
+      "sha256": "cc6caa15aaa4fd4c1a39208e02426724b5233508776e7db82fcaa84447a72739"
+    },
+    {
+      "name": "ChineseVoice/zhuang.js",
+      "bytes": 101916,
+      "sha256": "0e2fa11a37a292d10565ccb13b6f22a69d73287871721cccaba20cc90179096d"
+    },
+    {
+      "name": "ChineseVoice/zhui.js",
+      "bytes": 124528,
+      "sha256": "ee3e0680601b71a506ac141ff5b93997326cffbe75e74ba6992b3798397f39aa"
+    },
+    {
+      "name": "ChineseVoice/zhun.js",
+      "bytes": 115111,
+      "sha256": "93d026b36cb5a8bdbbf86493345271640cb3883f608329207cafbead0ec34f9f"
+    },
+    {
+      "name": "ChineseVoice/zhuo.js",
+      "bytes": 102583,
+      "sha256": "3f3fdf8947794fe850bec34cdbd37bcd0ea809ce8371ea3a688021dfc42fc198"
+    },
+    {
+      "name": "ChineseVoice/zi.js",
+      "bytes": 130150,
+      "sha256": "7d9a1da9d5e67a143c43ae28c0c59127473fee32b756d0cefe215ab7fe18773e"
+    },
+    {
+      "name": "ChineseVoice/zong.js",
+      "bytes": 103814,
+      "sha256": "536d306edf5b73acdb688c7aecf8cef716b35ddf6990181849737f62b3d01d41"
+    },
+    {
+      "name": "ChineseVoice/zou.js",
+      "bytes": 103666,
+      "sha256": "ee27553778f66553f69c8b494bc9452c87a1c527c0ecf3a670c27e30e8729c0d"
+    },
+    {
+      "name": "ChineseVoice/zu.js",
+      "bytes": 126032,
+      "sha256": "937ae4fdba941020fd7a0d7fa65bf5a8e7c391c1bb81f3746d232c18c60ccd06"
+    },
+    {
+      "name": "ChineseVoice/zuan.js",
+      "bytes": 105969,
+      "sha256": "06fd7972fb2a1fb67f047fc14b6fcebfee2e4e49ff6bb649511650267301d8ec"
+    },
+    {
+      "name": "ChineseVoice/zui.js",
+      "bytes": 121015,
+      "sha256": "373624850d4aa83ff73539b11cd132eb4b68fc796a9491afc24f90cca22bc939"
+    },
+    {
+      "name": "ChineseVoice/zun.js",
+      "bytes": 116476,
+      "sha256": "0e97a64c9f4d3c7d6b2aeebfddba241e3ab3ef15b92d06e7ab4b700a49facc44"
+    },
+    {
+      "name": "ChineseVoice/zuo.js",
+      "bytes": 85989,
+      "sha256": "3ff975f9f39b88bab83770bc3db97038e3fee3651f4f50e73b899850325058f1"
+    },
+    {
       "name": "diagram.html",
       "bytes": 2122,
       "sha256": "b888032f8c36f885bd0c76422a6f3361f185821ad3c6934c7bde116129fdbed5"
@@ -152,6 +2277,16 @@
       "sha256": "24e3f8b3cd68966f4a70e62b6b878cc5030b38a17fee1feba0dc346501e62304"
     },
     {
+      "name": "reading-voice-runtime.js",
+      "bytes": 595199,
+      "sha256": "c424f2b577e28f0aa7e9e95efdff5f05ec2caf8b5c0d8ba01ac8f84038eccf71"
+    },
+    {
+      "name": "reading-voice.html",
+      "bytes": 531,
+      "sha256": "bcd6744edcc513e9985f5dc3cd140146fb47a225ba0eeb4c4718544d118078a7"
+    },
+    {
       "name": "selection-runtime.js",
       "bytes": 3706,
       "sha256": "09944bbb41bcfc08f748256840d5e6badd5b4a7471c41787749249a86d4b71f3"
@@ -160,6 +2295,41 @@
       "name": "viewer-entry.js",
       "bytes": 525190,
       "sha256": "459c6831a92dbc2691a327d586a90a02cd3df36941c74a8a06150f6d319f8fd5"
+    },
+    {
+      "name": "voice-notices.txt",
+      "bytes": 2159,
+      "sha256": "08fa8fa812e71723d748366282a3b9c4ac5b5890422cb19ba42176d4c0861eff"
+    },
+    {
+      "name": "Webi/情绪动作.webp",
+      "bytes": 262642,
+      "sha256": "7e4ea0254f0ab2c4972012363ffe8dd060b141ed1b93ecdd3c23cce82ad7c8bc"
+    },
+    {
+      "name": "Webi/独立口型.png",
+      "bytes": 5530,
+      "sha256": "4ae14e619c99345897dc058607ed1737a22fa52fa79d2f59aee77ea34a935435"
+    },
+    {
+      "name": "Webi/素材清单.json",
+      "bytes": 1720,
+      "sha256": "ff251d3e700f30ec8e6d53b31432a465bcfbc3f78084d5abd45356299a27bf1f"
+    },
+    {
+      "name": "Webi/课堂动作.webp",
+      "bytes": 201228,
+      "sha256": "74de1280a6d1ebd54c716664ab1cdb0151a9afe1c8475e16e3c0e09ee9dc999d"
+    },
+    {
+      "name": "whiteboard-runtime.js",
+      "bytes": 687328,
+      "sha256": "ff31c72b3d31f809f121575a55fe0a1ee39471dd4abf4c31d8254875bcfa77f1"
+    },
+    {
+      "name": "whiteboard.html",
+      "bytes": 3686,
+      "sha256": "1fe111876667f973762c45d62324b397b03db71533c395a29f742118c7b1eb79"
     }
   ]
 }

@@ -1,0 +1,229 @@
+import XCTest
+@testable import WeiBei
+@testable import WeiBeiCore
+
+final class WhiteboardLessonTests: XCTestCase {
+    private let source = WhiteboardSource(itemID: "material-a", title: "计量经济学",
+        pages: [.init(number: 12, text: "最小二乘法使残差平方和最小。残差等于观测值减去预测值；平方避免正负抵消，且更重地惩罚较大误差。")])
+    private let stream = #"""
+    {"type":"new_page","step_id":"p1","title":"理解残差","page_id":"page-a"}
+    {"type":"group","step_id":"group1","actions":[{"type":"board","step_id":"b1","board_uid":0,"card_type":"formula","title":"残差","board_content":"残差是观测值与预测值之差：$e_i=y_i-\\hat y_i$。","source_page":12},{"type":"speak","step_id":"s1","spoken_text":"先看观测值与预测值之差。"}]}
+    {"type":"highlight","step_id":"h1","target_board_id":0,"snippet":"观测值","color":"red"}
+    {"type":"ask","step_id":"q1","mode":"choice","question":"为什么平方？","options":["避免正负抵消","没有原因"],"correct_index":0,"explanation":"正负误差直接相加会抵消。"}
+    """#
+    private func lesson() throws -> WhiteboardLesson {
+        var parser = WhiteboardActionDecoder()
+        let lesson = WhiteboardLesson(title: "理解残差", actions: try parser.append(stream, final: true))
+        try lesson.validate(source: source); return lesson
+    }
+
+    func testIncrementalProtocolAndAtomicAcknowledgementGate() throws {
+        var parser = WhiteboardActionDecoder(), actions: [WhiteboardAction] = []
+        for character in stream { actions += try parser.append(String(character)) }
+        actions += try parser.append("", final: true)
+        XCTAssertEqual(actions, try lesson().actions)
+        var gate = WhiteboardActionGate()
+        let first = try XCTUnwrap(gate.dispatch(actions))
+        XCTAssertNil(gate.dispatch(actions), "One action remains in flight until ACK")
+        XCTAssertFalse(gate.acknowledge(stepID: first.0.stepID, ticket: first.1, success: false))
+        XCTAssertFalse(gate.acknowledge(stepID: "other", ticket: first.1, success: true))
+        XCTAssertFalse(gate.acknowledge(stepID: first.0.stepID, ticket: UUID(), success: true))
+        XCTAssertTrue(gate.acknowledge(stepID: first.0.stepID, ticket: first.1, success: true))
+        XCTAssertFalse(gate.acknowledge(stepID: first.0.stepID, ticket: first.1, success: true))
+        let group = try XCTUnwrap(gate.dispatch(actions))
+        XCTAssertFalse(gate.acknowledge(stepID: "b1", ticket: group.1, success: true), "Child completion cannot advance a group")
+        gate.retry()
+        let retry = try XCTUnwrap(gate.dispatch(actions))
+        XCTAssertEqual(retry.0.stepID, group.0.stepID)
+        XCTAssertFalse(gate.acknowledge(stepID: group.0.stepID, ticket: group.1, success: true))
+        XCTAssertTrue(gate.acknowledge(stepID: retry.0.stepID, ticket: retry.1, success: true))
+        XCTAssertEqual(gate.cursor, 2)
+    }
+
+    func testInvalidModelOutputStopsInsteadOfInventingContent() throws {
+        var parser = WhiteboardActionDecoder()
+        XCTAssertThrowsError(try parser.append("```json\n"))
+        parser = .init(); _ = try parser.append("{\"type\":\"board\"")
+        XCTAssertThrowsError(try parser.append("", final: true))
+        var value = try lesson()
+        value.actions[1].actions![0].sourcePage = 99
+        XCTAssertThrowsError(try value.validate(source: source))
+        value = try lesson(); value.actions[2].targetBoardID = 999
+        XCTAssertThrowsError(try value.validate(source: source))
+        value = try lesson(); value.actions[2].rect = .init(x: 0.9, y: 0, w: 0.5, h: 1)
+        XCTAssertThrowsError(try value.validate(source: source))
+        value = try lesson(); value.actions[3].stepID = "b1"
+        XCTAssertThrowsError(try value.validate(source: source))
+        value = try lesson(); value.actions[3].correctIndex = 8
+        XCTAssertThrowsError(try value.validate(source: source))
+    }
+
+    func testPersistenceRetainsStepAndContentAndNeverOverwritesOnInvalidSave() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = WhiteboardSessionStore(directory: folder)
+        var value = WhiteboardSession(source: source, goal: "讲解", lesson: try lesson())
+        value.cursor = 2; value.generationComplete = true; value.answers["q1"] = "避免正负抵消"
+        let state = #"{"version":1,"revision":42,"activePageId":"page-a","pages":[{"id":"page-a","title":"理解残差","overlayItems":[{"id":"b1","kind":"note_card","x":20,"y":66,"w":320,"h":160,"columnIndex":0,"boardUid":0,"keypoint":{"title":"残差","content":"公式","type":"formula"},"decorations":[]}],"columnLayout":{"columns":[{"w":320,"nextY":246}],"activeIndex":0,"lp":{"tileW":320}}}]}"#
+        value.canvas = try JSONDecoder().decode(WhiteboardCanvasState.self, from: Data(state.utf8))
+        try store.save(value)
+        XCTAssertEqual(try store.load(value.id), value)
+        XCTAssertEqual(try store.list(itemID: "other-material"), [])
+        XCTAssertTrue(value.markdown().contains("避免正负抵消"))
+        let original = try Data(contentsOf: store.url(value.id))
+        value.cursor = 99
+        XCTAssertThrowsError(try store.save(value))
+        XCTAssertEqual(try Data(contentsOf: store.url(value.id)), original)
+        try Data("damaged".utf8).write(to: store.url(value.id))
+        XCTAssertThrowsError(try store.list(itemID: source.itemID))
+        XCTAssertEqual(try String(contentsOf: store.url(value.id)), "damaged")
+    }
+
+    func testMediaCredentialsAreBoundToEachServiceEndpoint() throws {
+        var a = WhiteboardMediaSettings.Channel(); a.baseURL = "https://one.example/v1"; a.model = "tts"
+        var b = a; b.baseURL = "https://two.example/v1"
+        XCTAssertNotEqual(try a.credentialID(kind: "speech"), try b.credentialID(kind: "speech"))
+        b.baseURL = "http://public.example/v1"
+        XCTAssertThrowsError(try b.credentialID(kind: "speech"))
+    }
+
+    func testTeacherStreamsOnePageAndReplyUsesCurrentAnswers() async throws {
+        let capture = WhiteboardRequestCapture()
+        let pageStream = #"{"type":"session_ready","step_id":"outline","key_points":["残差","平方","比较"]}"# + "\n" + stream
+            + "\n" + #"{"type":"keypoint_complete","step_id":"done","index":0}"#
+        var value = WhiteboardSession(source: source, goal: "讲解", lesson: .init(title: "残差"))
+        let reply = try await WhiteboardTeacher.generatePage(
+            adapter: WhiteboardTestAdapter(text: pageStream, finish: .stop, capture: capture), model: "configured-model",
+            source: source, goal: value.goal, page: 1, session: value, receive: { action in capture.actions.append(action) })
+        XCTAssertEqual(capture.actions, reply.actions, "Do not append blockEnd after textDelta a second time")
+        XCTAssertEqual(reply.actions.last?.index, 0)
+        XCTAssertEqual(capture.request?.model, "configured-model")
+        XCTAssertTrue(capture.request?.messages.last?.content.contains("material-a") == true)
+        value.lesson = reply; value.answers["q1"] = "避免正负抵消"
+        capture.actions = []
+        try await WhiteboardTeacher.reply(adapter: WhiteboardTestAdapter(
+            text: #"{"type":"speak","step_id":"reply1","spoken_text":"平方避免抵消。"}"#, finish: .stop, capture: capture),
+            model: "m", session: value, question: "为什么平方？", receive: { capture.actions.append($0) })
+        XCTAssertEqual(capture.actions.count, 1)
+        XCTAssertTrue(capture.request?.messages.last?.content.contains("避免正负抵消") == true)
+        XCTAssertTrue(capture.request?.messages.last?.content.contains("group1") == true)
+        do {
+            _ = try await WhiteboardTeacher.generatePage(
+                adapter: WhiteboardTestAdapter(text: pageStream, finish: .length, capture: capture), model: "m",
+                source: source, goal: "g", page: 1, session: .init(source: source, goal: "g", lesson: .init(title: "残差")), receive: { _ in })
+            XCTFail("Truncated output must fail even if received lines contain valid JSON")
+        } catch {}
+    }
+
+    @MainActor
+    func testClassroomWaitsForMatchingAckAndRestoresUnfinishedAction() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let classroom = WhiteboardClassroom(directory: folder, provider: .custom, baseURL: "http://localhost:1/v1", model: "fixture")
+        classroom.settings.voice = .silent
+        var value = WhiteboardSession(source: source, goal: "讲解", lesson: try lesson()); value.generationComplete = true
+        classroom.session = value
+        var envelopes: [[String: Any]] = []
+        let first = expectation(description: "First action"), second = expectation(description: "Second action")
+        classroom.attachRenderer { method, args in
+            if method == "restore" { classroom.receive(["type":"restored", "request_id":args["requestID"]!]) }
+            if method == "receive", let env = args["envelope"] as? [String:Any] {
+                envelopes.append(env)
+                if envelopes.count == 1 { first.fulfill() }
+                if envelopes.count == 2 { second.fulfill() }
+            }
+        }
+        classroom.play()
+        await fulfillment(of: [first], timeout: 2)
+        XCTAssertEqual(envelopes.count, 1); XCTAssertEqual(classroom.session?.cursor, 0)
+        let ticket = try XCTUnwrap(envelopes.first?["ticket"] as? String)
+        classroom.receive(["type":"action_step_complete", "step_id":"wrong", "ticket":ticket])
+        XCTAssertEqual(classroom.session?.cursor, 0)
+        classroom.receive(["type":"action_step_complete", "step_id":"p1", "ticket":ticket])
+        await fulfillment(of: [second], timeout: 2)
+        XCTAssertEqual(classroom.session?.cursor, 1)
+        classroom.receive(["type":"action_step_complete", "step_id":"p1", "ticket":ticket])
+        XCTAssertEqual(classroom.session?.cursor, 1)
+        let reader = ReadAloud.shared
+        reader.start(id: "reading-fixture") { try await Task.sleep(for: .seconds(60)); return "残差" }
+        XCTAssertFalse(classroom.playing, "Another reading source pauses the unfinished classroom action")
+        XCTAssertEqual(classroom.session?.cursor, 1, "Switching speech focus must never acknowledge the unfinished group")
+        XCTAssertEqual(reader.sourceID, "reading-fixture")
+        classroom.play()
+        XCTAssertNil(reader.sourceID, "Resuming the classroom cancels the previous reading source")
+        XCTAssertEqual(classroom.session?.cursor, 1)
+        classroom.close()
+        let saved = try classroom.archive.load(value.id)
+        XCTAssertEqual(saved.cursor, 1); XCTAssertEqual(saved.lesson, value.lesson)
+    }
+
+    func testLiveConfiguredModelProducesUsableLesson() async throws {
+        guard ProcessInfo.processInfo.environment["WEIBEI_WHITEBOARD_LIVE"] == "1" else {
+            throw XCTSkip("Explicit opt-in: uses the configured provider outside CI.")
+        }
+        let model = NativeProviderRouting.route(.openaiCodex).defaultModel
+        let adapter = try await NativeLLMAdapterFactory.make(provider: .openaiCodex, model: model,
+            endpoint: AgentProviderEndpoint(provider: .openaiCodex, baseURL: ""))
+        let capture = WhiteboardRequestCapture(), start = Date()
+        var value = WhiteboardSession(source: source, goal: "讲解残差为什么需要平方，用公式和一张 Mermaid 关系图，最后出一道选择题。", lesson: .init(title: "理解最小二乘法"))
+        for page in 1...6 {
+            capture.actions = []
+            let part = try await WhiteboardTeacher.generatePage(adapter: adapter, model: model, source: source,
+                goal: value.goal, page: page, session: value, receive: { action in
+                    if capture.actions.isEmpty { print("FIRST_ACTION_SECONDS \(Date().timeIntervalSince(start))") }
+                    if page == 1 && action.leaves.contains(where: { $0.type == .board || $0.type == .graph }) && !capture.actions.contains(where: { $0.leaves.contains(where: { $0.type == .board || $0.type == .graph }) }) {
+                        print("FIRST_BOARD_RECEIVED_SECONDS \(Date().timeIntervalSince(start))")
+                    }
+                    capture.actions.append(action)
+                })
+            value.lesson.actions += part.actions; value.generatedPages = page
+            value.lesson.title = value.lesson.actions.first?.title ?? "理解最小二乘法"
+            if page >= value.keyPoints.count { value.generationComplete = true; break }
+        }
+        try value.lesson.validate(source: source)
+        XCTAssertTrue(value.generationComplete)
+        XCTAssertTrue(value.lesson.actions.contains { $0.questionAction != nil })
+        if let path = ProcessInfo.processInfo.environment["WEIBEI_WHITEBOARD_EVIDENCE"] {
+            try WhiteboardSessionStore(directory: URL(fileURLWithPath: path)).save(value)
+        }
+    }
+
+    @MainActor
+    func testSystemSpeechUsesRealStartBoundaryAndCompletion() async throws {
+        guard ProcessInfo.processInfo.environment["WEIBEI_SYSTEM_SPEECH_LIVE"] == "1" else {
+            throw XCTSkip("Explicit opt-in: plays a short Chinese acceptance sentence using the installed system voice.")
+        }
+        let narrator = SystemNarrator.shared
+        let started = expectation(description: "System voice starts"), finished = expectation(description: "System voice finishes")
+        let text = "残差等于观测值减去预测值。"
+        var ranges: [NSRange] = [], outcome: Error?
+        narrator.speak(text, speed: 1, started: { started.fulfill() }, boundary: { ranges.append($0) }, completed: { error in
+            outcome = error; finished.fulfill()
+        })
+        await fulfillment(of: [started, finished], timeout: 30, enforceOrder: true)
+        XCTAssertNil(outcome); XCTAssertFalse(ranges.isEmpty)
+        XCTAssertTrue(ranges.allSatisfy { $0.location >= 0 && NSMaxRange($0) <= (text as NSString).length })
+        var wasCancelled = false
+        narrator.speak("这句话随后会被取消。", speed: 1, started: {}, completed: { wasCancelled = $0 is CancellationError })
+        narrator.stop(); XCTAssertTrue(wasCancelled)
+    }
+}
+
+private final class WhiteboardRequestCapture: @unchecked Sendable {
+    var request: NativeLLMRequest?
+    var actions: [WhiteboardAction] = []
+}
+private struct WhiteboardTestAdapter: NativeLLMAdapter {
+    let family = "test"
+    let text: String
+    let finish: NativeFinishReason
+    let capture: WhiteboardRequestCapture
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        capture.request = request
+        return AsyncThrowingStream { continuation in
+            for character in text { continuation.yield(.textDelta(index: 0, text: String(character))) }
+            continuation.yield(.blockEnd(index: 0, block: .text(text)))
+            continuation.yield(.finish(reason: finish, replayState: nil)); continuation.finish()
+        }
+    }
+}

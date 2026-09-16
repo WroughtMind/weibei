@@ -7,6 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FABC01230000000000000004 /* ReadAloudControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FABC01230000000000000003 /* ReadAloudControls.swift */; };
+		FABC01230000000000000002 /* ReadAloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = FABC01230000000000000001 /* ReadAloud.swift */; };
+		FAED00100000000000000001 /* WorkspaceStore+Whiteboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAED00100000000000000002 /* WorkspaceStore+Whiteboard.swift */; };
+		F9D8349D02F42B25ECC8B0AB /* WhiteboardCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40805DD7B77A4C164CA3E1ED /* WhiteboardCanvasView.swift */; };
+		A4283641713B8BF9F6B629CB /* WhiteboardSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E24C9301A7E73D1A60BF02 /* WhiteboardSessionView.swift */; };
+		4D62177C460AEADB296BB2AB /* WhiteboardClassroom.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED05DA5868E871ACC0A87CA5 /* WhiteboardClassroom.swift */; };
+		33F2B17FBA0FA0106D198350 /* WhiteboardTeacher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC4E193DC17BA9AF9E52E3C /* WhiteboardTeacher.swift */; };
+		D3B9B36D787C85E8759539F4 /* WhiteboardMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5FA25861D22C2E846AC3AB4 /* WhiteboardMedia.swift */; };
+		631FB50B853C3BAB05DDDA0B /* WhiteboardLesson.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B11447A1642767ECA654631 /* WhiteboardLesson.swift */; };
 		014CAA0987ACF6294F39D1A2 /* AgentAccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D92418B7C7756A863085B9D /* AgentAccountService.swift */; };
 		0251D244D2FD142022993345 /* NativeAgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */; };
 		034100326A738DEAC681BF7F /* ImageMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB49A5CAD7B99BDF0E8D6FAD /* ImageMarkdownView.swift */; };
@@ -273,6 +282,15 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		FABC01230000000000000003 /* ReadAloudControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadAloudControls.swift; sourceTree = "<group>"; };
+		FABC01230000000000000001 /* ReadAloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadAloud.swift; sourceTree = "<group>"; };
+		FAED00100000000000000002 /* WorkspaceStore+Whiteboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+Whiteboard.swift"; sourceTree = "<group>"; };
+		40805DD7B77A4C164CA3E1ED /* WhiteboardCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardCanvasView.swift; sourceTree = "<group>"; };
+		77E24C9301A7E73D1A60BF02 /* WhiteboardSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardSessionView.swift; sourceTree = "<group>"; };
+		ED05DA5868E871ACC0A87CA5 /* WhiteboardClassroom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardClassroom.swift; sourceTree = "<group>"; };
+		CCC4E193DC17BA9AF9E52E3C /* WhiteboardTeacher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardTeacher.swift; sourceTree = "<group>"; };
+		A5FA25861D22C2E846AC3AB4 /* WhiteboardMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardMedia.swift; sourceTree = "<group>"; };
+		6B11447A1642767ECA654631 /* WhiteboardLesson.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardLesson.swift; sourceTree = "<group>"; };
 		00FB03E91469CACE2F8CEF89 /* CoursePortableState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoursePortableState.swift; sourceTree = "<group>"; };
 		0143654F5459DD613936A2D2 /* CourseProjectRootSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseProjectRootSupport.swift; sourceTree = "<group>"; };
 		01EDB37E094162897A3C510E /* CourseSidebarTagSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseSidebarTagSupport.swift; sourceTree = "<group>"; };
@@ -573,6 +591,7 @@
 				5FB801ABB9BE25818268419F /* WorkspaceStore+NotesPersistence.swift */,
 				034D6D52BAEAD08A9A0FAEDE /* WorkspaceStore+SelectionRemark.swift */,
 				3E73D78FF30845E50524C3B1 /* WorkspaceStore+SessionMessages.swift */,
+				FAED00100000000000000002 /* WorkspaceStore+Whiteboard.swift */,
 				3CF453C08CC7FE075BE53DB1 /* WorkspaceStore+SelectionChat.swift */,
 				5BF617840FA3436FFFF504FA /* WorkspaceStore+SessionTitle.swift */,
 				C2736E07206739804FBB5FDA /* WorkspaceStore+SnapshotRecovery.swift */,
@@ -666,6 +685,9 @@
 				8E93D3DD50F06C9F4B6003C2 /* WeiBeiAppBuildInfo.swift */,
 				6466DFC31FC844340EE76AA1 /* WeiBeiLog.swift */,
 				895661426136DBC4F464D6BE /* WeiBeiPerfBudgets.swift */,
+				6B11447A1642767ECA654631 /* WhiteboardLesson.swift */,
+				A5FA25861D22C2E846AC3AB4 /* WhiteboardMedia.swift */,
+				CCC4E193DC17BA9AF9E52E3C /* WhiteboardTeacher.swift */,
 				2B36FBF40C988CDB377C7075 /* WorkspaceModels.swift */,
 				E03CCE789A98C2C282869A38 /* WorkspaceResumePoint.swift */,
 				8FA4D62096C79888EA83CE54 /* NativeAgentRuntime */,
@@ -743,6 +765,9 @@
 				178A366B5659AC7A47E7AA30 /* PDFReaderOpenSafety.swift */,
 				9E988A09E37D58AB7C5DB6EF /* ReaderPDFContentRailPreview.swift */,
 				617BA2B0C06AA0951BAF0CDD /* ReaderPDFRemarkMarks.swift */,
+				77E24C9301A7E73D1A60BF02 /* WhiteboardSessionView.swift */,
+				FABC01230000000000000003 /* ReadAloudControls.swift */,
+				40805DD7B77A4C164CA3E1ED /* WhiteboardCanvasView.swift */,
 				B70D1158336BFF2387EA4B24 /* ReaderView.swift */,
 				CD62172095286419347BAD3C /* ReaderWebRemarkMarks.swift */,
 				128917445B9A5AAAD21DDFD8 /* RichMarkdownEditorView.swift */,
@@ -806,6 +831,8 @@
 				EA7C69F915A6ED6E8562DD64 /* WeiBeiResources.swift */,
 				30D3D6648BFD9F4924004459 /* WeiBeiWebViewConfiguration.swift */,
 				27CFEABFEA9E0BD9DD27C865 /* WorkspaceFileDialog.swift */,
+				ED05DA5868E871ACC0A87CA5 /* WhiteboardClassroom.swift */,
+				FABC01230000000000000001 /* ReadAloud.swift */,
 				E4DECE1968935604B8E2CB07 /* WorkspaceViewSupport.swift */,
 			);
 			path = Support;
@@ -1176,6 +1203,9 @@
 				662568A537D4F0175AAC1482 /* WeiBeiAppBuildInfo.swift in Sources */,
 				B1077BB5214A97ABDACC3055 /* WeiBeiLog.swift in Sources */,
 				7827AF14F4882BBF9FCC9DF7 /* WeiBeiPerfBudgets.swift in Sources */,
+				631FB50B853C3BAB05DDDA0B /* WhiteboardLesson.swift in Sources */,
+				D3B9B36D787C85E8759539F4 /* WhiteboardMedia.swift in Sources */,
+				33F2B17FBA0FA0106D198350 /* WhiteboardTeacher.swift in Sources */,
 				483969E85BDE060DE0E0E0A8 /* WorkspaceModels.swift in Sources */,
 				B01B6EC4450499712E9CA674 /* WorkspaceResumePoint.swift in Sources */,
 			);
@@ -1266,6 +1296,9 @@
 				2C624A003FFDB2EBD1194CF9 /* PreparedContent.swift in Sources */,
 				8A19BD11B88AFDFA25B03F3F /* ReaderPDFContentRailPreview.swift in Sources */,
 				67CD2D629BEF4566A01E50A3 /* ReaderPDFRemarkMarks.swift in Sources */,
+				A4283641713B8BF9F6B629CB /* WhiteboardSessionView.swift in Sources */,
+				FABC01230000000000000004 /* ReadAloudControls.swift in Sources */,
+				F9D8349D02F42B25ECC8B0AB /* WhiteboardCanvasView.swift in Sources */,
 				4EF5FF4C48360845B139AF97 /* ReaderView.swift in Sources */,
 				BAED75D670CA5D37AC28EC72 /* ReaderWebRemarkMarks.swift in Sources */,
 				8AD5703AE2BB476ABF376A4B /* RichMarkdownEditorView.swift in Sources */,
@@ -1302,6 +1335,7 @@
 				E2A930C9BADF30856ECC07C3 /* WorkspaceStore+NotesPersistence.swift in Sources */,
 				79E32606B9DD0685D537E295 /* WorkspaceStore+SelectionRemark.swift in Sources */,
 				07AA0BFB1B0C7EB98204B0DA /* WorkspaceStore+SessionMessages.swift in Sources */,
+				FAED00100000000000000001 /* WorkspaceStore+Whiteboard.swift in Sources */,
 				E74F27FD84A5744D031CE05E /* WorkspaceStore+SelectionChat.swift in Sources */,
 				4ECFD2CCA6543550AE5EBE76 /* WorkspaceStore+SessionTitle.swift in Sources */,
 				9B832BBFF5F603DDA7533402 /* WorkspaceStore+SnapshotRecovery.swift in Sources */,
@@ -1310,6 +1344,8 @@
 				57521F3615397A93AD96B32A /* WorkspaceStore+WorkResume.swift in Sources */,
 				D8B5BA6E3F2C57B1EF3FCD5C /* WorkspaceStore.swift in Sources */,
 				B605F2297A1AC763592241D8 /* WorkspaceUserFailures.swift in Sources */,
+				4D62177C460AEADB296BB2AB /* WhiteboardClassroom.swift in Sources */,
+				FABC01230000000000000002 /* ReadAloud.swift in Sources */,
 				108DF9197F40D6420D13422F /* WorkspaceViewSupport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

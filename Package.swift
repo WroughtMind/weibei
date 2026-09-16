@@ -71,6 +71,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "WeiBeiWebEditorCheck",
+            dependencies: ["WeiBeiCore"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("WebKit")

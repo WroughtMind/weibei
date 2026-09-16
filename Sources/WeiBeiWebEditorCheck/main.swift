@@ -3917,6 +3917,12 @@ if benchmarkMode {
     exit(1)
 }
 NSApplication.shared.setActivationPolicy(.prohibited)
+if CommandLine.arguments.contains("--whiteboard") || CommandLine.arguments.contains("--whiteboard-window") || Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.whiteboardcheck" {
+    let whiteboard = WhiteboardHarness()
+    whiteboard.run()
+    if CommandLine.arguments.contains("--whiteboard-window") || Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.whiteboardcheck" { NSApplication.shared.run() }
+    exit(0)
+}
 if CommandLine.arguments.contains("--selection-writing") {
     NativeSelectionWritingHarness().run()
     exit(0)

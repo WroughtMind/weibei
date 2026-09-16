@@ -573,3 +573,13 @@ documented in:
 - [`Sources/WeiBei/Resources/Inspiration/SOURCES.md`](Sources/WeiBei/Resources/Inspiration/SOURCES.md)
 
 Redistributors must review and preserve the terms that apply to each asset.
+## 中文动物语与课堂伙伴
+
+- `animalese-tts` 1.1.3: MIT, https://github.com/izure1/animalese-tts 。
+- `pinyin-pro` 3.29.4: MIT, https://github.com/zh-lx/pinyin-pro 。
+- 中文音节来自 Chen Wang 的录音，由 Hugo Lopez、Nicolas Vion 整理：
+  https://github.com/hugolpz/audio-cmn/tree/ff9ed3d0c631195bd2c06f39450f3264c7124040/64k/syllabs 。
+  Copyright 2013 Wang Chen, Lopez Hugo, Vion Nicolas；CC BY-SA 3.0。
+  魏碑裁剪首尾静音、归一化音量、转为单声道 16 kHz，按音节分包并压缩。修改后的素材包保持 CC BY-SA 3.0；重建脚本为 `script/build_chinese_voice.py`。
+
+应用资源中保留两项 MIT 许可全文 `Editor/voice-notices.txt`，以及中文音节来源、修改说明和 CC BY-SA 3.0 全文 `Editor/chinese-voice-LICENSE.txt`。这些音频素材的许可不改变应用代码的许可。

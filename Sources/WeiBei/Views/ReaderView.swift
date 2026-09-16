@@ -266,6 +266,7 @@ struct ReaderView: View {
     @State private var markdownSnapshotFailed = false
     /// Live pane size from a background probe. Zero until first real measurement.
     @State private var measuredPaneSize: CGSize = .zero
+    @State private var showsWhiteboardClassroom = false
 
     var body: some View {
         // Hang-proof structure:
@@ -326,6 +327,13 @@ struct ReaderView: View {
                 ) {
                     HStack(spacing: 8) {
                         ContextualContentListButton(kind: .material)
+                        if let item = store.selectedMaterialItem { MaterialReadAloudControls(store: store, item: item) }
+                        Button { showsWhiteboardClassroom = true } label: {
+                            Image(systemName: "rectangle.and.pencil.and.ellipsis")
+                        }
+                        .buttonStyle(.plain)
+                        .help(store.ui("白板讲解", "Whiteboard lesson"))
+                        .accessibilityLabel(store.ui("白板讲解", "Whiteboard lesson"))
                         selectionAskThreadsMenu
                         if let item = store.selectedMaterialItem,
                            !store.selectionRemarkRecords(forItemID: item.id).isEmpty {
@@ -337,6 +345,12 @@ struct ReaderView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
+            if !showsFloatingTitle, store.selectedMaterialItem != nil {
+                HStack {
+                    if let item = store.selectedMaterialItem { MaterialReadAloudControls(store: store, item: item) }
+                    Button(store.ui("白板讲解", "Whiteboard lesson")) { showsWhiteboardClassroom = true }.buttonStyle(.bordered)
+                }.padding(8)
+            }
             if store.selectedMaterialItem?.kind == .html, !htmlResourceIssues.isEmpty {
                 Button { htmlIssueDetailsPresented.toggle() } label: {
                     Circle().fill(.orange).frame(width: 7, height: 7)
@@ -362,6 +376,11 @@ struct ReaderView: View {
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
             adaptsHTMLColors = false
+        }
+        .sheet(isPresented: $showsWhiteboardClassroom) {
+            if let item = store.selectedMaterialItem {
+                WhiteboardSessionView(store: store, item: item, selection: store.selectionContext, pageIndex: pdfPageIndex)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Width/height probe as background sibling — never parent of WKWebView/PDFView.

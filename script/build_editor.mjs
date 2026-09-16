@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, cp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -11,7 +11,7 @@ const check = process.argv.includes('--check');
 const output = check ? await mkdtemp(join(tmpdir(), 'weibei-editor-')) : resources;
 const generated = new Set([
   'editor-entry.js', 'viewer-entry.js', 'katex-runtime.js', 'mermaid-runtime.js',
-  'prism-runtime.js', 'selection-runtime.js', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
+  'prism-runtime.js', 'selection-runtime.js', 'whiteboard-runtime.js', 'reading-voice-runtime.js', 'voice-notices.txt', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
 ]);
 
 const bundle = (entry, outfile, editable, globalName) => build({
@@ -22,7 +22,7 @@ const bundle = (entry, outfile, editable, globalName) => build({
     '@milkdown/kit/plugin/upload', '@milkdown/kit/prose/history', '@milkdown/kit/prose/inputrules',
   ].map((name) => [name, resolve(source, 'viewerEditorStubs.ts')])),
   metafile: true, logLevel: 'warning', globalName,
-  ...(entry === 'vendor/mermaid-runtime.ts' ? { supported: { 'template-literal': false } } : {}),
+  ...(['vendor/mermaid-runtime.ts', 'whiteboard.ts'].includes(entry) ? { supported: { 'template-literal': false } } : {}),
 });
 
 if (!check) {
@@ -33,7 +33,9 @@ if (!check) {
 }
 await mkdir(output, { recursive: true });
 if (check) {
-  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html']) {
+  await cp(resolve(resources, 'ChineseVoice'), resolve(output, 'ChineseVoice'), { recursive: true });
+  await cp(resolve(resources, 'Webi'), resolve(output, 'Webi'), { recursive: true });
+  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html', 'whiteboard.html', 'reading-voice.html', 'chinese-voice-index.js', 'chinese-voice-LICENSE.txt']) {
     await writeFile(resolve(output, name), await readFile(resolve(resources, name)));
   }
 }
@@ -45,6 +47,8 @@ const [editorMeta, viewerMeta] = await Promise.all([
   bundle('vendor/mermaid-runtime.ts', 'mermaid-runtime.js', false),
   bundle('vendor/prism-runtime.ts', 'prism-runtime.js', false),
   bundle('selection.ts', 'selection-runtime.js', false, 'WeiBeiSelection'),
+  bundle('whiteboard.ts', 'whiteboard-runtime.js', false),
+  bundle('readingVoice.ts', 'reading-voice-runtime.js', false),
   build({
     stdin: {
       contents: (await readFile(resolve(root, 'node_modules/katex/dist/katex.css'), 'utf8'))
@@ -57,6 +61,8 @@ const [editorMeta, viewerMeta] = await Promise.all([
     assetNames: '[name]', logLevel: 'warning',
   }),
 ]);
+
+await writeFile(resolve(output, 'voice-notices.txt'), (await Promise.all(['animalese-tts', 'pinyin-pro'].map(async name => name + '\n' + await readFile(resolve(root, 'node_modules', name, 'LICENSE'), 'utf8')))).join('\n\n'));
 
 const walk = async (directory) => (await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {
   const path = join(directory, entry.name);
