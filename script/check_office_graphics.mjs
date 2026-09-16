@@ -69,10 +69,13 @@ import AppKit
 import WebKit
 func require(_ ok: Bool, _ message: String) { if !ok { fputs("FAILED: \\(message)\\n", stderr); exit(1) } }
 func wait(_ done: () -> Bool) { let end = Date().addingTimeInterval(45); while !done() && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }; require(done(), "WebKit timeout") }
-final class Page: NSObject, WKNavigationDelegate {
-  let web: WKWebView; var loaded = false
-  override init() { let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent(); web = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 1200), configuration: config); super.init(); web.navigationDelegate = self }
+final class Page: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+  let web: WKWebView; var loaded = false; var activeJumps: [String] = []
+  override init() { let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent(); web = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 1200), configuration: config); super.init(); web.navigationDelegate = self; config.userContentController.add(self, name: "contentRailActive") }
   func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) { loaded = true }
+  func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+    if let body = message.body as? [String: Any], body["reason"] as? String == "jump", let id = body["id"] as? String { activeJumps.append(id) }
+  }
   func js(_ source: String, _ args: [String: Any]) -> Any? {
     var done = false; var result: Any?
     Task { @MainActor in
@@ -234,6 +237,7 @@ _ = page.js("""
   assert(visible(excerpt), 'PPT excerpt return must reveal its paragraph');
   return true;
   """, ["bytes": deck.base64EncodedString()])
+require(page.activeJumps == [2, 2, 2, 1, 2].map { "ppt/slides/slide\\($0).xml" }, "PPT navigation, note search and excerpt returns must report their owning slide: \\(page.activeJumps)")
 let omittedSlideFormula = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[5]))
 _ = page.js("""
   await WeiBeiOffice.open(Uint8Array.from(atob(bytes), c => c.charCodeAt(0)).buffer, 'pptx');
