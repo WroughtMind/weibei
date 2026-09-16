@@ -125,14 +125,42 @@ function drawGraphic(source: string) {
   const part = graphic.getAttribute('data-weibei-part')!;
   const w = Number(graphic.getAttribute('data-weibei-width')), h = Number(graphic.getAttribute('data-weibei-height'));
   if (!(w > 0 && h > 0)) throw new Error('绘图内容缺少有效尺寸');
-  const frame = drawing.xml(`<p:graphicFrame xmlns:p="${pptNS}" xmlns:a="${drawNS}"><p:xfrm><a:off x="0" y="0"/><a:ext cx="${w}" cy="${h}"/></p:xfrm>${source}</p:graphicFrame>`);
+  const shape = graphic.getElementsByTagNameNS('http://schemas.microsoft.com/office/word/2010/wordprocessingShape', 'wsp')[0];
+  const frame = shape
+    ? drawing.xml(`<p:sp xmlns:p="${pptNS}" xmlns:a="${drawNS}">${Array.from(shape.children).filter(e => ['spPr', 'style'].includes(e.localName)).map(e => new XMLSerializer().serializeToString(e)).join('')}</p:sp>`)
+    : drawing.xml(`<p:graphicFrame xmlns:p="${pptNS}" xmlns:a="${drawNS}"><p:xfrm><a:off x="0" y="0"/><a:ext cx="${w}" cy="${h}"/></p:xfrm>${source}</p:graphicFrame>`);
   const context = drawing.context(presentation, { index: 0, slidePath: part, rels: relations(part) }, mediaURLs, chartInstances);
   const theme = themeFor(part); if (theme) context.theme = drawing.theme(drawing.xml(theme));
   context.asyncTasks = [];
   const node = drawing.node(frame, { rels: context.slide.rels, partPath: part, diagramDrawings: presentation.diagramDrawings });
   if (!node) throw new Error('绘图内容未能读取');
+  // Word owns paragraph/table layout; the existing DrawingML renderer owns the shell.
+  if (shape) { node.position = { x: 0, y: 0 }; node.size = { w: w / 9525, h: h / 9525 }; }
   const element = drawing.render(node, context);
-  return { element, ready: Promise.all(context.asyncTasks) };
+  let text: HTMLElement | undefined;
+  if (shape && (shape.getElementsByTagNameNS('*', 'txbxContent').length || shape.getElementsByTagNameNS('*', 'linkedTxbx').length)) {
+    const properties = Array.from(shape.children).find(e => e.localName === 'bodyPr');
+    const value = (name: string) => properties?.getAttribute(name);
+    if (shape.getElementsByTagNameNS('*', 'linkedTxbx').length ||
+        (value('vert') && value('vert') !== 'horz') || Number(value('rot') ?? 0) !== 0 ||
+        Number(value('numCol') ?? 1) !== 1 || properties?.getElementsByTagNameNS('*', 'prstTxWarp').length ||
+        properties?.getElementsByTagNameNS('*', 'normAutofit').length ||
+        properties?.getElementsByTagNameNS('*', 'spAutoFit').length ||
+        ['upright', 'anchorCtr'].some(name => ['1', 'true'].includes(value(name) ?? '')) ||
+        ['flipH', 'flipV'].some(name => ['1', 'true'].includes(frame.child('spPr').child('xfrm').attr(name) ?? '')) ||
+        (value('wrap') && value('wrap') !== 'square')) {
+      throw new Error('这份 Word 文本框的文字变换暂不能完整显示');
+    }
+    const insets = ['tIns', 'rIns', 'bIns', 'lIns'].map((name, i) => Number(value(name) ?? (i % 2 ? 91440 : 45720)) / 9525);
+    text = document.createElement('div'); text.className = 'office-word-shape-text';
+    Object.assign(text.style, {
+      position: 'absolute', inset: '0', boxSizing: 'border-box', display: 'flex', flexDirection: 'column',
+      padding: insets.map(n => `${n}px`).join(' '),
+      justifyContent: ({ t: 'flex-start', ctr: 'center', b: 'flex-end', just: 'space-between', dist: 'space-around' } as Record<string, string>)[value('anchor') ?? 't'],
+    });
+    element.append(text);
+  }
+  return { element, text, ready: Promise.all(context.asyncTasks) };
 }
 
 // Word constructs detached pages first; charts need their final, connected layout.
@@ -146,6 +174,7 @@ export async function mountWordGraphics(root: HTMLElement) {
   for (const placeholder of Array.from(root.querySelectorAll<HTMLElement>('[data-weibei-graphic]'))) {
     const graphic = drawGraphic(placeholder.dataset.weibeiGraphic!);
     placeholder.removeAttribute('data-weibei-graphic');
+    if (graphic.text) graphic.text.append(...Array.from(placeholder.childNodes));
     placeholder.append(graphic.element);
     await graphic.ready;
   }

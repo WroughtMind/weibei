@@ -32,7 +32,9 @@ export function parseOfficeCharts(bytes) {
         if (mathStart < 0 || mathEnd < 0) throw new Error('Word math patch no longer matches');
         source = source.slice(0, mathStart) + '    parseMathElement(elem) { return {type: "weibeiMath", source: elem.outerHTML}; }\n' + source.slice(mathEnd);
         replace('                case "pic":\n                    return this.parsePicture(n);', '                case "chart":\n                case "relIds":\n                    return { type: "weibeiGraphic", source: elem.outerHTML };\n                case "pic":\n                    return this.parsePicture(n);');
-        replace('    renderElement(elem) {', '    renderElement(elem) {\n        if (elem.type === "weibeiGraphic") return window.WeiBeiOffice.renderGraphic(elem.source);');
+        replace('                case "pic":\n                    return this.parsePicture(n);', '                case "wsp":\n                    const content = n.getElementsByTagNameNS("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "txbxContent")[0]; return { type: "weibeiGraphic", source: elem.outerHTML, children: content ? this.parseBodyElements(content) : [] };\n                case "pic":\n                    return this.parsePicture(n);');
+        replace('        return null;\n    }\n    parsePicture(elem) {', '        throw new Error("这份 Word 中的绘图对象暂不能完整显示");\n    }\n    parsePicture(elem) {');
+        replace('    renderElement(elem) {', '    renderElement(elem) {\n        if (elem.type === "weibeiGraphic") { const result = window.WeiBeiOffice.renderGraphic(elem.source); result.append(...this.renderElements(elem.children ?? [])); return result; }');
         replace('    renderElement(elem) {', '    renderElement(elem) {\n        if (elem.type === "weibeiMath") return window.WeiBeiOffice.math(elem.source);');
         replace('var result = this.toHTML(elem, ns.html, "p");', 'var result = this.toHTML(elem, ns.html, "p");\n        if (elem.location) result.setAttribute("data-weibei-location", elem.location);');
       } else if (path.endsWith('WMFJS.bundle.js')) {

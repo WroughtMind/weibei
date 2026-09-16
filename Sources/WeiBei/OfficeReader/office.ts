@@ -22,6 +22,8 @@ let root: HTMLElement;
 let kind: string;
 const notes = new Map<string, Element[]>();
 const noteParts = new Map<string, string>();
+const equations = new Map<string, string[]>();
+let mainPart = '';
 let loadError = '';
 let searchQuery = '';
 let searchResult = -1;
@@ -63,6 +65,7 @@ async function prepare(bytes: ArrayBuffer, format: string) {
     const doc = parse(await file.async('string'));
     for (const relation of Array.from(doc.getElementsByTagName('Relationship'))) {
       const target = relation.getAttribute('Target');
+      if (file.name === '_rels/.rels' && target && relation.getAttribute('Type')?.endsWith('/officeDocument')) mainPart = target.replace(/^\//, '');
       if (target && relation.getAttribute('Type')?.endsWith('/notesSlide')) {
         const slidePart = file.name.replace('/_rels/', '/').replace(/\.rels$/, '');
         noteParts.set(slidePart, new URL(target, `https://office.invalid/${slidePart}`).pathname.slice(1));
@@ -91,7 +94,12 @@ async function prepare(bytes: ArrayBuffer, format: string) {
     }
     const ns = format === 'docx' ? 'http://schemas.openxmlformats.org/wordprocessingml/2006/main' : drawingNS;
     Array.from(doc.getElementsByTagNameNS(ns, 'p')).forEach((p, index) => p.setAttribute('data-weibei-location', `${file.name}#p${index}`));
-    for (const formula of Array.from(doc.getElementsByTagNameNS(mathNS, 'oMath'))) renderOmml(formula);
+    const formulas = Array.from(doc.getElementsByTagNameNS(mathNS, 'oMath')).filter(e => !e.closest('del'));
+    equations.set(file.name, formulas.map((formula, index) => {
+      const id = `${file.name}#math${index}`;
+      formula.setAttribute('data-weibei-equation', id); renderOmml(formula);
+      return id;
+    }));
     if (format === 'pptx') {
       for (const wrapper of Array.from(doc.getElementsByTagNameNS('http://schemas.microsoft.com/office/drawing/2010/main', 'm'))) {
         const formula = Array.from(wrapper.children).find(c => c.namespaceURI === mathNS);
@@ -115,6 +123,12 @@ async function prepare(bytes: ArrayBuffer, format: string) {
   return zip;
 }
 
+function verifyEquations(element: Element, part: string) {
+  const expected = equations.get(part) ?? [];
+  const rendered = new Set(Array.from(element.querySelectorAll('math[data-weibei-equation]')).map(e => e.getAttribute('data-weibei-equation')));
+  const found = expected.filter(id => rendered.has(id)).length;
+  if (found !== expected.length) throw new Error(`原文公式未能完整显示：应有 ${expected.length} 个，已显示 ${found} 个`);
+}
 function sourceElement(location: string) {
   return Array.from(root.querySelectorAll<HTMLElement>('[data-weibei-location]')).find(e => e.dataset.weibeiLocation === location);
 }
@@ -231,13 +245,14 @@ function attachNote(index: number, wrapper: HTMLElement | null) {
     body.append(block);
   }
   note.addEventListener('beforetoggle', event => { if ((event as ToggleEvent).newState === 'open') positionNote(note); });
+  verifyEquations(note, path);
   wrapper.append(button, note);
 }
 
 async function open(url: string | ArrayBuffer, format: string) {
   root = document.getElementById('office-document')!;
   document.documentElement.style.setProperty('-webkit-text-size-adjust', '100%');
-  kind = format; loadError = ''; notes.clear(); noteParts.clear();
+  kind = format; loadError = ''; notes.clear(); noteParts.clear(); equations.clear(); mainPart = '';
   try {
     const bytes = typeof url === 'string' ? await (await fetch(url)).arrayBuffer() : url;
     const zip = await prepare(bytes, format);
@@ -248,6 +263,7 @@ async function open(url: string | ArrayBuffer, format: string) {
       root.dataset.weibeiLocation = 'word/document.xml';
       await renderAsync(zip, root, undefined, { useBase64URL: true, renderAltChunks: false, renderComments: true, ignoreWidth: false, ignoreHeight: false });
       await mountWordGraphics(root);
+      verifyEquations(root, mainPart);
     } else {
       delete root.dataset.weibeiLocation;
       viewer = new PptxViewer(root, {
@@ -257,7 +273,11 @@ async function open(url: string | ArrayBuffer, format: string) {
         onSlideChange: index => post('contentRailActive', { id: viewer?.presentationData?.slides[index].slidePath, reason: 'scroll' }),
         onSlideRendered: (index, element) => {
           const slide = viewer?.presentationData?.slides[index];
-          if (slide) element.dataset.weibeiLocation = slide.slidePath;
+          if (slide) {
+            element.dataset.weibeiLocation = slide.slidePath;
+            try { verifyEquations(element, slide.slidePath); }
+            catch (error) { loadError = String(error); queueMicrotask(() => fail(error)); return; }
+          }
           post('officeReady', {});
         },
       });

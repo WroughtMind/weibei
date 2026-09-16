@@ -33,6 +33,12 @@ zip.file('word/diagrams/_rels/drawing42.xml.rels', relationships([['photo', 'ima
 zip.file('word/media/pixel.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
 zip.file('word/media/rectangle.emf', Buffer.concat([emf, ...records]));
 zip.file('word/document.xml', `<w:document xmlns:w="${ns}/wordprocessingml/2006/main" xmlns:wp="${ns}/drawingml/2006/wordprocessingDrawing" xmlns:a="${a}" xmlns:c="${c}" xmlns:r="${rel}" xmlns:dgm="${ns}/drawingml/2006/diagram" xmlns:m="${ns}/officeDocument/2006/math" xmlns:pic="${ns}/drawingml/2006/picture"><w:body><w:p><w:r><w:t>图形回归检查</w:t></w:r></w:p>${graphic(c, '<c:chart r:id="flat"/>')}${graphic(c, '<c:chart r:id="deep"/>')}${graphic(c, '<c:chart r:id="pie"/>')}${graphic(`${ns}/drawingml/2006/diagram`, '<dgm:relIds r:dm="diagram"/>', 914400, 914400)}<w:p><m:oMath><m:r><m:rPr><m:scr m:val="double-struck"/></m:rPr><m:t>R</m:t></m:r></m:oMath></w:p>${graphic(`${ns}/drawingml/2006/picture`, '<pic:pic><pic:blipFill><a:blip r:embed="emf"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic>', 914400, 914400)}<w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:r><w:t>继续阅读下一页</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`);
+// Word shape text uses Word paragraphs, including formulas; its shell uses DrawingML.
+const shapeNS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
+const shape = graphic(shapeNS, `<wps:wsp xmlns:wps="${shapeNS}"><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm rot="600000"><a:off x="0" y="0"/><a:ext cx="3657600" cy="1371600"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FFF2CC"/></a:solidFill><a:ln w="19050"><a:solidFill><a:srgbClr val="C04030"/></a:solidFill></a:ln></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>文本框中的公式</w:t></w:r></w:p><w:p><m:oMath><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath></w:p></w:txbxContent></wps:txbx><wps:bodyPr lIns="182880" rIns="91440" tIns="91440" bIns="45720" anchor="ctr"/></wps:wsp>`, 3657600, 1371600);
+const defaultShape = shape.replace(/<wps:bodyPr[^>]*\/>/, '<wps:bodyPr/>').replace('rot="600000"', 'rot="0"');
+const decoration = defaultShape.replace(/<wps:txbx>[\s\S]*?<\/wps:txbx>/, '');
+zip.file('word/document.xml', (await zip.file('word/document.xml').async('string')).replace('<w:sectPr>', shape + defaultShape + decoration + '<w:sectPr>'));
 // A tall slide in a wide, short reading pane exposes page-centering that hides its title.
 const deck = new JSZip();
 const p = `${ns}/presentationml/2006/main`;
@@ -42,15 +48,22 @@ deck.file('ppt/presentation.xml', `<p:presentation xmlns:p="${p}" xmlns:r="${rel
 deck.file('ppt/_rels/presentation.xml.rels', relationships([1, 2].map(i => [`s${i}`, 'slide', `slides/slide${i}.xml`])));
 const textBox = (id, y, text) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="text${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="457200" y="${y}"/><a:ext cx="8229600" cy="457200"/></a:xfrm><a:prstGeom prst="rect"/></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr sz="2400"/><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
 for (const i of [1, 2]) deck.file(`ppt/slides/slide${i}.xml`, `<p:sld xmlns:p="${p}" xmlns:a="${a}" xmlns:r="${rel}"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>${textBox(2, 182880, `页首标题${i}`)}${textBox(3, 5943600, `页尾摘录${i}`)}</p:spTree></p:cSld></p:sld>`);
+const pptFormula = textBox(4, 3200400, '').replace('<a:r><a:rPr sz="2400"/><a:t></a:t></a:r>', `<a14:m xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" xmlns:m="${ns}/officeDocument/2006/math"><m:oMath><m:f><m:num><m:r><m:t>3</m:t></m:r></m:num><m:den><m:r><m:t>4</m:t></m:r></m:den></m:f></m:oMath></a14:m>`);
+deck.file('ppt/slides/slide2.xml', (await deck.file('ppt/slides/slide2.xml').async('string')).replace('</p:spTree>', pptFormula + '</p:spTree>'));
 for (const i of [1, 2]) deck.file(`ppt/slides/_rels/slide${i}.xml.rels`, relationships([['notes', 'notesSlide', `../notesSlides/notesSlide${i}.xml`]]));
 deck.file('ppt/notesSlides/notesSlide1.xml', `<p:notes xmlns:p="${p}" xmlns:a="${a}" xmlns:r="${rel}"><p:cSld><p:spTree>${textBox(2, 0, '   ')}</p:spTree></p:cSld></p:notes>`);
 deck.file('ppt/notesSlides/notesSlide2.xml', `<p:notes xmlns:p="${p}" xmlns:a="${a}" xmlns:r="${rel}"><p:cSld><p:spTree>${textBox(2, 0, '老师说明：选看内容')}${textBox(3, 0, '这一页补充说明图中的课程成绩。'.repeat(80))}</p:spTree></p:cSld></p:notes>`);
 try {
   await writeFile(join(output, 'navigation.pptx'), await deck.generateAsync({ type: 'nodebuffer' }));
+  deck.file('ppt/slides/slide2.xml', (await deck.file('ppt/slides/slide2.xml').async('string')).replace('http://schemas.microsoft.com/office/drawing/2010/main', 'urn:unsupported-equation-wrapper'));
+  await writeFile(join(output, 'omitted-formula.pptx'), await deck.generateAsync({ type: 'nodebuffer' }));
   for (const angle of [20, 65]) {
     zip.file('word/charts/chart2.xml', chart(true, angle));
     await writeFile(join(output, `${angle}.docx`), await zip.generateAsync({ type: 'nodebuffer' }));
   }
+  const completeWord = await zip.file('word/document.xml').async('string');
+  zip.file('word/document.xml', completeWord.replace(/<m:oMath>([\s\S]*?)<\/m:oMath>/, '<w:customXml><m:oMath>$1</m:oMath></w:customXml>'));
+  await writeFile(join(output, 'omitted-formula.docx'), await zip.generateAsync({ type: 'nodebuffer' }));
   await writeFile(join(output, 'check.swift'), `
 import AppKit
 import WebKit
@@ -130,6 +143,18 @@ for path in CommandLine.arguments.dropFirst(2).prefix(2) {
     });
     assert(document.querySelector('math mi').getAttribute('mathvariant') === 'double-struck', 'formula lost its mathematical alphabet');
     assert(document.body.innerText.includes('图中文字'), 'diagram text is missing');
+    const fraction = document.querySelector('math mfrac');
+    assert(fraction && fraction.children[0].textContent === '1' && fraction.children[1].textContent === '2', 'Word text-box formula is missing or flattened');
+    const textBox = fraction.closest('.office-word-shape-text');
+    assert(textBox && textBox.textContent.includes('文本框中的公式') && fraction.closest('[data-weibei-location]'), 'Word text-box paragraphs must retain content and source locations');
+    assert(Math.abs(parseFloat(getComputedStyle(textBox).paddingLeft) - 19.2) < .01 && getComputedStyle(textBox).justifyContent === 'center', 'Word text-box insets and vertical alignment must follow the source: ' + JSON.stringify({ padding: getComputedStyle(textBox).paddingLeft, alignment: getComputedStyle(textBox).justifyContent }));
+    const shell = textBox.parentElement;
+    assert(shell.style.transform.includes('rotate(10deg)') && parseFloat(shell.style.width) === 384 && parseFloat(shell.style.height) === 144, 'Word text-box size and rotation must follow the source');
+    const surfaces = [shell, ...shell.querySelectorAll('svg, path, rect')].map(e => getComputedStyle(e));
+    assert(surfaces.some(s => s.fill === 'rgb(255, 242, 204)' || s.backgroundColor === 'rgb(255, 242, 204)') && surfaces.some(s => s.stroke === 'rgb(192, 64, 48)' || s.borderColor === 'rgb(192, 64, 48)'), 'Word text-box fill and stroke must follow the source');
+    const defaults = getComputedStyle(document.querySelectorAll('.office-word-shape-text')[1]);
+    assert(Math.abs(parseFloat(defaults.paddingTop) - 4.8) < .01 && Math.abs(parseFloat(defaults.paddingLeft) - 9.6) < .01 && defaults.justifyContent === 'flex-start', 'Word text boxes must retain default insets and top alignment');
+
     const image = document.querySelector('svg image');
     assert(image && [...image.parentElement.children].slice([...image.parentElement.children].indexOf(image)+1).every(e=>e.localName!=='path' || e.getAttribute('fill')==='none'), 'diagram image is covered by a solid fill');
     const vector = [...document.images].find(i=>i.naturalWidth === 200);
@@ -152,6 +177,12 @@ for width in [600.0, 900.0] {
     return true;
     """, [:])
 }
+let omittedFormula = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[4]))
+_ = page.js("""
+  await WeiBeiOffice.open(Uint8Array.from(atob(bytes), c => c.charCodeAt(0)).buffer, 'docx');
+  if (!WeiBeiOffice.error.includes('公式未能完整显示') || !document.querySelector('[role="alert"]')) throw Error('a skipped source formula must fail explicitly instead of reporting a complete document');
+  return true;
+  """, ["bytes": omittedFormula.base64EncodedString()])
 window.setContentSize(NSSize(width: 1200, height: 600))
 let deck = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments.last!))
 _ = page.js("""
@@ -162,6 +193,7 @@ _ = page.js("""
   await WeiBeiOffice.goTo('ppt/slides/slide2.xml');
   const title = document.querySelector('[data-weibei-location="ppt/slides/slide2.xml#p0"]');
   assert(title && visible(title), 'PPT page navigation must keep the full title visible');
+  assert(document.querySelector('math mfrac')?.textContent === '34' && !WeiBeiOffice.error, 'PPT source equations must pass accounting after their slide is mounted');
   checkOfficeMask(title);
   await WeiBeiOffice.find('页首标题2');
   assert(visible(title), 'PPT search must reveal the matched title');
@@ -202,8 +234,16 @@ _ = page.js("""
   assert(visible(excerpt), 'PPT excerpt return must reveal its paragraph');
   return true;
   """, ["bytes": deck.base64EncodedString()])
+let omittedSlideFormula = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[5]))
+_ = page.js("""
+  await WeiBeiOffice.open(Uint8Array.from(atob(bytes), c => c.charCodeAt(0)).buffer, 'pptx');
+  if (!WeiBeiOffice.error) await WeiBeiOffice.goTo('ppt/slides/slide2.xml');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  if (!WeiBeiOffice.error.includes('公式未能完整显示') || !document.querySelector('[role="alert"]')) throw Error('a skipped slide formula must reach the reader error state through the slide event');
+  return true;
+  """, ["bytes": omittedSlideFormula.base64EncodedString()])
 print("Office graphics and reading: Word charts, 3D bar/pie images and rotation, diagram, math, EMF; Word resize position; PPT title navigation, search, excerpt return, themed note popovers and Word/PPT sunglasses passed")
 `);
   execFileSync('xcrun', ['swiftc', join(output, 'check.swift'), '-o', join(output, 'check')], { stdio: 'inherit' });
-  execFileSync(join(output, 'check'), [office, join(output, '20.docx'), join(output, '65.docx'), join(output, 'navigation.pptx')], { stdio: 'inherit', timeout: 120000 });
+  execFileSync(join(output, 'check'), [office, join(output, '20.docx'), join(output, '65.docx'), join(output, 'omitted-formula.docx'), join(output, 'omitted-formula.pptx'), join(output, 'navigation.pptx')], { stdio: 'inherit', timeout: 120000 });
 } finally { await rm(output, { recursive: true, force: true }); }

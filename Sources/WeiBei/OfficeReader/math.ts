@@ -21,7 +21,7 @@ export function renderOmml(e: Element): Element {
   const all = () => children(e).filter(c => !c.localName.endsWith('Pr')).map(renderOmml);
   const row = () => node('mrow', all());
   switch (tag) {
-    case 'oMath': return node('math', all());
+    case 'oMath': return node('math', all(), e.hasAttribute('data-weibei-equation') ? { 'data-weibei-equation': e.getAttribute('data-weibei-equation')! } : {});
     case 'oMathPara': {
       const result = document.createElement('span');
       result.style.display = 'block';
