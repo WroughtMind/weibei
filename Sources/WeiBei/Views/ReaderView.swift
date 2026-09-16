@@ -254,7 +254,7 @@ struct ReaderView: View {
     @State private var pdfRailHoveredPageIndex: Int?
     @State private var htmlResourceIssues: [String] = []
     @State private var htmlIssueDetailsPresented = false
-    @State private var adaptsHTMLColors = false
+    @State private var adaptsWebDocumentColors = false
     @State private var htmlContentRailItems: [ContentRailItem] = []
     @State private var htmlContentRailActiveID: String?
     @State private var htmlContentRailTarget: WebReaderContentRailTarget?
@@ -367,7 +367,7 @@ struct ReaderView: View {
         .onChange(of: store.selectedMaterialItem?.id) { _, _ in
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
-            adaptsHTMLColors = false
+            adaptsWebDocumentColors = false
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         // Width/height probe as background sibling — never parent of WKWebView/PDFView.
@@ -767,7 +767,7 @@ struct ReaderView: View {
             Button {
                 withAnimation(WeiBeiMotion.appearance) {
                     if store.selectedMaterialItem?.kind.isWebDocument == true {
-                        adaptsHTMLColors.toggle()
+                        adaptsWebDocumentColors.toggle()
                     } else {
                         store.toggleImportedDocumentColorAdaptation()
                     }
@@ -825,11 +825,11 @@ struct ReaderView: View {
 
     private var supportsImportedDocumentColorAdaptation: Bool {
         guard let item = store.selectedMaterialItem, item.url != nil else { return false }
-        return item.kind == .pdf || item.kind == .html
+        return item.kind == .pdf || item.kind.isWebDocument
     }
 
     private var adaptsSelectedDocumentColors: Bool {
-        store.selectedMaterialItem?.kind == .html ? adaptsHTMLColors : store.adaptImportedDocumentColors
+        store.selectedMaterialItem?.kind.isWebDocument == true ? adaptsWebDocumentColors : store.adaptImportedDocumentColors
     }
 
     private var importedDocumentAdaptationLabel: String {
@@ -1117,7 +1117,7 @@ struct ReaderView: View {
                         contentRevision: item.contentRevision,
                         searchQuery: store.effectiveReaderSearch,
                         appearanceMode: store.appearanceMode,
-                        adaptsDocumentColors: item.kind.isOffice ? false : adaptsHTMLColors,
+                        adaptsDocumentColors: adaptsWebDocumentColors,
                         onResourceIssuesChange: { htmlResourceIssues = $0 },
                         contentRailTarget: htmlContentRailTarget,
                         selectionAskMarks: selectionAskMarksJSON(for: item.id),
@@ -3112,8 +3112,10 @@ struct WebReaderRepresentable: ReaderRepresentable {
     static func readerStyleScript(for mode: WeiBeiAppearanceMode, adaptsDocumentColors: Bool = true) -> String {
         let tokens = WeiBeiNativePalette.cssHex(for: mode)
         let scheme = mode.isDark ? "dark" : "light"
+        let maskRGB = WeiBeiNativePalette.documentMaskFill(for: mode).cgColor.components!
+            .prefix(3).map { String(Int(($0 * 255).rounded())) }.joined(separator: ",")
         let selectionCSS = """
-            :root { --weibei-note-fill: \(tokens.paperRaised); --weibei-note-ink: \(tokens.ink); --weibei-note-muted: \(tokens.muted); --weibei-note-accent: \(tokens.cinnabar); }
+            :root { --weibei-document-mask: rgb(\(maskRGB)); --weibei-note-fill: \(tokens.paperRaised); --weibei-note-ink: \(tokens.ink); --weibei-note-muted: \(tokens.muted); --weibei-note-accent: \(tokens.cinnabar); }
             ::selection { background: \(tokens.selection); color: \(tokens.ink); }
             .weibei-selection-ask-mark {
               text-decoration-line: underline;
@@ -3170,12 +3172,14 @@ struct WebReaderRepresentable: ReaderRepresentable {
             document.head.appendChild(style);
           }
           document.documentElement.dataset.weibeiTheme = adaptsDocumentColors ? appearance : "original";
-          style.textContent = css;
+          const office = document.getElementById("office-document");
+          office?.toggleAttribute("data-weibei-adapts-colors", adaptsDocumentColors);
+          style.textContent = office ? \(Self.json(selectionCSS)) : css;
 
           document.querySelectorAll("[data-weibei-paper-surface]").forEach((element) => {
             element.removeAttribute("data-weibei-paper-surface");
           });
-          if (adaptsDocumentColors && appearance === "paper") {
+          if (!office && adaptsDocumentColors && appearance === "paper") {
             const candidates = Array.from(document.querySelectorAll(
               "main, article, section, div, aside, header, footer, table, thead, tbody, tr, td, th"
             )).slice(0, 2500);
@@ -3272,7 +3276,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             let html = """
             <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-\(nonce)' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src weibeihtml:; base-uri 'none'; frame-src 'none'">
-            <style>html,body{margin:0;padding:0}body{font:15px/1.7 -apple-system}#office-document{padding:16px;box-sizing:border-box;min-height:100vh}.docx-wrapper{padding:0!important;background:transparent!important}.docx-wrapper>section.docx{margin-bottom:16px;box-shadow:none!important}.office-note-trigger,.office-note header button{width:26px;height:26px;box-sizing:border-box;display:grid;place-items:center;padding:4px;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:7px;color:var(--weibei-note-muted);background:rgb(from var(--weibei-note-fill) r g b / .94);cursor:pointer}.office-note-trigger{position:absolute;right:8px;box-shadow:0 1px 4px #0002}.office-note-trigger:hover,.office-note header button:hover{color:var(--weibei-note-ink)}.office-note-trigger:focus-visible,.office-note header button:focus-visible{outline:2px solid var(--weibei-note-accent);outline-offset:2px}.office-note-trigger svg,.office-note header svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.office-note{position:fixed;inset:auto;margin:0;padding:0;width:min(22rem,calc(100vw - 24px));box-sizing:border-box;overflow:hidden;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:9px;background:rgb(from var(--weibei-note-fill) r g b / .97);color:var(--weibei-note-ink);box-shadow:0 8px 28px #0003;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);font:14px/1.65 -apple-system}.office-note:popover-open{display:flex;flex-direction:column}.office-note header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px 8px 16px;flex-shrink:0}.office-note header strong{font-size:13px;font-weight:600}.office-note header button{border:0;background:transparent}.office-note-body{min-height:0;padding:0 16px 14px;overflow:auto;overflow-wrap:anywhere;overscroll-behavior:contain}.office-note-body>p{margin:0 0 10px}.office-note-body>p:last-child{margin-bottom:0}math{font-family:"Cambria Math","STIX Two Math",serif}a{color:#91261b}</style>
+            <style>html,body{margin:0;padding:0}body{font:15px/1.7 -apple-system}#office-document{padding:16px;box-sizing:border-box;min-height:100vh}#office-document[data-weibei-adapts-colors]::after{content:"";position:fixed;inset:0;background:var(--weibei-document-mask);mix-blend-mode:multiply;pointer-events:none;z-index:2147483647}.docx-wrapper{padding:0!important;background:transparent!important}.docx-wrapper>section.docx{margin-bottom:16px;box-shadow:none!important}.office-note-trigger,.office-note header button{width:26px;height:26px;box-sizing:border-box;display:grid;place-items:center;padding:4px;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:7px;color:var(--weibei-note-muted);background:rgb(from var(--weibei-note-fill) r g b / .94);cursor:pointer}.office-note-trigger{position:absolute;right:8px;box-shadow:0 1px 4px #0002}.office-note-trigger:hover,.office-note header button:hover{color:var(--weibei-note-ink)}.office-note-trigger:focus-visible,.office-note header button:focus-visible{outline:2px solid var(--weibei-note-accent);outline-offset:2px}.office-note-trigger svg,.office-note header svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.office-note{position:fixed;inset:auto;margin:0;padding:0;width:min(22rem,calc(100vw - 24px));box-sizing:border-box;overflow:hidden;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:9px;background:rgb(from var(--weibei-note-fill) r g b / .97);color:var(--weibei-note-ink);box-shadow:0 8px 28px #0003;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);font:14px/1.65 -apple-system}.office-note:popover-open{display:flex;flex-direction:column}.office-note header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px 8px 16px;flex-shrink:0}.office-note header strong{font-size:13px;font-weight:600}.office-note header button{border:0;background:transparent}.office-note-body{min-height:0;padding:0 16px 14px;overflow:auto;overflow-wrap:anywhere;overscroll-behavior:contain}.office-note-body>p{margin:0 0 10px}.office-note-body>p:last-child{margin-bottom:0}math{font-family:"Cambria Math","STIX Two Math",serif}a{color:#91261b}</style>
             </head><body data-weibei-revision="\(revision)"><main id="office-document"><p role="status">正在读取文档…</p></main>
             <script nonce="\(nonce)">\(Self.officeRuntime)</script>
             <script nonce="\(nonce)">window.WeiBeiOffice.open(\(Self.json(fileURL.absoluteString)),\(Self.json(url.pathExtension.lowercased())));</script>

@@ -81,6 +81,33 @@ page.web.loadHTMLString("""
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-check' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; connect-src 'none'"><style>${officeCSS}:root{--weibei-note-fill:#f9f1de;--weibei-note-ink:#1d1814;--weibei-note-muted:#665c54;--weibei-note-accent:#91261c}</style><body><main id="office-document"></main><script nonce="check">\\(source)</script></body>
 """, baseURL: nil)
 wait { page.loaded }
+_ = page.js("""
+  window.checkOfficeMask = element => {
+    const assert = (ok, why) => { if (!ok) throw Error(why); };
+    const root = document.getElementById('office-document');
+    const color = getComputedStyle(element).color;
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection().removeAllRanges(); getSelection().addRange(range);
+    const selected = getSelection().toString();
+    assert(selected.length > 0 && hit, 'mask check needs visible selectable document text');
+    root.toggleAttribute('data-weibei-adapts-colors', true);
+    document.documentElement.style.setProperty('--weibei-document-mask', 'rgb(244, 234, 213)');
+    const mask = getComputedStyle(root, '::after');
+    assert(mask.content !== 'none' && mask.mixBlendMode === 'multiply' && mask.pointerEvents === 'none', 'Office sunglasses must tint the page without intercepting input');
+    assert(parseFloat(mask.width) === innerWidth && parseFloat(mask.height) === innerHeight, 'the mask must cover the reading viewport');
+    const paper = mask.backgroundColor;
+    document.documentElement.style.setProperty('--weibei-document-mask', 'rgb(148, 153, 163)');
+    assert(getComputedStyle(root, '::after').backgroundColor !== paper, 'the mask must follow theme changes');
+    assert(getComputedStyle(element).color === color && element.getBoundingClientRect().top === rect.top && getSelection().toString() === selected, 'mask changes must preserve document colors, position and selection');
+    assert(document.elementFromPoint((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2) === hit, 'the mask must not block document interaction');
+    root.removeAttribute('data-weibei-adapts-colors');
+    assert(getComputedStyle(root, '::after').content === 'none', 'turning sunglasses off must remove the tint');
+    getSelection().removeAllRanges();
+  };
+  return true;
+  """, [:])
 var hashes: [String] = []
 for path in CommandLine.arguments.dropFirst(2).prefix(2) {
   let data = try Data(contentsOf: URL(fileURLWithPath: path))
@@ -88,6 +115,7 @@ for path in CommandLine.arguments.dropFirst(2).prefix(2) {
     const assert = (ok, why) => { if (!ok) throw Error(why); };
     await WeiBeiOffice.open(Uint8Array.from(atob(bytes), c=>c.charCodeAt(0)).buffer, 'docx');
     assert(!WeiBeiOffice.error, WeiBeiOffice.error);
+    checkOfficeMask(document.querySelector('p[data-weibei-location]'));
     const charts = [...document.querySelectorAll('canvas, img')].slice(0, 3);
     assert(charts.length === 3, 'Word must render the native 2D, 3D bar and 3D pie charts');
     const signatures = charts.map(chart => {
@@ -134,6 +162,7 @@ _ = page.js("""
   await WeiBeiOffice.goTo('ppt/slides/slide2.xml');
   const title = document.querySelector('[data-weibei-location="ppt/slides/slide2.xml#p0"]');
   assert(title && visible(title), 'PPT page navigation must keep the full title visible');
+  checkOfficeMask(title);
   await WeiBeiOffice.find('页首标题2');
   assert(visible(title), 'PPT search must reveal the matched title');
   await WeiBeiOffice.find('页尾摘录2');
@@ -173,7 +202,7 @@ _ = page.js("""
   assert(visible(excerpt), 'PPT excerpt return must reveal its paragraph');
   return true;
   """, ["bytes": deck.base64EncodedString()])
-print("Office graphics and reading: Word charts, 3D bar/pie images and rotation, diagram, math, EMF; Word resize position; PPT title navigation, search, excerpt return and themed note popovers passed")
+print("Office graphics and reading: Word charts, 3D bar/pie images and rotation, diagram, math, EMF; Word resize position; PPT title navigation, search, excerpt return, themed note popovers and Word/PPT sunglasses passed")
 `);
   execFileSync('xcrun', ['swiftc', join(output, 'check.swift'), '-o', join(output, 'check')], { stdio: 'inherit' });
   execFileSync(join(output, 'check'), [office, join(output, '20.docx'), join(output, '65.docx'), join(output, 'navigation.pptx')], { stdio: 'inherit', timeout: 120000 });
