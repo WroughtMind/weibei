@@ -12,8 +12,8 @@
     "en": ["WeiBei FAQ — Files, AI Models, Privacy & Mac Installation", "Answers about supported files, optional AI models, local data, source references, Mac requirements, installation, and WeiBei's open-source licensing."]
   },
   "labs.html": {
-    "zh-CN": ["魏碑 Labs｜白板课堂、智能助手协作与 DIY 主题", "探索魏碑的新方向：白板课堂、更 Agent Native 的改造方向与 DIY 主题。了解正在酝酿的学习方式，分享你的想法。"],
-    "en": ["WeiBei Labs | Whiteboard classroom, agent-native work and DIY themes", "Explore new directions for WeiBei: a whiteboard classroom, more agent-native collaboration, and DIY themes. Discover the ideas and share yours."]
+    "zh-CN": ["魏碑 Labs｜白板课堂、智能助手协作与 DIY 主题", "探索魏碑的新方向：与 Webi 一起推演的白板课堂、通过聊天推进任务的智能协作，以及可调节配色与排版的 DIY 主题。"],
+    "en": ["WeiBei Labs | Whiteboard classroom, agent-native work and DIY themes", "Explore new directions for WeiBei: whiteboard lessons with Webi, tasks carried forward through chat, and DIY themes with adjustable colors and typography."]
   },
   "feedback.html": {
     "zh-CN": ["反馈与建议｜魏碑 weibei", "向魏碑反馈阅读、对话或笔记体验问题，分享功能与内容建议。填写后前往 GitHub 表单确认，网站不会自动发布你的反馈。"],

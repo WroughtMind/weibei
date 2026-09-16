@@ -16,39 +16,22 @@
 .faq-list details p { margin: -2px 0 22px; padding: 0 54px 0 24px; color: var(--ink-soft); font-size: 14px; line-height: 1.8; text-align: left; }
 
 /* Labs: project sketches, with the existing paper and ink palette. */
-.labs-shell { width: min(1080px, 88vw); text-align: left; }
+.labs-shell { width: min(1200px, 88vw); text-align: left; }
 .labs-intro { padding: 24px 0 36px; }
 .labs-intro .detail-lead { max-width: none; margin: 18px 0 12px; font-size: clamp(20px, 2.5vw, 28px); color: var(--ink); }
 .labs-note, .labs-more { color: var(--ink-soft); font-size: 13px; line-height: 1.8; }
 .labs-list { border-top: 1px solid var(--line); }
-.lab-item { display: grid; grid-template-columns: 1fr 1.1fr; gap: clamp(28px, 5vw, 72px); align-items: center; padding: 38px 0; border-bottom: 1px solid var(--line); }
+.lab-item { display: grid; grid-template-columns: .75fr 1.25fr; gap: clamp(28px, 4vw, 56px); align-items: center; padding: 38px 0; border-bottom: 1px solid var(--line); }
 .lab-number { display: block; color: var(--vermilion); font: 12px/1.5 ui-monospace, monospace; margin-bottom: 14px; }
 .lab-item h2 { margin: 0; font-size: clamp(24px, 2.5vw, 32px); line-height: 1.5; text-wrap: balance; }
 .lab-item p { margin: 16px 0; color: var(--ink-soft); font-size: 14px; line-height: 1.9; }
 .lab-caption { display: block; margin-top: 22px; font-size: 12px; color: var(--vermilion); }
-.lab-scene { min-width: 0; margin: 0; padding: 24px; background: var(--paper-light); border: 1px solid var(--line); }
-.lab-scene figcaption { margin-bottom: 22px; font-size: 12px; color: var(--ink-soft); }
-.board-scene { background-image: radial-gradient(var(--line) .7px, transparent .7px); background-size: 16px 16px; }
-.board-question { text-align: center; font-size: 18px; }
-.board-scene svg { display: block; width: 100%; height: 120px; margin: 10px 0; fill: none; stroke-width: 2; }
-.board-axis { stroke: var(--ink-soft); stroke-width: 1; }
-.board-curves { stroke: var(--ink); }
-.board-arrow { stroke: var(--vermilion); }
-.board-steps { display: flex; justify-content: space-around; gap: 8px; font-size: 12px; }
-.lab-item .agent-request { margin: 0 0 22px; padding: 12px 16px; border-left: 2px solid var(--vermilion); color: var(--ink); background: var(--paper); font-size: 18px; }
-.agent-steps { list-style: decimal-leading-zero; margin: 0 0 20px; padding-left: 32px; }
-.agent-steps li { padding: 8px 0 8px 10px; border-bottom: 1px solid var(--line); font-size: 14px; }
-.agent-steps li::marker { color: var(--vermilion); font: 11px ui-monospace, monospace; }
-.scene-footnote { font-size: 12px; color: var(--ink-soft); }
-.theme-samples { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 12px 0; }
-.theme-sample { padding: 18px 12px; border: 1px solid currentColor; }
-.theme-sample span { display: block; font-size: 14px; margin-bottom: 28px; }
-.theme-sample i { display: block; height: 2px; margin: 10px 0; background: currentColor; opacity: .25; }
-.theme-sample i:nth-of-type(2) { width: 70%; }
-.theme-sample b { display: block; width: 18px; height: 18px; margin-top: 24px; background: currentColor; }
-.theme-paper { color: #8b4931; background: #f3e5cd; }
-.theme-moss { color: #455747; background: #dfe4d8; }
-.theme-night { color: #dfd3b9; background: #343633; }
+.lab-scene { min-width: 0; margin: 0; }
+.lab-preview { position: relative; display: block; }
+.lab-preview img { display: block; width: 100%; height: auto; border: 1px solid var(--line); }
+.lab-preview:hover img { border-color: var(--vermilion); }
+.lab-expand { position: absolute; right: 12px; bottom: 12px; padding: 6px 10px; color: var(--ink); background: var(--paper-light); border: 1px solid var(--line); font: 11px/1.4 ui-sans-serif, system-ui, sans-serif; }
+.lab-scene figcaption { margin-top: 10px; color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
 .labs-more { margin: 32px 0 0; text-align: center; }
 
 .feedback-shell { width: min(960px, 90vw); padding-top: 94px; }
@@ -91,9 +74,7 @@
   .lab-item { grid-template-columns: 1fr; gap: 24px; padding: 28px 0; }
   .lab-item h2 { font-size: 25px; }
   .lab-caption { margin-top: 14px; }
-  .lab-scene { padding: 18px; }
-  .theme-samples { gap: 8px; }
-  .theme-sample { padding: 14px 8px; }
+  .lab-expand { right: 8px; bottom: 8px; }
   .feedback-shell { width: 88vw; padding-top: 120px; }
   .feedback-kind-grid { grid-template-columns: 1fr 1fr; }
   .feedback-kind-option > span { min-height: 62px; padding: 11px 12px; }
