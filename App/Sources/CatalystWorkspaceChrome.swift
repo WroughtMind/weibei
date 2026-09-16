@@ -292,6 +292,8 @@ final class CatalystDividerView: UIView {
     var onDragStart: (() -> Void)?
     var onDragChange: ((CGFloat) -> Void)?
     var onDragEnd: (() -> Void)?
+    var onEqualize: (() -> Void)?
+    var skipSnap = false
     var appearanceMode: WeiBeiAppearanceMode = .paper { didSet { setNeedsDisplay() } }
     var reduceMotion = false
     private var hovering = false
@@ -303,19 +305,28 @@ final class CatalystDividerView: UIView {
         isAccessibilityElement = true
         accessibilityLabel = "调整分栏宽度"
         accessibilityTraits = .adjustable
+        accessibilityHint = "双击均分相邻两栏；按住 Option 松手可跳过吸附。"
+        accessibilityCustomActions = [UIAccessibilityCustomAction(name: "均分相邻两栏", target: self, selector: #selector(equalize))]
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(equalize))
+        doubleTap.numberOfTapsRequired = 2
+        addGestureRecognizer(doubleTap)
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(drag(_:))))
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hover(_:))))
         accent.opacity = 0; layer.addSublayer(accent)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     @objc private func drag(_ gesture: UIPanGestureRecognizer) {
+        skipSnap = gesture.modifierFlags.contains(.alternate) || gesture.state == .cancelled
         switch gesture.state {
         case .began: pressed = true; updateAccent(); onDragStart?()
         case .changed: onDragChange?(gesture.translation(in: superview).x)
-        case .ended, .cancelled: pressed = false; updateAccent(); onDragEnd?()
+        case .ended, .cancelled:
+            if gesture.state == .ended { onDragChange?(gesture.translation(in: superview).x) }
+            pressed = false; updateAccent(); onDragEnd?(); skipSnap = false
         default: break
         }
     }
+    @objc private func equalize() -> Bool { onEqualize?(); return true }
     override func accessibilityIncrement() { onDragStart?(); onDragChange?(40); onDragEnd?() }
     override func accessibilityDecrement() { onDragStart?(); onDragChange?(-40); onDragEnd?() }
     override func draw(_ rect: CGRect) {
