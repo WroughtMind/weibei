@@ -57,25 +57,34 @@ done
 
 # Check the visible contract: varying translucent ink, an opaque red anchor,
 # and empty notches. This also catches accidental grayscale conversion.
-python3 - "$ICON_COMPOSER/Assets" <<'PY_CHECK'
-from pathlib import Path
-import subprocess, sys
-assets = Path(sys.argv[1])
-def pixel(name, x, y):
-    channels = " ".join(f"%[fx:p{{{x},{y}}}.{c}]" for c in ("r", "g", "b", "a"))
-    return list(map(float, subprocess.check_output(["convert", str(assets / name),
-        "-format", channels, "info:"], text=True).split()))
-ink = [pixel("01-Ink.png", x, 400)[3] for x in (250, 500, 740)]
-assert all(0.79 < a < 0.97 for a in ink), ink
-assert max(ink) - min(ink) > 0.04, ink
-r, g, b, a = pixel("02-Cinnabar.png", 840, 825)
-assert a > 0.99 and r > 3 * g and r > 3 * b, (r, g, b, a)
-assert pixel("01-Ink.png", 840, 825)[3] == 0
-assert pixel("02-Cinnabar.png", 500, 400)[3] == 0
-for x, y in ((398, 400), (630, 400), (50, 50)):
-    assert pixel("01-Ink.png", x, y)[3] == 0, (x, y)
+swift - "$ICON_COMPOSER/Assets" <<'SWIFT_CHECK'
+import AppKit
+let assets = URL(fileURLWithPath: CommandLine.arguments[1])
+func load(_ name: String) throws -> NSBitmapImageRep {
+    let data = try Data(contentsOf: assets.appendingPathComponent(name))
+    guard let image = NSBitmapImageRep(data: data) else { fatalError("Invalid image: \(name)") }
+    return image
+}
+func pixel(_ image: NSBitmapImageRep, _ x: Int, _ y: Int) -> NSColor {
+    guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+        fatalError("Cannot read pixel at \(x), \(y)")
+    }
+    return color
+}
+let ink = try load("01-Ink.png"), cinnabar = try load("02-Cinnabar.png")
+let alpha = [250, 500, 740].map { pixel(ink, $0, 400).alphaComponent }
+precondition(alpha.allSatisfy { $0 > 0.79 && $0 < 0.97 }, "Ink must remain translucent")
+precondition(alpha.max()! - alpha.min()! > 0.04, "Ink must vary in opacity")
+let red = pixel(cinnabar, 840, 825)
+precondition(red.alphaComponent > 0.99 && red.redComponent > 3 * red.greenComponent
+    && red.redComponent > 3 * red.blueComponent, "Cinnabar must remain opaque and red")
+precondition(pixel(ink, 840, 825).alphaComponent == 0)
+precondition(pixel(cinnabar, 500, 400).alphaComponent == 0)
+for (x, y) in [(398, 400), (630, 400), (50, 50)] {
+    precondition(pixel(ink, x, y).alphaComponent == 0, "Ink notches must remain empty")
+}
 print("glass W alpha, cinnabar color, and notch checks passed")
-PY_CHECK
+SWIFT_CHECK
 jq empty "$ICON_COMPOSER/icon.json"
 
 COMPILED_ICON="$(mktemp -d "${TMPDIR:-/tmp}/weibei-icon-verify.XXXXXX")"
