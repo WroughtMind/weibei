@@ -218,7 +218,6 @@ struct CatalystWeiBeiApp: App {
     private var workspaceContent: some View {
         CatalystWorkspaceRoot(store: AppDelegate.workspace, appDelegate: appDelegate)
             .frame(minWidth: 520, minHeight: 720)
-            .ignoresSafeArea(.container, edges: .top)
             .onOpenURL { AppDelegate.workspace.importFiles([$0]) }
 #if WEIBEI_ACCEPTANCE_CHECKS
             .task {

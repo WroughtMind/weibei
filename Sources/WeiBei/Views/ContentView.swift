@@ -1,4 +1,6 @@
-#if !targetEnvironment(macCatalyst)
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
 #endif
 import SwiftUI
@@ -100,7 +102,11 @@ struct ContentView: View {
                     || store.transientNoteStatus != nil {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+#if targetEnvironment(macCatalyst)
+                        .padding(.top, 10)
+#else
                         .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
+#endif
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
                 }
@@ -327,13 +333,22 @@ private struct GlobalFloatingSelectionLayer: View {
         let point = SelectionFloatingAgentPlacement.position(
             anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
-            topInset: Double(WeiBeiMetric.topBarHeight * textScale),
+            topInset: selectionTopInset,
             surfaceHalfWidth: Double(size.width / 2),
             measuredHalfHeight: Double(size.height / 2),
             prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
             prefersAnchorCenter: !(expanded || interaction.keepFloatingSelectionForAnswer || interaction.pinnedFloatingAgent)
         )
         return CGPoint(x: point.x, y: point.y)
+    }
+
+    private var selectionTopInset: Double {
+#if targetEnvironment(macCatalyst)
+        // The native toolbar sits outside the workspace's content coordinates.
+        0
+#else
+        Double(WeiBeiMetric.topBarHeight * textScale)
+#endif
     }
 }
 
@@ -544,14 +559,77 @@ private struct UnifiedTopBarView: View {
     @State private var appeared = false
 
     var body: some View {
+#if targetEnvironment(macCatalyst)
+        CatalystTopBar(
+            leading: toolbarContent(leftPrimaryControls),
+            center: toolbarContent(paneToggleCluster),
+            trailing: toolbarContent(trailingControls),
+            overflowMenus: toolbarOverflowMenus,
+            isVisible: !store.courseWorkspacePresented
+        )
+        .frame(height: 0)
+        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
+            showSettings()
+        }
+#else
+        customTopBar
+#endif
+    }
+
+#if targetEnvironment(macCatalyst)
+    private var toolbarOverflowMenus: [UIMenu] {
+        var navigation = [
+            toolbarAction(store.ui("课程抽屉", "Course drawer"), selected: libraryDrawer.isOpen, action: store.toggleLibrary),
+            toolbarAction(store.ui("后退", "Back"), enabled: store.canNavigateBack) {
+                withAnimation(WeiBeiMotion.layout) { store.navigateBackInWorkspace() }
+            },
+            toolbarAction(store.ui("前进", "Forward"), enabled: store.canNavigateForward) {
+                withAnimation(WeiBeiMotion.layout) { store.navigateForwardInWorkspace() }
+            }
+        ]
+        if updateService.showsToolbarControl, updateService.availableUpdate != nil {
+            navigation.append(toolbarAction(store.ui("下载并安装魏碑更新", "Download and install the WeiBei update"),
+                enabled: !updateService.isBusy, action: updateService.installAvailableUpdate))
+        }
+        let panes = [
+            toolbarAction(store.ui("文稿", "Document"), selected: store.isPaneToggleActive(.reader), action: store.toggleReader),
+            toolbarAction(store.ui("对话", "Chat"), selected: store.isPaneToggleActive(.agent), action: store.toggleAgent),
+            toolbarAction(store.ui("笔记", "Notes"), selected: store.isPaneToggleActive(.notes), action: store.toggleNotes)
+        ]
+        var actions: [UIAction] = []
+        if shouldShowSearchAction {
+            actions.append(toolbarAction(searchPrompt,
+                selected: paneState.showDocumentSearch, action: toggleReaderSearch))
+        }
+        actions.append(toolbarAction(store.ui("切换深浅外观", "Toggle Light / Dark"), action: toggleAppearance))
+        if store.lastPersistState == .failed {
+            actions.append(toolbarAction(store.ui("重试保存", "Retry save")) { _ = store.retryWorkspaceSave() })
+        }
+        actions.append(toolbarAction(store.ui("打开设置", "Open Settings"), action: showSettings))
+        return [UIMenu(title: store.ui("导航", "Navigation"), children: navigation),
+                UIMenu(title: store.ui("面板", "Panes"), children: panes),
+                UIMenu(title: store.ui("操作", "Actions"), children: actions)]
+    }
+
+    private func toolbarAction(_ title: String, enabled: Bool = true, selected: Bool = false,
+                               action: @escaping () -> Void) -> UIAction {
+        UIAction(title: title, attributes: enabled ? [] : [.disabled], state: selected ? .on : .off) { _ in action() }
+    }
+
+    private func toolbarContent<Content: View>(_ content: Content) -> AnyView {
+        AnyView(content
+            .foregroundStyle(secondaryText)
+            .environmentObject(store)
+            .environmentObject(updateService)
+            .environmentObject(libraryDrawer)
+            .environmentObject(paneState)
+            .environmentObject(interaction)
+            .environment(\.weiBeiTextScale, textScale))
+    }
+#endif
+
+    private var trailingControls: some View {
         HStack(spacing: topBarSpacing) {
-            Spacer()
-                .frame(width: leftInset)
-
-            leftPrimaryControls
-
-            Spacer(minLength: 0)
-
             if paneState.showDocumentSearch && shouldShowSearchAction {
                 TextField(
                     "",
@@ -603,7 +681,7 @@ private struct UnifiedTopBarView: View {
                 store.appearanceMode.isDark ? "sun.max" : "moon.stars",
                 help: store.ui("切换深浅外观", "Toggle Light / Dark")
             ) {
-                store.appearancePreference = store.appearanceMode.isDark ? .light : .dark
+                toggleAppearance()
             }
             .animation(WeiBeiMotion.micro, value: store.appearanceMode.isDark)
 
@@ -613,6 +691,20 @@ private struct UnifiedTopBarView: View {
             topIconButton("gearshape", help: store.ui("打开设置", "Open Settings")) {
                 showSettings()
             }
+
+        }
+    }
+
+    private var customTopBar: some View {
+        HStack(spacing: topBarSpacing) {
+            Spacer()
+                .frame(width: leftInset)
+
+            leftPrimaryControls
+
+            Spacer(minLength: 0)
+
+            trailingControls
 
             Spacer()
                 .frame(width: 8)
@@ -647,6 +739,10 @@ private struct UnifiedTopBarView: View {
 
     private func showSettings() {
         openSettingsWindow(id: "weibei-settings")
+    }
+
+    private func toggleAppearance() {
+        store.appearancePreference = store.appearanceMode.isDark ? .light : .dark
     }
 
     private var barHeight: CGFloat {
