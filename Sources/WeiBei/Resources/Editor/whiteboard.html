@@ -2,15 +2,16 @@
 <html lang="zh-CN">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-/Q7VUHZ+U6FCYUsHCtl/w3Is/xwvhiqHP86ympq/1/A=' 'sha256-v/zJFsgJHxx/72F28ZtDAisaKyjCM2mXTAr/pznK3qQ=' 'sha256-KvxvCgBt77BbFD12RSVlaWP6vz0UX1fVZgHlW7shJEw=' 'sha256-CzilgdH5WEYXW+yGhG6h3GIm+/1h80+dSpAYO3trQbs='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src data:; connect-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-/Q7VUHZ+U6FCYUsHCtl/w3Is/xwvhiqHP86ympq/1/A=' 'sha256-v/zJFsgJHxx/72F28ZtDAisaKyjCM2mXTAr/pznK3qQ=' 'sha256-KvxvCgBt77BbFD12RSVlaWP6vz0UX1fVZgHlW7shJEw=' 'sha256-3lOyNw86lB9cd27vhvgIdsBFKLMEkJM8g5GKWU1wCys='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src data:; connect-src 'none'; frame-src 'none'">
 <link rel="stylesheet" href="editor.css">
 <style>
 @font-face{font-family:Virgil;src:url("Virgil.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
 :root{color-scheme:light;--paper:#faf8f2;--ink:#36332e;--muted:#8d8679;--dot:#d9d3c7;--definition:#28668d;--formula:#765198;--example:#43765c;--diagram:#b56d34;--red:#b54636;--hand:"Virgil","Kaiti SC","STKaiti",serif}
 :root[data-theme=dark]{color-scheme:dark;--paper:#242421;--ink:#e7e2d7;--muted:#a7a092;--dot:#45433c;--definition:#91bbd3;--formula:#bf9ed6;--example:#98bda2;--diagram:#e3b27f;--red:#df9481}
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;font-family:var(--hand);color:var(--ink);background:var(--paper)}
-#viewport{position:absolute;inset:0 var(--webi-width,156px) 0 0;overflow:auto;background-image:radial-gradient(var(--dot) .65px,transparent .65px);background-size:20px 20px}
-#webi-host{position:fixed;right:6px;bottom:12px;width:144px;z-index:9}
+#viewport{position:absolute;inset:0;overflow:auto;background-image:radial-gradient(var(--dot) .65px,transparent .65px);background-size:20px 20px}
+#webi-host{position:fixed;right:6px;bottom:12px;width:144px;z-index:9;pointer-events:none}
+#webi-host button{pointer-events:auto}
 #generation-waiting{position:fixed;right:8px;bottom:190px;width:140px;font-size:14px;line-height:1.7;text-align:center;color:var(--muted)}
 #canvas-space{position:relative;overflow:hidden}#canvas{position:relative;transform-origin:0 0}.card{position:absolute;padding:4px 12px 8px;--type-color:var(--definition)}
 .ink-layer{position:absolute;inset:0;z-index:5;pointer-events:none;overflow:visible;fill:none;stroke:var(--ink);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}

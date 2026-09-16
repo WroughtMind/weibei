@@ -28,7 +28,7 @@ const canvas = document.getElementById('canvas')!;
 const viewport = document.getElementById('viewport')!;
 const audio = document.getElementById('narration') as HTMLAudioElement;
 const companion = createWebiCompanion(document.getElementById('webi-host')!);
-new ResizeObserver(()=>{document.documentElement.style.setProperty('--webi-width',companion.element.querySelector('canvas')!.hidden?'86px':'156px');layout();}).observe(companion.element);
+new ResizeObserver(()=>{document.documentElement.style.setProperty('--webi-width',companion.element.querySelector('canvas')!.hidden?'86px':'156px');}).observe(companion.element);
 let entries: ({type:'page'|'column';id?:string;title?:string} | Card)[] = [], cards = new Map<number, Card>();
 let pages:Page[] = [], activePageId:string|undefined, layoutJSON='';
 let epoch = 0, camera = 0, revision = 0, active: Envelope | undefined, paused = false, pausedAt = 0, pauseTotal = 0;
@@ -266,8 +266,9 @@ async function annotate(a:Action,restoring=false) {
   mark.style.cssText=`left:${r.x-6}px;top:${r.y-5}px;overflow:visible;color:${({red:'var(--red)',green:'var(--example)',blue:'var(--definition)',ink:'var(--ink)'} as Record<string,string>)[a.color ?? 'red']}`;
   if(a.type==='circle')mark.innerHTML=`<defs><filter id="${id}" x="-10%" y="-20%" width="120%" height="140%"><feTurbulence type="fractalNoise" baseFrequency=".05" numOctaves="2" seed="5" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="1.3"/></filter></defs><ellipse cx="${width/2}" cy="${height/2}" rx="${width/2-2}" ry="${height/2-2}" fill="none" stroke="currentColor" stroke-width="2" pathLength="1" filter="url(#${id})"/>`;
   else mark.innerHTML=`<defs><clipPath id="${id}"><rect width="${width}" height="${height}"/></clipPath></defs><path d="M3 ${height*.6} Q${width*.5} ${height*.48} ${width-3} ${height*.56}" fill="none" stroke="currentColor" stroke-width="${height*.65}" opacity=".25" stroke-linecap="round" clip-path="url(#${id})"/>`;
-  card.node.append(mark);card.decorations.push(a);layout();follow(card);
+  card.node.append(mark);card.decorations.push(a);layout();
   if(!restoring){
+    follow(card);
     if(a.type==='circle'){
       const ellipse=mark.querySelector('ellipse')!;ellipse.setAttribute('stroke-dasharray','1');
       await animate(ellipse,[{strokeDashoffset:'1'},{strokeDashoffset:'0'}],920);

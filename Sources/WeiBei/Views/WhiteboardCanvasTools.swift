@@ -8,6 +8,7 @@ struct WhiteboardCanvasTools: View {
             Button("\(Int((classroom.canvasZoom * 100).rounded()))%") { classroom.canvasCommand("reset_zoom") }
                 .monospacedDigit().frame(width: 44).help("复位到 100%")
                 .accessibilityLabel("复位画布缩放")
+                .accessibilityValue("\(Int((classroom.canvasZoom * 100).rounded()))%")
             tool("放大画布", "plus", "zoom_in").disabled(classroom.canvasZoom >= 2)
             Divider().frame(height: 16)
             Button { classroom.canvasCommand("toggle_ink") } label: {

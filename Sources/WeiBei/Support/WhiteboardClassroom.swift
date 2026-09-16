@@ -20,6 +20,7 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     @Published var canvasZoom = 1.0
     @Published var handwriting = false
     @Published var canUndoInk = false
+    @Published private(set) var restoring = false
     var busy: Bool { generating || replying }
     var currentAction: WhiteboardAction? { session?.currentAction }
     let archive: WhiteboardSessionStore
@@ -32,7 +33,7 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     private var generationWork: Task<Void, Never>?, replyWork: Task<Void, Never>?, dispatchTask: Task<Void, Never>?
     private var speechTasks: [String: Task<Data, Error>] = [:]
     private var renderer: ((String, [String: Any]) -> Void)?
-    private var restoring = false, closed = false, autoStartPending = false, generationStopped = false
+    private var closed = false, autoStartPending = false, generationStopped = false
     private var restoreID = UUID().uuidString
     private var startedAt: Date?
     private var pauseVersion = 0
@@ -162,7 +163,12 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     func replay() {
         guard !replying else { return }
         stopPlayback(); failure = nil
-        if currentAction == nil, (session?.cursor ?? 0) > 0 { session?.cursor -= 1 }
+        if currentAction == nil, let value = session {
+            guard let index = value.lesson.actions.prefix(value.cursor).lastIndex(where: {
+                $0.leaves.contains { [.board, .graph, .speak].contains($0.type) }
+            }) else { return }
+            session?.cursor = index
+        }
         gate = .init(cursor: session?.cursor ?? 0); persist(); playing = true; claimSpeech(); rehydrate()
     }
     private func pump() {

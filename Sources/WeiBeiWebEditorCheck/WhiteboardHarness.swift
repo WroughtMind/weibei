@@ -237,6 +237,14 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
       assert(getComputedStyle(card).backgroundColor==='rgba(0, 0, 0, 0)'&&getComputedStyle(card).borderTopWidth==='0px'&&getComputedStyle(card).boxShadow==='none','Card is an invisible layout container');
       assert(!card.querySelector('.reveal-char'),'Completed reveal must restore plain text');
       assert(card.querySelector('.katex'),'Bundled KaTeX must render formula');
+      const boardViewport=document.getElementById('viewport'),webiToggle=document.querySelector('#webi-host button');
+      const boardBounds=boardViewport.getBoundingClientRect(),cardX=card.getBoundingClientRect().x;
+      assert(boardBounds.left===0&&boardBounds.right===innerWidth,'Webi cannot reserve a full-height empty column');
+      webiToggle.click();await new Promise(requestAnimationFrame);
+      assert(boardViewport.getBoundingClientRect().width===boardBounds.width&&card.getBoundingClientRect().x===cardX,'Collapsing Webi cannot move the board');
+      webiToggle.click();await new Promise(requestAnimationFrame);
+      const petBounds=document.querySelector('#webi-host canvas').getBoundingClientRect();
+      assert(boardViewport.contains(document.elementFromPoint(petBounds.left+10,petBounds.top+10)),'Webi artwork must let board gestures through');
       await dispatch({type:'highlight',step_id:'h1',target_board_id:0,snippet:'观测值与预测值',color:'red'});
       assert(card.querySelector('.highlight'),'Annotation must match text across Markdown nodes');
       window.wbStage='graph';const graph={type:'graph',step_id:'g1',board_uid:1,title:'因果关系',card_type:'diagram',source_page:12,mermaid:'flowchart LR\nA[观测值] --> B[残差]'};
@@ -332,6 +340,10 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
       assert(viewport.scrollLeft===scrollBefore,'Handwriting disables the automatic camera');
       await api.restore([page,group,graph],inkState,'restore-ink');
       assert(zoom()===1.5&&document.querySelectorAll('.ink-layer path').length===3,'Three strokes and zoom survive restoration');
+      await api.restore([page,group,graph,{type:'circle',step_id:'restored-circle',target_board_id:0,snippet:'残差',color:'red'}],
+        {...inkState,scrollX:200,scrollY:140},'restore-camera');
+      await new Promise(resolve=>setTimeout(resolve,550));
+      assert(Math.abs(viewport.scrollLeft-200)<1&&Math.abs(viewport.scrollTop-140)<1,'Restoring annotations must not move the saved camera');
       api.canvasCommand('undo');assert(document.querySelectorAll('.ink-layer path').length===2,'Undo removes the last stroke');
       api.canvasCommand('clear_page');assert(document.querySelectorAll('.ink-layer path').length===0,'Clear removes only this page ink');
       await api.restore([page,group,graph],inkState,'ink-visual');

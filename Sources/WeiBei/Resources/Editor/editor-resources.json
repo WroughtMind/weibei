@@ -446,13 +446,13 @@
     },
     {
       "name": "whiteboard-runtime.js",
-      "bytes": 99949,
-      "sha256": "2ef8ff841b24057056d49a88b89129c4075f95e3d655cc6c2fba64cdbd0c948a"
+      "bytes": 99941,
+      "sha256": "6cc80bfadef44b8f025ee19ae15470c2bcad9b23a40abac1d30f0040e3a3e8dd"
     },
     {
       "name": "whiteboard.html",
-      "bytes": 4630,
-      "sha256": "9a67932733381458b76aa039c903a3d8a6ebf884fe2487574296d538f460f509"
+      "bytes": 4661,
+      "sha256": "3d4692d0e820c6c1befb906a95c789e90301a93e05ace66d8eafe92dbf5847d0"
     },
     {
       "name": "情绪动作.webp",

@@ -204,7 +204,7 @@ struct WhiteboardSessionView: View {
                 Text(classroom.settings.voice == .animalese ? "中文动物语" : classroom.settings.voice == .system ? "系统语音" : classroom.settings.voice == .cloud ? "云端语音" : "静音阅读")
                     .font(.caption).foregroundStyle(WeiBeiTheme.secondaryInk)
             }.padding(16)
-            WhiteboardCanvasTools(classroom: classroom)
+            WhiteboardCanvasTools(classroom: classroom).disabled(classroom.restoring)
             WhiteboardCanvasView(classroom: classroom, isDark: store.appearanceMode.isDark)
             if let narration = classroom.currentAction?.narration, !narration.isEmpty, classroom.settings.voice == .system || classroom.settings.voice == .cloud {
                 ScrollView { Text(narration).font(.callout).lineSpacing(4).textSelection(.enabled)
@@ -226,22 +226,27 @@ struct WhiteboardSessionView: View {
                         Divider()
                     }
                     ForEach(classroom.session?.discussions ?? []) { discussion in
-                        Text(discussion.correctionFor == nil ? discussion.question : "刚才这道题").font(.headline).textSelection(.enabled)
-                        if !discussion.text.isEmpty {
-                            discussionText(discussion)
-                        }
-                        if !discussion.completed {
-                            Text(classroom.replying ? "正在回答…" : "回答尚未完成").font(.caption)
-                        }
-                        Divider().id(discussion.id)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(discussion.correctionFor == nil ? discussion.question : "刚才这道题").font(.headline).textSelection(.enabled)
+                            if !discussion.text.isEmpty {
+                                discussionText(discussion)
+                            }
+                            if !discussion.completed {
+                                Text(classroom.replying ? "正在回答…" : "回答尚未完成").font(.caption)
+                            }
+                            Divider()
+                        }.frame(maxWidth: .infinity, alignment: .leading).id(discussion.id)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
               }
               .onChange(of: classroom.session?.discussions.last?.id) { _, id in
-                  if let id { proxy.scrollTo(id, anchor: .bottom) }
+                  if let id { DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) } }
               }
               .onChange(of: classroom.session?.discussions.last?.text) { _, _ in
-                  if let id = classroom.session?.discussions.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                  if let id = classroom.session?.discussions.last?.id {
+                      // Scroll after the native answer has its new layout, keeping its beginning visible.
+                      DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
+                  }
               }
             }
             TextField("这一步哪里没听懂？", text: $classroom.question, axis: .vertical)
@@ -274,10 +279,15 @@ struct WhiteboardSessionView: View {
     private var controls: some View {
         HStack(spacing: 16) {
             if classroom.session != nil {
-                Button { classroom.playing ? classroom.pause() : classroom.play() } label: {
-                    Label(classroom.playing ? "暂停" : "继续", systemImage: classroom.playing ? "pause.fill" : "play.fill")
-                }.disabled(classroom.replying || classroom.session?.completed == true)
-                Button("重讲这一步") { classroom.replay() }
+                if classroom.session?.completed == true {
+                    Text("已讲完").foregroundStyle(WeiBeiTheme.secondaryInk)
+                } else {
+                    Button { classroom.playing ? classroom.pause() : classroom.play() } label: {
+                        Label(classroom.playing ? "暂停" : "继续", systemImage: classroom.playing ? "pause.fill" : "play.fill")
+                    }.disabled(classroom.replying || classroom.restoring)
+                }
+                Button(classroom.session?.completed == true ? "复习最后一步" : "重讲这一步") { classroom.replay() }
+                    .disabled(classroom.replying || classroom.restoring)
                 if !classroom.generating && classroom.session?.generationComplete == false {
                     Button("继续编排") { classroom.resumeGeneration() }
                 }
@@ -287,7 +297,8 @@ struct WhiteboardSessionView: View {
                 Button("停止生成") { classroom.cancel() }
             }
             Spacer()
-            Text(classroom.status).font(.caption).foregroundStyle(WeiBeiTheme.secondaryInk).lineLimit(1)
+            Text(classroom.restoring ? "正在准备板书…" : classroom.status)
+                .font(.caption).foregroundStyle(WeiBeiTheme.secondaryInk).lineLimit(1)
         }.buttonStyle(.borderless).padding(16)
     }
 }

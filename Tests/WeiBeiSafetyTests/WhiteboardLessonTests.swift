@@ -303,6 +303,21 @@ final class WhiteboardLessonTests: XCTestCase {
         XCTAssertEqual(saved.cursor, 1); XCTAssertEqual(saved.lesson, value.lesson)
     }
 
+    @MainActor
+    func testReplayAfterCompletionReturnsToTeachingInsteadOfTrailingMetadata() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let classroom = WhiteboardClassroom(directory: folder, provider: .custom, baseURL: "http://localhost:1/v1", model: "fixture")
+        defer { classroom.close() }
+        var value = WhiteboardSession(source: source, goal: "复习", lesson: try lesson())
+        value.generationComplete = true; value.cursor = value.lesson.actions.count
+        classroom.session = value
+        classroom.replay()
+        XCTAssertEqual(classroom.session?.cursor, 1)
+        XCTAssertEqual(classroom.currentAction?.type, .group)
+        XCTAssertTrue(classroom.playing)
+    }
+
     func testLiveConfiguredModelProducesUsableLesson() async throws {
         guard ProcessInfo.processInfo.environment["WEIBEI_WHITEBOARD_LIVE"] == "1" else {
             throw XCTSkip("Explicit opt-in: uses the configured provider outside CI.")
