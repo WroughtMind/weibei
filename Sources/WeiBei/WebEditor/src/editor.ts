@@ -488,7 +488,11 @@ const slashContextForView = (view: any) => {
   const { $from } = selection;
   if ($from.parent.type.name !== 'paragraph') return null;
   for (let depth = $from.depth; depth > 0; depth -= 1) if (slashExcludedAncestors.has($from.node(depth).type.name)) return null;
-  const beforeCaret = $from.parent.textBetween(0, $from.parentOffset, '\uFFFC', '\uFFFC');
+  let beforeCaret = '';
+  // Formula nodes include boundary positions; flattening their text shifts the slash range.
+  $from.parent.content.cut(0, $from.parentOffset).forEach((node: any) => {
+    beforeCaret += node.isText ? node.text : '\uFFFC'.repeat(node.nodeSize);
+  });
   const slashOffset = beforeCaret.lastIndexOf('/');
   if (slashOffset < 0) return null;
   const query = beforeCaret.slice(slashOffset + 1);
@@ -553,7 +557,7 @@ const slashReplacement = (commandID: any, schema: any, options: any = {}) => {
   if (commandID === 'inlineMath') {
     const mathInline = schema.nodes.math_inline;
     const node = mathInline?.create(null, schema.text('x'));
-    return node ? { content: Fragment.from(paragraph.create(null, node)), selectionOffset: 1 } : null;
+    return node ? { content: Fragment.from(paragraph.create(null, node)), selectionFromOffset: 2, selectionToOffset: 3 } : null;
   }
   if (commandID === 'link') {
     const link = schema.marks.link;
@@ -575,7 +579,7 @@ const slashReplacement = (commandID: any, schema: any, options: any = {}) => {
   if (commandID === 'blockMath') {
     const mathBlock = schema.nodes.math_block;
     const node = mathBlock?.create(null, schema.text('x'));
-    return node ? { content: Fragment.from(node), selectionOffset: 0 } : null;
+    return node ? { content: Fragment.from(node), selectionFromOffset: 1, selectionToOffset: 2 } : null;
   }
   if (commandID === 'divider') {
     const divider = schema.nodes.hr || schema.nodes.horizontal_rule;

@@ -57,3 +57,27 @@ await native('insert', '+0');
 editor.pressKeyForCheck('Enter', { metaKey: true }); await pause();
 const saved = editor.getMarkdown(); editor.setMarkdown(saved); await pause();
 expect(document.querySelector('.weibei-math-block')?.dataset.value === '1+1\n=2+0', 'Block formula edit did not survive reload');
+
+// Slash keyboard selection and the empty-line plus button enter the same source editor.
+for (const [command, nodeType] of [['inlineMath', 'math_inline'], ['blockMath', 'math_block']]) {
+  await reset(command === 'inlineMath' ? '$a$ 前 ' : '');
+  if (command === 'inlineMath') {
+    await native('insert', '/inline_math');
+    await native('key', '\r', { keyCode: 36 });
+  } else {
+    await click(document.querySelector('.weibei-line-plus'));
+    const button = document.querySelector('#weibei-slash-command-blockMath button');
+    button.scrollIntoView({ block: 'nearest' });
+    await click(button);
+  }
+  expect(editor.selectionForCheck().parent === nodeType && editor.selectedTextForCheck() === 'x', 'Menu did not select formula source');
+  expect(editor.slashStateForCheck().show === false, 'Formula insertion left the menu open');
+  const inserted = document.querySelector('.weibei-math-editing');
+  await native('insert', '1/2');
+  expect(inserted?.dataset.value === '1/2'
+    && editor.slashStateForCheck().show === false, 'Formula input retained placeholder or opened slash menu');
+  if (command === 'inlineMath') expect(editor.getMarkdown().startsWith('$a$ 前'), 'Slash replacement damaged preceding formula');
+  editor.pressKeyForCheck('Enter', { metaKey: command === 'blockMath' }); await pause();
+  await native('insert', '后续正文');
+  expect(editor.selectionForCheck().parent === 'paragraph' && editor.getMarkdown().includes('后续正文'), 'Menu formula did not exit into normal text');
+}
