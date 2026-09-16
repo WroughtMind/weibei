@@ -264,6 +264,9 @@ final class WhiteboardLessonTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
         let classroom = WhiteboardClassroom(directory: folder, provider: .custom, baseURL: "http://localhost:1/v1", model: "fixture")
         classroom.settings.voice = .silent
+        let preparationStatus = classroom.status
+        classroom.pause()
+        XCTAssertEqual(classroom.status, preparationStatus, "Opening settings before a lesson must retain the preparation state")
         var value = WhiteboardSession(source: source, goal: "讲解", lesson: try lesson()); value.generationComplete = true
         classroom.session = value
         var envelopes: [[String: Any]] = []

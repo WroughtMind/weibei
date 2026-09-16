@@ -150,7 +150,7 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
         renderer?("generationWaiting", ["value": false])
         playing = false; renderer?("pause", ["value": true])
         if speechID != nil { SystemNarrator.shared.pause() }
-        status = "已暂停"
+        if session?.completed == false { status = "已暂停" }
     }
     func stopPlayback() {
         playing = false; dispatchID = UUID(); dispatchTask?.cancel(); dispatchTask = nil

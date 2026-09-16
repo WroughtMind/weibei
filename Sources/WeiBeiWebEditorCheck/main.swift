@@ -163,10 +163,6 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         window.weiBeiMarkdownBaseURL = \(json(URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor/").absoluteString));
         """
         controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        // Set DOM attributes after parsing; WebKit may replace the initial root.
-        controller.addUserScript(WKUserScript(
-            source: "document.documentElement.setAttribute('writingsuggestions', 'false');",
-            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         super.init()
@@ -199,7 +195,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 fail("editorReady did not include the V2 document identity")
                 return
             }
-            validateInitialMarkdown()
+            // The compressed editor boots asynchronously. Configure the actual
+            // editable surface after its ready event, before any typing checks.
+            webView.evaluateJavaScript("document.querySelector('.ProseMirror').setAttribute('writingsuggestions', 'false')") { [weak self] _, error in
+                guard let self else { return }
+                if let error { self.fail("could not configure editor input checks: \(error.localizedDescription)"); return }
+                self.validateInitialMarkdown()
+            }
         case "dirtyChanged":
             guard updateSession(from: message.body),
                   let dirty = (message.body as? [String: Any])?["dirty"] as? Bool else {
@@ -3540,9 +3542,6 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
         window.weiBeiLocalImageScheme = "weibeiimage";
         window.weiBeiMarkdownBaseURL = \(json(URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor/").absoluteString));
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        controller.addUserScript(WKUserScript(
-            source: "document.documentElement.setAttribute('writingsuggestions', 'false');",
-            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         panel = NSPanel(
@@ -3587,7 +3586,11 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
                 return
             }
             readyMilliseconds = (ProcessInfo.processInfo.systemUptime - loadStarted) * 1_000
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.beginActions() }
+            webView.evaluateJavaScript("document.querySelector('.ProseMirror').setAttribute('writingsuggestions', 'false')") { [weak self] _, error in
+                guard let self else { return }
+                if let error { self.finish(.failure(error)); return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.beginActions() }
+            }
         case "editorFailure":
             finish(.failure(BenchmarkError.failed("\(fixture): editor reported a failure: \(message.body)")))
         case "dirtyChanged":
