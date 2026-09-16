@@ -20,7 +20,9 @@ struct CatalystTopBar: UIViewControllerRepresentable {
 
     final class Controller: UIViewController, NSToolbarDelegate {
         private let identifiers = ["weibei.navigation", "weibei.panes", "weibei.actions"].map { NSToolbarItem.Identifier($0) }
-        private let hosts = (0..<3).map { _ in UIHostingController(rootView: AnyView(EmptyView())) }
+        private let hosts = (0..<3).map { _ in
+            UIHostingConfiguration { AnyView(EmptyView()) }.margins(.all, 0).makeContentView()
+        }
         private let toolbar = NSToolbar(identifier: "weibei.workspace")
         private weak var scene: UIWindowScene?
         private var showsToolbar = true
@@ -34,18 +36,15 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             toolbar.allowsUserCustomization = false
             toolbar.centeredItemIdentifiers = [identifiers[1]]
             for host in hosts {
-                addChild(host)
-                host.sizingOptions = .intrinsicContentSize
-                host.view.backgroundColor = .clear
-                host.didMove(toParent: self)
+                host.backgroundColor = .clear
             }
         }
 
         func update(_ contents: [AnyView], isVisible: Bool) {
             loadViewIfNeeded()
             for (host, content) in zip(hosts, contents) {
-                host.rootView = content
-                host.view.invalidateIntrinsicContentSize()
+                host.configuration = UIHostingConfiguration { content }.margins(.all, 0)
+                host.invalidateIntrinsicContentSize()
             }
             showsToolbar = isVisible
             attach()
@@ -74,7 +73,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                      willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
             guard let index = identifiers.firstIndex(of: identifier) else { return nil }
-            let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: hosts[index].view)
+            let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: hosts[index])
             item.isBordered = false
             return item
         }
