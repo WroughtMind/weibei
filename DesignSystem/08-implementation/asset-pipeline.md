@@ -10,7 +10,7 @@
 
 ## 输出
 
-`scripts/build-assets.sh` 生成透明、单色、反白、真实字体英文组合标、App Icon、Web、GitHub、Social 和预览图。它同时将批准的透明拓印生成为 `AppIcon.icon` 的独立字标层，玻璃底板由图标配置交给系统处理；应用打包时再由 Xcode 编译动态资源与传统 ICNS。`scripts/build-manifest.ts` 记录路径、体积与 SHA-256。
+`scripts/build-assets.sh` 生成透明、单色、反白、真实字体英文组合标、App Icon、Web、GitHub、Social 和预览图。它通过 `scripts/build-icon-layers.sh` 将批准的拓印生成为 `AppIcon.icon` 的玻璃 W 与不透明朱砂两个独立材质层，玻璃底板由图标配置交给系统处理；应用打包时再由 Xcode 编译动态资源与传统 ICNS。`scripts/build-manifest.ts` 记录路径、体积与 SHA-256。
 
 ## 重建
 
@@ -18,6 +18,8 @@
 DesignSystem/scripts/build-assets.sh
 DesignSystem/scripts/verify-assets.sh
 ```
+
+只重建系统图标材质时，运行 `bash DesignSystem/scripts/build-icon-layers.sh`，再运行 `npx tsx DesignSystem/scripts/build-manifest.ts DesignSystem` 更新清单。
 
 要求：ImageMagick、Node.js。脚本不依赖网络；字体渲染直接读取 `assets/fonts/`，SVG 是可编辑母版，PNG 的干净图形版本使用同一几何坐标机械绘制。
 
