@@ -150,12 +150,14 @@ function sections() {
   return (headings.length ? headings : blocks.filter((_, i) => i % 15 === 0)).map((p, i, all) => ({ id: p.dataset.weibeiLocation!, title: clean(p.textContent).slice(0, 60), excerpt: '', level: 1, position: i / Math.max(1, all.length - 1), metadata: 'Word' }));
 }
 async function goTo(location: string) {
+  let activeID = location;
   if (viewer) {
     const index = viewer.presentationData!.slides.findIndex(s => s.slidePath === location.split('#')[0]);
     // Notes have the source location of their own part, but belong to one slide.
     const noteIndex = viewer.presentationData!.slides.findIndex(s => noteParts.get(s.slidePath) === location.split('#')[0]);
     const target = index >= 0 ? index : noteIndex;
     if (target < 0) return false;
+    activeID = viewer.presentationData!.slides[target].slidePath;
     await viewer.goToSlide(target, { behavior: 'instant', block: 'start' });
   }
   const element = sourceElement(location);
@@ -166,7 +168,7 @@ async function goTo(location: string) {
     element!.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   } else if (element && (!viewer || location.includes('#'))) element.scrollIntoView({ block: 'center', behavior: 'instant' });
   else if (!viewer) return false;
-  post('contentRailActive', { id: viewer ? location.split('#')[0] : location, reason: 'jump' });
+  post('contentRailActive', { id: activeID, reason: 'jump' });
   return true;
 }
 async function find(query: string) {
