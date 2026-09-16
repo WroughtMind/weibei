@@ -656,14 +656,18 @@ enum CatalystBusinessCheck {
         try await until("reasoning composer configured") {
             AgentProviderReadiness.isConfigured(for: store) && store.agentReasoningEffort == "low"
         }
+        mainComposer.text = "第一行\n第二行\n第三行"
+        mainComposer.delegate?.textViewDidChange?(mainComposer)
+        try await until("reasoning composer grows for multiple lines") {
+            mainComposer.bounds.height >= (mainComposer.font?.lineHeight ?? 20) * 3 - 2
+        }
         mainComposer.text = "解释这段内容。"
         mainComposer.delegate?.textViewDidChange?(mainComposer)
-        try await Task.sleep(for: .milliseconds(300))
-        window.layoutIfNeeded()
-        guard let content = window.rootViewController?.view,
-              mainComposer.bounds.height <= (mainComposer.font?.lineHeight ?? 20) + 2,
-              content.bounds.maxY - mainComposer.convert(mainComposer.bounds, to: content).maxY <= 40 else {
-            throw Failure("single-line reasoning composer grew beyond its content")
+        try await until("reasoning composer shrinks to one line") {
+            window.layoutIfNeeded()
+            guard let content = window.rootViewController?.view else { return false }
+            return mainComposer.bounds.height <= (mainComposer.font?.lineHeight ?? 20) + 2
+                && content.bounds.maxY - mainComposer.convert(mainComposer.bounds, to: content).maxY <= 40
         }
         try capture("reasoning-composer.png")
     }
