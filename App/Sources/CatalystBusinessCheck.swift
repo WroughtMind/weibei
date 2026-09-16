@@ -572,10 +572,12 @@ enum CatalystBusinessCheck {
         }
         func capture(_ name: String) throws {
             guard let content = window.rootViewController?.view,
+                  let split = descendants(content).compactMap({ $0 as? StableDocumentSplitView }).first,
+                  content.bounds.contains(split.convert(split.bounds, to: content)),
                   content.bounds.contains(mainComposer.convert(mainComposer.bounds, to: content)) else {
-                throw Failure("main composer outside visible content")
+                throw Failure("workspace or main composer outside visible content")
             }
-            // The native toolbar offsets Catalyst's content inside UIWindow; capture content coordinates.
+            // Capture workspace content; the native toolbar is outside this view.
             let snapshot = UIGraphicsImageRenderer(bounds: content.bounds).image { _ in
                 content.drawHierarchy(in: content.bounds, afterScreenUpdates: true)
             }
