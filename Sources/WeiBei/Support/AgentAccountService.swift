@@ -33,6 +33,7 @@ final class AgentAccountService: ObservableObject {
     @Published private(set) var statusMessage: LocalizedMessage?
     @Published private(set) var lastError: LocalizedMessage?
     @Published private(set) var liveModelIDs: [String] = []
+    @Published private(set) var liveReasoningLevels: [String: [String]] = [:]
     private var liveModelsProvider: AgentProviderID?
     private var loginTask: Task<Void, Never>?
     private var modelListTask: Task<Void, Never>?
@@ -47,6 +48,7 @@ final class AgentAccountService: ObservableObject {
 
     /// 打开设置或更换服务/密钥后，向服务商拉取可用模型；失败时保留默认 ID。
     func refreshModels(provider: AgentProviderID, baseURL: String) {
+        liveReasoningLevels = [:]
         modelListTask?.cancel()
         modelListTask = Task { [weak self] in
             await self?.fetchLiveModels(provider: provider, baseURL: baseURL)
@@ -64,6 +66,25 @@ final class AgentAccountService: ObservableObject {
             ids.insert(fallback, at: 0)
         }
         return ids
+    }
+
+    func reasoningLevels(provider: AgentProviderID, model: String) -> [String] {
+        let id = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if provider == .openaiCodex {
+            return liveModelsProvider == provider ? liveReasoningLevels[id] ?? [] : []
+        }
+        return AgentReasoningEffort.levels(provider: provider, model: id)
+    }
+
+    func reasoningLevelsForRequest(provider: AgentProviderID, model: String) async throws -> [String] {
+        guard provider == .openaiCodex else {
+            return AgentReasoningEffort.levels(provider: provider, model: model)
+        }
+        let record = try await NativeOpenAIOAuth.ensureFreshAccessToken()
+        let levels = try await AgentModelListService.shared.codexReasoningLevels(
+            token: record.accessToken ?? "", accountID: record.accountID ?? ""
+        )
+        return levels[model] ?? []
     }
 
     func isAvailable(_ provider: AgentProviderID) -> Bool {
@@ -248,9 +269,22 @@ final class AgentAccountService: ObservableObject {
             return
         }
         do {
-            let ids = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
+            let ids: [String]
+            var reasoningLevels: [String: [String]] = [:]
+            if provider == .openaiCodex {
+                let fresh = try await NativeOpenAIOAuth.ensureFreshAccessToken()
+                let token = fresh.accessToken ?? ""
+                let accountID = fresh.accountID ?? ""
+                ids = try await AgentModelListService.shared.fetchModels(
+                    strategy: .codexSubscription(token: token, accountID: accountID), apiKey: ""
+                )
+                reasoningLevels = try await AgentModelListService.shared.codexReasoningLevels(token: token, accountID: accountID)
+            } else {
+                ids = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
+            }
             guard !Task.isCancelled else { return }
             await MainActor.run {
+                liveReasoningLevels = reasoningLevels
                 liveModelIDs = ids
                 liveModelsProvider = provider
             }

@@ -15,6 +15,7 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-failure.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
     [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
   done
@@ -68,7 +69,7 @@ business = verify(business_path, 'source', 'passed')
 assert len(business['checks']) == 21, business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
-for filename in ['selection-composers.png', 'selection-discussion.png']:
+for filename in ['selection-composers.png', 'selection-discussion.png', 'reasoning-composer.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
 print('13 项会话检查与 21 项原业务保存重开检查通过；含原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。')
 

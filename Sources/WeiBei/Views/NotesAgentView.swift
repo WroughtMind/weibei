@@ -2149,7 +2149,8 @@ struct AgentPaneView: View {
                     sendTrailing: wide ? 8 : 10,
                     horizontalPadding: wide ? 16 : 12,
                     verticalPadding: 8,
-                    focusTrigger: composerFocusTrigger
+                    focusTrigger: composerFocusTrigger,
+                    showsReasoningEffort: true
                 ) {
                     submitAgentDraft()
                 }
