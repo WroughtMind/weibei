@@ -24,6 +24,8 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
         window.selectionEvents = [];
         window.remarkEvents = [];
         window.askEvents = [];
+        window.wikiEvents = [];
+        window.webkit.messageHandlers.wikiLinkActivated = { postMessage: body => window.wikiEvents.push(body) };
         window.webkit.messageHandlers.selectionChanged = { postMessage: body => window.selectionEvents.push(body) };
         window.webkit.messageHandlers.remarkMark = { postMessage: body => window.remarkEvents.push(body) };
         window.webkit.messageHandlers.selectionAskMark = { postMessage: body => window.askEvents.push(body) };
@@ -54,10 +56,22 @@ final class NativeSelectionWritingHarness: NSObject, WKScriptMessageHandler {
                 return
             }
             let text = body["text"] as? String ?? ""
+            if body["operation"] as? String == "focus" {
+                window.makeFirstResponder(web)
+                return
+            }
+            if body["operation"] as? String == "find" {
+                let configuration = WKFindConfiguration()
+                configuration.backwards = body["backwards"] as? Bool == true
+                web.find(text, configuration: configuration) { result in
+                    self.web.evaluateJavaScript("window.nativeFindResult = \(result.matchFound);")
+                }
+                return
+            }
             if body["operation"] as? String == "key", let keyCode = body["keyCode"] as? UInt16 {
                 let modifiers: NSEvent.ModifierFlags = body["shift"] as? Bool == true ? .shift : []
                 let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: keyCode)!
-                web.keyDown(with: event)
+                window.sendEvent(event)
                 return
             }
             guard let client = web.inputContext?.client else { expect(false, "native text input unavailable"); return }

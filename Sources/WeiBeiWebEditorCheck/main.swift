@@ -135,6 +135,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 
     private let webView: WKWebView
+    private let window: NSWindow
     private var isDone = false
     private var failure: String?
     private var activatedWikiTitle: String?
@@ -166,6 +167,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         controller.addUserScript(WKUserScript(source: "document.documentElement.setAttribute('writingsuggestions', 'false')", injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
+        // Focus-dependent source/preview states need a real host, kept hidden.
+        window = NSWindow(contentRect: webView.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = webView
+        window.makeFirstResponder(webView)
         super.init()
         for name in ["editorReady", "dirtyChanged", "snapshotReady", "outlineChanged", "selectionChanged", "askAgentWithSelection", "linkEditorRequested", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested", "selectionAskMark", "editorFailure"] {
             controller.add(self, name: name)
@@ -3946,6 +3951,10 @@ if benchmarkMode {
     exit(1)
 }
 NSApplication.shared.setActivationPolicy(.prohibited)
+if CommandLine.arguments.contains("--notes-interaction") {
+    NativeSelectionWritingHarness().run(scriptName: "native-notes.js")
+    exit(0)
+}
 if CommandLine.arguments.contains("--math-interaction") {
     NativeSelectionWritingHarness().run(scriptName: "native-math.js")
     exit(0)

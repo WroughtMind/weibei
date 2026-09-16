@@ -103,7 +103,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 case .navigateBack: store.navigateBackInWorkspace()
                 case .navigateForward: store.navigateForwardInWorkspace()
                 case .courseIndex: store.toggleLibrary()
-                case .searchInMaterial: store.revealReaderSearch()
+                case .searchInMaterial: store.revealDocumentSearch()
                 case .focusLibrary: store.focus(.library)
                 case .focusReader: store.focus(.reader)
                 case .focusNotes: store.focus(.notes)

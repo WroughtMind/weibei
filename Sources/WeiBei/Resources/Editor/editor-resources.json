@@ -11,8 +11,8 @@
     },
     {
       "name": "editor-entry.js",
-      "bytes": 614739,
-      "sha256": "d1016c5b004b4e78eb3f57ee7ab9b20a66fd0ca0b37ac49505af7d820a6ede19"
+      "bytes": 615665,
+      "sha256": "1460941473b28113d934e385a687ca9200c630b464e68e2ceca94f8c71f66d25"
     },
     {
       "name": "editor.css",
@@ -171,8 +171,8 @@
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 526169,
-      "sha256": "5852e582158af4f8bf9ed1fae58ab643ca70fd502c4d006ad3eb5f47317eb8ee"
+      "bytes": 538686,
+      "sha256": "a37b21db60560bfc0af8291d61eb5cd0b4b9f5c815d759793b506ccf5f8bcdda"
     }
   ]
 }

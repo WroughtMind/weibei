@@ -298,7 +298,7 @@ struct CourseDocNoteWorkspaceView: View {
 
             CourseWorkspaceRow(
                 icon: kind == .notes ? "note.text" : item.kind.systemImage,
-                title: store.displayTitle(for: item),
+                title: store.noteListDisplayTitle(for: item),
                 detail: itemDetail(item),
                 status: relationCountLabel(for: item, kind: kind),
                 selected: isSelected(item, kind: kind)
@@ -383,7 +383,7 @@ struct CourseDocNoteWorkspaceView: View {
                     .tracking(1.0)
                     .foregroundStyle(WeiBeiTheme.cinnabar)
 
-                Text(store.displayTitle(for: item))
+                Text(store.noteListDisplayTitle(for: item))
                     .weiBeiText(16, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(2)
@@ -532,10 +532,7 @@ struct CourseDocNoteWorkspaceView: View {
     private func filter(_ items: [StudyItem]) -> [StudyItem] {
         guard !cleanedSearch.isEmpty else { return items }
         return items.filter { item in
-            store.displayTitle(for: item)
-                .localizedCaseInsensitiveContains(cleanedSearch)
-                || store.displaySubtitle(for: item)
-                    .localizedCaseInsensitiveContains(cleanedSearch)
+            store.itemMatchesLibrarySearch(item, query: cleanedSearch)
                 || item.id.localizedCaseInsensitiveContains(cleanedSearch)
         }
     }

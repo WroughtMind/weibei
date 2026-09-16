@@ -52,7 +52,7 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
         case .navigateBack: return language.text("后退", "Back")
         case .navigateForward: return language.text("前进", "Forward")
         case .courseIndex: return language.text("课程目录", "Course Index")
-        case .searchInMaterial: return language.text("资料内搜索", "Search in Material")
+        case .searchInMaterial: return language.text("当前文稿内查找", "Find in Current Document")
         case .focusLibrary: return language.text("聚焦课程目录", "Focus Course Index")
         case .focusReader: return language.text("聚焦阅读", "Focus Reader")
         case .focusNotes: return language.text("聚焦笔记", "Focus Notes")

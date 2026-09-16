@@ -128,7 +128,7 @@ struct ContentView: View {
                     onToggleLibrary: { store.toggleLibrary() },
                     onDismissFloatingAgent: { store.dismissFloatingSelectionAgent() },
                     onHideReaderSearch: {
-                        store.hideReaderSearch()
+                        store.hideDocumentSearch()
                         topSearchFocused = false
                     }
                 )
@@ -263,12 +263,15 @@ private struct PaneChromeFocusBridge: View {
             .onChange(of: paneState.focusedPane) { _, value in
                 focusedPane.wrappedValue = value
             }
-            .onChange(of: paneState.showReaderSearch) { _, visible in
+            .onChange(of: paneState.showDocumentSearch) { _, visible in
                 topSearchFocused.wrappedValue = visible
+            }
+            .onChange(of: paneState.searchFocusRequest) { _, _ in
+                topSearchFocused.wrappedValue = true
             }
             .onAppear {
                 focusedPane.wrappedValue = paneState.focusedPane
-                topSearchFocused.wrappedValue = paneState.showReaderSearch
+                topSearchFocused.wrappedValue = paneState.showDocumentSearch
             }
     }
 }
@@ -475,11 +478,16 @@ private struct LibraryAwareEscapeBridge: View {
 
     var body: some View {
         Group {
-            if !courseWorkspacePresented && libraryDrawer.isOpen {
+            if !courseWorkspacePresented && store.notePickerPresented {
+                EscapeKeyBridge(onEscape: {
+                    store.notePickerPresented = false
+                    store.focus(.notes)
+                })
+            } else if !courseWorkspacePresented && libraryDrawer.isOpen {
                 EscapeKeyBridge(onEscape: onToggleLibrary)
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showsGlobalFloatingAgent {
                 EscapeKeyBridge(onEscape: onDismissFloatingAgent)
-            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showReaderSearch {
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showDocumentSearch {
                 EscapeKeyBridge(onEscape: onHideReaderSearch)
             }
         }
@@ -544,11 +552,11 @@ private struct UnifiedTopBarView: View {
 
             Spacer(minLength: 0)
 
-            if paneState.showReaderSearch && shouldShowSearchAction {
+            if paneState.showDocumentSearch && shouldShowSearchAction {
                 TextField(
                     "",
-                    text: $store.readerSearch,
-                    prompt: Text(store.ui("资料内搜索", "Search in material"))
+                    text: store.searchesNotes ? $store.noteSearch : $store.readerSearch,
+                    prompt: Text(searchPrompt)
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
@@ -560,16 +568,30 @@ private struct UnifiedTopBarView: View {
                     .weiBeiText(12)
                     .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
                     .frame(width: 220)
+                .onSubmit {
+                    if store.searchesNotes { store.noteSearchRequest &+= 1 }
+                }
                 .weiBeiOnExitCommand {
                     withAnimation(WeiBeiMotion.panel) {
-                        store.hideReaderSearch()
+                        store.hideDocumentSearch()
                         searchFocused.wrappedValue = false
                     }
                 }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
+                if store.searchesNotes && !store.noteSearch.isEmpty {
+                    if store.noteSearchFound == false {
+                        Text(store.ui("无匹配", "No matches")).weiBeiText(11)
+                    }
+                    topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
+                    topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
+                }
+                topIconButton("xmark", help: store.ui("关闭查找", "Close search")) {
+                    store.hideDocumentSearch()
+                    searchFocused.wrappedValue = false
+                }
             }
 
-            if shouldShowSearchAction && !paneState.showReaderSearch {
+            if shouldShowSearchAction && !paneState.showDocumentSearch {
                 searchButton
             }
 
@@ -615,7 +637,7 @@ private struct UnifiedTopBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
             showSettings()
         }
-        .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
+        .animation(WeiBeiMotion.panel, value: paneState.showDocumentSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
         .animation(WeiBeiMotion.panel, value: paneState.showReader)
@@ -644,11 +666,11 @@ private struct UnifiedTopBarView: View {
     }
 
     private var shouldShowSearchAction: Bool {
-        store.hasSelectedMaterial && hasReaderScopedTopActions
+        store.canSearchCurrentDocument
     }
 
-    private var hasReaderScopedTopActions: Bool {
-        store.isPaneToggleActive(.reader)
+    private var searchPrompt: String {
+        store.searchesNotes ? store.ui("笔记内查找", "Find in note") : store.ui("资料内搜索", "Search in material")
     }
 
     private var primaryText: Color {
@@ -796,18 +818,18 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var searchButton: some View {
-        topIconButton("magnifyingglass", help: store.ui("打开资料内搜索", "Search in material")) {
+        topIconButton("magnifyingglass", help: searchPrompt) {
             toggleReaderSearch()
         }
     }
 
     private func toggleReaderSearch() {
         withAnimation(WeiBeiMotion.panel) {
-            if paneState.showReaderSearch {
-                store.hideReaderSearch()
+            if paneState.showDocumentSearch {
+                store.hideDocumentSearch()
                 searchFocused.wrappedValue = false
             } else {
-                store.revealReaderSearch()
+                store.revealDocumentSearch()
                 searchFocused.wrappedValue = true
             }
         }
