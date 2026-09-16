@@ -49,7 +49,8 @@ export const createMathEditingPlugin = (isEditable: () => boolean) => new Plugin
     if (!block.isTextblock || block.type.spec.code) return null;
     // A complete double-dollar paragraph becomes editable block math.
     const text = block.textBetween(0, block.content.size, '\n', '\ufffc');
-    if (block.type.name === 'paragraph' && /^\$\$[\s\S]+\$\$$/.test(text)) {
+    if (block.type.name === 'paragraph' && block.childCount === 1 && block.firstChild?.isText
+        && !block.firstChild.marks.some((mark) => mark.type.spec.code) && /^\$\$[\s\S]+\$\$$/.test(text)) {
       const value = text.slice(2, -2);
       const pos = $from.before();
       const tr = state.tr.replaceWith(pos, pos + block.nodeSize, state.schema.nodes.math_block.create(null, state.schema.text(value)));
@@ -59,7 +60,7 @@ export const createMathEditingPlugin = (isEditable: () => boolean) => new Plugin
     }
     const spans: Array<{ from: number; to: number; source: string }> = [];
     block.forEach((child, offset) => {
-      if (child.isText) spans.push(...findCompleteInlineMathSpans(child.text!).map((span) => ({ ...span, from: offset + span.from, to: offset + span.to })));
+      if (child.isText && !child.marks.some((mark) => mark.type.spec.code)) spans.push(...findCompleteInlineMathSpans(child.text!).map((span) => ({ ...span, from: offset + span.from, to: offset + span.to })));
     });
     if (!spans.length) return null;
     const tr = state.tr;

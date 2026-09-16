@@ -11,6 +11,14 @@ const click = async (element) => {
   const rect = element.getBoundingClientRect();
   await native('click', '', { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
 };
+// Dollar pairs inside inline code remain literal, including double-dollar pairs.
+for (const delimiter of ['$', '$$']) {
+  await reset('`' + delimiter + '1+1' + delimiter + '`');
+  editor.selectFirstTextForCheck('1+1');
+  await native('insert', '2+2');
+  expect(document.querySelector('.ProseMirror code')?.textContent === delimiter + '2+2' + delimiter
+    && !document.querySelector('.weibei-math-node'), 'Inline code became a formula');
+}
 // A/B: type both dollars first, move between them, then enter letters or numbers.
 for (const value of ['abc', '1+1']) {
   await reset();
