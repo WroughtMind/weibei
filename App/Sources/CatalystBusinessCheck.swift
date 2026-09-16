@@ -571,8 +571,13 @@ enum CatalystBusinessCheck {
             descendants(window).compactMap { $0 as? AgentComposerTextEditor.ComposerTextView }.first { $0 !== mainComposer }
         }
         func capture(_ name: String) throws {
-            let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            guard let content = window.rootViewController?.view,
+                  content.bounds.contains(mainComposer.convert(mainComposer.bounds, to: content)) else {
+                throw Failure("main composer outside visible content")
+            }
+            // The native toolbar offsets Catalyst's content inside UIWindow; capture content coordinates.
+            let snapshot = UIGraphicsImageRenderer(bounds: content.bounds).image { _ in
+                content.drawHierarchy(in: content.bounds, afterScreenUpdates: true)
             }
             try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent(name))
         }
