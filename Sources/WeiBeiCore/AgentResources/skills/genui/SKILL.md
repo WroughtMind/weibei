@@ -6,8 +6,7 @@
 ## 先判断：有结构才画，有操作才交互
 
 口诀：纯解释直接说；并列信息用表；数量趋势用图；步骤用流程；确需用户输入再放控件。
-两三句话能说清时不要调用 render_ui，也不要把普通回答包进卡片。
-不要把回答自动改成待办清单、练习或仪表盘；list 只用于真正并列的信息。
+两三句话能说清时不要调用 render_ui，也不要把普通回答包进卡片；不要把回答自动改成待办清单、练习或仪表盘，list 只用于真正并列的信息。
 
 ## 调用方式
 
@@ -26,10 +25,10 @@
 | 标题、段落、公式、代码 | text |
 | 短内容横排或纵排 | row / col |
 | 多组同级内容 | grid |
-| 少量明细对照 | table |
+| 明细对照 | table |
 | 关键数字、状态、进度 | stat / badge / progress |
 | 并列项、键值、提醒 | list / keyvalue / callout |
-| 阶段或操作顺序 | steps |
+| 阶段、操作顺序或时间轴 | steps / timeline |
 | 简单数量、趋势、占比 | chart |
 | 收集输入后继续处理 | input / select / textarea / submit |
 
@@ -39,7 +38,7 @@
 - row: `{"type":"row","items":[...],"wrap":true?,"spacer":true?}`
 - col: `{"type":"col","items":[...],"gap":8?}`
 - grid: `{"type":"grid","cols":2,"items":[...]}`
-- table: `{"type":"table","columns":["列"],"rows":[["值"]]}`；少量明细直接用表头排序。
+- table: `{"type":"table","columns":["列"],"rows":[["值"]]}`；只要需要筛选 filter、导出 export、展开明细 details、列类型 types 或联动排序 sortField，无论行数，先加载 genui-advanced。
 - stat: `{"type":"stat","label":"指标","value":"42","delta":"+8%","spark":[3,5,4,8]}`
 - badge: `{"type":"badge","label":"状态","tone":"success|warn|danger|accent"}`
 - progress: `{"type":"progress","label":"进度","value":64,"valueLabel":"64%"}`
@@ -47,6 +46,7 @@
 - keyvalue: `{"type":"keyvalue","pairs":[{"key":"名称","value":"内容"}]}`
 - callout: `{"type":"callout","tone":"info|success|warning|error","title":"提醒","content":"内容"}`
 - steps: `{"type":"steps","current":1,"steps":[{"title":"步骤","desc":"说明"}]}`
+- timeline: `{"type":"timeline","items":[{"title":"事件","desc":"说明","time":"第 1 天"}]}`
 - chart: `{"type":"chart","kind":"bars|line|donut","data":[{"label":"A","value":1}]}`；只做不超过 8 点的快速对比。
 - button: `{"type":"button","label":"继续","tone":"primary|danger|success|ghost","action":"continue"}`
 - input: `{"type":"input","id":"query","label":"问题","placeholder":"请输入","inputType":"text|email|color"}`
@@ -72,4 +72,4 @@ action 只是当前会话的互动请求，不代表检索、记忆或笔记操�
 不得索取或生成密码、API Key、访问令牌、恢复码等秘密输入。
 渲染器报错时按原因修正后重调 render_ui；工具回执只表示已提交，不保证显示正确。
 
-需要复杂长表、13 种 ECharts 预设或 full option、Diagram、Plot、3D 与低频组件时，先调用 `load_skill`，参数 `{"id":"genui-advanced"}`；加载后仍用 `render_ui`。
+表格只要需要筛选、导出、展开明细、列类型或联动排序，无论行数，或需要 13 种 ECharts 预设、full option、Diagram、Plot、3D 与低频组件时，先调用 `load_skill`，参数 `{"id":"genui-advanced"}`；加载后仍用 `render_ui`。

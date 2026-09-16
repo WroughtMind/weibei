@@ -2,7 +2,7 @@
   "id": "genui",
   "name": "GenUI",
   "version": "0.10.0",
-  "description": "常用生成式界面：负责使用判断、内容选型、富文本、基础图表与交互；高级能力需加载 genui-advanced。",
+  "description": "常用生成式界面：负责使用判断、时间线、内容选型与基础交互；表格筛选、导出、展开明细、列类型或联动排序等高级能力需加载 genui-advanced。",
   "modelInvocable": true,
   "userInvocable": true,
   "tools": [

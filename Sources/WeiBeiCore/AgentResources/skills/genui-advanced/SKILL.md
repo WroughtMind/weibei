@@ -21,7 +21,6 @@
 - image: `{"type":"image","src":"https://example.com/result.png","alt":"结果图片"}` — 展示浏览器可访问的 HTTPS 图片地址；懒加载；不支持 `file:`/`data:` 等本地或主动协议
 - audio: `{"type":"audio","src":"https://example.com/result.mp3","alt":"语音结果","loop":true?}` — 原生控制条；用户主动播放，不自动播放；仅已确认的 HTTPS 地址
 - video: `{"type":"video","src":"https://example.com/result.mp4","alt":"视频结果","poster":"https://example.com/poster.jpg"?,"loop":true?,"muted":true?,"aspectRatio":"16:9|4:3|1:1|9:16"?}` — 原生播放/音量/全屏控制；不自动播放
-- timeline: `{"type":"timeline","items":[{"title":"...","desc":"...","time":"..."}]}`
 - file-tree: `{"type":"file-tree","items":[{"name":"...","type":"file|dir","children":[...]?}]}` — 目录行可点击折叠/展开（本地，零往返）
 - breadcrumb: `{"type":"breadcrumb","items":["首页","设置","账户"]}`
 - diff: `{"type":"diff","diffs":[{"path":"...","oldText":"..."|null,"newText":"..."}]}`
@@ -51,10 +50,10 @@
 
 ## 完整调用示例
 
-这个例子只示范高级组件参数，不表示任何任务都要同时用表和图：
+这个例子演示本地筛选、内置导出和展开明细：filter 是输入框 id 字符串，export 是布尔值，details 与 rows 对齐且每项是组件数组或 null；不要使用 expandable，也不要另放导出按钮。
 
 ```json
-{"id":"advanced-flow","spec":{"items":[{"type":"table","columns":["阶段","人数"],"rows":[["访问",120],["注册",45]]},{"type":"echart","option":{"xAxis":{"type":"category","data":["访问","注册"]},"yAxis":{"type":"value"},"series":[{"type":"bar","data":[120,45]}]}}]}}
+{"id":"course-table","spec":{"title":"课程数据表","items":[{"type":"input","id":"course-filter","label":"筛选课程","placeholder":"输入课程名称"},{"type":"table","columns":["课程","学分","人数"],"rows":[["高等数学",4,120],["线性代数",3,90],["概率论",3,80]],"types":["text","num","num"],"export":true,"filter":"course-filter","filterColumn":0,"details":[[{"type":"text","size":"body","content":"微积分基础与函数分析课程。"}],[{"type":"text","size":"body","content":"向量、矩阵及线性方程组课程。"}],[{"type":"text","size":"body","content":"随机事件、概率模型与统计基础课程。"}]]}]}}
 ```
 
 保持稳定 id，通过 `render_ui` 提交；若不再需要高级组件，继续按主技能选择最小表达。

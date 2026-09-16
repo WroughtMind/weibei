@@ -111,8 +111,7 @@ const mainSkill = `# GenUI — 魏碑常用界面规范
 ## 先判断：有结构才画，有操作才交互
 
 口诀：纯解释直接说；并列信息用表；数量趋势用图；步骤用流程；确需用户输入再放控件。
-两三句话能说清时不要调用 render_ui，也不要把普通回答包进卡片。
-不要把回答自动改成待办清单、练习或仪表盘；list 只用于真正并列的信息。
+两三句话能说清时不要调用 render_ui，也不要把普通回答包进卡片；不要把回答自动改成待办清单、练习或仪表盘，list 只用于真正并列的信息。
 
 ## 调用方式
 
@@ -131,10 +130,10 @@ const mainSkill = `# GenUI — 魏碑常用界面规范
 | 标题、段落、公式、代码 | text |
 | 短内容横排或纵排 | row / col |
 | 多组同级内容 | grid |
-| 少量明细对照 | table |
+| 明细对照 | table |
 | 关键数字、状态、进度 | stat / badge / progress |
 | 并列项、键值、提醒 | list / keyvalue / callout |
-| 阶段或操作顺序 | steps |
+| 阶段、操作顺序或时间轴 | steps / timeline |
 | 简单数量、趋势、占比 | chart |
 | 收集输入后继续处理 | input / select / textarea / submit |
 
@@ -144,7 +143,7 @@ const mainSkill = `# GenUI — 魏碑常用界面规范
 - row: \`{"type":"row","items":[...],"wrap":true?,"spacer":true?}\`
 - col: \`{"type":"col","items":[...],"gap":8?}\`
 - grid: \`{"type":"grid","cols":2,"items":[...]}\`
-- table: \`{"type":"table","columns":["列"],"rows":[["值"]]}\`；少量明细直接用表头排序。
+- table: \`{"type":"table","columns":["列"],"rows":[["值"]]}\`；只要需要筛选 filter、导出 export、展开明细 details、列类型 types 或联动排序 sortField，无论行数，先加载 genui-advanced。
 - stat: \`{"type":"stat","label":"指标","value":"42","delta":"+8%","spark":[3,5,4,8]}\`
 - badge: \`{"type":"badge","label":"状态","tone":"success|warn|danger|accent"}\`
 - progress: \`{"type":"progress","label":"进度","value":64,"valueLabel":"64%"}\`
@@ -152,6 +151,7 @@ const mainSkill = `# GenUI — 魏碑常用界面规范
 - keyvalue: \`{"type":"keyvalue","pairs":[{"key":"名称","value":"内容"}]}\`
 - callout: \`{"type":"callout","tone":"info|success|warning|error","title":"提醒","content":"内容"}\`
 - steps: \`{"type":"steps","current":1,"steps":[{"title":"步骤","desc":"说明"}]}\`
+- timeline: \`{"type":"timeline","items":[{"title":"事件","desc":"说明","time":"第 1 天"}]}\`
 - chart: \`{"type":"chart","kind":"bars|line|donut","data":[{"label":"A","value":1}]}\`；只做不超过 8 点的快速对比。
 - button: \`{"type":"button","label":"继续","tone":"primary|danger|success|ghost","action":"continue"}\`
 - input: \`{"type":"input","id":"query","label":"问题","placeholder":"请输入","inputType":"text|email|color"}\`
@@ -177,15 +177,38 @@ action 只是当前会话的互动请求，不代表检索、记忆或笔记操�
 不得索取或生成密码、API Key、访问令牌、恢复码等秘密输入。
 渲染器报错时按原因修正后重调 render_ui；工具回执只表示已提交，不保证显示正确。
 
-需要复杂长表、13 种 ECharts 预设或 full option、Diagram、Plot、3D 与低频组件时，先调用 \`load_skill\`，参数 \`{"id":"genui-advanced"}\`；加载后仍用 \`render_ui\`。`;
+表格只要需要筛选、导出、展开明细、列类型或联动排序，无论行数，或需要 13 种 ECharts 预设、full option、Diagram、Plot、3D 与低频组件时，先调用 \`load_skill\`，参数 \`{"id":"genui-advanced"}\`；加载后仍用 \`render_ui\`。`;
 
 const advancedNames = [
   'table', 'echart', 'plot', 'diagram', 'scene3d',
   'hero', 'span', 'card', 'palette', 'divider', 'avatar', 'image', 'audio', 'video',
-  'timeline', 'file-tree', 'breadcrumb', 'diff', 'json', 'code', 'mermaid', 'quiz',
+  'file-tree', 'breadcrumb', 'diff', 'json', 'code', 'mermaid', 'quiz',
   'checkbox', 'slider', 'radio', 'link', 'switch', 'tabs', 'accordion', 'copy',
 ];
 const advancedSpecs = adaptHost(advancedNames.map(listItem).join('\n'));
+const advancedTableExample = {
+  id: 'course-table',
+  spec: {
+    title: '课程数据表',
+    items: [
+      { type: 'input', id: 'course-filter', label: '筛选课程', placeholder: '输入课程名称' },
+      {
+        type: 'table',
+        columns: ['课程', '学分', '人数'],
+        rows: [['高等数学', 4, 120], ['线性代数', 3, 90], ['概率论', 3, 80]],
+        types: ['text', 'num', 'num'],
+        export: true,
+        filter: 'course-filter',
+        filterColumn: 0,
+        details: [
+          [{ type: 'text', size: 'body', content: '微积分基础与函数分析课程。' }],
+          [{ type: 'text', size: 'body', content: '向量、矩阵及线性方程组课程。' }],
+          [{ type: 'text', size: 'body', content: '随机事件、概率模型与统计基础课程。' }],
+        ],
+      },
+    ],
+  },
+};
 const advancedSkill = `# GenUI Advanced — 魏碑高级界面规范
 
 这是 GenUI 的按需补充。先遵循主技能的判断、富文本、版式与调用规则；只有任务确实需要下列能力时使用，不照着规格堆组件。
@@ -203,10 +226,10 @@ ${advancedSpecs}
 
 ## 完整调用示例
 
-这个例子只示范高级组件参数，不表示任何任务都要同时用表和图：
+这个例子演示本地筛选、内置导出和展开明细：filter 是输入框 id 字符串，export 是布尔值，details 与 rows 对齐且每项是组件数组或 null；不要使用 expandable，也不要另放导出按钮。
 
 \`\`\`json
-{"id":"advanced-flow","spec":{"items":[{"type":"table","columns":["阶段","人数"],"rows":[["访问",120],["注册",45]]},{"type":"echart","option":{"xAxis":{"type":"category","data":["访问","注册"]},"yAxis":{"type":"value"},"series":[{"type":"bar","data":[120,45]}]}}]}}
+${JSON.stringify(advancedTableExample)}
 \`\`\`
 
 保持稳定 id，通过 \`render_ui\` 提交；若不再需要高级组件，继续按主技能选择最小表达。`;
@@ -227,6 +250,7 @@ const { processGenuiSpec } = await tsImport(resolve(dirname(require.resolve('@ch
 function validateSpec(name, spec) {
   const result = processGenuiSpec(spec);
   assert(result.spec && result.errors.length === 0 && result.warnings.length === 0, `${name}: ${JSON.stringify(result)}`);
+  return result;
 }
 validateSpec('genui 高频规格', { items: [
   { type: 'text', size: 'h2', content: '**重点**与 $x^2$', center: true },
@@ -238,6 +262,7 @@ validateSpec('genui 高频规格', { items: [
   { type: 'keyvalue', pairs: [{ key: '名称', value: '内容' }] },
   { type: 'callout', tone: 'info', title: '提醒', content: '正文' },
   { type: 'steps', current: 1, steps: [{ title: '开始', desc: '说明' }] },
+  { type: 'timeline', items: [{ title: '开始', desc: '说明', time: '第 1 天' }] },
   { type: 'chart', kind: 'bars', data: [{ label: '甲', value: 1 }] },
   { type: 'button', label: '继续', tone: 'primary', action: 'continue' },
   { type: 'input', id: 'query', label: '问题', placeholder: '请输入', inputType: 'text' },
@@ -275,6 +300,13 @@ validateSpec('genui-advanced 关键规格', { items: [
   { type: 'accordion', items: [{ title: '详情', items: [{ type: 'text', size: 'body', content: '内容' }] }] },
   { type: 'copy', label: '复制', text: '内容' },
 ] });
+const advancedTableResult = validateSpec('genui-advanced 表格示例', advancedTableExample.spec);
+const repairedTable = advancedTableResult.spec.items.find(item => item.type === 'table');
+assert.equal(repairedTable?.filter, 'course-filter', '高级表格示例的 filter 未保留');
+assert.equal(repairedTable?.export, true, '高级表格示例的 export 未保留');
+assert.deepEqual(repairedTable?.types, ['text', 'num', 'num'], '高级表格示例的 types 未保留');
+assert(repairedTable?.details?.length === 3, '高级表格示例的 details 未完整保留');
+assert(repairedTable.details.every(detail => detail?.[0]?.type === 'text'), '高级表格示例的 details 必须是组件数组');
 for (const [name, output] of [['genui', mainOutput], ['genui-advanced', advancedOutput]]) {
   const examplesJSON = [...output.matchAll(/```json\n([\s\S]*?)\n```/g)];
   assert(examplesJSON.length >= 1, `${name} 缺少完整 JSON 示例`);
@@ -287,7 +319,7 @@ for (const [name, output] of [['genui', mainOutput], ['genui-advanced', advanced
 for (const [id, output, manifest] of [
   ['genui', mainOutput, {
   id: 'genui', name: 'GenUI', version: genuiPackage.version,
-  description: '常用生成式界面：负责使用判断、内容选型、富文本、基础图表与交互；高级能力需加载 genui-advanced。',
+  description: '常用生成式界面：负责使用判断、时间线、内容选型与基础交互；表格筛选、导出、展开明细、列类型或联动排序等高级能力需加载 genui-advanced。',
   modelInvocable: true, userInvocable: true, tools: ['render_ui'], jscHook: null,
   }],
   ['genui-advanced', advancedOutput, {
