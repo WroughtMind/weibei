@@ -280,17 +280,24 @@ document.querySelectorAll('[data-jump], a[href^="#scene-"]').forEach(control => 
 });
 
 const ratios = new Map(chapters.map(chapter => [chapter, 0]));
-let sceneFourPreloaded = false;
-const preloadSceneFour = () => {
-  if (sceneFourPreloaded) return;
-  sceneFourPreloaded = true;
-  // Decode the displayed elements (including their selected srcset), not detached copies.
-  document.querySelectorAll('.release-layer img').forEach(img => {
-    img.loading = 'eager';
-    img.decoding = 'async';
-    img.decode().catch(() => {});
-  });
-};
+// Fixed, overlapping scene layers are all near the viewport: native lazy loading
+// cannot distinguish them. Request each scene's images as its chapter approaches.
+const imageObserver = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    document.querySelectorAll(`img[data-image-scene="${entry.target.dataset.scene}"]`).forEach(img => {
+      img.loading = 'eager';
+      img.decoding = 'async';
+      if (img.dataset.srcset) img.srcset = img.dataset.srcset;
+      img.src = img.dataset.src;
+      delete img.dataset.src;
+      delete img.dataset.srcset;
+      delete img.dataset.imageScene;
+    });
+    imageObserver.unobserve(entry.target);
+  }
+}, { rootMargin: '25% 0px' });
+chapters.forEach(chapter => imageObserver.observe(chapter));
 const observer = new IntersectionObserver(entries => {
   entries.forEach(entry => ratios.set(entry.target, entry.intersectionRatio));
   const activeChapter = chapters.reduce((best, chapter) => ratios.get(chapter) > ratios.get(best) ? chapter : best);
@@ -303,7 +310,6 @@ const observer = new IntersectionObserver(entries => {
   document.querySelector('.release-layer').inert = activeIndex !== 3;
   if (activeIndex !== 2) resetThemePreview();
   if (activeIndex !== 3) closeDownloadMenu();
-  if (activeIndex >= 1) preloadSceneFour();
   railButtons.forEach((button, index) => {
     button.classList.toggle('is-active', index === activeIndex);
     if (index === activeIndex) button.setAttribute('aria-current', 'step');
