@@ -142,6 +142,10 @@ final class ContextualListReturnTests: XCTestCase {
             XCTAssertNil(store.activeNoteItem)
             XCTAssertEqual(store.noteListDisplayTitle(for: note), expected)
             store.openContextualItem(noteID, kind: .note)
+            let deadline = Date().addingTimeInterval(2)
+            while store.courseNoteLoadTasksByItemID[noteID] != nil, Date() < deadline {
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+            }
             XCTAssertEqual(store.agentNoteTitle, expected)
         }
 
