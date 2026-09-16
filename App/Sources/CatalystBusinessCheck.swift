@@ -323,6 +323,17 @@ enum CatalystBusinessCheck {
                 && root.path.contains(".businesscheck/")
                 && WeiBeiAgentDataPaths.nativeAgentDirectory.path.contains(".businesscheck/"))
             try check("original_update_service_through_native_bridge", AppDelegate.updates.status != .failed)
+            // Verify that all three control groups live in native toolbar items,
+            // rather than being drawn underneath the window's titlebar hit region.
+            try await until("native workspace toolbar controls") {
+                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.contains { scene in
+                    let items = scene.titlebar?.toolbar?.items.compactMap { $0 as? NSUIViewToolbarItem } ?? []
+                    return items.count == 3 && items.allSatisfy {
+                        $0.uiView.window != nil && !$0.uiView.bounds.isEmpty
+                    }
+                }
+            }
+            try check("native_workspace_toolbar_controls", true)
             // This in-process check uses the candidate's own default library.
             // First-launch folder confirmation remains a separate UI check.
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")

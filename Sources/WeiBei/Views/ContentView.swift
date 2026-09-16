@@ -536,14 +536,38 @@ private struct UnifiedTopBarView: View {
     @State private var appeared = false
 
     var body: some View {
+#if targetEnvironment(macCatalyst)
+        CatalystTopBar(
+            leading: toolbarContent(leftPrimaryControls),
+            center: toolbarContent(paneToggleCluster),
+            trailing: toolbarContent(trailingControls),
+            isVisible: !store.courseWorkspacePresented
+        )
+        .frame(height: 0)
+        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
+            showSettings()
+        }
+#else
+        customTopBar
+#endif
+    }
+
+#if targetEnvironment(macCatalyst)
+    private func toolbarContent<Content: View>(_ content: Content) -> AnyView {
+        AnyView(content
+            .foregroundStyle(secondaryText)
+            .environmentObject(store)
+            .environmentObject(updateService)
+            .environmentObject(libraryDrawer)
+            .environmentObject(paneState)
+            .environmentObject(interaction)
+            .environment(\.weiBeiTextScale, textScale)
+            .environment(\.openWindow, openSettingsWindow))
+    }
+#endif
+
+    private var trailingControls: some View {
         HStack(spacing: topBarSpacing) {
-            Spacer()
-                .frame(width: leftInset)
-
-            leftPrimaryControls
-
-            Spacer(minLength: 0)
-
             if paneState.showReaderSearch && shouldShowSearchAction {
                 TextField(
                     "",
@@ -591,6 +615,20 @@ private struct UnifiedTopBarView: View {
             topIconButton("gearshape", help: store.ui("打开设置", "Open Settings")) {
                 showSettings()
             }
+
+        }
+    }
+
+    private var customTopBar: some View {
+        HStack(spacing: topBarSpacing) {
+            Spacer()
+                .frame(width: leftInset)
+
+            leftPrimaryControls
+
+            Spacer(minLength: 0)
+
+            trailingControls
 
             Spacer()
                 .frame(width: 8)
