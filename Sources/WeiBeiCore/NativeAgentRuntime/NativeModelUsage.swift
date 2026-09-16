@@ -85,7 +85,8 @@ struct NativeMeteredLLMAdapter: NativeLLMAdapter {
                     }
                     try Task.checkCancellation()
                     switch record.finishReason {
-                    case .stop, .toolCalls, .length: record.state = .completed
+                    case .stop, .toolCalls: record.state = .completed
+                    case .length: record.state = .incomplete
                     case .aborted: record.state = .cancelled
                     case .error: record.state = .failed
                     case nil: record.state = .incomplete

@@ -63,6 +63,7 @@ final class NativeModelUsageTests: XCTestCase {
             ([.finish(reason: .stop, replayState: nil)], nil),
             ([.usage(.init(inputTokens: 50, outputTokens: 3))], providerFailure),
             ([.usage(.init(inputTokens: 10))], .init(code: "cancelled", message: "cancelled")),
+            (incomplete, nil),
             ([], nil),
         ]
         for scenario in scenarios {
@@ -77,11 +78,14 @@ final class NativeModelUsageTests: XCTestCase {
         }
         let records = try snapshots(url)
         let calls = latest(records)
-        XCTAssertEqual(calls.count, 5)
+        XCTAssertEqual(calls.count, 6)
         XCTAssertEqual(calls.filter { $0.state == .completed }.count, 2)
         XCTAssertEqual(calls.filter { $0.state == .failed }.count, 1)
         XCTAssertEqual(calls.filter { $0.state == .cancelled }.count, 1)
-        XCTAssertEqual(calls.filter { $0.state == .incomplete }.count, 1)
+        XCTAssertEqual(calls.filter { $0.state == .incomplete }.count, 2)
+        let truncated = try XCTUnwrap(calls.first { $0.finishReason == .length })
+        XCTAssertEqual(truncated.state, .incomplete)
+        XCTAssertEqual(truncated.usage, .init(inputTokens: 100, outputTokens: 4))
         XCTAssertEqual(calls.filter { $0.usage == nil }.count, 2)
         XCTAssertEqual(calls.first { $0.state == .failed }?.usage?.inputTokens, 80)
         XCTAssertEqual(calls.first { $0.state == .failed }?.usage?.outputTokens, 4)
@@ -89,6 +93,36 @@ final class NativeModelUsageTests: XCTestCase {
         XCTAssertEqual(first.usage?.inputTokens, 100)
         XCTAssertEqual(first.usage?.outputTokens, 20)
         XCTAssertGreaterThan(records.filter { $0.id == first.id }.count, 2)
+    }
+
+    func testResponsesUsageRejectsInvalidCountsWithoutInventingZeros() throws {
+        func translated(_ usage: [String: Any]) throws -> [NativeStreamChunk] {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "type": "response.completed", "response": ["usage": usage]
+            ])
+            return try OpenAIResponsesProvider.translate(String(decoding: data, as: UTF8.self))
+        }
+        let valid: [String: Any] = ["input_tokens": 100, "output_tokens": 4]
+        var invalidUsages: [[String: Any]] = [[:], ["input_tokens": 100], ["output_tokens": 4]]
+        for invalid in [true, "10", -1, 1.5] as [Any] {
+            for field in ["input_tokens", "output_tokens", "total_tokens"] {
+                invalidUsages.append(valid.merging([field: invalid]) { _, new in new })
+            }
+            invalidUsages.append(valid.merging(["input_tokens_details": ["cached_tokens": invalid]]) { _, new in new })
+        }
+        invalidUsages.append(valid.merging(["input_tokens_details": ["cached_tokens": 101]]) { _, new in new })
+        invalidUsages.append(["input_tokens": Int.max, "output_tokens": 1])
+        for usage in invalidUsages {
+            XCTAssertEqual(try translated(usage), [.finish(reason: .stop, replayState: nil)])
+        }
+        XCTAssertTrue(try translated(["input_tokens": 0, "output_tokens": 0]).contains(
+            .usage(.init(inputTokens: 0, outputTokens: 0))
+        ))
+        XCTAssertTrue(try translated(valid.merging([
+            "input_tokens_details": ["cached_tokens": 20], "total_tokens": 104
+        ]) { _, new in new }).contains(
+            .usage(.init(inputTokens: 80, outputTokens: 4, cacheReadTokens: 20, totalTokens: 104))
+        ))
     }
 
     func testConsumerCancellationPersistsAlreadyReceivedUsage() async throws {

@@ -244,14 +244,26 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
     }
 
     private static func tokenUsage(_ value: Any?) -> NativeTokenUsage? {
-        guard let usage = value as? [String: Any] else { return nil }
-        let details = usage["input_tokens_details"] as? [String: Any]
-        let cached = details?["cached_tokens"] as? Int
+        struct Usage: Decodable {
+            struct Details: Decodable { var cached_tokens: Int? }
+            var input_tokens: Int
+            var output_tokens: Int
+            var input_tokens_details: Details?
+            var total_tokens: Int?
+        }
+        guard let value = value as? [String: Any],
+              let data = try? JSONSerialization.data(withJSONObject: value),
+              let usage = try? JSONDecoder().decode(Usage.self, from: data),
+              usage.input_tokens >= 0, usage.output_tokens >= 0,
+              usage.input_tokens <= Int.max - usage.output_tokens,
+              (usage.total_tokens ?? 0) >= 0 else { return nil }
+        let cached = usage.input_tokens_details?.cached_tokens
+        guard (cached ?? 0) >= 0, (cached ?? 0) <= usage.input_tokens else { return nil }
         return NativeTokenUsage(
-            inputTokens: max(0, (usage["input_tokens"] as? Int ?? 0) - (cached ?? 0)),
-            outputTokens: usage["output_tokens"] as? Int ?? 0,
+            inputTokens: usage.input_tokens - (cached ?? 0),
+            outputTokens: usage.output_tokens,
             cacheReadTokens: cached,
-            totalTokens: usage["total_tokens"] as? Int
+            totalTokens: usage.total_tokens
         )
     }
 

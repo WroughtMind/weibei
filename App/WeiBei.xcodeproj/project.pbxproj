@@ -221,6 +221,7 @@
 		FF3D251186B527F5FB45D6F3 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0689394113772B93619F884 /* AppDelegate.swift */; };
 		140F42A96634A9FE89C189F4 /* three.js in Resources */ = {isa = PBXBuildFile; fileRef = 1B035DA5CDBB5DD49E9DE885 /* three.js */; };
 		8AEFB6F1D755EABEF77A3B91 /* echarts-full.js in Resources */ = {isa = PBXBuildFile; fileRef = 10DA09B7D678CA3F93ED0D0A /* echarts-full.js */; };
+		41918BF9770E9F4CC9A236BC /* NativeModelUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F82757F4C2076211922411C /* NativeModelUsage.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -482,6 +483,7 @@
 		FD7373826FAD5979B3D11A95 /* SOURCES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SOURCES.md; sourceTree = "<group>"; };
 		10DA09B7D678CA3F93ED0D0A /* echarts-full.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "echarts-full.js"; sourceTree = "<group>"; };
 		1B035DA5CDBB5DD49E9DE885 /* three.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = three.js; sourceTree = "<group>"; };
+		0F82757F4C2076211922411C /* NativeModelUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelUsage.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -783,6 +785,7 @@
 				B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */,
 				23D51E375F6C7745CD944640 /* NativeContextCompaction.swift */,
 				5C74F370409208410B218551 /* NativeCopilotSession.swift */,
+				0F82757F4C2076211922411C /* NativeModelUsage.swift */,
 				DDE9B5B430C16C2C8DB95AD2 /* NativeProviderRouting.swift */,
 				433E5657BF2C1DCD29347D42 /* NativeSessionTitle.swift */,
 				ED67BE51713D6E75443BEBF3 /* NativeStudyAgentRuntime.swift */,
@@ -1152,6 +1155,7 @@
 				913C2C7783CC54089A3E6879 /* NativeHTTPByteStream.swift in Sources */,
 				16937510D6D1C627B09A90B4 /* NativeLLMAdapter.swift in Sources */,
 				926D0321E52CA79D81CD00FA /* NativeLLMAdapterFactory.swift in Sources */,
+				41918BF9770E9F4CC9A236BC /* NativeModelUsage.swift in Sources */,
 				2710FFF4B0438D9457EA84D5 /* NativeProviderRouting.swift in Sources */,
 				E60BC6DE707366A0549B937C /* NativeSessionTitle.swift in Sources */,
 				49DE6B677DD3ED924746300C /* NativeStudyAgentRuntime.swift in Sources */,

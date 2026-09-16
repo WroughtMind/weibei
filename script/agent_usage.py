@@ -67,14 +67,15 @@ def self_check():
                                                       cacheReadTokens=900))
     rows = summarize([record, known, record, known,
                       dict(record, id="b", state="failed"),
-                      dict(record, id="c", state="cancelled", usage=dict(inputTokens=50, outputTokens=5))])
+                      dict(record, id="c", state="cancelled", usage=dict(inputTokens=50, outputTokens=5)),
+                      dict(record, id="d", state="incomplete", usage=dict(inputTokens=100, outputTokens=4))])
     row, = rows
-    assert row["calls"] == 3 and row["unknown_usage"] == 1
-    assert row["input"] == 1050 and row["output"] == 25
+    assert row["calls"] == 4 and row["unknown_usage"] == 1
+    assert row["input"] == 1150 and row["output"] == 29
     assert row["uncached_input"] == 100
-    assert row["reported_cache"] == 1 and row["unknown_cache"] == 1
+    assert row["reported_cache"] == 1 and row["unknown_cache"] == 2
     assert row["cache_read"] / row["cache_known_input"] == .9
-    assert row["partial_usage"] == 1
+    assert row["incomplete"] == 1 and row["partial_usage"] == 2
     print("用量汇总检查通过")
 
 
