@@ -1,3 +1,4 @@
+import { findCompleteInlineMathSpans } from './syntax-scanner';
 export const calloutTypePattern = '[A-Za-z][A-Za-z0-9_-]*';
 
 const isEscapedMarkdownPosition = (source: string, index: number) => {
@@ -189,9 +190,14 @@ export const incompleteStreamingMarkdownTailMarkers = (markdown: string): Incomp
 
 export type MarkdownSource = 'userDocument' | 'userPaste' | 'agentGenerated' | 'internalFragment';
 
-export const inlineMathInputPattern = /(?<!\\)\$((?!\d)[^$\n]+)\$$/;
-
-const protectCurrencySegment = (text: string) => String(text || '').replace(/(^|[^\\])\$(?=\d)/g, '$1\\$');
+const protectCurrencySegment = (text: string) => {
+  const formulas = findCompleteInlineMathSpans(text);
+  for (const match of text.matchAll(/\$\$[\s\S]*?\$\$/g)) {
+    formulas.push({ from: match.index!, to: match.index! + match[0].length, source: match[0] });
+  }
+  return text.replace(/(?<![\\$])\$(?=\d)/g, (dollar, offset) =>
+    formulas.some(({ from, to }) => from <= offset && offset < to) ? dollar : '\\$');
+};
 
 /** Prevents remark-math from treating ordinary prices and ranges as formulas. */
 export const protectCurrencyDollars = (markdown: string) => mapMarkdownOutsideCode(markdown, protectCurrencySegment);
