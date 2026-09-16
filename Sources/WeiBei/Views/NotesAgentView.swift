@@ -1349,7 +1349,6 @@ struct AgentPaneView: View {
             let comfy = wide
                 || typographyWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
             let composerHeight = AgentChatLayoutMetrics.composerHeight
-                + (store.agentReasoningLevels.isEmpty ? 0 : ComposerView.reasoningControlHeight)
             let headerHeight: CGFloat = showsPaneHeader
                 ? (liveAvailableWidth < 420 ? 44 : 54)
                 : 0

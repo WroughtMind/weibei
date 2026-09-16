@@ -3,7 +3,6 @@ import WeiBeiCore
 
 /// Chat 输入框。草稿放在本地 `@State`，打字不写 `store.agentDraft`，避免整棵对话树刷新。
 struct ComposerView: View {
-    static let reasoningControlHeight: CGFloat = 18
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
     @ObservedObject private var agentAccount = AgentAccountService.shared
@@ -53,7 +52,7 @@ struct ComposerView: View {
         let corner: CGFloat = showsChrome ? 24 : WeiBeiMetric.controlRadius
         let textHeight = max(editorHeight, fontSize + 3)
         let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
-        VStack(alignment: .leading, spacing: 0) {
+        HStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
                 AgentComposerTextEditor(
                     text: $draft,
@@ -78,13 +77,12 @@ struct ComposerView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .padding(.top, hasReasoningControl ? 10 : verticalPadding)
-            .padding(.bottom, hasReasoningControl ? 0 : verticalPadding)
+            .padding(.vertical, verticalPadding)
             .padding(.trailing, hasReasoningControl ? 0 : trailingPadding)
             .padding(.horizontal, horizontalPadding)
             .frame(
                 maxWidth: .infinity,
-                minHeight: hasReasoningControl ? height - Self.reasoningControlHeight : max(
+                minHeight: max(
                     CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
                         composerMinimumHeight: Double(height)
                     )),
@@ -99,15 +97,14 @@ struct ComposerView: View {
                 }
             }
             if hasReasoningControl {
-                HStack {
+                HStack(spacing: 8) {
                     reasoningEffortPicker
-                    Spacer(minLength: 12)
-                    if showsControl { sendButton }
+                    sendButton
+                        .opacity(showsControl ? 1 : 0)
+                        .disabled(!showsControl)
+                        .accessibilityHidden(!showsControl)
                 }
-                .frame(height: sendButtonSize * textScale)
-                .padding(.leading, horizontalPadding)
                 .padding(.trailing, sendTrailing)
-                .padding(.bottom, 8)
             }
         }
         .frame(
@@ -184,12 +181,11 @@ struct ComposerView: View {
         } label: {
             HStack(spacing: 4) {
                 Text(store.agentReasoningEffort.map {
-                    let label = AgentReasoningEffort.label($0, language: store.interfaceLanguage)
-                    return store.ui($0 == "none" ? "关闭推理" : label + "强度", label + " effort")
+                    AgentReasoningEffort.label($0, language: store.interfaceLanguage)
                 } ?? "")
-                    .weiBeiText(11, weight: .medium)
+                    .weiBeiText(fontSize, weight: .regular)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 9 * textScale, weight: .medium))
             }
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .frame(minHeight: sendButtonSize * textScale)

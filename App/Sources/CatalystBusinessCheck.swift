@@ -636,6 +636,8 @@ enum CatalystBusinessCheck {
         try await until("reasoning composer configured") {
             AgentProviderReadiness.isConfigured(for: store) && store.agentReasoningEffort == "low"
         }
+        mainComposer.text = "解释这段内容。"
+        mainComposer.delegate?.textViewDidChange?(mainComposer)
         try await Task.sleep(for: .milliseconds(300))
         window.layoutIfNeeded()
         try capture("reasoning-composer.png")
