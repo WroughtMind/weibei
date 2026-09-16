@@ -660,6 +660,11 @@ enum CatalystBusinessCheck {
         mainComposer.delegate?.textViewDidChange?(mainComposer)
         try await Task.sleep(for: .milliseconds(300))
         window.layoutIfNeeded()
+        guard let content = window.rootViewController?.view,
+              mainComposer.bounds.height <= (mainComposer.font?.lineHeight ?? 20) + 2,
+              content.bounds.maxY - mainComposer.convert(mainComposer.bounds, to: content).maxY <= 40 else {
+            throw Failure("single-line reasoning composer grew beyond its content")
+        }
         try capture("reasoning-composer.png")
     }
 

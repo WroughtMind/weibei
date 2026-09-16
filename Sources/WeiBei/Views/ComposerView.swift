@@ -107,12 +107,11 @@ struct ComposerView: View {
                 .padding(.trailing, sendTrailing)
             }
         }
-        .frame(
-            maxWidth: .infinity,
-            minHeight: height,
-            maxHeight: compactMaxHeight,
-            alignment: .topLeading
-        )
+        .frame(maxWidth: .infinity)
+        .frame(height: min(
+            max(height, textHeight + verticalPadding * 2, reservedControlHeight),
+            compactMaxHeight ?? .greatestFiniteMagnitude
+        ), alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
         .weibeiComposerCard(
             cornerRadius: corner,
