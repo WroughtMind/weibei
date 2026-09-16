@@ -1,9 +1,15 @@
+import AppKit
+import SwiftUI
 import XCTest
 @testable import WeiBei
 import WeiBeiCore
 
-/// 笔记列表按钮契约:点击后必须回到列表态,不受"当前选中条目恰好是笔记"影响。
+/// 选择器保留当前编辑现场；真正切换时仍须等待保存。
 final class ContextualListReturnTests: XCTestCase {
+    override class func setUp() {
+        super.setUp()
+        setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+    }
     private struct Fixture {
         let root: URL
         let workspaceDirectory: URL
@@ -93,27 +99,90 @@ final class ContextualListReturnTests: XCTestCase {
         XCTAssertTrue(store.showNotes, "列表按钮应当保证笔记栏位可见")
     }
 
-    /// 正常配对场景(资料选中 + 笔记打开)下,点列表按钮回到列表且资料选择保留。
+    /// 选择其他笔记可以取消，不提前清空当前笔记。
     @MainActor
-    func testNoteListButtonReturnsToListAndKeepsMaterialSelection() throws {
+    func testNotePickerPreservesCurrentNoteAndCancelKeepsMaterialSelection() throws {
         let (fixture, store, material, _, noteB) = try makeFixture()
         defer { fixture.remove() }
 
         store.openContextualItem(material.id, kind: .material)
         store.openContextualItem(noteB.id, kind: .note)
         XCTAssertEqual(store.activeNoteItem?.id, noteB.id)
+        store.noteText = "选择器打开前的编辑内容"
 
         store.showContextualBrowser(.note)
 
-        XCTAssertNil(store.activeNoteItem, "配对场景下列表按钮也没能回到列表")
+        XCTAssertTrue(store.notePickerPresented)
+        XCTAssertEqual(store.activeNoteItem?.id, noteB.id)
+        XCTAssertEqual(store.noteText, "选择器打开前的编辑内容")
+        store.notePickerPresented = false
+        XCTAssertEqual(store.activeNoteItem?.id, noteB.id)
         XCTAssertEqual(store.selectedMaterialItem?.id, material.id, "回到笔记列表不应清掉资料选择")
+    }
+
+    @MainActor
+    func testNoteDisplayNameSearchAndFindStayInWritingPane() throws {
+        let (fixture, store, _, _, noteB) = try makeFixture()
+        defer { fixture.remove() }
+        store.openContextualItem(noteB.id, kind: .note)
+        store.setNoteCustomDisplayTitle("新的显示名称", for: noteB.id)
+        let renamed = try XCTUnwrap(store.item(withID: noteB.id))
+        XCTAssertEqual(store.noteListDisplayTitle(for: renamed), "新的显示名称")
+        XCTAssertTrue(store.itemMatchesLibrarySearch(renamed, query: "显示名称"))
+        XCTAssertTrue(store.itemMatchesLibrarySearch(renamed, query: "别泄气"))
+        store.layout = .immersiveWriting
+        store.revealDocumentSearch()
+        XCTAssertTrue(store.showDocumentSearch)
+        XCTAssertEqual(store.focusedPane, .notes)
+        XCTAssertEqual(store.layout, .immersiveWriting)
+        store.noteSearch = "正文"
+        store.hideDocumentSearch()
+        XCTAssertTrue(store.noteSearch.isEmpty)
+        XCTAssertEqual(store.focusedPane, .notes)
+    }
+
+    @MainActor
+    func testRenderNotePickerAndConflictForVisualReview() throws {
+        guard let directory = ProcessInfo.processInfo.environment["WEIBEI_NOTES_UX_SNAPSHOTS"] else {
+            throw XCTSkip("Opt-in review of the actual note views in hidden windows")
+        }
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        let (fixture, store, _, _, noteB) = try makeFixture()
+        defer { fixture.remove() }
+        func capture<V: View>(_ view: V, name: String, width: CGFloat) throws {
+            let host = NSHostingView(rootView: view.environmentObject(store).environmentObject(store.paneState)
+                .preferredColorScheme(store.appearanceMode.colorScheme))
+            host.frame = NSRect(x: 0, y: 0, width: width, height: 560)
+            let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
+            XCTAssertFalse(window.isVisible)
+            window.contentView = nil
+        }
+        store.openContextualItem(noteB.id, kind: .note)
+        store.showContextualBrowser(.note)
+        try capture(NotePaneView(), name: "选择笔记", width: 700)
+        store.noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
+            diskMarkdown: "# 导数\n\n磁盘中补充了导数的定义。\n\n$f'(x) = 2x$",
+            checkpoint: NoteRecoveryCheckpoint(metadata: NoteRecoveryMetadata(
+                documentID: noteB.id, baseFileDigest: "sample", checkpointDigest: "sample",
+                revision: 1, updatedAt: Date(), dialectVersion: 1
+            ), markdown: "# 导数\n\n魏碑中补充了计算过程。\n\n$f(x) = x^2$"),
+            checkpointIsPersisted: true
+        )
+        try capture(NoteConflictComparisonView(), name: "冲突对照", width: 820)
     }
 
     /// 卡死逃生:切换等待停在「保存中」且无任何出口(编辑器命令未回执)时,
     /// 看门狗应把状态降级为失败——底部状态条的重试入口恢复、新切换不再被吞。
     @MainActor
     func testStuckSavingWatchdogSurfacesManualRetry() throws {
-        let (fixture, store, _, _, noteB) = try makeFixture()
+        let (fixture, store, _, noteA, noteB) = try makeFixture()
         defer { fixture.remove() }
 
         store.openContextualItem(noteB.id, kind: .note)
@@ -126,7 +195,7 @@ final class ContextualListReturnTests: XCTestCase {
             documentID: noteB.id
         )
 
-        store.showContextualBrowser(.note)
+        store.openContextualItem(noteA.id, kind: .note)
 
         XCTAssertTrue(store.noteSelectionStatusMessage?.contains("保存") == true, "卡死期间应显示保存中提示,实际:\(store.noteSelectionStatusMessage ?? "nil")")
         XCTAssertFalse(store.canRetryPendingNoteSelection, "卡在保存中时旧行为没有重试出口")
@@ -140,10 +209,9 @@ final class ContextualListReturnTests: XCTestCase {
         XCTAssertNotNil(store.noteSelectionStatusMessage, "降级后应显示可行动的失败提示")
     }
 
-    /// 契约延伸:打开笔记窗格 = 显示列表。即使文稿区开着资料、资料有关联笔记,
-    /// 也不得自动跳进配对笔记;文稿区同理(打开文稿窗格不自动跳配对资料)。
+    /// 开关笔记窗格保留原来的笔记选择。
     @MainActor
-    func testOpeningNotesPaneStaysAtListDespitePairing() throws {
+    func testOpeningNotesPaneKeepsCurrentNote() throws {
         let (fixture, store, material, _, noteB) = try makeFixture()
         defer { fixture.remove() }
 
@@ -154,7 +222,7 @@ final class ContextualListReturnTests: XCTestCase {
         store.toggleNotes()
 
         XCTAssertTrue(store.showNotes, "前置条件:笔记窗格已重新打开")
-        XCTAssertNil(store.activeNoteItem, "打开笔记窗格应停在列表,不得自动跳进配对笔记")
+        XCTAssertEqual(store.activeNoteItem?.id, noteB.id)
         XCTAssertEqual(store.selectedMaterialItem?.id, material.id, "文稿区选择不受影响")
     }
 
@@ -202,7 +270,7 @@ final class ContextualListReturnTests: XCTestCase {
     /// 契约3:失败切换在自愈额度内只显示中性「正在保存」,额度耗尽才升级为手动重试。
     @MainActor
     func testFailedSelectionSelfHealThenManualEscape() throws {
-        let (fixture, store, _, _, noteB) = try makeFixture()
+        let (fixture, store, _, noteA, noteB) = try makeFixture()
         defer { fixture.remove() }
 
         store.openContextualItem(noteB.id, kind: .note)
@@ -213,7 +281,7 @@ final class ContextualListReturnTests: XCTestCase {
             NoteEditorCommand(kind: .insertMarkdown, markdown: "未应用内容"),
             documentID: noteB.id
         )
-        store.showContextualBrowser(.note)
+        store.openContextualItem(noteA.id, kind: .note)
 
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
