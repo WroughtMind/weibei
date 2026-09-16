@@ -1,0 +1,12 @@
+{
+  "id": "genui-advanced",
+  "name": "GenUI Advanced",
+  "version": "0.10.0",
+  "description": "GenUI 按需高级补充：复杂长表、ECharts、Diagram、Plot、3D 与低频组件；先加载 genui。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "render_ui"
+  ],
+  "jscHook": null
+}

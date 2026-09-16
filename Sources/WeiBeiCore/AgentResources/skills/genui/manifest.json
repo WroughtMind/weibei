@@ -2,7 +2,7 @@
   "id": "genui",
   "name": "GenUI",
   "version": "0.10.0",
-  "description": "使用 dshGenUI 在回答中呈现结构化组件、图表、表格与交互。",
+  "description": "常用生成式界面：负责使用判断、内容选型、富文本、基础图表与交互；高级能力需加载 genui-advanced。",
   "modelInvocable": true,
   "userInvocable": true,
   "tools": [
