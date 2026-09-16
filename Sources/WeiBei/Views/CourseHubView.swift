@@ -393,8 +393,8 @@ struct CourseHubView: View {
                         "No material to continue yet"
                     ),
                     detail: store.ui(
-                        "把 PDF、HTML、Markdown 或文本加入这门课。",
-                        "Add PDF, HTML, Markdown, or text to this course."
+                        "把 Word、PPT、PDF、HTML、Markdown 或文本加入这门课。",
+                        "Add Word, PowerPoint, PDF, HTML, Markdown, or text to this course."
                     ),
                     actionTitle: store.ui("导入文稿", "Import materials")
                 )

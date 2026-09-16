@@ -1,11 +1,10 @@
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
-import { gzipSync } from 'three/addons/libs/fflate.module.js';
 import { build } from 'esbuild';
 import { tsImport } from 'tsx/esm/api';
+import { packedWebScript } from './packed_web_script.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const require = createRequire(resolve(root, 'package.json'));
@@ -47,18 +46,11 @@ await build({ ...options,
 // Keep all syntax grammars offline; WebKit supplies gzip decoding on our OS targets.
 const scriptPath = resolve(resources, 'genui.js');
 const source = await readFile(scriptPath);
-const scriptHashes = [];
+const scriptHashes = JSON.parse(await readFile(resolve(resources, 'Editor/editor-resources.json'), 'utf8')).inlineScripts;
 function packedProgram(program) {
-  scriptHashes.push(`'sha256-${createHash('sha256').update(program).digest('base64')}'`);
-  // Three already ships fflate; its JS encoder gives identical bytes across CI hosts.
-  const compressed = Buffer.from(gzipSync(program, { level: 9, mtime: 0 })).toString('base64');
-  return `(async () => {
-  const bytes = Uint8Array.from(atob(${JSON.stringify(compressed)}), c => c.charCodeAt(0));
-  const script = document.createElement('script');
-  script.textContent = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
-  document.head.append(script);
-  script.remove();
-})()`;
+  const packed = packedWebScript(program);
+  scriptHashes.push(packed.hash);
+  return packed.source;
 }
 await writeFile(scriptPath, `${packedProgram(source)}.then(() => {
   if (!window.WeiBeiGenUIHost) throw new Error('GenUI initialization failed');

@@ -21,7 +21,7 @@ export const selectionEndpointRect = (selection: Selection | null) => {
   };
 };
 
-export type SelectionTextAnchor = { startOffset: number; endOffset: number };
+export type SelectionTextAnchor = { startOffset: number; endOffset: number; location?: string; revision?: number; sourceOrder?: number[] };
 export type SelectionMark = { id: string; text: string; anchor?: SelectionTextAnchor; active?: boolean; reveal?: string };
 export type SelectionTextIndex<T> = { text: string; points: T[] };
 
@@ -66,10 +66,20 @@ export const indexDOMSelectionText = (root: Node) => {
   return indexSelectionText(runs);
 };
 
+const locatedDOMIndex = (root: Node, location?: string) => {
+  if (!location) return indexDOMSelectionText(root);
+  const elements = root instanceof Element ? [root, ...Array.from(root.querySelectorAll('[data-weibei-location]'))] : [];
+  const indexes = elements.filter(e => e.getAttribute('data-weibei-location') === location).map(indexDOMSelectionText);
+  return { text: indexes.map(index => index.text).join(''), points: indexes.flatMap(index => index.points) };
+};
+
 export const domSelectionTextAnchor = (selection: Selection | null, root: Node) => {
   if (!selection?.rangeCount || selection.isCollapsed) return null;
   const range = selection.getRangeAt(0);
-  const index = indexDOMSelectionText(root);
+  const common = range.commonAncestorContainer;
+  const element = common instanceof Element ? common : common.parentElement;
+  const location = element?.closest('[data-weibei-location]')?.getAttribute('data-weibei-location') ?? undefined;
+  const index = locatedDOMIndex(root, location);
   const startOffset = index.points.findIndex(point => range.comparePoint(point.node, point.offset) === 0);
   if (startOffset < 0) return null;
   let endOffset = startOffset;
@@ -78,7 +88,9 @@ export const domSelectionTextAnchor = (selection: Selection | null, root: Node) 
     if (range.comparePoint(point.node, point.offset + 1) !== 0) break;
     endOffset += 1;
   }
-  return endOffset > startOffset ? { startOffset, endOffset } : null;
+  const revision = document.body.dataset.weibeiRevision;
+  const sourceOrder = (window as any).WeiBeiOffice?.sourceOrder(index.points[startOffset].node);
+  return endOffset > startOffset ? { startOffset, endOffset, ...(location ? { location } : {}), ...(revision ? { revision: Number(revision) } : {}), ...(sourceOrder ? { sourceOrder } : {}) } : null;
 };
 
 let lastRevealRequest = '';
@@ -107,7 +119,8 @@ export const applyDOMSelectionMarks = (root: HTMLElement, marks: SelectionMark[]
   });
   for (const mark of Array.isArray(marks) ? marks : []) {
     if (!mark?.id || typeof mark.text !== 'string') continue;
-    const index = indexDOMSelectionText(root);
+    if (mark.anchor?.revision !== undefined && String(mark.anchor.revision) !== document.body.dataset.weibeiRevision) continue;
+    const index = locatedDOMIndex(root, mark.anchor?.location);
     const range = selectionMarkRange(index.text, mark);
     if (!range) continue;
     const portions = new Map<Text, { from: number; to: number }>();
@@ -120,18 +133,25 @@ export const applyDOMSelectionMarks = (root: HTMLElement, marks: SelectionMark[]
       const fragment = document.createRange();
       fragment.setStart(node, portion.from);
       fragment.setEnd(node, portion.to);
-      const span = document.createElement('span');
-      span.className = className;
+      const span = node.parentElement?.namespaceURI === 'http://www.w3.org/1998/Math/MathML'
+        ? document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mrow') : document.createElement('span');
+      span.setAttribute('class', className);
       if (mark.active && className === 'weibei-remark-mark') span.classList.add('weibei-remark-active');
       if (last && className === 'weibei-remark-mark') span.classList.add('weibei-remark-end');
       span.setAttribute(idAttribute, mark.id);
-      fragment.surroundContents(span);
+      const token = node.parentElement;
+      if (token?.namespaceURI === 'http://www.w3.org/1998/Math/MathML') {
+        const piece = (text: string) => { const e = token.cloneNode(false); e.textContent = text; return e; };
+        span.append(piece(node.data.slice(portion.from, portion.to)));
+        token.replaceWith(...(portion.from ? [piece(node.data.slice(0, portion.from))] : []), span,
+          ...(portion.to < node.length ? [piece(node.data.slice(portion.to))] : []));
+      } else fragment.surroundContents(span);
       last = false;
     }
   }
   // Rewrapping marks moves text nodes; restore the reader's live selection by its stable text offsets.
   if (selected && selection) {
-    const points = indexDOMSelectionText(root).points;
+    const points = locatedDOMIndex(root, selected.location).points;
     const first = points[selected.startOffset], last = points[selected.endOffset - 1];
     if (first && last) selection.setBaseAndExtent(
       backwards ? last.node : first.node, backwards ? last.offset + 1 : first.offset,
