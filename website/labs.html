@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Labs · 魏碑</title>
   <link rel="stylesheet" href="style.css?v=20260912-polish">
-  <link rel="stylesheet" href="detail.css?v=20260912-polish">
+  <link rel="stylesheet" href="detail.css?v=20260916-labs">
 </head>
 <body class="detail-page">
   <nav class="topbar detail-topbar" aria-label="主导航" data-en-label="Main navigation">
@@ -17,14 +17,41 @@
       <a class="nav-download" href="index.html#scene-4" data-en="Download">下载</a>
     </div>
   </nav>
-  <main class="detail-shell">
-    <h1 class="detail-heading">Labs</h1>
-    <p class="detail-lead" data-en="New directions in progress">正在尝试的新能力</p>
+  <main class="detail-shell labs-shell">
+    <header class="labs-intro">
+      <h1 class="detail-heading">Labs</h1>
+      <p class="detail-lead" data-en="What could studying with WeiBei become?">和魏碑一起学习，还可以是什么样？</p>
+      <p class="labs-note" data-en="A few directions we are exploring. These sketches describe ideas, not released features.">这里放着我们正在探索的方向。以下是概念示意，并非已上线功能。</p>
+    </header>
     <section class="labs-list" aria-label="魏碑正在尝试的方向" data-en-label="Directions being explored in WeiBei">
-      <article class="lab-item"><h2 data-en="Interactive answers">互动答案</h2><p data-en="Turn an answer into an interface you can operate, compare, and continue questioning.">把回答变成可以操作、比较和继续追问的界面。</p></article>
-      <article class="lab-item"><h2 data-en="Context rewind">语境回看</h2><p data-en="Keep the selection, source, and original question together, so you never have to search from scratch.">保留选区、来源和当时的问题，回来时不用从头找。</p></article>
-      <article class="lab-item"><h2 data-en="Learning review">学习回顾</h2><p data-en="Keep the places that genuinely slowed you down and turn them into your own review trail.">把真正卡住的地方留下来，形成自己的复习线索。</p></article>
+      <article class="lab-item">
+        <div class="lab-copy"><span class="lab-number">01</span><h2 data-en="Whiteboard classroom">白板课堂</h2><p data-en="Bring the material onto a whiteboard. Unpack a difficult idea through diagrams, explanations, and questions, then keep the reasoning in view.">把材料搬上白板，边画、边讲、边追问。将一个难懂的知识点拆开，让推导过程留在眼前。</p><span class="lab-caption" data-en="From reading a page to working it out together">从读一页材料，到一起推演</span></div>
+        <figure class="lab-scene board-scene" aria-label="白板课堂概念示意" data-en-label="Whiteboard classroom concept">
+          <figcaption data-en="A lesson on the board">一块白板，一堂课</figcaption>
+          <div class="board-question" data-en="Why does the curve move?">这条曲线为什么会移动？</div>
+          <svg viewBox="0 0 360 120" aria-hidden="true"><path d="M40 12v86h280" class="board-axis"/><path d="M60 80Q150 75 235 22M120 89Q210 84 295 31" class="board-curves"/><path d="M181 48h46m-8-7 8 7-8 7" class="board-arrow"/></svg>
+          <div class="board-steps"><span data-en="Read the source">读材料</span><span data-en="Draw the relation">画关系</span><span data-en="Ask why">追问原因</span></div>
+        </figure>
+      </article>
+      <article class="lab-item">
+        <div class="lab-copy"><span class="lab-number">02</span><h2 data-en="A more agent-native WeiBei">更 Agent Native 的改造方向</h2><p data-en="Let the assistant work with the material, notes, and task at hand. Explore a path from answering questions to carrying work forward, with a process you can inspect and intervene in.">让助手围绕眼前的材料、笔记和任务展开工作。从回答问题，走向持续推进一件事，过程可查看，也能随时介入。</p><span class="lab-caption" data-en="From a conversation to work in progress">从聊一聊，到一起把事情做完</span></div>
+        <figure class="lab-scene agent-scene" aria-label="助手协作概念示意" data-en-label="Agent collaboration concept">
+          <figcaption data-en="One task, connected work">围绕一件事，接着往下做</figcaption>
+          <p class="agent-request" data-en="Help me work through this chapter.">帮我理清这一章。</p>
+          <ol class="agent-steps"><li data-en="Read the material">阅读材料</li><li data-en="Connect the key ideas">串联知识点</li><li data-en="Organize study notes">整理学习笔记</li></ol>
+          <span class="scene-footnote" data-en="Inspect the process · Step in at any point">查看过程 · 随时介入</span>
+        </figure>
+      </article>
+      <article class="lab-item">
+        <div class="lab-copy"><span class="lab-number">03</span><h2 data-en="DIY themes">DIY 主题</h2><p data-en="Explore your own combination of colors, type, and reading atmosphere. Make a familiar study desk feel like yours.">探索自己喜欢的配色、字体与阅读氛围。把每天使用的学习桌面，布置成自己习惯的样子。</p><span class="lab-caption" data-en="A study space that feels like yours">让学习空间，有自己的样子</span></div>
+        <figure class="lab-scene theme-scene" aria-label="三种主题配色概念示意" data-en-label="Three theme color concepts">
+          <figcaption data-en="The same desk, your atmosphere">同一张桌面，不同的心情</figcaption>
+          <div class="theme-samples"><div class="theme-sample theme-paper"><span data-en="Paper">纸页</span><i></i><i></i><i></i><b></b></div><div class="theme-sample theme-moss"><span data-en="Moss">苔绿</span><i></i><i></i><i></i><b></b></div><div class="theme-sample theme-night"><span data-en="Night">夜读</span><i></i><i></i><i></i><b></b></div></div>
+        </figure>
+      </article>
     </section>
+    <p class="labs-more" data-en="More ideas will take shape here. Have a direction you would like to explore?">更多想法，会在这里慢慢展开。你也有想尝试的方向？</p>
+    <p class="guide-links"><a href="feedback.html" data-en="Share an idea">聊聊你的想法</a></p>
     <p class="guide-links"><a href="guide.html" data-en="About WeiBei">了解魏碑</a> · <a href="index.html" data-en="Home">返回首页</a></p>
   </main>
   <script src="detail.js?v=20260912-navigation"></script>
