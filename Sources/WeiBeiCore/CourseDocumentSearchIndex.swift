@@ -425,6 +425,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         guard !Task.isCancelled else { return [:] }
         guard let database = borrowDatabase() else { return [:] }
         defer { returnDatabase() }
+        // FULLMUTEX 只串行单条 SQLite 调用；共享连接的整段读事务也必须与写事务互斥。
+        // 同时保护连接级 progress handler，避免并发查询互相替换取消回调。
+        databaseWriteLock.lock()
+        defer { databaseWriteLock.unlock() }
         let cancellationProbe = CourseIndexCancellationProbe()
         let cancellationContext = Unmanaged.passRetained(cancellationProbe).toOpaque()
         sqlite3_progress_handler(
@@ -595,6 +599,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
         }
         defer { returnDatabase() }
+        databaseWriteLock.lock()
+        defer { databaseWriteLock.unlock() }
         guard Self.fileSignature(for: item) == scheduled.signature,
               let state = fileState(for: scheduled.storageID, in: database),
               state.signature == scheduled.signature,
@@ -1804,6 +1810,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private func withDatabase<T>(_ body: (OpaquePointer) -> T) -> T? {
         guard let database = borrowDatabase() else { return nil }
         defer { returnDatabase() }
+        databaseWriteLock.lock()
+        defer { databaseWriteLock.unlock() }
         return body(database)
     }
 
