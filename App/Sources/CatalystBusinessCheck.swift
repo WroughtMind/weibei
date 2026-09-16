@@ -330,6 +330,8 @@ enum CatalystBusinessCheck {
                     let items = scene.titlebar?.toolbar?.items.compactMap { $0 as? NSUIViewToolbarItem } ?? []
                     return items.count == 3 && items.allSatisfy {
                         $0.uiView.window != nil && !$0.uiView.bounds.isEmpty
+                            && !$0.label.isEmpty
+                            && (($0.itemMenuFormRepresentation as? UIMenu)?.children.contains { $0 is UIAction } == true)
                     }
                 }
             }

@@ -8,11 +8,12 @@ struct CatalystTopBar: UIViewControllerRepresentable {
     let leading: AnyView
     let center: AnyView
     let trailing: AnyView
+    let overflowMenus: [UIMenu]
     let isVisible: Bool
 
     func makeUIViewController(context: Context) -> Controller { Controller() }
     func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.update([leading, center, trailing], isVisible: isVisible)
+        controller.update([leading, center, trailing], menus: overflowMenus, isVisible: isVisible)
     }
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
         controller.detach()
@@ -24,6 +25,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             UIHostingConfiguration { AnyView(EmptyView()) }.margins(.all, 0).makeContentView()
         }
         private let toolbar = NSToolbar(identifier: "weibei.workspace")
+        private var menus = (0..<3).map { _ in UIMenu(children: []) }
         private weak var scene: UIWindowScene?
         private var showsToolbar = true
 
@@ -40,11 +42,17 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             }
         }
 
-        func update(_ contents: [AnyView], isVisible: Bool) {
+        func update(_ contents: [AnyView], menus: [UIMenu], isVisible: Bool) {
             loadViewIfNeeded()
+            self.menus = menus
             for (host, content) in zip(hosts, contents) {
                 host.configuration = UIHostingConfiguration { content }.margins(.all, 0)
                 host.invalidateIntrinsicContentSize()
+            }
+            for item in toolbar.items {
+                guard let index = identifiers.firstIndex(of: item.itemIdentifier) else { continue }
+                item.label = menus[index].title
+                item.itemMenuFormRepresentation = menus[index]
             }
             showsToolbar = isVisible
             attach()
@@ -75,6 +83,9 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             guard let index = identifiers.firstIndex(of: identifier) else { return nil }
             let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: hosts[index])
             item.isBordered = false
+            if index == 2 { item.visibilityPriority = .high }
+            item.label = menus[index].title
+            item.itemMenuFormRepresentation = menus[index]
             return item
         }
 
