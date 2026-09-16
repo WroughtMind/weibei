@@ -100,7 +100,11 @@ struct ContentView: View {
                     || store.transientNoteStatus != nil {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+#if targetEnvironment(macCatalyst)
+                        .padding(.top, 10)
+#else
                         .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
+#endif
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
                 }
@@ -324,13 +328,22 @@ private struct GlobalFloatingSelectionLayer: View {
         let point = SelectionFloatingAgentPlacement.position(
             anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
-            topInset: Double(WeiBeiMetric.topBarHeight * textScale),
+            topInset: selectionTopInset,
             surfaceHalfWidth: Double(size.width / 2),
             measuredHalfHeight: Double(size.height / 2),
             prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
             prefersAnchorCenter: !(expanded || interaction.keepFloatingSelectionForAnswer || interaction.pinnedFloatingAgent)
         )
         return CGPoint(x: point.x, y: point.y)
+    }
+
+    private var selectionTopInset: Double {
+#if targetEnvironment(macCatalyst)
+        // The native toolbar sits outside the workspace's content coordinates.
+        0
+#else
+        Double(WeiBeiMetric.topBarHeight * textScale)
+#endif
     }
 }
 
@@ -561,8 +574,7 @@ private struct UnifiedTopBarView: View {
             .environmentObject(libraryDrawer)
             .environmentObject(paneState)
             .environmentObject(interaction)
-            .environment(\.weiBeiTextScale, textScale)
-            .environment(\.openWindow, openSettingsWindow))
+            .environment(\.weiBeiTextScale, textScale))
     }
 #endif
 
