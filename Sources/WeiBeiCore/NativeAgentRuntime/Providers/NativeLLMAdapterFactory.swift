@@ -9,19 +9,32 @@ public enum NativeLLMAdapterFactory {
         let route = NativeProviderRouting.route(provider)
         let baseURL = NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: endpoint)
         let credentialProviderID = endpoint.credentialProviderID
-        _ = model
         switch route.family {
         case .openaiCodexResponses:
             let record = try await NativeOpenAIOAuth.ensureFreshAccessToken()
             guard let token = record.accessToken, !token.isEmpty else {
                 throw NativeLLMFailure(code: "unauthorized", status: 401, message: "ChatGPT subscription is not signed in")
             }
+            var contextWindow: Int?
+            if baseURL == URL(string: "https://chatgpt.com/backend-api/codex") {
+                do {
+                    contextWindow = try await AgentModelListService.shared.codexContextWindow(
+                        model: model, token: token, accountID: record.accountID ?? ""
+                    )
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    try Task.checkCancellation()
+                    WeiBeiLog.workspace.error("code=agent_model_context_unknown")
+                }
+            }
             return OpenAIResponsesProvider(
                 baseURL: baseURL ?? URL(string: "https://chatgpt.com/backend-api/codex")!,
                 accessToken: token,
                 accountID: record.accountID,
                 chatgptBackend: true,
-                webSearchSupported: route.webSearch == .responsesTool
+                webSearchSupported: route.webSearch == .responsesTool,
+                contextWindow: contextWindow
             )
         case .openaiResponses:
             guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: credentialProviderID) else {

@@ -368,10 +368,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
     func testProviderRequestEncodingIsStableForPromptCaching() async throws {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let tools = await registry.resolved(scope: .global)
+        let prompt = NativePromptAssembler.webiSystemPrompt(bundledText: "固定提示")
+        for tool in tools { XCTAssertFalse(prompt.contains(tool.description)) }
         let request = NativeLLMRequest(model: "test", messages: [
-            NativeModelMessage(role: .system, content: "固定提示"),
+            NativeModelMessage(role: .system, content: prompt),
             NativeModelMessage(role: .user, content: "问题"),
-        ], tools: await registry.resolved(scope: .global))
+        ], tools: tools)
         let encoders: [(NativeLLMRequest) throws -> URLRequest] = [
             OpenAIResponsesProvider(baseURL: URL(string: "https://api.openai.com/v1")!, accessToken: "test").makeURLRequest,
             OpenAIChatCompletionsProvider(apiKey: "test").makeURLRequest,
@@ -381,6 +384,19 @@ final class NativeAgentRuntimeTests: XCTestCase {
         for encode in encoders {
             let bodies = try (0..<30).map { _ in try XCTUnwrap(encode(request).httpBody) }
             XCTAssertEqual(Set(bodies).count, 1)
+            func definitions(in object: Any) -> [[String: Any]] {
+                if let values = object as? [Any] { return values.flatMap { definitions(in: $0) } }
+                guard let value = object as? [String: Any] else { return [] }
+                let own = value["name"] is String && value["description"] is String ? [value] : []
+                return own + value.values.flatMap { definitions(in: $0) }
+            }
+            let definitions = definitions(in: try JSONSerialization.jsonObject(with: bodies[0]))
+            for tool in tools {
+                let encoded = definitions.filter { $0["name"] as? String == tool.name }
+                XCTAssertEqual(encoded.count, 1)
+                XCTAssertEqual(encoded.first?["description"] as? String, tool.description)
+                XCTAssertNotNil(encoded.first?["parameters"] ?? encoded.first?["input_schema"])
+            }
         }
     }
 
@@ -1471,9 +1487,9 @@ private struct MockLLMAdapter: NativeLLMAdapter {
     }
 }
 
-private final class CompactionLoopAdapter: NativeContextWindowTestingAdapter, @unchecked Sendable {
+private final class CompactionLoopAdapter: NativeLLMAdapter, @unchecked Sendable {
     let family = "mock"
-    let contextWindowForTesting = 40_000
+    let contextWindow: Int? = 40_000
     private let lock = NSLock()
     private var requests: [NativeLLMRequest] = []
     private var normalRequests = 0
