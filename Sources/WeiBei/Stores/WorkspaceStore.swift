@@ -6239,6 +6239,10 @@ final class WorkspaceStore: ObservableObject {
         let documentAnchor = documentAnchor ?? anchor?.textAnchor.map { SelectionDocumentAnchor(text: $0) }
         let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
+            if automaticSelection?.source == source {
+                clearAutomaticSelectionAttachment()
+                invalidateAgentContext()
+            }
             guard selectionContext?.source == source else { return }
             let now = Date()
             if lastSelectionUpdateDate.map({ now.timeIntervalSince($0) > selectionAttachmentMergeWindow }) ?? true {

@@ -278,6 +278,7 @@ private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.weiBeiTextScale) private var textScale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var expanded: Bool
     let canvasSize: CGSize
 
@@ -296,11 +297,13 @@ private struct GlobalFloatingSelectionLayer: View {
                     dimensions.height / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).y
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : WeiBeiMotion.appearance, value: showsGlobalFloatingAgent)
         .transaction { transaction in
+            // Fade visibility only; selection coordinates must track without a spring.
             transaction.animation = nil
-            transaction.disablesAnimations = true
         }
     }
 
