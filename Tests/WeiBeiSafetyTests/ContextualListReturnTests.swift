@@ -109,6 +109,48 @@ final class ContextualListReturnTests: XCTestCase {
         XCTAssertEqual(store.selectedMaterialItem?.id, material.id, "回到笔记列表不应清掉资料选择")
     }
 
+    @MainActor
+    func testNoteTitlesFollowCurrentBodyThroughSaveAndReopen() throws {
+        let fixture = try Fixture(name: "titles")
+        defer { fixture.remove() }
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        try store.configureCourseLibrary(at: fixture.importsDirectory)
+        let courseID = try store.createCourseInLibrary(title: "标题测试")
+        let createdID = try store.waitForCourseFileOperation {
+            await store.createCourseNotebookNote(
+                courseID: courseID, title: "新笔记", markdown: "# 旧标题"
+            )
+        }
+        let noteID = try XCTUnwrap(createdID)
+        let note = try XCTUnwrap(store.activeNoteItem)
+        let url = try XCTUnwrap(note.url)
+
+        for (body, expected) in [("# 新的正文标题\n内容", "新的正文标题"),
+                                 ("普通首行也作为标题\n内容", "普通首行也作为标题")] {
+            store.updateNote(body)
+            XCTAssertEqual(store.agentNoteTitle, expected)
+            XCTAssertEqual(store.noteListDisplayTitle(for: note), expected)
+            store.flushPendingNotePersistence(for: noteID)
+            XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), body)
+            XCTAssertEqual(store.agentNoteTitle, expected)
+            store.showContextualBrowser(.note)
+            XCTAssertNil(store.activeNoteItem)
+            XCTAssertEqual(store.noteListDisplayTitle(for: note), expected)
+            store.openContextualItem(noteID, kind: .note)
+            XCTAssertEqual(store.agentNoteTitle, expected)
+        }
+
+        store.setNoteCustomDisplayTitle("手动标题", for: noteID)
+        XCTAssertEqual(store.agentNoteTitle, "手动标题")
+        store.setNoteCustomDisplayTitle("", for: noteID)
+        XCTAssertEqual(store.agentNoteTitle, "普通首行也作为标题")
+    }
+
     /// 卡死逃生:切换等待停在「保存中」且无任何出口(编辑器命令未回执)时,
     /// 看门狗应把状态降级为失败——底部状态条的重试入口恢复、新切换不再被吞。
     @MainActor
