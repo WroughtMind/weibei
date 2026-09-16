@@ -209,7 +209,6 @@ struct WhiteboardSessionView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     ForEach(classroom.session?.questions ?? []) { action in
                         WhiteboardQuestionView(classroom: classroom, action: action)
-                            .onAppear { classroom.questionDisplayed(action.stepID) }
                         Divider()
                     }
                     ForEach(classroom.session?.discussions ?? []) { discussion in

@@ -1,4 +1,23 @@
 import Foundation
+import WebKit
+
+/// Only serves bundled voice packs to the local player. No URL or filesystem path comes from JavaScript.
+@MainActor public final class WhiteboardVoiceResources: NSObject, WKScriptMessageHandlerWithReply {
+    private let directory: URL
+    public init(directory: URL) { self.directory = directory.resolvingSymlinksInPath(); super.init() }
+    public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage,
+                                      replyHandler: @escaping (Any?, String?) -> Void) {
+        guard message.frameInfo.isMainFrame, let source = message.frameInfo.request.url, source.isFileURL,
+              source.deletingLastPathComponent().resolvingSymlinksInPath() == directory,
+              let group = message.body as? String, group.utf8.count == 1,
+              group.utf8.allSatisfy({ (97...122).contains($0) }) else { replyHandler(nil, "无效的中文声音资源请求"); return }
+        do {
+            let data = try Data(contentsOf: directory.appendingPathComponent("chinese-voice-\(group).caf"), options: .mappedIfSafe)
+            guard !data.isEmpty, data.count <= 1_024 * 1_024 else { throw WhiteboardFailure("中文声音资源大小无效") }
+            replyHandler(data.base64EncodedString(), nil)
+        } catch { replyHandler(nil, "中文声音资源读取失败：\(group)") }
+    }
+}
 
 public struct WhiteboardMediaSettings: Codable, Equatable, Sendable {
     public enum Voice: String, Codable, CaseIterable, Sendable { case animalese, system, cloud, silent }

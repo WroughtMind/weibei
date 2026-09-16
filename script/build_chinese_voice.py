@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build the pinned CC BY-SA 3.0 Mandarin sample pack. Requires numpy and soundfile.
+"""Build the pinned CC BY-SA 3.0 Mandarin sample pack. Requires macOS, numpy and soundfile.
 Usage: python3 script/build_chinese_voice.py /tmp/weibei-animalese-research
 The checked-in pack is used offline; this maintenance command alone downloads sources.
 """
 import http.client
-import base64, gzip, hashlib, io, json, pathlib, sys, time, urllib.request, wave
+import hashlib, io, json, pathlib, struct, subprocess, sys, time, urllib.request, wave
 import numpy as np
 import soundfile as sf
 
@@ -44,22 +44,36 @@ def read(path):
 groups={}
 for i,path in enumerate(files):
     name,pcm=read(path)
-    groups.setdefault(name[:-1],[]).append((name,pcm))
+    groups.setdefault(name.lstrip('_')[0],[]).append((name,pcm))
     if i%200 == 0: print('verified samples', i, flush=True)
 pack_dir=resources
 index={}
+for old in resources.glob('chinese-voice-*'):
+    if old.suffix in ('.js', '.caf'): old.unlink()
 for group,clips in groups.items():
     parts=[]; sprites={}; length=0
     for name,pcm in clips:
         sprites[name]={'startMs':length/32, 'durationMs':len(pcm)/32}; parts.append(pcm); length+=len(pcm);index[name]=group
-    output=io.BytesIO()
-    with wave.open(output,'wb') as wav:
+    raw=cache/('pack-'+group+'.wav')
+    with wave.open(str(raw),'wb') as wav:
         wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(b''.join(parts))
-    pack={'sampleRate':16000,'sprites':sprites,'gzip':base64.b64encode(gzip.compress(output.getvalue(),mtime=0)).decode()}
+    # Core Audio preserves the CAF packet table (including Opus pre-skip), so
+    # decoded samples retain their exact boundaries. No codec ships in the app.
+    encoded=pack_dir/('chinese-voice-'+group+'.caf')
+    subprocess.run(['/usr/bin/afconvert',str(raw),str(encoded),'-f','caff','-d','opus','-b','10000'],check=True)
+    # CAF reserves a free chunk for later metadata edits. Bundled assets are immutable.
+    data=encoded.read_bytes(); compact=data[:8]; offset=8
+    while offset<len(data):
+        kind=data[offset:offset+4]; size=struct.unpack('>q',data[offset+4:offset+12])[0]
+        assert size>=0 and offset+12+size<=len(data)
+        if kind!=b'free': compact+=data[offset:offset+12+size]
+        offset+=12+size
+    encoded.write_bytes(compact)
+    pack={'sampleRate':16000,'sprites':sprites}
     (pack_dir/('chinese-voice-'+group+'.js')).write_text('/* CC BY-SA 3.0. Chen Wang, Hugo Lopez, Nicolas Vion. See chinese-voice-LICENSE.txt. */\nwindow.WeiBeiChineseVoices['+json.dumps(group)+']='+json.dumps(pack,separators=(',',':'))+';\n')
 (resources/'chinese-voice-index.js').write_text('window.WeiBeiChineseVoices={};window.WeiBeiChineseVoiceIndex='+json.dumps(index,separators=(',',':'))+';\n')
 license_file=cache/'CC-BY-SA-3.0.txt'
 if not license_file.exists(): license_file.write_bytes(download('https://raw.githubusercontent.com/spdx/license-list-data/main/text/CC-BY-SA-3.0.txt'))
 license_text=license_file.read_text()
-(resources/'chinese-voice-LICENSE.txt').write_text('中文动物语音节素材\n\nRecording: Chen Wang\nCopyright 2013 Wang Chen, Lopez Hugo, Vion Nicolas\nSource: https://github.com/hugolpz/audio-cmn/tree/'+COMMIT+'/64k/syllabs\n1707 source files; each verified against the Git blob SHA and its embedded CC-BY-SA-3.0 license.\nChanges by WeiBei: trim outer silence, normalize gain, downsample to mono 16000 Hz, concatenate and gzip. The transformed sample pack remains CC BY-SA 3.0.\nRebuild: script/build_chinese_voice.py (numpy, soundfile).\nNeutral tones use the first-tone sample, following upstream removal of duplicated tone-5 recordings; no English or game audio is included.\n\n'+license_text)
-print('packs',len(groups),'bytes',sum((pack_dir/('chinese-voice-'+group+'.js')).stat().st_size for group in groups),flush=True)
+(resources/'chinese-voice-LICENSE.txt').write_text('中文动物语音节素材\n\nRecording: Chen Wang\nCopyright 2013 Wang Chen, Lopez Hugo, Vion Nicolas\nSource: https://github.com/hugolpz/audio-cmn/tree/'+COMMIT+'/64k/syllabs\n1707 source files; each verified against the Git blob SHA and its embedded CC-BY-SA-3.0 license.\nChanges by WeiBei: trim outer silence, normalize gain, downsample to mono 16000 Hz, concatenate by initial, encode Opus at 10000 bits/s in CAF using macOS Core Audio. The transformed sample pack remains CC BY-SA 3.0.\nRebuild: script/build_chinese_voice.py (macOS, numpy, soundfile).\nNeutral tones use the first-tone sample, following upstream removal of duplicated tone-5 recordings; no English or game audio is included.\n\n'+license_text)
+print('packs',len(groups),'bytes',sum(p.stat().st_size for p in resources.glob('chinese-voice-*')),flush=True)

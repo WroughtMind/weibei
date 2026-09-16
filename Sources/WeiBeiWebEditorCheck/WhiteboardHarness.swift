@@ -2,16 +2,33 @@ import AppKit
 import WebKit
 import WeiBeiCore
 
+private struct WhiteboardMeasuredAdapter: NativeLLMAdapter {
+    let base: any NativeLLMAdapter
+    let record: @Sendable (Int) -> Void
+    var family: String { base.family }
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        if let data = try? JSONSerialization.data(withJSONObject: OpenAIResponsesProvider.payload(for: request), options: [.sortedKeys]) { record(data.count) }
+        return base.stream(request)
+    }
+}
+
 /// Real bundled WebKit runtime. Model timing runs only through its explicit button; never uses the shared clipboard.
 final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
     private var ready = false
     private var failure: String?
     private let web: WKWebView
     private var window: NSWindow?
+    private var liveButton: NSButton?
     private var liveStart: Date?, firstVisible = false
     private var liveActions: [WhiteboardAction] = [], liveGate = WhiteboardActionGate()
+    private var liveSession: WhiteboardSession?, generationFinished = false
+    private var requestBytes: [Int: Int] = [:], pageGaps: [Double] = [], synchronization: [Double] = []
+    private var firstSeconds: Double?, pageEnded: Double?, speechEnds: [String: Double] = [:], boardEnds: [String: Double] = [:]
+    private var liveFailure: String?
     override init() {
         let config = WKWebViewConfiguration()
+        let resources = URL(fileURLWithPath: Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String ?? FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor")
+        config.userContentController.addScriptMessageHandler(WhiteboardVoiceResources(directory: resources), contentWorld: .page, name: "voiceResource")
         config.websiteDataStore = .nonPersistent()
         config.mediaTypesRequiringUserActionForPlayback = []
         config.userContentController.addUserScript(.init(source: "window.wbMessages = []; window.addEventListener('error', e => window.webkit.messageHandlers.whiteboard.postMessage({type:'harness_error',message:e.message}));", injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -21,18 +38,35 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let value = message.body as? [String: Any] else { return }
         if let start = liveStart {
-            if value["type"] as? String == "board_revealed", !firstVisible {
-                firstVisible = true
-                let seconds = Date().timeIntervalSince(start)
-                let result = String(format: "首笔可见 %.2f 秒（%@）", seconds, seconds <= 15 ? "通过" : "未达标")
-                window?.title = result
-                if let folder = Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String {
-                    try? Data(result.utf8).write(to: URL(fileURLWithPath: folder).appendingPathComponent("dist-whiteboard-check/live-result.txt"))
+            let eventTime = value["at"] as? Double ?? 0
+            if value["type"] as? String == "board_revealed" {
+                if !firstVisible {
+                    firstVisible = true; firstSeconds = Date().timeIntervalSince(start)
+                    window?.title = String(format: "首笔 %.2f 秒 · 正在验收整堂课", firstSeconds!)
+                }
+                if let pageEnded { pageGaps.append(eventTime - pageEnded); self.pageEnded = nil }
+            }
+            if let id = value["step_id"] as? String {
+                if value["type"] as? String == "speech_finished" { speechEnds[id] = eventTime }
+                if value["type"] as? String == "board_finished" { boardEnds[id] = eventTime }
+            }
+            if value["type"] as? String == "question", let action = value["action"] as? [String: Any], let id = action["step_id"] as? String {
+                Task { @MainActor in
+                    do { _ = try await web.callAsyncJavaScript("window.WeiBeiWhiteboard.questionDisplayed(id)", arguments: ["id": id], in: nil, contentWorld: .page) }
+                    catch { liveFailure = error.localizedDescription; writeLiveEvidence() }
                 }
             }
             if value["type"] as? String == "action_step_complete", let id = value["step_id"] as? String,
-               let raw = value["ticket"] as? String, let ticket = UUID(uuidString: raw), liveGate.acknowledge(stepID: id, ticket: ticket, success: true) { dispatchLive() }
-            if value["type"] as? String == "action_step_failed" { window?.title = "模型计时失败：" + String(describing: value["message"] ?? "") }
+               let raw = value["ticket"] as? String, let ticket = UUID(uuidString: raw), liveGate.acknowledge(stepID: id, ticket: ticket, success: true) {
+                if let action = liveActions.first(where: { $0.stepID == id }) {
+                    if action.type == .keypointComplete { pageEnded = eventTime }
+                    if action.type == .group, let speech = action.leaves.first(where: { $0.type == .speak }), let ended = speechEnds[speech.stepID],
+                       let board = action.leaves.compactMap({ boardEnds[$0.stepID] }).max() { synchronization.append(board - ended) }
+                }
+                dispatchLive()
+            }
+            if value["type"] as? String == "action_step_failed" { liveFailure = String(describing: value["message"] ?? ""); window?.title = "课堂验收失败：" + liveFailure! }
+            writeLiveEvidence()
         }
         if value["type"] as? String == "ready" {
             ready = true; print("whiteboard runtime ready"); fflush(stdout)
@@ -46,6 +80,7 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
         if value["type"] as? String == "harness_result" {
             let status = value["status"] as? String ?? "missing result"
             window?.title = "魏碑白板验收 · " + status
+            liveButton?.isEnabled = status == "passed"
             if let folder = Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String {
                 try? Data(status.utf8).write(to: URL(fileURLWithPath: folder).appendingPathComponent("dist-whiteboard-check/result.txt"))
             }
@@ -69,22 +104,60 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
                     endpoint: AgentProviderEndpoint(provider: .openaiCodex, baseURL: ""))
                 let source = WhiteboardSource(itemID: "timing-fixture", title: "计量经济学",
                     pages: [.init(number: 12, text: "最小二乘法使残差平方和最小。残差等于观测值减去预测值；平方避免正负抵消，且更重地惩罚较大误差。")])
-                let session = WhiteboardSession(source: source, goal: "讲解残差为什么需要平方，用公式和关系图，最后出一道选择题。", lesson: .init(title: "残差"))
-                _ = try await WhiteboardTeacher.generatePage(adapter: adapter, model: model, source: source, goal: session.goal, page: 1, session: session) { action in
-                    await MainActor.run { self.liveActions.append(action); self.dispatchLive() }
+                var session = WhiteboardSession(source: source, goal: "恰好安排五页与五个关键点：残差定义、正负抵消、平方的作用、大误差惩罚、选择拟合直线。每页主要用一卡一组短讲解，包含公式和一张关系图，最后出一道选择题。", lesson: .init(title: "残差"))
+                for page in 1...5 {
+                    let measured = WhiteboardMeasuredAdapter(base: adapter) { bytes in
+                        Task { @MainActor in self.requestBytes[page] = bytes; self.writeLiveEvidence() }
+                    }
+                    let part = try await WhiteboardTeacher.generatePage(adapter: measured, model: model, source: source, goal: session.goal, page: page, session: session) { action in
+                        await MainActor.run { self.liveActions.append(action); self.dispatchLive() }
+                    }
+                    session.lesson.actions += part.actions; session.generatedPages = page; liveSession = session
+                    if let folder = Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String {
+                        try WhiteboardSessionStore(directory: URL(fileURLWithPath: folder).appendingPathComponent("dist-whiteboard-check/live-lesson")).save(session)
+                    }
+                    if page >= session.keyPoints.count { break }
                 }
-            } catch { window?.title = "模型计时失败：" + error.localizedDescription }
+                generationFinished = true; liveSession?.generationComplete = true; dispatchLive(); writeLiveEvidence()
+            } catch { liveFailure = error.localizedDescription; window?.title = "课堂验收失败：" + error.localizedDescription; writeLiveEvidence() }
         }
     }
     private func dispatchLive() {
-        guard !firstVisible, let (action, ticket) = liveGate.dispatch(liveActions) else { return }
+        guard liveFailure == nil else { return }
+        guard let (action, ticket) = liveGate.dispatch(liveActions) else {
+            if liveGate.pendingID == nil {
+                web.evaluateJavaScript("window.WeiBeiWhiteboard.generationWaiting(\(!generationFinished))")
+                if generationFinished { writeLiveEvidence() }
+            }
+            return
+        }
+        web.evaluateJavaScript("window.WeiBeiWhiteboard.generationWaiting(false)")
         do {
             let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(action))
             Task { @MainActor in
                 do { _ = try await web.callAsyncJavaScript("return await window.WeiBeiWhiteboard.receive(envelope)", arguments: ["envelope": ["action": value, "ticket": ticket.uuidString, "audio": [:], "voice": "animalese", "speed": 1]], in: nil, contentWorld: .page) }
-                catch { window?.title = "模型计时失败：" + error.localizedDescription }
+                catch { liveFailure = error.localizedDescription; window?.title = "课堂验收失败：" + error.localizedDescription; writeLiveEvidence() }
             }
-        } catch { window?.title = "模型计时失败：" + error.localizedDescription }
+        } catch { liveFailure = error.localizedDescription; window?.title = "课堂验收失败：" + error.localizedDescription; writeLiveEvidence() }
+    }
+    private func writeLiveEvidence() {
+        guard let folder = Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String, let liveStart else { return }
+        let finished = generationFinished && liveGate.cursor == liveActions.count
+        let groups = liveActions.filter { $0.type == .group && $0.leaves.contains(where: { $0.type == .board || $0.type == .graph }) }.count
+        let passed = finished && liveFailure == nil && (liveSession?.generatedPages ?? 0) >= 3 && (firstSeconds ?? 999) <= 15
+            && pageGaps.count >= 2 && pageGaps.allSatisfy { $0 <= 10 } && synchronization.count == groups
+            && synchronization.allSatisfy { (0...3).contains($0) }
+        let report: [String: Any] = ["finished": finished, "passed": passed, "first_visible_seconds": firstSeconds as Any? ?? NSNull(),
+            "pages": liveSession?.generatedPages ?? 0, "requests_bytes": Dictionary(uniqueKeysWithValues: requestBytes.map { (String($0.key), $0.value) }),
+            "page_gap_seconds": pageGaps, "board_after_speech_seconds": synchronization, "groups": groups,
+            "elapsed_seconds": Date().timeIntervalSince(liveStart), "action_types": liveActions.map(\.type.rawValue),
+            "failure": liveFailure as Any? ?? NSNull()]
+        let root = URL(fileURLWithPath: folder).appendingPathComponent("dist-whiteboard-check")
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { try? data.write(to: root.appendingPathComponent("live-result.json")) }
+        if finished {
+            window?.title = "五页真实课堂 · " + (passed ? "通过" : "未达标")
+            if var session = liveSession { session.cursor = liveGate.cursor; try? WhiteboardSessionStore(directory: root.appendingPathComponent("live-lesson")).save(session) }
+        }
     }
     private func wait(_ condition: () -> Bool) {
         let end = Date().addingTimeInterval(45)
@@ -109,8 +182,10 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
         if CommandLine.arguments.contains("--whiteboard-window") || Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.whiteboardcheck" {
             NSApplication.shared.setActivationPolicy(.accessory); NSApplication.shared.finishLaunching()
             let value = NSWindow(contentRect: web.frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            let liveButton = NSButton(title: "五页真实课堂验收", target: self, action: #selector(live))
+            liveButton.isEnabled = false; self.liveButton = liveButton
             let controls = NSStackView(views: [NSButton(title: "浅色板面", target: self, action: #selector(light)),
-                NSButton(title: "深色板面", target: self, action: #selector(dark)), NSButton(title: "模型首屏计时", target: self, action: #selector(live))])
+                NSButton(title: "深色板面", target: self, action: #selector(dark)), liveButton])
             controls.heightAnchor.constraint(equalToConstant: 34).isActive = true
             let content = NSStackView(views: [controls, web]); content.orientation = .vertical; content.spacing = 0
             web.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
@@ -135,6 +210,7 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
     (async () => {
       const api=window.WeiBeiWhiteboard;
       const assert=(v,m)=>{if(!v)throw new Error(m);};
+      assert((await document.fonts.load('19px Virgil','ABC 123')).length>0,'Bundled Virgil must load');
       const wait=async test=>{const end=performance.now()+12000;while(!test()){if(performance.now()>end)throw new Error('condition timed out');await new Promise(requestAnimationFrame);}};
       const messages=(type,id)=>window.wbMessages.filter(m=>m.type===type&&(!id||m.step_id===id));
       const page={type:'new_page',step_id:'p1',page_id:'page-a',title:'残差与平方和'};
@@ -197,6 +273,7 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
       const voiceGroup={type:'group',step_id:'voice-group',actions:[{...board,step_id:'voice-board',board_uid:30},{...speak,step_id:'voice-speak',spoken_text:'重庆银行比较残差。平方以后，正数和负数就不会抵消。'}]};
       const audible=api.receive({action:voiceGroup,ticket:'voice-ticket',audio:{},voice:'animalese',speed:1});
       await wait(()=>audio.currentTime>.15);
+      assert(document.querySelector('[data-board="30"] .reveal-char'),'Voice must finish before the final writing unit');
       const oldEnded=audio.onended;
       assert(getComputedStyle(document.querySelector('[data-board="30"]')).opacity==='1','Actual playing event reveals the board');
       const pausedEvent=new Promise(resolve=>audio.addEventListener('pause',resolve,{once:true}));
@@ -211,12 +288,14 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
       api.pause(false);await wait(()=>audio.currentTime>time+.15);
       await api.restore([page],null,'cancel-audio');await audible;
       assert(!messages('action_step_complete','voice-group').length,'Cancellation never acknowledges an unfinished action');
+      let endedAt=0;audio.addEventListener('ended',()=>endedAt=performance.now(),{once:true});
       const replay=api.receive({action:voiceGroup,ticket:'new-ticket',audio:{},voice:'animalese',speed:1.5});
       await wait(()=>audio.currentTime>.1);oldEnded?.call(audio,new Event('ended'));
       assert(!messages('action_step_complete','voice-group').length,'An old ended callback cannot finish a replay');
       assert(audio.playbackRate===1.5&&audio.preservesPitch,'Rate changes preserve pitch');
       await replay;await wait(()=>messages('action_step_complete','voice-group').length===1);
       assert(audio.ended,'A completed replay waits for the actual ended event');
+      assert(endedAt>0&&performance.now()-endedAt<3000,'The final board finishes within three seconds of speech');
       assert(messages('action_step_complete','voice-group')[0].ticket==='new-ticket','Only the current playback ticket completes');
       await api.restore([page,group,graph,{type:'circle',step_id:'visual-circle',target_board_id:0,snippet:'残差',color:'red'}],null,'visual');
       window.wbResult='passed';window.webkit.messageHandlers.whiteboard.postMessage({type:'harness_result',status:'passed'});

@@ -4,8 +4,8 @@ Recording: Chen Wang
 Copyright 2013 Wang Chen, Lopez Hugo, Vion Nicolas
 Source: https://github.com/hugolpz/audio-cmn/tree/ff9ed3d0c631195bd2c06f39450f3264c7124040/64k/syllabs
 1707 source files; each verified against the Git blob SHA and its embedded CC-BY-SA-3.0 license.
-Changes by WeiBei: trim outer silence, normalize gain, downsample to mono 16000 Hz, concatenate and gzip. The transformed sample pack remains CC BY-SA 3.0.
-Rebuild: script/build_chinese_voice.py (numpy, soundfile).
+Changes by WeiBei: trim outer silence, normalize gain, downsample to mono 16000 Hz, concatenate by initial, encode Opus at 10000 bits/s in CAF using macOS Core Audio. The transformed sample pack remains CC BY-SA 3.0.
+Rebuild: script/build_chinese_voice.py (macOS, numpy, soundfile).
 Neutral tones use the first-tone sample, following upstream removal of duplicated tone-5 recordings; no English or game audio is included.
 
 Creative Commons Legal Code

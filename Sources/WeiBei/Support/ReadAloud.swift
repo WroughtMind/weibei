@@ -170,6 +170,7 @@ extension WhiteboardMediaSettings {
         if web == nil {
             guard let url = WeiBeiResources.bundle.url(forResource: "reading-voice", withExtension: "html", subdirectory: "Editor") else { throw WhiteboardFailure("朗读资源缺失，请重新构建应用。") }
             let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
+            configuration.userContentController.addScriptMessageHandler(WhiteboardVoiceResources(directory: url.deletingLastPathComponent()), contentWorld: .page, name: "voiceResource")
             configuration.mediaTypesRequiringUserActionForPlayback = []; configuration.userContentController.add(self, name: "readingVoice")
             let value = WKWebView(frame: .zero, configuration: configuration); web = value; value.navigationDelegate = self
             value.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())

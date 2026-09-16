@@ -1,4 +1,5 @@
-import { animalSpeech, mandarinUnits, speechCaption } from './animalVoice';
+import type * as Voice from './animalVoice';
+const voice = () => (globalThis as unknown as {WeiBeiVoice:typeof Voice}).WeiBeiVoice;
 import { createWebiCompanion, webiMouthForPinyin } from './webiCompanion';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
@@ -21,7 +22,7 @@ const host = window as unknown as { webkit?: { messageHandlers?: { whiteboard?: 
   WeiBeiKaTeX: { renderToString: (text: string, options: unknown) => string };
   WeiBeiMermaid: Promise<{ initialize: (options: unknown) => void; render: (id: string, text: string) => Promise<{svg:string}> }>;
   WeiBeiWhiteboard: typeof api; initialWhiteboardDark?:boolean };
-const send = (data: unknown) => host.webkit?.messageHandlers?.whiteboard?.postMessage(data);
+const send = (data: Record<string,unknown>) => host.webkit?.messageHandlers?.whiteboard?.postMessage({...data,at:performance.now()/1000});
 const canvas = document.getElementById('canvas')!;
 const viewport = document.getElementById('viewport')!;
 const audio = document.getElementById('narration') as HTMLAudioElement;
@@ -32,7 +33,9 @@ let pages:Page[] = [], activePageId:string|undefined, layoutJSON='';
 let epoch = 0, camera = 0, revision = 0, active: Envelope | undefined, paused = false, pausedAt = 0, pauseTotal = 0;
 let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
 const revealing = new Map<number, Deferred>(), speeches = new Map<string, Deferred>(), questions = new Map<string, Deferred>();
-const preparedVoice=new Map<string,Awaited<ReturnType<typeof animalSpeech>>>();
+const preparedVoice=new Map<string,Awaited<ReturnType<typeof Voice.animalSpeech>>>();
+const speechClocks=new Map<string,{progress:number;finished:boolean;audio?:HTMLAudioElement;error?:string}>();
+type RevealSpeech={id:string;part:number;total:number};
 const opened = new Set<number>(), animations = new Set<Animation>();
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const now = () => performance.now() - pauseTotal - (paused ? performance.now() - pausedAt : 0);
@@ -170,25 +173,37 @@ async function animate(node:Element,frames:Keyframe[],duration:number,delay=0) {
   try {await animation.finished;} finally {animations.delete(animation);animation.cancel();}
 }
 
-async function reveal(card:Card,track=true) {
+async function waitSpeech(speech:RevealSpeech,fraction:number,token:number){
+  const target=(speech.part+fraction)/speech.total;
+  for(;;){
+    assertEpoch(token);const clock=speechClocks.get(speech.id);
+    if(clock?.error)throw new Error(clock.error);
+    const progress=clock?.audio&&Number.isFinite(clock.audio.duration)&&clock.audio.duration>0
+      ? Math.min(.999,clock.audio.currentTime/clock.audio.duration) : clock?.progress ?? 0;
+    if(!paused&&(clock?.finished||(target<1&&progress>=target)))return;
+    await new Promise(requestAnimationFrame);
+  }
+}
+
+async function reveal(card:Card,track=true,speech?:RevealSpeech) {
   if(card.revealed)return;
   const token=epoch,ticket=active?.ticket;
   const visible=()=>{if(track&&token===epoch)send({type:'board_revealed',ticket});};
   card.node.style.opacity='1';if(track)follow(card);
-  const marker=card.node.querySelector<HTMLElement>('.title-marker')!;
-  if(reduced()||card.action.type==='graph'){marker.style.backgroundSize='100% 100%';card.revealed=true;await paint();visible();return;}
+  const marker=card.node.querySelector<HTMLElement>('.title-marker');
   const spans:HTMLSpanElement[]=[],units:{node:Element;math:boolean;title:boolean}[]=[];
   const collect=(parent:Node)=>{
     for(const node of Array.from(parent.childNodes)){
       if(node instanceof Text){
         const fragment=document.createDocumentFragment();
-        for(const char of node.data){const span=document.createElement('span');span.className='reveal-char';span.textContent=char;fragment.append(span);spans.push(span);units.push({node:span,math:false,title:marker.contains(node)});}
+        for(const char of node.data){const span=document.createElement('span');span.className='reveal-char';span.textContent=char;fragment.append(span);spans.push(span);units.push({node:span,math:false,title:marker?.contains(node) ?? false});}
         node.replaceWith(fragment);
       }else if(node instanceof Element){
         if(node.matches('.katex-display,.katex,svg,pre'))units.push({node,math:true,title:false});else collect(node);
       }
     }
-  };collect(card.node.querySelector('h2')!);collect(card.node.querySelector('.content')!);
+  };const title=card.node.querySelector('h2');if(title)collect(title);collect(card.node.querySelector('.content')!);
+  for(const unit of units)(unit.node as HTMLElement).style.opacity='0';
   const interval=Math.max(18,Math.min(50,2880/Math.max(1,units.length)));
   const lastTitle=units.map((u,i)=>u.title?i:-1).reduce((a,b)=>Math.max(a,b),-1);
   const pen=document.createElement('div');pen.className='write-pen';pen.setAttribute('aria-hidden','true');
@@ -196,17 +211,23 @@ async function reveal(card:Card,track=true) {
   card.node.append(pen);let markerFinished:Promise<void>|undefined;
   try {
     await Promise.all(units.map(async(u,i)=>{
-      await animate(u.node,[{opacity:0,filter:'blur(3px)'},{opacity:1,filter:'blur(0)'}],u.math?280:360,i*interval);
+      if(speech)await waitSpeech(speech,units.length===1?1:i/(units.length-1),token);
+      await animate(u.node,[{opacity:0,filter:'blur(3px)'},{opacity:1,filter:'blur(0)'}],u.math?280:360,speech?0:i*interval);
+      (u.node as HTMLElement).style.opacity='1';
+      if(!track&&card.action.type==='speak'){
+        const clock=speechClocks.get(card.action.step_id);if(clock)clock.progress=Math.max(clock.progress,Math.min(.999,(i+1)/units.length));
+      }
       if(i===0){await paint();visible();}
       const rect=u.node.getBoundingClientRect(),base=card.node.getBoundingClientRect();
       pen.style.left=rect.right-base.left+'px';pen.style.top=rect.bottom-base.top+'px';pen.style.opacity='1';
-      if(i===lastTitle)markerFinished=animate(marker,[{backgroundSize:'0% 100%'},{backgroundSize:'100% 100%'}],420)
+      if(i===lastTitle&&marker)markerFinished=animate(marker,[{backgroundSize:'0% 100%'},{backgroundSize:'100% 100%'}],420)
         .then(()=>{marker.style.backgroundSize='100% 100%';});
     }));
     await markerFinished;card.revealed=true;
     await animate(pen,[{opacity:1},{opacity:0}],180);
   } finally {pen.remove();for(const span of spans)span.replaceWith(document.createTextNode(span.textContent ?? ''));card.node.normalize();}
   await paint();
+  if(track&&token===epoch)send({type:'board_finished',step_id:card.action.step_id,ticket});
 }
 
 function annotationRect(card:Card,a:Action):DOMRect {
@@ -251,6 +272,7 @@ async function execute(a:Action,env:Envelope,restoring=false):Promise<void> {
   }
   if(a.type==='group'){
     const children=a.actions ?? [],boardActions=children.filter(c=>c.type==='board'||c.type==='graph'),token=epoch;
+    for(const child of children)if(child.type==='speak')speechClocks.set(child.step_id,{progress:0,finished:false});
     await Promise.all(boardActions.map(c=>deadline(prepare(c,restoring),30000,'板书排版')));assertEpoch(token);
     const boards=(async()=>{for(const c of boardActions)await execute(c,env,restoring);})();
     await Promise.all([boards,...children.filter(c=>!boardActions.includes(c)).map(async c=>{
@@ -263,26 +285,29 @@ async function execute(a:Action,env:Envelope,restoring=false):Promise<void> {
     if(restoring)return;
     const speak=env.action.actions?.find(c=>c.type==='speak');
     if(speak&&!opened.has(a.board_uid!))await deadline(deferred(revealing,a.board_uid!),8000,'语音揭示');
-    await deadline(reveal(card),Math.min(30000,4000+24*(a.board_content?.length ?? 200)),'板书显示');return;
+    const boards=env.action.actions?.filter(c=>c.type==='board'||c.type==='graph') ?? [];
+    const speech=speak?{id:speak.step_id,part:boards.indexOf(a),total:boards.length}:undefined;
+    await deadline(reveal(card,true,speech),speech?183000:Math.min(30000,4000+24*(a.board_content?.length ?? 200)),'板书显示');return;
   }
   if(a.type==='speak'){
     if(restoring)return;
     if(env.silent){
       const node=document.createElement('div');node.className='silent-caption';
-      node.innerHTML='<h2><span class="title-marker"></span></h2><div class="content"></div>';
+      node.innerHTML='<div class="content"></div>';
       node.querySelector('.content')!.textContent=a.spoken_text ?? '';document.body.append(node);
       api.speechStarted(a.step_id);
       try{await deadline(reveal({action:a,node,revealed:false,page:0,column:0,x:0,y:0,decorations:[]},false),30000,'讲稿阅读');}
-      finally{node.remove();}return;
+      finally{node.remove();api.speechFinished(a.step_id);}return;
     }
     const token=epoch;
     const local=preparedVoice.get(a.step_id);preparedVoice.delete(a.step_id);
     assertEpoch(token);
     const pending=deferred(speeches,a.step_id),finished=deadline(pending,180000,'语音播放');
     const bytes=local?.url ?? env.audio[a.step_id];
-    const cleanCaption=local?speechCaption(audio,a.spoken_text ?? '',local.cues):undefined;
+    const cleanCaption=local?voice().speechCaption(audio,a.spoken_text ?? '',local.cues):undefined;
     const detachWebi=bytes?companion.followAudio(audio,local?.mouthCues ?? []):undefined;
     if(bytes){
+      speechClocks.set(a.step_id,{progress:0,finished:false,audio});
       audio.src=bytes;audio.playbackRate=env.speed ?? 1;audio.preservesPitch=true;
       audio.onplaying=()=>{if(token===epoch)api.speechStarted(a.step_id);};
       audio.onended=()=>{if(token===epoch)api.speechFinished(a.step_id);};
@@ -297,7 +322,7 @@ async function execute(a:Action,env:Envelope,restoring=false):Promise<void> {
   if(a.type==='ask'){
     if(restoring)return;
     const pending=deferred(questions,a.step_id);send({type:'question',action:a,ticket:env.ticket});
-    // The native question view acknowledges its appearance, independently of the learner's answer.
+    // The native receiver acknowledges the persisted question, independently of the learner's answer.
     try{await deadline(pending,4000,'题目显示');}finally{questions.delete(a.step_id);}return;
   }
   throw new Error('不支持的课堂动作');
@@ -310,17 +335,19 @@ const api={
     try{
       if(env.voice==='animalese'){
         for(const action of env.action.type==='group'?env.action.actions ?? []:[env.action])if(action.type==='speak'){
-          const local=await deadline(animalSpeech(action.spoken_text ?? '',()=>assertEpoch(token)),30000,'中文动物语合成');
+          const local=await deadline(voice().animalSpeech(action.spoken_text ?? '',()=>assertEpoch(token)),30000,'中文动物语合成');
           assertEpoch(token);preparedVoice.set(action.step_id,local);
         }
       }
       await execute(env.action,env);
+      for(const action of env.action.actions ?? [env.action])if(action.type==='speak')speechClocks.delete(action.step_id);
       if(token===epoch){active=undefined;send({type:'action_step_complete',step_id:env.action.step_id,ticket:env.ticket});}
     }catch(error){
       if(token===epoch){api.pause(true);send({type:'action_step_failed',step_id:env.action.step_id,ticket:env.ticket,message:String(error)});}
     }
   },
   speechStarted(id:string){
+    send({type:'speech_started',step_id:id,ticket:active?.ticket});
     if(active?.action.step_id===id||active?.action.actions?.some(a=>a.type==='speak'&&a.step_id===id))companion.setAction('talk');
     const children=active?.action.type==='group'?active.action.actions:[];
     if(!children?.some(a=>a.type==='speak'&&a.step_id===id))return;
@@ -328,13 +355,22 @@ const api={
       opened.add(a.board_uid!);revealing.get(a.board_uid!)?.resolve();revealing.delete(a.board_uid!);
     }
   },
-  speechFinished(id:string,error?:string){const d=speeches.get(id);error?d?.reject(new Error(error)):d?.resolve();},
-  speechBoundary(id:string,text:string){
+  speechFinished(id:string,error?:string){
+    const clock=speechClocks.get(id);if(clock){clock.finished=!error;clock.error=error;}
+    send({type:'speech_finished',step_id:id,ticket:active?.ticket,error});
+    const d=speeches.get(id);error?d?.reject(new Error(error)):d?.resolve();
+  },
+  speechBoundary(id:string,text:string,progress=0){
     if(!speeches.has(id))return;
-    try{const phoneme=mandarinUnits(text).flatMap(u=>u.phonemes)[0];companion.setMouth(phoneme?webiMouthForPinyin(phoneme):0);}catch{companion.setMouth(0);}
+    const clock=speechClocks.get(id);if(clock)clock.progress=Math.max(clock.progress,Math.min(.999,progress));
+    try{const phoneme=voice().mandarinUnits(text).flatMap(u=>u.phonemes)[0];companion.setMouth(phoneme?webiMouthForPinyin(phoneme):0);}catch{companion.setMouth(0);}
   },
   questionDisplayed(id:string){questions.get(id)?.resolve();},
   feedback(correct:boolean){companion.setAction(correct?'celebrate':'surprise');},
+  generationWaiting(value:boolean){
+    document.getElementById('generation-waiting')!.hidden=!value;
+    companion.setAction(value?'think':'idle');
+  },
   async supplement(action:Action,replyID:string){
     const token=epoch;
     try{await deadline(prepare(action,true),30000,'补充板书');assertEpoch(token);await paint();send({type:'supplement_complete',reply_id:replyID});}
@@ -361,7 +397,7 @@ const api={
   },
   async restore(actions:Action[],state:{revision?:number;activePageId?:string}|undefined,requestID:string){
     companion.setPaused(false);companion.setMouth(0);companion.setAction('idle');
-    epoch++;camera++;active=undefined;audio.onplaying=null;audio.onended=null;audio.onerror=null;audio.pause();audio.removeAttribute('src');audio.load();opened.clear();preparedVoice.clear();
+    epoch++;camera++;active=undefined;audio.onplaying=null;audio.onended=null;audio.onerror=null;audio.pause();audio.removeAttribute('src');audio.load();opened.clear();preparedVoice.clear();speechClocks.clear();api.generationWaiting(false);
     clearTimeout(snapshotTimer);
     for(const map of [revealing,speeches,questions]){for(const d of map.values())d.reject(new Error('课堂已切换'));map.clear();}
     for(const animation of animations)animation.cancel();animations.clear();
@@ -383,5 +419,8 @@ async function setAppearance(dark:boolean){
     mainBkg:dark?'#263e50':'#dbeafe',nodeTextColor:dark?'#cee2ed':'#25435b',edgeLabelBackground:dark?'#242421':'#faf8f2',
   }});
 }
-void setAppearance(host.initialWhiteboardDark ?? matchMedia('(prefers-color-scheme: dark)').matches)
+void Promise.all([document.fonts.load('19px Virgil','ABC 123'),window.WeiBeiKaTeXReady]).then(([fonts])=>{
+  if(!fonts.length)throw new Error('白板手写字体未能加载');
+  return setAppearance(host.initialWhiteboardDark ?? matchMedia('(prefers-color-scheme: dark)').matches);
+})
   .then(()=>send({type:'ready'})).catch(error=>send({type:'initialization_failed',message:String(error)}));

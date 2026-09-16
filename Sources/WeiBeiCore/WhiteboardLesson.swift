@@ -75,13 +75,15 @@ public struct WhiteboardLesson: Codable, Equatable, Sendable {
         }
         try check(!title.isEmpty && title.count <= 200 && actions.count <= 160, "标题或动作数量超限")
         var ids = Set<String>(), boards = Set<Int>(), pageIDs = Set<String>()
-        var page = 0, boardPages: [Int: Int] = [:], completedPoints = Set<Int>()
+        var page = 0, boardPages: [Int: Int] = [:], completedPoints = Set<Int>(), outlineSeen = false
+        let outline = actions.first { $0.type == .sessionReady }
         for root in actions {
             let children = root.type == .group ? root.actions ?? [] : [root]
             if root.type == .group {
                 try check(!root.stepID.isEmpty && root.stepID.count <= 80 && ids.insert(root.stepID).inserted, "重复动作编号")
                 try check((1...8).contains(children.count) && children.allSatisfy { ![.group, .newPage, .newColumn, .sessionReady, .keypointComplete].contains($0.type) }, "组合动作不能嵌套或改变页面及关键点")
                 try check(children.filter { $0.type == .speak }.count <= 1 && children.filter { $0.type == .ask }.count <= 1, "组合内只能有一段语音和一道提问")
+                try check(children.filter { $0.type == .board || $0.type == .graph }.count <= 2, "一组最多两张对照板书")
             }
             for a in children {
                 try check(!a.stepID.isEmpty && a.stepID.count <= 80 && ids.insert(a.stepID).inserted, "动作编号必须唯一")
@@ -91,11 +93,12 @@ public struct WhiteboardLesson: Codable, Equatable, Sendable {
                 if let number = a.sourcePage { try check(source.pages.contains { $0.number == number }, "引用未提供的原文页") }
                 switch a.type {
                 case .sessionReady:
-                    try check(page == 0 && root == actions.first && a == root, "关键点清单只能在开场出现")
+                    try check(!outlineSeen && a == root, "课堂只能有一份关键点清单")
+                    outlineSeen = true
                     try check((3...6).contains(a.keyPoints?.count ?? 0) && a.keyPoints!.allSatisfy { !$0.isEmpty && $0.count <= 80 }, "关键点应为 3–6 条简短目标")
                 case .keypointComplete:
                     guard let index = a.index else { throw WhiteboardFailure("缺少关键点编号") }
-                    try check(page > 0 && index == page - 1 && (actions.first?.keyPoints?.indices.contains(index) == true)
+                    try check(page > 0 && index == page - 1 && (outline?.keyPoints?.indices.contains(index) == true)
                         && completedPoints.insert(index).inserted, "关键点编号与当前页不符或重复")
                 case .newPage:
                     page += 1; try check(page <= 12, "页面过多")
@@ -237,9 +240,12 @@ public struct WhiteboardSession: Codable, Equatable, Identifiable, Sendable {
     public init(source: WhiteboardSource, goal: String, lesson: WhiteboardLesson) {
         self.source = source; self.goal = goal; self.lesson = lesson
     }
-    public var keyPoints: [String] { lesson.actions.first?.keyPoints ?? [] }
+    public var keyPoints: [String] { lesson.actions.first(where: { $0.type == .sessionReady })?.keyPoints ?? [] }
     public var completedKeyPoints: Set<Int> { Set(lesson.actions.prefix(cursor).flatMap(\.leaves).filter { $0.type == .keypointComplete }.compactMap(\.index)) }
-    public var questions: [WhiteboardAction] { lesson.actions.flatMap(\.leaves).filter { $0.type == .ask && presentedQuestionIDs.contains($0.stepID) } }
+    public var questions: [WhiteboardAction] {
+        let shown = lesson.actions.flatMap(\.leaves).filter { $0.type == .ask && presentedQuestionIDs.contains($0.stepID) }
+        return shown.filter { answers[$0.stepID] == nil } + shown.filter { answers[$0.stepID] != nil }
+    }
     public var completed: Bool { generationComplete && cursor == lesson.actions.count }
     public var currentAction: WhiteboardAction? { lesson.actions.indices.contains(cursor) ? lesson.actions[cursor] : nil }
     public func validated() throws -> Self {

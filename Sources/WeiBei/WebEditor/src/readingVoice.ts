@@ -2,7 +2,8 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import { animalSpeech, mandarinUnits } from './animalVoice';
+import type * as Voice from './animalVoice';
+const voice = () => (globalThis as unknown as {WeiBeiVoice:typeof Voice}).WeiBeiVoice;
 import { createWebiCompanion, webiMouthForPinyin } from './webiCompanion';
 import type { Root, RootContent } from 'mdast';
 
@@ -40,7 +41,7 @@ if(typeof window!=='undefined'){
     async play(text:string,mode:string,speed:number,id:string,cloud:string){
       run=id;const start=performance.now();
       const valid=()=>{if(run!==id)throw new Error('朗读已停止');if(performance.now()-start>30000)throw new Error('中文动物语合成超时，请重试。');};
-      const local=mode==='animalese'?await animalSpeech(text,valid):undefined;valid();
+      const local=mode==='animalese'?await voice().animalSpeech(text,valid):undefined;valid();
       const url=local?.url ?? cloud;if(!url)throw new Error('音频为空');
       audio.src=url;audio.playbackRate=speed;audio.preservesPitch=true;
       const detachWebi=companion.followAudio(audio,local?.mouthCues ?? []);
@@ -57,7 +58,7 @@ if(typeof window!=='undefined'){
     },
     systemStarted(id:string,value:boolean){run=id;paused=value;companion.setPaused(paused);companion.setAction('talk');},
     systemBoundary(text:string,id:string){if(run!==id)return;
-      try{const phoneme=mandarinUnits(text).flatMap(u=>u.phonemes)[0];companion.setMouth(phoneme?webiMouthForPinyin(phoneme):0);}catch{companion.setMouth(0);}
+      try{const phoneme=voice().mandarinUnits(text).flatMap(u=>u.phonemes)[0];companion.setMouth(phoneme?webiMouthForPinyin(phoneme):0);}catch{companion.setMouth(0);}
     },
     systemFinished(id:string){if(run===id){companion.setMouth(0);companion.setAction('idle');}},
     visible(value:boolean){companion.setCollapsed(!value);},

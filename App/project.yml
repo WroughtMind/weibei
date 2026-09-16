@@ -72,6 +72,9 @@ targets:
       - package: MarkdownView
         product: MarkdownParser
     settings:
+      configs:
+        Release:
+          LD_EXPORT_SYMBOLS: NO
       base:
         WEIBEI_BUNDLE_IDENTIFIER: com.changfenhuang.weibei
         PRODUCT_BUNDLE_IDENTIFIER: $(WEIBEI_BUNDLE_IDENTIFIER)

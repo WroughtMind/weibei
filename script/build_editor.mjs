@@ -14,7 +14,7 @@ const check = process.argv.includes('--check');
 const output = check ? await mkdtemp(join(tmpdir(), 'weibei-editor-')) : resources;
 const generated = new Set([
   'editor-entry.js', 'viewer-entry.js', 'katex-runtime.js', 'mermaid-runtime.js',
-  'prism-runtime.js', 'selection-runtime.js', 'office-entry.js', 'office-entry.js.deflate', 'whiteboard-runtime.js', 'reading-voice-runtime.js', 'voice-notices.txt', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
+  'prism-runtime.js', 'selection-runtime.js', 'office-entry.js', 'office-entry.js.deflate', 'whiteboard-runtime.js', 'reading-voice-runtime.js', 'voice-runtime.js', 'voice-notices.txt', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
 ]);
 
 const bundle = (entry, outfile, editable, globalName) => build({
@@ -36,7 +36,7 @@ if (!check) {
 }
 await mkdir(output, { recursive: true });
 if (check) {
-  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html', 'office-licenses.txt', 'whiteboard.html', 'reading-voice.html', '课堂动作.webp', '情绪动作.webp', '独立口型.png', '素材清单.json', ...(await readdir(resources)).filter(name => name.startsWith('chinese-voice-'))]) {
+  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'Virgil.woff2', 'Virgil-LICENSE.txt', 'diagram.html', 'office-licenses.txt', 'whiteboard.html', 'reading-voice.html', '课堂动作.webp', '情绪动作.webp', '独立口型.png', '素材清单.json', ...(await readdir(resources)).filter(name => name.startsWith('chinese-voice-'))]) {
     await writeFile(resolve(output, name), await readFile(resolve(resources, name)));
   }
 }
@@ -50,6 +50,7 @@ const [editorMeta, viewerMeta] = await Promise.all([
   bundle('selection.ts', 'selection-runtime.js', false, 'WeiBeiSelection'),
   bundle('whiteboard.ts', 'whiteboard-runtime.js', false),
   bundle('readingVoice.ts', 'reading-voice-runtime.js', false),
+  bundle('vendor/voice-runtime.ts', 'voice-runtime.js', false),
   build({ entryPoints: [resolve(root, 'Sources/WeiBei/OfficeReader/office.ts')], bundle: true, format: 'iife', minify: true, outfile: resolve(output, 'office-entry.js'), plugins: [officeVendorPatches], logLevel: 'warning' }),
   build({
     stdin: {
@@ -77,9 +78,20 @@ const mermaid = packedWebScript(await readFile(mermaidBundle));
 await writeFile(mermaidBundle, `window.WeiBeiMermaid = ${mermaid.source}.then(() => window.WeiBeiMermaid);
 (window.__GenuiAssets__ ??= {}).mermaid = window.WeiBeiMermaid.then(() => window.__GenuiAssets__.mermaid);
 `);
-// The standalone board permits only this exact bundled Mermaid script to inflate inline.
-const boardHTML = await readFile(resolve(resources, 'whiteboard.html'), 'utf8');
-await writeFile(resolve(output, 'whiteboard.html'), boardHTML.replace(/script-src 'self'(?: 'sha256-[^']+')*;/, `script-src 'self' ${mermaid.hash};`));
+const viewerSource = await readFile(resolve(output, 'viewer-entry.js'), 'utf8');
+const runtimeHashes = {};
+for (const name of ['editor-entry', 'viewer-entry', 'whiteboard-runtime', 'reading-voice-runtime', 'katex-runtime', 'voice-runtime']) {
+  const path = resolve(output, name + '.js'), packed = packedWebScript(await readFile(path));
+  runtimeHashes[name] = packed.hash;
+  const prefix = name === 'whiteboard-runtime' ? 'window.WeiBeiWhiteboardBoot = ' : name === 'katex-runtime' ? 'window.WeiBeiKaTeXReady = ' : name === 'voice-runtime' ? 'window.WeiBeiVoiceReady = ' : '';
+  const program = ['whiteboard-runtime', 'reading-voice-runtime'].includes(name) ? `Promise.resolve(window.WeiBeiVoiceReady).then(() => ${packed.source})` : packed.source;
+  await writeFile(path, prefix + program + '.catch(error => { window.dispatchEvent(new ErrorEvent("error", { error, message: String(error) })); throw error; });\n');
+}
+// Each standalone player permits exactly the inline programs it actually uses.
+for (const [name, hashes] of Object.entries({ whiteboard: [mermaid.hash, runtimeHashes['katex-runtime'], runtimeHashes['voice-runtime'], runtimeHashes['whiteboard-runtime']], 'reading-voice': [runtimeHashes['voice-runtime'], runtimeHashes['reading-voice-runtime']] })) {
+  const html = await readFile(resolve(resources, name + '.html'), 'utf8');
+  await writeFile(resolve(output, name + '.html'), html.replace(/script-src 'self'(?: 'sha256-[^']+')*;/, `script-src 'self' ${hashes.join(' ')};`));
+}
 
 const walk = async (directory) => (await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {
   const path = join(directory, entry.name);
@@ -106,7 +118,6 @@ if (check) {
     if (!left || !right || !(await readFile(left)).equals(await readFile(right))) differences.push(name);
   }
   const viewerInputs = Object.keys(viewerMeta.metafile.inputs);
-  const viewerSource = await readFile(resolve(output, 'viewer-entry.js'), 'utf8');
   const indexSource = await readFile(resolve(resources, 'index.html'), 'utf8');
   if (viewerInputs.some((name) => /plugin-(?:history|slash|upload)|plugin\/(?:history|slash|upload)/.test(name))) {
     differences.push('viewer-editor-dependency');

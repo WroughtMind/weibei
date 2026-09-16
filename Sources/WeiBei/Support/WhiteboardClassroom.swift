@@ -94,18 +94,11 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
         pump()
     }
     private func prefetchPage() {
-        guard playing, !replying, !generating, !generationStopped, let value = session, !value.generationComplete else { return }
-        let pageOnBoard = max(1, value.lesson.actions.prefix(value.cursor + 1).filter { $0.type == .newPage }.count)
-        // At most one page ahead. Each fresh request sees answers received before that request starts.
-        if value.generatedPages <= pageOnBoard { generatePage() }
+        guard !generating, !generationStopped, let value = session, !value.generationComplete else { return }
+        // Each completed page immediately starts the next request with the latest answers.
+        generatePage()
     }
     func resumeGeneration() {
-        // A fully parsed page may have arrived before a transport failure. Never ask the model to repeat its closing marker.
-        if let last = session?.lesson.actions.last, last.type == .keypointComplete, last.index == session?.generatedPages {
-            session?.generatedPages += 1
-            session?.generationComplete = session?.generatedPages == session?.keyPoints.count
-            persist()
-        }
         generationStopped = false; failure = nil; generatePage()
     }
     func attachRenderer(_ send: @escaping (String, [String: Any]) -> Void) { renderer = send; closed = false; rehydrate() }
@@ -147,6 +140,7 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     }
     func pause() { pauseVersion += 1; autoStartPending = false; pausePlayback() }
     private func pausePlayback() {
+        renderer?("generationWaiting", ["value": false])
         playing = false; renderer?("pause", ["value": true])
         if speechID != nil { SystemNarrator.shared.pause() }
         status = "已暂停"
@@ -167,10 +161,14 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
     private func pump() {
         guard playing, !restoring, !closed, !replying, dispatchTask == nil, renderer != nil, let value = session else { return }
         guard let (action, ticket) = gate.dispatch(value.lesson.actions) else {
-            if value.completed { playing = false; status = "这堂课讲完了，仍可答题和追问" }
-            else if gate.pendingID == nil { status = generating ? "正在准备下一页…" : "可继续编排下一页"; prefetchPage() }
+            if value.completed { playing = false; renderer?("generationWaiting", ["value": false]); status = "这堂课讲完了，仍可答题和追问" }
+            else if gate.pendingID == nil {
+                prefetchPage(); status = "正在准备下一页… 准备好后自动继续"
+                renderer?("generationWaiting", ["value": true])
+            }
             return
         }
+        renderer?("generationWaiting", ["value": false]); status = "正在讲解"
         let token = runID, dispatcher = UUID(); dispatchID = dispatcher
         dispatchTask = Task { [weak self] in
             guard let self else { return }
@@ -232,7 +230,7 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
                 guard currentAction?.leaves.contains(action) == true else { return }
                 if type == "question" {
                     if session?.presentedQuestionIDs.contains(action.stepID) == false { session?.presentedQuestionIDs.append(action.stepID); persist() }
-                    else { questionDisplayed(action.stepID) }
+                    renderer?("questionDisplayed", ["id": action.stepID])
                 } else { speak(action) }
             } catch { fail(error.localizedDescription) }
         }
@@ -246,7 +244,9 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
             renderer?("speechStarted", ["id": action.stepID])
         }, boundary: { [weak self] range in
             guard let self, speechID == action.stepID else { return }
-            renderer?("speechBoundary", ["id": action.stepID, "text": ((action.text ?? "") as NSString).substring(with: range)])
+            let text = (action.text ?? "") as NSString
+            renderer?("speechBoundary", ["id": action.stepID, "text": text.substring(with: range),
+                "progress": Double(range.location) / Double(max(1, text.length))])
         }, completed: { [weak self] error in
             guard let self, speechID == action.stepID else { return }; speechID = nil
             if error is CancellationError { pausePlayback(); gate.retry(); rehydrate(); return }
@@ -256,7 +256,6 @@ final class WhiteboardClassroom: NSObject, ObservableObject {
         })
         if !playing { SystemNarrator.shared.pause() }
     }
-    func questionDisplayed(_ id: String) { renderer?("questionDisplayed", ["id": id]) }
     func answer(_ text: String, to action: WhiteboardAction, correct: Bool? = nil) {
         guard session?.presentedQuestionIDs.contains(action.stepID) == true, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         session?.answers[action.stepID] = text; persist()

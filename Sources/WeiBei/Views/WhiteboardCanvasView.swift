@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import WeiBeiCore
 #if targetEnvironment(macCatalyst)
 import UIKit
 typealias WhiteboardRepresentable = UIViewRepresentable
@@ -14,6 +15,9 @@ struct WhiteboardCanvasView: WhiteboardRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(classroom) }
     private func makeWeb(_ coordinator: Coordinator) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        if let url = WeiBeiResources.bundle.url(forResource: "whiteboard", withExtension: "html", subdirectory: "Editor") {
+            configuration.userContentController.addScriptMessageHandler(WhiteboardVoiceResources(directory: url.deletingLastPathComponent()), contentWorld: .page, name: "voiceResource")
+        }
         configuration.websiteDataStore = .nonPersistent()
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.userContentController.add(coordinator, name: "whiteboard")
@@ -59,11 +63,12 @@ struct WhiteboardCanvasView: WhiteboardRepresentable {
                 "receive": "return await window.WeiBeiWhiteboard.receive(envelope)",
                 "pause": "window.WeiBeiWhiteboard.pause(value)",
                 "questionDisplayed": "window.WeiBeiWhiteboard.questionDisplayed(id)",
+                "generationWaiting": "window.WeiBeiWhiteboard.generationWaiting(value)",
                 "feedback": "window.WeiBeiWhiteboard.feedback(correct)",
                 "supplement": "return await window.WeiBeiWhiteboard.supplement(action, replyID)",
                 "setAppearance": "return await window.WeiBeiWhiteboard.setAppearance(dark)",
                 "speechStarted": "window.WeiBeiWhiteboard.speechStarted(id)",
-                "speechBoundary": "window.WeiBeiWhiteboard.speechBoundary(id, text)",
+                "speechBoundary": "window.WeiBeiWhiteboard.speechBoundary(id, text, progress)",
                 "speechFinished": "window.WeiBeiWhiteboard.speechFinished(id, error)"
             ]
             guard let code = statements[method], let web else { return }
@@ -81,8 +86,11 @@ struct WhiteboardCanvasView: WhiteboardRepresentable {
             navigationAction.request.url?.isFileURL == true ? .allow : .cancel
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.evaluateJavaScript("typeof window.WeiBeiWhiteboard === 'object'") { [weak self] result, error in
-                if error != nil || result as? Bool != true { self?.classroom?.fail("白板网页未能初始化，请检查应用资源。") }
+            Task { @MainActor [weak self] in
+                do {
+                    let result = try await webView.callAsyncJavaScript("await window.WeiBeiWhiteboardBoot; return typeof window.WeiBeiWhiteboard === 'object'", arguments: [:], in: nil, contentWorld: .page)
+                    if result as? Bool != true { self?.classroom?.fail("白板网页未能初始化，请检查应用资源。") }
+                } catch { self?.classroom?.fail("白板网页未能初始化：\(error.localizedDescription)") }
             }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

@@ -106,13 +106,86 @@ final class WhiteboardLessonTests: XCTestCase {
             model: "m", session: value, question: "为什么平方？", receive: { capture.actions.append($0) })
         XCTAssertEqual(capture.actions.count, 1)
         XCTAssertTrue(capture.request?.messages.last?.content.contains("避免正负抵消") == true)
-        XCTAssertTrue(capture.request?.messages.last?.content.contains("group1") == true)
+        XCTAssertFalse(capture.request?.messages.last?.content.contains("先看观测值与预测值之差。") == true, "History omits narration")
+        XCTAssertFalse(capture.request?.messages.last?.content.contains("board_content") == true, "History omits board bodies")
         do {
             _ = try await WhiteboardTeacher.generatePage(
                 adapter: WhiteboardTestAdapter(text: pageStream, finish: .length, capture: capture), model: "m",
                 source: source, goal: "g", page: 1, session: .init(source: source, goal: "g", lesson: .init(title: "残差")), receive: { _ in })
             XCTFail("Truncated output must fail even if received lines contain valid JSON")
         } catch {}
+    }
+
+    func testPageMetadataIsNormalizedWithoutDroppingContentErrors() async throws {
+        let outline = #"{"type":"session_ready","step_id":"outline","key_points":["残差","平方","比较"]}"#
+        for output in [outline + "\n" + stream,
+                       outline + "\n" + stream + "\n" + #"{"type":"keypoint_complete","step_id":"wrong-index","index":99}"#,
+                       stream + "\n" + outline] {
+            let capture = WhiteboardRequestCapture()
+            let result = try await WhiteboardTeacher.generatePage(
+                adapter: WhiteboardTestAdapter(text: output, finish: .stop, capture: capture), model: "m", source: source,
+                goal: "讲解", page: 1, session: .init(source: source, goal: "讲解", lesson: .init(title: "残差")), receive: { capture.actions.append($0) })
+            XCTAssertEqual(result.actions.filter { $0.type == .keypointComplete }.count, 1)
+            XCTAssertEqual(result.actions.last?.index, 0)
+            XCTAssertEqual(result.actions.flatMap(\.leaves).filter { $0.type == .board }.count, 1)
+            XCTAssertEqual(WhiteboardSession(source: source, goal: "讲解", lesson: result).keyPoints.count, 3)
+            try result.validate(source: source)
+        }
+        let capture = WhiteboardRequestCapture()
+        do {
+            _ = try await WhiteboardTeacher.generatePage(adapter: WhiteboardTestAdapter(
+                text: outline + "\n" + stream.replacingOccurrences(of: #""source_page":12"#, with: #""source_page":99"#), finish: .stop, capture: capture),
+                model: "m", source: source, goal: "讲解", page: 1, session: .init(source: source, goal: "讲解", lesson: .init(title: "残差")), receive: { _ in })
+            XCTFail("Metadata normalization cannot weaken source boundaries")
+        } catch {}
+    }
+
+    func testRequestHistoryIsBoundedAndUsesOnlyBoardIndexes() throws {
+        var parser = WhiteboardActionDecoder()
+        let outline = try XCTUnwrap(parser.append(#"{"type":"session_ready","step_id":"outline","key_points":["定义","正负","平方","惩罚","选择"]}"#, final: true).first)
+        var session = WhiteboardSession(source: source, goal: "讲解", lesson: .init(title: "残差", actions: [outline]))
+        let first = try WhiteboardTeacher.context(session)
+        var second = ""
+        for page in 1...4 {
+            var pageAction = try lesson().actions[0]; pageAction.stepID = "p\(page)"; pageAction.pageID = "page\(page)"
+            var board = try lesson().actions[1].actions![0]; board.stepID = "b\(page)"; board.boardUID = page
+            board.markdown = String(repeating: "不要重传板书正文", count: 80)
+            var speech = try lesson().actions[1].actions![1]; speech.stepID = "s\(page)"; speech.text = String(repeating: "不要重传讲稿", count: 80)
+            session.lesson.actions += [pageAction, board, speech]; session.generatedPages = page
+            if page == 1 { second = try WhiteboardTeacher.context(session) }
+        }
+        let fifth = try WhiteboardTeacher.context(session)
+        XCTAssertFalse(fifth.contains("不要重传")); XCTAssertFalse(fifth.contains("board_content"))
+        XCTAssertLessThanOrEqual(abs(fifth.utf8.count - second.utf8.count), 20)
+        print("WHITEBOARD_CONTEXT_BYTES page1=\(first.utf8.count) page2=\(second.utf8.count) page5=\(fifth.utf8.count)")
+    }
+
+    @MainActor
+    func testQuestionAcknowledgesReceiptWithoutMountingUIAndRestoresUnansweredFirst() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let classroom = WhiteboardClassroom(directory: folder, provider: .custom, baseURL: "http://localhost:1/v1", model: "fixture")
+        var value = WhiteboardSession(source: source, goal: "讲解", lesson: try lesson())
+        value.cursor = 3; value.generationComplete = true
+        try classroom.archive.save(value); classroom.restore(value)
+        let acknowledged = expectation(description: "Question acknowledged without a SwiftUI view")
+        classroom.attachRenderer { method, args in
+            if method == "restore" { classroom.receive(["type":"restored", "request_id":args["requestID"]!]) }
+            if method == "receive", let envelope = args["envelope"] as? [String:Any] {
+                classroom.receive(["type":"question", "action":envelope["action"]!, "ticket":envelope["ticket"]!])
+            }
+            if method == "questionDisplayed" { acknowledged.fulfill() }
+        }
+        classroom.play(); await fulfillment(of: [acknowledged], timeout: 2)
+        XCTAssertTrue(classroom.session?.presentedQuestionIDs.contains("q1") == true)
+        XCTAssertNil(classroom.session?.answers["q1"])
+        classroom.close()
+        var restored = try classroom.archive.load(value.id)
+        var answered = try XCTUnwrap(restored.questions.first); answered.stepID = "answered"
+        restored.lesson.actions.insert(answered, at: 3); restored.cursor = 4
+        restored.presentedQuestionIDs.append("answered"); restored.answers["answered"] = "已作答"
+        try classroom.archive.save(restored)
+        XCTAssertEqual(try classroom.archive.load(value.id).questions.map(\.stepID), ["q1", "answered"])
     }
 
     @MainActor

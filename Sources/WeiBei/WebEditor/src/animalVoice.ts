@@ -1,10 +1,11 @@
-import { AnimaleseEngine, MemorySampler, PitchManager } from 'animalese-tts';
+import { AnimaleseEngine, AudioConverter, MemorySampler, PitchManager } from 'animalese-tts';
 import { pinyin } from 'pinyin-pro';
 
 export type SpeechCue = { start:number; end:number; from:number; to:number };
 export type MouthCue = { start:number; end:number; phoneme?:string };
-type Pack = { sampleRate:number; gzip:string; sprites:Record<string,{startMs:number;durationMs:number}> };
-const voiceHost=globalThis as unknown as {WeiBeiChineseVoiceIndex?:Record<string,string>;WeiBeiChineseVoices?:Record<string,Pack>};
+type Pack = { sampleRate:number; sprites:Record<string,{startMs:number;durationMs:number}> };
+const voiceHost=globalThis as unknown as {WeiBeiChineseVoiceIndex?:Record<string,string>;WeiBeiChineseVoices?:Record<string,Pack>;
+  webkit?:{messageHandlers:{voiceResource:{postMessage:(group:string)=>Promise<string>}}}};
 const loading=new Map<string,Promise<MemorySampler>>();let indexLoading:Promise<void>|undefined;
 const punctuation=/^[\s\p{P}\p{S}]$/u;
 const letters=['诶','比','西','迪','伊','艾弗','吉','诶尺','艾','杰','开','艾勒','艾姆','恩','欧','批','丘','阿尔','艾斯','提','优','维','达不溜','艾克斯','歪','贼德'];
@@ -27,9 +28,11 @@ async function samples(phonemes:string[]){
     if(!loading.has(group))loading.set(group,(async()=>{
       if(!voiceHost.WeiBeiChineseVoices?.[group])await script('chinese-voice-'+group+'.js');
       const pack=voiceHost.WeiBeiChineseVoices?.[group];if(!pack)throw new Error('中文音节包缺失：'+group);
-      const compressed=Uint8Array.from(atob(pack.gzip),c=>c.charCodeAt(0));
-      const stream=new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'));
-      const sampler=new MemorySampler(await new Response(stream).arrayBuffer(),pack.sprites);
+      const encoded=await voiceHost.webkit?.messageHandlers.voiceResource.postMessage(group);
+      if(!encoded)throw new Error('本地中文声音资源未就绪');
+      const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
+      const decoded=await new OfflineAudioContext(1,1,pack.sampleRate).decodeAudioData(bytes.buffer);
+      const sampler=new MemorySampler(pcmWav([AudioConverter.float32ToInt16(decoded.getChannelData(0))],pack.sampleRate),pack.sprites);
       await sampler.load();delete voiceHost.WeiBeiChineseVoices![group];return sampler;
     })().catch(error=>{loading.delete(group);throw error;}));
     return loading.get(group)!;
