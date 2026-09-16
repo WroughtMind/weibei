@@ -40,6 +40,7 @@ def summarize(records):
             row["cache_write"] += write
         if usage.get("cacheReadTokens") is not None:
             row["reported_cache"] += 1
+            row["uncached_input"] += uncached
             row["cache_read"] += read
             row["cache_known_input"] += uncached + read + write
         else:
@@ -70,6 +71,7 @@ def self_check():
     row, = rows
     assert row["calls"] == 3 and row["unknown_usage"] == 1
     assert row["input"] == 1050 and row["output"] == 25
+    assert row["uncached_input"] == 100
     assert row["reported_cache"] == 1 and row["unknown_cache"] == 1
     assert row["cache_read"] / row["cache_known_input"] == .9
     assert row["partial_usage"] == 1
@@ -92,18 +94,20 @@ def main():
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return
     print("只统计新用量账本；未知不是零，未正常结束的已报用量是下限。")
-    print("供应商 / 协议 / 模型 / 用途 | 调用 | 用量未知 | 部分用量 | 已报输入 | 已报输出 | 缓存读/写 | 缓存字段覆盖 | 已报样本命中率 | 窗口未知")
+    print("未缓存输入和命中率只统计返回缓存读取字段的调用；其他调用通过覆盖数标明。")
+    print("供应商 / 协议 / 模型 / 用途 | 调用 | 用量未知 | 部分用量 | 已报输入 | 已报输出 | 未缓存输入 | 缓存读/写 | 缓存字段覆盖 | 已报样本命中率 | 窗口未知")
     for row in rows:
         count = row.get("cache_known_input", 0)
         rate = f'{row.get("cache_read", 0) / count:.2%}' if count else "未知"
         reported = row.get("reported_usage", 0)
         input_text = str(row.get("input", 0)) if reported else "未知"
         output_text = str(row.get("output", 0)) if reported else "未知"
+        uncached_text = str(row.get("uncached_input", 0)) if row.get("reported_cache", 0) else "未知"
         read_text = str(row.get("cache_read", 0)) if row.get("reported_cache", 0) else "未报"
         write_text = str(row.get("cache_write", 0)) if row.get("reported_cache_write", 0) else "未报"
         print(f'{row["provider"]} / {row["family"]} / {row["model"]} / {row["purpose"]} | '
               f'{row["calls"]} | {row.get("unknown_usage", 0)} | {row.get("partial_usage", 0)} | '
-              f'{input_text} | {output_text} | '
+              f'{input_text} | {output_text} | {uncached_text} | '
               f'{read_text}/{write_text} | '
               f'{row.get("reported_cache", 0)}/{row["calls"]} | {rate} | {row.get("unknown_window", 0)}')
     if not rows:
