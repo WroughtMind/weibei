@@ -59,6 +59,12 @@ if ! git -C "$MARKDOWN_DIR" apply --reverse --check "$TYPOGRAPHY_PATCH" 2>/dev/n
   git -C "$MARKDOWN_DIR" apply --check "$TYPOGRAPHY_PATCH"
   git -C "$MARKDOWN_DIR" apply "$TYPOGRAPHY_PATCH"
 fi
+CMARK_DIR="$PACKAGES/checkouts/swift-cmark"
+HAN_STRONG_PATCH="$ROOT_DIR/App/script/cmark-han-strong.patch"
+if ! git -C "$CMARK_DIR" apply --reverse --check "$HAN_STRONG_PATCH" 2>/dev/null; then
+  git -C "$CMARK_DIR" apply --check "$HAN_STRONG_PATCH"
+  git -C "$CMARK_DIR" apply "$HAN_STRONG_PATCH"
+fi
 # Recreate final products so removed build phases cannot leave stale embedded code.
 rm -rf "$DERIVED/Build/Products/$CONFIGURATION-maccatalyst/魏碑.app" \
   "$DERIVED/Build/Products/$CONFIGURATION/WeiBeiWindowBridge.bundle"
