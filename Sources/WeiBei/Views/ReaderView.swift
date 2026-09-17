@@ -390,7 +390,7 @@ struct ReaderView: View {
         .background(Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
         .foregroundStyle(Color(weiBeiNativeColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
-        .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
+        .animation(WeiBeiMotion.panel, value: paneState.showDocumentSearch)
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
         .onAppear {
             loadMarkdownSnapshot()

@@ -8,6 +8,7 @@ import './host.css';
 
 type Payload = {
   id?: string;
+  renderToken?: string;
   spec: unknown;
   state?: BlockInteractionState;
   appearance?: string;
@@ -53,7 +54,7 @@ const sendAction = (action: string, data: Record<string, unknown>) => {
 function draw() {
   const available = pending === undefined && payload.actionStatus !== 'processing' && !payload.actionUnavailableReason;
   flushSync(() => root.render(
-    <ErrorBoundary key={payload.id ?? 'inline'} label="互动界面">
+    <ErrorBoundary key={`${payload.id ?? 'inline'}:${payload.renderToken ?? ''}`} label="互动界面">
       <GenuiActionContext.Provider value={available ? sendAction : undefined}>
         <GenuiBlock spec={spec} stateKey={payload.id ?? 'inline'} initialState={state}
           onStateChange={saveState} animateEntrance={false} />
@@ -72,9 +73,10 @@ new ResizeObserver(reportHeight).observe(container);
 window.WeiBeiGenUIHost = {
   render(next) {
     const result = processGenuiSpec(next.spec);
-    if (!isRenderableProcess(result) || result.spec === null) {
-      showStatus(`互动界面无法显示：${result.errors.join('；')}`);
-      post({ type: 'error', message: status.textContent });
+    const unsupported = result.renderedTotalCount !== result.renderedNativeCount;
+    if (!isRenderableProcess(result) || result.spec === null || unsupported) {
+      showStatus(`互动界面无法显示：${unsupported ? '包含未支持的组件' : result.errors.join('；')}`);
+      post({ type: 'error', renderToken: next.renderToken, message: status.textContent });
       return;
     }
     if (payload === undefined || payload.id !== next.id) {
@@ -91,6 +93,13 @@ window.WeiBeiGenUIHost = {
     showStatus(next.actionUnavailableReason || (next.actionStatus === 'processing' ? '正在生成回答…' : ''));
     draw();
     reportHeight();
+    requestAnimationFrame(() => {
+      if (payload !== next) return;
+      const failure = content.querySelector('[data-genui-error]');
+      post(failure
+        ? { type: 'error', renderToken: next.renderToken, message: failure.textContent }
+        : { type: 'rendered', renderToken: next.renderToken });
+    });
   },
   actionResult(result) {
     if (result.requestID !== pending) return;

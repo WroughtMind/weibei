@@ -75,6 +75,8 @@ public enum NativeFinishReason: String, Codable, Sendable {
     case stop
     case toolCalls = "tool_calls"
     case length
+    case paused
+    case refused
     case error
     case aborted
 }
@@ -142,6 +144,9 @@ public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Senda
         case "offline": return .offline
         case "cancelled", "aborted": return .cancelled
         case "server_error": return .serverError
+        case "length": return .truncated
+        case "paused": return .paused
+        case "refused": return .refused
         default:
             return AgentFailureKind.classify(
                 NSError(domain: "WeiBei.NativeAgent", code: status ?? 0, userInfo: [
@@ -165,6 +170,8 @@ public enum NativeSessionEventType: String, Codable, Sendable {
     case stepStart = "step/start"
     case stepEnd = "step/end"
     case userMessage = "user/message"
+    case turnContext = "turn/context"
+    case turnReplacement = "turn/replacement"
     case assistantChunk = "assistant/chunk"
     case assistantMessage = "assistant/message"
     case toolCall = "tool/call"
@@ -191,6 +198,9 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
     public var firstKeptSeq: Int?
     public var imageMediaType: String?
     public var imageBase64: String?
+    /// Client-only state aliases. The ledger keeps this outside model-visible messages.
+    public var stateAliasScope: String?
+    public var stateAliases: [String: String]?
 
     public init(
         type: NativeSessionEventType,
@@ -209,7 +219,9 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         summary: String? = nil,
         firstKeptSeq: Int? = nil,
         imageMediaType: String? = nil,
-        imageBase64: String? = nil
+        imageBase64: String? = nil,
+        stateAliasScope: String? = nil,
+        stateAliases: [String: String]? = nil
     ) {
         self.type = type
         self.seq = seq
@@ -228,6 +240,8 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         self.firstKeptSeq = firstKeptSeq
         self.imageMediaType = imageMediaType
         self.imageBase64 = imageBase64
+        self.stateAliasScope = stateAliasScope
+        self.stateAliases = stateAliases
     }
 
     public var imagePart: NativeImagePart? {

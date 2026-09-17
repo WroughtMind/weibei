@@ -10,12 +10,14 @@
 		0F01CE000000000000000001 /* OfficeDocumentText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F01CE000000000000000002 /* OfficeDocumentText.swift */; };
 		014CAA0987ACF6294F39D1A2 /* AgentAccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D92418B7C7756A863085B9D /* AgentAccountService.swift */; };
 		0251D244D2FD142022993345 /* NativeAgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */; };
+		D1A51A5E0000000000000002 /* NativeStateAliases.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A51A5E0000000000000001 /* NativeStateAliases.swift */; };
 		034100326A738DEAC681BF7F /* ImageMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB49A5CAD7B99BDF0E8D6FAD /* ImageMarkdownView.swift */; };
 		04D396024619F7562B875297 /* CourseRelationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145933E80255972BA83611B4 /* CourseRelationsView.swift */; };
 		04DE8F794793F389298CC35A /* CourseLibraryVolatilityBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3182D144EA522AB5D660975B /* CourseLibraryVolatilityBanner.swift */; };
 		0565B892BF2EC88944449D5A /* CourseRelationPaperView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C04FB8F235924EE42B40E2 /* CourseRelationPaperView.swift */; };
 		05B34CAB21481FB54B2A0FC5 /* CourseRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28228E2E2950801444E2EC73 /* CourseRecordsView.swift */; };
 		07010C7A1E98300267D925DC /* AgentModelListService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */; };
+		2BB2BB7E7612D5D7909E1D46 /* AgentReasoningEffort.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD595EC19B5E715C6A89E732 /* AgentReasoningEffort.swift */; };
 		07AA0BFB1B0C7EB98204B0DA /* WorkspaceStore+SessionMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E73D78FF30845E50524C3B1 /* WorkspaceStore+SessionMessages.swift */; };
 		E74F27FD84A5744D031CE05E /* WorkspaceStore+SelectionChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CF453C08CC7FE075BE53DB1 /* WorkspaceStore+SelectionChat.swift */; };
 		07D7027AA2BB4385AED66397 /* CatalystBusinessCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB6903E77B7F89AD1758884 /* CatalystBusinessCheck.swift */; };
@@ -220,6 +222,7 @@
 		FB0C839223181C545553C8C6 /* AgentModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2D56A564786A1FEE7F20A7 /* AgentModelPicker.swift */; };
 		FE6FCF3FB5EF87B9FE0050B8 /* NoteRecoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD1EC009C99E5D05C5322632 /* NoteRecoveryStore.swift */; };
 		FF3D251186B527F5FB45D6F3 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0689394113772B93619F884 /* AppDelegate.swift */; };
+		0CBEF0E57A484B2400B973BC /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 7F2DC701EB6495A02CB0C291 /* SwiftMath */; };
 		140F42A96634A9FE89C189F4 /* three.js in Resources */ = {isa = PBXBuildFile; fileRef = 1B035DA5CDBB5DD49E9DE885 /* three.js */; };
 		8AEFB6F1D755EABEF77A3B91 /* echarts-full.js in Resources */ = {isa = PBXBuildFile; fileRef = 10DA09B7D678CA3F93ED0D0A /* echarts-full.js */; };
 		41918BF9770E9F4CC9A236BC /* NativeModelUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F82757F4C2076211922411C /* NativeModelUsage.swift */; };
@@ -428,6 +431,7 @@
 		B1C04FB8F235924EE42B40E2 /* CourseRelationPaperView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseRelationPaperView.swift; sourceTree = "<group>"; };
 		B215538091FA28517FF16935 /* StableDocumentWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StableDocumentWorkspace.swift; sourceTree = "<group>"; };
 		B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentTools.swift; sourceTree = "<group>"; };
+		D1A51A5E0000000000000001 /* NativeStateAliases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStateAliases.swift; sourceTree = "<group>"; };
 		B3D53F1E3B3A1F336E71C9B8 /* NativeAgentCredentials.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentCredentials.swift; sourceTree = "<group>"; };
 		B4ED60D2C03044C3843C4F45 /* NativeAgentDocuments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentDocuments.swift; sourceTree = "<group>"; };
 		B50AB6E6DC9F8AC15B64CEA7 /* AgentChatKaTeXMarkdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatKaTeXMarkdown.swift; sourceTree = "<group>"; };
@@ -459,6 +463,7 @@
 		E143536A222BB3EF39386017 /* WorkspaceStore+GoneImportedItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+GoneImportedItems.swift"; sourceTree = "<group>"; };
 		E1C5F74BA013DD4666730861 /* NoteEditorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorBridge.swift; sourceTree = "<group>"; };
 		E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentModelListService.swift; sourceTree = "<group>"; };
+		DD595EC19B5E715C6A89E732 /* AgentReasoningEffort.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentReasoningEffort.swift; sourceTree = "<group>"; };
 		E351033849C34CF53F7F41EC /* WeiBeiPerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiPerf.swift; sourceTree = "<group>"; };
 		E4DECE1968935604B8E2CB07 /* WorkspaceViewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceViewSupport.swift; sourceTree = "<group>"; };
 		E51AB9EF50CCEDB319397D8C /* ContextualContentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextualContentPicker.swift; sourceTree = "<group>"; };
@@ -504,6 +509,7 @@
 				94D96D08A77CF0891C483063 /* libWeiBeiCore.a in Frameworks */,
 				3B2C8E694D9261EF99106BA7 /* MarkdownView in Frameworks */,
 				B3935D753CAFB649617429EF /* MarkdownParser in Frameworks */,
+				0CBEF0E57A484B2400B973BC /* SwiftMath in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -632,6 +638,7 @@
 				E739D32EBD1993C95049134D /* AgentDisplayText.swift */,
 				894CEB93CFF53976D74CD4A7 /* AgentHistoryRevealPolicy.swift */,
 				E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */,
+				DD595EC19B5E715C6A89E732 /* AgentReasoningEffort.swift */,
 				3CA222798F14870B9307D012 /* AgentResources */,
 				78E5E769F507FE404011801D /* AgentResources.swift */,
 				08AAEB7FA79FA30300ED13B4 /* AppShortcutCatalog.swift */,
@@ -786,6 +793,7 @@
 				4CDF85F80AC46C5FE414E777 /* NativeAgentSSE.swift */,
 				ECB6E3E976222146630F0A23 /* NativeAgentSubagent.swift */,
 				B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */,
+				D1A51A5E0000000000000001 /* NativeStateAliases.swift */,
 				23D51E375F6C7745CD944640 /* NativeContextCompaction.swift */,
 				5C74F370409208410B218551 /* NativeCopilotSession.swift */,
 				0F82757F4C2076211922411C /* NativeModelUsage.swift */,
@@ -952,6 +960,7 @@
 			packageProductDependencies = (
 				E0D7D5150911C6F073F5FF0F /* MarkdownView */,
 				0C66C75EE6ABD1A7688A6967 /* MarkdownParser */,
+				7F2DC701EB6495A02CB0C291 /* SwiftMath */,
 			);
 			productName = WeiBei;
 			productReference = 3F8AE41B74F7B80807871FAF /* WeiBei.app */;
@@ -1045,6 +1054,7 @@
 				EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */,
 				A362C2116CE98A2EFABB6D0E /* XCRemoteSwiftPackageReference "Sparkle" */,
 				82686C55CB0F5945DDF64FEB /* XCRemoteSwiftPackageReference "swift-markdown" */,
+				F0B834D7CA0AC1F04C232021 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 			);
 			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
@@ -1120,6 +1130,7 @@
 				8FA1279C216C58094CD3F484 /* AgentDisplayText.swift in Sources */,
 				7FDE7E4802F79DA32B937D49 /* AgentHistoryRevealPolicy.swift in Sources */,
 				07010C7A1E98300267D925DC /* AgentModelListService.swift in Sources */,
+				2BB2BB7E7612D5D7909E1D46 /* AgentReasoningEffort.swift in Sources */,
 				5F0145EF173169542E01DE79 /* AgentResources.swift in Sources */,
 				364263C6477A3FC4B74996B5 /* AnthropicMessagesProvider.swift in Sources */,
 				807FDA7A7F71174A458991F2 /* AppShortcutCatalog.swift in Sources */,
@@ -1156,6 +1167,7 @@
 				532BC5B29EFEFC601215EC20 /* NativeAgentSources.swift in Sources */,
 				1C8433473F31B864845671FA /* NativeAgentSubagent.swift in Sources */,
 				0251D244D2FD142022993345 /* NativeAgentTools.swift in Sources */,
+				D1A51A5E0000000000000002 /* NativeStateAliases.swift in Sources */,
 				B2A50361F83AF6FB28B74CDA /* NativeContextCompaction.swift in Sources */,
 				61E47EB31C59CA67A484321D /* NativeCopilotSession.swift in Sources */,
 				913C2C7783CC54089A3E6879 /* NativeHTTPByteStream.swift in Sources */,
@@ -1741,6 +1753,14 @@
 				revision = 757b6fcc4b3095e84f4c0613f4b98147f49dcd09;
 			};
 		};
+		F0B834D7CA0AC1F04C232021 /* XCRemoteSwiftPackageReference "SwiftMath" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/WroughtMind/SwiftMath";
+			requirement = {
+				kind = revision;
+				revision = b6d15610552aa04a54c36bf205efaf34409dc335;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1768,6 +1788,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */;
 			productName = MarkdownView;
+		};
+		7F2DC701EB6495A02CB0C291 /* SwiftMath */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F0B834D7CA0AC1F04C232021 /* XCRemoteSwiftPackageReference "SwiftMath" */;
+			productName = SwiftMath;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

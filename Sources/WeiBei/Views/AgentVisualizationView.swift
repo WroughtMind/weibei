@@ -36,11 +36,7 @@ struct AgentVisualizationLoadState: Equatable {
 
     mutating func fail(_ message: String, from failedAttempt: Int) {
         guard failedAttempt == attempt else { return }
-        if attempt == 0 {
-            attempt = 1
-        } else {
-            failure = message
-        }
+        failure = message
     }
 
     mutating func reload() {
@@ -57,8 +53,10 @@ struct AgentVisualizationView: View {
 
     @State private var contentHeight: CGFloat = 180
     @State private var loadState = AgentVisualizationLoadState()
+    @State private var webViewAttached = true
 
     var body: some View {
+        let receiptToken = store.nativeVisualizationWaiters[messageID]?.token
         Group {
             if loadState.failure != nil {
                 VStack(alignment: .leading, spacing: 8) {
@@ -71,12 +69,13 @@ struct AgentVisualizationView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-            } else {
+            } else if webViewAttached {
                 AgentVisualizationWebView(
                     visualization: visualization,
                     appearance: store.appearanceMode,
                     textScale: textScale,
                     loadAttempt: loadState.attempt,
+                    receiptToken: receiptToken,
                     actionStatus: store.isAgentRunningInActiveChat ? "processing" : "ready",
                     actionUnavailableReason: actionUnavailableReason,
                     onHeight: { contentHeight = $0 },
@@ -90,12 +89,21 @@ struct AgentVisualizationView: View {
                     onAction: { action, payloadJSON in
                         store.submitAgentVisualizationAction(action, payloadJSON: payloadJSON)?.message(store.ui)
                     },
-                    onFailure: handleFailure
+                    onRendered: { rendered in
+                        store.completeNativeVisualization(messageID: messageID, token: receiptToken, visualization: rendered, error: nil)
+                    },
+                    onFailure: { attempt, message in handleFailure(attempt, message, receiptToken: receiptToken) }
                 )
                 .id(loadState.attempt)
                 .frame(height: max(contentHeight, 120))
             }
         }
+        .onChange(of: visualization.specJSON) { _, _ in loadState.reload() }
+        .onChange(of: receiptToken) { _, token in
+            if token != nil, loadState.failure != nil { loadState.reload() }
+        }
+        .onAppear { webViewAttached = true }
+        .onDisappear { webViewAttached = false }
     }
 
     private var actionUnavailableReason: String? {
@@ -110,12 +118,14 @@ struct AgentVisualizationView: View {
         return nil
     }
 
-    private func handleFailure(_ failedAttempt: Int, _ message: String) {
+    private func handleFailure(_ failedAttempt: Int, _ message: String, receiptToken: UUID?) {
         WeiBeiLog.web.error(
             "code=genui_runtime_failure attempt=\(failedAttempt, privacy: .public) detail=\(WeiBeiLog.truncated(message), privacy: .private)"
         )
         Task { @MainActor in
+            guard failedAttempt == loadState.attempt else { return }
             loadState.fail(message, from: failedAttempt)
+            store.completeNativeVisualization(messageID: messageID, token: receiptToken, visualization: visualization, error: message)
         }
     }
 }
@@ -125,11 +135,13 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
     var appearance: WeiBeiAppearanceMode
     var textScale: CGFloat
     var loadAttempt: Int
+    var receiptToken: UUID?
     var actionStatus: String
     var actionUnavailableReason: String?
     var onHeight: (CGFloat) -> Void
     var onState: (String) -> Void
     var onAction: (String, String) -> String?
+    var onRendered: (AgentVisualization) -> Void
     var onFailure: (Int, String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -203,6 +215,8 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
         private var parent: AgentVisualizationWebView
         private var isReady = false
         private var sentFingerprint: String?
+        private var renderToken: String?
+        private var renderingVisualization: AgentVisualization?
 
         init(parent: AgentVisualizationWebView) {
             self.parent = parent
@@ -227,10 +241,15 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
                 String(Double(parent.textScale)),
                 parent.actionStatus,
                 parent.actionUnavailableReason ?? "",
+                parent.receiptToken?.uuidString ?? "",
             ].joined(separator: "|")
             guard fingerprint != sentFingerprint else { return }
 
+            let token = UUID().uuidString
+            renderToken = token
+            renderingVisualization = parent.visualization
             var payload: [String: Any] = [
+                "renderToken": token,
                 "id": parent.visualization.id,
                 "spec": spec,
                 "appearance": parent.appearance.isDark ? "dark" : "light",
@@ -253,7 +272,7 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
             sentFingerprint = fingerprint
             webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(json))") { [weak self] _, error in
                 if let error {
-                    guard let self else { return }
+                    guard let self, self.renderToken == token else { return }
                     self.parent.onFailure(self.parent.loadAttempt, error.localizedDescription)
                 }
             }
@@ -278,6 +297,10 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
                 isReady = true
                 sentFingerprint = nil
                 renderIfReady()
+            case "rendered":
+                guard body["renderToken"] as? String == renderToken,
+                      let visualization = renderingVisualization else { return }
+                parent.onRendered(visualization)
             case "height":
                 guard let value = body["height"] as? NSNumber,
                       value.doubleValue.isFinite else { return }
@@ -314,6 +337,7 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
                       let json = String(data: data, encoding: .utf8) else { return }
                 webView?.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult(\(json))")
             case "error":
+                guard body["renderToken"] as? String == renderToken else { return }
                 parent.onFailure(
                     parent.loadAttempt,
                     body["message"] as? String ?? "互动界面运行错误"

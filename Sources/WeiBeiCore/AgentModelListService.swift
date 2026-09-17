@@ -163,6 +163,12 @@ public actor AgentModelListService {
     struct CodexModel: Sendable {
         var id: String
         var contextWindow: Int?
+        var reasoningLevels: [String]
+    }
+
+    public func codexReasoningLevels(token: String, accountID: String) async throws -> [String: [String]] {
+        let models = try await fetchCodexCatalog(token: token, accountID: accountID)
+        return models.reduce(into: [:]) { $0[$1.id] = $1.reasoningLevels }
     }
 
     public func codexContextWindow(model: String, token: String, accountID: String) async throws -> Int? {
@@ -224,7 +230,12 @@ public actor AgentModelListService {
                     + limits.context_window % 100 * percent / 100
                 if value > 0 { window = value }
             }
-            return CodexModel(id: slug, contextWindow: window)
+            let levels = (dict["supported_reasoning_levels"] as? [[String: Any]] ?? [])
+                .compactMap { $0["effort"] as? String }
+                .filter { !$0.isEmpty }
+            return CodexModel(id: slug, contextWindow: window, reasoningLevels: levels.reduce(into: []) {
+                if !$0.contains($1) { $0.append($1) }
+            })
         }
     }
 

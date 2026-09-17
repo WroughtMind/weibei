@@ -248,17 +248,6 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
                 }
             }
         }
-        if let finish = choice["finish_reason"] as? String, finish != "null" {
-            let reason: NativeFinishReason
-            switch finish {
-            case "stop": reason = .stop
-            case "tool_calls": reason = .toolCalls
-            case "length": reason = .length
-            default: reason = .stop
-            }
-            chunks.append(.finish(reason: reason, replayState: nil))
-            return chunks
-        }
         let delta = choice["delta"] as? [String: Any] ?? [:]
         if let text = delta["content"] as? String, !text.isEmpty {
             chunks.append(.textDelta(index: textIndex, text: text))
@@ -272,6 +261,17 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
                 let arguments = function["arguments"] as? String ?? ""
                 chunks.append(.toolCallDelta(index: index, id: id, name: name, argumentsDelta: arguments))
             }
+        }
+        if let finish = choice["finish_reason"] as? String, finish != "null" {
+            let reason: NativeFinishReason
+            switch finish {
+            case "stop": reason = .stop
+            case "tool_calls": reason = .toolCalls
+            case "length": reason = .length
+            case "content_filter": reason = .refused
+            default: reason = .error
+            }
+            chunks.append(.finish(reason: reason, replayState: nil))
         }
         return chunks
     }

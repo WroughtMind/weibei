@@ -10,6 +10,7 @@ struct ComposerView: View {
     @State private var editorHeight: CGFloat = 0
     @State private var editorActive = false
     @State private var focusRequest = 0
+    @State private var showsReasoningPicker = false
     var prompt: String
     var focused: FocusState<Bool>.Binding
     var fontSize: CGFloat
@@ -26,6 +27,7 @@ struct ComposerView: View {
     var showsChrome = true
     var focusesOnAppear = false
     var focusTrigger = 0
+    var showsReasoningEffort = false
     var sessionID: UUID? = nil
     var submit: () -> Void
 
@@ -39,15 +41,20 @@ struct ComposerView: View {
             && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var hasReasoningControl: Bool {
+        showsReasoningEffort && !store.agentReasoningLevels.isEmpty
+    }
+
     private var showsControl: Bool {
         isRunning || canSend
     }
 
     var body: some View {
-        let corner: CGFloat = showsChrome ? 24 : WeiBeiMetric.controlRadius
+        let corner: CGFloat = showsChrome ? 22 : WeiBeiMetric.controlRadius
         let textHeight = max(editorHeight, fontSize + 3)
         let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
-        VStack(alignment: .leading, spacing: 0) {
+        let controlBottomInset = max(verticalPadding, (height - sendButtonSize * textScale) / 2)
+        HStack(alignment: .bottom, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 AgentComposerTextEditor(
                     text: $draft,
@@ -72,9 +79,8 @@ struct ComposerView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .padding(.top, verticalPadding)
-            .padding(.bottom, verticalPadding)
-            .padding(.trailing, trailingPadding)
+            .padding(.vertical, verticalPadding)
+            .padding(.trailing, hasReasoningControl ? 0 : trailingPadding)
             .padding(.horizontal, horizontalPadding)
             .frame(
                 maxWidth: .infinity,
@@ -86,19 +92,32 @@ struct ComposerView: View {
                 ),
                 alignment: .leading
             )
-            .overlay(alignment: .trailing) {
-                if showsControl {
+            .contentShape(Rectangle())
+            .onTapGesture { focusRequest &+= 1 }
+            .overlay(alignment: .bottomTrailing) {
+                if showsControl && !hasReasoningControl {
                     sendButton
                         .padding(.trailing, sendTrailing)
+                        .padding(.bottom, controlBottomInset)
                 }
             }
+            if hasReasoningControl {
+                HStack(spacing: 12) {
+                    reasoningEffortPicker
+                    sendButton
+                        .opacity(showsControl ? 1 : 0)
+                        .disabled(!showsControl)
+                        .accessibilityHidden(!showsControl)
+                }
+                .padding(.trailing, sendTrailing)
+                .padding(.bottom, controlBottomInset)
+            }
         }
-        .frame(
-            maxWidth: .infinity,
-            minHeight: height,
-            maxHeight: compactMaxHeight,
-            alignment: .topLeading
-        )
+        .frame(maxWidth: .infinity)
+        .frame(height: min(
+            max(height, textHeight + verticalPadding * 2, reservedControlHeight),
+            compactMaxHeight ?? .greatestFiniteMagnitude
+        ), alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
         .weibeiComposerCard(
             cornerRadius: corner,
@@ -106,9 +125,6 @@ struct ComposerView: View {
             showsChrome: showsChrome
         )
         .contentShape(RoundedRectangle(cornerRadius: corner))
-        .onTapGesture {
-            focusRequest &+= 1
-        }
         .onAppear {
             draft = store.composerDraft(for: targetID)
             if focusesOnAppear || focused.wrappedValue { focusRequest &+= 1 }
@@ -142,8 +158,46 @@ struct ComposerView: View {
                 )
             }
         }
-        .animation(WeiBeiMotion.micro, value: showsControl)
+        .onChange(of: store.agentReasoningModelKey) { _, _ in showsReasoningPicker = false }
+        .task(id: store.activeAgentProfileID.uuidString + store.agentProviderID.rawValue + store.agentBaseURL) {
+            guard showsReasoningEffort else { return }
+            agentAccount.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        }
         .accessibilityIdentifier("agent-composer-compact")
+    }
+
+    private var reasoningEffortPicker: some View {
+        Button {
+            showsReasoningPicker.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                ZStack(alignment: .leading) {
+                    // Reserve the widest mode label so selection never resizes the editor.
+                    ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
+                        Text(mode.label).hidden().accessibilityHidden(true)
+                    }
+                    Text(store.agentReasoningMode.label)
+                }
+                .weiBeiText(fontSize, weight: .regular)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9 * textScale, weight: .medium))
+            }
+            .padding(.horizontal, 6)
+            .frame(minHeight: sendButtonSize * textScale)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(ReasoningModeButtonStyle(selected: showsReasoningPicker))
+        .fixedSize()
+        .popover(isPresented: $showsReasoningPicker, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+            ReasoningModeMenu(selection: store.agentReasoningMode) { mode in
+                store.agentReasoningMode = mode
+                showsReasoningPicker = false
+            }
+        }
+        .accessibilityLabel(store.ui("推理模式", "Reasoning mode"))
+        .accessibilityValue(store.agentReasoningMode.label)
+        .help(store.ui("Flash 快速回答，Think 深入思考。可在对话设置中调整对应强度。", "Flash for quick answers, Think for deeper reasoning. Configure their effort in Chat settings."))
+        .accessibilityIdentifier("agent-reasoning-effort")
     }
 
     private func commitAndSubmit() {
@@ -157,7 +211,7 @@ struct ComposerView: View {
             if isRunning, let targetID { store.cancelAgentRequest(in: targetID) }
             else { commitAndSubmit() }
         } label: {
-            Image(systemName: isRunning ? "stop.fill" : "paperplane.fill")
+            Image(systemName: isRunning ? "stop.fill" : showsChrome ? "arrow.up" : "paperplane.fill")
         }
         .buttonStyle(WeiBeiIconButtonStyle(
             size: sendButtonSize,
@@ -169,5 +223,89 @@ struct ComposerView: View {
         .keyboardShortcut(focused.wrappedValue ? KeyboardShortcut(.return, modifiers: [.command]) : nil)
         .transition(WeiBeiTransition.floating)
         .animation(WeiBeiMotion.micro, value: showsControl)
+    }
+}
+
+private struct ReasoningModeMenu: View {
+    let selection: AgentReasoningMode
+    let choose: (AgentReasoningMode) -> Void
+    @State private var hoveredMode: AgentReasoningMode?
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
+                Button { choose(mode) } label: {
+                    HStack(spacing: 24) {
+                        Text(mode.label)
+                        Spacer(minLength: 0)
+                        Image(systemName: "checkmark")
+                            .opacity(mode == selection ? 1 : 0)
+                    }
+                    .weiBeiText(13)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(ReasoningModeButtonStyle(
+                    selected: mode == selection,
+                    menuHovered: hoveredMode == mode
+                ))
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active:
+                        hoveredMode = mode
+                    case .ended:
+                        if hoveredMode == mode { hoveredMode = nil }
+                    }
+                }
+                .accessibilityAddTraits(mode == selection ? .isSelected : [])
+            }
+        }
+        .padding(10)
+        .fixedSize(horizontal: true, vertical: true)
+        .presentationBackground(WeiBeiTheme.paperRaised)
+    }
+}
+
+/// Menu rows receive pointer state from their whole button, outside the label style.
+private struct ReasoningModeButtonStyle: ButtonStyle {
+    var selected: Bool
+    var menuHovered: Bool? = nil
+
+    func makeBody(configuration: Configuration) -> some View {
+        ReasoningModeButtonBody(configuration: configuration, selected: selected, menuHovered: menuHovered)
+    }
+}
+
+private struct ReasoningModeButtonBody: View {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @State private var triggerHovered = false
+    let configuration: ButtonStyleConfiguration
+    let selected: Bool
+    let menuHovered: Bool?
+    private var hovering: Bool { menuHovered ?? triggerHovered }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        configuration.label
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .background {
+                shape
+                    .fill(hovering || configuration.isPressed ? WeiBeiTheme.paperRaised : Color.clear)
+                    .overlay {
+                        shape
+                            .fill(WeiBeiTheme.ink.opacity(configuration.isPressed ? 0.16 : hovering ? 0.11 : selected ? 0.04 : 0))
+                    }
+                    .compositingGroup()
+                    .shadow(
+                        color: Color.black.opacity(hovering && !configuration.isPressed ? 0.18 : 0),
+                        radius: 3, y: 1
+                    )
+            }
+            .contentShape(.interaction, shape)
+            .onHover { if menuHovered == nil { triggerHovered = $0 } }
+            .animation(reduceMotion ? nil : WeiBeiMotion.micro, value: hovering)
+            .animation(reduceMotion || configuration.isPressed ? nil : WeiBeiMotion.micro, value: configuration.isPressed)
     }
 }

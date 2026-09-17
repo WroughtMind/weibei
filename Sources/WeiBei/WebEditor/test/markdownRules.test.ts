@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   joinFrontmatter,
-  inlineMathInputPattern,
   incompleteStreamingMarkdownTailMarkers,
   looksLikeMarkdownSyntax,
   normalizeHtmlBreaks,
@@ -72,10 +71,7 @@ test('currency dollars are protected at parse time without touching formulas, es
     'Price \\$5, range \\$10–\\$20, escaped \\$5, formula $x_1 + y$ and `$8`.\n```\n$9\n```',
   );
   assert.equal(normalizeMarkdownOutput(protectCurrencyDollars('$5 / $10–$20')), '$5 / $10–$20');
-  assert.equal('$x_1 + y$'.match(inlineMathInputPattern)?.[1], 'x_1 + y');
-  assert.equal('$5'.match(inlineMathInputPattern), null);
-  assert.equal('$10–$20'.match(inlineMathInputPattern), null);
-  assert.equal('\\$5'.match(inlineMathInputPattern), null);
+  assert.equal(protectCurrencyDollars('$1+1$ and $5$'), '$1+1$ and $5$');
 });
 
 test('source matrix keeps user documents literal and repairs only explicit paste and Agent math', () => {

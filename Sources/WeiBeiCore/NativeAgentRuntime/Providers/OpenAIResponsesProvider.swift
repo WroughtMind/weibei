@@ -222,8 +222,18 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             let hasTools = ((response?["output"] as? [[String: Any]]) ?? []).contains {
                 $0["type"] as? String == "function_call"
             }
-            let reason: NativeFinishReason = status == "incomplete" || type == "response.incomplete"
-                ? .length : (hasTools ? .toolCalls : .stop)
+            let incompleteReason = (response?["incomplete_details"] as? [String: Any])?["reason"] as? String
+            let refused = ((response?["output"] as? [[String: Any]]) ?? []).contains { output in
+                (output["content"] as? [[String: Any]] ?? []).contains { $0["type"] as? String == "refusal" }
+            }
+            let reason: NativeFinishReason
+            if status == "incomplete" || type == "response.incomplete" {
+                reason = incompleteReason == "content_filter" ? .refused : .length
+            } else if refused {
+                reason = .refused
+            } else {
+                reason = hasTools ? .toolCalls : .stop
+            }
             var chunks: [NativeStreamChunk] = []
             if let usage = tokenUsage(response?["usage"]) {
                 chunks.append(.usage(usage))

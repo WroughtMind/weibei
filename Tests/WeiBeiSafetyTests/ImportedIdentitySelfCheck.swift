@@ -358,9 +358,9 @@ enum ImportedIdentitySelfCheck {
         }
         store.showContextualBrowser(.note)
         try check(
-            store.activeNoteItem == nil
+            store.notePickerPresented && store.activeNoteItem?.id == note.id
                 && store.selectedMaterialItem?.id == material.id,
-            "笔记内容页不能稳定返回笔记列表；note=\(store.activeNoteItem?.id ?? "nil") material=\(store.selectedMaterialItem?.id ?? "nil")"
+            "笔记选择器未保留当前笔记；note=\(store.activeNoteItem?.id ?? "nil") material=\(store.selectedMaterialItem?.id ?? "nil")"
         )
         store.openContextualItem(note.id, kind: .note)
         store.showContextualBrowser(.material)
@@ -398,7 +398,7 @@ enum ImportedIdentitySelfCheck {
         store.showRightPane = true
         store.focusedPane = .agent
         store.focusRequest += 1
-        store.showReaderSearch = true
+        store.showDocumentSearch = true
 
         store.selectionContext = SelectionContext(
             text: "隔离自检选区",
@@ -767,8 +767,10 @@ enum ImportedIdentitySelfCheck {
 
         do {
             var rejectsCourseQuestionSave = false
+            var rejectedCourseQuestionSaves = 0
             let courseQuestionStore = makeStore { data, url in
                 if rejectsCourseQuestionSave {
+                    rejectedCourseQuestionSaves += 1
                     throw CheckError.failed("预期中的课程首页问题保存失败")
                 }
                 try data.write(to: url, options: [.atomic])
@@ -877,6 +879,7 @@ enum ImportedIdentitySelfCheck {
                 "A/B 课程恢复点没有指向同一条全局 Chat"
             )
 
+            let rejectedSavesBeforeRetry = rejectedCourseQuestionSaves
             courseQuestionStore.retryAgentRequest(
                 question,
                 targetCourseID: failure.origin?.courseID
@@ -891,8 +894,8 @@ enum ImportedIdentitySelfCheck {
                             && $0.retryQuestion == question
                             && $0.completionState == .interrupted
                     } ?? []
-                if matchingFailures.count >= 2,
-                   !courseQuestionStore.isAskingAgent {
+                if matchingFailures.count == 1,
+                   !courseQuestionStore.isAgentRunning(in: originalChatID) {
                     retriedFailure = matchingFailures.last
                     break
                 }
@@ -909,6 +912,9 @@ enum ImportedIdentitySelfCheck {
                 courseQuestionStore.activeStudySessionID == originalChatID
                     && courseQuestionStore.studySessions.count
                         == originalSessionCount
+                    && retryFailure.id == failure.id
+                    && courseQuestionStore.activeStudySession?.messages.count == routedMessages.count
+                    && rejectedCourseQuestionSaves > rejectedSavesBeforeRetry
                     && retryFailure.origin?.chatID == originalChatID
                     && retryFailure.origin?.courseID == courseB.id,
                 "课程首页问题重试换了 Chat 或退回旧课程焦点"
@@ -918,6 +924,24 @@ enum ImportedIdentitySelfCheck {
             try check(
                 courseQuestionStore.flushPendingWorkspaceSave(),
                 "全局 Chat 跨课程关联无法在失败恢复后落盘"
+            )
+            var recoveredRequest: StudyAgentRequest?
+            courseQuestionStore.selfCheckAgentResponder = { request in
+                recoveredRequest = request
+                return StudyAgentReply(text: "保存恢复后的回答", backend: .native)
+            }
+            courseQuestionStore.retryAgentRequest(question, targetCourseID: courseB.id)
+            try waitForCondition("保存恢复后无法重试原问题") {
+                !courseQuestionStore.isAgentRunning(in: originalChatID)
+            }
+            try check(
+                recoveredRequest?.reusingLastUserMessage == false
+                    && recoveredRequest?.question == question
+                    && recoveredRequest?.projectScope.courseID == courseB.id.uuidString.lowercased()
+                    && courseQuestionStore.activeStudySession?.messages.count == routedMessages.count
+                    && courseQuestionStore.activeStudySession?.messages.last?.id == failure.id
+                    && courseQuestionStore.activeStudySession?.messages.last?.completionState == .completed,
+                "保存恢复后重复了可见消息、复用了未发送的模型历史或改变了目标课程"
             )
             let reopenedCourseQuestionStore = makeStore()
             try check(

@@ -107,6 +107,11 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
         if let maxTokens = request.maxTokens {
             payload["generationConfig"] = ["maxOutputTokens": maxTokens]
         }
+        if let effort = request.reasoningEffort {
+            var config = payload["generationConfig"] as? [String: Any] ?? [:]
+            config["thinkingConfig"] = ["thinkingLevel": effort]
+            payload["generationConfig"] = config
+        }
         return payload
     }
 
@@ -161,6 +166,11 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
         }
         let candidates = object["candidates"] as? [[String: Any]] ?? []
         guard let candidate = candidates.first else {
+            if let feedback = object["promptFeedback"] as? [String: Any],
+               let reason = feedback["blockReason"] as? String,
+               reason != "BLOCK_REASON_UNSPECIFIED" {
+                chunks.append(.finish(reason: .refused, replayState: nil))
+            }
             return chunks
         }
         // 接地来源:groundingMetadata.groundingChunks[].web.uri(可能单独出现,不带 content)
@@ -172,10 +182,8 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
                 }
             }
         }
-        guard let content = candidate["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]] else {
-            return chunks
-        }
+        let content = candidate["content"] as? [String: Any]
+        let parts = content?["parts"] as? [[String: Any]] ?? []
         for (index, part) in parts.enumerated() {
             if let thought = part["thought"] as? Bool, thought, let text = part["text"] as? String, !text.isEmpty {
                 chunks.append(.reasoningDelta(index: index, text: text))
@@ -192,12 +200,18 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
             }
         }
         if let finish = candidate["finishReason"] as? String, finish != "FINISH_REASON_UNSPECIFIED" {
-            let reason: NativeFinishReason = finish == "STOP"
-                ? (chunks.contains(where: {
+            let reason: NativeFinishReason
+            switch finish {
+            case "STOP":
+                reason = chunks.contains(where: {
                     if case .toolCallDelta = $0 { return true }
                     return false
-                }) ? .toolCalls : .stop)
-                : .stop
+                }) ? .toolCalls : .stop
+            case "MAX_TOKENS": reason = .length
+            case "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
+                 "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION": reason = .refused
+            default: reason = .error
+            }
             chunks.append(.finish(reason: reason, replayState: nil))
         }
         return chunks

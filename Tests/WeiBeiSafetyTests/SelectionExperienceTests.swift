@@ -56,6 +56,14 @@ final class SelectionExperienceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let reasoningKeys = ["agentReasoningModes", "agentReasoningMappings"]
+        let savedReasoning = reasoningKeys.map { UserDefaults.standard.object(forKey: $0) }
+        defer { for (key, value) in zip(reasoningKeys, savedReasoning) { UserDefaults.standard.set(value, forKey: key) } }
+        store.agentProviderID = .openai
+        store.modelName = "gpt-5.6-sol"
+        store.agentReasoningMode = .think
+        store.agentReasoningMappings[store.agentReasoningMappingKey(.think)] = "max"
+        store.agentReasoningMappings[store.agentReasoningMappingKey(.flash)] = "medium"
         let mainID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
         store.layout = .documentAgentNotes
         store.showAgent = true
@@ -83,6 +91,7 @@ final class SelectionExperienceTests: XCTestCase {
             done.fulfill()
         }
         wait(for: [done], timeout: 10)
+        XCTAssertEqual(submitted?.reasoningEffort, "low")
         XCTAssertEqual(submitted?.projectScope.chatID, firstID.uuidString.lowercased())
         XCTAssertEqual(submitted?.selectionSources.first?.excerpt, "公式 A 的原文")
         XCTAssertTrue(store.messages.isEmpty)
@@ -122,6 +131,15 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertEqual(store.conversationMessages(in: firstID).suffix(2).map(\.text), ["再解释公式 A", "公式 A 的解释"])
         XCTAssertTrue(store.messages.isEmpty)
         XCTAssertEqual(store.composerDraft(for: mainID), "主会话未发送的草稿")
+        XCTAssertEqual(submitted?.reasoningEffort, "low", "Retry keeps floating effort low")
+        store.submitAgentDraft(sessionID: mainID)
+        let mainDone = expectation(description: "main effort reaches request")
+        Task { @MainActor in
+            await store.agentRuns[mainID]?.agentRequestTask?.value
+            mainDone.fulfill()
+        }
+        wait(for: [mainDone], timeout: 10)
+        XCTAssertEqual(submitted?.reasoningEffort, "max")
         let (mainStream, mainContinuation) = AsyncStream<Void>.makeStream()
         let (floatStream, floatContinuation) = AsyncStream<Void>.makeStream()
         let mainTask = Task { for await _ in mainStream {} }
