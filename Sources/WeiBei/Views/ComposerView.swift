@@ -49,7 +49,7 @@ struct ComposerView: View {
     }
 
     var body: some View {
-        let corner: CGFloat = showsChrome ? 24 : WeiBeiMetric.controlRadius
+        let corner: CGFloat = showsChrome ? 22 : WeiBeiMetric.controlRadius
         let textHeight = max(editorHeight, fontSize + 3)
         let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
         HStack(spacing: 0) {
@@ -97,7 +97,7 @@ struct ComposerView: View {
                 }
             }
             if hasReasoningControl {
-                HStack(spacing: 8) {
+                HStack(spacing: 12) {
                     reasoningEffortPicker
                     sendButton
                         .opacity(showsControl ? 1 : 0)
@@ -209,7 +209,7 @@ struct ComposerView: View {
             if isRunning, let targetID { store.cancelAgentRequest(in: targetID) }
             else { commitAndSubmit() }
         } label: {
-            Image(systemName: isRunning ? "stop.fill" : "paperplane.fill")
+            Image(systemName: isRunning ? "stop.fill" : showsChrome ? "arrow.up" : "paperplane.fill")
         }
         .buttonStyle(WeiBeiIconButtonStyle(
             size: sendButtonSize,

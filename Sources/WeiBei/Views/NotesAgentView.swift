@@ -1316,7 +1316,7 @@ private enum AgentChatLayoutMetrics {
     static let compactSideGutter: CGFloat = 12
     /// Codex-style: modest side margin; column grows/shrinks with the window.
     static let wideSideGutter: CGFloat = 28
-    static let composerHeight: CGFloat = 52
+    static let composerHeight: CGFloat = 44
     static let composerFontSize: CGFloat = 15
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
@@ -2144,11 +2144,11 @@ struct AgentPaneView: View {
                     fontSize: fontSize,
                     lineLimit: nil,
                     height: minHeight,
-                    sendButtonSize: 28,
-                    trailingPadding: wide ? 48 : 40,
-                    sendTrailing: wide ? 8 : 10,
-                    horizontalPadding: wide ? 16 : 12,
-                    verticalPadding: 8,
+                    sendButtonSize: 32,
+                    trailingPadding: 44,
+                    sendTrailing: 6,
+                    horizontalPadding: 16,
+                    verticalPadding: 6,
                     focusTrigger: composerFocusTrigger,
                     showsReasoningEffort: true
                 ) {
