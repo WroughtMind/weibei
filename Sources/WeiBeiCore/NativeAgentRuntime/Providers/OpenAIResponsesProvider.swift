@@ -83,6 +83,19 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         }
     }
 
+    private static func webActivity(_ item: [String: Any], id: String) -> AgentToolActivity {
+        let action = item["action"] as? [String: Any]
+        let queries = action?["queries"] as? [String]
+        let pageDetail = [action?["pattern"] as? String, action?["url"] as? String].compactMap { $0 }.joined(separator: " · ")
+        let detail = queries?.joined(separator: " · ") ?? action?["query"] as? String
+            ?? (pageDetail.isEmpty ? nil : pageDetail)
+        let urls = (action?["sources"] as? [[String: Any]])?.compactMap { $0["url"] as? String }
+        let status = item["status"] as? String
+        return .init(id: id, name: webActivityName(action),
+                     state: status == "failed" ? .failed : status == "completed" ? .completed : .running,
+                     detail: detail, sourceURLs: urls)
+    }
+
     public static func payload(for request: NativeLLMRequest, webSearchSupported: Bool = true) -> [String: Any] {
         var tools: [[String: Any]] = request.tools.map { tool in
             [
@@ -214,7 +227,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         case "response.output_item.added":
             if let item = object["item"] as? [String: Any],
                item["type"] as? String == "web_search_call", let id = item["id"] as? String {
-                return [.serverToolActivity(.init(id: id, name: webActivityName(item["action"] as? [String: Any]), state: .running))]
+                return [.serverToolActivity(webActivity(item, id: id))]
             }
             guard let item = object["item"] as? [String: Any],
                   item["type"] as? String == "function_call" else { return [] }
@@ -226,16 +239,8 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
                   item["type"] as? String == "web_search_call" else { return [] }
             var chunks: [NativeStreamChunk] = []
             let action = item["action"] as? [String: Any]
-            let queries = action?["queries"] as? [String]
-            let pageDetail = [action?["pattern"] as? String, action?["url"] as? String].compactMap { $0 }.joined(separator: " · ")
-            let detail = queries?.joined(separator: " · ") ?? action?["query"] as? String
-                ?? (pageDetail.isEmpty ? nil : pageDetail)
-            let urls = (action?["sources"] as? [[String: Any]])?.compactMap { $0["url"] as? String }
             if let id = item["id"] as? String {
-                let status = item["status"] as? String
-                chunks.append(.serverToolActivity(.init(id: id, name: webActivityName(action),
-                    state: status == "failed" ? .failed : status == "completed" ? .completed : .running,
-                    detail: detail, sourceURLs: urls)))
+                chunks.append(.serverToolActivity(webActivity(item, id: id)))
             }
             for source in action?["sources"] as? [[String: Any]] ?? [] {
                 if let url = source["url"] as? String { chunks.append(.webSearchSource(url: url)) }

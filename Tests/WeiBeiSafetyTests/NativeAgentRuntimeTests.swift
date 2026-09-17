@@ -790,6 +790,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
     }
 
     func testSearchDetailsSurviveStatusUpdates() throws {
+        let started = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.added","item":{"type":"web_search_call","id":"search1","status":"in_progress","action":{"type":"search","queries":["Barcelona dressing room","Real Madrid dressing room"]}}}"#)
+        guard case let .serverToolActivity(live) = started.first else { return XCTFail("Missing running activity") }
+        XCTAssertEqual(live.state, .running)
+        XCTAssertEqual(live.detail, "Barcelona dressing room · Real Madrid dressing room", "Available queries must be visible before completion")
         let chunks = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"search1","status":"completed","action":{"type":"search","queries":["Barcelona dressing room","Real Madrid dressing room"],"sources":[{"url":"https://example.com/story"}]}}}"#)
         guard case let .serverToolActivity(activity) = chunks.first else { return XCTFail("Missing activity") }
         XCTAssertEqual(activity.detail, "Barcelona dressing room · Real Madrid dressing room")

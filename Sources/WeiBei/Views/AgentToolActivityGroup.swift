@@ -124,7 +124,8 @@ struct AgentToolActivityGroup: View {
     }
 
     private func activityRow(_ activity: AgentToolActivity, timing: AgentActivityRevealTiming, continuation: Double) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let hasDetails = !(activity.detail ?? "").isEmpty || !(activity.resultSummary ?? "").isEmpty || !(activity.sourceURLs ?? []).isEmpty
+        return VStack(alignment: .leading, spacing: 0) {
             Button {
                 if !detailIDs.insert(activity.id).inserted { detailIDs.remove(activity.id) }
             } label: {
@@ -134,19 +135,26 @@ struct AgentToolActivityGroup: View {
                         Text(detail.replacingOccurrences(of: "\n", with: " "))
                             .lineLimit(1).truncationMode(.tail)
                             .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.75))
+                    } else if activity.state == .running && running {
+                        ProgressView().controlSize(.mini)
+                        Text(store.ui("进行中", "In progress"))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.75))
                     }
                     if activity.state == .failed {
                         Image(systemName: "exclamationmark.circle").foregroundStyle(WeiBeiTheme.cinnabar)
                     } else if activity.state == .cancelled {
                         Text(store.ui("已取消", "Cancelled"))
                     }
-                    Image(systemName: "chevron.right").font(.system(size: 8))
-                        .rotationEffect(.degrees(detailIDs.contains(activity.id) ? 90 : 0))
+                    if hasDetails {
+                        Image(systemName: "chevron.right").font(.system(size: 8))
+                            .rotationEffect(.degrees(detailIDs.contains(activity.id) ? 90 : 0))
+                    }
                 }
                 .frame(height: 32, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(!hasDetails)
             .accessibilityLabel(title(activity.name))
             .accessibilityValue(activity.state == .failed ? store.ui("失败", "Failed") :
                 activity.state == .cancelled ? store.ui("已取消", "Cancelled") :
