@@ -25,7 +25,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: nil, queue: .main) { [weak self] note in
             guard let self, let window = note.object as? NSWindow,
                   !window.acceptsMouseMovedEvents
-                    || (window.toolbar?.identifier.rawValue == "weibei.workspace"
+                    || (window.toolbar?.identifier == "weibei.workspace"
                         && (!window.titlebarAppearsTransparent || !window.styleMask.contains(.fullSizeContentView)))
                     || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
             self.apply(to: window)
@@ -39,7 +39,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         // Popovers are borderless windows too; their rows need mouse-move events.
         window.acceptsMouseMovedEvents = true
         guard window.styleMask.contains(.titled), let content = window.contentView else { return }
-        if window.toolbar?.identifier.rawValue == "weibei.workspace" {
+        if window.toolbar?.identifier == "weibei.workspace" {
             window.styleMask.insert(.fullSizeContentView)
             window.titlebarAppearsTransparent = true
         }
