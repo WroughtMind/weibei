@@ -11,6 +11,7 @@
     "typecheck:editor": "tsc --noEmit -p tsconfig.editor.json",
     "test:editor": "node --import tsx --test Sources/WeiBei/WebEditor/test/*.test.ts",
     "build:genui": "node script/build_genui.mjs",
+    "test:packed-web-script": "node --test script/packed_web_script.test.mjs",
     "typecheck:genui": "tsc --noEmit -p tsconfig.genui.json"
   },
   "dependencies": {
