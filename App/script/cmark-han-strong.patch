@@ -1,0 +1,31 @@
+--- a/src/inlines.c
++++ b/src/inlines.c
+@@ -424,6 +424,15 @@
+ }
+ 
+ 
++// Han text does not require spaces around quoted strong emphasis.
++static bool is_han_character(int32_t c) {
++  return (c >= 0x3400 && c <= 0x4DBF) ||
++         (c >= 0x4E00 && c <= 0x9FFF) ||
++         (c >= 0xF900 && c <= 0xFAFF) ||
++         (c >= 0x20000 && c <= 0x2FA1F) ||
++         (c >= 0x30000 && c <= 0x323AF);
++}
++
+ // Scan ***, **, or * and return number scanned, or 0.
+ // Advances position.
+ static int scan_delims(cmark_parser *parser, subject *subj, unsigned char c,
+@@ -484,6 +493,12 @@
+                    (!cmark_utf8proc_is_punctuation(before_char) ||
+                     cmark_utf8proc_is_space(after_char) ||
+                     cmark_utf8proc_is_punctuation(after_char));
++  if (c == '*' && numdelims >= 2) {
++    left_flanking = left_flanking ||
++        (is_han_character(before_char) && cmark_utf8proc_is_punctuation(after_char));
++    right_flanking = right_flanking ||
++        (cmark_utf8proc_is_punctuation(before_char) && is_han_character(after_char));
++  }
+   if (c == '_') {
+     *can_open = left_flanking &&
+                 (!right_flanking || cmark_utf8proc_is_punctuation(before_char));
