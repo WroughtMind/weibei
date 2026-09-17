@@ -566,6 +566,7 @@ public struct AgentRequestContext: Codable, Hashable, Sendable {
 }
 
 public struct StudyAgentRequest: Sendable {
+    public var reasoningEffort: String?
     public var id: UUID
     public var reusingLastUserMessage: Bool
     public var purpose: StudyAgentPurpose
@@ -620,8 +621,10 @@ public struct StudyAgentRequest: Sendable {
         courseProfile: StudyAgentCourseProfileContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
         contextRevision: String,
-        confirmedNotes: [StudyAgentPersistedNoteRef] = []
+        confirmedNotes: [StudyAgentPersistedNoteRef] = [],
+        reasoningEffort: String? = nil
     ) {
+        self.reasoningEffort = reasoningEffort
         self.id = id
         self.reusingLastUserMessage = reusingLastUserMessage
         self.purpose = purpose

@@ -6,6 +6,46 @@ import XCTest
 import WeiBeiCore
 
 final class SelectionExperienceTests: XCTestCase {
+    @MainActor
+    func testClearingReaderSelectionRemovesCapsuleAndAutomaticAttachment() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.layout = .documentAgentNotes
+        store.showAgent = true
+        store.updateSelection("刚选中的原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
+        XCTAssertEqual(store.selectionAttachments.count, 1)
+        XCTAssertEqual(store.agentSurface, .selectionFloat)
+        store.updateSelection("", source: .document)
+        XCTAssertNil(store.selectionContext)
+        XCTAssertNil(store.selectionAnchor)
+        XCTAssertNotEqual(store.agentSurface, .selectionFloat)
+        XCTAssertNil(store.automaticSelection)
+        XCTAssertTrue(store.selectionAttachments.isEmpty)
+    }
+
+    @MainActor
+    func testSelectionClearPreservesManualAttachmentsAndOpenedQuestion() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.layout = .documentAgentNotes
+        store.showAgent = true
+        let manual = SelectionContext(text: "手动保留的另一段", source: .note, ownerTitle: "笔记")
+        store.addSelectionAttachment(manual)
+        store.updateSelection("准备提问的原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
+        store.updateSelection("", source: .note)
+        XCTAssertEqual(store.selectionAttachments.count, 2, "Another reader's empty event must not remove the active passage")
+        store.askSelection()
+        let threadID = try XCTUnwrap(store.activeSelectionAskThreadID)
+        store.updateSelection("", source: .document)
+        XCTAssertNil(store.automaticSelection)
+        XCTAssertEqual(store.selectionAttachments.map(\.text), [manual.text])
+        XCTAssertEqual(store.activeSelectionAskThreadID, threadID)
+        XCTAssertEqual(store.selectionContext?.text, "准备提问的原文")
+        XCTAssertEqual(store.agentSurface, .selectionFloat)
+    }
+
     override class func setUp() {
         super.setUp()
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
@@ -16,6 +56,11 @@ final class SelectionExperienceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let savedEfforts = UserDefaults.standard.object(forKey: "agentReasoningEfforts")
+        defer { UserDefaults.standard.set(savedEfforts, forKey: "agentReasoningEfforts") }
+        store.agentProviderID = .openai
+        store.modelName = "gpt-5.6-sol"
+        store.agentReasoningEfforts[store.agentReasoningModelKey] = "max"
         let mainID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
         store.layout = .documentAgentNotes
         store.showAgent = true
@@ -43,6 +88,7 @@ final class SelectionExperienceTests: XCTestCase {
             done.fulfill()
         }
         wait(for: [done], timeout: 10)
+        XCTAssertEqual(submitted?.reasoningEffort, "low")
         XCTAssertEqual(submitted?.projectScope.chatID, firstID.uuidString.lowercased())
         XCTAssertEqual(submitted?.selectionSources.first?.excerpt, "公式 A 的原文")
         XCTAssertTrue(store.messages.isEmpty)
@@ -82,6 +128,15 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertEqual(store.conversationMessages(in: firstID).suffix(2).map(\.text), ["再解释公式 A", "公式 A 的解释"])
         XCTAssertTrue(store.messages.isEmpty)
         XCTAssertEqual(store.composerDraft(for: mainID), "主会话未发送的草稿")
+        XCTAssertEqual(submitted?.reasoningEffort, "low", "Retry keeps floating effort low")
+        store.submitAgentDraft(sessionID: mainID)
+        let mainDone = expectation(description: "main effort reaches request")
+        Task { @MainActor in
+            await store.agentRuns[mainID]?.agentRequestTask?.value
+            mainDone.fulfill()
+        }
+        wait(for: [mainDone], timeout: 10)
+        XCTAssertEqual(submitted?.reasoningEffort, "max")
         let (mainStream, mainContinuation) = AsyncStream<Void>.makeStream()
         let (floatStream, floatContinuation) = AsyncStream<Void>.makeStream()
         let mainTask = Task { for await _ in mainStream {} }

@@ -7,6 +7,9 @@ struct ContextualContentPicker: View {
     let kind: ContextualContentKind
     @State private var courseEntry: CourseProjectEntryPresentation?
     @State private var choosingImportTarget = false
+    @State private var pendingImport: (() -> Void)?
+    @State private var search = ""
+    @FocusState private var searchFocused: Bool
 
     private struct Group: Identifiable {
         let course: Course?
@@ -17,28 +20,45 @@ struct ContextualContentPicker: View {
     private var groups: [Group] {
         var byCourse: [UUID: [StudyItem]] = [:]
         var common: [StudyItem] = []
-        let items = store.allItems.filter { courseContextItemMatches($0, kind: kind) }.sorted {
-            store.displayTitle(for: $0).localizedStandardCompare(store.displayTitle(for: $1)) == .orderedAscending
-        }
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let items = store.allItems.filter {
+            courseContextItemMatches($0, kind: kind)
+                && (query.isEmpty || store.itemMatchesLibrarySearch($0, query: query))
+        }.map { (item: $0, title: store.noteListDisplayTitle(for: $0)) }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+            .map(\.item)
         for item in items {
             for id in item.storage.ownerCourseID.map({ [$0] }) ?? store.courseMembershipIndex.courseIDs(for: item.id) {
                 byCourse[id, default: []].append(item)
             }
             if case .common = item.storage { common.append(item) }
         }
-        return store.courses.map { Group(course: $0, items: byCourse[$0.id] ?? []) }
+        let grouped = store.courses.map { Group(course: $0, items: byCourse[$0.id] ?? []) }
             + [Group(course: nil, items: common)]
+        return query.isEmpty ? grouped : grouped.filter { !$0.items.isEmpty }
     }
 
     var body: some View {
         GeometryReader { geometry in
             let groups = groups
             let available = max(1, geometry.size.width - 40)
-            let columns = min(groups.count, max(1, Int((min(available, 1140) + 16) / 200)))
+            let columns = max(1, min(groups.count, Int((min(available, 1140) + 16) / 200)))
             let width = min(available, CGFloat(columns) * 220 + CGFloat(columns - 1) * 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    TextField("", text: $search, prompt: Text(store.ui("按名称、文件名或标签筛选", "Filter by title, filename or tag"))
+                        .foregroundStyle(WeiBeiTheme.placeholderInk))
+                        .textFieldStyle(.plain)
+                        .weiBeiText(13)
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .focused($searchFocused)
+                        .weibeiInputSurface(active: searchFocused, height: 32)
+                        .accessibilityIdentifier("contextual-content-filter")
                     globalActions
+                    if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && groups.allSatisfy({ $0.items.isEmpty }) {
+                        Text(store.ui("没有匹配的内容", "No matching content"))
+                            .weiBeiText(13).foregroundStyle(WeiBeiTheme.secondaryInk)
+                    }
                     CoursePickerColumns(columns: columns, spacing: 16) {
                         ForEach(groups) { group in
                             courseBlock(group)
@@ -54,6 +74,7 @@ struct ContextualContentPicker: View {
             }
         }
         .background(WeiBeiTheme.paper)
+        .onAppear { if kind == .note && store.notePickerPresented { searchFocused = true } }
         .sheet(item: $courseEntry) { presentation in
             CourseProjectEntrySheet(
                 initialIntent: presentation.intent,
@@ -61,7 +82,11 @@ struct ContextualContentPicker: View {
                 openCourse: { _ in courseEntry = nil }
             ).environmentObject(store)
         }
-        .sheet(isPresented: $choosingImportTarget) {
+        .sheet(isPresented: $choosingImportTarget, onDismiss: {
+            let action = pendingImport
+            pendingImport = nil
+            action?()
+        }) {
             VStack(alignment: .leading, spacing: 16) {
                 Text(store.ui("导入到哪里？", "Import into…")).weiBeiText(17, weight: .semibold)
                 ScrollView {
@@ -134,6 +159,7 @@ struct ContextualContentPicker: View {
             }
             if kind == .note {
                 Button {
+                    store.notePickerPresented = false
                     store.openExcerptBook(courseID: group.course?.id)
                 } label: {
                     Label(store.ui("摘抄本", "Excerpts"), systemImage: "text.book.closed")
@@ -157,7 +183,7 @@ struct ContextualContentPicker: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(store.displayTitle(for: item))
+                .help(store.noteListDisplayTitle(for: item) + "\n" + store.displaySubtitle(for: item))
                 .contextMenu {
                     if let id = group.course?.id {
                         Button(store.ui("从本课程移除", "Remove from This Course")) { store.removeItem(item.id, fromCourseID: id) }
@@ -187,11 +213,15 @@ struct ContextualContentPicker: View {
     }
 
     private func importFiles(into courseID: UUID?) {
-        choosingImportTarget = false
-        // Let the target sheet dismiss before presenting the system file panel.
-        DispatchQueue.main.async {
+        let action = { [store, kind] in
             if kind == .note { store.importCourseNotesFromPanel(courseID: courseID) }
             else { store.importCourseMaterialsFromPanel(courseID: courseID) }
+        }
+        if choosingImportTarget {
+            pendingImport = action
+            choosingImportTarget = false
+        } else {
+            action()
         }
     }
 }

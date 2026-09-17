@@ -2,6 +2,100 @@ import UIKit
 import SwiftUI
 import WeiBeiCore
 
+/// Native toolbar items own their hit regions; drawing controls under a hidden
+/// titlebar leaves AppKit's window double-click handling over those controls.
+struct CatalystTopBar: UIViewControllerRepresentable {
+    let leading: AnyView
+    let center: AnyView
+    let trailing: AnyView
+    let overflowMenus: [UIMenu]
+    let isVisible: Bool
+
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.update([leading, center, trailing], menus: overflowMenus, isVisible: isVisible)
+    }
+    static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
+        controller.detach()
+    }
+
+    final class Controller: UIViewController, NSToolbarDelegate {
+        private let identifiers = ["weibei.navigation", "weibei.panes", "weibei.actions"].map { NSToolbarItem.Identifier($0) }
+        private let hosts = (0..<3).map { _ in
+            UIHostingConfiguration { AnyView(EmptyView()) }.margins(.all, 0).makeContentView()
+        }
+        private let toolbar = NSToolbar(identifier: "weibei.workspace")
+        private var menus = (0..<3).map { _ in UIMenu(children: []) }
+        private weak var scene: UIWindowScene?
+        private var showsToolbar = true
+
+        override func loadView() {
+            let probe = Probe()
+            probe.changed = { [weak self] in self?.attach() }
+            view = probe
+            toolbar.delegate = self
+            toolbar.displayMode = .iconOnly
+            toolbar.allowsUserCustomization = false
+            toolbar.centeredItemIdentifiers = [identifiers[1]]
+            for host in hosts {
+                host.backgroundColor = .clear
+            }
+        }
+
+        func update(_ contents: [AnyView], menus: [UIMenu], isVisible: Bool) {
+            loadViewIfNeeded()
+            self.menus = menus
+            for (host, content) in zip(hosts, contents) {
+                host.configuration = UIHostingConfiguration { content }.margins(.all, 0)
+                host.invalidateIntrinsicContentSize()
+            }
+            for item in toolbar.items {
+                guard let index = identifiers.firstIndex(of: item.itemIdentifier) else { continue }
+                item.label = menus[index].title
+                item.itemMenuFormRepresentation = menus[index]
+            }
+            showsToolbar = isVisible
+            attach()
+        }
+
+        private func attach() {
+            guard let next = view.window?.windowScene else { return }
+            if scene !== next { detach(); scene = next }
+            next.titlebar?.toolbarStyle = .unifiedCompact
+            next.titlebar?.autoHidesToolbarInFullScreen = false
+            let desired = showsToolbar ? toolbar : nil
+            if next.titlebar?.toolbar !== desired { next.titlebar?.toolbar = desired }
+        }
+
+        func detach() {
+            if scene?.titlebar?.toolbar === toolbar { scene?.titlebar?.toolbar = nil }
+            scene = nil
+        }
+
+        func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+            identifiers + [.flexibleSpace]
+        }
+        func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+            [identifiers[0], .flexibleSpace, identifiers[1], .flexibleSpace, identifiers[2]]
+        }
+        func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
+                     willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+            guard let index = identifiers.firstIndex(of: identifier) else { return nil }
+            let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: hosts[index])
+            item.isBordered = false
+            if index == 2 { item.visibilityPriority = .high }
+            item.label = menus[index].title
+            item.itemMenuFormRepresentation = menus[index]
+            return item
+        }
+
+        private final class Probe: UIView {
+            var changed: (() -> Void)?
+            override func didMoveToWindow() { super.didMoveToWindow(); changed?() }
+        }
+    }
+}
+
 /// Keeps each original SwiftUI pane and its editor/controller alive when moving between layouts.
 final class CatalystHostingView: UIView {
     let controller: UIHostingController<AnyView>
@@ -382,22 +476,40 @@ struct HoverPassThroughRegion: UIViewRepresentable {
 
 struct CatalystWindowChrome: UIViewRepresentable {
     let appearanceMode: WeiBeiAppearanceMode
+    var initialSize = CGSize(width: 1240, height: 792)
     func makeUIView(context: Context) -> Probe {
         let view = Probe()
+        view.initialSize = initialSize
         view.isUserInteractionEnabled = false
         return view
     }
     func updateUIView(_ view: Probe, context: Context) { view.mode = appearanceMode; view.configure() }
     final class Probe: UIView {
         var mode: WeiBeiAppearanceMode = .paper
+        var initialSize = CGSize.zero
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         func configure() {
             CatalystDesktopWindow.configure(mode: mode)
             guard let window, let scene = window.windowScene else { return }
             scene.titlebar?.titleVisibility = .hidden
-            scene.titlebar?.toolbar = nil
             scene.titlebar?.separatorStyle = .none
             scene.sizeRestrictions?.minimumSize = CGSize(width: 520, height: 720)
+            let initialSizeKey = "weibeiInitialWindowSizeApplied"
+            if scene.session.userInfo?[initialSizeKey] as? Bool != true {
+                var info = scene.session.userInfo ?? [:]
+                info[initialSizeKey] = true
+                scene.session.userInfo = info
+                var frame = scene.effectiveGeometry.systemFrame
+                if frame.isNull || frame.isEmpty { frame = scene.screen.bounds }
+                let size = CGSize(width: min(initialSize.width, scene.screen.bounds.width),
+                                  height: min(initialSize.height, scene.screen.bounds.height))
+                frame = CGRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2,
+                               width: size.width, height: size.height)
+                // A geometry request sets the opening frame, not permanent min/max constraints.
+                scene.requestGeometryUpdate(.Mac(systemFrame: frame)) { error in
+                    WeiBeiLog.workspace.error("Initial window geometry request failed: \(WeiBeiLog.code(error), privacy: .public)")
+                }
+            }
             window.isOpaque = !mode.isGlass
             window.backgroundColor = WeiBeiNativePalette.paper(for: mode)
             // A nonzero root surface keeps Catalyst pointer events in transparent gaps.

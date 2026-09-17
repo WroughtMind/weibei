@@ -9,6 +9,28 @@ final class ComposerDraftIsolationTests: XCTestCase {
     }
 
     @MainActor
+    func testReasoningPreferenceIsRememberedPerModel() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let saved = UserDefaults.standard.object(forKey: "agentReasoningEfforts")
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        defer {
+            UserDefaults.standard.set(saved, forKey: "agentReasoningEfforts")
+            try? FileManager.default.removeItem(at: root)
+        }
+        store.agentProviderID = .openai
+        store.activeAgentProfileID = UUID()
+        store.modelName = "gpt-5.6-sol"
+        store.agentReasoningEfforts[store.agentReasoningModelKey] = "max"
+        XCTAssertEqual(store.agentReasoningEffort, "max")
+        store.modelName = "gpt-5.1"
+        XCTAssertEqual(store.agentReasoningEffort, "low")
+        store.modelName = "gpt-5.6-sol"
+        XCTAssertEqual(store.agentReasoningEffort, "max")
+        store.modelName = "gpt-4.1"
+        XCTAssertNil(store.agentReasoningEffort)
+    }
+
+    @MainActor
     func testUnsentComposerDraftSurvivesSwitchingChats() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiComposerDraft-\(UUID().uuidString)", isDirectory: true)

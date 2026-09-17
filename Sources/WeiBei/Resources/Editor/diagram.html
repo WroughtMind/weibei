@@ -12,13 +12,16 @@ body { padding:12px; overflow:auto; }
 <div id="diagram" role="img" aria-label="关系图"></div><p id="error" role="status"></p>
 <script src="mermaid-runtime.js"></script>
 <script>
-const mermaid=window.WeiBeiMermaid;
-mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:matchMedia('(prefers-color-scheme:dark)').matches?'dark':'neutral',fontFamily:'-apple-system'});
+const ready=Promise.resolve(window.WeiBeiMermaid).then(mermaid=>{
+  mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:matchMedia('(prefers-color-scheme:dark)').matches?'dark':'neutral',fontFamily:'-apple-system'});
+  return mermaid;
+});
 let current=0;
 async function renderDiagram(source,generation) {
   current=generation;
   let rendered=false;
   try {
+    const mermaid=await ready;
     const result=await mermaid.render('diagram-'+generation,source);
     if(current!==generation)return;
     document.querySelector('#diagram').innerHTML=result.svg;

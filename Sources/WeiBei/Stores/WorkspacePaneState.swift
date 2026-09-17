@@ -45,7 +45,8 @@ final class WorkspacePaneState: ObservableObject {
         }
     }
 
-    @Published var showReaderSearch = false
+    @Published var showDocumentSearch = false
+    @Published var searchFocusRequest = 0
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
 

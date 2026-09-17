@@ -323,6 +323,19 @@ enum CatalystBusinessCheck {
                 && root.path.contains(".businesscheck/")
                 && WeiBeiAgentDataPaths.nativeAgentDirectory.path.contains(".businesscheck/"))
             try check("original_update_service_through_native_bridge", AppDelegate.updates.status != .failed)
+            // Verify that all three control groups live in native toolbar items,
+            // rather than being drawn underneath the window's titlebar hit region.
+            try await until("native workspace toolbar controls") {
+                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.contains { scene in
+                    let items = scene.titlebar?.toolbar?.items.compactMap { $0 as? NSUIViewToolbarItem } ?? []
+                    return items.count == 3 && items.allSatisfy {
+                        $0.uiView.window != nil && !$0.uiView.bounds.isEmpty
+                            && !$0.label.isEmpty
+                            && (($0.itemMenuFormRepresentation as? UIMenu)?.children.contains { $0 is UIAction } == true)
+                    }
+                }
+            }
+            try check("native_workspace_toolbar_controls", true)
             // This in-process check uses the candidate's own default library.
             // First-launch folder confirmation remains a separate UI check.
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
@@ -558,8 +571,15 @@ enum CatalystBusinessCheck {
             descendants(window).compactMap { $0 as? AgentComposerTextEditor.ComposerTextView }.first { $0 !== mainComposer }
         }
         func capture(_ name: String) throws {
-            let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            guard let content = window.rootViewController?.view,
+                  let split = descendants(content).compactMap({ $0 as? StableDocumentSplitView }).first,
+                  content.bounds.contains(split.convert(split.bounds, to: content)),
+                  content.bounds.contains(mainComposer.convert(mainComposer.bounds, to: content)) else {
+                throw Failure("workspace or main composer outside visible content")
+            }
+            // Capture workspace content; the native toolbar is outside this view.
+            let snapshot = UIGraphicsImageRenderer(bounds: content.bounds).image { _ in
+                content.drawHierarchy(in: content.bounds, afterScreenUpdates: true)
             }
             try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent(name))
         }
@@ -626,6 +646,30 @@ enum CatalystBusinessCheck {
         }
         store.dismissFloatingSelectionAgent()
         store.clearSelectionAttachments()
+        // Exercise the real composer with a documented model, using only the isolated fixture endpoint.
+        let provider = store.agentProviderID
+        let model = store.modelName
+        defer { store.setAgentProviderID(provider); store.updateModelName(model) }
+        store.setAgentProviderID(.azureOpenAI)
+        store.updateModelName("gpt-5.4")
+        AgentAccountService.shared.startAPIKeyLogin("catalyst-test-only", provider: .azureOpenAI, baseURL: store.agentBaseURL)
+        try await until("reasoning composer configured") {
+            AgentProviderReadiness.isConfigured(for: store) && store.agentReasoningEffort == "low"
+        }
+        mainComposer.text = "第一行\n第二行\n第三行"
+        mainComposer.delegate?.textViewDidChange?(mainComposer)
+        try await until("reasoning composer grows for multiple lines") {
+            mainComposer.bounds.height >= (mainComposer.font?.lineHeight ?? 20) * 3 - 2
+        }
+        mainComposer.text = "解释这段内容。"
+        mainComposer.delegate?.textViewDidChange?(mainComposer)
+        try await until("reasoning composer shrinks to one line") {
+            window.layoutIfNeeded()
+            guard let content = window.rootViewController?.view else { return false }
+            return mainComposer.bounds.height <= (mainComposer.font?.lineHeight ?? 20) + 2
+                && content.bounds.maxY - mainComposer.convert(mainComposer.bounds, to: content).maxY <= 40
+        }
+        try capture("reasoning-composer.png")
     }
 
     private static func verifyDividerResize(_ controller: ConversationController) async throws {

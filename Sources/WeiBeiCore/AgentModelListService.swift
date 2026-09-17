@@ -43,10 +43,13 @@ public enum ModelListError: Error, Equatable, Sendable {
     }
 }
 
-public struct AgentModelListService: Sendable {
+public actor AgentModelListService {
     public static let shared = AgentModelListService()
 
-    public init() {}
+    private var codexCatalogs: [String: (Date, [CodexModel])] = [:]
+    private let session: URLSession
+
+    public init(session: URLSession = .shared) { self.session = session }
 
     /// Resolve a strategy into a concrete list of model ids. Each strategy performs one
     /// authenticated GET and parses the response. Callers handle fallback on error.
@@ -67,7 +70,7 @@ public struct AgentModelListService: Sendable {
         case let .googlePublisherModels(base):
             return try await fetchGooglePublisherModels(base: base, apiKey: apiKey)
         case let .codexSubscription(token, accountID):
-            return try await fetchCodexSubscription(token: token, accountID: accountID)
+            return try await fetchCodexCatalog(token: token, accountID: accountID).map(\.id)
         }
     }
 
@@ -157,10 +160,31 @@ public struct AgentModelListService: Sendable {
     /// listing (`chatgpt.com/backend-api/codex/models`), authenticated with the OAuth
     /// token + ChatGPT-Account-ID. Verified against the openai-api-server-via-codex
     /// reference implementation. Listing is best-effort.
-    private func fetchCodexSubscription(token: String, accountID: String) async throws -> [String] {
+    struct CodexModel: Sendable {
+        var id: String
+        var contextWindow: Int?
+        var reasoningLevels: [String]
+    }
+
+    public func codexReasoningLevels(token: String, accountID: String) async throws -> [String: [String]] {
+        let models = try await fetchCodexCatalog(token: token, accountID: accountID)
+        return models.reduce(into: [:]) { $0[$1.id] = $1.reasoningLevels }
+    }
+
+    public func codexContextWindow(model: String, token: String, accountID: String) async throws -> Int? {
+        try await fetchCodexCatalog(token: token, accountID: accountID)
+            .first { $0.id == model }?.contextWindow
+    }
+
+    private func fetchCodexCatalog(token: String, accountID: String) async throws -> [CodexModel] {
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAccount = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedToken.isEmpty else { throw ModelListError.missingCredential }
+        // Keep credentials out of persistent storage; separate anonymous account IDs by token.
+        let cacheKey = trimmedAccount.isEmpty ? trimmedToken : trimmedAccount
+        if let cached = codexCatalogs[cacheKey], Date().timeIntervalSince(cached.0) < 300 {
+            return cached.1
+        }
         guard let url = URL(string: "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0") else {
             throw ModelListError.transport("invalid codex models url")
         }
@@ -178,17 +202,41 @@ public struct AgentModelListService: Sendable {
               let models = object["models"] as? [Any] else {
             throw ModelListError.decoding("missing models array")
         }
-        // Match the reference filter: only models the backend reports as API-supported
-        // and visible. `slug` is the id callers pass to model=.
-        let ids = models.compactMap { entry -> String? in
-            guard let dict = entry as? [String: Any],
-                  let slug = dict["slug"] as? String,
+        let catalog = Self.codexModels(models)
+        guard !catalog.isEmpty else { throw ModelListError.decoding("no supported models") }
+        codexCatalogs = codexCatalogs.filter { Date().timeIntervalSince($0.value.0) < 300 }
+        codexCatalogs[cacheKey] = (Date(), catalog)
+        return catalog
+    }
+
+    static func codexModels(_ models: [Any]) -> [CodexModel] {
+        models.compactMap { entry in
+            guard let dict = entry as? [String: Any], let slug = dict["slug"] as? String,
                   (dict["supported_in_api"] as? Bool) == true,
                   (dict["visibility"] as? String) == "list" else { return nil }
-            return slug
+            // Decode numeric fields strictly: booleans, fractions and strings aren't capacities.
+            struct Limits: Decodable {
+                var context_window: Int
+                var effective_context_window_percent: Int?
+            }
+            var window: Int?
+            if let data = try? JSONSerialization.data(withJSONObject: dict),
+               let limits = try? JSONDecoder().decode(Limits.self, from: data),
+               limits.context_window > 0,
+               (1...100).contains(limits.effective_context_window_percent ?? 100) {
+                let percent = limits.effective_context_window_percent ?? 100
+                // Avoid multiplying an untrusted full-width integer before dividing.
+                let value = limits.context_window / 100 * percent
+                    + limits.context_window % 100 * percent / 100
+                if value > 0 { window = value }
+            }
+            let levels = (dict["supported_reasoning_levels"] as? [[String: Any]] ?? [])
+                .compactMap { $0["effort"] as? String }
+                .filter { !$0.isEmpty }
+            return CodexModel(id: slug, contextWindow: window, reasoningLevels: levels.reduce(into: []) {
+                if !$0.contains($1) { $0.append($1) }
+            })
         }
-        guard !ids.isEmpty else { throw ModelListError.decoding("no supported models") }
-        return ids
     }
 
 
@@ -209,7 +257,7 @@ public struct AgentModelListService: Sendable {
 
     private func perform(request: URLRequest) async throws -> Data {
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 let message = String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)"
                 throw ModelListError.http(status: http.statusCode, message: message)

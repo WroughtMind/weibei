@@ -437,14 +437,14 @@ private func checkProviderRouting() throws {
 private func checkSkillCatalogAndLoad() throws {
     let root = try AgentResources.bundled().skillsURL
     let registry = try NativeSkillRegistry.load(from: root)
-    try nativeRequire(registry.pack(named: "visualize") != nil, "visualize skill pack exists")
+    try nativeRequire(registry.pack(named: "genui") != nil, "genui skill pack exists")
     try nativeRequire(registry.pack(named: "socratic-questioning") != nil, "socratic skill pack exists")
-    try nativeRequire(registry.catalogSummary().contains("visualize"), "catalog lists visualize")
+    try nativeRequire(registry.catalogSummary().contains("genui"), "catalog lists genui")
     let before = registry.packs.map(\.id)
     let loaded = registry.pack(named: "socratic-questioning")
     try nativeRequire(loaded?.body.contains("苏格拉底") == true, "socratic body loads")
     try nativeRequire(registry.packs.map(\.id) == before, "load is instruction-only and does not change registration")
-    try nativeRequire(NativeSkillRegistry.isSignedBuiltin("visualize"), "visualize is a signed builtin")
+    try nativeRequire(NativeSkillRegistry.isSignedBuiltin("genui"), "genui is a signed builtin")
     let toolRegistry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: toolRegistry, skillRoot: root) }
     let tools = try waitFor { await toolRegistry.resolved(scope: .global) }
@@ -669,7 +669,7 @@ private func checkContextRevisionEcho() throws {
         confirmedNotes: [StudyAgentPersistedNoteRef(itemID: "saved-note", title: "组合笔记")])
     let context = try NativePromptAssembler.turnContext(for: request)
     try nativeRequire(!context.contains(request.contextRevision), "internal revision stays out of the model input")
-    try nativeRequire(context.contains("saved-note"), "actual saved note identifiers remain available")
+    try nativeRequire(context.contains("n1") && !context.contains("saved-note"), "saved notes expose only short aliases")
 }
 
 private func checkFailureMapping() throws {
@@ -723,9 +723,30 @@ private func checkNativeProductContract() throws {
         learningContext: StudyAgentLearningContext(memoryRevision: 3), contextRevision: "internal-only")
     let context = NativeToolExecutionContext(request: request, liveStores: stores)
     let tools = try waitFor { await registry.resolved(scope: .global) }
-    for name in ["weibei_update_learning_memory", "weibei_course_profile_update", "weibei_note_proposal", "weibei_relation_proposal"] {
-        let schema = tools.first { $0.name == name }?.schema.object["properties"] as? [String: Any]
-        try nativeRequire(schema != nil && schema?["contextRevision"] == nil, "tool revisions are program-bound")
+    for name in [
+        "weibei_update_learning_memory",
+        "weibei_course_profile_update",
+        "weibei_note_proposal",
+        "weibei_relation_proposal",
+        "weibei_search_workspace",
+        "weibei_course_read",
+    ] {
+        guard let tool = tools.first(where: { $0.name == name }) else {
+            throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 10, userInfo: [
+                NSLocalizedDescriptionKey: "missing tool \(name)",
+            ])
+        }
+        try nativeRequire(tool.schema.object["properties"] is [String: Any], "\(name) schema includes properties")
+        if [
+            "weibei_update_learning_memory",
+            "weibei_course_profile_update",
+            "weibei_note_proposal",
+            "weibei_relation_proposal",
+        ].contains(name), let properties = tool.schema.object["properties"] as? [String: Any] {
+            try nativeRequire(properties["contextRevision"] == nil, "\(name) hides contextRevision from new calls")
+            try nativeRequire(properties["memoryRevision"] == nil, "\(name) hides memoryRevision from new calls")
+            try nativeRequire(properties["profileRevision"] == nil, "\(name) hides profileRevision from new calls")
+        }
     }
     let memory = try waitFor {
         try await registry.execute(NativeToolCallRequest(name: "weibei_read_learning_memory", argumentsJSON: "{}", callID: "read"), context: context, scope: .global)
@@ -751,12 +772,13 @@ private func checkNativeProductContract() throws {
         try nativeRequire(failure.code == "invalid_evidence", "fabricated evidence is rejected")
     }
     let profile = try waitFor {
-        try await registry.execute(NativeToolCallRequest(name: "weibei_course_profile_read", argumentsJSON: "{}", callID: "profile-read"), context: context, scope: .global)
+        try await registry.execute(NativeToolCallRequest(name: "weibei_read_learning_memory", argumentsJSON: "{}", callID: "profile-read"), context: context, scope: .global)
     }
     let read = try JSONSerialization.jsonObject(with: Data(profile.text.utf8)) as! [String: Any]
-    let entry = (read["entries"] as! [[String: Any]])[0]
-    let update = try JSONSerialization.data(withJSONObject: ["profileRevision": read["profileRevision"]!, "checkpoint": "userRequested",
-        "entries": [["entryID": entry["id"]!, "kind": "concept", "text": "用户自述：能解释单利"]]])
+    let entries = read["courseProfile"] as! [String: Any]
+    let entry = (entries["entries"] as! [[String: Any]])[0]
+    let update = try JSONSerialization.data(withJSONObject: ["checkpoint": "userRequested",
+        "entries": [["entryID": entry["entryID"]!, "kind": "concept", "text": "用户自述：能解释单利"]]])
     let profileSaved = try waitFor {
         try await registry.execute(NativeToolCallRequest(name: "weibei_course_profile_update", argumentsJSON: String(decoding: update, as: UTF8.self), callID: "profile-write"), context: context, scope: .global)
     }

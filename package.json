@@ -9,19 +9,37 @@
     "typecheck:tools": "tsc --noEmit -p tsconfig.json",
     "test:release-tools": "node --test script/homebrew/*.test.mjs",
     "typecheck:editor": "tsc --noEmit -p tsconfig.editor.json",
-    "test:editor": "node --import tsx --test Sources/WeiBei/WebEditor/test/*.test.ts"
+    "test:editor": "node --import tsx --test Sources/WeiBei/WebEditor/test/*.test.ts",
+    "build:genui": "node script/build_genui.mjs",
+    "test:packed-web-script": "node --test script/packed_web_script.test.mjs",
+    "typecheck:genui": "tsc --noEmit -p tsconfig.genui.json"
   },
   "dependencies": {
+    "@aiden0z/pptx-renderer": "1.2.4",
     "@milkdown/kit": "7.21.3",
     "@milkdown/plugin-streaming": "7.21.3",
+    "@silurus/ooxml": "0.87.0",
+    "docx-preview": "0.4.0",
+    "emf-renderer": "0.1.0",
+    "jszip": "3.10.1",
     "katex": "^0.17.0",
     "mermaid": "11.16.1",
     "prismjs": "^1.30.0",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "rtf.js": "3.0.9"
   },
   "devDependencies": {
+    "@changfenhuang/dsh-genui": "https://codeload.github.com/omdsh-dev/dsh-genui/tar.gz/ee11c6f29ff5d7e382f26d0a4485339524098f8e",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.2-rc.1",
     "@types/node": "^22.10.0",
+    "@types/react": "^18.3.28",
+    "@types/react-dom": "^18.3.7",
+    "echarts": "5.6.0",
     "esbuild": "0.28.1",
+    "pako": "1.0.11",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "0.180.0",
     "tsx": "^4.19.2",
     "typescript": "5.7.3"
   },

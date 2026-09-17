@@ -126,7 +126,7 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 | `make package` | `./script/build_and_run.sh package` |
 | `make verify` | `./script/build_and_run.sh verify` (automatic launch on isolated CI desktops only; use picture-in-picture locally) |
 | `make editor-build` | `npm run build:editor` |
-| `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
+| `make genui-build` | `npm run build:genui` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)` (usage: `make perf-p95 LOG=<perf-log> METRIC=<metric-name>`) |
 | `make release` | `./script/build_release_dmg.sh` (build the current architecture's unnotarized release DMG) |
 | `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules` and user data) |

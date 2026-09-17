@@ -11,7 +11,11 @@ func selectionRemarkMarksJSON(_ records: [SelectionRemarkRecord], activeID: UUID
         ]
         if revealRequest?.recordID == record.id { mark["reveal"] = revealRequest?.id.uuidString }
         if let anchor = record.documentAnchor?.text {
-            mark["anchor"] = ["startOffset": anchor.startOffset, "endOffset": anchor.endOffset]
+            var values: [String: Any] = ["startOffset": anchor.startOffset, "endOffset": anchor.endOffset]
+            if let location = anchor.location { values["location"] = location }
+            if let revision = anchor.revision { values["revision"] = revision }
+            if let order = anchor.sourceOrder { values["sourceOrder"] = order }
+            mark["anchor"] = values
         }
         return mark
     }

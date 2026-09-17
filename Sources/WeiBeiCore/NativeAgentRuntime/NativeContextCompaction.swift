@@ -1,11 +1,5 @@
 import Foundation
 
-#if DEBUG
-protocol NativeContextWindowTestingAdapter: NativeLLMAdapter {
-    var contextWindowForTesting: Int { get }
-}
-#endif
-
 struct NativeContextCompactionCandidate: Sendable {
     var summary: String
     var firstKeptSeq: Int
@@ -137,7 +131,7 @@ enum NativeContextCompaction {
                 content: "请依据上面的真实对话生成新的延续摘要。"
             )
         )
-        let request = NativeLLMRequest(
+        var request = NativeLLMRequest(
             model: model,
             messages: messages,
             tools: [],
@@ -145,6 +139,7 @@ enum NativeContextCompaction {
             enableNativeWebSearch: false,
             maxTokens: maximumSummaryTokens
         )
+        request.purpose = .compaction
         var text = ""
         var finish: NativeFinishReason?
         for try await chunk in adapter.stream(request) {

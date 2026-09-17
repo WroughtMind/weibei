@@ -221,6 +221,13 @@ extension WorkspaceStore {
             model: model,
             endpoint: endpoint
         )
+        var resolvedRequest = request
+        if selectedProvider == .openaiCodex {
+            let levels = try await AgentAccountService.shared.reasoningLevelsForRequest(provider: selectedProvider, model: model)
+            resolvedRequest.reasoningEffort = AgentReasoningEffort.selected(
+                request.reasoningEffort, levels: levels, floating: agentRun.selectionThreadID != nil
+            )
+        }
         let resources = try AgentResources.bundled()
         let liveStores = NativeLiveStores(
             learning: { [weak self] in
@@ -305,6 +312,7 @@ extension WorkspaceStore {
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
+            providerID: selectedProvider.rawValue,
             contextWindow: NativeProviderRouting.contextWindow(
                 provider: selectedProvider,
                 model: model
@@ -319,7 +327,7 @@ extension WorkspaceStore {
         run.runtime = runtime
         defer { run.runtime = nil }
         return try await runtime.respond(
-            to: request,
+            to: resolvedRequest,
             progress: { [weak self] progress in
                 await AgentConversationExecution.$run.withValue(run) {
                     await self?.applyAgentProgress(

@@ -30,9 +30,10 @@ final class ReaderPDFView: PDFView {
     }
     @objc private func tap(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: self)
-        _ = handleAskUnderlineClick?(point)
+        if handleAskUnderlineClick?(point) == true { return }
+        onPointerEvent?(point, .began)
+        clearSelection()
         onPointerEvent?(point, .ended)
-        reportCurrentSelection?()
     }
     @objc private func hover(_ gesture: UIHoverGestureRecognizer) { handleAskUnderlineHover?(gesture.location(in: self)) }
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {

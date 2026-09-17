@@ -31,14 +31,11 @@ public struct NativePromptAssembler: Sendable {
 
     public static func webiSystemPrompt(
         bundledText: String,
-        tools: [NativeToolDefinition],
         skillCatalog: String = ""
     ) -> String {
         var assembler = NativePromptAssembler()
         assembler.add(NativePromptSection(id: "persona", order: 10, text: bundledText))
         assembler.add(NativePromptSection(id: "retrieval", order: 18, text: retrievalStrategy))
-        let catalog = tools.map { "- \($0.name): \($0.description)" }.joined(separator: "\n")
-        assembler.add(NativePromptSection(id: "tools", order: 20, text: "可用工具：\n\(catalog)"))
         if !skillCatalog.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             assembler.add(NativePromptSection(id: "skills", order: 15, text: skillCatalog))
         }
@@ -50,17 +47,25 @@ public struct NativePromptAssembler: Sendable {
         for request: StudyAgentRequest,
         selections: [AgentReplySource] = []
     ) throws -> String {
+        try turnContext(for: request, selections: selections, aliases: NativeStateAliases(request: request))
+    }
+
+    static func turnContext(
+        for request: StudyAgentRequest,
+        selections: [AgentReplySource],
+        aliases: NativeStateAliases
+    ) throws -> String {
         var reference: [String: Any] = [:]
-        reference["readingLocation"] = NativeTurnLocation.block(for: request)
+        reference["readingLocation"] = NativeTurnLocation.block(for: request, aliases: aliases)
         if let selection = request.selectionText, !selection.isEmpty {
             reference["selection"] = ["title": request.selectionTitle ?? "当前选区", "text": selection]
         }
         if !selections.isEmpty {
-            reference["sources"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(selections))
+            reference["sources"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(selections.map(aliases.projected)))
         }
         if !request.confirmedNotes.isEmpty {
             reference["persistedNotes"] = request.confirmedNotes.map {
-                ["noteItemID": $0.itemID, "title": $0.title]
+                ["noteItemID": aliases.noteAlias(for: $0.itemID)!, "title": $0.title]
             }
         }
         guard !reference.isEmpty else { return "" }

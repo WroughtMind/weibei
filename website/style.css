@@ -70,11 +70,11 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--vermilion); out
 .brand img { width: 28px; height: 28px; object-fit: cover; mix-blend-mode: multiply; }
 .brand span { font-family: "WeiBei Stele", serif; font-size: 17px; font-weight: 400; line-height: 1; letter-spacing: .11em; text-transform: uppercase; }
 .brand i { width: 6px; height: 6px; margin: 0 0 7px -6px; align-self: flex-end; background: var(--vermilion); }
-.top-actions { display: flex; align-items: center; gap: 18px; font-size: 14px; }
+.top-actions { display: flex; align-items: center; gap: 20px; font-size: 14px; }
 .github-link { display: grid; place-items: center; width: 28px; height: 28px; opacity: .72; transition: opacity .2s ease, transform .2s ease; }
 .github-link svg { width: 18px; height: 18px; fill: currentColor; }
 .github-link:hover { opacity: 1; transform: translateY(-1px); }
-.release-nav { display: grid; grid-template-columns: repeat(3, 44px) 70px; align-items: center; gap: 20px; white-space: nowrap; text-align: left; }
+.release-nav { display: flex; align-items: center; gap: 20px; white-space: nowrap; text-align: left; }
 .release-nav a { display: flex; align-items: center; height: 28px; line-height: 1; }
 .release-nav a:hover, .release-nav a:focus-visible, .hero-guide:hover { color: var(--vermilion); }
 .release-nav a:active, .hero-guide:active { opacity: .65; }
@@ -85,11 +85,11 @@ html[lang="zh-CN"] .release-nav a[data-en] { font-size: .93em; transform: transl
 html[lang="zh-CN"] .language-toggle span:first-child, html[lang="en"] .language-toggle span:last-child { opacity: 1; }
 .language-toggle::after { content: ""; position: absolute; bottom: 0; left: 0; width: 11px; height: 1px; background: var(--vermilion); transition: transform .24s cubic-bezier(.16,1,.3,1); }
 html[lang="en"] .language-toggle::after { transform: translateX(28px); }
-.nav-download { position: relative; display: grid; place-items: center; width: 64px; height: 28px; font: inherit; opacity: .78; transition: opacity .2s ease, transform .2s ease; }
-.nav-download::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 1px; background: currentColor; transform: scaleX(.55); transition: transform .2s ease; }
+.nav-download { position: relative; display: grid; place-items: center; width: auto; height: 28px; font: inherit; opacity: .78; transition: opacity .2s ease, transform .2s ease; }
+.nav-download::after { content: ""; position: absolute; left: 0; right: 0; bottom: 1px; height: 1px; background: currentColor; transform: scaleX(.85); transition: transform .2s ease; }
 .nav-download:hover::after { transform: scaleX(1); }
 .nav-download:hover { opacity: 1; transform: translateY(-1px); }
-:is(.release-nav, .nav-download, .mode-word, .theme-name, .release-title, .hero-tagline, .primary-download, .download-menu) { font-family: "WeiBei Stele", serif; font-weight: 400; letter-spacing: .08em; }
+:is(.release-nav, .nav-download, .mode-word, .theme-name, .release-title, .hero-tagline, .primary-download, .download-options) { font-family: "WeiBei Stele", serif; font-weight: 400; letter-spacing: .08em; }
 
 .scene-rail {
   position: fixed;
@@ -293,25 +293,34 @@ body::after {
 html[data-scene="4"] body::after { visibility: visible; }
 .download-act { position: absolute; z-index: 6; left: 50%; bottom: -2%; width: 38%; height: 54%; pointer-events: none; transform: translateX(-50%); }
 .download-act .mascot-four { position: absolute; z-index: 2; left: 50%; top: -4%; width: 88%; height: 88%; transform: translateX(-50%); }
-.download-control { position: absolute; z-index: 3; left: 50%; bottom: 4%; width: 330px; height: 92px; color: #2e2924; background: url("assets/第四幕-下载纸签-v4.webp") center / contain no-repeat; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); pointer-events: none; transform: translateX(-50%); transition: filter .24s ease, transform .24s ease; }
-.download-control:hover { filter: drop-shadow(0 8px 10px rgba(54,40,25,.18)) saturate(1.07); transform: translateX(-50%) translateY(1px) scale(1.015); }
-.download-control:active { transform: translateX(-50%) translateY(2px) scale(.99); }
-.primary-download { position: absolute; inset: 0; display: grid; place-items: center; padding: 0; color: inherit; font-family: "Songti SC", "STSong", serif; white-space: nowrap; cursor: pointer; transform: translateY(-13px); }
+.download-control { position: absolute; z-index: 3; left: 50%; bottom: 4%; width: 330px; color: #2e2924; filter: drop-shadow(0 9px 12px rgba(54,40,25,.18)); pointer-events: none; transform: translateX(-50%); }
+.download-summary { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; height: 92px; padding: 8px 26px 16px; background: url("assets/第四幕-下载纸签-v4.webp") center / contain no-repeat; cursor: pointer; list-style: none; }
+.download-summary::-webkit-details-marker { display: none; }
 .download-title { font-size: 17px; font-weight: 600; letter-spacing: .045em; }
-.download-versions { position: absolute; z-index: 4; left: 50%; top: 50%; display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 142px; height: 21px; padding: 0 6px 1px; border: 0; border-bottom: 1px solid rgba(64,50,37,.24); color: #4c433a; background: transparent; font: 10px/1 "Songti SC", "STSong", serif; cursor: pointer; transform: translate(-50%, -2px); transition: color .18s ease, border-color .18s ease; }
-.download-versions span { color: #8a7b6b; }
-.download-versions strong { font-weight: 600; }
-.download-versions i { font: 14px/1 Georgia, serif; transition: transform .18s ease; }
-.download-versions:hover { border-color: var(--vermilion); color: var(--vermilion); }
-.download-versions:focus-visible { outline: 0; border-color: var(--vermilion); }
-.download-versions[aria-expanded="true"] i { transform: rotate(180deg); }
-.download-menu { position: absolute; z-index: 8; left: 50%; bottom: 80px; width: 224px; padding: 6px 10px; border: 0; background: rgba(246,236,217,.98); box-shadow: 0 14px 28px rgba(54,40,25,.2), inset 0 0 0 1px rgba(74,58,42,.1); backdrop-filter: blur(12px); transform: translateX(-50%); }
-.download-menu[hidden] { display: none; }
-.download-menu button { display: grid; grid-template-columns: 8px 1fr; align-items: center; gap: 7px; width: 100%; min-height: 38px; padding: 7px 8px; border: 0; color: #302a24; background: transparent; text-align: left; cursor: pointer; }
-.download-menu button::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--vermilion); opacity: 0; }
-.download-menu button + button { border-top: 1px solid rgba(74,58,42,.1); }
-.download-menu button:hover, .download-menu button.is-selected { background: rgba(185,48,31,.07); }
-.download-menu button.is-selected::before { opacity: 1; }
+.download-summary-caption { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); font-size: 10px; }
+.download-summary i { font: 14px/1 Georgia, serif; transition: transform .25s ease; }
+.download-control[open] .download-summary i { transform: rotate(180deg); }
+.download-summary:focus-visible, .download-paper :is(button, a):focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; }
+.download-control[open] { width: min(580px, 76vw); bottom: -10%; padding: 8px 26px 22px; }
+.download-control[open]::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(17deg, #796a5005 0 .4px, transparent .8px 5px), repeating-linear-gradient(97deg, #fff9ed33 0 .4px, transparent .8px 3px), var(--paper-light); box-shadow: inset 0 0 12px #b9a48044; clip-path: polygon(1% 1.5%, 15% .4%, 38% 1%, 62% .2%, 83% 1%, 99% .5%, 99.5% 26%, 99% 52%, 100% 76%, 99% 98%, 78% 99%, 54% 98.5%, 31% 100%, 1% 98%, .4% 72%, 1% 48%, 0 23%); }
+.download-control[open] .download-summary { position: relative; height: auto; min-height: 44px; padding: 5px 20px 10px; background: none; }
+.download-control[open] .download-summary-caption { position: absolute; right: 0; top: 12px; }
+.download-control[open] .download-summary-caption > span { display: none; }
+.download-paper { position: relative; display: grid; gap: 16px; animation: download-unfold .32s var(--ease-smooth-out); }
+.download-options { display: flex; justify-content: center; gap: 28px; border-bottom: 1px solid var(--line); }
+.download-options button { padding: 8px 16px 10px; border: 0; border-bottom: 2px solid transparent; color: var(--ink-soft); background: none; font: inherit; font-size: 13px; cursor: pointer; }
+.download-options button[aria-pressed="true"] { border-bottom-color: var(--vermilion); color: var(--vermilion); }
+.primary-download { display: flex; align-items: center; justify-content: center; justify-self: center; flex-wrap: wrap; gap: 10px; min-height: 44px; padding: 10px 24px; border-radius: 4px; color: var(--paper-light); background: var(--vermilion); font-size: 15px; letter-spacing: .025em; }
+.primary-download:hover { background: #a32e1d; }
+.download-chip { padding-left: 12px; border-left: 1px solid #f7eddb55; font-size: 11px; }
+.download-homebrew { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 3px; font-size: 12px; }
+.download-homebrew > span:last-child { color: var(--ink-soft); font-size: 11px; }
+.release-map, .download-act .mascot-four { transition: transform .4s var(--ease-smooth-out); }
+.release-layer:has(.download-control[open]) .release-map { transform: translateY(-8%) scale(.9); }
+.release-layer:has(.download-control[open]) .mascot-four { transform: translate(-50%, -44%) scale(.74); }
+.release-layer:has(.download-control[open]) .release-webi { left: 1%; }
+.release-layer:has(.download-control[open]) .release-feedback { right: 1%; }
+@keyframes download-unfold { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 
 @supports (animation-timeline: scroll()) {
   .hero-tagline { animation: hero-tagline-journey 1s linear both; animation-timeline: scroll(root block); }
@@ -383,10 +392,10 @@ html[data-scene="4"] body::after { visibility: visible; }
   .brand img { width: 23px; height: 23px; }
   .brand span { font-size: 14px; }
   .top-actions { gap: 13px; font-size: 12px; }
-  .nav-download, .language-toggle { min-height: 44px; }
+  .nav-download, .language-toggle { min-width: 44px; min-height: 44px; }
   .top-actions > a:first-child { display: none; }
-  .release-nav { position: fixed; top: 58px; left: 0; right: 0; grid-template-columns: repeat(3, 44px) 60px; justify-content: center; height: 44px; gap: 16px; font-size: 11px; background: linear-gradient(to bottom, rgba(238,225,202,.9), transparent); }
-  .release-nav a { height: 44px; }
+  .release-nav { position: fixed; top: 58px; left: 0; right: 0; justify-content: center; height: 44px; gap: 16px; font-size: 11px; background: linear-gradient(to bottom, rgba(238,225,202,.9), transparent); }
+  .release-nav a { min-width: 44px; height: 44px; justify-content: center; }
   html[data-scene="3"] .release-nav { background: transparent; }
   .language-toggle { font-size: 9px; }
   .scene { min-height: 100dvh; }
@@ -454,16 +463,25 @@ html[data-scene="4"] body::after { visibility: visible; }
   .release-feedback { right: 5%; bottom: 27%; }
   .download-act { bottom: 7%; width: 52%; height: 31%; }
   .download-act .mascot-four { top: -17%; width: 110%; height: 110%; }
-  .download-control { bottom: 0; width: min(300px, 86vw); height: 86px; }
-  .primary-download { padding: 0; transform: translateY(-10px); }
+  .download-control { bottom: 0; width: min(300px, 86vw); }
+  .download-summary { height: 86px; }
   .download-title { font-size: 15px; }
-  .download-versions { top: 44%; min-width: 150px; height: 44px; font-size: 11px; border-bottom: 0; transform: translate(-50%, -2px); }
-  .download-versions i { font-size: 11px; }
-  .download-menu { bottom: 74px; width: min(240px, 82vw); }
-  .download-menu button { min-height: 44px; }
+  .download-control[open] { bottom: -8%; width: 92vw; padding: 6px 16px 18px; }
+  .download-paper { gap: 12px; }
+  .download-options { gap: 16px; }
+  .download-options button { min-height: 44px; }
+  .download-homebrew { flex-wrap: wrap; gap: 5px; }
+  .release-layer:has(.download-control[open]) .release-webi { left: 3%; bottom: 43%; }
+  .release-layer:has(.download-control[open]) .release-feedback { right: 3%; bottom: 43%; }
+  .release-layer:has(.download-control[open]) .release-map { transform: translateY(-3%) scale(.94); }
+  .release-layer:has(.download-control[open]) .mascot-four { transform: translate(-50%, -58%) scale(.65); }
+
 }
 
 @media (max-width: 760px) and (max-height: 680px) and (orientation: portrait) {
+  .release-layer:has(.download-control[open]) .release-webi,
+  .release-layer:has(.download-control[open]) .release-feedback { bottom: 53%; }
+  .release-layer:has(.download-control[open]) .mascot-four { transform: translate(-50%, -100%) scale(.65); }
   .hero-tagline { top: 20%; }
   html[data-scene="1"] .journey-stage { top: 64%; }
   .mascot-one { width: 100px; height: 100px; bottom: 1vh; }

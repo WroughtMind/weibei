@@ -290,7 +290,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
 
     func testPromptCachePrefixSurvivesToolStepsAndNewTurns() async throws {
         struct CacheSequenceAdapter: NativeLLMAdapter {
-            let family = "mock"
+            let family = "openai-responses"
             let capture: RequestCapture
 
             func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
@@ -310,9 +310,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
             systemPromptText: "固定系统提示"
         )
         var request = testRequest()
+        XCTAssertNil(request.reasoningEffort)
+        request.reasoningEffort = "high"
         request.projectScope = StudyAgentProjectScope(kind: .global, chatID: "cache-chat")
         request.contextRevision = "first-turn-revision"
         _ = try await runtime.respond(to: request)
+        XCTAssertTrue(capture.requests.allSatisfy { $0.reasoningEffort == "high" })
+        request.reasoningEffort = "medium"
         request.id = UUID()
         request.question = "关联刚刚确认的笔记"
         request.contextRevision = "second-turn-revision"
@@ -320,6 +324,9 @@ final class NativeAgentRuntimeTests: XCTestCase {
         _ = try await runtime.respond(to: request)
 
         XCTAssertEqual(capture.requests.count, 3)
+        XCTAssertEqual(capture.requests.last?.reasoningEffort, "medium")
+        let reasoning = OpenAIResponsesProvider.payload(for: capture.requests[0])["reasoning"] as? [String: String]
+        XCTAssertEqual(reasoning?["effort"], "high")
         for (previous, next) in zip(capture.requests, capture.requests.dropFirst()) {
             XCTAssertEqual(Array(next.messages.prefix(previous.messages.count)), previous.messages)
             XCTAssertEqual(next.tools.map(\.name), previous.tools.map(\.name))
@@ -338,17 +345,20 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertFalse(last.messages[0].content.contains("second-turn-revision"))
         XCTAssertFalse(first.messages.contains { $0.content.contains("first-turn-revision") })
         XCTAssertFalse(last.messages.contains { $0.content.contains("second-turn-revision") })
-        XCTAssertTrue(last.messages.contains { $0.content.contains("confirmed-note") })
+        XCTAssertTrue(last.messages.contains { $0.content.contains("n1") })
+        XCTAssertFalse(last.messages.contains { $0.content.contains("confirmed-note") })
         XCTAssertEqual(last.messages.last?.content, request.question)
         let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("cache-chat/ledger.jsonl"))
         let persisted = await ledger.deriveMessages()
         XCTAssertEqual(Array(persisted.prefix(last.messages.count - 1)), Array(last.messages.dropFirst()))
+        request.reasoningEffort = "low"
         request.projectScope = StudyAgentProjectScope(kind: .global, chatID: "another-chat")
         _ = try await runtime.respond(to: request)
         XCTAssertEqual(capture.requests.last?.promptCacheKey, "another-chat")
+        XCTAssertEqual(capture.requests.last?.reasoningEffort, "low")
     }
 
-    // 长工具链压缩后保留问题与已确认笔记，内部修订号始终不进入模型输入。
+    // 长工具链压缩到本轮内部后，仍能使用已确认笔记的短别名，且不向模型泄露修订号和真实编号。
     func testStepCompactionPreservesCurrentTurnContext() async throws {
         struct StepCompactionAdapter: NativeLLMAdapter {
             let family = "mock"
@@ -402,10 +412,410 @@ final class NativeAgentRuntimeTests: XCTestCase {
             for messages in [last.messages, await ledger.deriveMessages()] {
                 XCTAssertFalse(messages.contains { $0.content.contains(request.contextRevision) })
                 XCTAssertTrue(messages.contains { $0.content.contains(request.question) })
-                XCTAssertTrue(messages.contains { $0.content.contains("confirmed-step-note") })
+                XCTAssertTrue(messages.contains { $0.content.contains("n1") })
+                XCTAssertFalse(messages.contains { $0.content.contains("confirmed-step-note") })
             }
             XCTAssertEqual(last.promptCacheKey, "step-context")
         }
+    }
+
+    func testStateToolSchemasUseAliasesAndExecutorStampsLiveRevisions() async throws {
+        let memoryID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let profileID = "22222222-2222-4222-8222-222222222222"
+        let noteID = "33333333-3333-4333-8333-333333333333"
+        let memory = LearningMemoryEntry(
+            id: memoryID,
+            kind: .progress,
+            text: "已读完第一节",
+            evidence: "用户自述",
+            origin: .userStatement,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let liveLearning = StudyAgentLearningContext(memoryRevision: 19, memories: [memory])
+        let liveProfile = StudyAgentCourseProfileContext(
+            revision: 23,
+            entries: [StudyAgentCourseProfileEntry(id: profileID, kind: "concept", text: "用户自述：已掌握边际分析")]
+        )
+        let capture = StateUpdateCapture()
+        let stores = NativeLiveStores(
+            learning: { liveLearning },
+            profile: { liveProfile },
+            persistLearningUpdate: { update in
+                await capture.record(update)
+                return NativeStorePersistReceipt(
+                    status: .saved,
+                    message: "ok",
+                    memoryUpdate: AgentReplyMemoryUpdate(memoryIDs: [memoryID], summary: "已更新")
+                )
+            },
+            persistCourseProfileUpdate: { update in
+                await capture.record(update)
+                return NativeStorePersistReceipt(
+                    status: .saved,
+                    message: "ok",
+                    profileUpdate: AgentReplyProfileUpdate(entryIDs: [UUID(uuidString: profileID)!], summary: "已更新", texts: [])
+                )
+            },
+            performRelationProposal: { proposal in
+                await capture.record(proposal)
+                return NativeStorePersistReceipt(status: .pending, message: "待采用")
+            }
+        )
+        var request = testRequest()
+        request.contextRevision = "live-context-revision"
+        request.learningContext = StudyAgentLearningContext(memoryRevision: 1)
+        request.courseProfile = StudyAgentCourseProfileContext(revision: 2)
+        request.projectScope = StudyAgentProjectScope(
+            kind: .course,
+            chatID: "alias-chat",
+            courseID: "course",
+            items: [StudyAgentProjectItem(
+                itemID: noteID,
+                title: "课堂笔记",
+                kind: "markdown",
+                role: "note",
+                relativePath: "课堂笔记.md",
+                resolvedPath: "/tmp/课堂笔记.md",
+                entryIdentity: nil,
+                targetIdentity: nil,
+                isShared: false
+            )]
+        )
+        let context = NativeToolExecutionContext(request: request, liveStores: stores)
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+
+        let definitions = await registry.resolved(scope: .global)
+        for name in ["weibei_update_learning_memory", "weibei_course_profile_update", "weibei_note_proposal", "weibei_relation_proposal"] {
+            let definition = try XCTUnwrap(definitions.first { $0.name == name })
+            let properties = try XCTUnwrap(definition.schema.object["properties"] as? [String: Any])
+            XCTAssertNil(properties["contextRevision"], "\(name) 不应再要求模型回传上下文修订号")
+            XCTAssertNil(properties["memoryRevision"])
+            XCTAssertNil(properties["profileRevision"])
+        }
+
+        let read = try await registry.execute(
+            NativeToolCallRequest(name: "weibei_read_learning_memory", argumentsJSON: "{}", callID: "read"),
+            context: context,
+            scope: .global
+        )
+        XCTAssertTrue(read.text.contains(#""memoryID":"m1""#))
+        XCTAssertTrue(read.text.contains(#""entryID":"e1""#))
+        XCTAssertFalse(read.text.contains(memoryID.uuidString.lowercased()))
+        XCTAssertFalse(read.text.contains(profileID))
+        XCTAssertFalse(read.text.contains("Revision"))
+
+        var writable = context
+        writable.lastReadMemoryRevision = (read.details["memoryRevision"] as? NSNumber)?.uint64Value
+        _ = try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_update_learning_memory",
+                argumentsJSON: #"{"entries":[{"memoryID":"m1","kind":"progress","text":"进入第二节","origin":"agentInference","evidence":"[用户：本轮] 测试工具恢复"}]}"#,
+                callID: "memory"
+            ),
+            context: writable,
+            scope: .global
+        )
+        _ = try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_course_profile_update",
+                argumentsJSON: #"{"checkpoint":"userRequested","entries":[{"entryID":"e1","kind":"concept","text":"用户自述：已经掌握"}]}"#,
+                callID: "profile"
+            ),
+            context: context,
+            scope: .global
+        )
+        let capturedLearningUpdate = await capture.learningUpdate
+        let learningUpdate = try XCTUnwrap(capturedLearningUpdate)
+        XCTAssertEqual(learningUpdate.contextRevision, "live-context-revision")
+        XCTAssertEqual(learningUpdate.memoryRevision, 19)
+        XCTAssertEqual(learningUpdate.entries.first?.memoryID, memoryID.uuidString.lowercased())
+        let capturedProfileUpdate = await capture.profileUpdate
+        let profileUpdate = try XCTUnwrap(capturedProfileUpdate)
+        XCTAssertEqual(profileUpdate.contextRevision, "live-context-revision")
+        XCTAssertEqual(profileUpdate.profileRevision, 23)
+        XCTAssertEqual(profileUpdate.entries.first?.entryID, profileID)
+
+        let relation = try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_relation_proposal",
+                argumentsJSON: #"{"noteItemID":"n1","sourceItemID":"source","userRequested":false}"#,
+                callID: "relation"
+            ),
+            context: context,
+            scope: .global
+        )
+        let capturedRelation = await capture.relationProposal
+        XCTAssertEqual(capturedRelation?.noteItemID, noteID)
+        XCTAssertEqual(capturedRelation?.contextRevision, "live-context-revision")
+        XCTAssertTrue(relation.text.contains("pending"))
+    }
+
+    func testNewNoteReceiptAliasCanBeUsedForRelationInSameTurn() async throws {
+        struct NoteAdapter: NativeLLMAdapter {
+            let family = "mock"
+            func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+                let chunks: [NativeStreamChunk]
+                if request.messages.contains(where: { $0.toolCallID == "relation" }) {
+                    XCTAssertFalse(request.messages.contains { $0.content.contains("44444444-4444-4444-8444-444444444444") })
+                    XCTAssertTrue(request.messages.contains { $0.content.contains("n1") })
+                    chunks = [.textDelta(index: 0, text: "已写入并关联"), .finish(reason: .stop, replayState: nil)]
+                } else {
+                    let wroteNote = request.messages.contains { $0.toolCallID == "note" }
+                    chunks = [
+                        .toolCallDelta(index: 0, id: wroteNote ? "relation" : "note",
+                            name: wroteNote ? "weibei_relation_proposal" : "weibei_note_proposal",
+                            argumentsDelta: wroteNote
+                                ? #"{"noteItemID":"n1","sourceItemID":"material","userRequested":true}"#
+                                : #"{"markdown":"正文","evidence":["用户要求"],"userRequested":true}"#),
+                        .finish(reason: .toolCalls, replayState: nil),
+                    ]
+                }
+                return MockLLMAdapter(chunks: chunks).stream(request)
+            }
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("new-note-alias-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capture = StateUpdateCapture()
+        let noteID = "44444444-4444-4444-8444-444444444444"
+        let runtime = NativeStudyAgentRuntime(model: "mock", adapter: NoteAdapter(), ledgerRoot: root,
+            systemPromptText: "test", liveStores: NativeLiveStores(
+                performNoteProposal: { _ in
+                    NativeStorePersistReceipt(status: .saved, message: "已写入笔记",
+                        action: AgentReplyAction(kind: .writeNote, state: .executed, targetItemID: noteID))
+                },
+                performRelationProposal: { proposal in
+                    await capture.record(proposal)
+                    return NativeStorePersistReceipt(status: .saved, message: "已建立关联")
+                }))
+        let reply = try await runtime.respond(to: testRequest())
+        let relation = await capture.relationProposal
+        XCTAssertEqual(relation?.noteItemID, noteID)
+        XCTAssertEqual(relation?.sourceItemID, "material")
+        XCTAssertEqual(reply.text, "已写入并关联")
+    }
+
+    func testAliasesAreStableWithinScopeAndRejectIDsFromAnotherScope() async throws {
+        let firstID = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!
+        let secondID = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
+        func memory(_ id: UUID, at seconds: TimeInterval) -> LearningMemoryEntry {
+            LearningMemoryEntry(
+                id: id,
+                kind: .goal,
+                text: id == firstID ? "先学第一章" : "再学第二章",
+                evidence: "用户自述",
+                origin: .userStatement,
+                createdAt: Date(timeIntervalSince1970: seconds),
+                updatedAt: Date(timeIntervalSince1970: seconds)
+            )
+        }
+        var request = testRequest()
+        request.learningContext = StudyAgentLearningContext(
+            memoryRevision: 7,
+            memories: [memory(secondID, at: 2), memory(firstID, at: 1)]
+        )
+        let aliases = NativeStateAliases(request: request)
+        XCTAssertEqual(aliases.memoryID(for: "m1"), firstID.uuidString.lowercased())
+        XCTAssertEqual(aliases.memoryID(for: "m2"), secondID.uuidString.lowercased())
+
+        let thirdID = UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!
+        var reordered = request
+        reordered.learningContext = StudyAgentLearningContext(
+            memoryRevision: 8,
+            memories: [memory(thirdID, at: 3), memory(secondID, at: 2)]
+        )
+        let stableAliases = NativeStateAliases(request: reordered, persisted: aliases.persistedSnapshot)
+        XCTAssertNil(stableAliases.memoryID(for: "m1"), "已删除对象的别名不能越界解析")
+        XCTAssertEqual(stableAliases.memoryID(for: "m2"), secondID.uuidString.lowercased())
+        XCTAssertEqual(stableAliases.memoryID(for: "m3"), thirdID.uuidString.lowercased())
+
+        var otherScope = request
+        otherScope.learningContext = StudyAgentLearningContext(memoryRevision: 1, memories: [memory(secondID, at: 2)])
+        let isolatedAliases = NativeStateAliases(
+            request: otherScope,
+            reservedAliases: Set(aliases.persistedSnapshot.values)
+        )
+        XCTAssertNil(isolatedAliases.memoryID(for: "m1"))
+        XCTAssertNil(isolatedAliases.memoryID(for: "m2"))
+        XCTAssertEqual(isolatedAliases.memoryID(for: "m3"), secondID.uuidString.lowercased())
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        do {
+            _ = try await registry.execute(
+                NativeToolCallRequest(
+                    name: "weibei_update_learning_memory",
+                    argumentsJSON: #"{"entries":[{"memoryID":"m2","kind":"goal","text":"越界","origin":"agentInference","evidence":"[用户：本轮] 测试工具恢复"}]}"#,
+                    callID: "cross-scope"
+                ),
+                context: NativeToolExecutionContext(request: otherScope, lastReadMemoryRevision: 1),
+                scope: .global
+            )
+            XCTFail("另一个作用域中不存在的短别名必须拒绝")
+        } catch let failure as NativeLLMFailure {
+            XCTAssertEqual(failure.code, "invalid_arguments")
+        }
+        do {
+            _ = try await registry.execute(
+                NativeToolCallRequest(
+                    name: "weibei_update_learning_memory",
+                    argumentsJSON: #"{"entries":[{"memoryID":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","kind":"goal","text":"绕过别名","origin":"agentInference","evidence":"[用户：本轮] 测试工具恢复"}]}"#,
+                    callID: "raw-id"
+                ),
+                context: NativeToolExecutionContext(request: request, lastReadMemoryRevision: 7),
+                scope: .global
+            )
+            XCTFail("新调用不能用真实编号绕过短别名")
+        } catch let failure as NativeLLMFailure {
+            XCTAssertEqual(failure.code, "invalid_arguments")
+        }
+    }
+
+    func testLoopPersistsGrowingProfileAliasesAndDoesNotReuseDeletedAlias() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("native-live-aliases-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProfileAliasStore()
+        let firstCapture = RequestCapture()
+        let firstRuntime = NativeStudyAgentRuntime(
+            model: "mock",
+            adapter: ProfileAliasSequenceAdapter(capture: firstCapture, mutates: true),
+            ledgerRoot: root,
+            systemPromptText: "学习助手",
+            liveStores: NativeLiveStores(
+                profile: { await store.snapshot() },
+                persistCourseProfileUpdate: { await store.persist($0) }
+            )
+        )
+        var request = testRequest()
+        request.projectScope = StudyAgentProjectScope(kind: .course, chatID: "live-aliases", courseID: "course-a")
+        _ = try await firstRuntime.respond(to: request)
+
+        let firstReadResults = try XCTUnwrap(firstCapture.requests.last).messages
+            .filter { $0.role == .tool && $0.content.contains("\"courseProfile\"") }
+        XCTAssertEqual(firstReadResults.count, 2)
+        XCTAssertTrue(firstReadResults[0].content.contains("\"entryID\":\"e1\""))
+        XCTAssertTrue(firstReadResults[0].content.contains("用户自述：B"))
+        XCTAssertTrue(firstReadResults[1].content.contains("\"entryID\":\"e2\""))
+        XCTAssertTrue(firstReadResults[1].content.contains("用户自述：C"))
+        XCTAssertFalse(firstReadResults[1].content.contains("\"entryID\":\"e1\""))
+
+        let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("live-aliases/ledger.jsonl"))
+        let ledgerEvents = await ledger.allEvents()
+        let persisted = try XCTUnwrap(ledgerEvents.last(where: { $0.stateAliases != nil })?.stateAliases)
+        XCTAssertEqual(persisted[ProfileAliasStore.firstID], "e1")
+        XCTAssertEqual(persisted[ProfileAliasStore.secondID], "e2")
+
+        let restoredCapture = RequestCapture()
+        let restoredRuntime = NativeStudyAgentRuntime(
+            model: "mock",
+            adapter: ProfileAliasSequenceAdapter(capture: restoredCapture, mutates: false),
+            ledgerRoot: root,
+            systemPromptText: "学习助手",
+            liveStores: NativeLiveStores(profile: { await store.snapshot() })
+        )
+        _ = try await restoredRuntime.respond(to: request)
+        let restoredMessages = try XCTUnwrap(restoredCapture.requests.last).messages
+        let restoredRead = try XCTUnwrap(restoredMessages.last {
+            $0.role == .tool && $0.content.contains("\"courseProfile\"")
+        })
+        XCTAssertTrue(restoredRead.content.contains("\"entryID\":\"e2\""))
+        XCTAssertFalse(restoredRead.content.contains(ProfileAliasStore.secondID))
+    }
+
+    func testLegacyStateHistoryProjectsToCurrentAliasesWithoutChangingStoredEvents() async throws {
+        let memoryID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        let unrelatedID = "55555555-5555-4555-8555-555555555555"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-legacy-state-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        _ = try await ledger.append { NativeSessionEvent(type: .turnStart, seq: $0, timeMS: $1, turn: 1) }
+        _ = try await ledger.append {
+            NativeSessionEvent(
+                type: .userMessage,
+                seq: $0,
+                timeMS: $1,
+                turn: 1,
+                text: "旧问题\n\n本轮 contextRevision 是 `legacy-r1`。所有写工具必须原样回传。"
+            )
+        }
+        _ = try await ledger.append {
+            NativeSessionEvent(
+                type: .toolCall,
+                seq: $0,
+                timeMS: $1,
+                turn: 1,
+                toolCallID: "legacy-update",
+                toolName: "weibei_update_learning_memory",
+                argumentsJSON: #"{"contextRevision":"legacy-r1","memoryRevision":3,"entries":[{"memoryID":"44444444-4444-4444-8444-444444444444","kind":"progress","text":"旧进度"}]}"#
+            )
+        }
+        _ = try await ledger.append {
+            NativeSessionEvent(
+                type: .toolResult,
+                seq: $0,
+                timeMS: $1,
+                turn: 1,
+                text: #"{"contextRevision":"legacy-r1","memoryRevision":3,"memoryID":"44444444-4444-4444-8444-444444444444"}"#,
+                toolCallID: "legacy-update",
+                toolName: "weibei_update_learning_memory"
+            )
+        }
+        _ = try await ledger.append {
+            NativeSessionEvent(
+                type: .assistantMessage,
+                seq: $0,
+                timeMS: $1,
+                turn: 1,
+                text: "已记录，编号是 \(memoryID.uuidString.lowercased())；用户讨论的 UUID 是 \(unrelatedID)"
+            )
+        }
+        _ = try await ledger.append {
+            NativeSessionEvent(
+                type: .toolCall,
+                seq: $0,
+                timeMS: $1,
+                turn: 1,
+                toolCallID: "legacy-read",
+                toolName: "weibei_course_read",
+                argumentsJSON: #"{"itemID":"55555555-5555-4555-8555-555555555555"}"#
+            )
+        }
+        _ = try await ledger.append {
+            NativeSessionEvent(
+                type: .toolResult,
+                seq: $0,
+                timeMS: $1,
+                turn: 1,
+                text: #"{"items":[{"item":{"id":"55555555-5555-4555-8555-555555555555","role":"material","title":"普通材料"}}]}"#,
+                toolCallID: "legacy-read",
+                toolName: "weibei_course_read"
+            )
+        }
+        try await ledger.closeTurn(turn: 1, reason: .completed)
+        var request = testRequest()
+        request.learningContext = StudyAgentLearningContext(memories: [LearningMemoryEntry(
+            id: memoryID,
+            kind: .progress,
+            text: "旧进度",
+            evidence: "旧会话",
+            origin: .userStatement,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )])
+        let projected = NativeStateAliases(request: request).projectedHistory(await ledger.deriveProjection())
+        let projectedText = projected.messages.map(\.content).joined(separator: "\n")
+        XCTAssertTrue(projectedText.contains("m1"))
+        XCTAssertFalse(projectedText.contains(memoryID.uuidString.lowercased()))
+        XCTAssertFalse(projectedText.contains("legacy-r1"))
+        XCTAssertFalse(projectedText.contains("memoryRevision"))
+        XCTAssertTrue(projectedText.contains(unrelatedID), "普通正文和非状态工具中的 UUID 必须原样保留")
+        let readCall = projected.records.flatMap { $0.message.toolCalls ?? [] }
+            .first { $0.id == "legacy-read" }
+        XCTAssertTrue(try XCTUnwrap(readCall).arguments.contains(unrelatedID))
+        let stored = await ledger.deriveMessages().map(\.content).joined(separator: "\n")
+        XCTAssertTrue(stored.contains(memoryID.uuidString.lowercased()))
+        XCTAssertTrue(stored.contains("legacy-r1"))
     }
 
     // 缓存标记覆盖固定提示和最新消息，同时保留文字、图片和工具结果的内容与关联。
@@ -446,10 +856,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
     func testProviderRequestEncodingIsStableForPromptCaching() async throws {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let tools = await registry.resolved(scope: .global)
+        let prompt = NativePromptAssembler.webiSystemPrompt(bundledText: "固定提示")
+        for tool in tools { XCTAssertFalse(prompt.contains(tool.description)) }
         let request = NativeLLMRequest(model: "test", messages: [
-            NativeModelMessage(role: .system, content: "固定提示"),
+            NativeModelMessage(role: .system, content: prompt),
             NativeModelMessage(role: .user, content: "问题"),
-        ], tools: await registry.resolved(scope: .global))
+        ], tools: tools)
         let encoders: [(NativeLLMRequest) throws -> URLRequest] = [
             OpenAIResponsesProvider(baseURL: URL(string: "https://api.openai.com/v1")!, accessToken: "test").makeURLRequest,
             OpenAIChatCompletionsProvider(apiKey: "test").makeURLRequest,
@@ -459,6 +872,19 @@ final class NativeAgentRuntimeTests: XCTestCase {
         for encode in encoders {
             let bodies = try (0..<30).map { _ in try XCTUnwrap(encode(request).httpBody) }
             XCTAssertEqual(Set(bodies).count, 1)
+            func definitions(in object: Any) -> [[String: Any]] {
+                if let values = object as? [Any] { return values.flatMap { definitions(in: $0) } }
+                guard let value = object as? [String: Any] else { return [] }
+                let own = value["name"] is String && value["description"] is String ? [value] : []
+                return own + value.values.flatMap { definitions(in: $0) }
+            }
+            let definitions = definitions(in: try JSONSerialization.jsonObject(with: bodies[0]))
+            for tool in tools {
+                let encoded = definitions.filter { $0["name"] as? String == tool.name }
+                XCTAssertEqual(encoded.count, 1)
+                XCTAssertEqual(encoded.first?["description"] as? String, tool.description)
+                XCTAssertNotNil(encoded.first?["parameters"] ?? encoded.first?["input_schema"])
+            }
         }
     }
 
@@ -491,10 +917,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
             request: testRequest(), ledger: ledger, registry: registry,
             adapter: SequenceAdapter(steps: [
                 [.textDelta(index: 0, text: "before"),
-                 .toolCallDelta(index: 0, id: "v1", name: "weibei_visualize", argumentsDelta: #"{"id":"figure","spec":{"items":[{"value":1}]}}"#),
+                 .toolCallDelta(index: 0, id: "v1", name: "render_ui", argumentsDelta: #"{"id":"figure","spec":{"items":[{"value":1}]}}"#),
                  .finish(reason: .toolCalls, replayState: nil)],
                 [.textDelta(index: 0, text: "after"),
-                 .toolCallDelta(index: 0, id: "v2", name: "weibei_visualize", argumentsDelta: #"{"id":"figure","spec":{"items":[{"value":2}]}}"#),
+                 .toolCallDelta(index: 0, id: "v2", name: "render_ui", argumentsDelta: #"{"id":"figure","spec":{"items":[{"value":2}]}}"#),
                  .finish(reason: .toolCalls, replayState: nil)],
                 [.textDelta(index: 0, text: "tail"), .finish(reason: .stop, replayState: nil)]
             ]), model: "mock", hostToolHandler: nil, systemPrompt: "test",
@@ -1109,10 +1535,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(chunks.first, .textDelta(index: 0, text: "利率"))
     }
 
-    func testSkillRegistryLoadsVisualizeAndSocratic() throws {
+    func testSkillRegistryLoadsGenuiAndSocratic() throws {
         let root = try AgentResources.bundled().skillsURL
         let registry = try NativeSkillRegistry.load(from: root)
-        XCTAssertNotNil(registry.pack(named: "visualize"))
+        XCTAssertNotNil(registry.pack(named: "genui"))
         XCTAssertNotNil(registry.pack(named: "socratic-questioning"))
         XCTAssertTrue(registry.catalogSummary().contains("socratic-questioning"))
     }
@@ -1548,9 +1974,9 @@ private struct MockLLMAdapter: NativeLLMAdapter {
     }
 }
 
-private final class CompactionLoopAdapter: NativeContextWindowTestingAdapter, @unchecked Sendable {
+private final class CompactionLoopAdapter: NativeLLMAdapter, @unchecked Sendable {
     let family = "mock"
-    let contextWindowForTesting = 40_000
+    let contextWindow: Int? = 40_000
     private let lock = NSLock()
     private var requests: [NativeLLMRequest] = []
     private var normalRequests = 0
@@ -1776,6 +2202,22 @@ private actor WorkspaceSearchRecorder {
     }
 }
 
+private actor StateUpdateCapture {
+    private(set) var learningUpdate: StudyAgentLearningUpdate?
+    private(set) var profileUpdate: StudyAgentCourseProfileUpdate?
+    private(set) var relationProposal: StudyAgentRelationProposal?
+
+    func record(_ proposal: StudyAgentRelationProposal) { relationProposal = proposal }
+
+    func record(_ update: StudyAgentLearningUpdate) {
+        learningUpdate = update
+    }
+
+    func record(_ update: StudyAgentCourseProfileUpdate) {
+        profileUpdate = update
+    }
+}
+
 private func testRequest() -> StudyAgentRequest {
     StudyAgentRequest(
         purpose: .conversation,
@@ -1791,6 +2233,98 @@ private func testRequest() -> StudyAgentRequest {
 private final class RequestCapture: @unchecked Sendable {
     var request: NativeLLMRequest?
     var requests: [NativeLLMRequest] = []
+}
+
+private actor ProfileAliasStore {
+    static let firstID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    static let secondID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+    private var profile = StudyAgentCourseProfileContext()
+
+    func snapshot() -> StudyAgentCourseProfileContext { profile }
+
+    func persist(_ update: StudyAgentCourseProfileUpdate) -> NativeStorePersistReceipt {
+        profile.entries.removeAll { update.removedEntryIDs.contains($0.id) }
+        var appliedIDs: [UUID] = []
+        for entry in update.entries {
+            let id = entry.entryID ?? (entry.text.contains("：B") ? Self.firstID : Self.secondID)
+            let next = StudyAgentCourseProfileEntry(id: id, kind: entry.kind.rawValue, text: entry.text)
+            if let index = profile.entries.firstIndex(where: { $0.id == id }) {
+                profile.entries[index] = next
+            } else {
+                profile.entries.append(next)
+            }
+            if let uuid = UUID(uuidString: id) { appliedIDs.append(uuid) }
+        }
+        profile.revision += 1
+        return NativeStorePersistReceipt(
+            status: .saved,
+            message: "ok",
+            profileUpdate: AgentReplyProfileUpdate(entryIDs: appliedIDs, summary: "已更新", texts: update.entries.map(\.text))
+        )
+    }
+}
+
+private final class ProfileAliasSequenceAdapter: NativeLLMAdapter, @unchecked Sendable {
+    let family = "mock"
+    private let capture: RequestCapture
+    private let mutates: Bool
+    private let lock = NSLock()
+    private var step = 0
+
+    init(capture: RequestCapture, mutates: Bool) {
+        self.capture = capture
+        self.mutates = mutates
+    }
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        lock.lock()
+        step += 1
+        let current = step
+        capture.requests.append(request)
+        lock.unlock()
+        let chunks: [NativeStreamChunk]
+        if !mutates {
+            chunks = current == 1
+                ? Self.call(id: "restored-read", name: "weibei_read_learning_memory", arguments: "{}")
+                : [.textDelta(index: 0, text: "恢复完成"), .finish(reason: .stop, replayState: nil)]
+        } else {
+            switch current {
+            case 1:
+                chunks = Self.call(
+                    id: "create-b",
+                    name: "weibei_course_profile_update",
+                    arguments: #"{"checkpoint":"userRequested","entries":[{"kind":"concept","text":"用户自述：B"}]}"#
+                )
+            case 2:
+                chunks = Self.call(id: "read-b", name: "weibei_read_learning_memory", arguments: "{}")
+            case 3:
+                chunks = Self.call(
+                    id: "delete-b",
+                    name: "weibei_course_profile_update",
+                    arguments: #"{"checkpoint":"userRequested","removedEntryIDs":["e1"]}"#
+                )
+            case 4:
+                chunks = Self.call(
+                    id: "create-c",
+                    name: "weibei_course_profile_update",
+                    arguments: #"{"checkpoint":"userRequested","entries":[{"kind":"concept","text":"用户自述：C"}]}"#
+                )
+            case 5:
+                chunks = Self.call(id: "read-c", name: "weibei_read_learning_memory", arguments: "{}")
+            default:
+                chunks = [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)]
+            }
+        }
+        return MockLLMAdapter(chunks: chunks).stream(request)
+    }
+
+    private static func call(id: String, name: String, arguments: String) -> [NativeStreamChunk] {
+        [
+            .toolCallDelta(index: 0, id: id, name: name, argumentsDelta: arguments),
+            .finish(reason: .toolCalls, replayState: nil),
+        ]
+    }
 }
 
 private final class TitleCapture: @unchecked Sendable {

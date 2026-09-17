@@ -3,12 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-/Q7VUHZ+U6FCYUsHCtl/w3Is/xwvhiqHP86ympq/1/A=' 'sha256-SuFo8wGOmx2vlL9uUXwg4bitgQ5n099bWuwROjzs8cQ=' 'sha256-C3/87NdeDB3LPHyIre2Detgd6gPZT1oYG+hv/b3NJBI='; style-src 'self' 'unsafe-inline'; img-src 'self' https: http: data: blob:; media-src https: http:; font-src 'self' data:; object-src 'none'; base-uri 'none'">
   <link rel="stylesheet" href="genui.css">
 </head>
 <body>
-  <main id="genui-root" aria-live="polite"></main>
-  <script src="genui-math.js"></script>
+  <main id="genui-root"><div id="genui-content"></div><p id="genui-status" role="status" hidden></p></main>
   <script src="genui.js"></script>
 </body>
 </html>

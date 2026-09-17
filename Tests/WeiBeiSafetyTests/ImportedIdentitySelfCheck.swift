@@ -358,9 +358,9 @@ enum ImportedIdentitySelfCheck {
         }
         store.showContextualBrowser(.note)
         try check(
-            store.activeNoteItem == nil
+            store.notePickerPresented && store.activeNoteItem?.id == note.id
                 && store.selectedMaterialItem?.id == material.id,
-            "笔记内容页不能稳定返回笔记列表；note=\(store.activeNoteItem?.id ?? "nil") material=\(store.selectedMaterialItem?.id ?? "nil")"
+            "笔记选择器未保留当前笔记；note=\(store.activeNoteItem?.id ?? "nil") material=\(store.selectedMaterialItem?.id ?? "nil")"
         )
         store.openContextualItem(note.id, kind: .note)
         store.showContextualBrowser(.material)
@@ -398,7 +398,7 @@ enum ImportedIdentitySelfCheck {
         store.showRightPane = true
         store.focusedPane = .agent
         store.focusRequest += 1
-        store.showReaderSearch = true
+        store.showDocumentSearch = true
 
         store.selectionContext = SelectionContext(
             text: "隔离自检选区",

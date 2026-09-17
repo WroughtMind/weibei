@@ -5,6 +5,13 @@ import Foundation
 import PDFKit
 import WeiBeiCore
 
+try checkOfficeDocumentReading()
+if CommandLine.arguments.contains("--office") {
+    print("Office source, search and persisted-location check passed")
+    exit(0)
+}
+
+
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() {
         fputs("self-check failed: \(message)\n", stderr)
@@ -1118,6 +1125,10 @@ expect(!pdfSelectionGate.shouldPublish(text: "", now: 1.01), "empty PDFKit pulse
 pdfSelectionGate.endTracking()
 expect(!pdfSelectionGate.shouldPublish(text: "", now: 1.02), "empty PDFKit pulses right after mouse-up do not cancel the capsule")
 expect(pdfSelectionGate.shouldPublish(text: "", now: 1.02 + PDFSelectionReportGate.emptySuppression), "a later real empty selection can still dismiss the capsule")
+expect(pdfSelectionGate.shouldPublish(text: "new passage", now: 2), "new PDF selection is published")
+pdfSelectionGate.beginTracking()
+pdfSelectionGate.endTracking()
+expect(pdfSelectionGate.shouldPublish(text: "", now: 2.01), "a new click clears the previous PDF selection even inside the pulse suppression window")
 let oldMacLibrary = "/Users/old-owner/Documents/魏碑资料库"
 let thisMacLibrary = URL(fileURLWithPath: "/Users/new-owner/Documents/魏碑资料库", isDirectory: true)
 let recoveredRoots = CourseLibraryRootRecovery.candidates(

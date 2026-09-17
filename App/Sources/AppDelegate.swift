@@ -103,7 +103,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 case .navigateBack: store.navigateBackInWorkspace()
                 case .navigateForward: store.navigateForwardInWorkspace()
                 case .courseIndex: store.toggleLibrary()
-                case .searchInMaterial: store.revealReaderSearch()
+                case .searchInMaterial: store.revealDocumentSearch()
                 case .focusLibrary: store.focus(.library)
                 case .focusReader: store.focus(.reader)
                 case .focusNotes: store.focus(.notes)
@@ -201,23 +201,23 @@ struct CatalystWeiBeiApp: App {
             workspaceContent
 #endif
         }
-        .defaultSize(width: 1240, height: 760)
+        // Catalyst turns defaultSize into fixed native size constraints on macOS 27.
+        // CatalystWindowChrome requests the initial frame without restricting later resizing.
         WindowGroup("设置", id: "weibei-settings") {
             SettingsView()
                 .weiBeiMotionScoped()
                 .environmentObject(AppDelegate.workspace)
                 .environmentObject(AppDelegate.updates)
                 .frame(minWidth: 700, minHeight: 600)
-                .background(CatalystWindowChrome(appearanceMode: AppDelegate.workspace.appearanceMode))
+                .background(CatalystWindowChrome(appearanceMode: AppDelegate.workspace.appearanceMode,
+                                                initialSize: CGSize(width: 900, height: 720)))
                 .ignoresSafeArea(.container, edges: .top)
         }
-        .defaultSize(width: 900, height: 640)
     }
 
     private var workspaceContent: some View {
+        // Native window size restrictions own the minimum; content must fit below the toolbar.
         CatalystWorkspaceRoot(store: AppDelegate.workspace, appDelegate: appDelegate)
-            .frame(minWidth: 520, minHeight: 720)
-            .ignoresSafeArea(.container, edges: .top)
             .onOpenURL { AppDelegate.workspace.importFiles([$0]) }
 #if WEIBEI_ACCEPTANCE_CHECKS
             .task {

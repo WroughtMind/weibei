@@ -69,7 +69,7 @@ for url in sorted(expected):
                 assert target.is_file() and target.stat().st_size, f'{url}: missing resource {value}'
     for image in nodes(document, 'img'):
         assert 'alt' in image.attrs, f'{url}: image needs an alt decision'
-        for attr in ('src', 'srcset'):
+        for attr in ('src', 'srcset', 'data-src', 'data-srcset'):
             for entry in image.attrs.get(attr, '').split(','):
                 value = entry.strip().split(' ')[0]
                 if not value:
@@ -79,6 +79,21 @@ for url in sorted(expected):
     for key in ('og:image',):
         image_path = local_file(nodes(document, 'meta', property=key)[0].attrs['content'])
         assert image_path.is_file() and image_path.stat().st_size
+    if url.endswith('/labs.html'):
+        image_language = 'en' if language == 'en' else 'zh'
+        prefix = f'/weibei/assets/labs/{image_language}/'
+        previews = nodes(document, 'a', **{'class': 'lab-preview'})
+        assert len(previews) == 3, f'{url}: missing project preview'
+        for preview in previews:
+            image = next(n for n in preview.walk() if n.tag == 'img')
+            assert image.attrs.get('sizes'), f'{url}: missing responsive image sizing'
+            candidates = [preview.attrs['href'], image.attrs['src']]
+            candidates += [entry.strip().split()[0] for entry in image.attrs['srcset'].split(',')]
+            for candidate in candidates:
+                resolved = urljoin(url, candidate)
+                assert urlsplit(resolved).path.startswith(prefix), f'{url}: wrong image language: {candidate}'
+                target = local_file(resolved)
+                assert target and target.is_file() and target.stat().st_size, f'{url}: missing localized image: {candidate}'
 
 for url, document in pages.items():
     for alternate in nodes(document, 'link', rel='alternate'):

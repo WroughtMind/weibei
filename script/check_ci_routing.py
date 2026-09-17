@@ -82,7 +82,7 @@ with tempfile.TemporaryDirectory() as directory:
         ('官网', ['website/style.css', '.github/workflows/pages.yml'], {'website-check'}),
         ('发布说明和设计文档', ['Docs/releases/README.md', 'DesignSystem/README.md', 'LICENSE'], set()),
         ('工具测试', ['script/homebrew/generate_cask.test.mjs'], {'tools-check'}),
-        ('工具代码', ['script/check-genui-math.ts'], {'tools-check'}),
+        ('GenUI 构建', ['script/build_genui.mjs'], {'app-check', 'catalyst-check'}),
         ('检查编排', ['.github/workflows/pr-checks.yml', 'script/check_ci_routing.py'], set()),
         ('官网与应用混合', ['website/app.js', 'Sources/WeiBei/Stores/WorkspaceStore.swift'], {'website-check', 'app-check', 'catalyst-check'}),
         ('正式会话代码', ['App/Sources/ConversationController.swift'], {'app-check', 'catalyst-check'}),

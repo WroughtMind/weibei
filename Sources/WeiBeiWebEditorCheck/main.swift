@@ -135,6 +135,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 
     private let webView: WKWebView
+    private let window: NSWindow
     private var isDone = false
     private var failure: String?
     private var activatedWikiTitle: String?
@@ -155,7 +156,6 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
         let source = """
-        document.documentElement.setAttribute("writingsuggestions", "false");
         window.initialMarkdown = \(json(sampleMarkdown));
         window.weiBeiDocumentID = "web-editor-check";
         window.weiBeiMarkdownEditable = true;
@@ -164,8 +164,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         window.weiBeiMarkdownBaseURL = \(json(URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor/").absoluteString));
         """
         controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: "document.documentElement.setAttribute('writingsuggestions', 'false')", injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
+        // Focus-dependent source/preview states need a real host, kept hidden.
+        window = NSWindow(contentRect: webView.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = webView
+        window.makeFirstResponder(webView)
         super.init()
         for name in ["editorReady", "dirtyChanged", "snapshotReady", "outlineChanged", "selectionChanged", "askAgentWithSelection", "linkEditorRequested", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested", "selectionAskMark", "editorFailure"] {
             controller.add(self, name: name)
@@ -1488,9 +1493,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         (() => {
           const editor = window.WeiBeiEditor;
           const fail = (message) => { throw new Error(message); };
-          const key = (element, name, options = {}) => element.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true, ...options }));
-          const sourceHidden = (node) => node.classList.contains('weibei-math-adjacent')
-            || getComputedStyle(node.querySelector('.weibei-math-source')).display === 'none';
+          const sourceHidden = (node) => getComputedStyle(node.querySelector('.weibei-math-source')).display === 'none';
           const visible = (node) => { const style = getComputedStyle(node); const rect = node.getBoundingClientRect(); return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0; };
 
           editor.setDocumentID('math-node-interactions');
@@ -1502,28 +1505,15 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           if (![inline, block, invalid].every((node) => node && visible(node) && sourceHidden(node))) fail('formula source was visible by default or its container was hidden');
           if (!invalid?.classList.contains('weibei-math-invalid') || invalid.querySelector('.katex-error') || invalid.querySelector('.weibei-math-preview')?.textContent !== \(json(invalidFormula))) fail('invalid formula did not preserve its original source without katex-error');
 
-          inline.querySelector('.weibei-math-preview').click();
-          let input = inline.querySelector('.weibei-math-source');
-          if (!inline.classList.contains('weibei-math-editing') || document.activeElement !== input || getComputedStyle(input).display === 'none') fail('click did not open inline formula editing');
-          input.value = 'x^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter');
-          if (!editor.getMarkdown().includes('$x^3$') || inline.classList.contains('weibei-math-editing')) fail('inline Enter did not save the formula');
-
-          key(invalid, 'Enter');
-          input = invalid.querySelector('.weibei-math-source');
-          if (document.activeElement !== input) fail('Enter did not open formula editing');
-          input.value = \(json(fixedFormula)); input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter');
-          if (invalid.classList.contains('weibei-math-invalid') || !invalid.querySelector('.weibei-math-preview > .katex') || !editor.getMarkdown().includes(\(json(fixedFormula)))) fail('correcting an invalid formula did not restore its preview');
-
-          key(block, 'Enter');
-          input = block.querySelector('.weibei-math-source');
-          input.value = 'y^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter', { metaKey: true });
-          if (!editor.getMarkdown().includes('y^3') || block.classList.contains('weibei-math-editing')) fail('block Command-Enter did not save the formula');
-          block.querySelector('.weibei-math-preview').click(); input = block.querySelector('.weibei-math-source'); input.value = 'y^4'; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('blur'));
-          if (!editor.getMarkdown().includes('y^4')) fail('block blur did not save the formula');
-          inline.querySelector('.weibei-math-preview').click(); input = inline.querySelector('.weibei-math-source'); input.value = 'x^4'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Escape');
-          if (!editor.getMarkdown().includes('$x^4$')) fail('Escape did not save the formula');
+          for (const [before, after, selector] of [['x^2', 'x^3', '.weibei-math-inline'], ['y^2', 'y^3', '.weibei-math-block'], [\(json(invalidFormula)), \(json(fixedFormula)), '.weibei-math-inline.weibei-math-invalid']]) {
+            const formula = document.querySelector(selector);
+            formula.querySelector('.weibei-math-preview').click();
+            if (formula.querySelector('input, textarea') || sourceHidden(formula)) fail('formula did not enter native source editing');
+            editor.selectFirstTextForCheck(before); editor.typeTextForCheck(after); editor.pressKeyForCheck('Escape');
+            if (!editor.getMarkdown().includes(after) || !sourceHidden(formula)) fail('formula source edit or exit failed');
+          }
           const savedFormulas = editor.getMarkdown(); editor.setMarkdown(savedFormulas);
-          if (!editor.getMarkdown().includes('$x^4$') || !editor.getMarkdown().includes('y^4') || !document.querySelector('.weibei-math-inline[data-value="x^4"]') || !document.querySelector('.weibei-math-block[data-value="y^4"]')) fail('formula edits did not survive serialization and reload');
+          if (!document.querySelector('.weibei-math-inline[data-value="x^3"]') || !document.querySelector('.weibei-math-block[data-value="y^3"]')) fail('formula edits did not survive reload');
 
           editor.setDocumentID('math-render-scope');
           editor.setMarkdown('first $a^2$ and second $b^2$');
@@ -1531,7 +1521,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const untouchedPreview = formulas[1]?.querySelector('.weibei-math-preview');
           const untouchedHTML = untouchedPreview?.innerHTML;
           editor.resetCheckMetrics();
-          formulas[0]?.querySelector('.weibei-math-preview')?.click(); input = formulas[0]?.querySelector('.weibei-math-source'); input.value = 'a^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter');
+          editor.selectFirstTextForCheck('a^2'); editor.typeTextForCheck('a^3'); editor.pressKeyForCheck('Escape');
           const editedMetrics = editor.getCheckMetrics();
           if (editedMetrics.katexRenders < 1 || formulas[1]?.querySelector('.weibei-math-preview') !== untouchedPreview || untouchedPreview?.innerHTML !== untouchedHTML) fail('editing one formula rerendered an untouched formula');
           editor.setMarkdown('ordinary paragraph without formulas'); editor.resetCheckMetrics(); editor.typeTextForCheck(' plus text');
@@ -3530,7 +3520,6 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: """
-        document.documentElement.setAttribute("writingsuggestions", "false");
         window.initialMarkdown = \(json(markdown));
         window.weiBeiDocumentID = \(json(fixture));
         window.weiBeiMarkdownEditable = true;
@@ -3896,6 +3885,51 @@ private func runBenchmarks(completion: @escaping (Result<String, Error>) -> Void
     runFixture(at: 0)
 }
 
+final class SharedDiagramHarness: NSObject, WKScriptMessageHandler {
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {}
+
+    func run() {
+        let resources = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/WeiBei/Resources")
+        let source = json("graph TD\nA[阅读] --> B[整理]")
+        for (page, start) in [
+            ("Editor/diagram.html", "if (typeof renderDiagram !== 'function') return false; renderDiagram(\(source), 1);"),
+            ("genui.html", "if (!window.WeiBeiGenUIHost) return false; window.WeiBeiGenUIHost.render({id:'shared-diagram',theme:{surface:'rgba(255,255,255,1)',ink:'rgba(30,30,30,1)',muted:'rgba(80,80,80,1)',soft:'rgba(120,120,120,1)',border:'rgba(0,0,0,0.1)'},spec:{items:[{type:'mermaid',code:\(source)}]}});")
+        ] {
+            let configuration = WKWebViewConfiguration()
+            configuration.userContentController.add(self, name: "size")
+            let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+            view.loadFileURL(resources.appendingPathComponent(page), allowingReadAccessTo: resources)
+            let script = """
+            (() => {
+              if (!window.diagramCheckStarted) { \(start) window.diagramCheckStarted = true; }
+              const svg = document.querySelector('#diagram svg, #genui-content svg');
+              return Boolean(svg && svg.textContent.includes('阅读') && svg.textContent.includes('整理') && svg.getBoundingClientRect().height > 0);
+            })()
+            """
+            let deadline = Date().addingTimeInterval(20)
+            var rendered = false
+            while !rendered && Date() < deadline {
+                var result: Bool?
+                view.evaluateJavaScript(script) { value, _ in result = value as? Bool ?? false }
+                repeat { RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05)) }
+                while result == nil && Date() < deadline
+                rendered = result == true
+            }
+            if !rendered {
+                var detail: String?
+                view.callAsyncJavaScript("try { await window.__GenuiAssets__.mermaid.renderMermaid(\(source)); return 'rendered'; } catch(error) { return String(error); }", arguments: [:], in: nil, in: .page) { result in detail = String(describing: result) }
+                let timeout = Date().addingTimeInterval(2)
+                while detail == nil && Date() < timeout { RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05)) }
+                print("shared diagram detail: \(detail ?? "no response")")
+            }
+            expect(rendered, "shared diagram runtime did not render in \(page)")
+            view.stopLoading()
+        }
+        print("Shared diagram runtime: relationship view and GenUI passed")
+    }
+}
+
 let benchmarkMode = CommandLine.arguments.dropFirst().contains("--benchmark")
 if benchmarkMode {
     NSApplication.shared.setActivationPolicy(.accessory)
@@ -3917,6 +3951,14 @@ if benchmarkMode {
     exit(1)
 }
 NSApplication.shared.setActivationPolicy(.prohibited)
+if CommandLine.arguments.contains("--notes-interaction") {
+    NativeSelectionWritingHarness().run(scriptName: "native-notes.js")
+    exit(0)
+}
+if CommandLine.arguments.contains("--math-interaction") {
+    NativeSelectionWritingHarness().run(scriptName: "native-math.js")
+    exit(0)
+}
 if CommandLine.arguments.contains("--selection-writing") {
     NativeSelectionWritingHarness().run()
     exit(0)
@@ -3930,6 +3972,7 @@ if CommandLine.arguments.contains("--notes-typography") {
     NotesTypographyHarness().run()
     exit(0)
 }
+SharedDiagramHarness().run()
 NotesTypographyHarness().run()
 verifyAgentChatMarkdownSourceContract()
 UTF8HTMLReaderHarness().run()

@@ -86,6 +86,7 @@ public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Senda
     public var status: Int?
     public var retryAfterMs: Int?
     public var requestID: String?
+    public var usage: NativeTokenUsage?
     public var message: String
 
     public var errorDescription: String? { message }
@@ -115,12 +116,14 @@ public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Senda
         status: Int? = nil,
         retryAfterMs: Int? = nil,
         requestID: String? = nil,
+        usage: NativeTokenUsage? = nil,
         message: String
     ) {
         self.code = code
         self.status = status
         self.retryAfterMs = retryAfterMs
         self.requestID = requestID
+        self.usage = usage
         self.message = message
     }
 
@@ -195,6 +198,9 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
     public var firstKeptSeq: Int?
     public var imageMediaType: String?
     public var imageBase64: String?
+    /// Client-only state aliases. The ledger keeps this outside model-visible messages.
+    public var stateAliasScope: String?
+    public var stateAliases: [String: String]?
 
     public init(
         type: NativeSessionEventType,
@@ -213,7 +219,9 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         summary: String? = nil,
         firstKeptSeq: Int? = nil,
         imageMediaType: String? = nil,
-        imageBase64: String? = nil
+        imageBase64: String? = nil,
+        stateAliasScope: String? = nil,
+        stateAliases: [String: String]? = nil
     ) {
         self.type = type
         self.seq = seq
@@ -232,6 +240,8 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         self.firstKeptSeq = firstKeptSeq
         self.imageMediaType = imageMediaType
         self.imageBase64 = imageBase64
+        self.stateAliasScope = stateAliasScope
+        self.stateAliases = stateAliases
     }
 
     public var imagePart: NativeImagePart? {

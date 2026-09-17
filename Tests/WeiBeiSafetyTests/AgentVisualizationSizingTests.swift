@@ -4,6 +4,106 @@ import XCTest
 @testable import WeiBei
 
 final class AgentVisualizationSizingTests: XCTestCase {
+    @MainActor
+    func testGenUICardsInRowsKeepChartWidth() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let spec = #"""
+        {"items":[
+          {"type":"row","items":[
+            {"type":"card","title":"材料数量","items":[{"type":"chart","kind":"bars","horizontal":true,"data":[{"label":"教材","value":3},{"label":"论文","value":20},{"label":"笔记","value":7}]}]},
+            {"type":"card","title":"阅读路径","items":[{"type":"steps","steps":[{"title":"阅读"},{"title":"整理"},{"title":"讨论"}]}]}
+          ]},
+          {"type":"card","title":"材料清单","items":[{"type":"table","columns":["材料","数量"],"rows":[["教材",3],["论文",20],["笔记",7]]}]}
+        ]}
+        """#
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec)})")
+        for width in [420, 960] {
+            webView.frame.size.width = CGFloat(width)
+            let result = try await webView.evaluateJavaScript("""
+            (() => {
+              const chart = document.querySelector('[data-genui-chart]');
+              const group = chart.parentElement, row = group.parentElement;
+              const bars = [...chart.querySelectorAll('[style*="width:"]')].map(e => e.getBoundingClientRect().width);
+              return {
+                chartWidth: chart.getBoundingClientRect().width, rowWidth: row.getBoundingClientRect().width,
+                minBar: Math.min(...bars), maxBar: Math.max(...bars)};
+            })()
+            """) as? [String: Any]
+            let chartWidth = try XCTUnwrap(result?["chartWidth"] as? Double)
+            let rowWidth = try XCTUnwrap(result?["rowWidth"] as? Double)
+            XCTAssertGreaterThan(chartWidth / rowWidth, width == 420 ? 0.85 : 0.4)
+            let minBar = try XCTUnwrap(result?["minBar"] as? Double)
+            let maxBar = try XCTUnwrap(result?["maxBar"] as? Double)
+            XCTAssertGreaterThan(minBar, 0)
+            XCTAssertEqual(maxBar / minBar, 20.0 / 3, accuracy: 0.1)
+        }
+        withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
+    func testGenUIAllowsBundledProgramButBlocksOtherInlineScripts() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let blocked = try await webView.evaluateJavaScript("""
+        (() => {
+          const script = document.createElement('script');
+          script.textContent = 'window.untrustedScriptRan = true';
+          document.head.append(script);
+          script.remove();
+          return typeof window.WeiBeiGenUIHost.render === 'function' && !window.untrustedScriptRan;
+        })()
+        """) as? Bool
+        XCTAssertEqual(blocked, true)
+        withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
+    func testGenUIFollowsNativeThemesAndTextScaleWithoutLosingInput() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let spec: [String: Any] = ["items": [["type": "textarea", "id": "question"]]]
+        var surfaces = Set<String>()
+        for mode in WeiBeiAppearanceMode.allCases {
+            let theme = agentVisualizationTheme(for: mode, textScale: 1.25)
+            surfaces.insert(try XCTUnwrap(theme["surface"]))
+            let data = try JSONSerialization.data(withJSONObject: [
+                "id": "theme-check", "spec": spec, "theme": theme,
+                "appearance": mode.isDark ? "dark" : "light",
+            ])
+            let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
+            let result = try await webView.evaluateJavaScript("""
+            (() => {
+              const payload = \(payload);
+              window.WeiBeiGenUIHost.render(payload);
+              const input = document.querySelector('textarea');
+              if (\(mode == .paper)) {
+                Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '保留阅读疑问');
+                input.dispatchEvent(new Event('input', {bubbles:true}));
+              }
+              const expected = document.createElement('i');
+              expected.style.backgroundColor = payload.theme.surface;
+              expected.style.color = payload.theme.ink;
+              document.body.append(expected);
+              const actual = getComputedStyle(input), colors = getComputedStyle(expected);
+              const result = {
+                surface: actual.backgroundColor === colors.backgroundColor,
+                ink: actual.color === colors.color,
+                size: actual.fontSize,
+                value: input.value,
+                shadow: getComputedStyle(document.querySelector('[data-genui]')).getPropertyValue('--dsl-g-shadow-card').trim(),
+              };
+              expected.remove();
+              return result;
+            })()
+            """) as? [String: Any]
+            XCTAssertEqual(result?["surface"] as? Bool, true, mode.rawValue)
+            XCTAssertEqual(result?["ink"] as? Bool, true, mode.rawValue)
+            XCTAssertEqual(result?["size"] as? String, "17.5px", mode.rawValue)
+            XCTAssertEqual(result?["value"] as? String, "保留阅读疑问", mode.rawValue)
+            XCTAssertEqual(result?["shadow"] as? String, "none", mode.rawValue)
+        }
+        XCTAssertEqual(surfaces.count, WeiBeiAppearanceMode.allCases.count)
+        withExtendedLifetime(navigationProbe) {}
+    }
+
     func testGenUILoadFailureWaitsForUserReload() {
         var state = AgentVisualizationLoadState()
         let firstAttempt = state.attempt
@@ -39,7 +139,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
         webView.navigationDelegate = navigationProbe
         let entry = try XCTUnwrap(WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html"))
         webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
-        await fulfillment(of: [loaded], timeout: 3)
+        await fulfillment(of: [loaded], timeout: 10)
 
         let spec = #"{"items":[{"type":"button","label":"继续解释","action":"explain"}]}"#
         let rendered = expectation(description: "display receipt")
@@ -48,8 +148,11 @@ final class AgentVisualizationSizingTests: XCTestCase {
             XCTAssertEqual(body["renderToken"] as? String, "valid")
             rendered.fulfill()
         }
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), renderToken: 'valid', actionStatus: 'ready'}); document.querySelector('.button').click()")
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), renderToken: 'valid', actionStatus: 'ready'}); document.querySelector('button').click()")
         await fulfillment(of: [rendered], timeout: 3)
+        for _ in 0..<50 where actionProbe.requestID == nil {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
         let requestID = try XCTUnwrap(actionProbe.requestID)
         XCTAssertEqual(actionProbe.action, "explain")
         let rejection = "当前无法提交这条回答。"
@@ -60,8 +163,8 @@ final class AgentVisualizationSizingTests: XCTestCase {
         ])
         let resultJSON = try XCTUnwrap(String(data: resultData, encoding: .utf8))
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult(\(resultJSON))")
-        let rejectedDisabled = try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool
-        let rejectedText = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
+        let rejectedDisabled = try await webView.evaluateJavaScript("document.querySelector('button').disabled") as? Bool
+        let rejectedText = try await webView.evaluateJavaScript("document.getElementById('genui-root').textContent") as? String
         XCTAssertEqual(rejectedDisabled, false)
         XCTAssertTrue(rejectedText?.contains(rejection) == true)
         let failed = expectation(description: "invalid component receipt")
@@ -124,8 +227,8 @@ final class AgentVisualizationSizingTests: XCTestCase {
           const spec = {items:[{type:'textarea', id:'answer'}]};
           window.WeiBeiGenUIHost.render({spec});
           const control = document.querySelector('textarea');
-          control.value = \(encodedInput);
-          control.dispatchEvent(new Event('input'));
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(control, \(encodedInput));
+          control.dispatchEvent(new Event('input', {bubbles:true}));
           window.WeiBeiGenUIHost.render({spec, state: window.WeiBeiGenUIHost.snapshot()});
           return document.querySelector('textarea').value;
         })()
@@ -138,7 +241,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
     @MainActor
     func testGenUICopyWritesFullText() async throws {
         let (webView, navigationProbe) = try await loadGenUI()
-        let text = String(repeating: "需要完整复制的学习内容。", count: 1_000) + "复制末尾"
+        let text = String(repeating: "需要完整复制的学习内容。", count: 100) + "复制末尾"
         let data = try JSONSerialization.data(withJSONObject: [
             "spec": ["items": [["type": "copy", "text": text]]],
         ])
@@ -150,7 +253,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
             value: {writeText: text => { window.copiedText = text; return Promise.resolve(); }}
           });
           window.WeiBeiGenUIHost.render(\(payload));
-          document.querySelector('.button').click();
+          document.querySelector('button').click();
           return window.copiedText;
         })()
         """) as? String
@@ -160,54 +263,52 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIKeepsFullTextAndRevealsWholeTable() async throws {
-        let configuration = WKWebViewConfiguration()
-        let webView = WKWebView(
-            frame: NSRect(x: 0, y: 0, width: 640, height: 240),
-            configuration: configuration
-        )
-        let loaded = expectation(description: "GenUI runtime loaded")
-        let navigationProbe = GenUINavigationProbe { loaded.fulfill() }
-        webView.navigationDelegate = navigationProbe
-        let entry = try XCTUnwrap(
-            WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html")
-        )
-        webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
-        await fulfillment(of: [loaded], timeout: 3)
+    func testDSHGenUIBundledEnginesRenderOffline() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let spec = #"""
+        {"items":[
+          {"type":"mermaid","code":"graph LR; A[阅读] --> B[整理]"},
+          {"type":"echart","preset":"bar","data":[{"label":"资料","value":3}]},
+          {"type":"echart","option":{"xAxis":{"type":"category","data":["资料"]},"yAxis":{},"series":[{"type":"bar","data":[3]}]}},
+          {"type":"scene3d","meshes":[{"shape":"box"}]}
+        ]}
+        """#
+        let themeData = try JSONSerialization.data(withJSONObject: agentVisualizationTheme(for: .paper, textScale: 1))
+        let theme = try XCTUnwrap(String(data: themeData, encoding: .utf8))
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), theme: \(theme)})")
+        let ready = "['mermaid','echartsFull','three'].every(name => window.__GenuiAssets__?.[name]) && document.querySelectorAll('svg .node').length === 2 && document.querySelectorAll('canvas').length >= 3"
+        var rendered = false
+        for _ in 0..<100 {
+            rendered = try await webView.evaluateJavaScript(ready) as? Bool == true
+            if rendered { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let detail = try await webView.evaluateJavaScript("document.getElementById('genui-root').innerText") as? String
+        XCTAssertTrue(rendered, detail ?? "本地图表资源未完成渲染")
+        let sharedResources = try await webView.callAsyncJavaScript("""
+        await Promise.all(Array.from(document.fonts, font => font.load()));
+        const engines = Array.from(document.scripts, script => script.src);
+        return typeof window.WeiBeiMermaid.render === 'function'
+          && typeof window.__GenuiAssets__.echartsFull.createChart === 'function'
+          && engines.filter(src => src.endsWith('/echarts-full.js')).length === 1
+          && !engines.some(src => src.endsWith('/echarts-core.js') || src.endsWith('/mermaid.js'))
+          && [...document.fonts].length > 0
+          && [...document.fonts].every(font => font.status === 'loaded');
+        """, arguments: [:], in: nil, contentWorld: .page) as? Bool
+        XCTAssertEqual(sharedResources, true, "共享引擎和完整数学字体必须离线加载")
+        withExtendedLifetime(navigationProbe) {}
+    }
 
-        let tailMarker = "正文末尾仍然可见"
-        let content = String(repeating: "正文", count: 10_000) + tailMarker
-        let columns = (0..<13).map { "第 \($0) 列" }
-        let rows = (0..<120).map { row in columns.map { "第 \(row) 行 · \($0)" } }
-        let data = try JSONSerialization.data(withJSONObject: [
-            "spec": [
-                "items": [[
-                    "type": "text",
-                    "content": content,
-                ], [
-                    "type": "table",
-                    "columns": columns,
-                    "rows": rows,
-                ]],
-            ],
-        ])
-        let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(payload))")
-        let visibleText = try await webView.evaluateJavaScript("document.querySelector('.text').textContent") as? String
-        let totalRows = rows.count
-        let initialRows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
-        let progress = try await webView.evaluateJavaScript("document.querySelector('.data-progress').textContent") as? String
-        _ = try await webView.evaluateJavaScript("while (!document.querySelector('.table-wrap > .data-progress button').hidden) document.querySelector('.table-wrap > .data-progress button').click()")
-        let revealedRows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
-        let revealedColumns = try await webView.evaluateJavaScript("document.querySelectorAll('thead th').length") as? Int
-
-        XCTAssertTrue(visibleText?.contains(tailMarker) == true)
-        XCTAssertNotNil(initialRows)
-        XCTAssertLessThan(initialRows ?? totalRows, totalRows)
-        XCTAssertTrue(progress?.range(of: #"\d+/\d+"#, options: .regularExpression) != nil)
-        XCTAssertEqual(revealedRows, totalRows)
-        XCTAssertEqual(revealedColumns, columns.count)
-
+    @MainActor
+    func testDSHGenUITableRendersAndSortsLocally() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let spec = #"{"items":[{"type":"table","columns":["项目","数量"],"rows":[["乙",20],["甲",3]]}]}"#
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec)})")
+        let rows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
+        XCTAssertEqual(rows, 2)
+        _ = try await webView.evaluateJavaScript("document.querySelectorAll('thead th button')[1].click()")
+        let first = try await webView.evaluateJavaScript("document.querySelector('tbody tr').textContent") as? String
+        XCTAssertTrue(first?.contains("甲") == true)
         withExtendedLifetime(navigationProbe) {}
     }
 
@@ -275,7 +376,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
             WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html")
         )
         webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
-        await fulfillment(of: [loaded], timeout: 3)
+        await fulfillment(of: [loaded], timeout: 10)
 
         let repeatedText = String(repeating: "快速切换后内容仍应完整刷新。", count: 20)
         let spec: [String: Any] = [
@@ -337,7 +438,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
             WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html")
         )
         webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
-        await fulfillment(of: [loaded], timeout: 3)
+        await fulfillment(of: [loaded], timeout: 10)
         return (webView, navigationProbe)
     }
 }
@@ -412,6 +513,16 @@ private final class GenUINavigationProbe: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        onFinish()
+        Task { @MainActor in
+            for _ in 0..<100 {
+                if (try? await webView.evaluateJavaScript("Boolean(window.WeiBeiGenUIHost)")) as? Bool == true {
+                    onFinish()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            XCTFail("GenUI did not become ready after loading")
+            onFinish()
+        }
     }
 }

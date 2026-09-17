@@ -3,6 +3,7 @@ import CoreGraphics
 import CoreText
 import PDFKit
 import WeiBeiCore
+import ZIPFoundation
 
 func checkCourseDocumentSearchReadiness() throws {
     let root = FileManager.default.temporaryDirectory
@@ -201,6 +202,18 @@ func checkCourseDocumentSearchReadiness() throws {
         },
         pdfOCRPageLoader: { _, pageIndex in retryProbe.ocrOutcome(for: pageIndex) }
     )
+    // 前台搜索与后台 OCR 同时使用索引，不能让查询事务打断失败页的写入或重试。
+    let concurrentReaders = DispatchGroup()
+    for _ in 0..<2 {
+        concurrentReaders.enter()
+        DispatchQueue.global().async {
+            for _ in 0..<100 {
+                _ = retryIndex.lookup(items: [retryPDF], query: "绝不命中")
+            }
+            concurrentReaders.leave()
+        }
+    }
+    defer { concurrentReaders.wait() }
     retryIndex.schedule([retryPDF])
     let failedResult = waitForSearchResult(until: Date().addingTimeInterval(8)) {
         retryIndex.lookup(items: [retryPDF], query: "绝不命中")[retryPDF.id]
@@ -226,7 +239,7 @@ func checkCourseDocumentSearchReadiness() throws {
             && failedResult?.failedPageReasons == [0: PDFOCRFailureReason.recognition.rawValue]
             && retryProbe.counts == (native: 1, ocr: 1)
             && failedContext.items.first?.failedPageReasons == [1: "文字识别失败，可重试"],
-        "PDF 失败页、内部诊断或 Agent 人话原因不真实"
+        "PDF 失败页、内部诊断或 Agent 人话原因不真实：result=\(String(reflecting: failedResult)), calls=\(retryProbe.counts), reasons=\(String(reflecting: failedContext.items.first?.failedPageReasons))"
     )
     retryProbe.allowRecovery()
     try requireSearchCheck(retryIndex.retryFailedPDFPages(in: retryPDF), "当前失败页不能手动重试")
@@ -237,7 +250,7 @@ func checkCourseDocumentSearchReadiness() throws {
         recovered?.text?.contains("手动重试恢复") == true
             && retryProbe.counts == (native: 2, ocr: 1)
             && !retryIndex.retryFailedPDFPages(in: retryPDF),
-        "手动重试没有只重新处理当前失败页，或后端未复核当前失败状态"
+        "手动重试没有只重新处理当前失败页，或后端未复核当前失败状态：result=\(String(reflecting: recovered)), calls=\(retryProbe.counts)"
     )
 
     let courseID = UUID()
@@ -442,7 +455,7 @@ private func checkDirectSourceReading() throws {
                                                nativePDFTextLoader: nativeLoader)
     let body = mixedIndex.read(item: mixed, page: 1, location: nil)
     try requireSearchCheck(body.text?.contains("SCANNED BODY") == true && body.text?.split(separator: "\n").contains("1") == true,
-                           "带原生页码的扫描页漏掉图片正文或原生文字")
+                           "带原生页码的扫描页漏掉图片正文或原生文字：\(String(reflecting: body))")
     let background = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("mixed-background.sqlite3"),
                                                nativePDFTextLoader: nativeLoader)
     background.schedule([mixed])
@@ -450,7 +463,7 @@ private func checkDirectSourceReading() throws {
         background.searchPassages(item: mixed, query: "SCANNED BODY")
     } where: { !$0.passages.isEmpty }
     try requireSearchCheck(backgroundBody?.passages.first?.text.contains("SCANNED BODY") == true,
-                           "后台索引把混合扫描页误当成完整原生页")
+                           "后台索引未返回扫描页正文：\(String(reflecting: backgroundBody))")
     let failedIndex = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("mixed-failed.sqlite3"),
         nativePDFTextLoader: nativeLoader, pdfOCRPageLoader: { _, page in .failed(pageIndex: page, reason: .recognition) })
     let failed = failedIndex.read(item: mixed, page: 1, location: nil)
@@ -742,4 +755,87 @@ private enum CourseDocumentSearchSelfCheckError: LocalizedError {
             return "课程搜索就绪自检失败：\(message)"
         }
     }
+}
+
+/// One source-to-search check: Office order, formulas, notes and exact source locations.
+func checkOfficeDocumentReading() throws {
+    func archive(_ parts: [String: String]) throws -> Data {
+        let zip = try ZIPFoundation.Archive(data: Data(), accessMode: .create)
+        for (path, xml) in parts {
+            let bytes = Data(xml.utf8)
+            try zip.addEntry(with: path, type: .file, uncompressedSize: Int64(bytes.count)) { offset, count in
+                bytes.subdata(in: Int(offset)..<(Int(offset) + count))
+            }
+        }
+        return zip.data!
+    }
+    let packageRels = "http://schemas.openxmlformats.org/package/2006/relationships"
+    let rels = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    let word = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    let math = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+    let mainRel = "<Relationships xmlns=\"\(packageRels)\"><Relationship Id=\"main\" Type=\"\(rels)/officeDocument\" Target=\"word/document.xml\"/></Relationships>"
+    let docx = try archive([
+        "_rels/.rels": mainRel,
+        "word/document.xml": """
+        <w:document xmlns:w="\(word)" xmlns:m="\(math)"><w:body>
+        <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>课程定义</w:t></w:r></w:p>
+        <w:p><w:r><w:t>重复原文</w:t></w:r></w:p><w:p><w:r><w:t>重复原文</w:t></w:r></w:p>
+        <w:p><m:oMath><m:f><m:num><m:r><m:t>α+βx</m:t></m:r></m:num><m:den><m:r><m:t>n</m:t></m:r></m:den></m:f></m:oMath></w:p>
+        </w:body></w:document>
+        """,
+    ])
+    let sections = try OfficeDocumentText.sections(in: docx, kind: .docx)
+    expect(sections.count == 4 && sections[0].heading == "课程定义", "Word headings and paragraphs")
+    expect(sections[1].text == sections[2].text && sections[1].location != sections[2].location, "repeated passages keep distinct source locations")
+    expect(sections[3].text == "$\\frac{α+βx}{n}$", "native formula source preserves numerator and denominator")
+    var oversizedParts = ["_rels/.rels": mainRel, "word/document.xml": "<w:document xmlns:w=\"\(word)\"/>"]
+    for index in 0..<9 { oversizedParts["word/media/image\(index).bin"] = "" }
+    var oversized = try archive(oversizedParts)
+    var offset = 0
+    while let header = oversized.range(of: Data([0x50, 0x4b, 0x01, 0x02]), in: offset..<oversized.endIndex) {
+        let start = header.lowerBound
+        let nameLength = Int(oversized[start + 28]) | Int(oversized[start + 29]) << 8
+        let name = String(data: oversized[(start + 46)..<(start + 46 + nameLength)], encoding: .utf8)!
+        if name.hasPrefix("word/media/") {
+            // Declared sizes exercise the budget without allocating a 288 MiB fixture.
+            oversized.replaceSubrange((start + 24)..<(start + 28), with: [0, 0, 0, 2])
+        }
+        offset = start + 46 + nameLength
+    }
+    do {
+        _ = try OfficeDocumentText.sections(in: oversized, kind: .docx)
+        expect(false, "Office index accepted an archive over the reader's total unpacked-size budget")
+    } catch OfficeDocumentText.ReadError.oversizedPart(let path) {
+        expect(path == "document", "Office total budget is checked before extracting XML")
+    }
+    let slideText = { (text: String) in "<p:sld xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:p><a:r><a:t>\(text)</a:t></a:r></a:p></p:sld>" }
+    let pptx = try archive([
+        "_rels/.rels": mainRel.replacingOccurrences(of: "word/document.xml", with: "ppt/presentation.xml"),
+        "ppt/presentation.xml": "<p:presentation xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" xmlns:r=\"\(rels)\"><p:sldIdLst><p:sldId id=\"256\" r:id=\"second\"/><p:sldId id=\"257\" r:id=\"first\"/></p:sldIdLst></p:presentation>",
+        "ppt/_rels/presentation.xml.rels": "<Relationships xmlns=\"\(packageRels)\"><Relationship Id=\"first\" Type=\"\(rels)/slide\" Target=\"slides/slide1.xml\"/><Relationship Id=\"second\" Type=\"\(rels)/slide\" Target=\"slides/slide2.xml\"/></Relationships>",
+        "ppt/slides/slide1.xml": slideText("第二页原文"), "ppt/slides/slide2.xml": slideText("第一页原文"),
+        "ppt/slides/_rels/slide2.xml.rels": "<Relationships xmlns=\"\(packageRels)\"><Relationship Id=\"notes\" Type=\"\(rels)/notesSlide\" Target=\"../notesSlides/notesSlide2.xml\"/></Relationships>",
+        "ppt/notesSlides/notesSlide2.xml": slideText("老师备注"),
+    ])
+    let slides = try OfficeDocumentText.sections(in: pptx, kind: .pptx)
+    expect(slides.map(\.text) == ["第一页原文", "老师备注", "第二页原文"], "PPT follows presentation order and keeps source notes attached")
+    expect(slides[0].location == "ppt/slides/slide2.xml#p0" && slides[1].heading == "第 1 页 · 备注", "PPT source location uses actual part, not slide ordinal")
+    let sourceTitle = SourceReferenceTitle.parse("课件，章节标识：ppt/slides/slide2.xml#p0，章节：第 1 页")
+    expect(sourceTitle.title == "课件" && sourceTitle.sectionLocationID == slides[0].location, "source return parses Office locations")
+
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("weibei-office-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("课件.pptx")
+    try pptx.write(to: url)
+    let item = StudyItem(id: "office-source", title: "课件", subtitle: "", kind: .pptx, urlPath: url.path, isSample: false)
+    let index = CourseDocumentSearchIndex(databaseURL: root.appendingPathComponent("search.sqlite3"))
+    let result = index.lookup(items: [item], query: "第一页原文")[item.id]
+    expect(result?.text?.contains("第一页原文") == true && index.read(item: item, location: slides[0].location).passages.first?.location == slides[0].location, "Office source reaches existing course search at its exact location")
+    let anchor = SelectionTextAnchor(startOffset: 0, endOffset: 4, location: slides[0].location, revision: 2, sourceOrder: [0, 0])
+    let reopened = try JSONDecoder().decode(SelectionTextAnchor.self, from: JSONEncoder().encode(anchor))
+    expect(reopened == anchor, "selection location survives note persistence")
+    let first = SelectionRemarkRecord(selectionText: "第一页原文", remarkText: "", source: .document, ownerTitle: "课件", documentAnchor: SelectionDocumentAnchor(text: anchor))
+    let last = SelectionRemarkRecord(selectionText: "第二页原文", remarkText: "", source: .document, ownerTitle: "课件", documentAnchor: SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 0, endOffset: 4, location: slides[2].location, revision: 2, sourceOrder: [2, 0])), createdAt: .distantPast)
+    expect([last, first].sorted(by: SelectionRemarkRecord.inDocumentOrder).first?.id == first.id, "Office excerpts retain source order instead of creation order")
 }

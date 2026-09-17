@@ -2,6 +2,7 @@ import Foundation
 
 public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     public var model: String
+    public var providerID: String?
     public var adapter: NativeLLMAdapter
     public var contextWindow: Int?
     public var hostToolHandler: StudyAgentHostToolHandler?
@@ -19,6 +20,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     public init(
         model: String,
         adapter: NativeLLMAdapter,
+        providerID: String? = nil,
         contextWindow: Int? = nil,
         ledgerRoot: URL,
         systemPromptText: String,
@@ -30,6 +32,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     ) {
         self.model = model
         self.adapter = adapter
+        self.providerID = providerID
         self.contextWindow = contextWindow
         self.ledgerRoot = ledgerRoot
         self.systemPromptText = systemPromptText
@@ -61,22 +64,27 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         if delegateDepth >= NativeSubagentRunner.maximumDepth {
             await registry.hide("delegate", scope: scope)
         }
-        let tools = await registry.resolved(scope: scope)
         let prompt = NativePromptAssembler.webiSystemPrompt(
             bundledText: systemPromptText,
-            tools: tools,
             skillCatalog: liveStores.skillRegistry.catalogSummary()
+        )
+        let meteredAdapter = NativeMeteredLLMAdapter(
+            base: adapter, providerID: providerID, requestID: request.id,
+            usageURL: ledgerURL.deletingLastPathComponent().appendingPathComponent("usage.jsonl"),
+            contextWindow: contextWindow ?? adapter.contextWindow
         )
         var stores = liveStores
         if stores.startSubagent == nil {
             let adapter = self.adapter
             let model = self.model
+            let providerID = self.providerID
             let contextWindow = self.contextWindow
             let systemPromptText = self.systemPromptText
             let ledgerRoot = self.ledgerRoot
             let hostToolHandler = self.hostToolHandler
             let depth = delegateDepth
             let baseStores = liveStores
+            let reasoningEffort = request.reasoningEffort
             stores.startSubagent = { request in
                 var next = request
                 next.depth = max(request.depth, depth + 1)
@@ -84,11 +92,13 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
                     next,
                     adapter: adapter,
                     model: model,
+                    providerID: providerID,
                     contextWindow: contextWindow,
                     systemPrompt: systemPromptText,
                     ledgerRoot: ledgerRoot,
                     hostToolHandler: hostToolHandler,
-                    liveStores: baseStores
+                    liveStores: baseStores,
+                    reasoningEffort: reasoningEffort
                 )
             }
         }
@@ -97,7 +107,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
             request: request,
             ledger: ledger,
             registry: registry,
-            adapter: adapter,
+            adapter: meteredAdapter,
             model: model,
             contextWindow: contextWindow,
             hostToolHandler: hostToolHandler,
@@ -109,7 +119,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         await scheduleSessionTitleIfNeeded(
             question: request.question,
             answer: result.text,
-            ledger: ledger
+            ledger: ledger,
+            adapter: meteredAdapter
         )
         return StudyAgentReply(
             text: result.text,
@@ -135,7 +146,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     private func scheduleSessionTitleIfNeeded(
         question: String,
         answer: String,
-        ledger: NativeAgentLedger
+        ledger: NativeAgentLedger,
+        adapter: NativeLLMAdapter
     ) async {
         guard mode == .assistant, let handler = sessionTitleHandler else { return }
         let completedTurnCount = (await ledger.allEvents()).filter {
@@ -144,7 +156,6 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         guard NativeSessionTitle.shouldPropose(completedTurnCount: completedTurnCount) else { return }
         let trimmedAnswer = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedAnswer.isEmpty else { return }
-        let adapter = self.adapter
         let model = self.model
         Task.detached(priority: .utility) {
             guard let title = await NativeSessionTitle.generate(

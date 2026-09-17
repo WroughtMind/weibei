@@ -23,6 +23,9 @@ struct AgentComposerTextEditor: UIViewRepresentable {
         view.textContainer.lineFragmentPadding = 0
         view.accessibilityIdentifier = "agent-composer-input"
         view.text = text
+        view.onLayout = { [weak coordinator = context.coordinator] view in
+            coordinator?.report(view)
+        }
         view.onAttachment = { [weak view, weak coordinator = context.coordinator] in
             guard let view else { return }; coordinator?.applyFocus(to: view)
         }
@@ -36,15 +39,17 @@ struct AgentComposerTextEditor: UIViewRepresentable {
         view.accessibilityLabel = accessibilityLabel
         if view.markedTextRange == nil, view.text != text { view.text = text }
         context.coordinator.applyFocus(to: view)
+        view.setNeedsLayout()
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: ComposerTextView, context: Context) -> CGSize? {
         let width = max(1, proposal.width ?? uiView.bounds.width)
-        let content = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        let line = uiView.font?.lineHeight ?? 20
-        let height = lineLimit.map { min(max(content, line * CGFloat($0.lowerBound)), line * CGFloat($0.upperBound)) } ?? max(line, content)
-        uiView.isScrollEnabled = content > height + 1
-        context.coordinator.report(height)
-        return CGSize(width: width, height: height)
+        return CGSize(width: width, height: Self.heights(uiView, width: width, lineLimit: lineLimit).fitted)
+    }
+    private static func heights(_ view: UITextView, width: CGFloat, lineLimit: ClosedRange<Int>?) -> (content: CGFloat, fitted: CGFloat) {
+        let content = view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        let line = view.font?.lineHeight ?? 20
+        let fitted = lineLimit.map { min(max(content, line * CGFloat($0.lowerBound)), line * CGFloat($0.upperBound)) } ?? max(line, content)
+        return (content, fitted)
     }
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: AgentComposerTextEditor
@@ -64,14 +69,26 @@ struct AgentComposerTextEditor: UIViewRepresentable {
             parent.submit()
             return false
         }
-        func report(_ height: CGFloat) {
-            let binding = parent.$measuredHeight
-            guard abs(binding.wrappedValue - height) > 0.5 else { return }
-            DispatchQueue.main.async { if abs(binding.wrappedValue - height) > 0.5 { binding.wrappedValue = height } }
+        func report(_ view: UITextView) {
+            // SwiftUI probes narrow widths; only the placed editor may update its height.
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view, view.bounds.width > 1 else { return }
+                let heights = AgentComposerTextEditor.heights(view, width: view.bounds.width, lineLimit: parent.lineLimit)
+                let scrolls = heights.content > heights.fitted + 1
+                if view.isScrollEnabled != scrolls { view.isScrollEnabled = scrolls }
+                if abs(parent.measuredHeight - heights.fitted) > 0.5 {
+                    parent.measuredHeight = heights.fitted
+                }
+            }
         }
     }
     final class ComposerTextView: UITextView {
         var onAttachment: (() -> Void)?
+        var onLayout: ((UITextView) -> Void)?
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            onLayout?(self)
+        }
         var shiftPressed = false
         override func didMoveToWindow() { super.didMoveToWindow(); onAttachment?() }
         override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {

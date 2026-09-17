@@ -110,7 +110,7 @@ public actor NativeAgentLedger {
         try writeEvents(events, to: url)
     }
 
-    private static func ensureSafeParent(for fileURL: URL) throws {
+    static func ensureSafeParent(for fileURL: URL) throws {
         let sessionDirectory = fileURL.deletingLastPathComponent()
         let ledgerRoot = sessionDirectory.deletingLastPathComponent()
         let workspaceRoot = ledgerRoot

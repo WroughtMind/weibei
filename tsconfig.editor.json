@@ -4,6 +4,7 @@
     "noEmit": true,
     "module": "esnext",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "target": "es2022",
     "lib": ["es2022", "dom"],
     "skipLibCheck": true,
@@ -11,6 +12,7 @@
   },
   "include": [
     "Sources/WeiBei/WebEditor/src/**/*.ts",
+    "Sources/WeiBei/OfficeReader/**/*.ts",
     "Sources/WeiBei/WebEditor/test/**/*.ts"
   ]
 }

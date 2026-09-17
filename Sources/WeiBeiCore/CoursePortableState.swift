@@ -695,6 +695,10 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
             return .pdf
         case "html", "htm":
             return .html
+        case "docx":
+            return .docx
+        case "pptx":
+            return .pptx
         case "md", "markdown":
             return .markdown
         case "txt", "text":

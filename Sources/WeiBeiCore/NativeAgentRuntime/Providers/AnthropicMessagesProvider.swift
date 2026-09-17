@@ -132,6 +132,9 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
         if !tools.isEmpty {
             payload["tools"] = tools
         }
+        if let effort = request.reasoningEffort {
+            payload["output_config"] = ["effort": effort]
+        }
         return payload
     }
 

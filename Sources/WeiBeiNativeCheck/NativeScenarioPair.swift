@@ -76,7 +76,7 @@ enum NativeScenarioPair {
         ))
         rows.append(try await row(id: "05-course-profile", tools: ["weibei_course_profile_update"], expectProfile: true, chunks: [
             [
-                .toolCallDelta(index: 0, id: "c1", name: "weibei_course_profile_update", argumentsDelta: "{\"contextRevision\":\"pair\",\"profileRevision\":0,\"checkpoint\":\"userRequested\"}"),
+                .toolCallDelta(index: 0, id: "c1", name: "weibei_course_profile_update", argumentsDelta: "{\"checkpoint\":\"userRequested\"}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
             [.textDelta(index: 0, text: "当前没有可用保存宿主，档案尚未写入。"), .finish(reason: .stop, replayState: nil)],
@@ -88,16 +88,16 @@ enum NativeScenarioPair {
             expectRelation: true,
             chunks: [
                 [
-                    .toolCallDelta(index: 0, id: "n1", name: "weibei_note_proposal", argumentsDelta: "{\"markdown\":\"利率是资金使用价格。\",\"evidence\":[\"利率课程\"],\"contextRevision\":\"pair\"}"),
-                    .toolCallDelta(index: 1, id: "r1", name: "weibei_relation_proposal", argumentsDelta: "{\"noteItemID\":\"note-1\",\"sourceItemID\":\"material-rates\",\"contextRevision\":\"pair\"}"),
+                    .toolCallDelta(index: 0, id: "n1", name: "weibei_note_proposal", argumentsDelta: "{\"markdown\":\"利率是资金使用价格。\",\"evidence\":[\"利率课程\"]}"),
+                    .toolCallDelta(index: 1, id: "r1", name: "weibei_relation_proposal", argumentsDelta: "{\"noteItemID\":\"n1\",\"sourceItemID\":\"material-rates\"}"),
                     .finish(reason: .toolCalls, replayState: nil),
                 ],
                 [.textDelta(index: 0, text: "当前没有可用保存宿主，笔记和关系尚未写入。"), .finish(reason: .stop, replayState: nil)],
             ]
         ))
-        rows.append(try await row(id: "07-visualize", tools: ["weibei_visualize"], chunks: [
+        rows.append(try await row(id: "07-visualize", tools: ["render_ui"], chunks: [
             [
-                .toolCallDelta(index: 0, id: "v1", name: "weibei_visualize", argumentsDelta: "{\"id\":\"real-rate\",\"spec\":{\"items\":[{\"type\":\"text\",\"content\":\"实际利率\"}]}}"),
+                .toolCallDelta(index: 0, id: "v1", name: "render_ui", argumentsDelta: "{\"id\":\"real-rate\",\"spec\":{\"items\":[{\"type\":\"text\",\"content\":\"实际利率\"}]}}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
             [.textDelta(index: 0, text: "当前没有显示界面，互动内容尚未展示。"), .finish(reason: .stop, replayState: nil)],
@@ -353,6 +353,15 @@ enum NativeScenarioPair {
                             kind: "html",
                             role: "material",
                             searchText: "利率是资金使用价格的表达。"
+                        ),
+                        StudyAgentCourseItem(
+                            id: "note-1",
+                            title: "利率笔记",
+                            subtitle: "",
+                            kind: "markdown",
+                            role: "note",
+                            isCurrentNote: true,
+                            searchText: "利率是资金使用价格。"
                         ),
                     ]
                 ),

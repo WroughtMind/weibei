@@ -1,0 +1,12 @@
+{
+  "id": "genui",
+  "name": "GenUI",
+  "version": "0.10.0",
+  "description": "使用 dshGenUI 在回答中呈现结构化组件、图表、表格与交互。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "render_ui"
+  ],
+  "jscHook": null
+}

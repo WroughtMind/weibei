@@ -330,6 +330,21 @@ final class WorkspaceStore: ObservableObject {
             self?.acceptNoteEditorSnapshot(snapshot)
         }
     )
+    @Published var agentReasoningEfforts: [String: String] =
+        UserDefaults.standard.dictionary(forKey: "agentReasoningEfforts") as? [String: String] ?? [:] {
+        didSet { UserDefaults.standard.set(agentReasoningEfforts, forKey: "agentReasoningEfforts") }
+    }
+    var agentReasoningModelName: String {
+        let selected = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return selected.isEmpty ? NativeProviderRouting.route(agentProviderID).defaultModel : selected
+    }
+    var agentReasoningModelKey: String { activeAgentProfileID.uuidString + ":" + agentReasoningModelName }
+    var agentReasoningLevels: [String] {
+        AgentAccountService.shared.reasoningLevels(provider: agentProviderID, model: agentReasoningModelName)
+    }
+    var agentReasoningEffort: String? {
+        AgentReasoningEffort.selected(agentReasoningEfforts[agentReasoningModelKey], levels: agentReasoningLevels)
+    }
     @Published var agentDraft = ""
     @Published var messages: [AgentMessage] = []
     var agentNoteActionWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
@@ -353,6 +368,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var noteMaterialPairings: [String: String] = [:]
     @Published private(set) var blankNoteDraftMaterialID: String?
     @Published var linkedSourcesPresented = false
+    @Published var notePickerPresented = false
     var studyLocationsByItemID: [String: StudyLocation] = [:]
     var studyLocationsByCourseID: [String: [String: StudyLocation]] = [:]
     var courseResumePoints: [CourseResumePoint] = []
@@ -406,11 +422,11 @@ final class WorkspaceStore: ObservableObject {
             }
         }
     }
-    var showReaderSearch: Bool {
-        get { paneState.showReaderSearch }
+    var showDocumentSearch: Bool {
+        get { paneState.showDocumentSearch }
         set {
-            if paneState.showReaderSearch != newValue {
-                paneState.showReaderSearch = newValue
+            if paneState.showDocumentSearch != newValue {
+                paneState.showDocumentSearch = newValue
             }
         }
     }
@@ -441,6 +457,18 @@ final class WorkspaceStore: ObservableObject {
             readerSourceHighlight = ""
             readerSourceHighlightPageIndex = nil
         }
+    }
+    @Published var noteSearch = "" {
+        didSet { if noteSearch != oldValue { noteSearchFound = nil } }
+    }
+    @Published var noteSearchRequest = 0
+    @Published var noteSearchFound: Bool?
+
+    var searchesNotes: Bool { focusedPane == .notes }
+    var canSearchCurrentDocument: Bool {
+        searchesNotes
+            ? isPaneToggleActive(.notes) && !activeNoteEditorDocumentID.isEmpty && !notePickerPresented
+            : hasSelectedMaterial && isPaneToggleActive(.reader)
     }
     /// Reader viewport (HTML section / PDF page). Scroll commits must not auto-publish:
     /// every EnvironmentObject consumer would remasure and freeze main (sample 2026-08-01).
@@ -801,7 +829,7 @@ final class WorkspaceStore: ObservableObject {
         var showAgent: Bool
         var showNotes: Bool
         var agentSurface: AgentSurface
-        var showReaderSearch: Bool
+        var showDocumentSearch: Bool
         var readerSearch: String
         var readerLocationID: String?
         var readerLocationTitle: String?
@@ -1650,6 +1678,7 @@ final class WorkspaceStore: ObservableObject {
             }
             focus(.reader)
         case .note:
+            notePickerPresented = false
             let materialID = selectedMaterialItem?.id
             select(itemID: itemID)
             showNotes = true
@@ -1964,7 +1993,7 @@ final class WorkspaceStore: ObservableObject {
         showReader = false
         showAgent = false
         showNotes = false
-        showReaderSearch = false
+        showDocumentSearch = false
         readerSearch = ""
         layout = .documentAgentNotes
         threePaneOrder = WorkspacePaneRole.defaultThreePaneOrder
@@ -3137,6 +3166,10 @@ final class WorkspaceStore: ObservableObject {
         switch item.kind {
         case .pdf:
             return ui("\(itemTitle)，第 \(readerPageIndex + 1) 页", "\(itemTitle), page \(readerPageIndex + 1)")
+        case .docx, .pptx:
+            guard let locationID = readerLocationID else { return itemTitle }
+            return ui("\(itemTitle)，章节标识：\(locationID)，章节：\(readerLocationTitle ?? itemTitle)",
+                      "\(itemTitle), section id: \(locationID), section: \(readerLocationTitle ?? itemTitle)")
         case .html:
             guard let locationTitle = readerLocationTitle,
                   locationTitle != itemTitle else { return itemTitle }
@@ -3346,10 +3379,12 @@ final class WorkspaceStore: ObservableObject {
 
     /// "选择其他笔记"列表的显示名，与浮动 tab 同口径：
     /// 自定义名 > 正文抬头 > 文件名 > 正文前几个字。
-    /// 仅用于笔记列表展示；`displayTitle(for:)` 保持原名语义，
-    /// 引用匹配、排序、重命名草稿等仍按文件标题走。
+    /// 文件操作和引用匹配仍使用原文件标题。
     func noteListDisplayTitle(for item: StudyItem) -> String {
         guard item.isNotebookNote else { return item.title }
+        if let custom = NoteTabDisplayTitle.normalizedCustomTitle(item.customDisplayTitle) {
+            return custom
+        }
         let resolved = NoteTabDisplayTitle.resolve(
             customTitle: item.customDisplayTitle,
             noteTitle: item.title,
@@ -3397,8 +3432,9 @@ final class WorkspaceStore: ObservableObject {
         return try? await agentActionNoteMarkdown(item)
     }
 
-    private func itemMatchesLibrarySearch(_ item: StudyItem, query: String) -> Bool {
-        displayTitle(for: item).localizedCaseInsensitiveContains(query)
+    func itemMatchesLibrarySearch(_ item: StudyItem, query: String) -> Bool {
+        noteListDisplayTitle(for: item).localizedCaseInsensitiveContains(query)
+            || item.title.localizedCaseInsensitiveContains(query)
             || displaySubtitle(for: item).localizedCaseInsensitiveContains(query)
             || item.kind.label(language: interfaceLanguage).localizedCaseInsensitiveContains(query)
             || noteTagsMatchLibrarySearch(item, query: query)
@@ -4351,7 +4387,7 @@ final class WorkspaceStore: ObservableObject {
                 readerLocationTitle = location.locationTitle ?? location.itemTitle
                 if selectedMaterialItem?.kind == .pdf {
                     requestReaderPDFPage(location.pageIndex, recordsLocation: false)
-                } else if selectedMaterialItem?.kind == .html {
+                } else if selectedMaterialItem?.kind.isWebDocument == true {
                     requestReaderHTMLLocation(
                         id: location.locationID,
                         title: location.locationTitle
@@ -4729,26 +4765,8 @@ final class WorkspaceStore: ObservableObject {
             }
             openDocumentPane(.reader)
         case .note:
-            guard activeNoteItem != nil || blankNoteDraftMaterialID != nil else {
-                openDocumentPane(.notes)
-                return
-            }
-            requestNoteSelectionTransition(to: nil) { [weak self] in
-                guard let self else { return }
-                blankNoteMaterializationTask?.cancel()
-                blankNoteMaterializationTask = nil
-                pendingBlankNoteText = ""
-                blankNoteDraftMaterialID = nil
-                activeNotebookItemID = nil
-                noteText = ""
-                notebookCreationDraft = nil
-                notebookRenameDraft = nil
-                linkedSourcesPresented = false
-                latestAgentLearningUpdate = nil
-                syncActiveStudySession()
-                openDocumentPane(.notes)
-                save()
-            }
+            notePickerPresented = activeNoteItem != nil || blankNoteDraftMaterialID != nil
+            openDocumentPane(.notes)
         }
     }
 
@@ -4876,7 +4894,7 @@ final class WorkspaceStore: ObservableObject {
             notes: roles.contains(.notes)
         )
         if !showReader {
-            showReaderSearch = false
+            if !searchesNotes { showDocumentSearch = false }
             readerSearch = ""
         }
     }
@@ -4886,13 +4904,14 @@ final class WorkspaceStore: ObservableObject {
         case .reader:
             showReader = visible
             if !visible {
-                showReaderSearch = false
+                if !searchesNotes { showDocumentSearch = false }
                 readerSearch = ""
             }
         case .agent:
             showAgent = visible
         case .notes:
             showNotes = visible
+            if !visible && searchesNotes { showDocumentSearch = false; noteSearch = "" }
         }
     }
 
@@ -4900,31 +4919,39 @@ final class WorkspaceStore: ObservableObject {
         visibleDocumentPaneOrder.first?.focus ?? .reader
     }
 
-    func revealReaderSearch() {
+    func revealDocumentSearch() {
+        if searchesNotes {
+            guard canSearchCurrentDocument else { return }
+            showDocumentSearch = true
+            paneState.searchFocusRequest &+= 1
+            return
+        }
         readerSourceHighlight = ""
         readerSourceHighlightPageIndex = nil
         guard hasSelectedMaterial else {
             clearReaderSearchIfNeeded()
             return
         }
-        if !showReaderSearch || layout == .immersiveConversation || layout == .immersiveWriting {
+        if !showDocumentSearch || layout == .immersiveConversation || layout == .immersiveWriting {
             recordNavigationPoint()
         }
         if layout == .immersiveConversation || layout == .immersiveWriting {
             setLayout(.immersiveReading)
         }
-        showReaderSearch = true
+        showDocumentSearch = true
         focus(.reader)
+        paneState.searchFocusRequest &+= 1
     }
 
-    func hideReaderSearch() {
-        if showReaderSearch || !readerSearch.isEmpty {
+    func hideDocumentSearch() {
+        if showDocumentSearch || !readerSearch.isEmpty {
             recordNavigationPoint()
         }
-        showReaderSearch = false
-        readerSearch = ""
+        showDocumentSearch = false
+        if searchesNotes { noteSearch = "" }
+        else { readerSearch = "" }
         clearUnpinnedFloatingSelection(keepContext: false)
-        focus(.reader)
+        focus(searchesNotes ? .notes : .reader)
     }
 
     func updateReaderLocationTitle(_ title: String?) {
@@ -4935,7 +4962,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateReaderHTMLLocation(id: String?, title: String?, reason: String) {
-        guard selectedMaterialItem?.kind == .html else { return }
+        guard selectedMaterialItem?.kind.isWebDocument == true else { return }
         let cleanedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextID = cleanedID.isEmpty ? nil : String(cleanedID.prefix(500))
@@ -5011,7 +5038,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let previous = studyLocation(for: item.id, in: activeCourseID)
         let itemTitle = sourceReferenceBaseTitle(for: item)
-        let locationID = item.kind == .html ? readerLocationID : nil
+        let locationID = item.kind.isWebDocument ? readerLocationID : nil
         let pageIndex = item.kind == .pdf ? readerPageIndex : nil
         let locationChanged = incrementVisit
             || previous?.itemTitle != itemTitle
@@ -5071,12 +5098,12 @@ final class WorkspaceStore: ObservableObject {
             clearReaderHTMLLocationTarget()
             return
         }
-        readerLocationID = item.kind == .html ? location.locationID : nil
+        readerLocationID = item.kind.isWebDocument ? location.locationID : nil
         readerLocationTitle = location.locationTitle ?? displayTitle(for: item)
         if item.kind == .pdf {
             readerPageIndex = max(location.pageIndex ?? 0, 0)
             requestReaderPDFPage(location.pageIndex, recordsLocation: false)
-        } else if item.kind == .html {
+        } else if item.kind.isWebDocument {
             requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         }
     }
@@ -5126,13 +5153,13 @@ final class WorkspaceStore: ObservableObject {
             item.kind == .pdf ? reference.pageIndex : nil,
             recordsLocation: item.kind == .pdf && reference.pageIndex != nil
         )
-        let htmlTargetID = item.kind == .html
+        let htmlTargetID = item.kind.isWebDocument
             ? reference.sectionLocationID
-                ?? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" }
+                ?? (item.kind == .html ? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind == .html ? reference.sectionTitle : nil
+            title: item.kind.isWebDocument ? reference.sectionTitle : nil
         )
         focus(.reader)
         return true
@@ -5190,13 +5217,13 @@ final class WorkspaceStore: ObservableObject {
             item.kind == .pdf ? source.pageIndex : nil,
             recordsLocation: item.kind == .pdf && source.pageIndex != nil
         )
-        let htmlTargetID = item.kind == .html
+        let htmlTargetID = item.kind.isWebDocument
             ? source.sectionLocationID
-                ?? source.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" }
+                ?? (item.kind == .html ? source.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind == .html ? source.sectionTitle : nil
+            title: item.kind.isWebDocument ? source.sectionTitle : nil
         )
         readerSourceHighlight = source.highlightQuery
         readerSourceHighlightPageIndex = item.kind == .pdf ? source.pageIndex : nil
@@ -5270,7 +5297,7 @@ final class WorkspaceStore: ObservableObject {
         if layout == .immersiveReading {
         }
         if layout == .immersiveConversation {
-            showReaderSearch = false
+            showDocumentSearch = false
             readerSearch = ""
         }
         focus(nextFocus)
@@ -5492,7 +5519,7 @@ final class WorkspaceStore: ObservableObject {
             showAgent: showAgent,
             showNotes: showNotes,
             agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
-            showReaderSearch: showReaderSearch,
+            showDocumentSearch: showDocumentSearch,
             readerSearch: readerSearch,
             readerLocationID: readerLocationID,
             readerLocationTitle: readerLocationTitle,
@@ -5514,7 +5541,7 @@ final class WorkspaceStore: ObservableObject {
         showAgent = snapshot.showAgent
         showNotes = snapshot.showNotes
         agentSurface = snapshot.agentSurface == .selectionFloat ? .hidden : snapshot.agentSurface
-        showReaderSearch = snapshot.showReaderSearch
+        showDocumentSearch = snapshot.showDocumentSearch
         readerSearch = snapshot.readerSearch
         readerLocationID = snapshot.readerLocationID
         readerLocationTitle = snapshot.readerLocationTitle
@@ -5527,8 +5554,8 @@ final class WorkspaceStore: ObservableObject {
             recordsLocation: false
         )
         requestReaderHTMLLocation(
-            id: selectedMaterialItem?.kind == .html ? snapshot.readerLocationID : nil,
-            title: selectedMaterialItem?.kind == .html ? snapshot.readerLocationTitle : nil
+            id: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationID : nil,
+            title: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationTitle : nil
         )
         latestAgentLearningUpdate = nil
         syncActiveStudySession()
@@ -5599,7 +5626,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func clearReaderSearchIfNeeded() {
         guard !hasSelectedMaterial else { return }
-        showReaderSearch = false
+        if !searchesNotes { showDocumentSearch = false }
         readerSearch = ""
     }
 
@@ -5840,7 +5867,7 @@ final class WorkspaceStore: ObservableObject {
         Task { @MainActor in
             let types: [UTType] = markdownOnly
                 ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
-                : [.pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
+                : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
             let urls = await WorkspaceFileDialog.pick(
                 title: panelTitle ?? ui("选择学习资料或课程文件夹", "Choose study materials or a course folder"),
                 types: types, multiple: true
@@ -5872,7 +5899,7 @@ final class WorkspaceStore: ObservableObject {
         panel.canChooseFiles = true
         panel.allowedContentTypes = markdownOnly
             ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
-            : [.pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
+            : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
 
         guard panel.runModal() == .OK else { return }
         if let assigningToCourseID {
@@ -6050,8 +6077,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     static func isSupportedCourseFile(_ url: URL) -> Bool {
-        ["pdf", "html", "htm", "md", "markdown", "txt", "text"]
-            .contains(url.pathExtension.lowercased())
+        StudyItemKind.materialExtensions.contains(url.pathExtension.lowercased())
     }
 
     func openOrCreateWikiNote(title rawTitle: String) {
@@ -6297,6 +6323,10 @@ final class WorkspaceStore: ObservableObject {
         let documentAnchor = documentAnchor ?? anchor?.textAnchor.map { SelectionDocumentAnchor(text: $0) }
         let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
+            if automaticSelection?.source == source {
+                clearAutomaticSelectionAttachment()
+                invalidateAgentContext()
+            }
             guard selectionContext?.source == source else { return }
             let now = Date()
             if lastSelectionUpdateDate.map({ now.timeIntervalSince($0) > selectionAttachmentMergeWindow }) ?? true {
@@ -8504,7 +8534,7 @@ final class WorkspaceStore: ObservableObject {
         }
         guard update.profileRevision == expectedProfileRevision,
               courseKnowledgeProfiles[profileIndex].revision == expectedProfileRevision else {
-            return .rejected("课程档案已变化，请调用 weibei_course_profile_read 重新读取后更新。")
+            return .rejected("课程档案已变化，请调用 weibei_read_learning_memory 重新读取后更新。")
         }
         var profile = courseKnowledgeProfiles[profileIndex]
         let existingIDs = Set(profile.entries.map(\.id))
@@ -9505,6 +9535,12 @@ final class WorkspaceStore: ObservableObject {
             agentRequestTask = nil
             return nil
         }
+        let isFloatingRequest = selectionAskThreads.contains { $0.id == target.sessionID }
+        let sentReasoningEffort = agentProviderID == .openaiCodex
+            ? (isFloatingRequest ? "low" : agentReasoningEffort ?? agentReasoningEfforts[agentReasoningModelKey] ?? "low")
+            : AgentReasoningEffort.selected(
+                agentReasoningEfforts[agentReasoningModelKey], levels: agentReasoningLevels, floating: isFloatingRequest
+            )
         let requestProvider = agentProviderID
         let requestAuthMethod = agentAuthMethod
         let previousReply = reusingLastUserMessage
@@ -9816,7 +9852,8 @@ final class WorkspaceStore: ObservableObject {
                     courseProfile: sentCourseProfile,
                     language: sentLanguage,
                     contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())",
-                    confirmedNotes: confirmedAgentNotes(in: target)
+                    confirmedNotes: confirmedAgentNotes(in: target),
+                    reasoningEffort: sentReasoningEffort
                 )
                 _ = updateAgentMessage(assistantMessage.id, in: target.sessionID) { $0.requestContext = AgentRequestContext(request) }
                 agentStreaming.activityText = ui("正在思考", "Thinking")

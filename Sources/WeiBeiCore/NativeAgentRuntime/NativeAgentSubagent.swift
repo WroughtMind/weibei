@@ -61,11 +61,13 @@ public enum NativeSubagentRunner {
         _ request: NativeSubagentRequest,
         adapter: NativeLLMAdapter,
         model: String,
+        providerID: String? = nil,
         contextWindow: Int? = nil,
         systemPrompt: String,
         ledgerRoot: URL,
         hostToolHandler: StudyAgentHostToolHandler?,
-        liveStores: NativeLiveStores
+        liveStores: NativeLiveStores,
+        reasoningEffort: String? = nil
     ) async -> NativeSubagentResult {
         if !NativeSubagentCapabilities.supported.contains(request.capabilities) {
             return NativeSubagentResult(
@@ -87,6 +89,7 @@ public enum NativeSubagentRunner {
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
+            providerID: providerID,
             contextWindow: contextWindow,
             ledgerRoot: childRoot,
             systemPromptText: systemPrompt,
@@ -110,7 +113,8 @@ public enum NativeSubagentRunner {
                     materialText: "",
                     noteTitle: "",
                     noteText: "",
-                    contextRevision: "delegate-\(request.depth)"
+                    contextRevision: "delegate-\(request.depth)",
+                    reasoningEffort: reasoningEffort
                 ),
                 progress: nil
             )

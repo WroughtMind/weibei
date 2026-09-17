@@ -107,6 +107,11 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
         if let maxTokens = request.maxTokens {
             payload["generationConfig"] = ["maxOutputTokens": maxTokens]
         }
+        if let effort = request.reasoningEffort {
+            var config = payload["generationConfig"] as? [String: Any] ?? [:]
+            config["thinkingConfig"] = ["thinkingLevel": effort]
+            payload["generationConfig"] = config
+        }
         return payload
     }
 

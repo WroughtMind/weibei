@@ -27,22 +27,40 @@ public actor NativeAgentLoop {
         progress: StudyAgentProgressHandler?
     ) async throws -> NativeLoopResult {
         await progress?(.preparing)
-        let turn = ((await ledger.allEvents()).compactMap(\.turn).max() ?? 0) + 1
+        let existingEvents = await ledger.allEvents()
+        let turn = (existingEvents.compactMap(\.turn).max() ?? 0) + 1
+        let aliasScope = NativeStateAliases.scopeKey(for: request)
+        let persistedAliases = existingEvents.reversed().first {
+            $0.stateAliasScope == aliasScope && $0.stateAliases != nil
+        }?.stateAliases ?? [:]
+        let reservedAliases = Set(existingEvents.compactMap(\.stateAliases).flatMap(\.values))
+        var aliases = NativeStateAliases(
+            request: request,
+            persisted: persistedAliases,
+            reservedAliases: reservedAliases
+        )
         _ = try await ledger.append { seq, time in
-            NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: turn)
+            NativeSessionEvent(
+                type: .turnStart,
+                seq: seq,
+                timeMS: time,
+                turn: turn,
+                stateAliasScope: aliasScope,
+                stateAliases: aliases.persistedSnapshot
+            )
         }
         let previousEvents = request.reusingLastUserMessage ? await ledger.allEvents() : []
         let originalUser = previousEvents.last { $0.type == .userMessage }
         var sources = request.knownSources
         sources += previousEvents.filter { $0.type == .toolResult && $0.seq > (originalUser?.seq ?? Int.max) }
-            .flatMap { NativeAgentSources.fromToolText($0.text ?? "") }
+            .flatMap { NativeAgentSources.fromToolText($0.text ?? "", aliases: aliases) }
         var sourceIndex = 0
         let selections = request.selectionSources.filter { !$0.excerpt.isEmpty }.map { source in
             sourceIndex += 1
             return NativeAgentSources.label(source, turn: originalUser?.turn ?? turn, index: sourceIndex)
         }
         sources += selections
-        let referenceContext = try NativePromptAssembler.turnContext(for: request, selections: selections)
+        let referenceContext = try NativePromptAssembler.turnContext(for: request, selections: selections, aliases: aliases)
         let turnContext = referenceContext + "\n\n用户问题：\n" + request.question
         let userMessageEvent: NativeSessionEvent
         if let original = originalUser {
@@ -59,16 +77,21 @@ public actor NativeAgentLoop {
             }
         }
 
+        var assetIDs = Dictionary(
+            uniqueKeysWithValues: request.courseContext.items.map { ($0.id, $0.id) }
+        )
+        for note in request.projectScope.items where note.role == "note" {
+            if let alias = aliases.noteAlias(for: note.itemID) { assetIDs[alias] = note.itemID }
+        }
         var context = NativeToolExecutionContext(
             request: request,
             mode: mode,
             hostToolHandler: hostToolHandler,
-            persistentAssetIDsByContextID: Dictionary(
-                uniqueKeysWithValues: request.courseContext.items.map { ($0.id, $0.id) }
-            ),
+            persistentAssetIDsByContextID: assetIDs,
             liveStores: liveStores
         )
         context.request.knownSources = sources
+        context.stateAliases = aliases
         let scope = NativeToolScope.session(request.id.uuidString)
         let tools = await registry.resolved(scope: scope)
 
@@ -94,9 +117,9 @@ public actor NativeAgentLoop {
             while true {
                 step += 1
                 try checkCancelled()
-                let projection = await ledger.deriveProjection()
+                let projection = aliases.projectedHistory(await ledger.deriveProjection())
                 for message in projection.messages where message.role == .tool {
-                    for source in NativeAgentSources.fromToolText(message.content) where !sources.contains(where: { $0.label == source.label }) {
+                    for source in NativeAgentSources.fromToolText(message.content, aliases: aliases) where !sources.contains(where: { $0.label == source.label }) {
                         sources.append(source)
                     }
                 }
@@ -114,17 +137,9 @@ public actor NativeAgentLoop {
                         ? request.id.uuidString.lowercased()
                         : request.projectScope.chatID.lowercased()
                 )
-                // 搜索开关对全协议族生效;推理档仅 Responses 家族支持。
                 llmRequest.enableNativeWebSearch = tools.contains { $0.name == "weibei_course_map" }
-                if adapter.family.contains("responses") {
-                    llmRequest.reasoningEffort = "low"
-                }
-                #if DEBUG
-                let effectiveContextWindow = (adapter as? NativeContextWindowTestingAdapter)?.contextWindowForTesting
-                    ?? contextWindow
-                #else
-                let effectiveContextWindow = contextWindow
-                #endif
+                llmRequest.reasoningEffort = request.reasoningEffort
+                let effectiveContextWindow = contextWindow ?? adapter.contextWindow
                 if let effectiveContextWindow {
                     let candidate: NativeContextCompactionCandidate?
                     do {
@@ -319,6 +334,10 @@ public actor NativeAgentLoop {
                             result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
                         }
                     }
+                    if let refreshedAliases = result.stateAliases {
+                        aliases = refreshedAliases
+                        context.stateAliases = refreshedAliases
+                    }
                     NativeAgentSources.attach(to: &result, name: call.name, turn: turn, index: &sourceIndex)
                     applySideEffects(
                         name: call.name,
@@ -332,7 +351,7 @@ public actor NativeAgentLoop {
                         contentBlocks: &contentBlocks,
                         context: &context
                     )
-                    if call.name == "weibei_visualize", !result.isError,
+                    if call.name == "render_ui", !result.isError,
                        let changed = contentBlocks.first(where: { block in
                            if case let .visualization(value) = block { return value.id == result.details["id"] as? String }
                            return false
@@ -359,7 +378,9 @@ public actor NativeAgentLoop {
                             toolName: call.name,
                             isError: result.isError,
                             imageMediaType: result.image?.mediaType,
-                            imageBase64: result.image?.base64
+                            imageBase64: result.image?.base64,
+                            stateAliasScope: aliasScope,
+                            stateAliases: aliases.persistedSnapshot
                         )
                     }
                 }
@@ -437,8 +458,12 @@ public actor NativeAgentLoop {
     ) {
         if result.isError { return }
         let details = result.details
+        if let note = details["persistedNote"] as? StudyAgentPersistedNoteRef {
+            context.request.confirmedNotes.append(note)
+        }
         if name == "weibei_course_read" || name == "weibei_search_workspace" || name == "weibei_read_discussion" {
-            for source in NativeAgentSources.fromToolText(result.text) {
+            let aliases = context.stateAliases ?? NativeStateAliases(request: context.request)
+            for source in NativeAgentSources.fromToolText(result.text, aliases: aliases) {
                 if !sources.contains(where: { $0.label == source.label }) { sources.append(source) }
                 if !context.request.knownSources.contains(where: { $0.label == source.label }) {
                     context.request.knownSources.append(source)
@@ -476,7 +501,7 @@ public actor NativeAgentLoop {
                 appliedProfileUpdate = applied
             }
         }
-        if name == "weibei_visualize",
+        if name == "render_ui",
            let id = details["id"] as? String,
            let spec = details["spec"],
            let specData = try? JSONSerialization.data(withJSONObject: spec),

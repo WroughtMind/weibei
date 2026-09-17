@@ -109,7 +109,7 @@ def compile_page(name, language):
                 if any(isinstance(child, Element) for child in node.children):
                     raise ValueError(f'{name}: data-en must annotate a text-only element')
                 node.children = [escape(attrs['data-en'])]
-            for suffix, target in [('label', 'aria-label'), ('placeholder', 'placeholder'), ('alt', 'alt'), ('title', 'title')]:
+            for suffix, target in [('label', 'aria-label'), ('placeholder', 'placeholder'), ('alt', 'alt'), ('title', 'title'), ('src', 'src'), ('srcset', 'srcset'), ('href', 'href')]:
                 if 'data-en-' + suffix in attrs:
                     attrs[target] = attrs['data-en-' + suffix]
             if 'data-submit-en' in attrs:
@@ -118,14 +118,14 @@ def compile_page(name, language):
             attrs.update(href=('../' + ('' if name == 'index.html' else name)) if english else 'en/' + ('' if name == 'index.html' else name), hreflang='zh-CN' if english else 'en', lang='zh-CN' if english else 'en')
             attrs['aria-label'] = '切换为中文' if english else 'Switch to English'
         else:
-            for key in ('href', 'src'):
+            for key in ('href', 'src', 'data-src'):
                 value = attrs.get(key, '')
                 if value.startswith('index.html'):
                     attrs[key] = './' + value[len('index.html'):]
                 elif english and value and not urlsplit(value).scheme and not value.startswith(('#', '/', '../')) and not value.split('#')[0].split('?')[0].endswith('.html'):
                     attrs[key] = '../' + value
             if english:
-                for key in ('srcset', 'imagesrcset'):
+                for key in ('srcset', 'imagesrcset', 'data-srcset'):
                     if key in attrs:
                         attrs[key] = ', '.join('../' + entry.strip() for entry in attrs[key].split(','))
         # Translation lives in static HTML, never in a second client-side state.

@@ -44,6 +44,7 @@ fi
   echo 'build failed: Sparkle public key must contain 32 bytes' >&2; exit 7;
 }
 npm run build:editor >/dev/null
+npm run build:genui >/dev/null
 SOURCE_DIRTY=false
 [[ -z "$(git status --porcelain=v1 --untracked-files=normal)" ]] || SOURCE_DIRTY=true
 mkdir -p "$DERIVED" "$DIST_DIR"

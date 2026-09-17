@@ -7,14 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0F01CE000000000000000001 /* OfficeDocumentText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F01CE000000000000000002 /* OfficeDocumentText.swift */; };
 		014CAA0987ACF6294F39D1A2 /* AgentAccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D92418B7C7756A863085B9D /* AgentAccountService.swift */; };
 		0251D244D2FD142022993345 /* NativeAgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */; };
+		D1A51A5E0000000000000002 /* NativeStateAliases.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A51A5E0000000000000001 /* NativeStateAliases.swift */; };
 		034100326A738DEAC681BF7F /* ImageMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB49A5CAD7B99BDF0E8D6FAD /* ImageMarkdownView.swift */; };
 		04D396024619F7562B875297 /* CourseRelationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145933E80255972BA83611B4 /* CourseRelationsView.swift */; };
 		04DE8F794793F389298CC35A /* CourseLibraryVolatilityBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3182D144EA522AB5D660975B /* CourseLibraryVolatilityBanner.swift */; };
 		0565B892BF2EC88944449D5A /* CourseRelationPaperView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C04FB8F235924EE42B40E2 /* CourseRelationPaperView.swift */; };
 		05B34CAB21481FB54B2A0FC5 /* CourseRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28228E2E2950801444E2EC73 /* CourseRecordsView.swift */; };
 		07010C7A1E98300267D925DC /* AgentModelListService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */; };
+		2BB2BB7E7612D5D7909E1D46 /* AgentReasoningEffort.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD595EC19B5E715C6A89E732 /* AgentReasoningEffort.swift */; };
 		07AA0BFB1B0C7EB98204B0DA /* WorkspaceStore+SessionMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E73D78FF30845E50524C3B1 /* WorkspaceStore+SessionMessages.swift */; };
 		E74F27FD84A5744D031CE05E /* WorkspaceStore+SelectionChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CF453C08CC7FE075BE53DB1 /* WorkspaceStore+SelectionChat.swift */; };
 		07D7027AA2BB4385AED66397 /* CatalystBusinessCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB6903E77B7F89AD1758884 /* CatalystBusinessCheck.swift */; };
@@ -190,7 +193,6 @@
 		D348A95E5B126E2C1EBB5950 /* AgentComposerTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 343CB37ECF7BC6AFFA2D37D5 /* AgentComposerTextEditor.swift */; };
 		D6BA247946096A39F5229522 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 766B57114F6E85A15E7FAD69 /* main.swift */; };
 		D8B5BA6E3F2C57B1EF3FCD5C /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97A83429CDF84C7C8F761A53 /* WorkspaceStore.swift */; };
-		D96CE7E3D2D35F68B2B3431B /* genui-math.js in Resources */ = {isa = PBXBuildFile; fileRef = 810A9D2DAC83F19AD7592E1A /* genui-math.js */; };
 		DADF8C6CC9C1C7ADF547541A /* AgentCredentialProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65D2BBEF06237DE4E74042AC /* AgentCredentialProfiles.swift */; };
 		DC5601FB1DD389C85C3F5781 /* CourseRelationGraphModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02185276C9215FEAC69B14AD /* CourseRelationGraphModel.swift */; };
 		DDC76DED2BFA19180F5AF2B8 /* CourseDocumentPassage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E08D00DB025C254B8D14BA1 /* CourseDocumentPassage.swift */; };
@@ -221,6 +223,9 @@
 		FE6FCF3FB5EF87B9FE0050B8 /* NoteRecoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD1EC009C99E5D05C5322632 /* NoteRecoveryStore.swift */; };
 		FF3D251186B527F5FB45D6F3 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0689394113772B93619F884 /* AppDelegate.swift */; };
 		0CBEF0E57A484B2400B973BC /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 7F2DC701EB6495A02CB0C291 /* SwiftMath */; };
+		140F42A96634A9FE89C189F4 /* three.js in Resources */ = {isa = PBXBuildFile; fileRef = 1B035DA5CDBB5DD49E9DE885 /* three.js */; };
+		8AEFB6F1D755EABEF77A3B91 /* echarts-full.js in Resources */ = {isa = PBXBuildFile; fileRef = 10DA09B7D678CA3F93ED0D0A /* echarts-full.js */; };
+		41918BF9770E9F4CC9A236BC /* NativeModelUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F82757F4C2076211922411C /* NativeModelUsage.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -273,6 +278,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0F01CE000000000000000002 /* OfficeDocumentText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeDocumentText.swift; sourceTree = "<group>"; };
 		00FB03E91469CACE2F8CEF89 /* CoursePortableState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoursePortableState.swift; sourceTree = "<group>"; };
 		0143654F5459DD613936A2D2 /* CourseProjectRootSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseProjectRootSupport.swift; sourceTree = "<group>"; };
 		01EDB37E094162897A3C510E /* CourseSidebarTagSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseSidebarTagSupport.swift; sourceTree = "<group>"; };
@@ -380,7 +386,6 @@
 		7AF269002BDFD3B79CD7A33C /* WeiBeiAgentDataPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiAgentDataPaths.swift; sourceTree = "<group>"; };
 		7EAC09AC59D2879EFE130E0F /* WorkspaceStore+CourseLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+CourseLibrary.swift"; sourceTree = "<group>"; };
 		7FEBE4390A6A8FE583C648F3 /* CourseSidebarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseSidebarModel.swift; sourceTree = "<group>"; };
-		810A9D2DAC83F19AD7592E1A /* genui-math.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "genui-math.js"; sourceTree = "<group>"; };
 		81330F2474351960F7D4B5D4 /* CourseLibraryVolatility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseLibraryVolatility.swift; sourceTree = "<group>"; };
 		82CD5F2664D21427B67643BE /* CourseWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseWorkspaceView.swift; sourceTree = "<group>"; };
 		851F281152AB3195E523BF46 /* LatestFirstSerialQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatestFirstSerialQueue.swift; sourceTree = "<group>"; };
@@ -426,6 +431,7 @@
 		B1C04FB8F235924EE42B40E2 /* CourseRelationPaperView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseRelationPaperView.swift; sourceTree = "<group>"; };
 		B215538091FA28517FF16935 /* StableDocumentWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StableDocumentWorkspace.swift; sourceTree = "<group>"; };
 		B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentTools.swift; sourceTree = "<group>"; };
+		D1A51A5E0000000000000001 /* NativeStateAliases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStateAliases.swift; sourceTree = "<group>"; };
 		B3D53F1E3B3A1F336E71C9B8 /* NativeAgentCredentials.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentCredentials.swift; sourceTree = "<group>"; };
 		B4ED60D2C03044C3843C4F45 /* NativeAgentDocuments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentDocuments.swift; sourceTree = "<group>"; };
 		B50AB6E6DC9F8AC15B64CEA7 /* AgentChatKaTeXMarkdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatKaTeXMarkdown.swift; sourceTree = "<group>"; };
@@ -457,6 +463,7 @@
 		E143536A222BB3EF39386017 /* WorkspaceStore+GoneImportedItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+GoneImportedItems.swift"; sourceTree = "<group>"; };
 		E1C5F74BA013DD4666730861 /* NoteEditorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorBridge.swift; sourceTree = "<group>"; };
 		E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentModelListService.swift; sourceTree = "<group>"; };
+		DD595EC19B5E715C6A89E732 /* AgentReasoningEffort.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentReasoningEffort.swift; sourceTree = "<group>"; };
 		E351033849C34CF53F7F41EC /* WeiBeiPerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiPerf.swift; sourceTree = "<group>"; };
 		E4DECE1968935604B8E2CB07 /* WorkspaceViewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceViewSupport.swift; sourceTree = "<group>"; };
 		E51AB9EF50CCEDB319397D8C /* ContextualContentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextualContentPicker.swift; sourceTree = "<group>"; };
@@ -481,6 +488,9 @@
 		FA378A62D30B6A6251AD9DA6 /* EmptyWorkspaceInspiration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyWorkspaceInspiration.swift; sourceTree = "<group>"; };
 		FA8D6B87981493A3017160C4 /* StudyAgentRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudyAgentRuntime.swift; sourceTree = "<group>"; };
 		FD7373826FAD5979B3D11A95 /* SOURCES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SOURCES.md; sourceTree = "<group>"; };
+		10DA09B7D678CA3F93ED0D0A /* echarts-full.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "echarts-full.js"; sourceTree = "<group>"; };
+		1B035DA5CDBB5DD49E9DE885 /* three.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = three.js; sourceTree = "<group>"; };
+		0F82757F4C2076211922411C /* NativeModelUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelUsage.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -628,6 +638,7 @@
 				E739D32EBD1993C95049134D /* AgentDisplayText.swift */,
 				894CEB93CFF53976D74CD4A7 /* AgentHistoryRevealPolicy.swift */,
 				E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */,
+				DD595EC19B5E715C6A89E732 /* AgentReasoningEffort.swift */,
 				3CA222798F14870B9307D012 /* AgentResources */,
 				78E5E769F507FE404011801D /* AgentResources.swift */,
 				08AAEB7FA79FA30300ED13B4 /* AppShortcutCatalog.swift */,
@@ -655,6 +666,7 @@
 				F4B2307F2390AA8433E3E782 /* PDFOCRTextExtractor.swift */,
 				909B209624E66CFAFB738B90 /* PDFSelectionReportGate.swift */,
 				8FA2D0FE3CC2CBF581233C41 /* SelectionAnchors.swift */,
+				0F01CE000000000000000002 /* OfficeDocumentText.swift */,
 				A3963B746660AA068E194F5D /* SelectionPopoverAnchor.swift */,
 				1F6EC54172A6313CD916B32C /* StudyAgentProposalDecoding.swift */,
 				FA8D6B87981493A3017160C4 /* StudyAgentRuntime.swift */,
@@ -781,8 +793,10 @@
 				4CDF85F80AC46C5FE414E777 /* NativeAgentSSE.swift */,
 				ECB6E3E976222146630F0A23 /* NativeAgentSubagent.swift */,
 				B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */,
+				D1A51A5E0000000000000001 /* NativeStateAliases.swift */,
 				23D51E375F6C7745CD944640 /* NativeContextCompaction.swift */,
 				5C74F370409208410B218551 /* NativeCopilotSession.swift */,
+				0F82757F4C2076211922411C /* NativeModelUsage.swift */,
 				DDE9B5B430C16C2C8DB95AD2 /* NativeProviderRouting.swift */,
 				433E5657BF2C1DCD29347D42 /* NativeSessionTitle.swift */,
 				ED67BE51713D6E75443BEBF3 /* NativeStudyAgentRuntime.swift */,
@@ -895,10 +909,11 @@
 			children = (
 				32C245CD2CC84C2F2CE3198E /* Editor */,
 				ED88B9D6F5730A4FD0467B53 /* Fonts */,
-				810A9D2DAC83F19AD7592E1A /* genui-math.js */,
 				EF4F5B2280039DF184FE8267 /* genui.css */,
 				9728A6162237E35605EC9A86 /* genui.html */,
 				24C681E3896A34D48AA1F02F /* genui.js */,
+				10DA09B7D678CA3F93ED0D0A /* echarts-full.js */,
+				1B035DA5CDBB5DD49E9DE885 /* three.js */,
 				E5F9E2996B278F1D2A9E6BB4 /* Inspiration */,
 			);
 			path = Resources;
@@ -999,10 +1014,12 @@
 			);
 			dependencies = (
 				49E6D4A20DE48D1533107998 /* PBXTargetDependency */,
+				0F01CE000000000000000003 /* PBXTargetDependency */,
 			);
 			name = WeiBeiCore;
 			packageProductDependencies = (
 				2357C0DC96C864EA89194FC2 /* Markdown */,
+				0F01CE000000000000000004 /* ZIPFoundation */,
 			);
 			productName = WeiBeiCore;
 			productReference = AB4D551D5F0841FA7DC2C881 /* libWeiBeiCore.a */;
@@ -1033,6 +1050,7 @@
 			mainGroup = CD245EE5BAF3B71C96D5FFE0;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 				EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */,
 				A362C2116CE98A2EFABB6D0E /* XCRemoteSwiftPackageReference "Sparkle" */,
 				82686C55CB0F5945DDF64FEB /* XCRemoteSwiftPackageReference "swift-markdown" */,
@@ -1062,10 +1080,11 @@
 				B27EA9DA746F1D2CC4D6F834 /* Mermaid-LICENSE.txt in Resources */,
 				14907F96CC2BA5EA280F9156 /* SOURCES.md in Resources */,
 				8E2B32B3E58E4AD9A6373C6D /* ThirdPartyNotices.txt in Resources */,
-				D96CE7E3D2D35F68B2B3431B /* genui-math.js in Resources */,
 				53CC6B0B8FA7EC4B2BC2C313 /* genui.css in Resources */,
 				EB4A792333288D22548B9A85 /* genui.html in Resources */,
 				3E13BEBA9519613FC404B41E /* genui.js in Resources */,
+				8AEFB6F1D755EABEF77A3B91 /* echarts-full.js in Resources */,
+				140F42A96634A9FE89C189F4 /* three.js in Resources */,
 				BFF0F15140DDB6156E503CE3 /* landscape.png in Resources */,
 				452B038A4F23FC8F44AE7CE5 /* lanting-clear-breeze.png in Resources */,
 				E498931F372E542246CCF1E8 /* lanting-observe-kinds.png in Resources */,
@@ -1111,6 +1130,7 @@
 				8FA1279C216C58094CD3F484 /* AgentDisplayText.swift in Sources */,
 				7FDE7E4802F79DA32B937D49 /* AgentHistoryRevealPolicy.swift in Sources */,
 				07010C7A1E98300267D925DC /* AgentModelListService.swift in Sources */,
+				2BB2BB7E7612D5D7909E1D46 /* AgentReasoningEffort.swift in Sources */,
 				5F0145EF173169542E01DE79 /* AgentResources.swift in Sources */,
 				364263C6477A3FC4B74996B5 /* AnthropicMessagesProvider.swift in Sources */,
 				807FDA7A7F71174A458991F2 /* AppShortcutCatalog.swift in Sources */,
@@ -1147,11 +1167,13 @@
 				532BC5B29EFEFC601215EC20 /* NativeAgentSources.swift in Sources */,
 				1C8433473F31B864845671FA /* NativeAgentSubagent.swift in Sources */,
 				0251D244D2FD142022993345 /* NativeAgentTools.swift in Sources */,
+				D1A51A5E0000000000000002 /* NativeStateAliases.swift in Sources */,
 				B2A50361F83AF6FB28B74CDA /* NativeContextCompaction.swift in Sources */,
 				61E47EB31C59CA67A484321D /* NativeCopilotSession.swift in Sources */,
 				913C2C7783CC54089A3E6879 /* NativeHTTPByteStream.swift in Sources */,
 				16937510D6D1C627B09A90B4 /* NativeLLMAdapter.swift in Sources */,
 				926D0321E52CA79D81CD00FA /* NativeLLMAdapterFactory.swift in Sources */,
+				41918BF9770E9F4CC9A236BC /* NativeModelUsage.swift in Sources */,
 				2710FFF4B0438D9457EA84D5 /* NativeProviderRouting.swift in Sources */,
 				E60BC6DE707366A0549B937C /* NativeSessionTitle.swift in Sources */,
 				49DE6B677DD3ED924746300C /* NativeStudyAgentRuntime.swift in Sources */,
@@ -1165,6 +1187,7 @@
 				BD408EC22829820BC290DB13 /* PDFOCRTextExtractor.swift in Sources */,
 				1BACBE16408835D31B827081 /* PDFSelectionReportGate.swift in Sources */,
 				765704D7BFF91EB3DB3C9134 /* SelectionAnchors.swift in Sources */,
+				0F01CE000000000000000001 /* OfficeDocumentText.swift in Sources */,
 				0F140575A7E125E6A4FB9C3E /* SelectionPopoverAnchor.swift in Sources */,
 				406E0EC71BA38245FBDF9D92 /* StudyAgentProposalDecoding.swift in Sources */,
 				385096A3F75C6CA95D93F663 /* StudyAgentRuntime.swift in Sources */,
@@ -1317,6 +1340,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		0F01CE000000000000000003 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 0F01CE000000000000000004 /* ZIPFoundation */;
+		};
 		49E6D4A20DE48D1533107998 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			productRef = 2357C0DC96C864EA89194FC2 /* Markdown */;
@@ -1389,7 +1416,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
@@ -1697,6 +1724,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
+			requirement = {kind = exactVersion; version = 0.9.20; };
+		};
 		82686C55CB0F5945DDF64FEB /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
@@ -1732,6 +1764,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		0F01CE000000000000000004 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
 		0C66C75EE6ABD1A7688A6967 /* MarkdownParser */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */;

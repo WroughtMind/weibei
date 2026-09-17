@@ -3,6 +3,9 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { build } from 'esbuild';
+import pako from 'pako';
+import { packedWebScript } from './packed_web_script.mjs';
+import { officeVendorPatches } from '../Sources/WeiBei/OfficeReader/vendor-patches.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const source = resolve(root, 'Sources/WeiBei/WebEditor/src');
@@ -11,7 +14,7 @@ const check = process.argv.includes('--check');
 const output = check ? await mkdtemp(join(tmpdir(), 'weibei-editor-')) : resources;
 const generated = new Set([
   'editor-entry.js', 'viewer-entry.js', 'katex-runtime.js', 'mermaid-runtime.js',
-  'prism-runtime.js', 'selection-runtime.js', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
+  'prism-runtime.js', 'selection-runtime.js', 'office-entry.js', 'office-entry.js.deflate', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
 ]);
 
 const bundle = (entry, outfile, editable, globalName) => build({
@@ -22,6 +25,7 @@ const bundle = (entry, outfile, editable, globalName) => build({
     '@milkdown/kit/plugin/upload', '@milkdown/kit/prose/history', '@milkdown/kit/prose/inputrules',
   ].map((name) => [name, resolve(source, 'viewerEditorStubs.ts')])),
   metafile: true, logLevel: 'warning', globalName,
+  ...(entry === 'vendor/mermaid-runtime.ts' ? { supported: { 'template-literal': false } } : {}),
 });
 
 if (!check) {
@@ -32,7 +36,7 @@ if (!check) {
 }
 await mkdir(output, { recursive: true });
 if (check) {
-  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html']) {
+  for (const name of ['Mplus1p-Light.woff2', 'Mplus1p-Regular.woff2', 'Mplus1p-Bold.woff2', 'diagram.html', 'office-licenses.txt']) {
     await writeFile(resolve(output, name), await readFile(resolve(resources, name)));
   }
 }
@@ -44,6 +48,7 @@ const [editorMeta, viewerMeta] = await Promise.all([
   bundle('vendor/mermaid-runtime.ts', 'mermaid-runtime.js', false),
   bundle('vendor/prism-runtime.ts', 'prism-runtime.js', false),
   bundle('selection.ts', 'selection-runtime.js', false, 'WeiBeiSelection'),
+  build({ entryPoints: [resolve(root, 'Sources/WeiBei/OfficeReader/office.ts')], bundle: true, format: 'iife', minify: true, outfile: resolve(output, 'office-entry.js'), plugins: [officeVendorPatches], logLevel: 'warning' }),
   build({
     stdin: {
       contents: (await readFile(resolve(root, 'node_modules/katex/dist/katex.css'), 'utf8'))
@@ -52,10 +57,23 @@ const [editorMeta, viewerMeta] = await Promise.all([
     },
     bundle: true, minify: true,
     outfile: resolve(output, 'editor.css'), loader: { '.woff2': 'file' },
-    // SPM .process 会把 bundle 内目录拍平;字体平铺输出 + css 同级相对路径才能在拍平后仍可解析。
+    // 字体和编辑器样式同级，原生 App 与 SwiftPM 保持相同的 Editor 目录结构。
     assetNames: '[name]', logLevel: 'warning',
   }),
 ]);
+
+const officeBundle = resolve(output, 'office-entry.js');
+// Use the existing pinned JSZip compressor for identical bytes across build hosts.
+// Foundation inflates this bundled runtime once, before WebKit loads it.
+await writeFile(`${officeBundle}.deflate`, pako.deflateRaw((await readFile(officeBundle, 'utf8')).replace(/[ \t]+$/gm, ''), { level: 9 }));
+await rm(officeBundle);
+
+// The editor and GenUI share one lazy relationship-diagram engine.
+const mermaidBundle = resolve(output, 'mermaid-runtime.js');
+const mermaid = packedWebScript(await readFile(mermaidBundle));
+await writeFile(mermaidBundle, `window.WeiBeiMermaid = ${mermaid.source}.then(() => window.WeiBeiMermaid);
+(window.__GenuiAssets__ ??= {}).mermaid = window.WeiBeiMermaid.then(() => window.__GenuiAssets__.mermaid);
+`);
 
 const walk = async (directory) => (await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {
   const path = join(directory, entry.name);
@@ -69,7 +87,7 @@ const entries = await Promise.all(manifestFiles.map(async (path) => {
   return { name, bytes: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex') };
 }));
 entries.sort((a, b) => a.name.localeCompare(b.name));
-const manifest = `${JSON.stringify({ schemaVersion: 1, assets: entries }, null, 2)}\n`;
+const manifest = `${JSON.stringify({ schemaVersion: 1, inlineScripts: [mermaid.hash], assets: entries }, null, 2)}\n`;
 await writeFile(resolve(output, 'editor-resources.json'), manifest);
 
 if (check) {
