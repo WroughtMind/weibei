@@ -2,6 +2,7 @@ import UIKit
 import MarkdownView
 import MarkdownParser
 import Litext
+import WeiBeiCore
 
 extension MarkdownTheme {
     static func weiBei(fontSize: CGFloat, appearance: WeiBeiAppearanceMode) -> Self {
@@ -94,7 +95,7 @@ final class ContentStore {
         let parsed: MarkdownParser.ParseResult
         if message.parsedRevision == revision, let cached = message.parsed { parsed = cached }
         else {
-            parsed = await Task.detached(priority: .userInitiated) { MarkdownParser().parse(text) }.value
+            parsed = await Task.detached(priority: .userInitiated) { MarkdownParser().parse(MarkdownEmphasisNormalizer.prepare(text).text) }.value
             guard generation == self.generation, revision == message.revision else { return false }
             message.parsed = parsed; message.parsedRevision = revision
             parseCount += 1

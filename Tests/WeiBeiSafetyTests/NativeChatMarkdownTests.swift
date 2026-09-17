@@ -5,6 +5,19 @@ import XCTest
 @testable import WeiBei
 
 final class NativeChatMarkdownTests: XCTestCase {
+    func testChineseEmphasisIsSharedWithoutChangingCode() {
+        let source = "**举办国家：**美国，**球场（纽约）**举办。\n\n`**举办国家：**美国`\n\n```text\n**球场（纽约）**举办\n```"
+        let prepared = MarkdownEmphasisNormalizer.prepare(source)
+        XCTAssertTrue(prepared.text.contains("**举办国家：** 美国"))
+        XCTAssertTrue(prepared.text.contains("**球场（纽约）** 举办"))
+        let code = prepared.codeRanges.map { (prepared.text as NSString).substring(with: $0) }
+        XCTAssertTrue(code.contains { $0.contains("**举办国家：**美国") })
+        XCTAssertTrue(code.contains { $0.contains("**球场（纽约）**举办") })
+        let document = NativeChatMarkdownParser.parse(source)
+        XCTAssertTrue(document.runs.contains { $0.style.bold && $0.text == "举办国家：" })
+        XCTAssertTrue(document.runs.contains { $0.style.bold && $0.text == "球场（纽约）" })
+    }
+
     // Continuous input must publish the already completed answer, then the latest snapshot.
     @MainActor func testPendingInputDoesNotStarveDisplay() async {
         let pipeline = NativeChatMarkdownPipeline()
