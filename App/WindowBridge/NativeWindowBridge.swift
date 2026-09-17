@@ -34,8 +34,9 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         NSApp.windows.forEach(apply)
     }
     private func apply(to window: NSWindow) {
-        guard window.styleMask.contains(.titled), let content = window.contentView else { return }
+        // Popovers are borderless windows too; their rows need mouse-move events.
         window.acceptsMouseMovedEvents = true
+        guard window.styleMask.contains(.titled), let content = window.contentView else { return }
         let glass = ["glassLight", "glassDark", "glassMist", "glassSlate"].contains(mode)
         window.isOpaque = !glass
         guard glass else {

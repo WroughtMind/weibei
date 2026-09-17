@@ -656,6 +656,13 @@ enum CatalystBusinessCheck {
         try await until("reasoning composer configured") {
             AgentProviderReadiness.isConfigured(for: store) && store.agentReasoningEffort == "low"
         }
+        store.agentReasoningMode = .think
+        guard store.agentReasoningEffort == "high" else { throw Failure("Think default is not high") }
+        store.agentReasoningMappings[store.agentReasoningMappingKey(.think)] = "medium"
+        guard store.agentReasoningEffort == "medium" else { throw Failure("Think mapping did not apply") }
+        store.agentReasoningMappings.removeValue(forKey: store.agentReasoningMappingKey(.think))
+        store.agentReasoningMode = .flash
+        guard store.agentReasoningEffort == "low" else { throw Failure("Flash default is not low") }
         mainComposer.text = "第一行\n第二行\n第三行"
         mainComposer.delegate?.textViewDidChange?(mainComposer)
         try await until("reasoning composer grows for multiple lines") {

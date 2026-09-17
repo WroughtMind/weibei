@@ -56,11 +56,14 @@ final class SelectionExperienceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
-        let savedEfforts = UserDefaults.standard.object(forKey: "agentReasoningEfforts")
-        defer { UserDefaults.standard.set(savedEfforts, forKey: "agentReasoningEfforts") }
+        let reasoningKeys = ["agentReasoningModes", "agentReasoningMappings"]
+        let savedReasoning = reasoningKeys.map { UserDefaults.standard.object(forKey: $0) }
+        defer { for (key, value) in zip(reasoningKeys, savedReasoning) { UserDefaults.standard.set(value, forKey: key) } }
         store.agentProviderID = .openai
         store.modelName = "gpt-5.6-sol"
-        store.agentReasoningEfforts[store.agentReasoningModelKey] = "max"
+        store.agentReasoningMode = .think
+        store.agentReasoningMappings[store.agentReasoningMappingKey(.think)] = "max"
+        store.agentReasoningMappings[store.agentReasoningMappingKey(.flash)] = "medium"
         let mainID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
         store.layout = .documentAgentNotes
         store.showAgent = true
