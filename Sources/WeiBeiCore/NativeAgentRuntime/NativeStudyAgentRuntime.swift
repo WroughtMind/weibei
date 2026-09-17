@@ -84,6 +84,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
             let hostToolHandler = self.hostToolHandler
             let depth = delegateDepth
             let baseStores = liveStores
+            let reasoningEffort = request.reasoningEffort
             stores.startSubagent = { request in
                 var next = request
                 next.depth = max(request.depth, depth + 1)
@@ -96,7 +97,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
                     systemPrompt: systemPromptText,
                     ledgerRoot: ledgerRoot,
                     hostToolHandler: hostToolHandler,
-                    liveStores: baseStores
+                    liveStores: baseStores,
+                    reasoningEffort: reasoningEffort
                 )
             }
         }

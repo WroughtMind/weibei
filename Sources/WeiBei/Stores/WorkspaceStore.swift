@@ -330,6 +330,21 @@ final class WorkspaceStore: ObservableObject {
             self?.acceptNoteEditorSnapshot(snapshot)
         }
     )
+    @Published var agentReasoningEfforts: [String: String] =
+        UserDefaults.standard.dictionary(forKey: "agentReasoningEfforts") as? [String: String] ?? [:] {
+        didSet { UserDefaults.standard.set(agentReasoningEfforts, forKey: "agentReasoningEfforts") }
+    }
+    var agentReasoningModelName: String {
+        let selected = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return selected.isEmpty ? NativeProviderRouting.route(agentProviderID).defaultModel : selected
+    }
+    var agentReasoningModelKey: String { activeAgentProfileID.uuidString + ":" + agentReasoningModelName }
+    var agentReasoningLevels: [String] {
+        AgentAccountService.shared.reasoningLevels(provider: agentProviderID, model: agentReasoningModelName)
+    }
+    var agentReasoningEffort: String? {
+        AgentReasoningEffort.selected(agentReasoningEfforts[agentReasoningModelKey], levels: agentReasoningLevels)
+    }
     @Published var agentDraft = ""
     @Published var messages: [AgentMessage] = []
     var agentNoteActionWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
@@ -9452,6 +9467,12 @@ final class WorkspaceStore: ObservableObject {
             agentRequestTask = nil
             return nil
         }
+        let isFloatingRequest = selectionAskThreads.contains { $0.id == target.sessionID }
+        let sentReasoningEffort = agentProviderID == .openaiCodex
+            ? (isFloatingRequest ? "low" : agentReasoningEffort ?? agentReasoningEfforts[agentReasoningModelKey] ?? "low")
+            : AgentReasoningEffort.selected(
+                agentReasoningEfforts[agentReasoningModelKey], levels: agentReasoningLevels, floating: isFloatingRequest
+            )
         let requestProvider = agentProviderID
         let requestAuthMethod = agentAuthMethod
         if reusingLastUserMessage {
@@ -9739,7 +9760,8 @@ final class WorkspaceStore: ObservableObject {
                     courseProfile: sentCourseProfile,
                     language: sentLanguage,
                     contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())",
-                    confirmedNotes: confirmedAgentNotes(in: target)
+                    confirmedNotes: confirmedAgentNotes(in: target),
+                    reasoningEffort: sentReasoningEffort
                 )
                 agentStreaming.activityText = ui("正在思考", "Thinking")
                 didStartModelRequest = true

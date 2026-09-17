@@ -66,7 +66,8 @@ public enum NativeSubagentRunner {
         systemPrompt: String,
         ledgerRoot: URL,
         hostToolHandler: StudyAgentHostToolHandler?,
-        liveStores: NativeLiveStores
+        liveStores: NativeLiveStores,
+        reasoningEffort: String? = nil
     ) async -> NativeSubagentResult {
         if !NativeSubagentCapabilities.supported.contains(request.capabilities) {
             return NativeSubagentResult(
@@ -112,7 +113,8 @@ public enum NativeSubagentRunner {
                     materialText: "",
                     noteTitle: "",
                     noteText: "",
-                    contextRevision: "delegate-\(request.depth)"
+                    contextRevision: "delegate-\(request.depth)",
+                    reasoningEffort: reasoningEffort
                 ),
                 progress: nil
             )

@@ -216,8 +216,8 @@ struct CatalystWeiBeiApp: App {
     }
 
     private var workspaceContent: some View {
+        // Native window size restrictions own the minimum; content must fit below the toolbar.
         CatalystWorkspaceRoot(store: AppDelegate.workspace, appDelegate: appDelegate)
-            .frame(minWidth: 520, minHeight: 720)
             .onOpenURL { AppDelegate.workspace.importFiles([$0]) }
 #if WEIBEI_ACCEPTANCE_CHECKS
             .task {
