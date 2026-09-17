@@ -340,7 +340,7 @@ struct OAuthResultPage {
         template = try String(contentsOf: root.appendingPathComponent("page.html"), encoding: .utf8)
         font = try Data(contentsOf: root.appendingPathComponent("WeiBeiStele.ttf")).base64EncodedString()
         images = try Dictionary(uniqueKeysWithValues: ["working", "success", "problem", "cancelled"].map {
-            ($0, "data:image/\($0 == "success" ? "png" : "webp");base64," + (try Data(contentsOf: root.appendingPathComponent("\($0).\($0 == "success" ? "png" : "webp")"))).base64EncodedString())
+            ($0, "data:image/webp;base64," + (try Data(contentsOf: root.appendingPathComponent("\($0).webp"))).base64EncodedString())
         })
     }
 
