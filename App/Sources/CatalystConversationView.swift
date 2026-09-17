@@ -239,7 +239,7 @@ private struct CatalystMessageFooter: View {
     @ObservedObject var streaming: AgentStreamingState
     let wideTypography: Bool
     let onHeight: (CGFloat) -> Void
-    private var message: AgentMessage { store.messages.first { $0.id == initial.id } ?? initial }
+    private var message: AgentMessage { streaming.applyingDisplayText(to: store.messages.first { $0.id == initial.id } ?? initial) }
     var body: some View {
         let text = streaming.isDisplaying(message.id) ? streaming.text : message.text
         VStack(alignment: .leading, spacing: 8) {

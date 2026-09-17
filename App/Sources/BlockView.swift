@@ -222,7 +222,7 @@ final class BlockView: UIView, UITextViewDelegate {
             markdown.frame = CGRect(x: 0, y: 0, width: width, height: lastHeight)
             markdown.layoutIfNeeded()
         case .workspaceAttachment:
-            lastHeight = max(120, record.height)
+            lastHeight = max(1, record.height)
         case .card:
             lastHeight = record.collapsed ? 48 : 204
             draft.isHidden = record.collapsed; save.isHidden = record.collapsed
