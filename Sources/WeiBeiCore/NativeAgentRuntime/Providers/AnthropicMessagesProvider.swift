@@ -215,13 +215,15 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
             if block["type"] as? String == "server_tool_use",
                block["name"] as? String == "web_search", let id = block["id"] as? String {
                 return [.blockStart(index: index, blockType: .serverTool),
-                        .serverToolActivity(.init(id: id, name: "$web_search", state: .running))]
+                        .serverToolActivity(.init(id: id, name: "$web_search", state: .running,
+                            detail: (block["input"] as? [String: Any])?["query"] as? String))]
             }
             if block["type"] as? String == "web_search_tool_result" {
                 var chunks: [NativeStreamChunk] = []
                 if let id = block["tool_use_id"] as? String {
                     let failed = (block["content"] as? [String: Any])?["type"] as? String == "web_search_tool_result_error"
-                    chunks.append(.serverToolActivity(.init(id: id, name: "$web_search", state: failed ? .failed : .completed)))
+                    chunks.append(.serverToolActivity(.init(id: id, name: "$web_search", state: failed ? .failed : .completed,
+                        sourceURLs: (block["content"] as? [[String: Any]])?.compactMap { $0["url"] as? String })))
                 }
                 for result in block["content"] as? [[String: Any]] ?? [] {
                     if let url = result["url"] as? String { chunks.append(.webSearchSource(url: url)) }

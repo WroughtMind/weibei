@@ -167,6 +167,7 @@ public actor NativeAgentLoop {
                 var stepText = ""
                 var stepUsage: NativeTokenUsage?
                 var reportedSearchActivity = false
+                var sourceOnlyURLs: [String] = []
                 var receivedChunk = false
                 var recoveredOverflow = false
                 streamAttempt: while true {
@@ -204,10 +205,11 @@ public actor NativeAgentLoop {
                             case let .webSearchSource(url):
                                 // Some providers expose only sources, not a search lifecycle.
                                 // Report the observed result once, without inventing a running phase.
-                                if !reportedSearchActivity {
-                                    reportedSearchActivity = true
+                                if !reportedSearchActivity && !sourceOnlyURLs.contains(url) {
+                                    sourceOnlyURLs.append(url)
                                     await progress?(.toolActivity(.init(
-                                        id: "\(step):server:sources", name: "$web_search", state: .completed
+                                        id: "\(step):server:sources", name: "$web_search_sources", state: .completed,
+                                        sourceURLs: sourceOnlyURLs
                                     )))
                                 }
                                 if !context.currentRunSourceURLs.contains(url) {
@@ -316,7 +318,9 @@ public actor NativeAgentLoop {
                     let call = callResult.call
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
-                    await progress?(.toolActivity(.init(id: "\(step):\(call.id)", name: call.name, state: .running)))
+                    let arguments = (try? JSONSerialization.jsonObject(with: Data(call.arguments.utf8))) as? [String: Any]
+                    let detail = ["query", "url", "title"].compactMap { arguments?[$0] as? String }.first
+                    await progress?(.toolActivity(.init(id: "\(step):\(call.id)", name: call.name, state: .running, detail: detail)))
                     var result: NativeToolExecutionResult
                     let previousBlocks = contentBlocks
                     if let failure = callResult.failure {

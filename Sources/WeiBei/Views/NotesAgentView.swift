@@ -5612,43 +5612,82 @@ struct AgentToolActivityGroup: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     let message: AgentMessage
-    @State private var expanded = false
+    @State private var userExpanded: Bool?
     private var running: Bool {
         message.completionState == .generating && message.toolActivities.contains { $0.state == .running }
     }
+    private var expanded: Bool { userExpanded ?? running }
+    private var sources: [String] {
+        Array(Set(message.toolActivities.flatMap { $0.sourceURLs ?? [] }))
+    }
+    private var summary: String {
+        if running, let current = message.toolActivities.last(where: { $0.state == .running }) {
+            return title(current.name) + (current.detail.map { " · " + $0 } ?? "")
+        }
+        let searches = message.toolActivities.filter { $0.name == "$web_search" }.count
+        var parts: [String] = []
+        if searches > 0 { parts.append(store.ui("搜索 \(searches) 次", "\(searches) searches")) }
+        let others = message.toolActivities.filter { $0.name != "$web_search" && $0.name != "$web_search_sources" }.count
+        if others > 0 { parts.append(store.ui("执行 \(others) 项操作", "\(others) operations")) }
+        if !sources.isEmpty { parts.append(store.ui("\(sources.count) 个来源", "\(sources.count) sources")) }
+        if message.toolActivities.contains(where: { $0.state == .failed }) { parts.append(store.ui("有失败项", "Includes failures")) }
+        return parts.joined(separator: " · ")
+    }
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(message.toolActivities) { activity in
-                    HStack(spacing: 8) {
-                        Image(systemName: activity.state == .failed ? "exclamationmark.circle" :
-                            activity.state == .completed ? "checkmark" : "ellipsis")
-                        Text(title(activity.name))
-                        Spacer(minLength: 8)
-                        Text(activity.state == .failed ? store.ui("失败", "Failed") :
-                            activity.state == .completed ? store.ui("完成", "Done") :
-                            message.completionState == .generating ? store.ui("进行中", "Running") : store.ui("已中断", "Interrupted"))
+        VStack(alignment: .leading, spacing: 10) {
+            Button { userExpanded = !expanded } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .medium))
+                    if running { ProgressView().controlSize(.mini) }
+                    Text(summary).lineLimit(2).multilineTextAlignment(.leading)
+                }.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(expanded ? store.ui("已展开", "Expanded") : store.ui("已折叠", "Collapsed"))
+            if expanded {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(message.toolActivities) { activity in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: activity.state == .failed ? "exclamationmark.circle" :
+                                activity.state == .completed ? "checkmark" : "ellipsis")
+                                .frame(width: 12).padding(.top, 2)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(title(activity.name)).fontWeight(.medium)
+                                if let detail = activity.detail, !detail.isEmpty {
+                                    Text(detail).foregroundStyle(WeiBeiTheme.ink).textSelection(.enabled)
+                                }
+                                if activity.state == .failed {
+                                    Text(store.ui("未能完成", "Could not complete"))
+                                } else if activity.state == .running && !running {
+                                    Text(store.ui("已中断", "Interrupted"))
+                                }
+                                let urls = Array(Set(activity.sourceURLs ?? [])).sorted()
+                                if !urls.isEmpty {
+                                    DisclosureGroup(store.ui("\(urls.count) 个来源", "\(urls.count) sources")) {
+                                      VStack(alignment: .leading, spacing: 4) {
+                                        ForEach(urls, id: \.self) { raw in
+                                            if let url = URL(string: raw), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                                                Link(destination: url) {
+                                                    Text(url.host ?? raw).underline().lineLimit(1)
+                                                }.help(raw)
+                                            }
+                                        }
+                                      }.padding(.top, 4)
+                                    }.fixedSize(horizontal: false, vertical: true)
+                                }
+                            }.fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                }
-            }.padding(.top, 6)
-        } label: {
-            HStack(spacing: 6) {
-                if running { ProgressView().controlSize(.mini) }
-                Text(running ? store.ui("正在执行工具", "Using tools") : store.ui("工具活动", "Tool activity"))
-                Text("· \(message.toolActivities.count)")
-                if message.toolActivities.contains(where: { $0.state == .failed }) {
-                    Text(store.ui("· 有失败项", "· includes failures"))
-                }
+                }.padding(.leading, 15)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .weiBeiText(11)
         .foregroundStyle(WeiBeiTheme.secondaryInk)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: expanded)
-        .onAppear { expanded = running }
-        .onChange(of: running) { _, isRunning in expanded = isRunning }
-        .onChange(of: message.completionState) { _, state in
-            if state != .generating { expanded = false }
-        }
+        .onChange(of: running) { _, _ in userExpanded = nil }
     }
     private func title(_ name: String) -> String {
         switch name {
@@ -5670,6 +5709,7 @@ struct AgentToolActivityGroup: View {
         case "weibei_relation_proposal": store.ui("准备关联建议", "Prepare relationship proposal")
         case "render_ui": store.ui("生成互动内容", "Create interactive content")
         case "$web_search": store.ui("网络搜索", "Search the web")
+        case "$web_search_sources": store.ui("搜索返回的来源", "Sources returned by search")
         default: store.ui("执行工具", "Run tool") + " · " + name
         }
     }

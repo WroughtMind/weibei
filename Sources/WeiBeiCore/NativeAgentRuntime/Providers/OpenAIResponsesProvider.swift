@@ -216,12 +216,16 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             guard let item = object["item"] as? [String: Any],
                   item["type"] as? String == "web_search_call" else { return [] }
             var chunks: [NativeStreamChunk] = []
+            let action = item["action"] as? [String: Any]
+            let queries = action?["queries"] as? [String]
+            let detail = queries?.joined(separator: " · ") ?? action?["query"] as? String ?? action?["url"] as? String
+            let urls = (action?["sources"] as? [[String: Any]])?.compactMap { $0["url"] as? String }
             if let id = item["id"] as? String {
                 let status = item["status"] as? String
                 chunks.append(.serverToolActivity(.init(id: id, name: "$web_search",
-                    state: status == "failed" ? .failed : status == "completed" ? .completed : .running)))
+                    state: status == "failed" ? .failed : status == "completed" ? .completed : .running,
+                    detail: detail, sourceURLs: urls)))
             }
-            let action = item["action"] as? [String: Any]
             for source in action?["sources"] as? [[String: Any]] ?? [] {
                 if let url = source["url"] as? String { chunks.append(.webSearchSource(url: url)) }
             }

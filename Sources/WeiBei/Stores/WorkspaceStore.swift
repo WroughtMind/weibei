@@ -10197,7 +10197,7 @@ final class WorkspaceStore: ObservableObject {
         case let .toolActivity(activity):
             _ = updateAgentMessage(replyMessageID, in: chatID) { message in
                 if let index = message.toolActivities.firstIndex(where: { $0.id == activity.id }) {
-                    message.toolActivities[index] = activity
+                    message.toolActivities[index] = message.toolActivities[index].merging(activity)
                 } else {
                     message.toolActivities.append(activity)
                 }

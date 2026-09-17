@@ -1842,8 +1842,17 @@ public struct AgentToolActivity: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var name: String
     public var state: State
-    public init(id: String, name: String, state: State) {
+    public var detail: String?
+    public var sourceURLs: [String]?
+    public init(id: String, name: String, state: State, detail: String? = nil, sourceURLs: [String]? = nil) {
         self.id = id; self.name = name; self.state = state
+        self.detail = detail; self.sourceURLs = sourceURLs
+    }
+    public func merging(_ update: Self) -> Self {
+        var next = update
+        next.detail = update.detail ?? detail
+        next.sourceURLs = update.sourceURLs ?? sourceURLs
+        return next
     }
 }
 
