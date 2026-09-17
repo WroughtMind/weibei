@@ -352,6 +352,12 @@ struct NotePaneView: View {
                     immersiveNoteHeader
                 }
             }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !showsPaneHeader && hasNoteContent && !railOnly {
+                    HStack { Spacer(minLength: 0); NoteReadAloudControls(store: store) }
+                        .padding(.horizontal, 16).frame(height: 36).background(WeiBeiTheme.paper)
+                }
+            }
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -430,6 +436,7 @@ struct NotePaneView: View {
                 reorderRole: reorderRole
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
+                NoteReadAloudControls(store: store)
                 typewriterButton
                 ContextualContentListButton(kind: .note)
                 ExcerptBookButton()
@@ -3426,6 +3433,7 @@ struct AgentBubble: View {
     var isStreaming = false
     var isChatWideTypography = false
     var showsBody = true
+    @ObservedObject private var reader = ReadAloud.shared
     @State private var hovering = false
     @State private var copiedMessage = false
     /// Copy feedback identity: a second copy within the 1.2s window re-arms the
@@ -3478,6 +3486,11 @@ struct AgentBubble: View {
             .help(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
             .accessibilityLabel(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
 
+            if !isStreaming && message.completionState == .completed && !WorkspaceStore.isAgentFailureMessage(message.text) {
+                ReadAloudControls(id: "message-" + message.id.uuidString) {
+                    AgentCitationParser.parse(store.agentDisplayText(for: message)).displayText
+                }
+            }
             if message.id == store.lastRegeneratableAgentReplyID {
                 Button {
                     store.regenerateLastAssistantReply()
@@ -3493,9 +3506,9 @@ struct AgentBubble: View {
                 .accessibilityLabel(store.ui("重新生成最后一条回答", "Regenerate last response"))
             }
         }
-        .opacity(hovering || !showsBody ? 1 : 0)
+        .opacity(hovering || !showsBody || reader.sourceID == "message-" + message.id.uuidString ? 1 : 0)
         .offset(y: hovering ? 0 : -1)
-        .allowsHitTesting(hovering || !showsBody)
+        .allowsHitTesting(hovering || !showsBody || reader.sourceID == "message-" + message.id.uuidString)
         .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hovering)
     }
 

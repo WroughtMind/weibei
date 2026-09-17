@@ -201,7 +201,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 fail("editorReady did not include the V2 document identity")
                 return
             }
-            validateInitialMarkdown()
+            // The compressed editor boots asynchronously. Configure the actual
+            // document after ready so rebuilt editor nodes inherit the setting.
+            webView.evaluateJavaScript("document.documentElement.setAttribute('writingsuggestions', 'false')") { [weak self] _, error in
+                guard let self else { return }
+                if let error { self.fail("could not configure editor input checks: \(error.localizedDescription)"); return }
+                self.validateInitialMarkdown()
+            }
         case "dirtyChanged":
             guard updateSession(from: message.body),
                   let dirty = (message.body as? [String: Any])?["dirty"] as? Bool else {
@@ -3571,7 +3577,11 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
                 return
             }
             readyMilliseconds = (ProcessInfo.processInfo.systemUptime - loadStarted) * 1_000
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.beginActions() }
+            webView.evaluateJavaScript("document.documentElement.setAttribute('writingsuggestions', 'false')") { [weak self] _, error in
+                guard let self else { return }
+                if let error { self.finish(.failure(error)); return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.beginActions() }
+            }
         case "editorFailure":
             finish(.failure(BenchmarkError.failed("\(fixture): editor reported a failure: \(message.body)")))
         case "dirtyChanged":
@@ -3951,6 +3961,12 @@ if benchmarkMode {
     exit(1)
 }
 NSApplication.shared.setActivationPolicy(.prohibited)
+if CommandLine.arguments.contains("--whiteboard") || CommandLine.arguments.contains("--whiteboard-window") || Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.whiteboardcheck" {
+    let whiteboard = WhiteboardHarness()
+    whiteboard.run()
+    if CommandLine.arguments.contains("--whiteboard-window") || Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.whiteboardcheck" { NSApplication.shared.run() }
+    exit(0)
+}
 if CommandLine.arguments.contains("--notes-interaction") {
     NativeSelectionWritingHarness().run(scriptName: "native-notes.js")
     exit(0)

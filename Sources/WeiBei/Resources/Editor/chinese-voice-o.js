@@ -1,0 +1,2 @@
+/* CC BY-SA 3.0. Chen Wang, Hugo Lopez, Nicolas Vion. See chinese-voice-LICENSE.txt. */
+window.WeiBeiChineseVoices["o"]={"sampleRate":16000,"sprites":{"o1":{"startMs":0.0,"durationMs":216.625},"o2":{"startMs":216.625,"durationMs":904.3125},"o3":{"startMs":1120.9375,"durationMs":764.8125},"o4":{"startMs":1885.75,"durationMs":263.25},"ou1":{"startMs":2149.0,"durationMs":332.3125},"ou2":{"startMs":2481.3125,"durationMs":899.0625},"ou3":{"startMs":3380.375,"durationMs":658.6875},"ou4":{"startMs":4039.0625,"durationMs":436.6875}}};

@@ -266,6 +266,7 @@ struct ReaderView: View {
     @State private var markdownSnapshotFailed = false
     /// Live pane size from a background probe. Zero until first real measurement.
     @State private var measuredPaneSize: CGSize = .zero
+    @State private var showsWhiteboardClassroom = false
 
     var body: some View {
         // Hang-proof structure:
@@ -338,6 +339,19 @@ struct ReaderView: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !railOnly, store.selectedMaterialItem != nil {
+                HStack(spacing: 14) {
+                    Spacer(minLength: 0)
+                    if let item = store.selectedMaterialItem { MaterialReadAloudControls(store: store, item: item) }
+                    Button { showsWhiteboardClassroom = true } label: {
+                        Image(systemName: "rectangle.and.pencil.and.ellipsis")
+                    }.help(store.ui("白板讲解", "Whiteboard lesson"))
+                        .accessibilityLabel(store.ui("白板讲解", "Whiteboard lesson"))
+                }.buttonStyle(.borderless).padding(.horizontal, 16).frame(height: 36)
+                    .background(WeiBeiTheme.paper)
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if store.selectedMaterialItem?.kind.isWebDocument == true, !htmlResourceIssues.isEmpty {
                 Button { htmlIssueDetailsPresented.toggle() } label: {
@@ -368,6 +382,11 @@ struct ReaderView: View {
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
             adaptsWebDocumentColors = false
+        }
+        .sheet(isPresented: $showsWhiteboardClassroom) {
+            if let item = store.selectedMaterialItem {
+                WhiteboardSessionView(store: store, item: item, selection: store.selectionContext, pageIndex: pdfPageIndex)
+            }
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         // Width/height probe as background sibling — never parent of WKWebView/PDFView.

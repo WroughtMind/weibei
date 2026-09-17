@@ -5,14 +5,254 @@
   ],
   "assets": [
     {
+      "name": "chinese-voice-a.caf",
+      "bytes": 33630,
+      "sha256": "3963dfc53e6eb493e50515cddce61da4075fc78b7773847c212ae4ee0a50bff5"
+    },
+    {
+      "name": "chinese-voice-a.js",
+      "bytes": 1374,
+      "sha256": "af299f6e709a7bbea84f24e4f8d213d2ffd826cbc5661ce70ed769edf6092aa4"
+    },
+    {
+      "name": "chinese-voice-b.caf",
+      "bytes": 97609,
+      "sha256": "362f4d88cb063329caf025048f1b44e55c8cd3c877b4534ab13e0554349612ca"
+    },
+    {
+      "name": "chinese-voice-b.js",
+      "bytes": 4084,
+      "sha256": "6cb9670fc89c87ab643c0e78d4784f02d783a9aa3c355ec15c433035bac9df5c"
+    },
+    {
+      "name": "chinese-voice-c.caf",
+      "bytes": 148534,
+      "sha256": "261da4bc64e61f7d9a6c1740956e336545356723641c1b5e79b4e02c10ea1516"
+    },
+    {
+      "name": "chinese-voice-c.js",
+      "bytes": 7532,
+      "sha256": "e4311e8fb63b557c191c1c4de881c7ff837d589b200b8784c7e169b05e21e9db"
+    },
+    {
+      "name": "chinese-voice-d.caf",
+      "bytes": 75210,
+      "sha256": "9d54830ce1d930348f26ae317280c7977be5f228c3fe3899f7b5fa3e9bdba357"
+    },
+    {
+      "name": "chinese-voice-d.js",
+      "bytes": 4768,
+      "sha256": "d878a639fd4a8143687985b8c6bb19eeb3aff059d9afc86966feb2f9f53c0728"
+    },
+    {
+      "name": "chinese-voice-e.caf",
+      "bytes": 13678,
+      "sha256": "25c174eb87f7129c7d936c04822bc908d5a7ca0497f37591a333c8c0b83eda53"
+    },
+    {
+      "name": "chinese-voice-e.js",
+      "bytes": 1115,
+      "sha256": "01cf2ebb17fc5f66021809b3978f93dfd88e6fa8c627adaa69061bc950419370"
+    },
+    {
+      "name": "chinese-voice-f.caf",
+      "bytes": 40885,
+      "sha256": "0889ac6b03ecc493657e4c530e0feba6350642cfee5cc2a20e8028c87d3943cd"
+    },
+    {
+      "name": "chinese-voice-f.js",
+      "bytes": 2349,
+      "sha256": "1da66dd569126168ff0ca847dcb628bfacfa61ce87483e8cc57bce0264864d7c"
+    },
+    {
+      "name": "chinese-voice-g.caf",
+      "bytes": 60730,
+      "sha256": "f622137e5b3c4c928dd9af14aa8eab207ba9c57028c652d0dfc1149e08c0b197"
+    },
+    {
+      "name": "chinese-voice-g.js",
+      "bytes": 3946,
+      "sha256": "4c7a19ad744bf3c51ed2384be53667baa141e7f6db7c3987e86da3ef2f3831f5"
+    },
+    {
+      "name": "chinese-voice-h.caf",
+      "bytes": 72057,
+      "sha256": "d72bfa4b8b4fbaa00b46f138f51cb41745ecefc2ec874c3c44f1ce367ec51c1a"
+    },
+    {
+      "name": "chinese-voice-h.js",
+      "bytes": 4353,
+      "sha256": "988bf2d57a9dfb8226ed19d523fc50661ae36dd15d4b8e8bb4c9972a9a32a5b8"
+    },
+    {
+      "name": "chinese-voice-index.js",
+      "bytes": 19235,
+      "sha256": "546816d3682fb4df029c0a83991f41e9ba903e9ca5024f91ff93b738a37067e6"
+    },
+    {
+      "name": "chinese-voice-j.caf",
+      "bytes": 54999,
+      "sha256": "8a0dbe2b1f08752ed4cb9425798ef91852c64be554cdae2448565240797bd0c7"
+    },
+    {
+      "name": "chinese-voice-j.js",
+      "bytes": 3004,
+      "sha256": "dc54ac71e9af7b731b319e58acadab88f30cc407229a345e495a4cc996e9f5cc"
+    },
+    {
+      "name": "chinese-voice-k.caf",
+      "bytes": 65844,
+      "sha256": "b7c256efd648530d4592ebc92440ae73fb69a2455e027efd59f709f3b4957225"
+    },
+    {
+      "name": "chinese-voice-k.js",
+      "bytes": 3987,
+      "sha256": "9e6e97d35f1f01896cb0bf92e47e8cb7032735ef42837d39961c62c562238b48"
+    },
+    {
+      "name": "chinese-voice-l.caf",
+      "bytes": 91056,
+      "sha256": "4063c47f75c21a6565ee21de1df324b3994b4379aed467eb084cab7dcdb06fc0"
+    },
+    {
+      "name": "chinese-voice-l.js",
+      "bytes": 5618,
+      "sha256": "82b4c1f238de1c19c0eaaa50e333cc1811599977edcc75adad409c6c4313622b"
+    },
+    {
+      "name": "chinese-voice-LICENSE.txt",
+      "bytes": 22964,
+      "sha256": "c9bce63706880a2d945c4b2fb9ed654054de274c455668e0c1cfbe8f3995df45"
+    },
+    {
+      "name": "chinese-voice-m.caf",
+      "bytes": 60036,
+      "sha256": "2600de46705404db3f100c12152f3aacc4babcf540428975fc643761b8970d6a"
+    },
+    {
+      "name": "chinese-voice-m.js",
+      "bytes": 4156,
+      "sha256": "8819b0a81597fed5230ca38ba52ef0a5ff4d7f411331a5295ad012f9b228e2d8"
+    },
+    {
+      "name": "chinese-voice-n.caf",
+      "bytes": 87781,
+      "sha256": "1570d976937c9e355e84589010dd43d9470f055be8457046b8ece4838654d0b2"
+    },
+    {
+      "name": "chinese-voice-n.js",
+      "bytes": 5772,
+      "sha256": "cb831cff5d5fa06386dd5d35091cd6a58a1ceaea912fcab726fcffffa8322cb3"
+    },
+    {
+      "name": "chinese-voice-o.caf",
+      "bytes": 6048,
+      "sha256": "ccfc9612785d2de93c64d88312847f96d4c7f67f0d1b3302a407b5810870670a"
+    },
+    {
+      "name": "chinese-voice-o.js",
+      "bytes": 533,
+      "sha256": "d04d5c11f9a0a9370ab47fac50368ea0e01077caecc8c856fe75593dbe5ea69b"
+    },
+    {
+      "name": "chinese-voice-p.caf",
+      "bytes": 62488,
+      "sha256": "79627d9a70c18c411f784dcc580479d5e43af36570ae09262cc5a069504f8f94"
+    },
+    {
+      "name": "chinese-voice-p.js",
+      "bytes": 3561,
+      "sha256": "e7111378d235c0e27459f26303622e3d60c4ed373e1973f323c9760818336f40"
+    },
+    {
+      "name": "chinese-voice-q.caf",
+      "bytes": 59297,
+      "sha256": "e09a0ac1946c7edf86a824e1adc743babe16bbdff0f209ae857b762f2130ae68"
+    },
+    {
+      "name": "chinese-voice-q.js",
+      "bytes": 3003,
+      "sha256": "dc9e8428176b03880bd4b52dff221597b484a782d405cda44c860070d8ec50f4"
+    },
+    {
+      "name": "chinese-voice-r.caf",
+      "bytes": 57659,
+      "sha256": "a0c4fdb29eb32e196a1cc76d9b4a528ebfeec289d99780327d0bd7b21d6319bd"
+    },
+    {
+      "name": "chinese-voice-r.js",
+      "bytes": 3165,
+      "sha256": "8fa88e46dc1c7abf91a8089416bf4bbb1f78eea4fa1fe796f56222939a9a57c7"
+    },
+    {
+      "name": "chinese-voice-s.caf",
+      "bytes": 147724,
+      "sha256": "7063cfbba3130ae5dbed34c1497f9193455d8d521ff26ac16e477d79cc96ca41"
+    },
+    {
+      "name": "chinese-voice-s.js",
+      "bytes": 7311,
+      "sha256": "66bbaa6dd272dd6080f59d6c7fc4711bf8d6a5221c8bd5031773e284af25c24b"
+    },
+    {
+      "name": "chinese-voice-t.caf",
+      "bytes": 76606,
+      "sha256": "8dc05543c4189153fc6c9148aa3f257989070198d2ab2bf094d045ca7c0eec25"
+    },
+    {
+      "name": "chinese-voice-t.js",
+      "bytes": 4200,
+      "sha256": "a850562550713ebcbfa7b57cf7804ce00899c8fd9c486860a6b3b4a596229998"
+    },
+    {
+      "name": "chinese-voice-w.caf",
+      "bytes": 32046,
+      "sha256": "823c65325c8e6e9ce8bae70936d5db51e372892bf3b8cb83ab462a232f9cd3d2"
+    },
+    {
+      "name": "chinese-voice-w.js",
+      "bytes": 1946,
+      "sha256": "dedfb2de5be22736bc8e01dbd182123dabee1f31bb3ace5824a1e614e4a80cdd"
+    },
+    {
+      "name": "chinese-voice-x.caf",
+      "bytes": 64524,
+      "sha256": "c15a1e6998dc06cae9790db10161e020ada01e4816e91de1e9ea8f9aec3a1d4f"
+    },
+    {
+      "name": "chinese-voice-x.js",
+      "bytes": 2996,
+      "sha256": "bab475ac33de30183e278c7d4b6ac66d6f55e0f98a4a375d081207d5d0b02a8b"
+    },
+    {
+      "name": "chinese-voice-y.caf",
+      "bytes": 53780,
+      "sha256": "c630a1cf6f9031d8a810ebafc1c41341162ce2b37021bf94dbaffc22ead67022"
+    },
+    {
+      "name": "chinese-voice-y.js",
+      "bytes": 3146,
+      "sha256": "ec6602aba28e9b129049d1f03a4ec0fb59d51831c9a2049ef2615a32685f3e3f"
+    },
+    {
+      "name": "chinese-voice-z.caf",
+      "bytes": 130565,
+      "sha256": "238771b4359014e0c5fe075ddbe8d871346739f4bd1c1fc62ef59832655bd4cc"
+    },
+    {
+      "name": "chinese-voice-z.js",
+      "bytes": 7694,
+      "sha256": "f3e6a5fb7d4aaee4bd20de061e037e8ed348d756b67c14d6e6305d8672f795fb"
+    },
+    {
       "name": "diagram.html",
       "bytes": 2207,
       "sha256": "296f05e368ee036c5276875f2e5e089a63d84b28af46e51a4861d61825c1eeed"
     },
     {
       "name": "editor-entry.js",
-      "bytes": 615788,
-      "sha256": "98d2ed6b709eb50a85d51dcf13368880d797ab16614ec13cad0da8eaf3ecc118"
+      "bytes": 268450,
+      "sha256": "14f2dffdd4c5916731f47b341cb3b41800600a409608ed7a923a749138d6f13a"
     },
     {
       "name": "editor.css",
@@ -126,8 +366,8 @@
     },
     {
       "name": "katex-runtime.js",
-      "bytes": 266135,
-      "sha256": "bffcc916c8091f1c7fef6176f19b43022b1a2b28c23369974c0affa739cadea4"
+      "bytes": 107068,
+      "sha256": "351e2818909d117c28f26ac8748765d3b8c96a12932ded00e27a5fef92080e29"
     },
     {
       "name": "mermaid-runtime.js",
@@ -165,14 +405,74 @@
       "sha256": "24e3f8b3cd68966f4a70e62b6b878cc5030b38a17fee1feba0dc346501e62304"
     },
     {
+      "name": "reading-voice-runtime.js",
+      "bytes": 52503,
+      "sha256": "fed44b8c23adbd5bfcf671d49681be7004d0bac20415da38d500b8e898e6b6bc"
+    },
+    {
+      "name": "reading-voice.html",
+      "bytes": 679,
+      "sha256": "64d08ed459aac311954318bdc6df048808db15ed72a05a380b9d7fc0d04e4e4c"
+    },
+    {
       "name": "selection-runtime.js",
       "bytes": 4846,
       "sha256": "418c09345e46c65b98091ae995f408fa0e171e26e047ad88464a65beedfcec10"
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 538686,
-      "sha256": "a37b21db60560bfc0af8291d61eb5cd0b4b9f5c815d759793b506ccf5f8bcdda"
+      "bytes": 233534,
+      "sha256": "feddab252ff06bab73acaad87f90c853ee976a5445c94ae60e91a9694bd3fa25"
+    },
+    {
+      "name": "Virgil-LICENSE.txt",
+      "bytes": 4304,
+      "sha256": "a3ac9cdc65ef304ffb095d8cc877ee93bf1bffa88269693cd42ddf001650ffd0"
+    },
+    {
+      "name": "Virgil.woff2",
+      "bytes": 61248,
+      "sha256": "9976295bfe709bdea64839a4d4e9a1d436dd6eb67538399a5a0e8b8fadbcf1cf"
+    },
+    {
+      "name": "voice-notices.txt",
+      "bytes": 2159,
+      "sha256": "08fa8fa812e71723d748366282a3b9c4ac5b5890422cb19ba42176d4c0861eff"
+    },
+    {
+      "name": "voice-runtime.js",
+      "bytes": 208528,
+      "sha256": "f74b0a00bea152dd02695d398efa64c622da5b88b6b5ffe2d0acbf662ae598eb"
+    },
+    {
+      "name": "whiteboard-runtime.js",
+      "bytes": 100201,
+      "sha256": "0d0a32b465724645864711e3eb9543f3c4fa783dfd0fc4130acc0849ad6524fc"
+    },
+    {
+      "name": "whiteboard.html",
+      "bytes": 4670,
+      "sha256": "c41ad837a4a7aa5ecb23136ebc041f9704286c7cf65892036aeb874fb60372ac"
+    },
+    {
+      "name": "情绪动作.webp",
+      "bytes": 262642,
+      "sha256": "7e4ea0254f0ab2c4972012363ffe8dd060b141ed1b93ecdd3c23cce82ad7c8bc"
+    },
+    {
+      "name": "独立口型.png",
+      "bytes": 5530,
+      "sha256": "4ae14e619c99345897dc058607ed1737a22fa52fa79d2f59aee77ea34a935435"
+    },
+    {
+      "name": "素材清单.json",
+      "bytes": 1720,
+      "sha256": "ff251d3e700f30ec8e6d53b31432a465bcfbc3f78084d5abd45356299a27bf1f"
+    },
+    {
+      "name": "课堂动作.webp",
+      "bytes": 201228,
+      "sha256": "74de1280a6d1ebd54c716664ab1cdb0151a9afe1c8475e16e3c0e09ee9dc999d"
     }
   ]
 }

@@ -29,3 +29,10 @@ Logo、App 图标、纸纹、宣传图和社交分享图仍是保留权利的品
 应用使用保留全部字形、映射、度量和微调指令的 WOFF2 压缩格式，
 原始 TTF 保存在设计资产目录；开发时可用 `python3 script/convert_editor_fonts.py --check`
 （fontTools 4.62.1，含 WOFF2 支持）重现并逐字形核对。中文缺字由系统无衬线字体补齐。
+## Webi 课堂动作与口型
+
+`Sources/WeiBei/Resources/Editor/` 中的课堂动作、情绪动作、独立口型及素材清单为用户在本次任务中提供的 Webi 候选动作与口型素材。运行包仅包含两张透明 WebP 动作图、一张独立口型 PNG 和素材清单，共 471,120 字节；生图原稿、预览动图及展示压缩包不进入应用。口型按实际合成音节的时间边界驱动，形状由拼音近似选择，不代表真实音素级对齐。
+
+## 白板手写字体
+
+Virgil 原字形，作者 Ellinor Rapp。来自 Excalidraw 官方仓库固定提交 `3d4c829dc85b455d4646631ac52bc1517df04217`：https://github.com/excalidraw/virgil/tree/3d4c829dc85b455d4646631ac52bc1517df04217 。未修改，按 SIL OFL 1.1 打包，保留字体名 Virgil。许可全文位于 `Sources/WeiBei/Resources/Editor/Virgil-LICENSE.txt`；字体 SHA-256：`9976295bfe709bdea64839a4d4e9a1d436dd6eb67538399a5a0e8b8fadbcf1cf`。

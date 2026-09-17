@@ -65,11 +65,9 @@ for (const [name, entry] of Object.entries({ three: 'three', 'echarts-full': 'ec
     entryPoints: [require.resolve(`@changfenhuang/dsh-genui/assets/${entry}`)],
     outfile,
   });
-  if (name === 'echarts-full') {
-    // The shared asset loader adopts this promise; charts still load only on demand.
-    const program = await readFile(outfile);
-    await writeFile(outfile, `(window.__GenuiAssets__ ??= {}).echartsFull = ${packedProgram(program)}.then(() => window.__GenuiAssets__.echartsFull);\n`);
-  }
+  // The shared asset loader adopts these promises; engines still load only on demand.
+  const program = await readFile(outfile), key = name === 'three' ? 'three' : 'echartsFull';
+  await writeFile(outfile, `(window.__GenuiAssets__ ??= {}).${key} = ${packedProgram(program)}.then(() => window.__GenuiAssets__.${key});\n`);
 }
 // Authorize only the exact bundled programs; arbitrary inline scripts stay blocked.
 const htmlPath = resolve(resources, 'genui.html');

@@ -853,7 +853,7 @@ final class WorkspaceStore: ObservableObject {
         var isCoordinatorOwned = false
     }
 
-    private enum NotebookNoteSeed {
+    enum NotebookNoteSeed {
         case blank
         case currentMaterial(StudyItem)
     }
@@ -4940,7 +4940,7 @@ final class WorkspaceStore: ObservableObject {
         readerTargetLocationTitle = nil
     }
 
-    private func requestReaderPDFPage(_ pageIndex: Int?, recordsLocation: Bool) {
+    func requestReaderPDFPage(_ pageIndex: Int?, recordsLocation: Bool) {
         readerTargetPageRecordsLocation = recordsLocation && pageIndex != nil
         readerTargetPageIndex = pageIndex.map { max($0, 0) }
         readerTargetPageRequestID = UUID()
@@ -6095,7 +6095,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func createNotebookNote(
+    func createNotebookNote(
         seed: NotebookNoteSeed,
         title rawTitle: String? = nil,
         initialMarkdown: String? = nil,
