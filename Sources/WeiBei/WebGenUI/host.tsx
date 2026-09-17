@@ -73,8 +73,9 @@ new ResizeObserver(reportHeight).observe(container);
 window.WeiBeiGenUIHost = {
   render(next) {
     const result = processGenuiSpec(next.spec);
-    if (!isRenderableProcess(result) || result.spec === null) {
-      showStatus(`互动界面无法显示：${result.errors.join('；')}`);
+    const unsupported = result.renderedTotalCount !== result.renderedNativeCount;
+    if (!isRenderableProcess(result) || result.spec === null || unsupported) {
+      showStatus(`互动界面无法显示：${unsupported ? '包含未支持的组件' : result.errors.join('；')}`);
       post({ type: 'error', renderToken: next.renderToken, message: status.textContent });
       return;
     }
