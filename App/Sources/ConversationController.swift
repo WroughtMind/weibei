@@ -1121,7 +1121,6 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 pendingView.onLink?(URL(string: MarkdownStreamingDisplay.pendingLink)!)
                 store.openLink = previousOpenLink
                 try expect(!openedPendingLink, "尚未传完的链接可被打开")
-                metrics.checks["stream_markdown_settles_without_changing_source"] = "passed"
 
                 let anchored = ConversationController(fixtureMode: false)
                 anchored.usesWorkspaceChrome = true

@@ -790,7 +790,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
     }
 
     func testSearchDetailsSurviveStatusUpdates() throws {
-        let chunks = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"search1","status":"completed","action":{"queries":["Barcelona dressing room","Real Madrid dressing room"],"sources":[{"url":"https://example.com/story"}]}}}"#)
+        let chunks = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"search1","status":"completed","action":{"type":"search","queries":["Barcelona dressing room","Real Madrid dressing room"],"sources":[{"url":"https://example.com/story"}]}}}"#)
         guard case let .serverToolActivity(activity) = chunks.first else { return XCTFail("Missing activity") }
         XCTAssertEqual(activity.detail, "Barcelona dressing room · Real Madrid dressing room")
         XCTAssertEqual(activity.sourceURLs, ["https://example.com/story"])
@@ -799,11 +799,26 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(AgentToolActivity.self, from: JSONEncoder().encode(merged)), activity)
     }
 
+    func testServerWebActionsKeepTheirIdentityAcrossStatusEvents() throws {
+        for (kind, name) in [("search", "$web_search"), ("open_page", "$web_open"), ("find_in_page", "$web_find")] {
+            let event: [String: Any] = ["type": "response.output_item.done", "item": [
+                "type": "web_search_call", "id": "web1", "status": "completed",
+                "action": ["type": kind, "url": "https://example.com", "pattern": "桥长"]]]
+            let chunks = try OpenAIResponsesProvider.translate(String(decoding: JSONSerialization.data(withJSONObject: event), as: UTF8.self))
+            guard case let .serverToolActivity(activity) = chunks.first else { return XCTFail("Missing web activity") }
+            XCTAssertEqual(activity.name, name)
+            XCTAssertEqual(activity.detail, "桥长 · https://example.com")
+            let merged = activity.merging(.init(id: activity.id, name: "$web_activity", state: .completed))
+            XCTAssertEqual(merged.name, name)
+            XCTAssertEqual(merged.detail, activity.detail)
+        }
+    }
+
     func testServerSearchLifecycleIncludesEmptyResultsAndFailure() throws {
         let start = try OpenAIResponsesProvider.translate(#"{"type":"response.web_search_call.in_progress","item_id":"search1"}"#)
         let done = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"search1","status":"completed","action":{"sources":[]}}}"#)
-        XCTAssertEqual(start, [.serverToolActivity(.init(id: "search1", name: "$web_search", state: .running))])
-        XCTAssertEqual(done, [.serverToolActivity(.init(id: "search1", name: "$web_search", state: .completed, sourceURLs: []))])
+        XCTAssertEqual(start, [.serverToolActivity(.init(id: "search1", name: "$web_activity", state: .running))])
+        XCTAssertEqual(done, [.serverToolActivity(.init(id: "search1", name: "$web_activity", state: .completed, sourceURLs: []))])
         let anthropicStart = try AnthropicMessagesProvider.translate(#"{"type":"content_block_start","content_block":{"type":"server_tool_use","name":"web_search","id":"search2"}}"#)
         let failed = try AnthropicMessagesProvider.translate(#"{"type":"content_block_start","content_block":{"type":"web_search_tool_result","tool_use_id":"search2","content":{"type":"web_search_tool_result_error","error_code":"too_many_requests"}}}"#)
         XCTAssertEqual(anthropicStart, [.blockStart(index: 0, blockType: .serverTool), .serverToolActivity(.init(id: "search2", name: "$web_search", state: .running))])

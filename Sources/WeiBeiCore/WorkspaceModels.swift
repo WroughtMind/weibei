@@ -1853,6 +1853,8 @@ public struct AgentToolActivity: Identifiable, Codable, Hashable, Sendable {
     }
     public func merging(_ update: Self) -> Self {
         var next = update
+        // Status-only web events cannot erase an already identified action.
+        if update.name == "$web_activity", ["$web_search", "$web_open", "$web_find"].contains(name) { next.name = name }
         next.detail = update.detail ?? detail
         next.sourceURLs = update.sourceURLs ?? sourceURLs
         next.resultSummary = update.resultSummary ?? resultSummary

@@ -5,9 +5,9 @@ import WeiBeiCore
 enum AgentActivityIcon {
     static func symbol(for name: String) -> String {
         switch name {
-        case "$web_search", "$web_search_sources", "weibei_web_open": "globe"
-        case "weibei_search_workspace", "weibei_find_discussions": "magnifyingglass"
-        case "weibei_course_read", "load_skill": "doc.text"
+        case "$web_activity", "$web_search", "$web_search_sources": "globe"
+        case "$web_find", "weibei_search_workspace", "weibei_find_discussions": "magnifyingglass"
+        case "$web_open", "weibei_web_open", "weibei_course_read", "load_skill": "doc.text"
         case "weibei_read_discussion": "text.bubble"
         case "create_document": "doc.badge.plus"
         case "weibei_note_proposal": "square.and.pencil"
@@ -53,8 +53,8 @@ struct AgentToolActivityGroup: View {
     private var expanded: Bool { userExpanded ?? autoOpen ?? running }
     private var lastArrival: Date? { arrivals.values.max() }
     private var summary: String {
-        let searchNames = ["$web_search", "weibei_search_workspace", "weibei_find_discussions"]
-        let readNames = ["load_skill", "weibei_course_read", "weibei_read_discussion", "weibei_web_open", "weibei_read_learning_memory"]
+        let searchNames = ["$web_search", "$web_find", "weibei_search_workspace", "weibei_find_discussions"]
+        let readNames = ["$web_open", "load_skill", "weibei_course_read", "weibei_read_discussion", "weibei_web_open", "weibei_read_learning_memory"]
         let searches = message.toolActivities.filter { searchNames.contains($0.name) }.count
         let reads = message.toolActivities.filter { readNames.contains($0.name) }.count
         let others = message.toolActivities.filter {
@@ -217,6 +217,9 @@ struct AgentToolActivityGroup: View {
         case "weibei_course_retry_failed_pdf_pages": store.ui("重新识别资料页面", "Retry page recognition")
         case "weibei_relation_proposal": store.ui("准备关联建议", "Prepare relationship proposal")
         case "render_ui": store.ui("生成互动内容", "Create interactive content")
+        case "$web_activity": store.ui("浏览网页", "Browse the web")
+        case "$web_open": store.ui("读取网页", "Read web page")
+        case "$web_find": store.ui("页内查找", "Find in page")
         case "$web_search": store.ui("网络搜索", "Search the web")
         case "$web_search_sources": store.ui("搜索返回的来源", "Sources returned by search")
         default: store.ui("执行工具", "Run tool") + " · " + name
