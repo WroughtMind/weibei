@@ -41,6 +41,7 @@ struct CatalystConversationView: View {
         }
         func updateUIViewController(_ controller: ConversationController, context: Context) {
             controller.reduceMotion = reduceMotion
+            controller.reservesReplySpace = floatingThreadID == nil
             controller.workspaceBodyWidth = bodyWidth
             controller.readingMessageChanged = onReadingMessage
             controller.contentHeightChanged = onContentHeight
@@ -84,8 +85,8 @@ struct CatalystConversationView: View {
             session.messages = displayedMessages ?? workspace.messages
             if let id = streaming.displayingMessageID,
                streaming.displayingChatID == targetID,
-               let index = session.messages.firstIndex(where: { $0.id == id && $0.completionState == .generating }) {
-                session.messages[index].text = streaming.text
+               let index = session.messages.firstIndex(where: { $0.id == id }) {
+                session.messages[index] = streaming.applyingDisplayText(to: session.messages[index])
             }
             coordinator.enqueue(session, into: controller, refreshAppearance: appearanceChanged)
         }

@@ -8,6 +8,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     let fixtureMode: Bool
     var usesWorkspaceChrome = false
     var reduceMotion = false
+    var reservesReplySpace = false
     var auxiliaryView: ((LabMessage) -> UIView)?
     var messageLink: ((URL, AgentMessage) -> Void)?
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese {
@@ -81,6 +82,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         collection.keyboardDismissMode = .none
         collection.accessibilityLabel = "会话消息列表"
         flow.itemHeight = { [weak self] path in self?.itemHeight(at: path) ?? 0 }
+        flow.replyStartSection = { [weak self] in
+            guard let self, reservesReplySpace else { return nil }
+            return messages.lastIndex { $0.original?.role == .user }
+        }
         for child in [toolbar, status, collection, input, send, latest] { view.addSubview(child) }
         toolbar.spacing = 16; toolbar.alignment = .center
         toolbar.addArrangedSubview(button("阅读区", symbol: "sidebar.left", action: { [weak self] in self?.toggleWorkspace?() }))
@@ -349,6 +354,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             let block = message.blocks[path.item - 1]
             let stale = block.width != bodyWidth
             cell.show(body: store.view(for: block, width: bodyWidth))
+            cell.body?.revealAppendedText(animated: !reduceMotion && message.state == .streaming && followsLatest)
             selection.paint(cell.body!)
             // A paragraph scrolled in before the width converged was sized from its
             // previous width; the frame in the layout catches up on the next turn.
@@ -559,11 +565,14 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         guard !reduceMotion else { return }
         for path in collection.indexPathsForVisibleItems where path.section == section {
             guard let cell = collection.cellForItem(at: path) else { continue }
-            cell.alpha = 0
-            cell.transform = CGAffineTransform(translationX: 0, y: 8)
-            UIView.animate(withDuration: 0.24, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
-                cell.alpha = 1
-                cell.transform = .identity
+            let isQuestion = messages[section].original?.role == .user
+            let travel = isQuestion ? max(8, collection.bounds.maxY - cell.frame.maxY - 16) : 8
+            cell.contentView.alpha = 0
+            cell.contentView.transform = CGAffineTransform(translationX: 0, y: travel)
+            UIView.animate(withDuration: isQuestion ? 0.42 : 0.24, delay: 0,
+                           options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
+                cell.contentView.alpha = 1
+                cell.contentView.transform = .identity
             }
         }
     }
@@ -1065,11 +1074,47 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let message = LabMessage(author: "检查样本", markdown: "第一段：中文与 emoji 👩🏽‍💻。\n\n第二段尚在增长")
                 _ = await store.prepare(message, width: bodyWidth)
                 let first = message.blocks[0]
+                let beforeAppend = store.view(for: message.blocks.last!, width: bodyWidth)
+                beforeAppend.revealAppendedText(animated: false)
+                let oldLength = beforeAppend.label.attributedText.length
                 message.append("，尾字已经收到。")
                 _ = await store.prepare(message, width: bodyWidth)
                 try expect(message.blocks[0] === first, "流式更新替换了未改变的段落")
-                let rendered = store.view(for: message.blocks.last!, width: bodyWidth).copyText()
+                let growing = store.view(for: message.blocks.last!, width: bodyWidth)
+                growing.revealAppendedText(animated: true)
+                let rendered = growing.copyText()
                 try expect(rendered.contains("尾字已经收到。"), "流式尾字没有显示")
+                try expect(growing === beforeAppend, "新增文字替换了原生段落视图")
+                guard let mask = growing.label.layer.mask,
+                      let settled = (mask.sublayers?.first as? CAShapeLayer)?.path,
+                      let oldGlyph = growing.rect(for: 0), let newGlyph = growing.rect(for: oldLength) else {
+                    throw Failure(message: "流式正文没有进入逐字淡入路径")
+                }
+                try expect(settled.contains(CGPoint(x: oldGlyph.midX, y: oldGlyph.midY), using: .evenOdd)
+                    && !settled.contains(CGPoint(x: newGlyph.midX, y: newGlyph.midY), using: .evenOdd),
+                    "淡入遮罩重播了旧文字，或未覆盖新增文字")
+                try expect(mask.sublayers?.last?.animation(forKey: "stream-reveal") != nil, "新增文字没有淡入动画")
+                growing.revealAppendedText(animated: false)
+                try expect(growing.label.layer.mask == nil, "减少动态效果后仍保留文字动画")
+
+                let anchored = ConversationController(fixtureMode: false)
+                anchored.usesWorkspaceChrome = true
+                anchored.reservesReplySpace = true
+                anchored.reduceMotion = true
+                anchored.loadViewIfNeeded()
+                anchored.view.frame = CGRect(x: 0, y: 0, width: 720, height: 640)
+                anchored.view.setNeedsLayout(); anchored.view.layoutIfNeeded()
+                var turn = StudySession(id: UUID(), title: "发送位置检查")
+                turn.messages = [AgentMessage(role: .user, text: "之前的问题", source: nil),
+                    AgentMessage(role: .assistant, text: String(repeating: "之前的一段回答。\n\n", count: 24), source: nil),
+                    AgentMessage(role: .user, text: "新的问题", source: nil)]
+                await anchored.showSession(turn)
+                let questionTop = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
+                    - anchored.flow.sectionInset.top
+                try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "发送问题后没有留出回答空间")
+                let reply = AgentMessage(role: .assistant, text: "短回答保持原位。", source: nil, completionState: .generating)
+                await anchored.display(reply, streaming: true)
+                try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "短回答把问题顶出了原位")
                 message.state = .stopped
                 try expect(message.blocks[0] === first, "停止时重建了正文")
                 metrics.checks["stream_keeps_unchanged_blocks_and_tail"] = "passed"

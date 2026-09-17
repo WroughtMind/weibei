@@ -17,7 +17,7 @@ final class MessageCell: UICollectionViewCell {
         contentView.addSubview(actions)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-    override func prepareForReuse() { super.prepareForReuse(); layer.removeAllAnimations(); alpha = 1; transform = .identity; unbind() }
+    override func prepareForReuse() { super.prepareForReuse(); contentView.layer.removeAllAnimations(); contentView.alpha = 1; contentView.transform = .identity; unbind() }
     private func unbind() {
         // A prepared view may already belong to the replacement cell by the
         // time UIKit recycles this one. Only detach views this cell still owns.

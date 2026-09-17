@@ -1,5 +1,6 @@
 import XCTest
 @testable import WeiBei
+import WeiBeiCore
 
 @MainActor
 final class AgentStreamingDisplayPumpTests: XCTestCase {
@@ -113,6 +114,22 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         XCTAssertEqual(rig.displayed, "新内容")
         XCTAssertEqual(rig.replacements, ["新内容"])
         XCTAssertEqual(rig.pump.pendingCharacterCount, 0)
+    }
+
+    func testCompletedReplyKeepsItsVisiblePrefixUntilTheDisplayQueueDrains() {
+        let run = AgentConversationRun(chatID: UUID())
+        let message = AgentMessage(role: .assistant, text: "一二三四五六七八九十", source: nil)
+        run.streaming.begin(messageID: message.id, chatID: run.chatID!)
+        run.pump.enqueue(cumulativeText: message.text)
+        run.pump.stepOnce()
+        run.pump.finish(cumulativeText: message.text)
+        XCTAssertEqual(run.streaming.applyingDisplayText(to: message).text, "一二三四")
+        XCTAssertEqual(message.text, "一二三四五六七八九十")
+        XCTAssertEqual(message.completionState, .completed)
+        XCTAssertEqual(run.streaming.applyingDisplayText(to: message).completionState, .generating)
+        while run.pump.pendingCharacterCount > 0 { run.pump.stepOnce() }
+        XCTAssertEqual(run.streaming.applyingDisplayText(to: message).text, message.text)
+        XCTAssertFalse(run.streaming.isDisplaying(message.id))
     }
 
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
