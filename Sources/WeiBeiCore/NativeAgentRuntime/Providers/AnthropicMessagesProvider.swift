@@ -212,12 +212,21 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
                 let name = block["name"] as? String
                 return [.toolCallDelta(index: index, id: id, name: name, argumentsDelta: "")]
             }
-            // 服务端 web_search 结果块:content 里每条 web_search_result 带来源 url。
-            if block["type"] as? String == "web_search_tool_result",
-               let results = block["content"] as? [[String: Any]] {
-                return results.compactMap { result in
-                    (result["url"] as? String).map(NativeStreamChunk.webSearchSource(url:))
+            if block["type"] as? String == "server_tool_use",
+               block["name"] as? String == "web_search", let id = block["id"] as? String {
+                return [.blockStart(index: index, blockType: .serverTool),
+                        .serverToolActivity(.init(id: id, name: "$web_search", state: .running))]
+            }
+            if block["type"] as? String == "web_search_tool_result" {
+                var chunks: [NativeStreamChunk] = []
+                if let id = block["tool_use_id"] as? String {
+                    let failed = (block["content"] as? [String: Any])?["type"] as? String == "web_search_tool_result_error"
+                    chunks.append(.serverToolActivity(.init(id: id, name: "$web_search", state: failed ? .failed : .completed)))
                 }
+                for result in block["content"] as? [[String: Any]] ?? [] {
+                    if let url = result["url"] as? String { chunks.append(.webSearchSource(url: url)) }
+                }
+                return chunks
             }
             return []
         case "content_block_stop":

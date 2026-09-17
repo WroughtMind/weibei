@@ -166,6 +166,7 @@ public actor NativeAgentLoop {
                 var finish: NativeFinishReason?
                 var stepText = ""
                 var stepUsage: NativeTokenUsage?
+                var reportedSearchActivity = false
                 var receivedChunk = false
                 var recoveredOverflow = false
                 streamAttempt: while true {
@@ -196,7 +197,19 @@ public actor NativeAgentLoop {
                                     }
                                 }
                                 await progress?(.text(collectedText, contentBlocks, NativeAgentSources.used(in: collectedText, available: sources)))
+                            case var .serverToolActivity(activity):
+                                reportedSearchActivity = true
+                                activity.id = "\(step):server:\(activity.id)"
+                                await progress?(.toolActivity(activity))
                             case let .webSearchSource(url):
+                                // Some providers expose only sources, not a search lifecycle.
+                                // Report the observed result once, without inventing a running phase.
+                                if !reportedSearchActivity {
+                                    reportedSearchActivity = true
+                                    await progress?(.toolActivity(.init(
+                                        id: "\(step):server:sources", name: "$web_search", state: .completed
+                                    )))
+                                }
                                 if !context.currentRunSourceURLs.contains(url) {
                                     context.currentRunSourceURLs.append(url)
                                 }

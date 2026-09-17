@@ -5644,6 +5644,8 @@ struct AgentToolActivityGroup: View {
         .weiBeiText(11)
         .foregroundStyle(WeiBeiTheme.secondaryInk)
         .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: expanded)
+        .onAppear { expanded = running }
+        .onChange(of: running) { _, isRunning in expanded = isRunning }
         .onChange(of: message.completionState) { _, state in
             if state != .generating { expanded = false }
         }

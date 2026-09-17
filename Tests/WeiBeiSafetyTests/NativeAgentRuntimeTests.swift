@@ -754,6 +754,21 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
+    func testServerSearchLifecycleIncludesEmptyResultsAndFailure() throws {
+        let start = try OpenAIResponsesProvider.translate(#"{"type":"response.web_search_call.in_progress","item_id":"search1"}"#)
+        let done = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"search1","status":"completed","action":{"sources":[]}}}"#)
+        XCTAssertEqual(start, [.serverToolActivity(.init(id: "search1", name: "$web_search", state: .running))])
+        XCTAssertEqual(done, [.serverToolActivity(.init(id: "search1", name: "$web_search", state: .completed))])
+        let anthropicStart = try AnthropicMessagesProvider.translate(#"{"type":"content_block_start","content_block":{"type":"server_tool_use","name":"web_search","id":"search2"}}"#)
+        let failed = try AnthropicMessagesProvider.translate(#"{"type":"content_block_start","content_block":{"type":"web_search_tool_result","tool_use_id":"search2","content":{"type":"web_search_tool_result_error","error_code":"too_many_requests"}}}"#)
+        XCTAssertEqual(anthropicStart, [.blockStart(index: 0, blockType: .serverTool), .serverToolActivity(.init(id: "search2", name: "$web_search", state: .running))])
+        XCTAssertEqual(failed, [.serverToolActivity(.init(id: "search2", name: "$web_search", state: .failed))])
+        var assembler = NativeToolCallAssembler()
+        for chunk in start + done + anthropicStart + failed { assembler.apply(chunk) }
+        assembler.apply(.toolCallDelta(index: 0, id: "", name: nil, argumentsDelta: "{\"query\":\"news\"}"))
+        XCTAssertTrue(try assembler.completedCalls().isEmpty, "Server searches must not be executed again locally")
+    }
+
     func testMalformedToolArgumentsDoNotBlockValidSiblingOrCompletion() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-mixed-tools-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -782,6 +797,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
             ledger: ledger,
             registry: registry,
             adapter: ToolRecoveryMockLLMAdapter(toolChunks: [
+                .webSearchSource(url: "https://example.com/a"),
+                .webSearchSource(url: "https://example.com/b"),
+                .serverToolActivity(.init(id: "search2", name: "$web_search", state: .running)),
+                .serverToolActivity(.init(id: "search2", name: "$web_search", state: .completed)),
                 .toolCallDelta(index: 0, id: "bad", name: "test_tool", argumentsDelta: "{\"value\":"),
                 .toolCallDelta(index: 1, id: "good", name: "test_tool", argumentsDelta: "{}"),
             ], expectedToolResults: 2),
@@ -792,8 +811,8 @@ final class NativeAgentRuntimeTests: XCTestCase {
         )
 
         let activities = await capture.activities
-        XCTAssertEqual(activities.map(\.id), ["1:bad", "1:bad", "1:good", "1:good"])
-        XCTAssertEqual(activities.map(\.state), [.running, .failed, .running, .completed])
+        XCTAssertEqual(activities.map(\.id), ["1:server:sources", "1:server:search2", "1:server:search2", "1:bad", "1:bad", "1:good", "1:good"])
+        XCTAssertEqual(activities.map(\.state), [.completed, .running, .completed, .running, .failed, .running, .completed])
         var message = AgentMessage(role: .assistant, text: result.text, source: nil)
         message.toolActivities = activities.filter { $0.state != .running }
         XCTAssertEqual(try JSONDecoder().decode(AgentMessage.self, from: JSONEncoder().encode(message)), message)

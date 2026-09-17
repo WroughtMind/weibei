@@ -198,7 +198,15 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
             let text = object["delta"] as? String ?? ""
             return text.isEmpty ? [] : [.reasoningDelta(index: index, text: text)]
+        case "response.web_search_call.in_progress", "response.web_search_call.searching", "response.web_search_call.completed":
+            guard let id = object["item_id"] as? String, !id.isEmpty else { return [] }
+            return [.serverToolActivity(.init(id: id, name: "$web_search",
+                state: type == "response.web_search_call.completed" ? .completed : .running))]
         case "response.output_item.added":
+            if let item = object["item"] as? [String: Any],
+               item["type"] as? String == "web_search_call", let id = item["id"] as? String {
+                return [.serverToolActivity(.init(id: id, name: "$web_search", state: .running))]
+            }
             guard let item = object["item"] as? [String: Any],
                   item["type"] as? String == "function_call" else { return [] }
             let id = (item["call_id"] as? String) ?? (item["id"] as? String) ?? ""
@@ -206,12 +214,18 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             return [.toolCallDelta(index: index, id: id, name: name, argumentsDelta: "")]
         case "response.output_item.done":
             guard let item = object["item"] as? [String: Any],
-                  item["type"] as? String == "web_search_call",
-                  let action = item["action"] as? [String: Any],
-                  let sources = action["sources"] as? [[String: Any]] else { return [] }
-            return sources.compactMap { source in
-                (source["url"] as? String).map(NativeStreamChunk.webSearchSource(url:))
+                  item["type"] as? String == "web_search_call" else { return [] }
+            var chunks: [NativeStreamChunk] = []
+            if let id = item["id"] as? String {
+                let status = item["status"] as? String
+                chunks.append(.serverToolActivity(.init(id: id, name: "$web_search",
+                    state: status == "failed" ? .failed : status == "completed" ? .completed : .running)))
             }
+            let action = item["action"] as? [String: Any]
+            for source in action?["sources"] as? [[String: Any]] ?? [] {
+                if let url = source["url"] as? String { chunks.append(.webSearchSource(url: url)) }
+            }
+            return chunks
         case "response.function_call_arguments.delta":
             let delta = object["delta"] as? String ?? ""
             let id = object["call_id"] as? String ?? ""
