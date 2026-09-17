@@ -5,7 +5,7 @@ import Markdown
 public enum MarkdownEmphasisNormalizer {
     // Match the editor's emphasis boundary rules for Chinese punctuation.
     private static let emphasisRules: [(NSRegularExpression, String)] = [
-        (#"([\p{L}\p{N}])(\*\*|__)(?=\p{P})"#, "$1 $2"),
+        (#"([\p{L}\p{N}])(\*\*|__)(?=[\p{Ps}\p{Pi}])"#, "$1 $2"),
         (#"(^|[\s\p{P}])(\*\*|__)([^\s*_\n][^*_\n]*\p{P})\2(?=[^\s\p{P}])"#, "$1$2$3$2 "),
         (#"(^|[\s\p{P}])(\*\*|__)([^\s*_\n](?:[^*_\n]*?\S)?)[ \t]+\2(?=\S)"#, "$1$2$3$2")
     ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }

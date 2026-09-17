@@ -13,6 +13,8 @@ final class NativeChatMarkdownTests: XCTestCase {
         let code = prepared.codeRanges.map { (prepared.text as NSString).substring(with: $0) }
         XCTAssertTrue(code.contains { $0.contains("**举办国家：**美国") })
         XCTAssertTrue(code.contains { $0.contains("**球场（纽约）**举办") })
+        let adjacent = NativeChatMarkdownParser.parse("如果你想问**梅西和C罗能否参加2026世界杯**，需要核实。")
+        XCTAssertTrue(adjacent.runs.contains { $0.style.bold && $0.text == "梅西和C罗能否参加2026世界杯" })
         let document = NativeChatMarkdownParser.parse(source)
         XCTAssertTrue(document.runs.contains { $0.style.bold && $0.text == "举办国家：" })
         XCTAssertTrue(document.runs.contains { $0.style.bold && $0.text == "球场（纽约）" })
