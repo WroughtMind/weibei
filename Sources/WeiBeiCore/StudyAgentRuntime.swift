@@ -281,7 +281,7 @@ public struct StudyAgentProjectScope: Codable, Equatable, Sendable {
     public static let empty = StudyAgentProjectScope(kind: .global, chatID: "")
 }
 
-public struct StudyAgentFocus: Codable, Equatable, Sendable {
+public struct StudyAgentFocus: Codable, Hashable, Sendable {
     public var chatID: String
     public var courseID: String?
     public var materialItemID: String?
@@ -542,10 +542,34 @@ public struct StudyAgentCourseProfileContext: Codable, Equatable, Sendable {
     public static let empty = StudyAgentCourseProfileContext()
 }
 
+/// The original input needed to retry an answer, independent of the currently selected pane.
+public struct AgentRequestContext: Codable, Hashable, Sendable {
+    public var question: String
+    public var materialTitle: String
+    public var noteTitle: String
+    public var noteItemID: String?
+    public var selectionTitle: String?
+    public var selectionText: String?
+    public var selectionSources: [AgentReplySource]
+    public var focus: StudyAgentFocus?
+
+    public init(_ request: StudyAgentRequest) {
+        question = request.question
+        materialTitle = request.materialTitle
+        noteTitle = request.noteTitle
+        noteItemID = request.noteItemID
+        selectionTitle = request.selectionTitle
+        selectionText = request.selectionText
+        selectionSources = request.selectionSources
+        focus = request.focus
+    }
+}
+
 public struct StudyAgentRequest: Sendable {
     public var reasoningMode: AgentReasoningMode
     public var reasoningEffort: String?
     public var id: UUID
+    public var reusingLastUserMessage: Bool
     public var purpose: StudyAgentPurpose
     public var answerFormPolicy: StudyAgentAnswerFormPolicy
     public var question: String
@@ -554,10 +578,13 @@ public struct StudyAgentRequest: Sendable {
     public var materialIsTruncated: Bool
     public var noteTitle: String
     public var noteText: String
+    public var noteItemID: String?
+    public var noteBaselineContentDigest: String?
     public var selectionTitle: String?
     public var selectionText: String?
     public var selectionSources: [AgentReplySource]
     public var knownSources: [AgentReplySource]
+    public var userEvidence: [String: String]
     public var courseContext: StudyAgentCourseContext
     public var projectScope: StudyAgentProjectScope
     public var focus: StudyAgentFocus?
@@ -572,6 +599,7 @@ public struct StudyAgentRequest: Sendable {
     public init(
         id: UUID = UUID(),
         purpose: StudyAgentPurpose,
+        reusingLastUserMessage: Bool = false,
         answerFormPolicy: StudyAgentAnswerFormPolicy = .automatic,
         question: String,
         materialTitle: String,
@@ -579,10 +607,13 @@ public struct StudyAgentRequest: Sendable {
         materialIsTruncated: Bool = false,
         noteTitle: String,
         noteText: String,
+        noteItemID: String? = nil,
+        noteBaselineContentDigest: String? = nil,
         selectionTitle: String? = nil,
         selectionText: String? = nil,
         selectionSources: [AgentReplySource] = [],
         knownSources: [AgentReplySource] = [],
+        userEvidence: [String: String] = [:],
         courseContext: StudyAgentCourseContext = .empty,
         projectScope: StudyAgentProjectScope = .empty,
         focus: StudyAgentFocus? = nil,
@@ -598,6 +629,7 @@ public struct StudyAgentRequest: Sendable {
         self.reasoningMode = reasoningMode
         self.reasoningEffort = reasoningEffort
         self.id = id
+        self.reusingLastUserMessage = reusingLastUserMessage
         self.purpose = purpose
         self.answerFormPolicy = answerFormPolicy
         self.question = question
@@ -606,10 +638,13 @@ public struct StudyAgentRequest: Sendable {
         self.materialIsTruncated = materialIsTruncated
         self.noteTitle = noteTitle
         self.noteText = noteText
+        self.noteItemID = noteItemID
+        self.noteBaselineContentDigest = noteBaselineContentDigest
         self.selectionTitle = selectionTitle
         self.selectionText = selectionText
         self.selectionSources = selectionSources
         self.knownSources = knownSources
+        self.userEvidence = userEvidence
         self.courseContext = courseContext
         self.projectScope = projectScope
         self.focus = focus
@@ -657,11 +692,13 @@ public struct StudyAgentRelationProposal: Codable, Equatable, Sendable {
     public var noteItemID: String
     public var sourceItemID: String
     public var contextRevision: String
+    public var userRequested: Bool
 
-    public init(noteItemID: String, sourceItemID: String, contextRevision: String) {
+    public init(noteItemID: String, sourceItemID: String, contextRevision: String, userRequested: Bool = false) {
         self.noteItemID = noteItemID
         self.sourceItemID = sourceItemID
         self.contextRevision = contextRevision
+        self.userRequested = userRequested
     }
 }
 
@@ -800,10 +837,6 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var contentBlocks: [AgentMessageContentBlock]
     public var backend: StudyAgentBackend
     public var sources: [AgentReplySource]
-    public var noteProposal: StudyAgentNoteProposal?
-    public var relationProposal: StudyAgentRelationProposal?
-    public var learningUpdate: StudyAgentLearningUpdate?
-    public var courseProfileUpdate: StudyAgentCourseProfileUpdate?
     public var appliedMemoryUpdate: AgentReplyMemoryUpdate?
     public var appliedProfileUpdate: AgentReplyProfileUpdate?
     public var loadedSkills: [StudyAgentLoadedSkill]
@@ -815,10 +848,6 @@ public struct StudyAgentReply: Equatable, Sendable {
         contentBlocks: [AgentMessageContentBlock] = [],
         backend: StudyAgentBackend,
         sources: [AgentReplySource] = [],
-        noteProposal: StudyAgentNoteProposal? = nil,
-        relationProposal: StudyAgentRelationProposal? = nil,
-        learningUpdate: StudyAgentLearningUpdate? = nil,
-        courseProfileUpdate: StudyAgentCourseProfileUpdate? = nil,
         appliedMemoryUpdate: AgentReplyMemoryUpdate? = nil,
         appliedProfileUpdate: AgentReplyProfileUpdate? = nil,
         loadedSkills: [StudyAgentLoadedSkill] = [],
@@ -829,10 +858,6 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.contentBlocks = contentBlocks
         self.backend = backend
         self.sources = sources
-        self.noteProposal = noteProposal
-        self.relationProposal = relationProposal
-        self.learningUpdate = learningUpdate
-        self.courseProfileUpdate = courseProfileUpdate
         self.appliedMemoryUpdate = appliedMemoryUpdate
         self.appliedProfileUpdate = appliedProfileUpdate
         self.loadedSkills = loadedSkills
@@ -862,6 +887,9 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     case timedOut
     case cancelled
     case generic
+    case truncated
+    case paused
+    case refused
 
     public func title(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
@@ -877,6 +905,12 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
             return language.text("请求超时", "Request timed out")
         case .cancelled:
             return language.text("已取消", "Cancelled")
+        case .truncated:
+            return language.text("回答未完成：达到长度限制", "Incomplete: output limit reached")
+        case .paused:
+            return language.text("回答已暂停，尚未完成", "Response paused and incomplete")
+        case .refused:
+            return language.text("模型拒绝了这次请求", "The model declined this request")
         case .generic:
             return language.text("请求失败", "Request failed")
         }
@@ -899,13 +933,17 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
             return language.text("可以缩短问题或稍后重试。", "Try a shorter question, or retry later.")
         case .cancelled:
             return language.text("本次请求已取消。", "This request was cancelled.")
+        case .truncated, .paused:
+            return language.text("已收到的内容已保留，可以继续提问。", "The received content is preserved. You can continue the conversation.")
+        case .refused:
+            return language.text("可以调整问题后再发送。", "You can revise the question and send it again.")
         case .generic:
             return language.text("可直接重试。", "You can retry.")
         }
     }
 
     public var isRetryable: Bool {
-        true
+        self != .refused
     }
 
     public static func classify(_ error: Error) -> AgentFailureKind {

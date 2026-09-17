@@ -206,7 +206,7 @@ struct NativeStateAliases: Sendable {
         return String(data: encoded, encoding: .utf8) ?? "{}"
     }
 
-    private func sanitizedToolResult(_ text: String, toolName: String) -> String {
+    func sanitizedToolResult(_ text: String, toolName: String) -> String {
         let hidesUUIDs = [
             "weibei_read_learning_memory",
             "weibei_update_learning_memory",

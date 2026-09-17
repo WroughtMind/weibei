@@ -71,7 +71,7 @@ enum NativeScenarioPair {
                     ),
                     .finish(reason: .toolCalls, replayState: nil),
                 ],
-                [.textDelta(index: 0, text: "已写入：记下复利进度。"), .finish(reason: .stop, replayState: nil)],
+                [.textDelta(index: 0, text: "当前没有可用保存宿主，复利进度尚未写入。"), .finish(reason: .stop, replayState: nil)],
             ]
         ))
         rows.append(try await row(id: "05-course-profile", tools: ["weibei_course_profile_update"], expectProfile: true, chunks: [
@@ -79,7 +79,7 @@ enum NativeScenarioPair {
                 .toolCallDelta(index: 0, id: "c1", name: "weibei_course_profile_update", argumentsDelta: "{\"checkpoint\":\"userRequested\"}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
-            [.textDelta(index: 0, text: "档案建议已提交，尚未落库。"), .finish(reason: .stop, replayState: nil)],
+            [.textDelta(index: 0, text: "当前没有可用保存宿主，档案尚未写入。"), .finish(reason: .stop, replayState: nil)],
         ]))
         rows.append(try await row(
             id: "06-note-relation",
@@ -92,7 +92,7 @@ enum NativeScenarioPair {
                     .toolCallDelta(index: 1, id: "r1", name: "weibei_relation_proposal", argumentsDelta: "{\"noteItemID\":\"n1\",\"sourceItemID\":\"material-rates\"}"),
                     .finish(reason: .toolCalls, replayState: nil),
                 ],
-                [.textDelta(index: 0, text: "笔记和关系都是待确认建议。"), .finish(reason: .stop, replayState: nil)],
+                [.textDelta(index: 0, text: "当前没有可用保存宿主，笔记和关系尚未写入。"), .finish(reason: .stop, replayState: nil)],
             ]
         ))
         rows.append(try await row(id: "07-visualize", tools: ["render_ui"], chunks: [
@@ -100,7 +100,7 @@ enum NativeScenarioPair {
                 .toolCallDelta(index: 0, id: "v1", name: "render_ui", argumentsDelta: "{\"id\":\"real-rate\",\"spec\":{\"items\":[{\"type\":\"text\",\"content\":\"实际利率\"}]}}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
-            [.textDelta(index: 0, text: "互动界面已显示。"), .finish(reason: .stop, replayState: nil)],
+            [.textDelta(index: 0, text: "当前没有显示界面，互动内容尚未展示。"), .finish(reason: .stop, replayState: nil)],
         ]))
         let png = FileManager.default.temporaryDirectory.appendingPathComponent("pair-asset.png")
         try Data([137, 80, 78, 71, 13, 10, 26, 10]).write(to: png)
@@ -228,6 +228,12 @@ enum NativeScenarioPair {
             visualURL: visualURL,
             chatID: chatID
         )
+        let ledger = try NativeAgentLedger(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("pair-\(chatID)/\(chatID)/ledger.jsonl"))
+        let events = await ledger.allEvents()
+        func unavailable(_ name: String) -> Bool {
+            events.last(where: { $0.type == .toolResult && $0.toolName == name })?.isError == true
+        }
         for name in tools {
             guard reply.toolTrace.contains(name) else {
                 throw NSError(domain: "WeiBei.Pair", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(id) missing \(name)"])
@@ -236,17 +242,17 @@ enum NativeScenarioPair {
         if let needle = textMustContain, !reply.text.contains(needle) {
             throw NSError(domain: "WeiBei.Pair", code: 2, userInfo: [NSLocalizedDescriptionKey: "\(id) missing text \(needle)"])
         }
-        if expectNote, reply.noteProposal == nil {
-            throw NSError(domain: "WeiBei.Pair", code: 3, userInfo: [NSLocalizedDescriptionKey: "\(id) missing note proposal"])
+        if expectNote, !unavailable("weibei_note_proposal") {
+            throw NSError(domain: "WeiBei.Pair", code: 3, userInfo: [NSLocalizedDescriptionKey: "\(id) missing note host failure"])
         }
-        if expectRelation, reply.relationProposal == nil {
-            throw NSError(domain: "WeiBei.Pair", code: 4, userInfo: [NSLocalizedDescriptionKey: "\(id) missing relation proposal"])
+        if expectRelation, !unavailable("weibei_relation_proposal") {
+            throw NSError(domain: "WeiBei.Pair", code: 4, userInfo: [NSLocalizedDescriptionKey: "\(id) missing relation host failure"])
         }
-        if expectProfile, reply.courseProfileUpdate == nil {
-            throw NSError(domain: "WeiBei.Pair", code: 5, userInfo: [NSLocalizedDescriptionKey: "\(id) missing profile proposal"])
+        if expectProfile, !unavailable("weibei_course_profile_update") {
+            throw NSError(domain: "WeiBei.Pair", code: 5, userInfo: [NSLocalizedDescriptionKey: "\(id) missing profile host failure"])
         }
-        if expectLearning, reply.learningUpdate == nil {
-            throw NSError(domain: "WeiBei.Pair", code: 9, userInfo: [NSLocalizedDescriptionKey: "\(id) missing learning update"])
+        if expectLearning, !unavailable("weibei_update_learning_memory") {
+            throw NSError(domain: "WeiBei.Pair", code: 9, userInfo: [NSLocalizedDescriptionKey: "\(id) missing memory host failure"])
         }
         if expectSources, reply.sources.isEmpty {
             throw NSError(domain: "WeiBei.Pair", code: 8, userInfo: [NSLocalizedDescriptionKey: "\(id) missing reply sources"])
@@ -255,9 +261,9 @@ enum NativeScenarioPair {
         return [
             "id": id,
             "tools": reply.toolTrace,
-            "note": reply.noteProposal != nil,
-            "relation": reply.relationProposal != nil,
-            "profile": reply.courseProfileUpdate != nil,
+            "note": unavailable("weibei_note_proposal"),
+            "relation": unavailable("weibei_relation_proposal"),
+            "profile": unavailable("weibei_course_profile_update"),
             "backend": reply.backend.rawValue,
         ]
     }

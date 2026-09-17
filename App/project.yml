@@ -17,6 +17,9 @@ packages:
   SwiftMarkdown:
     url: https://github.com/swiftlang/swift-markdown.git
     revision: 7d9a5ce307528578dfa777d505496bd5f544ad94
+  SwiftMath:
+    url: https://github.com/WroughtMind/SwiftMath
+    revision: b6d15610552aa04a54c36bf205efaf34409dc335
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation
     exactVersion: 0.9.20
@@ -71,6 +74,8 @@ targets:
         product: MarkdownView
       - package: MarkdownView
         product: MarkdownParser
+      - package: SwiftMath
+        product: SwiftMath
     settings:
       base:
         WEIBEI_BUNDLE_IDENTIFIER: com.changfenhuang.weibei
