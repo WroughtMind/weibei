@@ -53,7 +53,8 @@ struct ComposerView: View {
         let corner: CGFloat = showsChrome ? 22 : WeiBeiMetric.controlRadius
         let textHeight = max(editorHeight, fontSize + 3)
         let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
-        HStack(spacing: 0) {
+        let controlBottomInset = max(verticalPadding, (height - sendButtonSize * textScale) / 2)
+        HStack(alignment: .bottom, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 AgentComposerTextEditor(
                     text: $draft,
@@ -93,10 +94,11 @@ struct ComposerView: View {
             )
             .contentShape(Rectangle())
             .onTapGesture { focusRequest &+= 1 }
-            .overlay(alignment: .trailing) {
+            .overlay(alignment: .bottomTrailing) {
                 if showsControl && !hasReasoningControl {
                     sendButton
                         .padding(.trailing, sendTrailing)
+                        .padding(.bottom, controlBottomInset)
                 }
             }
             if hasReasoningControl {
@@ -108,6 +110,7 @@ struct ComposerView: View {
                         .accessibilityHidden(!showsControl)
                 }
                 .padding(.trailing, sendTrailing)
+                .padding(.bottom, controlBottomInset)
             }
         }
         .frame(maxWidth: .infinity)
