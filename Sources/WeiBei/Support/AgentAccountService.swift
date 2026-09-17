@@ -36,6 +36,9 @@ final class AgentAccountService: ObservableObject {
     @Published private(set) var liveReasoningLevels: [String: [String]] = [:]
     private var liveModelsProvider: AgentProviderID?
     private var loginTask: Task<Void, Never>?
+    private var loginID: UUID?
+    @Published private(set) var authorizationCode: String?
+    @Published private(set) var authorizationURL: URL?
     private var modelListTask: Task<Void, Never>?
 
     private init() {
@@ -95,7 +98,7 @@ final class AgentAccountService: ObservableObject {
 
     func authTypes(for provider: AgentProviderID) -> [AgentCredentialType] {
         guard isAvailable(provider) else { return [] }
-        return provider == .openaiCodex ? [.oauth] : [.apiKey]
+        return provider == .openaiCodex ? [.oauth] : NativeProviderOAuth.supports(provider) ? [.oauth, .apiKey] : [.apiKey]
     }
 
     func isConfigured(providerID: String, type: AgentCredentialType? = nil) -> Bool {
@@ -115,8 +118,8 @@ final class AgentAccountService: ObservableObject {
         isConfigured(providerID: provider.credentialProviderID, type: .oauth)
     }
 
-    func startLogin(_ provider: AgentProviderID) {
-        guard provider == .openaiCodex else {
+    func startLogin(_ provider: AgentProviderID, language: WeiBeiInterfaceLanguage) {
+        guard NativeProviderOAuth.supports(provider) else {
             lastError = LocalizedMessage(
                 chinese: "该服务暂不支持订阅登录。当前连接未更改；请改用 API Key。",
                 english: "Subscription sign-in is not supported for this service. The current connection is unchanged; use an API key instead."
@@ -124,6 +127,10 @@ final class AgentAccountService: ObservableObject {
             return
         }
         guard !isLoggingIn else { return }
+        let attempt = UUID()
+        loginID = attempt
+        authorizationCode = nil
+        authorizationURL = nil
         isLoggingIn = true
         statusMessage = LocalizedMessage(
             chinese: "正在打开浏览器完成登录…",
@@ -134,28 +141,45 @@ final class AgentAccountService: ObservableObject {
             guard let self else { return }
             do {
                 let store = try NativeAgentCredentialStore.defaultStore()
-                let record = try await NativeOpenAIOAuth.loginWithBrowser(
+                let record = try await NativeProviderOAuth.login(
+                    provider: provider,
                     store: store,
+                    language: language,
                     openURL: { url in
 #if targetEnvironment(macCatalyst)
                         UIApplication.shared.open(url, options: [:], completionHandler: nil)
 #else
                         NSWorkspace.shared.open(url)
 #endif
+                    },
+                    deviceCode: { code, url in
+                        guard self.loginID == attempt else { return }
+                        self.authorizationCode = code
+                        self.authorizationURL = url
+                        self.statusMessage = LocalizedMessage(chinese: "请在服务商页面确认设备码，完成授权。", english: "Confirm the device code on the provider page to authorize WeiBei.")
                     }
                 )
+                guard self.loginID == attempt else { return }
+                self.authorizationCode = nil
+                self.authorizationURL = nil
                 self.isLoggingIn = false
                 self.statusMessage = nil
                 self.reloadCredentialSnapshot()
                 NotificationCenter.default.post(name: .weiBeiAgentOAuthDidSucceed, object: nil, userInfo: ["provider": record.provider])
             } catch is CancellationError {
+                guard self.loginID == attempt else { return }
+                self.authorizationCode = nil
+                self.authorizationURL = nil
                 self.isLoggingIn = false
                 self.statusMessage = nil
             } catch {
+                guard self.loginID == attempt else { return }
+                self.authorizationCode = nil
+                self.authorizationURL = nil
                 self.isLoggingIn = false
                 self.statusMessage = nil
                 self.logFailure("agent_login_failed", providerID: provider.credentialProviderID, error: error)
-                self.lastError = self.loginFailureMessage(providerID: provider.credentialProviderID)
+                self.lastError = self.authorizationFailureMessage(error, providerID: provider.credentialProviderID)
             }
         }
     }
@@ -231,6 +255,9 @@ final class AgentAccountService: ObservableObject {
 
     func cancelLogin() {
         loginTask?.cancel()
+        loginID = nil
+        authorizationCode = nil
+        authorizationURL = nil
         isLoggingIn = false
         statusMessage = nil
     }
@@ -280,7 +307,14 @@ final class AgentAccountService: ObservableObject {
                 )
                 reasoningLevels = try await AgentModelListService.shared.codexReasoningLevels(token: token, accountID: accountID)
             } else {
-                ids = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
+                var key = apiKey
+                if NativeProviderOAuth.supports(provider) {
+                    let fresh = try await NativeProviderOAuth.credential(provider: provider, store: NativeAgentCredentialStore.defaultStore())
+                    key = fresh?.apiKey ?? fresh?.accessToken ?? ""
+                }
+                let modelService = NativeProviderOAuth.supports(provider)
+                    ? AgentModelListService(session: NativeProviderOAuth.networkSession) : .shared
+                ids = try await modelService.fetchModels(strategy: strategy, apiKey: key)
             }
             guard !Task.isCancelled else { return }
             await MainActor.run {
@@ -370,6 +404,21 @@ final class AgentAccountService: ObservableObject {
                 english: "Disconnect did not finish, and the current credential status could not be confirmed. Reopen Settings and try again."
             )
         }
+    }
+
+    private func authorizationFailureMessage(_ error: Error, providerID: String) -> LocalizedMessage {
+        if let failure = error as? NativeLLMFailure {
+            if failure.code == "oauth_timeout" {
+                return LocalizedMessage(chinese: "授权已过期，请重新登录。原有连接未更改。", english: "Authorization expired. Sign in again. Your previous connection is unchanged.")
+            }
+            if failure.status == 402 || failure.status == 403 {
+                return LocalizedMessage(chinese: "服务商未允许此账号访问模型。请检查订阅、余额或账号权限后重试；新凭据未保存。", english: "The provider did not permit model access. Check your plan, balance, or permissions, then retry. New credentials were not saved.")
+            }
+            if failure.status == 429 {
+                return LocalizedMessage(chinese: "服务商请求过于频繁，请稍后重试；新凭据未保存。", english: "The provider rate limit was reached. Try again later. New credentials were not saved.")
+            }
+        }
+        return loginFailureMessage(providerID: providerID)
     }
 
     private func logFailure(_ code: String, providerID: String, error: Error) {

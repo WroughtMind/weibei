@@ -65,11 +65,10 @@ for (const [name, entry] of Object.entries({ three: 'three', 'echarts-full': 'ec
     entryPoints: [require.resolve(`@changfenhuang/dsh-genui/assets/${entry}`)],
     outfile,
   });
-  if (name === 'echarts-full') {
-    // The shared asset loader adopts this promise; charts still load only on demand.
-    const program = await readFile(outfile);
-    await writeFile(outfile, `(window.__GenuiAssets__ ??= {}).echartsFull = ${packedProgram(program)}.then(() => window.__GenuiAssets__.echartsFull);\n`);
-  }
+  // The shared loader adopts the promise; engines still load only on demand.
+  const key = name === 'echarts-full' ? 'echartsFull' : name;
+  const program = await readFile(outfile);
+  await writeFile(outfile, `(window.__GenuiAssets__ ??= {}).${key} = ${packedProgram(program)}.then(() => window.__GenuiAssets__.${key});\n`);
 }
 // Authorize only the exact bundled programs; arbitrary inline scripts stay blocked.
 const htmlPath = resolve(resources, 'genui.html');
@@ -79,113 +78,261 @@ assert(policy.test(html), 'GenUI script policy changed');
 await writeFile(htmlPath, html.replace(policy, `script-src 'self' ${scriptHashes.join(' ')};`));
 
 const skill = await readFile(require.resolve('@changfenhuang/dsh-genui/skill'), 'utf8');
-const folder = resolve(root, 'Sources/WeiBeiCore/AgentResources/skills/genui');
-await mkdir(folder, { recursive: true });
-const host = `# GenUI — 魏碑界面组件规范
+const skillsFolder = resolve(root, 'Sources/WeiBeiCore/AgentResources/skills');
+function listItem(prefix) {
+  const marker = `- ${prefix}:`;
+  const start = skill.indexOf(marker);
+  assert(start >= 0, `上游 GenUI 技能缺少 ${prefix} 规格`);
+  const tail = skill.slice(start);
+  const boundaries = ['\n- ', '\n### ', '\n## ']
+    .map(boundary => tail.indexOf(boundary, marker.length))
+    .filter(index => index >= 0);
+  return tail.slice(0, Math.min(...boundaries, tail.length)).trim();
+}
+function adaptHost(text) {
+  return text
+    .replaceAll('/mmx-files/', 'https://example.com/')
+    .replaceAll('http(s) 或同源相对图片地址', 'HTTPS 图片地址')
+    .replaceAll('仅 http(s) 或同源相对地址', '仅已确认的 HTTPS 地址')
+    .replaceAll('无额外下载', '无需加载额外引擎')
+    .replaceAll('但会按需下载约 1MB 引擎', '引擎随魏碑安装并按需加载')
+    .replaceAll('`[genui-action]`', '互动操作请求')
+    .replaceAll('围栏校验直接拒绝', '渲染器直接拒绝')
+    .replaceAll('围栏会**静默降级为代码块**', '渲染器会报告错误，修正后重新调用 `render_ui`')
+    .replace(/\*\*状态持久化[^\n]*/, '**状态保存**：选择、输入和提交状态由魏碑随当前会话中的界面保存。同一块界面保持稳定 id；不要把重提相同 id 当成重置。')
+    .replace(/\*\*卷子模式[^\n]*/, '**用户明确要求自测时**，才用带唯一 group、answer、explanation 的 radio 和汇总 submit；普通解释不附题。');
+}
 
-本技能只说明界面组件的规格和呈现方式。Webi 的身份、交流方式、回答长短、材料检索、引用、学习记忆和笔记写入继续遵循系统契约与现有工具。界面文案跟随用户要求的语言，字段名、组件类型、id 和 action 保持原样。是否使用组件取决于它能否帮助回答当前问题，不按回答行数或组件数量强制使用。
+const mainSkill = `# GenUI — 魏碑常用界面规范
 
-围绕当前阅读、整理或讨论选择组件。只有用户明确要求练习、自测或探索参数变化时，才安排题目、判分或调参控件；不要把解释自动改成做题，不编造学习进度和掌握程度。
+本技能负责判断何时使用界面，以及常用组件的完整调用方法。Webi 的身份、语气、材料引用、记忆和笔记规则继续遵循系统契约；界面只帮助当前回答，不改变任务。
 
-普通小表格直接用表头排序，不额外附加筛选框或排序下拉。需要用户查找大量记录时再提供筛选；组件已经展示清楚的内容，不在正文逐项复述。
+## 先判断：有结构才画，有操作才交互
+
+口诀：纯解释直接说；并列信息用表；数量趋势用图；步骤用流程；确需用户输入再放控件。
+两三句话能说清时不要调用 render_ui，也不要把普通回答包进卡片；不要把回答自动改成待办清单、练习或仪表盘，list 只用于真正并列的信息。
 
 ## 调用方式
 
-调用 \`render_ui\` 将组件插入当前回答，参数包含稳定的 \`id\` 和完整组件树 \`spec\`；spec 必须含 items，可选 title 和 gap。下文 JSON 示例都是工具参数，不作为回答正文输出。文字可以自然穿插在工具调用前后。
-
-调用 \`render_ui\`，参数示例：
-
-\`\`\`json
-{"id":"concept-comparison","spec":{"title":"观点与证据","items":[{"type":"table","columns":["区别","观点","证据"],"rows":[["作用","说明作者的判断","支撑判断的事实或资料"],["例子","这本书适合入门","前两章使用了生活中的例子"]]}]}}
-\`\`\`
-
-- 同一条回答中用相同 id 更新原界面，用不同 id 插入另一块界面；id 只使用小写字母、数字和连字符。
-- action 由魏碑转成当前会话中的互动请求。需要检索、记忆或笔记操作时，Webi 继续使用原有工具；按钮被点击不代表相关操作已经完成。
-- 显示引擎随魏碑安装，按组件需要加载；只使用用户给出或已确认可公开访问的 HTTPS 图片、音视频地址。
-
-`;
-const start = skill.indexOf('富文本字段');
-const end = skill.indexOf('\n## 范例', start);
-assert(start >= 0 && end > start, '上游 GenUI 技能结构已变化，请核对魏碑接入说明');
-// Keep upstream component documentation; replace only host delivery and workflow rules.
-let body = skill.slice(start, end)
-  .replace('组件词汇（只允许这些 type）', '组件词汇（先列常用类型，完整规格见后文）')
-  .replace(/\*\*硬触发[^\n]*\n[\s\S]*?(?=\| 你要呈现的内容)/, '')
-  .replace(/\*\*规则来自设计规范[\s\S]*?(?=### 三条判据)/, '')
-  .replace(/### 怎么验证没模板化\n[\s\S]*$/, '')
-  .replace(/\*\*状态持久化[^\n]*/, '**状态保存**：选择、输入和提交状态由魏碑随当前会话中的界面保存。同一块界面保持稳定 id；不要把重新提交相同 id 当成重置用户输入。')
-  .replace('判卷、判题、重置、展开、选中', '排序、筛选、展开、选中、重置')
-  .replace('"label":"交卷","action":"grade","groups":["q1","styles"],"resetAction":"redo"?', '"label":"继续讨论","action":"discuss","groups":["topics"]?,"resetAction":"redo"?')
-  .replace(/\*\*卷子模式[^\n]*/, '**用户明确要求自测时**，可用 quiz；多道选择题使用带唯一 group、answer、explanation 的 radio，最后用 submit 汇总，本地显示结果。普通解释不附加题目。')
-  .replace('同一批数据不做两种表达（表格与图表二选一）。', '避免无意义复述。图表看差异或趋势，表格查明细；用户明确要求两者时照做。')
-  .replace(/### 卡片（`card`）只在两种场合用\n[\s\S]*?(?=### 层级靠字)/, '### 内容分组\n\n表格、图表、流程和输入控件直接放入布局，不再套 card；需要标题时使用 h3 文字节点。并排比较用 grid 直接放组件。card 仅用于多个内容确实属于同一对象的分组。不要逐段、逐项包卡，也不要嵌套卡片。\n\n')
-  .replace(/### 层级靠字，不靠框\n[\s\S]*?(?=### 不要)/, '### 跟随魏碑主题与阅读宽度\n\n字号、颜色、边界和表面由魏碑主题统一处理，不指定固定底色、阴影或再套整块外框。用标题、段落和间距区分层级。图表、长表格和流程优先纵向铺开；并排使用 grid，row 只放短按钮、标签等内容，避免把图表挤进窄行。\n\n')
-  .replace('超大数字（52px，带入场计数）', '突出数字（字号跟随魏碑主题，带入场计数）')
-  .replace('| 教学 / 自测 / 判断题 |', '| 用户明确要求自测 / 判断题 |')
-  .replaceAll('/mmx-files/', 'https://example.com/')
-  .replace('http(s) 或同源相对图片地址', 'HTTPS 图片地址')
-  .replace('仅 http(s) 或同源相对地址', '仅已确认的 HTTPS 地址')
-  .replace('无额外下载', '无需加载额外引擎')
-  .replace('但会按需下载约 1MB 引擎', '引擎随魏碑安装并按需加载')
-  .replace('**交互组件必须带 action：不带 action 的按钮渲染为禁用态，用户点不了；带 action 的按钮点击后有「已触发」本地反馈。**', '**需要模型处理的操作才设置 action；按钮需要 action 才能触发。本地选择、筛选和展开无需逐次请求模型。**')
-  .replace('`[genui-action]`', '互动操作请求')
-  .replace('围栏校验直接拒绝', '渲染器直接拒绝')
-  .replace('围栏会**静默降级为代码块**', '渲染器会报告错误，修正后重新调用 `render_ui`');
-const examples = `
-## 阅读与讨论示例：按内容选择，不照抄顺序
-
-### 阅读材料：看数量差异，再安排整理步骤
-
-用户给出教材 3 份、论文 20 篇、笔记 7 份，想看看材料构成并整理阅读顺序。图表占据完整阅读宽度，步骤放在下一段：
+调用 \`render_ui\`，参数必须含稳定的 \`id\` 和完整 \`spec\`；spec 至少有 items，可选 title、gap。
+同一界面更新时复用 id，新界面换 id；id 只用小写字母、数字和连字符。
+下方 JSON 是工具参数示例，不放进回答正文：
 
 \`\`\`json
-{"id":"reading-materials","spec":{"items":[{"type":"chart","kind":"bars","data":[{"label":"教材","value":3},{"label":"论文","value":20},{"label":"笔记","value":7}]},{"type":"steps","steps":[{"title":"梳理材料","desc":"标出各份材料讨论的问题"},{"title":"整理观点","desc":"把判断与支持它的证据分开"},{"title":"继续讨论","desc":"从尚未理解的地方开始"}]}]}}
+{"id":"concept-compare","spec":{"title":"观点与证据","items":[{"type":"table","columns":["项目","含义"],"rows":[["观点","对事情的判断"],["证据","支持判断的事实或资料"]]}]}}
 \`\`\`
 
-不要这样：用户只问数量，就额外安排阅读计划；用 row 把图表和长步骤挤在一起；材料没有给出时编造篇数。
+## 内容 → 组件
 
-### 继续讨论：输入后由用户明确提交
+| 内容 | 组件 |
+|---|---|
+| 标题、段落、公式、代码 | text |
+| 短内容横排或纵排 | row / col |
+| 多组同级内容 | grid |
+| 明细对照 | table |
+| 关键数字、状态、进度 | stat / badge / progress |
+| 并列项、键值、提醒 | list / keyvalue / callout |
+| 阶段、操作顺序或时间轴 | steps / timeline |
+| 简单数量、趋势、占比 | chart |
+| 收集输入后继续处理 | input / select / textarea / submit |
 
-用户需要在界面中记下疑问再继续讨论。textarea 设置稳定 id，不带 action；submit 收集 fields 并发送一次请求。读取 fields.question 回答当前问题，按实际需要使用原有检索和笔记工具。
+## 高频组件规格
+
+- text: \`{"type":"text","size":"h1|h2|h3|body|muted|caption","content":"富文本","center":true?}\`
+- row: \`{"type":"row","items":[...],"wrap":true?,"spacer":true?}\`
+- col: \`{"type":"col","items":[...],"gap":8?}\`
+- grid: \`{"type":"grid","cols":2,"items":[...]}\`
+- table: \`{"type":"table","columns":["列"],"rows":[["值"]]}\`；只要需要筛选 filter、导出 export、展开明细 details、列类型 types 或联动排序 sortField，无论行数，先加载 genui-advanced。
+- stat: \`{"type":"stat","label":"指标","value":"42","delta":"+8%","spark":[3,5,4,8]}\`
+- badge: \`{"type":"badge","label":"状态","tone":"success|warn|danger|accent"}\`
+- progress: \`{"type":"progress","label":"进度","value":64,"valueLabel":"64%"}\`
+- list: \`{"type":"list","items":["项目"]}\`
+- keyvalue: \`{"type":"keyvalue","pairs":[{"key":"名称","value":"内容"}]}\`
+- callout: \`{"type":"callout","tone":"info|success|warning|error","title":"提醒","content":"内容"}\`
+- steps: \`{"type":"steps","current":1,"steps":[{"title":"步骤","desc":"说明"}]}\`
+- timeline: \`{"type":"timeline","items":[{"title":"事件","desc":"说明","time":"第 1 天"}]}\`
+- chart: \`{"type":"chart","kind":"bars|line|donut","data":[{"label":"A","value":1}]}\`；只做不超过 8 点的快速对比。
+- button: \`{"type":"button","label":"继续","tone":"primary|danger|success|ghost","action":"continue"}\`
+- input: \`{"type":"input","id":"query","label":"问题","placeholder":"请输入","inputType":"text|email|color"}\`
+- select: \`{"type":"select","id":"choice","label":"选择","options":["甲","乙"],"selected":0?}\`
+- textarea: \`{"type":"textarea","id":"note","label":"补充","rows":3,"value":""}\`
+- submit: \`{"type":"submit","label":"继续","action":"continue"}\`；统一提交 fields，不给输入框重复设置 action。
+
+## 富文本与公式
+
+\`text.content\`、list、table 文本列、\`keyvalue.value\` 和 callout 支持行内代码、\`**粗体**\`、\`==高亮==\`、安全链接、行内公式 \`$x^2$\` 与独立公式 \`$$...$$\`；代码块使用 code 组件。只使用用户给出或确认可公开访问的 HTTPS 媒体地址。
+
+## 版式三判据
+
+1. 能否一眼看出主次：标题、正文、辅助说明各司其职。
+2. 能否顺着阅读：长表、图表、步骤纵向铺开；row 只放短控件，grid 只并排同级内容。
+3. 是否重复：同一信息只选最合适的表达；图看趋势，表查明细，正文不再逐项复述。
+
+## 交互与边界
+
+需要模型处理的 button 或 submit 才设置 action；本地排序、筛选、展开和选择无需逐次请求模型。
+action 只是当前会话的互动请求，不代表检索、记忆或笔记操作已经完成；这些仍用原有工具。
+用户明确要求自测时才使用题目和判分；不编造进度、掌握程度或材料数据。
+不得索取或生成密码、API Key、访问令牌、恢复码等秘密输入。
+只有收到已显示回执才能称已展示；渲染器报错时按原因修正后重调 render_ui。
+
+表格只要需要筛选、导出、展开明细、列类型或联动排序，无论行数，或需要 13 种 ECharts 预设、full option、Diagram、Plot、3D 与低频组件时，先调用 \`load_skill\`，参数 \`{"id":"genui-advanced"}\`；加载后仍用 \`render_ui\`。`;
+
+const advancedNames = [
+  'table', 'echart', 'plot', 'diagram', 'scene3d',
+  'hero', 'span', 'card', 'palette', 'divider', 'avatar', 'image', 'audio', 'video',
+  'file-tree', 'breadcrumb', 'diff', 'json', 'code', 'mermaid', 'quiz',
+  'checkbox', 'slider', 'radio', 'link', 'switch', 'tabs', 'accordion', 'copy',
+];
+const advancedSpecs = adaptHost(advancedNames.map(listItem).join('\n'));
+const advancedTableExample = {
+  id: 'course-table',
+  spec: {
+    title: '课程数据表',
+    items: [
+      { type: 'input', id: 'course-filter', label: '筛选课程', placeholder: '输入课程名称' },
+      {
+        type: 'table',
+        columns: ['课程', '学分', '人数'],
+        rows: [['高等数学', 4, 120], ['线性代数', 3, 90], ['概率论', 3, 80]],
+        types: ['text', 'num', 'num'],
+        export: true,
+        filter: 'course-filter',
+        filterColumn: 0,
+        details: [
+          [{ type: 'text', size: 'body', content: '微积分基础与函数分析课程。' }],
+          [{ type: 'text', size: 'body', content: '向量、矩阵及线性方程组课程。' }],
+          [{ type: 'text', size: 'body', content: '随机事件、概率模型与统计基础课程。' }],
+        ],
+      },
+    ],
+  },
+};
+const advancedSkill = `# GenUI Advanced — 魏碑高级界面规范
+
+这是 GenUI 的按需补充。先遵循主技能的判断、富文本、版式与调用规则；只有任务确实需要下列能力时使用，不照着规格堆组件。
+
+## 高级与低频组件
+
+${advancedSpecs}
+
+Diagram 默认省略 \`variant\`，让配色自动跟随宿主的深色或浅色主题；只有用户明确要求固定视觉主题时，才指定 \`light\`、\`dark\` 或 \`editorial\`。
+
+## 容量与宿主边界
+
+- 完整 spec 不超过 1 MB，组件树不超过 200 个节点、8 层嵌套。
+- plot 必须给合理的 xMin/xMax；scene3d 只用于空间内容，mesh 控制在 1–5 个。
+- diagram 建议不超过 9 个节点、12 条边；坐标型图按上方 kind 规则提供 x、y。
+- 显示引擎随魏碑安装并按需加载；只使用用户给出或确认可公开访问的 HTTPS 媒体地址。
+
+## 完整调用示例
+
+这个例子演示本地筛选、内置导出和展开明细：filter 是输入框 id 字符串，export 是布尔值，details 与 rows 对齐且每项是组件数组或 null；不要使用 expandable，也不要另放导出按钮。
 
 \`\`\`json
-{"id":"reading-question","spec":{"items":[{"type":"textarea","id":"question","label":"记下疑问","placeholder":"哪一处还没想明白？","rows":3},{"type":"submit","label":"继续讨论","action":"discuss"}]}}
+${JSON.stringify(advancedTableExample)}
 \`\`\`
 
-不要这样：给输入框和提交按钮同时设置 action，导致离开输入框就发送；把普通疑问框命名为考试或交卷；每条回答都强塞一个讨论入口。
+保持稳定 id，通过 \`render_ui\` 提交；若不再需要高级组件，继续按主技能选择最小表达。`;
 
-### 简短解释：直接回答
-
-用户说“用两句话解释观点和证据”，直接回答：观点是你对一件事的判断。证据是用来支持这个判断的事实或资料。
-
-不要这样：把两句话包进卡片，或反问用户来测试掌握程度。若用户之后要求比较多个具体例子，再用表格帮助看区别。
-`;
-const usage = `
-## 使用规则
-
-1. 只通过 \`render_ui\` 提交界面；普通文字、公式、代码和静态表格仍可直接写在回答里。组件内的文字、表格和代码用于组合界面，不必把普通回答再包一遍。
-2. 参数必须是合法 JSON 对象，\`spec.items\` 使用上方组件规范。长表格或复杂内容可拆成几次调用，按内容安排顺序。
-3. 魏碑渲染器校验组件。工具回执表示已提交，不代表界面已经正确显示；遇到错误时按具体原因修正后重新提交。
-4. 布局按内容组合，主题跟随魏碑；不设置固定的组件数量，也不为满足版式而增加无关内容。
-5. \`plot\` 给出合理的 xMin/xMax；3D 只用于几何或空间内容，mesh 少而精。
-6. 完整 spec 不超过 1 MB，组件树不超过 200 个节点、8 层嵌套；同一份信息避免重复表达。
-`;
-const adaptedSkill = `${host}${body}${examples}${usage}`;
-// Prevent retired DSH delivery paths from returning when the upstream skill changes.
-assert(!/dsh-ui|validate_dsh_ui|\/mmx-files\/|genui-usage-audit|design-reference|\[genui-action\]|硬触发/.test(adaptedSkill), 'GenUI 技能仍包含未适配的宿主说明');
-const { processGenuiSpec } = await tsImport(resolve(dirname(require.resolve('@changfenhuang/dsh-genui/package.json')), 'src/client/guard.ts'), import.meta.url);
-const examplesJSON = [...adaptedSkill.matchAll(/```json\n([\s\S]*?)\n```/g)];
-assert(examplesJSON.length >= 3, '魏碑 GenUI 示例缺失');
-for (const [, raw] of examplesJSON) {
-  const { id, spec } = JSON.parse(raw);
-  assert(/^[a-z0-9-]+$/.test(id), '示例必须有稳定 id');
-  const result = processGenuiSpec(spec);
-  assert(result.spec && result.errors.length === 0 && result.warnings.length === 0, JSON.stringify(result));
+const generatedNotice = '<!-- Generated from @changfenhuang/dsh-genui; edit script/build_genui.mjs for host integration. -->\n';
+const mainOutput = `${generatedNotice}${mainSkill}\n`;
+const advancedOutput = `${generatedNotice}${advancedSkill}\n`;
+const mainLines = mainOutput.trimEnd().split('\n').length;
+assert(mainLines >= 65 && mainLines <= 75, `主 GenUI 技能应为 65–75 行，当前 ${mainLines} 行`);
+const echartPresets = ['bar', 'line', 'area', 'pie', 'scatter', 'radar', 'gauge', 'funnel', 'treemap', 'sankey', 'graph', 'heatmap', 'bigline'];
+assert(echartPresets.every(preset => advancedOutput.includes(`\`${preset}\``)), '高级技能缺少 13 种 ECharts 预设');
+assert(advancedOutput.includes('full option'), '高级技能缺少 ECharts full option');
+assert(advancedOutput.includes('27 种') || advancedOutput.includes('27种'), '高级技能缺少 Diagram 27 种 kind');
+assert(advancedOutput.includes('Diagram 默认省略 `variant`'), '高级技能缺少 Diagram 宿主主题规则');
+for (const output of [mainOutput, advancedOutput]) {
+  assert(!/dsh-ui|validate_dsh_ui|\/mmx-files\/|genui-usage-audit|design-reference|\[genui-action\]|硬触发/.test(output), 'GenUI 技能仍包含未适配的宿主说明');
 }
-await writeFile(resolve(folder, 'SKILL.md'), `<!-- Generated from @changfenhuang/dsh-genui; edit script/build_genui.mjs for host integration. -->\n${adaptedSkill}`);
-await writeFile(resolve(folder, 'manifest.json'), `${JSON.stringify({
+const { processGenuiSpec } = await tsImport(resolve(dirname(require.resolve('@changfenhuang/dsh-genui/package.json')), 'src/client/guard.ts'), import.meta.url);
+function validateSpec(name, spec) {
+  const result = processGenuiSpec(spec);
+  assert(result.spec && result.errors.length === 0 && result.warnings.length === 0, `${name}: ${JSON.stringify(result)}`);
+  return result;
+}
+validateSpec('genui 高频规格', { items: [
+  { type: 'text', size: 'h2', content: '**重点**与 $x^2$', center: true },
+  { type: 'row', items: [{ type: 'badge', label: '就绪', tone: 'success' }], wrap: true, spacer: true },
+  { type: 'col', items: [{ type: 'text', size: 'body', content: '纵排' }], gap: 8 },
+  { type: 'grid', cols: 2, items: [{ type: 'stat', label: '数量', value: '42', delta: '+8%', spark: [3, 5, 4, 8] }, { type: 'progress', label: '进度', value: 64, valueLabel: '64%' }] },
+  { type: 'table', columns: ['项目', '数值'], rows: [['甲', 1]] },
+  { type: 'list', items: ['甲', { title: '乙', desc: '说明' }] },
+  { type: 'keyvalue', pairs: [{ key: '名称', value: '内容' }] },
+  { type: 'callout', tone: 'info', title: '提醒', content: '正文' },
+  { type: 'steps', current: 1, steps: [{ title: '开始', desc: '说明' }] },
+  { type: 'timeline', items: [{ title: '开始', desc: '说明', time: '第 1 天' }] },
+  { type: 'chart', kind: 'bars', data: [{ label: '甲', value: 1 }] },
+  { type: 'button', label: '继续', tone: 'primary', action: 'continue' },
+  { type: 'input', id: 'query', label: '问题', placeholder: '请输入', inputType: 'text' },
+  { type: 'select', id: 'choice', label: '选择', options: ['甲', '乙'], selected: 0 },
+  { type: 'textarea', id: 'note', label: '补充', rows: 3, value: '' },
+  { type: 'submit', label: '继续', action: 'continue' },
+] });
+validateSpec('genui-advanced 关键规格', { items: [
+  { type: 'table', columns: ['项目', '变化'], rows: [['甲', '+8%']], types: ['text', 'delta'], total: true, export: true, filter: 'query', filterColumn: 0 },
+  { type: 'echart', preset: 'sankey', data: [{ label: '访问', value: 120 }, { label: '注册', value: 45 }], links: [{ from: '访问', to: '注册', value: 45 }] },
+  { type: 'plot', title: '函数', xMin: -3.14, xMax: 3.14, series: [{ expr: 'a*sin(x)', label: '曲线', params: [{ name: 'a', value: 1, min: 0, max: 2 }] }] },
+  { type: 'diagram', kind: 'architecture', nodes: [{ id: 'a', label: 'Web', type: 'focal', x: 40, y: 40, w: 128, h: 48 }], edges: [] },
+  { type: 'scene3d', title: '空间', meshes: [{ shape: 'box', size: 1, position: [0, 0, 0] }] },
+  { type: 'hero', title: '摘要', subtitle: '说明', value: '42', label: '数量', delta: '+8%', spark: [3, 5, 4], tone: 'accent' },
+  { type: 'grid', cols: 2, items: [{ type: 'card', title: '分组', span: 2, items: [{ type: 'divider' }, { type: 'spacer' }] }] },
+  { type: 'chart', kind: 'donut', palette: ['#ff8800', '#3ecf8e'], data: [{ label: '甲', value: 1 }] },
+  { type: 'avatar', name: 'Webi', color: '#336699' },
+  { type: 'image', src: 'https://example.com/result.png', alt: '图片' },
+  { type: 'audio', src: 'https://example.com/result.mp3', alt: '音频' },
+  { type: 'video', src: 'https://example.com/result.mp4', alt: '视频', aspectRatio: '16:9' },
+  { type: 'timeline', items: [{ title: '开始', desc: '说明', time: '今天' }] },
+  { type: 'file-tree', items: [{ name: '资料', type: 'dir', children: [{ name: '说明.md', type: 'file' }] }] },
+  { type: 'breadcrumb', items: ['首页', '资料'] },
+  { type: 'diff', diffs: [{ path: '说明.md', oldText: '旧', newText: '新' }] },
+  { type: 'json', value: { ready: true } },
+  { type: 'code', lang: 'ts', code: 'const ready = true' },
+  { type: 'mermaid', code: 'graph TD\\nA-->B' },
+  { type: 'quiz', id: 'q1', question: '选哪项？', options: [{ label: '甲', correct: true }], explanation: '说明' },
+  { type: 'checkbox', label: '甲', group: 'choices' },
+  { type: 'slider', id: 'amount', label: '数量', min: 0, max: 10, step: 1, value: 5 },
+  { type: 'radio', label: '选择', options: ['甲', '乙'], group: 'q1', answer: 0, explanation: '说明' },
+  { type: 'link', label: '资料', href: 'https://example.com' },
+  { type: 'switch', label: '启用', checked: true, action: 'toggle' },
+  { type: 'tabs', tabs: [{ label: '甲', items: [{ type: 'text', size: 'body', content: '内容' }] }] },
+  { type: 'accordion', items: [{ title: '详情', items: [{ type: 'text', size: 'body', content: '内容' }] }] },
+  { type: 'copy', label: '复制', text: '内容' },
+] });
+const advancedTableResult = validateSpec('genui-advanced 表格示例', advancedTableExample.spec);
+const repairedTable = advancedTableResult.spec.items.find(item => item.type === 'table');
+assert.equal(repairedTable?.filter, 'course-filter', '高级表格示例的 filter 未保留');
+assert.equal(repairedTable?.export, true, '高级表格示例的 export 未保留');
+assert.deepEqual(repairedTable?.types, ['text', 'num', 'num'], '高级表格示例的 types 未保留');
+assert(repairedTable?.details?.length === 3, '高级表格示例的 details 未完整保留');
+assert(repairedTable.details.every(detail => detail?.[0]?.type === 'text'), '高级表格示例的 details 必须是组件数组');
+for (const [name, output] of [['genui', mainOutput], ['genui-advanced', advancedOutput]]) {
+  const examplesJSON = [...output.matchAll(/```json\n([\s\S]*?)\n```/g)];
+  assert(examplesJSON.length >= 1, `${name} 缺少完整 JSON 示例`);
+  for (const [, raw] of examplesJSON) {
+    const { id, spec } = JSON.parse(raw);
+    assert(/^[a-z0-9-]+$/.test(id), `${name} 示例必须有稳定 id`);
+    validateSpec(`${name} 示例`, spec);
+  }
+}
+for (const [id, output, manifest] of [
+  ['genui', mainOutput, {
   id: 'genui', name: 'GenUI', version: genuiPackage.version,
-  description: '使用 dshGenUI 在回答中呈现结构化组件、图表、表格与交互。',
+  description: '常用生成式界面：负责使用判断、时间线、内容选型与基础交互；表格筛选、导出、展开明细、列类型或联动排序等高级能力需加载 genui-advanced。',
   modelInvocable: true, userInvocable: true, tools: ['render_ui'], jscHook: null,
-}, null, 2)}\n`);
-console.log(`dshGenUI ${genuiPackage.version}: renderer, local engines and skill bundled`);
+  }],
+  ['genui-advanced', advancedOutput, {
+    id: 'genui-advanced', name: 'GenUI Advanced', version: genuiPackage.version,
+    description: 'GenUI 按需高级补充：复杂长表、ECharts、Diagram、Plot、3D 与低频组件；先加载 genui。',
+    modelInvocable: true, userInvocable: true, tools: ['render_ui'], jscHook: null,
+  }],
+]) {
+  const folder = resolve(skillsFolder, id);
+  await mkdir(folder, { recursive: true });
+  await writeFile(resolve(folder, 'SKILL.md'), output);
+  await writeFile(resolve(folder, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+}
+console.log(`dshGenUI ${genuiPackage.version}: renderer, local engines, main and advanced skills bundled`);

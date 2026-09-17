@@ -3,6 +3,10 @@ import Foundation
 /// 本轮最小定位：正在看哪份、哪一页。调用方把它随用户消息一并写入账本。
 public enum NativeTurnLocation {
     public static func block(for request: StudyAgentRequest) -> String? {
+        block(for: request, aliases: nil)
+    }
+
+    static func block(for request: StudyAgentRequest, aliases: NativeStateAliases?) -> String? {
         var lines: [String] = []
         if let focus = request.focus {
             if let title = trimmed(focus.materialTitle) {
@@ -22,7 +26,9 @@ public enum NativeTurnLocation {
         if let id = request.projectScope.courseID { lines.append("课程 ID：" + id) }
         if let id = request.focus?.sectionLocationID { lines.append("章节位置：" + id) }
         if let note = request.courseContext.items.first(where: \.isCurrentNote) {
-            lines.append("笔记 ID：" + note.id)
+            if let alias = aliases?.noteAlias(for: note.id) {
+                lines.append("笔记 ID：" + alias)
+            }
             lines.append(request.language.text("笔记：\(note.title)", "Note: \(note.title)"))
         }
         for asset in request.visualAssets {

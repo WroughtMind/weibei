@@ -109,8 +109,8 @@ struct AgentUnconfiguredHint: View {
             }
 
             Text(store.ui(
-                "连接后才能发送问题。可以使用订阅登录或 API Key。",
-                "Connect a service before sending. You can use a subscription sign-in or an API key."
+                "连接后才能发送问题。可以使用账号登录或 API Key。",
+                "Connect a service before sending. You can sign in with your account or use an API key."
             ))
             .weiBeiText(11.5)
             .foregroundStyle(WeiBeiTheme.secondaryInk)

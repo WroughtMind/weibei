@@ -1511,13 +1511,14 @@ public struct AgentReplySourceInlinePresentation: Sendable {
         var direct = [String: AgentReplySource]()
         var additional = [String: [AgentReplySource]]()
         var groupIndex = 0
+        let literals = sources.isEmpty ? [] : MarkdownLiteralRanges.ranges(in: text).compactMap { Range($0, in: text) }
 
-        while let match = Self.earliestSource(in: remaining, sources: sources) {
+        while let match = Self.earliestSource(in: remaining, sources: sources, excluding: literals) {
             rendered += remaining[..<match.range.lowerBound]
             var group = [match.source]
             remaining = remaining[match.range.upperBound...]
 
-            while let next = Self.earliestSource(in: remaining, sources: sources),
+            while let next = Self.earliestSource(in: remaining, sources: sources, excluding: literals),
                   Self.isSourceSeparator(remaining[..<next.range.lowerBound]) {
                 group.append(next.source)
                 remaining = remaining[next.range.upperBound...]
@@ -1561,10 +1562,17 @@ public struct AgentReplySourceInlinePresentation: Sendable {
 
     private static func earliestSource(
         in text: Substring,
-        sources: [AgentReplySource]
+        sources: [AgentReplySource],
+        excluding literals: [Range<String.Index>]
     ) -> (source: AgentReplySource, range: Range<Substring.Index>)? {
-        sources.compactMap { source in
-            text.range(of: source.label).map { (source, $0) }
+        sources.compactMap { source -> (AgentReplySource, Range<String.Index>)? in
+            guard !source.label.isEmpty else { return nil }
+            var remaining = text
+            while let range = remaining.range(of: source.label) {
+                if !literals.contains(where: { $0.overlaps(range) }) { return (source, range) }
+                remaining = remaining[range.upperBound...]
+            }
+            return nil
         }
         .min { $0.1.lowerBound < $1.1.lowerBound }
     }
@@ -1879,6 +1887,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var failureKind: AgentFailureKind?
     public var retryQuestion: String?
     public var toolActivities: [AgentToolActivity] = []
+    public var requestContext: AgentRequestContext?
     public var toolTrace: [String]
     public var createdAt: Date
 
@@ -1897,6 +1906,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         origin: AgentReplyOrigin? = nil,
         failureKind: AgentFailureKind? = nil,
         retryQuestion: String? = nil,
+        requestContext: AgentRequestContext? = nil,
         toolTrace: [String] = [],
         createdAt: Date = Date()
     ) {
@@ -1914,6 +1924,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.origin = origin
         self.failureKind = failureKind
         self.retryQuestion = retryQuestion
+        self.requestContext = requestContext
         self.toolTrace = toolTrace
         self.createdAt = createdAt
     }
@@ -1934,6 +1945,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case failureKind
         case retryQuestion
         case toolActivities
+        case requestContext
         case toolTrace
         case createdAt
     }
@@ -2038,6 +2050,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             marker: "reply-retry:decode-failed"
         )
         toolActivities = try container.decodeIfPresent([AgentToolActivity].self, forKey: .toolActivities) ?? []
+        requestContext = try container.decodeIfPresent(AgentRequestContext.self, forKey: .requestContext)
         toolTrace = decodedToolTrace
         createdAt = try container.decode(Date.self, forKey: .createdAt)
     }
@@ -2069,6 +2082,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         if !toolActivities.isEmpty {
             try container.encode(toolActivities, forKey: .toolActivities)
         }
+        try container.encodeIfPresent(requestContext, forKey: .requestContext)
         if !toolTrace.isEmpty {
             try container.encode(toolTrace, forKey: .toolTrace)
         }

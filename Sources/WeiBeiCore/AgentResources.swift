@@ -2,7 +2,7 @@ import Foundation
 
 /// Bundled system prompt and skills shared by the native runtime.
 public struct AgentResources: Sendable {
-    public static let requiredSkillIDs = ["genui", "socratic-questioning"]
+    public static let requiredSkillIDs = ["genui", "genui-advanced", "socratic-questioning"]
 
     public var rootURL: URL
     public var skillsURL: URL

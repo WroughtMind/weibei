@@ -135,8 +135,6 @@ public actor NativeAgentLedger {
     public func append(_ builder: (Int, Int64) -> NativeSessionEvent) throws -> NativeSessionEvent {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let event = builder(nextSeq, now)
-        events.append(event)
-        nextSeq += 1
         var line = try encoder.encode(event)
         line.append(0x0A)
         if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -151,7 +149,20 @@ public actor NativeAgentLedger {
                 ofItemAtPath: fileURL.path
             )
         }
+        events.append(event)
+        nextSeq += 1
         return event
+    }
+
+    /// Replace answer text in the projection; tool calls/results remain an audit of real side effects.
+    public func replaceLastAnswer(question: String) throws {
+        guard let user = events.last(where: { $0.type == .userMessage }) else {
+            throw NativeLLMFailure(code: "missing_history", message: "没有找到这次提问的模型历史，未重新生成。")
+        }
+        _ = try append { seq, time in
+            NativeSessionEvent(type: .turnReplacement, seq: seq, timeMS: time,
+                turn: events.compactMap(\.turn).max(), text: question, firstKeptSeq: user.seq)
+        }
     }
 
     public func allEvents() -> [NativeSessionEvent] {
@@ -163,10 +174,16 @@ public actor NativeAgentLedger {
     }
 
     func deriveProjection() -> NativeLedgerProjection {
-        let checkpoint = events.last { $0.type == .contextCompaction }
+        let replacedRanges = events.filter { $0.type == .turnReplacement }.compactMap { event in
+            event.firstKeptSeq.map { $0..<event.seq }
+        }
+        let checkpoint = events.last { event in
+            event.type == .contextCompaction && !replacedRanges.contains(where: { $0.contains(event.seq) })
+        }
         let firstVisibleSeq = checkpoint?.firstKeptSeq ?? Int.min
-        let visibleEvents = events.filter {
-            $0.type != .contextCompaction && $0.seq >= firstVisibleSeq
+        let visibleEvents = events.filter { event in
+            event.type != .contextCompaction && event.seq >= firstVisibleSeq
+                && !(event.type == .assistantMessage && replacedRanges.contains(where: { $0.contains(event.seq) }))
         }
         var records: [NativeProjectedMessage] = []
         var pendingAssistant = ""
@@ -200,11 +217,13 @@ public actor NativeAgentLedger {
 
         for event in visibleEvents {
             switch event.type {
-            case .userMessage:
+            case .userMessage, .turnContext:
                 flushAssistant()
                 records.append(
                     NativeProjectedMessage(
-                        message: NativeModelMessage(role: .user, content: event.text ?? ""),
+                        message: NativeModelMessage(role: .user, content: events.last(where: {
+                            $0.type == .turnReplacement && $0.firstKeptSeq == event.seq
+                        })?.text ?? event.text ?? ""),
                         firstSeq: event.seq,
                         lastSeq: event.seq,
                         usage: nil
@@ -241,7 +260,7 @@ public actor NativeAgentLedger {
                     )
                 )
             case .turnStart, .turnEnd, .stepStart, .stepEnd, .assistantChunk,
-                 .contextCompaction, .closer:
+                 .contextCompaction, .turnReplacement, .closer:
                 break
             }
         }

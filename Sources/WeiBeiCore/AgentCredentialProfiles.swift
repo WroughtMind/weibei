@@ -16,7 +16,7 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
         case .apiKey:
             return language.text("API 密钥", "API Key")
         case .subscription:
-            return language.text("订阅 OAuth", "Subscription OAuth")
+            return language.text("账号登录", "Account sign-in")
         }
     }
 
@@ -29,8 +29,8 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
             )
         case .subscription:
             return language.text(
-                "通过浏览器连接 ChatGPT Plus/Pro 订阅；登录信息由魏碑保存。",
-                "Connect a ChatGPT Plus/Pro subscription in the browser. WeiBei saves the sign-in information."
+                "通过浏览器授权模型服务账号；登录信息由魏碑保存。",
+                "Authorize your model provider account in the browser. WeiBei saves the sign-in information."
             )
         }
     }

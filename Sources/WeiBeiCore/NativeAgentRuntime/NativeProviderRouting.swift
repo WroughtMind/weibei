@@ -242,7 +242,7 @@ public enum NativeProviderRouting {
             return NativeProviderRoute(
                 family: .openaiChatCompletions,
                 auth: .apiKey,
-                baseURL: URL(string: "https://api.kimi.com/coding"),
+                baseURL: URL(string: "https://api.kimi.com/coding/v1"),
                 webSearch: .kimiBuiltin
             )
         case .moonshotai:

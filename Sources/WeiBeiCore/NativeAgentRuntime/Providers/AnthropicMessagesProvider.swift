@@ -248,16 +248,21 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
                     )
                 )
             }
-            if delta["stop_reason"] as? String == "tool_use" {
-                chunks.append(.finish(reason: .toolCalls, replayState: replayState(from: object)))
-                return chunks
-            }
-            if delta["stop_reason"] != nil {
-                chunks.append(.finish(reason: .stop, replayState: replayState(from: object)))
+            if let stop = delta["stop_reason"] as? String {
+                let reason: NativeFinishReason
+                switch stop {
+                case "end_turn", "stop_sequence": reason = .stop
+                case "tool_use": reason = .toolCalls
+                case "max_tokens", "model_context_window_exceeded": reason = .length
+                case "pause_turn": reason = .paused
+                case "refusal": reason = .refused
+                default: reason = .error
+                }
+                chunks.append(.finish(reason: reason, replayState: replayState(from: object)))
             }
             return chunks
         case "message_stop":
-            return [.finish(reason: .stop, replayState: nil)]
+            return []
         case "error":
             let error = object["error"] as? [String: Any]
             throw NativeLLMFailure(

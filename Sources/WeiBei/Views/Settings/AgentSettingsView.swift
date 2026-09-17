@@ -28,15 +28,15 @@ extension SettingsView {
             // 服务 (provider). Choosing one derives the auth method from its kind.
             settingsRow(title: store.ui("服务", "Service"), detail: "") {
                 compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
-                    Section(AgentProviderKind.subscription.label(language: store.interfaceLanguage)) {
-                        ForEach(AgentProviderID.subscriptionProviders.filter(oauthService.isAvailable)) { provider in
+                    Section(store.ui("支持账号登录", "Account sign-in available")) {
+                        ForEach(AgentProviderID.allCases.filter { oauthService.isAvailable($0) && NativeProviderOAuth.supports($0) }) { provider in
                             Button(provider.label(language: store.interfaceLanguage)) {
                                 applyProvider(provider)
                             }
                         }
                     }
                     Section(AgentProviderKind.apiKey.label(language: store.interfaceLanguage)) {
-                        ForEach(AgentProviderID.apiKeyProviders.filter(oauthService.isAvailable)) { provider in
+                        ForEach(AgentProviderID.apiKeyProviders.filter { oauthService.isAvailable($0) && !NativeProviderOAuth.supports($0) }) { provider in
                             Button(provider.label(language: store.interfaceLanguage)) {
                                 applyProvider(provider)
                             }
@@ -69,6 +69,29 @@ extension SettingsView {
             // 模型 — dropdown backed by the live catalog.
             settingsRow(title: store.ui("模型", "Model"), detail: "") {
                 agentModelPicker()
+            }
+
+            if !store.agentReasoningLevels.isEmpty {
+                ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
+                    settingsRow(
+                        title: mode.label,
+                        detail: store.ui("当前模型的推理强度", "Reasoning effort for this model")
+                    ) {
+                        compactMenu(store.agentReasoningEffort(for: mode) ?? mode.defaultEffort) {
+                            ForEach(store.agentReasoningLevels, id: \.self) { effort in
+                                Button {
+                                    store.agentReasoningMappings[store.agentReasoningMappingKey(mode)] = effort
+                                } label: {
+                                    if effort == store.agentReasoningEffort(for: mode) {
+                                        Label(effort, systemImage: "checkmark")
+                                    } else {
+                                        Text(effort)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Base URL — flat (no longer hidden behind Advanced); only for providers
@@ -194,7 +217,7 @@ extension SettingsView {
         }
         let authTypes = authTypes(for: provider)
         store.setAgentAuthMethod(
-            authTypes.contains(.oauth) && provider.kind == .subscription
+            authTypes.contains(.oauth) && (provider.kind == .subscription || !oauthService.isConfigured(providerID: provider.credentialProviderID, type: .apiKey))
                 ? .subscription
                 : .apiKey
         )
@@ -304,8 +327,10 @@ extension SettingsView {
 
     private var agentSubscriptionAuth: some View {
         settingsRow(
-            title: store.ui("订阅登录", "Subscription Login"),
-            detail: ""
+            title: store.ui("账号登录", "Account sign-in"),
+            detail: store.agentProviderID == .openrouter
+                ? store.ui("使用 OpenRouter 余额，授权时可设置额度。", "Uses your OpenRouter balance; set a spending limit when authorizing.")
+                : store.ui("模型权限和额度由服务商账号决定。", "Model access and limits depend on your provider account.")
         ) {
             VStack(alignment: .trailing, spacing: 8) {
                 let provider = currentOAuthProvider
@@ -325,14 +350,14 @@ extension SettingsView {
                         }
                         Button {
                             guard !oauthService.isLoggingIn else { return }
-                            oauthService.startLogin(provider)
+                            oauthService.startLogin(provider, language: store.interfaceLanguage)
                         } label: {
                             Text(
                                 oauthService.isLoggingIn
                                     ? store.ui("登录中…", "Signing in…")
                                     : oauthService.isLinked(provider)
                                         ? store.ui("重新登录", "Sign in again")
-                                        : store.ui("OAuth 登录", "OAuth sign in")
+                                        : store.ui("浏览器登录", "Sign in with browser")
                             )
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
@@ -346,6 +371,15 @@ extension SettingsView {
                     if oauthService.isLoggingIn {
                         Button(store.ui("取消", "Cancel")) { oauthService.cancelLogin() }
                             .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                }
+                if let code = oauthService.authorizationCode, oauthService.isLoggingIn {
+                    HStack(spacing: 12) {
+                        Text(code).font(.system(.title3, design: .monospaced)).textSelection(.enabled)
+                            .accessibilityLabel(store.ui("设备验证码：", "Device code: ") + code)
+                        if let url = oauthService.authorizationURL {
+                            Link(store.ui("打开授权页", "Open authorization page"), destination: url)
+                        }
                     }
                 }
                 if let progress = oauthService.statusMessage,
