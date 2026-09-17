@@ -186,7 +186,7 @@ struct ComposerView: View {
         .buttonStyle(ReasoningModeButtonStyle(selected: showsReasoningPicker))
         .fixedSize()
         .popover(isPresented: $showsReasoningPicker, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-            VStack(spacing: 2) {
+            VStack(spacing: 6) {
                 ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
                     Button {
                         store.agentReasoningMode = mode
@@ -207,9 +207,9 @@ struct ComposerView: View {
                     .accessibilityAddTraits(mode == store.agentReasoningMode ? .isSelected : [])
                 }
             }
-            .padding(6)
+            .padding(10)
             .fixedSize(horizontal: true, vertical: true)
-            .background(WeiBeiTheme.paperRaised)
+            .presentationBackground(WeiBeiTheme.paperRaised)
         }
         .accessibilityLabel(store.ui("推理模式", "Reasoning mode"))
         .accessibilityValue(store.agentReasoningMode.label)
@@ -250,20 +250,24 @@ private struct ReasoningModeButtonStyle: ButtonStyle {
     var selected: Bool
 
     func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
         configuration.label
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .background {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(hovering ? WeiBeiTheme.paperRaised : Color.clear)
+                shape
+                    .fill(hovering || configuration.isPressed ? WeiBeiTheme.paperRaised : Color.clear)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 6)
+                        shape
                             .fill(WeiBeiTheme.ink.opacity(configuration.isPressed ? 0.12 : hovering || selected ? 0.07 : 0))
                     }
+                    .compositingGroup()
                     .shadow(
                         color: WeiBeiTheme.ink.opacity(hovering && !configuration.isPressed ? 0.14 : 0),
                         radius: 3, y: 1
                     )
             }
+            .contentShape(.interaction, shape)
+            .zIndex(hovering ? 1 : 0)
             .onHover { hovering = $0 }
             .animation(reduceMotion ? nil : WeiBeiMotion.micro, value: hovering)
             .animation(reduceMotion || configuration.isPressed ? nil : WeiBeiMotion.micro, value: configuration.isPressed)
