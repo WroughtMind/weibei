@@ -164,14 +164,6 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 if identity != expectedIdentity {
                     WeiBeiLog.workspace.notice("search_index_identity_refreshed")
                 }
-            } else {
-                switch item.storage {
-                case .courseOwned:
-                    Darwin.close(descriptor)
-                    return nil
-                case .common, .bundledSample:
-                    break
-                }
             }
             self.descriptor = descriptor
             self.metadata = FileMetadata(fileStat)

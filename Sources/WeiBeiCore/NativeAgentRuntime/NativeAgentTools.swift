@@ -588,7 +588,7 @@ public enum NativeBuiltinTools {
     private static var courseRead: NativeToolDefinition {
         hostTool(
             name: "weibei_course_read",
-            description: "按 itemID 读取连续原文。编号可来自当前位置、选区、目录或搜索。PDF 使用结果条目的 page（从1开始）；章节 location 使用返回的完整标识。未指定位置时从开头读。maximumCharacters 是本次正文额度，nextCursor 可用于按需续读。覆盖信息说明哪些页尚未取得正文。",
+            description: "按 itemID 读取连续原文。编号可来自当前位置、选区、目录或搜索。PDF 使用结果条目的 page（从1开始）；章节 location 使用返回的完整标识，同时传入时以 page 为准。未指定位置时从开头读。maximumCharacters 是本次正文额度，nextCursor 可用于按需续读。覆盖信息说明哪些页尚未取得正文。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
@@ -603,10 +603,7 @@ public enum NativeBuiltinTools {
                     throw NativeLLMFailure(code: "invalid_arguments", message: "读取需要材料编号")
                 }
                 let page = try arguments["page"].map { try positiveCount($0, default: 1, maximum: Int.max) }
-                let location = string(arguments["location"])
-                guard page == nil || location == nil else {
-                    throw NativeLLMFailure(code: "invalid_arguments", message: "请选择页码或章节位置")
-                }
+                let location = page == nil ? string(arguments["location"]) : nil
                 let resolvedID = context.stateAliases?.itemID(for: id)
                     ?? context.persistentAssetIDsByContextID[id]
                     ?? id

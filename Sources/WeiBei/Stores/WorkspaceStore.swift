@@ -7288,7 +7288,6 @@ final class WorkspaceStore: ObservableObject {
             rootIdentity = expectedIdentity
         } else {
             guard let course = course(withID: courseID),
-                  course.sourceRootIdentity != nil,
                   let rawRoot = courseRootURL(for: courseID),
                   let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(rawRoot),
                   let liveRootIdentity = CourseProjectFileWorker.identity(at: resolvedRoot) else {
@@ -7308,8 +7307,7 @@ final class WorkspaceStore: ObservableObject {
               }),
               let relativePath = membership.courseRelativePath,
               Self.isVisibleAgentProjectPath(relativePath),
-              let targetURL = item.url?.standardizedFileURL,
-              let targetIdentity = item.importedFileIdentity else {
+              let targetURL = item.url?.standardizedFileURL else {
             return nil
         }
         if liveRootIdentity != rootIdentity {
@@ -7332,7 +7330,7 @@ final class WorkspaceStore: ObservableObject {
         if let entryIdentity = membership.entryIdentity, entryIdentity != liveEntryIdentity {
             WeiBeiLog.workspace.notice("agent_grant_entry_identity_refreshed")
         }
-        if liveTargetIdentity != targetIdentity {
+        if let targetIdentity = item.importedFileIdentity, liveTargetIdentity != targetIdentity {
             WeiBeiLog.workspace.notice("agent_grant_target_identity_refreshed")
         }
         let isShared: Bool

@@ -2,6 +2,28 @@ import XCTest
 @testable import WeiBeiCore
 
 final class NativeAgentRuntimeTests: XCTestCase {
+    func testCourseReadUsesExplicitPageWithRedundantLocation() async throws {
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let recorder = WorkspaceSearchRecorder()
+        let context = NativeToolExecutionContext(request: testRequest(), hostToolHandler: { request in
+            await recorder.record(request)
+            return StudyAgentHostToolResult(query: "", items: [])
+        })
+        let result = try await registry.execute(NativeToolCallRequest(name: "weibei_course_read",
+            argumentsJSON: #"{"itemID":"voting","page":4,"location":"page:4","maximumCharacters":10000}"#,
+            callID: "read"), context: context, scope: .global)
+        XCTAssertFalse(result.isError, result.text)
+        let captured = await recorder.request
+        guard case let .courseRead(itemID, page, location, _, allowance) = captured else {
+            return XCTFail("没有把已知页码传给材料读取工具")
+        }
+        XCTAssertEqual(itemID, "voting")
+        XCTAssertEqual(page, 4)
+        XCTAssertNil(location)
+        XCTAssertEqual(allowance, 10_000)
+    }
+
     func testSelectionHistoryIncludesCompletedTurnsAndDiscussionCitationsReachTheModel() async throws {
         struct DiscussionAdapter: NativeLLMAdapter {
             let family = "mock"

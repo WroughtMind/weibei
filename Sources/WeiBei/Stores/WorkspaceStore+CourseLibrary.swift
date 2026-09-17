@@ -4440,12 +4440,16 @@ extension WorkspaceStore {
         )) ?? []
         for child in children {
             let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
+            guard values?.isDirectory == true, values?.isSymbolicLink != true,
+                  let identity = importedFileIdentityResolver(child) else { continue }
             let name = child.lastPathComponent
             guard !reserved.contains(name) else { continue }
-            if courses.contains(where: {
+            if let index = courses.firstIndex(where: {
                 $0.sourceRootRelativePath == name || courseRootURL(for: $0.id) == child
             }) {
+                if courses[index].sourceRootIdentity != identity {
+                    courses[index].sourceRootIdentity = identity
+                }
                 ensureCourseScaffold(at: child)
                 continue
             }
@@ -4490,6 +4494,7 @@ extension WorkspaceStore {
             if let existingID, let index = courses.firstIndex(where: { $0.id == existingID }) {
                 courses[index].title = name
                 courses[index].sourceRootRelativePath = name
+                courses[index].sourceRootIdentity = identity
                 resolvedCourseRootURLs[existingID] = child
                 ensureCourseScaffold(at: child)
                 continue
@@ -4510,7 +4515,8 @@ extension WorkspaceStore {
                         id: courseID,
                         title: name,
                         colorIndex: nextCourseColorIndex(),
-                        sourceRootRelativePath: name
+                        sourceRootRelativePath: name,
+                        sourceRootIdentity: identity
                     )
                 )
             }
