@@ -212,6 +212,82 @@ final class NativeAgentRuntimeTests: XCTestCase {
     }
 
     // 连续追问、笔记确认和工具续跑只追加上下文，保留已经发给模型的完整前缀。
+    func testRegenerationKeepsRealWritesAndReplacesHistoryAfterReload() async throws {
+        struct RegenerationAdapter: NativeLLMAdapter {
+            let family = "mock"
+            func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+                XCTAssertFalse(request.messages.contains { $0.content.contains("被替换的旧回答") })
+                XCTAssertEqual(request.messages.filter { $0.content == "写入后解释" }.count, 1)
+                XCTAssertTrue(request.messages.contains { $0.role == .tool && $0.content.contains("real-note") })
+                let chunks: [NativeStreamChunk] = request.messages.contains { $0.toolCallID == "repeat" }
+                    ? [.textDelta(index: 0, text: "新的解释[选区：r1.1]"), .finish(reason: .stop, replayState: nil)]
+                    : [.toolCallDelta(index: 0, id: "repeat", name: "weibei_note_proposal", argumentsDelta: "{}"),
+                       .finish(reason: .toolCalls, replayState: nil)]
+                return MockLLMAdapter(chunks: chunks).stream(request)
+            }
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-regenerate-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("NativeAgent/Ledgers/chat/ledger.jsonl")
+        let ledger = try NativeAgentLedger(fileURL: url)
+        _ = try await ledger.append { NativeSessionEvent(type: .userMessage, seq: $0, timeMS: $1, turn: 1, text: "写入后解释") }
+        _ = try await ledger.append { NativeSessionEvent(type: .assistantMessage, seq: $0, timeMS: $1, turn: 1, text: "被替换的旧回答") }
+        _ = try await ledger.append { NativeSessionEvent(type: .toolCall, seq: $0, timeMS: $1, turn: 1,
+            toolCallID: "saved", toolName: "weibei_note_proposal", argumentsJSON: "{}") }
+        _ = try await ledger.append { NativeSessionEvent(type: .toolResult, seq: $0, timeMS: $1, turn: 1,
+            text: #"{"status":"saved","action":{"targetItemID":"real-note"}}"#,
+            toolCallID: "saved", toolName: "weibei_note_proposal") }
+        _ = try await ledger.append { NativeSessionEvent(type: .contextCompaction, seq: $0, timeMS: $1,
+            summary: "被替换的旧回答", firstKeptSeq: 4) }
+        try await ledger.closeTurn(turn: 1, reason: .completed)
+        var request = testRequest()
+        request.question = "写入后解释"
+        request.reusingLastUserMessage = true
+        request.selectionSources = [AgentReplySource(itemID: "source", kind: .selection, title: "原始选区", label: "", excerpt: "选区原文")]
+        let reply = try await NativeAgentLoop().run(request: request, ledger: ledger, registry: NativeToolRegistry(),
+            adapter: RegenerationAdapter(), model: "mock", hostToolHandler: nil, systemPrompt: "test", progress: nil)
+        XCTAssertEqual(reply.sources.first?.label, "[选区：r1.1]")
+        let reopened = try NativeAgentLedger(fileURL: url)
+        let messages = await reopened.deriveMessages()
+        XCTAssertTrue(messages.contains { $0.content == "新的解释[选区：r1.1]" })
+        XCTAssertFalse(messages.contains { $0.content.contains("被替换的旧回答") })
+        let audit = await reopened.allEvents()
+        XCTAssertEqual(audit.filter { $0.type == .userMessage }.count, 1)
+        XCTAssertEqual(audit.filter { $0.type == .toolResult }.count, 2)
+        let repeated = try XCTUnwrap(audit.first { $0.type == .toolResult && $0.toolCallID == "repeat" })
+        XCTAssertFalse(repeated.isError)
+        XCTAssertTrue(repeated.text?.contains("此前的操作已经完成") == true)
+        XCTAssertTrue(audit.contains { $0.text == "被替换的旧回答" })
+        request.reusingLastUserMessage = false
+        request.question = "继续解释"
+        _ = try await NativeAgentLoop().run(request: request, ledger: reopened, registry: NativeToolRegistry(),
+            adapter: MockLLMAdapter(chunks: [.finish(reason: .stop, replayState: nil)], inspect: { request in
+                XCTAssertTrue(request.messages.contains { $0.content == "新的解释[选区：r1.1]" })
+                XCTAssertFalse(request.messages.contains { $0.content.contains("被替换的旧回答") })
+            }), model: "mock", hostToolHandler: nil, systemPrompt: "test", progress: nil)
+    }
+
+    func testProvidersKeepTruncationPauseRefusalAndFinalText() throws {
+        for (raw, expected) in [("end_turn", NativeFinishReason.stop), ("tool_use", .toolCalls),
+                                ("max_tokens", .length), ("pause_turn", .paused), ("refusal", .refused)] {
+            let chunks = try AnthropicMessagesProvider.translate("{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"\(raw)\"}}")
+                + AnthropicMessagesProvider.translate(#"{"type":"message_stop"}"#)
+            XCTAssertEqual(chunks.last, .finish(reason: expected, replayState: nil))
+        }
+        for (raw, expected) in [("STOP", NativeFinishReason.stop), ("MAX_TOKENS", .length), ("SAFETY", .refused), ("MALFORMED_FUNCTION_CALL", .error)] {
+            let chunks = try GoogleGenerativeAIProvider.translate("{\"candidates\":[{\"finishReason\":\"\(raw)\"}]}")
+            XCTAssertEqual(chunks.last, .finish(reason: expected, replayState: nil))
+        }
+        var textIndex = 0
+        let chat = try OpenAIChatCompletionsProvider.translate(payload: #"{"choices":[{"delta":{"content":"最后一句"},"finish_reason":"length"}]}"#, textIndex: &textIndex)
+        XCTAssertTrue(chat.contains(.textDelta(index: 0, text: "最后一句")))
+        XCTAssertEqual(chat.last, .finish(reason: .length, replayState: nil))
+        let responses = try OpenAIResponsesProvider.translate(#"{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#)
+        XCTAssertEqual(responses.last, .finish(reason: .length, replayState: nil))
+        XCTAssertEqual(NativeLLMFailure(code: "length", message: "").asAgentFailureKind, .truncated)
+        XCTAssertEqual(NativeLLMFailure(code: "paused", message: "").asAgentFailureKind, .paused)
+    }
+
     func testPromptCachePrefixSurvivesToolStepsAndNewTurns() async throws {
         struct CacheSequenceAdapter: NativeLLMAdapter {
             let family = "openai-responses"
@@ -269,8 +345,9 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertFalse(last.messages[0].content.contains("second-turn-revision"))
         XCTAssertFalse(first.messages.contains { $0.content.contains("first-turn-revision") })
         XCTAssertFalse(last.messages.contains { $0.content.contains("second-turn-revision") })
-        XCTAssertTrue(last.messages.last?.content.contains("n1") == true)
-        XCTAssertFalse(last.messages.last?.content.contains("confirmed-note") == true)
+        XCTAssertTrue(last.messages.contains { $0.content.contains("n1") })
+        XCTAssertFalse(last.messages.contains { $0.content.contains("confirmed-note") })
+        XCTAssertEqual(last.messages.last?.content, request.question)
         let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("cache-chat/ledger.jsonl"))
         let persisted = await ledger.deriveMessages()
         XCTAssertEqual(Array(persisted.prefix(last.messages.count - 1)), Array(last.messages.dropFirst()))
@@ -334,6 +411,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             XCTAssertGreaterThan(try XCTUnwrap(checkpoint.firstKeptSeq), user.seq)
             for messages in [last.messages, await ledger.deriveMessages()] {
                 XCTAssertFalse(messages.contains { $0.content.contains(request.contextRevision) })
+                XCTAssertTrue(messages.contains { $0.content.contains(request.question) })
                 XCTAssertTrue(messages.contains { $0.content.contains("n1") })
                 XCTAssertFalse(messages.contains { $0.content.contains("confirmed-step-note") })
             }
@@ -366,7 +444,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             persistLearningUpdate: { update in
                 await capture.record(update)
                 return NativeStorePersistReceipt(
-                    accepted: true,
+                    status: .saved,
                     message: "ok",
                     memoryUpdate: AgentReplyMemoryUpdate(memoryIDs: [memoryID], summary: "已更新")
                 )
@@ -374,10 +452,14 @@ final class NativeAgentRuntimeTests: XCTestCase {
             persistCourseProfileUpdate: { update in
                 await capture.record(update)
                 return NativeStorePersistReceipt(
-                    accepted: true,
+                    status: .saved,
                     message: "ok",
                     profileUpdate: AgentReplyProfileUpdate(entryIDs: [UUID(uuidString: profileID)!], summary: "已更新", texts: [])
                 )
+            },
+            performRelationProposal: { proposal in
+                await capture.record(proposal)
+                return NativeStorePersistReceipt(status: .pending, message: "待采用")
             }
         )
         var request = testRequest()
@@ -424,13 +506,15 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertFalse(read.text.contains(profileID))
         XCTAssertFalse(read.text.contains("Revision"))
 
+        var writable = context
+        writable.lastReadMemoryRevision = (read.details["memoryRevision"] as? NSNumber)?.uint64Value
         _ = try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_update_learning_memory",
-                argumentsJSON: #"{"entries":[{"memoryID":"m1","kind":"progress","text":"进入第二节"}]}"#,
+                argumentsJSON: #"{"entries":[{"memoryID":"m1","kind":"progress","text":"进入第二节","origin":"agentInference","evidence":"[用户：本轮] 测试工具恢复"}]}"#,
                 callID: "memory"
             ),
-            context: context,
+            context: writable,
             scope: .global
         )
         _ = try await registry.execute(
@@ -456,14 +540,60 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let relation = try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_relation_proposal",
-                argumentsJSON: #"{"noteItemID":"n1","sourceItemID":"source"}"#,
+                argumentsJSON: #"{"noteItemID":"n1","sourceItemID":"source","userRequested":false}"#,
                 callID: "relation"
             ),
             context: context,
             scope: .global
         )
-        XCTAssertEqual(relation.details["noteItemID"] as? String, noteID)
-        XCTAssertEqual(relation.details["contextRevision"] as? String, "live-context-revision")
+        let capturedRelation = await capture.relationProposal
+        XCTAssertEqual(capturedRelation?.noteItemID, noteID)
+        XCTAssertEqual(capturedRelation?.contextRevision, "live-context-revision")
+        XCTAssertTrue(relation.text.contains("pending"))
+    }
+
+    func testNewNoteReceiptAliasCanBeUsedForRelationInSameTurn() async throws {
+        struct NoteAdapter: NativeLLMAdapter {
+            let family = "mock"
+            func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+                let chunks: [NativeStreamChunk]
+                if request.messages.contains(where: { $0.toolCallID == "relation" }) {
+                    XCTAssertFalse(request.messages.contains { $0.content.contains("44444444-4444-4444-8444-444444444444") })
+                    XCTAssertTrue(request.messages.contains { $0.content.contains("n1") })
+                    chunks = [.textDelta(index: 0, text: "已写入并关联"), .finish(reason: .stop, replayState: nil)]
+                } else {
+                    let wroteNote = request.messages.contains { $0.toolCallID == "note" }
+                    chunks = [
+                        .toolCallDelta(index: 0, id: wroteNote ? "relation" : "note",
+                            name: wroteNote ? "weibei_relation_proposal" : "weibei_note_proposal",
+                            argumentsDelta: wroteNote
+                                ? #"{"noteItemID":"n1","sourceItemID":"material","userRequested":true}"#
+                                : #"{"markdown":"正文","evidence":["用户要求"],"userRequested":true}"#),
+                        .finish(reason: .toolCalls, replayState: nil),
+                    ]
+                }
+                return MockLLMAdapter(chunks: chunks).stream(request)
+            }
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("new-note-alias-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capture = StateUpdateCapture()
+        let noteID = "44444444-4444-4444-8444-444444444444"
+        let runtime = NativeStudyAgentRuntime(model: "mock", adapter: NoteAdapter(), ledgerRoot: root,
+            systemPromptText: "test", liveStores: NativeLiveStores(
+                performNoteProposal: { _ in
+                    NativeStorePersistReceipt(status: .saved, message: "已写入笔记",
+                        action: AgentReplyAction(kind: .writeNote, state: .executed, targetItemID: noteID))
+                },
+                performRelationProposal: { proposal in
+                    await capture.record(proposal)
+                    return NativeStorePersistReceipt(status: .saved, message: "已建立关联")
+                }))
+        let reply = try await runtime.respond(to: testRequest())
+        let relation = await capture.relationProposal
+        XCTAssertEqual(relation?.noteItemID, noteID)
+        XCTAssertEqual(relation?.sourceItemID, "material")
+        XCTAssertEqual(reply.text, "已写入并关联")
     }
 
     func testAliasesAreStableWithinScopeAndRejectIDsFromAnotherScope() async throws {
@@ -515,10 +645,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
             _ = try await registry.execute(
                 NativeToolCallRequest(
                     name: "weibei_update_learning_memory",
-                    argumentsJSON: #"{"entries":[{"memoryID":"m2","kind":"goal","text":"越界"}]}"#,
+                    argumentsJSON: #"{"entries":[{"memoryID":"m2","kind":"goal","text":"越界","origin":"agentInference","evidence":"[用户：本轮] 测试工具恢复"}]}"#,
                     callID: "cross-scope"
                 ),
-                context: NativeToolExecutionContext(request: otherScope),
+                context: NativeToolExecutionContext(request: otherScope, lastReadMemoryRevision: 1),
                 scope: .global
             )
             XCTFail("另一个作用域中不存在的短别名必须拒绝")
@@ -529,10 +659,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
             _ = try await registry.execute(
                 NativeToolCallRequest(
                     name: "weibei_update_learning_memory",
-                    argumentsJSON: #"{"entries":[{"memoryID":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","kind":"goal","text":"绕过别名"}]}"#,
+                    argumentsJSON: #"{"entries":[{"memoryID":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","kind":"goal","text":"绕过别名","origin":"agentInference","evidence":"[用户：本轮] 测试工具恢复"}]}"#,
                     callID: "raw-id"
                 ),
-                context: NativeToolExecutionContext(request: request),
+                context: NativeToolExecutionContext(request: request, lastReadMemoryRevision: 7),
                 scope: .global
             )
             XCTFail("新调用不能用真实编号绕过短别名")
@@ -794,6 +924,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
                  .finish(reason: .toolCalls, replayState: nil)],
                 [.textDelta(index: 0, text: "tail"), .finish(reason: .stop, replayState: nil)]
             ]), model: "mock", hostToolHandler: nil, systemPrompt: "test",
+            liveStores: NativeLiveStores(displayVisualization: { visualization, blocks in
+                await capture.append(.visualization(visualization, blocks))
+                return NativeToolExecutionResult(text: "displayed")
+            }),
             progress: { await capture.append($0) }
         )
         let progress = await capture.values
@@ -1264,18 +1398,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let questionSentence = "请结合选中文字说明上下文如何影响判断，并指出论证、转折与证据之间的关系。"
         let selection = String(repeating: selectionSentence, count: 96)
         let question = String(repeating: questionSentence, count: 128)
-        let expectedUserMessage = """
-        [选中文字：课堂阅读节选]
-        \(selection)
-
-        [问题]
-        \(question)
-        """
         let adapter = MockLLMAdapter(
             chunks: [.finish(reason: .stop, replayState: nil)],
             inspect: { request in
-                let firstUserMessage = request.messages.first { $0.role == .user }?.content
-                XCTAssertTrue(firstUserMessage?.hasPrefix(expectedUserMessage) == true)
+                let inputs = request.messages.filter { $0.role == .user }
+                XCTAssertEqual(inputs.last?.content, question)
+                XCTAssertTrue(inputs.first?.content.contains(selection) == true)
+                XCTAssertFalse(inputs.last?.content.contains("contextRevision") == true)
             }
         )
         let request = StudyAgentRequest(
@@ -1406,12 +1535,59 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(chunks.first, .textDelta(index: 0, text: "利率"))
     }
 
-    func testSkillRegistryLoadsGenuiAndSocratic() throws {
+    func testBundledGenuiSkillsLoadIdempotently() async throws {
         let root = try AgentResources.bundled().skillsURL
-        let registry = try NativeSkillRegistry.load(from: root)
-        XCTAssertNotNil(registry.pack(named: "genui"))
-        XCTAssertNotNil(registry.pack(named: "socratic-questioning"))
-        XCTAssertTrue(registry.catalogSummary().contains("socratic-questioning"))
+        let packs = try NativeSkillRegistry.load(from: root)
+        let main = try XCTUnwrap(packs.pack(named: "genui"))
+        let mainLineCount = main.body.trimmingCharacters(in: .newlines)
+            .split(separator: "\n", omittingEmptySubsequences: false).count
+        XCTAssertTrue((65...75).contains(mainLineCount), "主 GenUI 技能当前 \(mainLineCount) 行")
+        XCTAssertNotNil(packs.pack(named: "genui-advanced"))
+        XCTAssertNotNil(packs.pack(named: "socratic-questioning"))
+        XCTAssertTrue(packs.catalogSummary().contains("genui-advanced"))
+
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: root)
+        var context = NativeToolExecutionContext(
+            request: testRequest(),
+            liveStores: NativeLiveStores(skillRegistry: packs)
+        )
+        for id in ["genui", "genui-advanced"] {
+            let first = try await registry.execute(
+                NativeToolCallRequest(name: "load_skill", argumentsJSON: "{\"id\":\"\(id)\"}", callID: "\(id)-1"),
+                context: context,
+                scope: .global
+            )
+            XCTAssertFalse(first.text.isEmpty)
+            XCTAssertNotEqual(first.details["alreadyLoaded"] as? Bool, true)
+            let loaded = try XCTUnwrap(first.details["loaded"] as? [String: Any])
+            XCTAssertEqual(loaded["id"] as? String, id)
+            context.loadedSkillIDs.insert(id)
+
+            let second = try await registry.execute(
+                NativeToolCallRequest(name: "load_skill", argumentsJSON: "{\"id\":\"\(id)\"}", callID: "\(id)-2"),
+                context: context,
+                scope: .global
+            )
+            XCTAssertEqual(second.details["alreadyLoaded"] as? Bool, true)
+            XCTAssertLessThan(second.text.count, first.text.count)
+        }
+    }
+
+    func testSkillRegistryRejectsMissingAdvancedGenuiPack() throws {
+        let bundled = try AgentResources.bundled().skillsURL
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("skills-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for id in ["genui", "socratic-questioning"] {
+            try FileManager.default.copyItem(
+                at: bundled.appendingPathComponent(id),
+                to: root.appendingPathComponent(id)
+            )
+        }
+        XCTAssertThrowsError(try NativeSkillRegistry.load(from: root)) { error in
+            XCTAssertEqual(error as? NativeAgentResourcesError, .missing("skill:genui-advanced"))
+        }
     }
 
     func testProviderRoutingCoversCatalog() {
@@ -1619,7 +1795,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(NativeVisualAssetMagic.matches(webp, mediaType: "image/webp"))
     }
 
-    func testTurnLocationIsPersistedWithTheUserMessage() async throws {
+    func testTurnLocationIsPersistedSeparatelyFromTheUserMessage() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-location-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
         let ledger = try NativeAgentLedger(fileURL: url)
@@ -1661,13 +1837,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
             progress: nil
         )
         let outgoing = capture.request?.messages.last { $0.role == .user }?.content ?? ""
-        XCTAssertTrue(outgoing.contains("利率讲义"))
-        XCTAssertTrue(outgoing.contains("这段什么意思"))
+        XCTAssertEqual(outgoing, "这段什么意思")
         XCTAssertEqual(NativeTurnLocation.displayPage(11), 12)
-        XCTAssertTrue(outgoing.contains("12"))
+        let reference = await ledger.allEvents().first { $0.type == .turnContext }?.text ?? ""
+        XCTAssertTrue(reference.contains("利率讲义"))
+        XCTAssertTrue(reference.contains("12"))
         let logged = await ledger.deriveMessages().last { $0.role == .user }?.content ?? ""
         XCTAssertEqual(logged, outgoing)
-        XCTAssertTrue(logged.contains("12"))
     }
 
     func testVisualAssetPutsPixelsOnToolResult() async throws {
@@ -2076,6 +2252,9 @@ private actor WorkspaceSearchRecorder {
 private actor StateUpdateCapture {
     private(set) var learningUpdate: StudyAgentLearningUpdate?
     private(set) var profileUpdate: StudyAgentCourseProfileUpdate?
+    private(set) var relationProposal: StudyAgentRelationProposal?
+
+    func record(_ proposal: StudyAgentRelationProposal) { relationProposal = proposal }
 
     func record(_ update: StudyAgentLearningUpdate) {
         learningUpdate = update
@@ -2126,7 +2305,7 @@ private actor ProfileAliasStore {
         }
         profile.revision += 1
         return NativeStorePersistReceipt(
-            accepted: true,
+            status: .saved,
             message: "ok",
             profileUpdate: AgentReplyProfileUpdate(entryIDs: appliedIDs, summary: "已更新", texts: update.entries.map(\.text))
         )

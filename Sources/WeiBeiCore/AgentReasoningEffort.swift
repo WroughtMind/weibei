@@ -1,5 +1,18 @@
 import Foundation
 
+public enum AgentReasoningMode: String, CaseIterable, Sendable {
+    case flash, think
+
+    public var label: String { rawValue.capitalized }
+    public var defaultEffort: String { self == .flash ? "low" : "high" }
+
+    public func effort(saved: String?, levels: [String]) -> String? {
+        if let saved, levels.contains(saved) { return saved }
+        if levels.contains(defaultEffort) { return defaultEffort }
+        return self == .flash ? levels.first : levels.last
+    }
+}
+
 /// Codex uses its live catalog; API models use their documented, model-specific levels.
 /// Unknown models do not acquire capabilities just because their provider speaks Responses.
 public enum AgentReasoningEffort {
