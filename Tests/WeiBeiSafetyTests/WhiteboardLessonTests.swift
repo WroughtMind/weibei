@@ -262,6 +262,104 @@ final class WhiteboardLessonTests: XCTestCase {
         try value.validated()
     }
 
+    func testTeachingRequestsFollowSavedEffortDefaultToMediumAndAcceptTwoPointPlan() async throws {
+        let defaults = UserDefaults.standard
+        let effortKey = "agentReasoningEfforts"
+        let activeProfileKey = "weibei.agentCredentialActiveProfileID.v1"
+        let savedEfforts = defaults.object(forKey: effortKey)
+        let savedProfile = defaults.object(forKey: activeProfileKey)
+        defer {
+            if let savedEfforts { defaults.set(savedEfforts, forKey: effortKey) }
+            else { defaults.removeObject(forKey: effortKey) }
+            if let savedProfile { defaults.set(savedProfile, forKey: activeProfileKey) }
+            else { defaults.removeObject(forKey: activeProfileKey) }
+        }
+
+        let profileID = UUID(), model = "teaching-effort-fixture"
+        AgentCredentialProfileStore.setActiveProfileID(profileID)
+        defaults.set([profileID.uuidString + ":" + model: "high"], forKey: effortKey)
+        let capture = WhiteboardRequestCapture()
+        var session = WhiteboardSession(source: source, goal: "用短材料讲清残差", lesson: .init(title: "残差"))
+        let planned = try await WhiteboardTeacher.plan(adapter: WhiteboardTestAdapter(
+            text: #"{"title":"残差入门","key_points":["先看预测偏差","再理解平方"]}"#,
+            finish: .stop, capture: capture), model: model, session: session)
+        let outline = try XCTUnwrap(planned)
+        XCTAssertEqual(capture.request?.reasoningEffort, "high")
+        XCTAssertEqual(outline.keyPoints, ["先看预测偏差", "再理解平方"])
+        session.lesson.actions.append(outline)
+        try session.validated()
+
+        let taught = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(
+            text: #"{"type":"group","actions":[{"type":"board","card_type":"example","title":"猜偏了多少","board_content":"预测 8，实际 10，相差 2","source_page":12},{"type":"speak","spoken_text":"先别背定义，看看预测和实际差了多少。"}]}"#,
+            finish: .stop, capture: capture), model: model, session: session, index: 0, receive: { _ in })
+        XCTAssertEqual(capture.request?.reasoningEffort, "high")
+        XCTAssertEqual(taught.actions.first?.leaves.first?.cardType, .example)
+
+        capture.actions = []
+        try await WhiteboardTeacher.reply(adapter: WhiteboardTestAdapter(
+            text: #"{"type":"speak","spoken_text":"这里的 2 就是预测与实际之间的差。"}"#,
+            finish: .stop, capture: capture), model: model, session: session, question: "2 是什么？",
+            receive: { capture.actions.append($0) })
+        XCTAssertEqual(capture.request?.reasoningEffort, "high")
+        XCTAssertEqual(capture.actions.first?.type, .speak)
+
+        defaults.set([String: String](), forKey: effortKey)
+        _ = try await WhiteboardTeacher.plan(adapter: WhiteboardTestAdapter(
+            text: #"{"title":"残差入门","key_points":["观察差值","理解平方"]}"#,
+            finish: .stop, capture: capture), model: model, session: .init(source: source, goal: "讲清残差", lesson: .init(title: "残差")))
+        XCTAssertEqual(capture.request?.reasoningEffort, "medium")
+    }
+
+    func testGraphContentSurvivesModelLabelAndQuestionOnlyPointCompletes() async throws {
+        var value = WhiteboardSession(source: source, goal: "看图后自测", lesson: .init(title: "残差"))
+        var outline = WhiteboardAction(type: .sessionReady, stepID: "outline")
+        outline.keyPoints = ["理解方向", "检验理解"]; value.lesson.actions = [outline]
+        let graph = #"{"type":"diagram","title":"比较实际和预测","mermaid":"flowchart LR\nA[实际]-->B[预测]"}"#
+        let capture = WhiteboardRequestCapture()
+        let drawing = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(
+            text: String(graph.dropLast()) + #","source_page":12}"# + "\n" + String(graph.dropLast()) + #","source_page":99}"#,
+            finish: .stop, capture: capture), model: "fixture", session: value, index: 0,
+            record: { capture.measurements.append($0) }, receive: { _ in })
+        XCTAssertEqual(drawing.actions.map(\.type), [.graph, .keypointComplete])
+        XCTAssertEqual(drawing.actions.first?.sourcePage, 12)
+        XCTAssertEqual(capture.measurements.first?.skippedLines, 1, "图示规范化后仍须拒绝不存在的来源页")
+        for pages in [source.pages, source.pages + [.init(number: 13, text: "另一页")]] {
+            var unsourced = value; unsourced.source.pages = pages
+            let rejected = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(text: graph,
+                finish: .stop, capture: capture), model: "fixture", session: unsourced, index: 0, receive: { _ in })
+            XCTAssertTrue(rejected.actions.isEmpty, "即使只有一页，也不能替模型猜来源或把丢弃内容当成完成")
+        }
+        let narrationOnly = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(
+            text: graph + "\n" + #"{"type":"speak","spoken_text":"先比较实际与预测。"}"#,
+            finish: .stop, capture: capture), model: "fixture", session: value, index: 0, receive: { _ in })
+        XCTAssertEqual(narrationOnly.actions.map(\.type), [.speak], "板书被拒后剩下的讲稿不能完成关键点")
+        value.lesson.actions += drawing.actions
+        let question = #"{"type":"ask","mode":"choice","question":"实际9，预测6，残差是多少？","options":["3","-3"],"correct_index":0,"explanation":"实际减预测，9−6=3。"}"#
+        let assessment = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(text: question,
+            finish: .stop, capture: capture), model: "fixture", session: value, index: 1, receive: { _ in })
+        XCTAssertEqual(assessment.actions.map(\.type), [.ask, .keypointComplete])
+        value.lesson.actions += assessment.actions
+        XCTAssertNil(value.nextKeyPoint)
+        _ = try value.validated()
+    }
+
+    func testTeachingExampleHasRenderableSeparateStepsAndSpokenQuestion() async throws {
+        let examples = WhiteboardTeacher.prompt.split(separator: "\n").filter { $0.hasPrefix("{") }.joined(separator: "\n")
+        var session = WhiteboardSession(source: source, goal: "示例合同", lesson: .init(title: "示例"))
+        var outline = WhiteboardAction(type: .sessionReady, stepID: "outline")
+        outline.keyPoints = ["理解变化率", "解释比例"]; session.lesson.actions = [outline]
+        let part = try await WhiteboardTeacher.teach(adapter: WhiteboardTestAdapter(text: examples, finish: .stop, capture: WhiteboardRequestCapture()),
+            model: "fixture", session: session, index: 0, receive: { _ in })
+        session.lesson.actions += part.actions
+        try session.validated()
+        let groups = part.actions.filter { $0.type == .group }
+        XCTAssertEqual(groups.first?.leaves.first?.type, .graph)
+        let exampleGroups = groups.filter { $0.leaves.contains { $0.cardType == .example } }
+        XCTAssertEqual(exampleGroups.count, 3, "Example conditions, reasoning and result appear separately")
+        XCTAssertTrue(groups.allSatisfy { $0.leaves.contains { $0.type == .speak } })
+        XCTAssertNotNil(groups.last?.questionAction)
+    }
+
     func testTeachingContextContainsStudentEventsAndTaughtTitlesWithoutNarration() throws {
         var value = WhiteboardSession(source: source, goal: "讲解", lesson: try lesson())
         value.cursor = 3; value.presentedQuestionIDs = ["q1"]
@@ -421,6 +519,68 @@ final class WhiteboardLessonTests: XCTestCase {
         }
     }
 
+    func testLiveThreeMaterialLessonsProduceValidActions() async throws {
+        guard let path = ProcessInfo.processInfo.environment["WEIBEI_WHITEBOARD_LIVE_MATERIALS"] else {
+            throw XCTSkip("Set WEIBEI_WHITEBOARD_LIVE_MATERIALS to an explicit three-lesson JSON manifest.")
+        }
+        let inputs = try JSONDecoder().decode([WhiteboardLiveLessonInput].self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        XCTAssertEqual(inputs.count, 3)
+        XCTAssertTrue(inputs.allSatisfy { !$0.goal.isEmpty && !$0.source.title.isEmpty && !$0.source.pages.isEmpty })
+        let model = NativeProviderRouting.route(.openaiCodex).defaultModel
+        let adapter = try await NativeLLMAdapterFactory.make(provider: .openaiCodex, model: model,
+            endpoint: AgentProviderEndpoint(provider: .openaiCodex, baseURL: ""))
+        let output = ProcessInfo.processInfo.environment["WEIBEI_WHITEBOARD_LIVE_OUTPUT"].map { URL(fileURLWithPath: $0) }
+        if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
+        for (number, input) in inputs.enumerated() {
+            let start = Date()
+            let capture = WhiteboardRequestCapture()
+            let recordedAdapter = WhiteboardLiveRecordingAdapter(base: adapter, capture: capture)
+            defer {
+                if let output {
+                    do {
+                        try JSONSerialization.data(withJSONObject: capture.rawOutputs, options: [.prettyPrinted, .sortedKeys])
+                            .write(to: output.appendingPathComponent("raw-\(number + 1).json"))
+                    } catch { XCTFail("Unable to save live response evidence: \(error)") }
+                }
+            }
+            var session = WhiteboardSession(source: input.source, goal: input.goal, lesson: .init(title: input.source.title))
+            let planned = try await WhiteboardTeacher.plan(adapter: recordedAdapter, model: model, session: session,
+                record: { capture.measurements.append($0) })
+            let outline = try XCTUnwrap(planned)
+            session.lesson.actions.append(outline); session.lesson.title = outline.title ?? input.source.title
+            for index in session.keyPoints.indices {
+                let part = try await WhiteboardTeacher.teach(adapter: recordedAdapter, model: model, session: session, index: index,
+                    record: { capture.measurements.append($0) }, receive: { action in
+                        if capture.firstBoardSeconds == nil && action.leaves.contains(where: { $0.type == .board || $0.type == .graph }) {
+                            capture.firstBoardSeconds = Date().timeIntervalSince(start)
+                        }
+                    })
+                session.lesson.actions += part.actions
+                session.cursor = session.lesson.actions.count
+            }
+            let records = capture.measurements, firstBoardSeconds = capture.firstBoardSeconds
+            session.teachingRequests = records
+            session.generationComplete = session.nextKeyPoint == nil && !session.keyPoints.isEmpty
+            XCTAssertTrue(session.generationComplete, "每个计划关键点都必须收到生成收尾，不能强设完成")
+            try session.validated()
+            if let output {
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                try encoder.encode(session).write(to: output.appendingPathComponent("lesson-\(number + 1).json"))
+                try JSONSerialization.data(withJSONObject: [
+                    "title": session.lesson.title, "model": model,
+                    "first_board_seconds": firstBoardSeconds as Any? ?? NSNull(),
+                    "measurement": "从教学计划请求开始到首个有效板书动作到达；不含原生窗口呈现", "calls": records.count,
+                    "total_tokens": records.compactMap { $0.usage?.contextTokens }.reduce(0, +),
+                    "missing_usage": records.filter { $0.usage == nil }.count,
+                ], options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("timing-\(number + 1).json"))
+            }
+            let first = try XCTUnwrap(session.lesson.actions.flatMap(\.leaves).first { $0.type == .board || $0.type == .graph })
+            XCTAssertTrue(first.type == .graph || [.example, .diagram].contains(first.cardType), "首张内容应以图示或具体例子切入")
+            XCTAssertLessThanOrEqual(try XCTUnwrap(firstBoardSeconds), 15, "首组讲解超过15秒")
+            print("TEACHING_LIVE lesson=\(number + 1) points=\(session.keyPoints.count) first_board=\(firstBoardSeconds ?? -1) calls=\(records.count)")
+        }
+    }
+
     @MainActor
     func testSystemSpeechUsesRealStartBoundaryAndCompletion() async throws {
         guard ProcessInfo.processInfo.environment["WEIBEI_SYSTEM_SPEECH_LIVE"] == "1" else {
@@ -442,10 +602,51 @@ final class WhiteboardLessonTests: XCTestCase {
     }
 }
 
+private struct WhiteboardLiveLessonInput: Decodable {
+    var source: WhiteboardSource
+    var goal: String
+}
+
+private struct WhiteboardLiveRecordingAdapter: NativeLLMAdapter {
+    let base: any NativeLLMAdapter
+    let capture: WhiteboardRequestCapture
+    var family: String { base.family }
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                let start = Date()
+                var text = "", streamed = Set<Int>(), firstTextSeconds: Double?
+                do {
+                    for try await chunk in base.stream(request) {
+                        switch chunk {
+                        case let .textDelta(index, delta):
+                            if firstTextSeconds == nil { firstTextSeconds = Date().timeIntervalSince(start) }
+                            streamed.insert(index); text += delta
+                        case let .blockEnd(index, .text(value)) where !streamed.contains(index):
+                            if firstTextSeconds == nil { firstTextSeconds = Date().timeIntervalSince(start) }
+                            text += value
+                        default: break
+                        }
+                        continuation.yield(chunk)
+                    }
+                    capture.rawOutputs.append(["model": request.model,
+                        "effort": request.reasoningEffort as Any? ?? NSNull(),
+                        "first_text_seconds": firstTextSeconds as Any? ?? NSNull(),
+                        "seconds": Date().timeIntervalSince(start), "text": text])
+                    continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 private final class WhiteboardRequestCapture: @unchecked Sendable {
     var request: NativeLLMRequest?
     var actions: [WhiteboardAction] = []
     var measurements: [WhiteboardTeachingRequest] = []
+    var firstBoardSeconds: Double?
+    var rawOutputs: [[String: Any]] = []
 }
 private struct WhiteboardTestAdapter: NativeLLMAdapter {
     let family = "test"

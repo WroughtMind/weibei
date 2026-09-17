@@ -96,7 +96,7 @@ public struct WhiteboardLesson: Codable, Equatable, Sendable {
                 case .sessionReady:
                     try check(!outlineSeen && a == root, "课堂只能有一份关键点清单")
                     outlineSeen = true
-                    try check((3...6).contains(a.keyPoints?.count ?? 0) && a.keyPoints!.allSatisfy { !$0.isEmpty && $0.count <= 80 }, "关键点应为 3–6 条简短目标")
+                    try check((2...6).contains(a.keyPoints?.count ?? 0) && a.keyPoints!.allSatisfy { !$0.isEmpty && $0.count <= 80 }, "关键点应为 2–6 条简短目标")
                 case .keypointComplete:
                     guard let index = a.index else { throw WhiteboardFailure("缺少关键点编号") }
                     try check(outline?.keyPoints?.indices.contains(index) == true && completedPoints.insert(index).inserted, "关键点编号无效或重复")
