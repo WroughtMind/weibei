@@ -213,6 +213,8 @@ private final class StableDocumentDividerView: NSView {
     var onDragStart: (() -> Void)?
     var onDragChange: ((CGFloat) -> Void)?
     var onDragEnd: (() -> Void)?
+    var onEqualize: (() -> Void)?
+    var skipSnap = false
     /// Resolved app reduce-motion, pushed from SwiftUI — never read the system switch here.
     var reduceMotion = false {
         didSet {
@@ -222,6 +224,7 @@ private final class StableDocumentDividerView: NSView {
         }
     }
     private var dragStartX: CGFloat?
+    private var didDrag = false
     private let accentLayer = CALayer()
     private var isHovering = false
     private var isPressed = false
@@ -261,6 +264,8 @@ private final class StableDocumentDividerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setAccessibilityRole(.splitter)
+        setAccessibilityHelp("双击均分相邻两栏；按住 Option 松手可跳过吸附。")
+        toolTip = "双击均分相邻两栏；按住 Option 松手可跳过吸附。"
         wantsLayer = true
         accentLayer.opacity = 0
         layer?.addSublayer(accentLayer)
@@ -338,12 +343,16 @@ private final class StableDocumentDividerView: NSView {
         NSCursor.resizeLeftRight.set()
         isPressed = true
         accentPhase = .pressed
+        if event.clickCount == 2 {
+            onEqualize?()
+            return
+        }
         dragStartX = event.locationInWindow.x
-        onDragStart?()
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let dragStartX else { return }
+        if !didDrag { onDragStart?(); didDrag = true }
         onDragChange?(event.locationInWindow.x - dragStartX)
     }
 
@@ -352,7 +361,9 @@ private final class StableDocumentDividerView: NSView {
         isPressed = false
         // Released while still over the divider: back to hover, not idle.
         accentPhase = isHovering ? .hover : .idle
-        onDragEnd?()
+        skipSnap = event.modifierFlags.contains(.option)
+        if didDrag { onDragEnd?() }
+        didDrag = false
     }
 
     private func updateAccentLine() {
@@ -410,7 +421,6 @@ final class StableDocumentSplitCoordinator {
 
     private let dividerWidth: CGFloat = 10
     private let railWidth = ContentRailMetrics.railOnlyWidth
-    private let railSnapThreshold = ContentRailMetrics.snapThreshold
     private let readableWidthThreshold = ContentRailMetrics.readableWidth
     private let defaultReadableWidth = ContentRailMetrics.defaultReadableWidth
     // Restored from 8a172fe5「保持分栏切换连续」— known-smooth pane show/hide motion.
@@ -439,9 +449,14 @@ final class StableDocumentSplitCoordinator {
                 guard let self, let splitView else { return }
                 self.updateDividerDrag(delta: delta, in: splitView)
             }
-            divider.onDragEnd = { [weak self, weak splitView] in
+            divider.onDragEnd = { [weak self, weak splitView, weak divider] in
                 guard let self, let splitView else { return }
-                self.endDividerDrag(in: splitView)
+                self.endDividerDrag(in: splitView, skipSnap: divider?.skipSnap ?? false)
+            }
+            divider.onEqualize = { [weak self, weak splitView] in
+                guard let self, let splitView, !self.isAnimatingLayout, !self.isDraggingDivider else { return }
+                self.beginDividerDrag(index: index, in: splitView)
+                self.endDividerDrag(in: splitView, equalize: true)
             }
         }
     }
@@ -452,6 +467,7 @@ final class StableDocumentSplitCoordinator {
             divider.onDragStart = nil
             divider.onDragChange = nil
             divider.onDragEnd = nil
+            divider.onEqualize = nil
         }
     }
 
@@ -922,12 +938,12 @@ final class StableDocumentSplitCoordinator {
         applyVisibleWidthsImmediately(widths, in: splitView)
     }
 
-    private func endDividerDrag(in splitView: StableDocumentSplitView) {
-        guard dividerDrag != nil else { return }
+    private func endDividerDrag(in splitView: StableDocumentSplitView, equalize: Bool = false, skipSnap: Bool = false) {
+        guard let drag = dividerDrag else { return }
         dividerDrag = nil
         isDraggingDivider = false
         let widths = displayedVisibleOrder.compactMap { splitView.roleHosts[$0]?.frame.width }
-        let snapped = snappedWidths(widths)
+        let snapped = ContentRailPolicy.dividerWidths(widths, divider: drag.index, equalize: equalize, skipSnap: skipSnap)
         if zip(widths, snapped).contains(where: { abs($0 - $1) > 0.5 }) {
             animateVisibleWidths(snapped, duration: snapAnimationDuration, in: splitView) { [weak self, weak splitView] in
                 guard let self, let splitView else { return }
@@ -948,25 +964,6 @@ final class StableDocumentSplitCoordinator {
 
     private func notifyDividerDragEnded(in splitView: StableDocumentSplitView) {
         NotificationCenter.default.post(name: .weiBeiDocumentDividerDragEnded, object: splitView)
-    }
-
-    private func snappedWidths(_ widths: [CGFloat]) -> [CGFloat] {
-        guard widths.count >= 2 else { return widths }
-        let snapIndices = widths.indices.filter { widths[$0] <= railSnapThreshold }
-        guard !snapIndices.isEmpty else { return widths }
-        var target = widths
-        for index in snapIndices {
-            let released = max(0, widths[index] - railWidth)
-            target[index] = min(railWidth, widths[index])
-            guard released > 0.5 else { continue }
-            let recipients = widths.indices.filter { $0 != index && !snapIndices.contains($0) }
-            let recipient = recipients.min { abs($0 - index) < abs($1 - index) }
-                ?? widths.indices.filter { $0 != index }.max { widths[$0] < widths[$1] }
-            if let recipient {
-                target[recipient] += released
-            }
-        }
-        return target
     }
 
     private func applyVisibleWidthsImmediately(_ widths: [CGFloat], in splitView: StableDocumentSplitView) {
