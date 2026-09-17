@@ -6,6 +6,7 @@ final class AgentConversationRun {
     let chatID: UUID?
     var courseID: UUID?
     var selectionThreadID: UUID?
+    var authMethod: AgentAuthMethod?
     var baseURL = ""
     var modelName = ""
     var runtime: NativeStudyAgentRuntime?

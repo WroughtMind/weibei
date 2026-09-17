@@ -9196,6 +9196,7 @@ final class WorkspaceStore: ObservableObject {
         let run = AgentConversationRun(chatID: target.sessionID)
         run.selectionThreadID = selectionAskThreads.first(where: { $0.id == target.sessionID })?.id
         run.courseID = target.courseID
+        run.authMethod = agentAuthMethod
         run.baseURL = agentBaseURL
         run.modelName = modelName
         agentRuns[target.sessionID] = run

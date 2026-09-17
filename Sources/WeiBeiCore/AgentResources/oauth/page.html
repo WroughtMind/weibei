@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="{{LANG}}">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>{{TITLE}}</title>
+<link rel="icon" href="data:,">
+<style>
+@font-face{font-family:Stele;src:url(data:font/ttf;base64,{{FONT}}) format('truetype');font-display:swap}
+:root{color-scheme:light dark;--paper:#ded0b7;--sheet:#f7eddb;--ink:#29241f;--muted:#756858;--red:#ae3423;--line:#493a282b;--fold:#d8c7aa;--edge:#fff8e8}
+*{box-sizing:border-box}body{min-height:100svh;margin:0;color:var(--ink);background:radial-gradient(ellipse at 35% 15%,#faf0dd88,transparent 65%),var(--paper);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.1;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Cpath filter='url(%23n)' opacity='.48' d='M0 0h220v220H0z'/%3E%3C/svg%3E");z-index:3}
+header,footer{max-width:1200px;margin:auto;padding:30px 40px;display:flex;justify-content:space-between;align-items:center;gap:24px}
+.brand{font-family:Stele,"Songti SC",serif;font-size:32px;display:flex;align-items:baseline;gap:12px}.brand:after{content:"";width:9px;height:9px;background:var(--red)}.brand small{font:11px/1.4 -apple-system,sans-serif;letter-spacing:.2em}.context{font-size:12px;color:var(--muted)}
+main{position:relative;isolation:isolate;max-width:1060px;min-height:550px;margin:48px auto 54px;padding:66px 62px 56px 32px;display:grid;grid-template-columns:1fr 1.12fr;gap:34px;align-items:center;background:var(--sheet);box-shadow:0 24px 44px -20px #49321f55,0 2px 4px #49321f1a;border-top:1px solid var(--edge)}
+main:before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(90deg,transparent 43%,#b49a7311 43.1%,#fffaf133 43.5%,transparent 45%),linear-gradient(0deg,transparent 24%,#b49a7311 24.1%,#fffaf144 24.5%,transparent 26%)}
+main:after{content:"";position:absolute;right:0;bottom:0;width:56px;height:56px;background:linear-gradient(135deg,var(--fold) 48%,var(--paper) 50%);filter:drop-shadow(-3px -3px 3px #4d382416)}
+.scene{position:relative;align-self:stretch;display:flex;align-items:center;justify-content:center;min-height:380px}.scene:before{content:"";position:absolute;width:260px;height:110px;bottom:10px;left:10px;border:1px solid var(--line);transform:rotate(-13deg);background:linear-gradient(32deg,transparent 49.5%,var(--line) 50%,transparent 50.5%),linear-gradient(-32deg,transparent 49.5%,var(--line) 50%,transparent 50.5%),var(--sheet);box-shadow:0 10px 14px #49321f0d;z-index:-1}
+.webi{width:420px;max-width:115%;height:420px;object-fit:contain;filter:drop-shadow(0 14px 10px #36291c16);transform:translate(-12px,8px)}
+.scene-label{position:absolute;bottom:-12px;left:30px;font:11px/1.6 "Songti SC",serif;letter-spacing:.15em;color:var(--muted)}
+.eyebrow{position:relative;display:inline-flex;align-items:center;gap:9px;transform:rotate(-5deg);border:3px double currentColor;color:var(--red);padding:9px 15px;font:15px/1.2 "Songti SC",Georgia,serif;letter-spacing:.1em;margin:0 0 32px}.dot{width:5px;height:5px;background:currentColor}
+h1{font-family:Stele,"Songti SC","STSong",Georgia,serif;font-size:clamp(38px,4.3vw,54px);font-weight:400;line-height:1.35;letter-spacing:.02em;margin:0 0 24px;text-wrap:balance}html[lang=en] h1{font-family:Georgia,serif;letter-spacing:-.045em;line-height:1.1}
+.detail{font-size:14px;line-height:1.9;color:var(--muted);margin:0;max-width:390px}.next{margin-top:30px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;line-height:1.8}.next strong{display:block;font-weight:500;margin-bottom:5px}.next p{color:var(--muted);margin:0;font-size:12px}
+footer{font-size:11px;color:var(--muted);line-height:1.7;padding-top:0}.note{max-width:600px}.signature{font-family:"Songti SC",serif;white-space:nowrap;letter-spacing:.1em}
+[data-state=working] .dot{animation:pulse 1.5s ease-in-out infinite}[data-state=working] .webi{animation:breathe 3s ease-in-out infinite}[data-state=success] .eyebrow{animation:stamp .3s ease-out both}
+@keyframes pulse{50%{opacity:.25}}@keyframes breathe{50%{transform:translate(-12px,3px)}}@keyframes stamp{from{opacity:0;transform:rotate(-5deg) scale(1.12)}to{opacity:1;transform:rotate(-5deg) scale(1)}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important}}
+@media(prefers-color-scheme:dark){:root{--paper:#201e1b;--sheet:#343029;--ink:#f2e4cb;--muted:#c0b29d;--red:#ef9272;--line:#ddc5a033;--fold:#4a4031;--edge:#514635}.scene{background:radial-gradient(ellipse at center,#cbbb9c33,transparent 70%)}.webi{filter:drop-shadow(0 0 1px #e9d7b388) drop-shadow(0 14px 12px #0005)}body{background:radial-gradient(ellipse at 35% 15%,#4f443566,transparent 65%),var(--paper)}}
+@media(max-width:1120px){main{margin-left:32px;margin-right:32px;padding-right:42px;gap:20px}.webi{width:370px;height:390px}}
+@media(max-width:680px){header{padding:22px 24px}.brand{font-size:27px}.brand small{display:none}.context{font-size:11px}main{grid-template-columns:1fr;gap:24px;margin:20px 20px 34px;padding:16px 26px 40px;min-height:0}.scene{min-height:235px;max-width:300px;width:100%;margin:auto}.scene:before{width:180px;height:78px;left:12px;bottom:10px}.webi{height:255px;width:255px;transform:translate(0,0);max-width:100%}.scene-label{left:4px;bottom:-3px;font-size:9px}h1{font-size:38px;margin-bottom:18px}.eyebrow{margin:10px 0 22px;font-size:12px;padding:8px 12px}.detail{font-size:14px;max-width:none}.next{margin-top:22px}main:after{width:35px;height:35px}footer{margin:0 24px;padding:0 0 22px;align-items:start}.signature{display:none}@keyframes breathe{50%{transform:translateY(-4px)}}}
+</style>
+</head>
+<body data-state="{{STATE}}">
+<header><div class="brand">魏碑 <small>WEIBEI</small></div><span class="context">{{CONTEXT}}</span></header>
+<main>
+<div class="scene"><img class="webi" src="{{IMAGE}}" alt="Webi"><span class="scene-label">WEBI &amp; {{COMPANION}}</span></div>
+<section aria-live="polite" aria-atomic="true"><p class="eyebrow"><span class="dot" aria-hidden="true"></span><span id="label">{{LABEL}}</span></p><h1 id="title">{{TITLE}}</h1><p class="detail" id="detail">{{DETAIL}}</p><div class="next"><strong id="next">{{NEXT}}</strong><p id="hint">{{HINT}}</p></div></section>
+</main>
+<footer><span class="note">{{PRIVACY}}</span><span class="signature">{{SIGNATURE}}</span></footer>
+<script>
+const states={{STATES}}, images={{IMAGES}};
+function show(state){const s=states[state];if(!s)return;document.body.dataset.state=state;for(const key of ['label','title','detail','next','hint'])document.getElementById(key).textContent=s[key];document.title=s.title;document.querySelector('.webi').src=images[s.art];}
+const statusURL={{STATUS_URL}};
+if(statusURL){let stopped=false;const started=Date.now();async function poll(){if(stopped)return;try{const response=await fetch(statusURL,{cache:'no-store',signal:AbortSignal.timeout(5000)});if(!response.ok)throw Error();const {state}=await response.json();show(state);if(state!=='working'){stopped=true;return}if(Date.now()-started>30000){document.getElementById('hint').textContent=states.slow.hint}setTimeout(poll,1000)}catch{show('disconnected');stopped=true}}poll();}
+</script>
+</body></html>
