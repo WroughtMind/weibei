@@ -243,7 +243,7 @@ struct ComposerView: View {
     }
 }
 
-/// Hover and press change only the tint; the trigger and rows never scale.
+/// Hover lifts the surface with a shadow; pressing settles it without scaling.
 private struct ReasoningModeButtonStyle: ButtonStyle {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     @State private var hovering = false
@@ -254,7 +254,15 @@ private struct ReasoningModeButtonStyle: ButtonStyle {
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .background {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(WeiBeiTheme.ink.opacity(configuration.isPressed ? 0.12 : hovering || selected ? 0.07 : 0))
+                    .fill(hovering ? WeiBeiTheme.paperRaised : Color.clear)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(WeiBeiTheme.ink.opacity(configuration.isPressed ? 0.12 : hovering || selected ? 0.07 : 0))
+                    }
+                    .shadow(
+                        color: WeiBeiTheme.ink.opacity(hovering && !configuration.isPressed ? 0.14 : 0),
+                        radius: 3, y: 1
+                    )
             }
             .onHover { hovering = $0 }
             .animation(reduceMotion ? nil : WeiBeiMotion.micro, value: hovering)
