@@ -67,11 +67,18 @@ public struct NativePromptAssembler: Sendable {
     ) throws -> String {
         var reference: [String: Any] = [:]
         reference["readingLocation"] = NativeTurnLocation.block(for: request, aliases: aliases)
-        if selections.isEmpty, let selection = request.selectionText, !selection.isEmpty {
+        if let selection = request.selectionText, !selection.isEmpty {
             reference["selection"] = ["title": request.selectionTitle ?? "当前选区", "text": selection]
         }
         if !selections.isEmpty {
-            reference["sources"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(selections.map(aliases.projected)))
+            // 选区完整原文由 selection 字段携带；Store 侧来源摘录只保留前 400 字，
+            // 再随 sources 发送会让模型把截断片段当成第二份选文。
+            let projectedSources = selections.map { source -> AgentReplySource in
+                var projected = aliases.projected(source)
+                if projected.kind == .selection { projected.excerpt = "" }
+                return projected
+            }
+            reference["sources"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(projectedSources))
         }
         if !request.confirmedNotes.isEmpty {
             reference["persistedNotes"] = request.confirmedNotes.map {

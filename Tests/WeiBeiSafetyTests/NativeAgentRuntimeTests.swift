@@ -874,29 +874,34 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
-    // 选区来源已在 sources 里带标签摘录，同一轮不再重复注入 selection 原文；
-    // 只有 selections 为空的旧路径（浮窗无 selectionSources）才保留 selection 键。
-    func testTurnContextInjectsSelectionOnlyWithoutSelectionSources() throws {
+    // 选区完整原文只经 selection 字段发送一次；Store 侧来源摘录截到 400 字，
+    // 不得作为第二份（截断版）选文随 sources 重复注入。
+    func testTurnContextSendsFullSelectionOnceWithoutTrimmedExcerpts() throws {
         var request = testRequest()
-        request.selectionText = "选中的一段原文"
+        let fullText = (0..<120).map { "选段原文第\($0)句" }.joined(separator: "，")
+        let trimmed = String(fullText.prefix(400))
+        request.selectionText = fullText
         let source = AgentReplySource(
             itemID: "material-1",
             kind: .selection,
             title: "材料标题",
             label: "[选区：r1.1]",
-            excerpt: "选中的一段原文"
+            excerpt: trimmed
         )
-        func referenceKeys(_ context: String) throws -> Set<String> {
-            let json = context.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
-            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
-            return Set(object.keys)
-        }
-        let withSources = try referenceKeys(try NativePromptAssembler.turnContext(for: request, selections: [source]))
-        XCTAssertFalse(withSources.contains("selection"))
-        XCTAssertTrue(withSources.contains("sources"))
-        let withoutSources = try referenceKeys(try NativePromptAssembler.turnContext(for: request, selections: []))
-        XCTAssertTrue(withoutSources.contains("selection"))
-        XCTAssertFalse(withoutSources.contains("sources"))
+        let context = try NativePromptAssembler.turnContext(for: request, selections: [source])
+        XCTAssertTrue(context.contains(fullText), "完整选文必须随 selection 字段进入模型输入")
+        XCTAssertTrue(context.contains(source.label), "选区来源标签仍随 sources 提供")
+        XCTAssertEqual(
+            context.components(separatedBy: trimmed).count, 2,
+            "400 字摘录片段只能作为完整选文的一部分出现一次，不得再随 sources 重复"
+        )
+        let json = context.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
+        let reference = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let selection = try XCTUnwrap(reference["selection"] as? [String: Any])
+        XCTAssertEqual(selection["text"] as? String, fullText)
+        let sources = try XCTUnwrap(reference["sources"] as? [[String: Any]])
+        XCTAssertEqual(sources.count, 1)
+        XCTAssertEqual((sources[0]["excerpt"] as? String)?.isEmpty, true)
     }
 
     // 能力行按服务商静态注入；nil（无法判定服务商）时不输出该段。
