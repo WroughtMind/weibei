@@ -27,9 +27,27 @@ public actor NativeAgentLoop {
         progress: StudyAgentProgressHandler?
     ) async throws -> NativeLoopResult {
         await progress?(.preparing)
-        let turn = ((await ledger.allEvents()).compactMap(\.turn).max() ?? 0) + 1
+        let existingEvents = await ledger.allEvents()
+        let turn = (existingEvents.compactMap(\.turn).max() ?? 0) + 1
+        let aliasScope = NativeStateAliases.scopeKey(for: request)
+        let persistedAliases = existingEvents.reversed().first {
+            $0.stateAliasScope == aliasScope && $0.stateAliases != nil
+        }?.stateAliases ?? [:]
+        let reservedAliases = Set(existingEvents.compactMap(\.stateAliases).flatMap(\.values))
+        var aliases = NativeStateAliases(
+            request: request,
+            persisted: persistedAliases,
+            reservedAliases: reservedAliases
+        )
         _ = try await ledger.append { seq, time in
-            NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: turn)
+            NativeSessionEvent(
+                type: .turnStart,
+                seq: seq,
+                timeMS: time,
+                turn: turn,
+                stateAliasScope: aliasScope,
+                stateAliases: aliases.persistedSnapshot
+            )
         }
         var sources = request.knownSources
         var sourceIndex = 0
@@ -46,7 +64,7 @@ public actor NativeAgentLoop {
         } else {
             userMessage = request.question
         }
-        if let location = NativeTurnLocation.block(for: request) {
+        if let location = NativeTurnLocation.block(for: request, aliases: aliases) {
             userMessage += "\n\n\(location)"
         }
         let selections = request.selectionSources.filter { !$0.excerpt.isEmpty }.map { source in
@@ -54,13 +72,14 @@ public actor NativeAgentLoop {
             return NativeAgentSources.label(source, turn: turn, index: sourceIndex)
         }
         sources += selections
-        if !selections.isEmpty, let data = try? JSONEncoder().encode(selections),
+        let modelSelections = selections.map(aliases.projected)
+        if !modelSelections.isEmpty, let data = try? JSONEncoder().encode(modelSelections),
            let text = String(data: data, encoding: .utf8) {
             userMessage += "\n\n选区引用：\n" + text
         }
         let turnContext = NativePromptAssembler.turnContext(
-            contextRevision: request.contextRevision,
-            confirmedNotes: request.confirmedNotes
+            confirmedNotes: request.confirmedNotes,
+            aliases: aliases
         )
         if !turnContext.isEmpty {
             userMessage += "\n\n" + turnContext
@@ -75,15 +94,20 @@ public actor NativeAgentLoop {
             )
         }
 
+        var assetIDs = Dictionary(
+            uniqueKeysWithValues: request.courseContext.items.map { ($0.id, $0.id) }
+        )
+        for note in request.projectScope.items where note.role == "note" {
+            if let alias = aliases.noteAlias(for: note.itemID) { assetIDs[alias] = note.itemID }
+        }
         var context = NativeToolExecutionContext(
             request: request,
             mode: mode,
             hostToolHandler: hostToolHandler,
-            persistentAssetIDsByContextID: Dictionary(
-                uniqueKeysWithValues: request.courseContext.items.map { ($0.id, $0.id) }
-            ),
+            persistentAssetIDsByContextID: assetIDs,
             liveStores: liveStores
         )
+        context.stateAliases = aliases
         let scope = NativeToolScope.session(request.id.uuidString)
         let tools = await registry.resolved(scope: scope)
 
@@ -105,9 +129,9 @@ public actor NativeAgentLoop {
             while true {
                 step += 1
                 try checkCancelled()
-                let projection = await ledger.deriveProjection()
+                let projection = aliases.projectedHistory(await ledger.deriveProjection())
                 for message in projection.messages where message.role == .tool {
-                    for source in NativeAgentSources.fromToolText(message.content) where !sources.contains(where: { $0.label == source.label }) {
+                    for source in NativeAgentSources.fromToolText(message.content, aliases: aliases) where !sources.contains(where: { $0.label == source.label }) {
                         sources.append(source)
                     }
                 }
@@ -321,6 +345,10 @@ public actor NativeAgentLoop {
                             result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
                         }
                     }
+                    if let refreshedAliases = result.stateAliases {
+                        aliases = refreshedAliases
+                        context.stateAliases = refreshedAliases
+                    }
                     NativeAgentSources.attach(to: &result, name: call.name, turn: turn, index: &sourceIndex)
                     applySideEffects(
                         name: call.name,
@@ -361,7 +389,9 @@ public actor NativeAgentLoop {
                             toolName: call.name,
                             isError: result.isError,
                             imageMediaType: result.image?.mediaType,
-                            imageBase64: result.image?.base64
+                            imageBase64: result.image?.base64,
+                            stateAliasScope: aliasScope,
+                            stateAliases: aliases.persistedSnapshot
                         )
                     }
                 }
@@ -448,7 +478,8 @@ public actor NativeAgentLoop {
         if result.isError { return }
         let details = result.details
         if name == "weibei_course_read" || name == "weibei_search_workspace" {
-            for source in NativeAgentSources.fromToolText(result.text) {
+            let aliases = context.stateAliases ?? NativeStateAliases(request: context.request)
+            for source in NativeAgentSources.fromToolText(result.text, aliases: aliases) {
                 if !sources.contains(where: { $0.label == source.label }) { sources.append(source) }
                 if name == "weibei_course_read", let id = source.itemID, !readItemIDs.contains(id) {
                     readItemIDs.append(id)

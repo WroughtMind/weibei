@@ -37,10 +37,12 @@ enum NativeAgentSources {
         return available.filter { !$0.label.isEmpty && text.contains($0.label) && labels.insert($0.label).inserted }
     }
 
-    static func fromToolText(_ text: String) -> [AgentReplySource] {
+    static func fromToolText(_ text: String, aliases: NativeStateAliases? = nil) -> [AgentReplySource] {
         guard let payload = try? JSONDecoder().decode(StudyAgentHostToolResult.self, from: Data(text.utf8)) else { return [] }
         let sources = payload.items.compactMap(\.source)
             + (payload.discussions ?? []).flatMap { ($0.messages ?? []).map(\.source) }
-        return sources.filter { !$0.label.isEmpty && !$0.excerpt.isEmpty }
+        return sources
+            .map { aliases?.resolving($0) ?? $0 }
+            .filter { !$0.label.isEmpty && !$0.excerpt.isEmpty }
     }
 }

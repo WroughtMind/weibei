@@ -44,23 +44,22 @@ public struct NativePromptAssembler: Sendable {
 
     // 随当轮消息落盘，不能插到固定系统提示或已有历史前面。
     public static func turnContext(
-        contextRevision: String = "",
         confirmedNotes: [StudyAgentPersistedNoteRef] = []
     ) -> String {
+        turnContext(confirmedNotes: confirmedNotes, aliases: nil)
+    }
+
+    static func turnContext(
+        confirmedNotes: [StudyAgentPersistedNoteRef],
+        aliases: NativeStateAliases?
+    ) -> String {
         var assembler = NativePromptAssembler()
-        if !contextRevision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            assembler.add(
-                NativePromptSection(
-                    id: "revision",
-                    order: 16,
-                    text: """
-                    本轮 contextRevision 是 `\(contextRevision)`。weibei_update_learning_memory、weibei_course_profile_update、weibei_note_proposal、weibei_relation_proposal 必须原样回传这个字符串，不要改成数字，也不要从 memoryRevision 或 profileRevision 推断。
-                    """
-                )
-            )
-        }
         if !confirmedNotes.isEmpty {
-            let lines = confirmedNotes.map { "- noteItemID `\($0.itemID)` 标题「\($0.title)」" }.joined(separator: "\n")
+            let lines = confirmedNotes.enumerated().map { index, note in
+                let alias = aliases?.noteAlias(for: note.itemID) ?? "n\(index + 1)"
+                return "- noteItemID `\(alias)` 标题「\(note.title)」"
+            }.joined(separator: "\n")
+            guard !lines.isEmpty else { return assembler.assemble() }
             assembler.add(
                 NativePromptSection(
                     id: "confirmed-notes",

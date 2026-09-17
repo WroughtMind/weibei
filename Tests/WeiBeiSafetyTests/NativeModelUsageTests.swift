@@ -36,7 +36,7 @@ final class NativeModelUsageTests: XCTestCase {
         XCTAssertTrue(events.contains { $0.type == .userMessage && $0.text?.contains("继续解释") == true })
         let messages = await ledger.deriveMessages()
         XCTAssertFalse(messages.contains { $0.content == "测试标题" })
-        XCTAssertTrue(messages.contains { $0.content.contains("revision-to-preserve") })
+        XCTAssertFalse(messages.contains { $0.content.contains("revision-to-preserve") })
         let attributes = try FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent("usage.jsonl").path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
         let child = root.appendingPathComponent("NativeAgent/Ledgers/fork/ledger.jsonl")

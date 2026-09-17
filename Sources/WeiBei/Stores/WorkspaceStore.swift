@@ -8572,9 +8572,9 @@ final class WorkspaceStore: ObservableObject {
                 !($0.memoryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
             }
             if hasClientID {
-                return .rejected("魏碑没有保存这次学习记忆。更新只能沿用 weibei_read_learning_memory 返回的 memoryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+                return .rejected("魏碑没有保存这次学习记忆。更新只能使用 weibei_read_learning_memory 返回的当前短别名；新建请省略 memoryID。")
             }
-            return .rejected("魏碑没有保存这次学习记忆。每条记忆需要 kind 标签和内容；更新已有记忆时 memoryID 只能从读取结果或上次回执抄写。")
+            return .rejected("魏碑没有保存这次学习记忆。每条记忆需要 kind 标签和内容；更新已有记忆时使用本次读取结果中的 memoryID 短别名。")
         }
         let appliedLearningStates = learningMemoryStates
         let appliedStudySession = studySessions.first {
@@ -8703,7 +8703,7 @@ final class WorkspaceStore: ObservableObject {
                 !($0.entryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
             }
             if hasClientID {
-                return .rejected("魏碑没有保存这次课程档案。更新只能沿用当前档案已有条目的 entryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+                return .rejected("魏碑没有保存这次课程档案。更新只能使用当前档案读取结果中的 entryID 短别名；新建请省略该字段。")
             }
             return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头，checkpoint 用 userRequested。")
         }
