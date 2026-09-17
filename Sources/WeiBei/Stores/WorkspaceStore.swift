@@ -7288,7 +7288,6 @@ final class WorkspaceStore: ObservableObject {
             rootIdentity = expectedIdentity
         } else {
             guard let course = course(withID: courseID),
-                  course.sourceRootIdentity != nil,
                   let rawRoot = courseRootURL(for: courseID),
                   let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(rawRoot),
                   let liveRootIdentity = CourseProjectFileWorker.identity(at: resolvedRoot) else {

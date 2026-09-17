@@ -23,6 +23,42 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testAgentReadsDiscoveredCourseMaterial() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiAgentSource-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = root.appendingPathComponent("资料库")
+        let materialDirectory = library.appendingPathComponent("经济学机制设计与应用/文稿")
+        try FileManager.default.createDirectory(at: materialDirectory, withIntermediateDirectories: true)
+        let source = materialDirectory.appendingPathComponent("02 Voting.txt")
+        let body = "Plurality winner: A; Condorcet winner: B; Ranked-choice winner: C"
+        try Data(body.utf8).write(to: source)
+        let store = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("workspace"),
+                                   startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        try store.configureCourseLibrary(at: library)
+        let courseIndex = try XCTUnwrap(store.courses.firstIndex { $0.title == "经济学机制设计与应用" })
+        let courseID = store.courses[courseIndex].id
+        let item = try XCTUnwrap(store.importedItems.first { $0.title == "02 Voting" })
+        XCTAssertNotNil(store.courses[courseIndex].sourceRootIdentity)
+        store.selectedItemID = item.id
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(item.url), encoding: .utf8), body)
+
+        for hasCachedIdentity in [true, false] {
+            if !hasCachedIdentity { store.courses[courseIndex].sourceRootIdentity = nil }
+            for scope in [courseID, nil] {
+                let read = try store.agentHostReadForSelfCheck(courseID: scope, itemID: item.id)
+                XCTAssertTrue(read.items.contains { $0.item.id == item.id && $0.item.searchText.contains(body) })
+                let map = try store.agentHostMapForSelfCheck(courseID: scope)
+                XCTAssertTrue(map.items.contains { $0.item.id == item.id })
+                let search = try store.agentHostSearchForSelfCheck(courseID: scope, query: "Condorcet")
+                XCTAssertEqual(search.items.map(\.item.id), [item.id])
+            }
+        }
+        store.discoverTopLevelCourseFolders()
+        XCTAssertNotNil(store.courses[courseIndex].sourceRootIdentity)
+    }
+
+    @MainActor
     func testFileRevisionTracksContentAcrossAtomicSave() throws {
         for isCommon in [true, false] {
             let root = FileManager.default.temporaryDirectory
