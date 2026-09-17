@@ -191,6 +191,26 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         XCTAssertLessThan(heights[1], 150, "Opening a group must not lay out query details or 44 sources")
     }
 
+    func testLoadingPainterProducesDifferentFramesWithoutMovingText() throws {
+        let view = AgentThinkingOrbitNSView(frame: NSRect(x: 0, y: 0, width: 180, height: 40))
+        var frames: [Data] = []
+        for elapsed in [1.0, 1.7] {
+            view.apply(text: "正在搜索网页", textWidth: 120, orbitWidth: 140, pathHeight: 34,
+                       orbitPadding: 6.5, textLineHeight: 20, lineWidth: 1.25, fontSize: 14,
+                       motionEpoch: Date().addingTimeInterval(-elapsed), appearanceMode: .paper)
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 180,
+                pixelsHigh: 40, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+            view.draw(view.bounds)
+            NSGraphicsContext.restoreGraphicsState()
+            frames.append(try XCTUnwrap(bitmap.representation(using: .png, properties: [:])))
+            XCTAssertEqual(view.intrinsicContentSize, NSSize(width: 140, height: 34))
+        }
+        XCTAssertNotEqual(frames[0], frames[1], "Loading feedback must animate, not remain a static label")
+    }
+
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
         let deadline = ContinuousClock.now + .seconds(1)
         while !condition(), ContinuousClock.now < deadline {

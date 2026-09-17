@@ -743,6 +743,20 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             if let cell = collection.cellForItem(at: path) as? MessageCell { configure(cell, at: path) }
         }
         collection.layoutIfNeeded()
+        if !reduceMotion && follow && message.state == .streaming {
+            for index in old..<max(old, new) {
+                guard case let .workspaceAttachment(identifier) = message.blocks[index].kind,
+                      identifier.hasPrefix("activity/"),
+                      let cell = collection.cellForItem(at: IndexPath(item: index + 1, section: section)) else { continue }
+                cell.contentView.alpha = 0
+                cell.contentView.transform = CGAffineTransform(translationX: 0, y: 6)
+                UIView.animate(withDuration: 0.24, delay: 0,
+                               options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
+                    cell.contentView.alpha = 1
+                    cell.contentView.transform = .identity
+                }
+            }
+        }
         if follow { scrollToLatest() } else if let anchor { restore(anchor) }
         layoutTransaction = false
     }

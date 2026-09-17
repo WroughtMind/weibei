@@ -3360,7 +3360,7 @@ private struct FloatingSelectionMessageRow: View {
                 isError: WorkspaceStore.isAgentFailureMessage(message.text),
                 isStreaming: isStreaming
             )
-            if message.completionState == .generating && message.toolActivities.isEmpty
+            if message.completionState == .generating && !message.toolActivities.contains(where: { $0.state == .running })
                 && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
                     .id(message.id)
@@ -3605,7 +3605,7 @@ struct AgentBubble: View {
                 return true
             }
         }
-        let isAwaitingFirstToken = message.completionState == .generating && message.toolActivities.isEmpty
+        let isAwaitingFirstToken = message.completionState == .generating && !message.toolActivities.contains(where: { $0.state == .running })
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
             if showsBody {
@@ -5639,8 +5639,14 @@ struct AgentToolActivityGroup: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .medium))
                         .rotationEffect(.degrees(expanded ? 90 : 0))
-                    Text(summary).lineLimit(1)
-                    if running && !expanded { ProgressView().controlSize(.mini) }
+                    if let current = message.toolActivities.last(where: { $0.state == .running }), running {
+                        AgentThinkingIndicator(activityText: current.name == "$web_search"
+                            ? store.ui("正在搜索网页", "Searching the web")
+                            : store.ui("正在", "Working: ") + title(current.name), compact: true)
+                            .allowsHitTesting(false)
+                    } else {
+                        Text(summary).lineLimit(1)
+                    }
                 }
                 .frame(minHeight: 26, alignment: .leading)
                 .contentShape(Rectangle())
@@ -5656,7 +5662,7 @@ struct AgentToolActivityGroup: View {
                             } label: {
                                 HStack(spacing: 8) {
                                     if activity.state == .running && running {
-                                        ProgressView().controlSize(.mini).frame(width: 12)
+                                        Image(systemName: "arrow.right").font(.system(size: 10)).frame(width: 12)
                                     } else {
                                         Image(systemName: activity.state == .failed ? "exclamationmark.circle" :
                                             activity.state == .completed ? "checkmark" : "minus.circle")
@@ -5723,6 +5729,8 @@ struct AgentToolActivityGroup: View {
         .foregroundStyle(WeiBeiTheme.secondaryInk)
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: expanded)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: message.toolActivities.map(\.state))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: message.toolActivities.map(\.id))
     }
     private func title(_ name: String) -> String {
         switch name {
