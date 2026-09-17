@@ -665,17 +665,17 @@ private func checkBackendSelection() throws {
 
 private func checkContextRevisionEcho() throws {
     let revision = "12:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    let prompt = NativePromptAssembler.turnContext(
-        contextRevision: revision
-    )
-    try nativeRequire(prompt.contains(revision), "turn context includes this turn's contextRevision")
+    let prompt = NativePromptAssembler.turnContext()
+    try nativeRequire(!prompt.contains(revision), "turn context does not expose contextRevision")
     let confirmedPrompt = NativePromptAssembler.turnContext(
-        contextRevision: revision,
         confirmedNotes: [
             StudyAgentPersistedNoteRef(itemID: "note-rates", title: "利率是资金使用价格 2"),
         ]
     )
-    try nativeRequire(confirmedPrompt.contains("note-rates"), "confirmed notes expose the persisted noteItemID")
+    try nativeRequire(
+        confirmedPrompt.contains("n1") && !confirmedPrompt.contains("note-rates"),
+        "confirmed notes expose only the short note alias"
+    )
 
     let registry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
@@ -701,7 +701,7 @@ private func checkContextRevisionEcho() throws {
             scope: .global
         )
     }
-    try nativeRequire(memory.text.contains(revision), "learning_memory returns the live contextRevision")
+    try nativeRequire(!memory.text.contains(revision), "learning_memory hides contextRevision")
     do {
         _ = try waitFor {
             try await registry.execute(
@@ -739,9 +739,9 @@ private func checkContextRevisionEcho() throws {
     }
     let accepted = try waitFor {
         try await registry.execute(
-            NativeToolCallRequest(
-                name: "weibei_note_proposal",
-                argumentsJSON: "{\"markdown\":\"利率是资金使用价格。\",\"evidence\":[\"[材料：利率] 利率是资金使用价格。\"],\"contextRevision\":\"\(revision)\"}",
+                NativeToolCallRequest(
+                    name: "weibei_note_proposal",
+                    argumentsJSON: "{\"markdown\":\"利率是资金使用价格。\",\"evidence\":[\"[材料：利率] 利率是资金使用价格。\"]}",
                 callID: "n1"
             ),
             context: context,
@@ -786,6 +786,16 @@ private func checkNativeProductContract() throws {
             ])
         }
         try nativeRequire(tool.schema.object["properties"] is [String: Any], "\(name) schema includes properties")
+        if [
+            "weibei_update_learning_memory",
+            "weibei_course_profile_update",
+            "weibei_note_proposal",
+            "weibei_relation_proposal",
+        ].contains(name), let properties = tool.schema.object["properties"] as? [String: Any] {
+            try nativeRequire(properties["contextRevision"] == nil, "\(name) hides contextRevision from new calls")
+            try nativeRequire(properties["memoryRevision"] == nil, "\(name) hides memoryRevision from new calls")
+            try nativeRequire(properties["profileRevision"] == nil, "\(name) hides profileRevision from new calls")
+        }
     }
     if let profileTool = tools.first(where: { $0.name == "weibei_course_profile_update" }),
        let schema = jsonObject(profileTool.schema.object),
@@ -823,7 +833,20 @@ private func checkNativeProductContract() throws {
         projectScope: StudyAgentProjectScope(
             kind: .course,
             chatID: UUID().uuidString.lowercased(),
-            courseID: UUID().uuidString.lowercased()
+            courseID: UUID().uuidString.lowercased(),
+            items: [
+                StudyAgentProjectItem(
+                    itemID: "note-1",
+                    title: "利率笔记",
+                    kind: "markdown",
+                    role: "note",
+                    relativePath: "利率笔记.md",
+                    resolvedPath: "/tmp/利率笔记.md",
+                    entryIdentity: nil,
+                    targetIdentity: nil,
+                    isShared: false
+                ),
+            ]
         ),
         learningContext: StudyAgentLearningContext(memoryRevision: 3),
         courseProfile: StudyAgentCourseProfileContext(revision: 2),
@@ -924,7 +947,7 @@ private func checkNativeProductContract() throws {
     try nativeRequire(blankDecoded.entries[0].memoryID == nil, "empty memoryID is omitted as a new entry")
 
     let blankEntryJSON = """
-    {"contextRevision":"\(revision)","profileRevision":2,"checkpoint":"userRequested","entries":[{"entryID":"","kind":"concept","text":"用户自述：刚搞懂了复利。"}]}
+    {"checkpoint":"userRequested","entries":[{"entryID":"","kind":"concept","text":"用户自述：刚搞懂了复利。"}]}
     """
     let blankEntryResult = try waitFor {
         try await registry.execute(
@@ -979,8 +1002,8 @@ private func checkNativeProductContract() throws {
     try nativeRequire(persistProbe.updates.count == 1, "Store persist runs inside the tool loop")
     try nativeRequire(persistProbe.updates[0].entries[0].memoryID == nil, "Store persist sees omitted memoryID")
     try nativeRequire(
-        persisted.text.contains(assignedMemoryID.uuidString.lowercased()),
-        "write receipt returns the system-assigned memoryID"
+        !persisted.text.contains(assignedMemoryID.uuidString.lowercased()),
+        "write receipt hides the system-assigned memoryID"
     )
     try nativeRequire(
         persisted.details["appliedMemoryUpdate"] != nil,
@@ -1053,16 +1076,16 @@ private func checkNativeProductContract() throws {
         )
     }
     try nativeRequire(
-        readResult.text.contains("\"memoryID\"")
-            && readResult.text.lowercased().contains(memoryID.uuidString.lowercased()),
-        "read result exposes memoryID for the model to copy"
+        readResult.text.contains("\"memoryID\":\"m1\"")
+            && !readResult.text.lowercased().contains(memoryID.uuidString.lowercased()),
+        "read result exposes only the stable memory alias"
     )
 
     let profileResult = try waitFor {
         try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_course_profile_update",
-                argumentsJSON: "{\"contextRevision\":\"\(revision)\",\"profileRevision\":2,\"checkpoint\":\"userRequested\",\"entries\":[{\"kind\":\"concept\",\"text\":\"用户自述：已掌握单利，复利还不熟。\"}]}",
+                argumentsJSON: "{\"checkpoint\":\"userRequested\",\"entries\":[{\"kind\":\"concept\",\"text\":\"用户自述：已掌握单利，复利还不熟。\"}]}",
                 callID: "profile-1"
             ),
             context: context,
@@ -1083,7 +1106,7 @@ private func checkNativeProductContract() throws {
                 NativeToolCallRequest(
                     name: "weibei_course_profile_update",
                     argumentsJSON: """
-                    {"contextRevision":"\(revision)","profileRevision":2,"checkpoint":"userRequested","entries":[{"kind":"userStatement","text":"用户自述：已掌握单利"}]}
+                    {"checkpoint":"userRequested","entries":[{"kind":"userStatement","text":"用户自述：已掌握单利"}]}
                     """,
                     callID: "profile-bad-kind"
                 ),
@@ -1123,7 +1146,7 @@ private func checkNativeProductContract() throws {
         try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_note_proposal",
-                argumentsJSON: "{\"markdown\":\"## 利率\\n利率是资金使用价格。\",\"evidence\":[\"[材料：利率课程] 利率是资金使用价格的表达。\"],\"contextRevision\":\"\(revision)\"}",
+                argumentsJSON: "{\"markdown\":\"## 利率\\n利率是资金使用价格。\",\"evidence\":[\"[材料：利率课程] 利率是资金使用价格的表达。\"]}",
                 callID: "note-1"
             ),
             context: context,
@@ -1143,7 +1166,7 @@ private func checkNativeProductContract() throws {
         try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_note_proposal",
-                argumentsJSON: "{\"markdown\":\"## 复利\\n复利是利息再计息。\",\"evidence\":[\"[材料：利率课程] 复利定义。\"],\"contextRevision\":\"\(revision)\",\"userRequested\":true}",
+                argumentsJSON: "{\"markdown\":\"## 复利\\n复利是利息再计息。\",\"evidence\":[\"[材料：利率课程] 复利定义。\"],\"userRequested\":true}",
                 callID: "note-2"
             ),
             context: context,
@@ -1162,7 +1185,7 @@ private func checkNativeProductContract() throws {
         try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_relation_proposal",
-                argumentsJSON: "{\"noteItemID\":\"note-1\",\"sourceItemID\":\"material-rates\",\"contextRevision\":\"\(revision)\"}",
+                argumentsJSON: "{\"noteItemID\":\"n1\",\"sourceItemID\":\"material-rates\"}",
                 callID: "rel-1"
             ),
             context: context,
