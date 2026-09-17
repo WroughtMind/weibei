@@ -82,6 +82,10 @@ struct CatalystTopBar: UIViewControllerRepresentable {
                      willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
             guard let index = identifiers.firstIndex(of: identifier) else { return nil }
             let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: hosts[index])
+            // The hosted SwiftUI buttons own their individual enabled states.
+            // This container has no target/action for AppKit to validate.
+            item.autovalidates = false
+            item.isEnabled = true
             item.isBordered = false
             if index == 2 { item.visibilityPriority = .high }
             item.label = menus[index].title
