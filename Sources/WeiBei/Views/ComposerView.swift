@@ -186,30 +186,10 @@ struct ComposerView: View {
         .buttonStyle(ReasoningModeButtonStyle(selected: showsReasoningPicker))
         .fixedSize()
         .popover(isPresented: $showsReasoningPicker, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-            VStack(spacing: 6) {
-                ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
-                    Button {
-                        store.agentReasoningMode = mode
-                        showsReasoningPicker = false
-                    } label: {
-                        HStack(spacing: 24) {
-                            Text(mode.label)
-                            Spacer(minLength: 0)
-                            Image(systemName: "checkmark")
-                                .opacity(mode == store.agentReasoningMode ? 1 : 0)
-                        }
-                        .weiBeiText(13)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(ReasoningModeButtonStyle(selected: mode == store.agentReasoningMode))
-                    .accessibilityAddTraits(mode == store.agentReasoningMode ? .isSelected : [])
-                }
+            ReasoningModeMenu(selection: store.agentReasoningMode) { mode in
+                store.agentReasoningMode = mode
+                showsReasoningPicker = false
             }
-            .padding(10)
-            .fixedSize(horizontal: true, vertical: true)
-            .presentationBackground(WeiBeiTheme.paperRaised)
         }
         .accessibilityLabel(store.ui("推理模式", "Reasoning mode"))
         .accessibilityValue(store.agentReasoningMode.label)
@@ -243,20 +223,65 @@ struct ComposerView: View {
     }
 }
 
-/// Hover lifts the surface with a shadow; pressing settles it without scaling.
+private struct ReasoningModeMenu: View {
+    let selection: AgentReasoningMode
+    let choose: (AgentReasoningMode) -> Void
+    @State private var hoveredMode: AgentReasoningMode?
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
+                Button { choose(mode) } label: {
+                    HStack(spacing: 24) {
+                        Text(mode.label)
+                        Spacer(minLength: 0)
+                        Image(systemName: "checkmark")
+                            .opacity(mode == selection ? 1 : 0)
+                    }
+                    .weiBeiText(13)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(ReasoningModeButtonStyle(
+                    selected: mode == selection,
+                    menuHovered: hoveredMode == mode
+                ))
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active:
+                        hoveredMode = mode
+                    case .ended:
+                        if hoveredMode == mode { hoveredMode = nil }
+                    }
+                }
+                .accessibilityAddTraits(mode == selection ? .isSelected : [])
+            }
+        }
+        .padding(10)
+        .fixedSize(horizontal: true, vertical: true)
+        .presentationBackground(WeiBeiTheme.paperRaised)
+    }
+}
+
+/// Menu rows receive pointer state from their whole button, outside the label style.
 private struct ReasoningModeButtonStyle: ButtonStyle {
     var selected: Bool
+    var menuHovered: Bool? = nil
 
     func makeBody(configuration: Configuration) -> some View {
-        ReasoningModeButtonBody(configuration: configuration, selected: selected)
+        ReasoningModeButtonBody(configuration: configuration, selected: selected, menuHovered: menuHovered)
     }
 }
 
 private struct ReasoningModeButtonBody: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
-    @State private var hovering = false
+    @State private var triggerHovered = false
     let configuration: ButtonStyleConfiguration
     let selected: Bool
+    let menuHovered: Bool?
+    private var hovering: Bool { menuHovered ?? triggerHovered }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -271,12 +296,12 @@ private struct ReasoningModeButtonBody: View {
                     }
                     .compositingGroup()
                     .shadow(
-                        color: WeiBeiTheme.ink.opacity(hovering && !configuration.isPressed ? 0.14 : 0),
+                        color: Color.black.opacity(hovering && !configuration.isPressed ? 0.18 : 0),
                         radius: 3, y: 1
                     )
             }
             .contentShape(.interaction, shape)
-            .onHover { hovering = $0 }
+            .onHover { if menuHovered == nil { triggerHovered = $0 } }
             .animation(reduceMotion ? nil : WeiBeiMotion.micro, value: hovering)
             .animation(reduceMotion || configuration.isPressed ? nil : WeiBeiMotion.micro, value: configuration.isPressed)
     }
