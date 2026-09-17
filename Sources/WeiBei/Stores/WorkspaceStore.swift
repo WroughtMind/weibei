@@ -330,9 +330,23 @@ final class WorkspaceStore: ObservableObject {
             self?.acceptNoteEditorSnapshot(snapshot)
         }
     )
-    @Published var agentReasoningEfforts: [String: String] =
-        UserDefaults.standard.dictionary(forKey: "agentReasoningEfforts") as? [String: String] ?? [:] {
-        didSet { UserDefaults.standard.set(agentReasoningEfforts, forKey: "agentReasoningEfforts") }
+    @Published var agentReasoningModes: [String: String] =
+        UserDefaults.standard.dictionary(forKey: "agentReasoningModes") as? [String: String] ?? [:] {
+        didSet { UserDefaults.standard.set(agentReasoningModes, forKey: "agentReasoningModes") }
+    }
+    @Published var agentReasoningMappings: [String: String] =
+        UserDefaults.standard.dictionary(forKey: "agentReasoningMappings") as? [String: String] ?? [:] {
+        didSet { UserDefaults.standard.set(agentReasoningMappings, forKey: "agentReasoningMappings") }
+    }
+    var agentReasoningMode: AgentReasoningMode {
+        get { AgentReasoningMode(rawValue: agentReasoningModes[agentReasoningModelKey] ?? "") ?? .flash }
+        set { agentReasoningModes[agentReasoningModelKey] = newValue.rawValue }
+    }
+    func agentReasoningMappingKey(_ mode: AgentReasoningMode) -> String {
+        agentReasoningModelKey + ":" + mode.rawValue
+    }
+    func agentReasoningEffort(for mode: AgentReasoningMode) -> String? {
+        mode.effort(saved: agentReasoningMappings[agentReasoningMappingKey(mode)], levels: agentReasoningLevels)
     }
     var agentReasoningModelName: String {
         let selected = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -343,7 +357,7 @@ final class WorkspaceStore: ObservableObject {
         AgentAccountService.shared.reasoningLevels(provider: agentProviderID, model: agentReasoningModelName)
     }
     var agentReasoningEffort: String? {
-        AgentReasoningEffort.selected(agentReasoningEfforts[agentReasoningModelKey], levels: agentReasoningLevels)
+        agentReasoningEffort(for: agentReasoningMode)
     }
     @Published var agentDraft = ""
     @Published var messages: [AgentMessage] = []
@@ -9536,11 +9550,19 @@ final class WorkspaceStore: ObservableObject {
             return nil
         }
         let isFloatingRequest = selectionAskThreads.contains { $0.id == target.sessionID }
-        let sentReasoningEffort = agentProviderID == .openaiCodex
-            ? (isFloatingRequest ? "low" : agentReasoningEffort ?? agentReasoningEfforts[agentReasoningModelKey] ?? "low")
-            : AgentReasoningEffort.selected(
-                agentReasoningEfforts[agentReasoningModelKey], levels: agentReasoningLevels, floating: isFloatingRequest
-            )
+        let sentReasoningMode = isFloatingRequest ? AgentReasoningMode.flash : agentReasoningMode
+        let sentReasoningEffort: String?
+        if isFloatingRequest {
+            sentReasoningEffort = agentProviderID == .openaiCodex ? "low"
+                : AgentReasoningEffort.selected(nil, levels: agentReasoningLevels, floating: true)
+        } else if agentProviderID == .openaiCodex {
+            // The live catalog is checked again at dispatch; capture this submission's choice now.
+            sentReasoningEffort = agentReasoningEffort
+                ?? agentReasoningMappings[agentReasoningMappingKey(sentReasoningMode)]
+                ?? sentReasoningMode.defaultEffort
+        } else {
+            sentReasoningEffort = agentReasoningEffort
+        }
         let requestProvider = agentProviderID
         let requestAuthMethod = agentAuthMethod
         let previousReply = reusingLastUserMessage
@@ -9853,7 +9875,8 @@ final class WorkspaceStore: ObservableObject {
                     language: sentLanguage,
                     contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())",
                     confirmedNotes: confirmedAgentNotes(in: target),
-                    reasoningEffort: sentReasoningEffort
+                    reasoningEffort: sentReasoningEffort,
+                    reasoningMode: sentReasoningMode
                 )
                 _ = updateAgentMessage(assistantMessage.id, in: target.sessionID) { $0.requestContext = AgentRequestContext(request) }
                 agentStreaming.activityText = ui("正在思考", "Thinking")

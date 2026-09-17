@@ -2,6 +2,18 @@ import XCTest
 @testable import WeiBeiCore
 
 final class AgentReasoningEffortTests: XCTestCase {
+    func testModesUseSupportedDefaultsAndCustomMapping() {
+        let levels = ["low", "medium", "high", "max"]
+        XCTAssertEqual(AgentReasoningMode.flash.effort(saved: nil, levels: levels), "low")
+        XCTAssertEqual(AgentReasoningMode.think.effort(saved: nil, levels: levels), "high")
+        XCTAssertEqual(AgentReasoningMode.flash.effort(saved: "medium", levels: levels), "medium")
+        XCTAssertEqual(AgentReasoningMode.think.effort(saved: "max", levels: levels), "max")
+        XCTAssertEqual(AgentReasoningMode.think.effort(saved: "ultra", levels: levels), "high")
+        XCTAssertEqual(AgentReasoningMode.flash.effort(saved: nil, levels: ["minimal", "high"]), "minimal")
+        XCTAssertEqual(AgentReasoningMode.think.effort(saved: nil, levels: ["low", "medium"]), "medium")
+        XCTAssertNil(AgentReasoningMode.think.effort(saved: "high", levels: []))
+    }
+
     func testModelSpecificLevelsAndFloatingIsolation() {
         XCTAssertEqual(AgentReasoningEffort.levels(provider: .openai, model: "gpt-5.1"), ["none", "low", "medium", "high"])
         XCTAssertEqual(AgentReasoningEffort.levels(provider: .openai, model: "gpt-5.6-sol").last, "max")

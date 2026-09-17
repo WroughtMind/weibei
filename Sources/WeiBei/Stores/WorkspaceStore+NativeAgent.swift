@@ -224,9 +224,9 @@ extension WorkspaceStore {
         var resolvedRequest = request
         if selectedProvider == .openaiCodex {
             let levels = try await AgentAccountService.shared.reasoningLevelsForRequest(provider: selectedProvider, model: model)
-            resolvedRequest.reasoningEffort = AgentReasoningEffort.selected(
-                request.reasoningEffort, levels: levels, floating: agentRun.selectionThreadID != nil
-            )
+            resolvedRequest.reasoningEffort = agentRun.selectionThreadID != nil
+                ? AgentReasoningEffort.selected(nil, levels: levels, floating: true)
+                : request.reasoningMode.effort(saved: request.reasoningEffort, levels: levels)
         }
         let resources = try AgentResources.bundled()
         let liveStores = NativeLiveStores(

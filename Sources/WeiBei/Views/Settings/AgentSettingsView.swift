@@ -71,6 +71,29 @@ extension SettingsView {
                 agentModelPicker()
             }
 
+            if !store.agentReasoningLevels.isEmpty {
+                ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
+                    settingsRow(
+                        title: mode.label,
+                        detail: store.ui("当前模型的推理强度", "Reasoning effort for this model")
+                    ) {
+                        compactMenu(store.agentReasoningEffort(for: mode) ?? mode.defaultEffort) {
+                            ForEach(store.agentReasoningLevels, id: \.self) { effort in
+                                Button {
+                                    store.agentReasoningMappings[store.agentReasoningMappingKey(mode)] = effort
+                                } label: {
+                                    if effort == store.agentReasoningEffort(for: mode) {
+                                        Label(effort, systemImage: "checkmark")
+                                    } else {
+                                        Text(effort)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Base URL — flat (no longer hidden behind Advanced); only for providers
             // that need it, or once the user has set one.
             if store.agentProviderID.showsBaseURLField || !store.agentBaseURL.isEmpty {
