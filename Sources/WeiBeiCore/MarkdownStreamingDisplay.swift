@@ -51,6 +51,9 @@ public enum MarkdownStreamingDisplay {
                     delimiters.removeSubrange((delimiters[index].count == 0 ? index : index + 1)..<delimiters.count)
                 }
                 if remaining > 0 {
+                    // A delimiter can arrive before its first character. Keep it
+                    // pending instead of briefly painting raw Markdown syntax.
+                    if end == chars.count { return mend(String(chars[..<(end - remaining)])) }
                     if let next, !next.isWhitespace, char != "~" || remaining == 2 {
                         delimiters.append(.init(char: char, count: remaining, end: end))
                     } else { lastContent = end - 1 }

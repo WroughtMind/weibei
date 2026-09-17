@@ -7,6 +7,7 @@ import XCTest
 final class NativeChatMarkdownTests: XCTestCase {
     func testStreamingMarkdownStylesOnlyTheUnfinishedTail() {
         let cases: [(String, String)] = [
+            ("官方确认其**", "官方确认其"), ("**粗体 *", "**粗体** "),
             ("**重点", "**重点**"), ("**重点*", "**重点**"), ("*强调", "*强调*"),
             ("~~删除", "~~删除~~"), ("`print(1)", "`print(1)`"),
             ("**粗体 *嵌套", "**粗体 *嵌套***"),
