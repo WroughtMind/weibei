@@ -1837,6 +1837,16 @@ public enum AgentMessageContentBlock: Codable, Hashable, Sendable {
     }
 }
 
+public struct AgentToolActivity: Identifiable, Codable, Hashable, Sendable {
+    public enum State: String, Codable, Sendable { case running, completed, failed }
+    public var id: String
+    public var name: String
+    public var state: State
+    public init(id: String, name: String, state: State) {
+        self.id = id; self.name = name; self.state = state
+    }
+}
+
 public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var role: AgentRole
@@ -1852,6 +1862,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var origin: AgentReplyOrigin?
     public var failureKind: AgentFailureKind?
     public var retryQuestion: String?
+    public var toolActivities: [AgentToolActivity] = []
     public var toolTrace: [String]
     public var createdAt: Date
 
@@ -1906,6 +1917,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case origin
         case failureKind
         case retryQuestion
+        case toolActivities
         case toolTrace
         case createdAt
     }
@@ -2009,6 +2021,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             forKey: .retryQuestion,
             marker: "reply-retry:decode-failed"
         )
+        toolActivities = try container.decodeIfPresent([AgentToolActivity].self, forKey: .toolActivities) ?? []
         toolTrace = decodedToolTrace
         createdAt = try container.decode(Date.self, forKey: .createdAt)
     }
@@ -2037,6 +2050,9 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         try container.encodeIfPresent(origin, forKey: .origin)
         try container.encodeIfPresent(failureKind, forKey: .failureKind)
         try container.encodeIfPresent(retryQuestion, forKey: .retryQuestion)
+        if !toolActivities.isEmpty {
+            try container.encode(toolActivities, forKey: .toolActivities)
+        }
         if !toolTrace.isEmpty {
             try container.encode(toolTrace, forKey: .toolTrace)
         }

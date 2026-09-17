@@ -18,6 +18,7 @@ struct CatalystConversationView: View {
         displayedMessages: displayedMessages, floatingThreadID: floatingThreadID, onContentHeight: onContentHeight,
         onFocusComposer: onFocusComposer, onReadingMessage: onReadingMessage).contentShape(Rectangle()) }
     private struct Bridge: UIViewControllerRepresentable {
+        @Environment(\.weibeiReduceMotion) private var reduceMotion
         @ObservedObject var workspace: WorkspaceStore
         @ObservedObject var streaming: AgentStreamingState
         var wideTypography: Bool
@@ -39,6 +40,7 @@ struct CatalystConversationView: View {
             return controller
         }
         func updateUIViewController(_ controller: ConversationController, context: Context) {
+            controller.reduceMotion = reduceMotion
             controller.workspaceBodyWidth = bodyWidth
             controller.readingMessageChanged = onReadingMessage
             controller.contentHeightChanged = onContentHeight
@@ -185,7 +187,9 @@ struct CatalystConversationView: View {
                     pending = nil
                     if displayedSessionID != session.id {
                         auxiliaryHosts.removeAll()
-                        await controller.showSession(session)
+                        let firstTurn = displayedSessionID != nil && previous.isEmpty
+                            && session.messages.contains { $0.completionState == .generating }
+                        await controller.showSession(session, animateFirstTurn: firstTurn)
                         displayedSessionID = session.id
                     } else {
                         controller.updateSavedHistory(session.messages)

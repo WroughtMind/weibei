@@ -7,6 +7,7 @@ import QuartzCore
 final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate, UITextViewDelegate {
     let fixtureMode: Bool
     var usesWorkspaceChrome = false
+    var reduceMotion = false
     var auxiliaryView: ((LabMessage) -> UIView)?
     var messageLink: ((URL, AgentMessage) -> Void)?
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese {
@@ -484,7 +485,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         if submitQuestion?(input.text) == true { input.text = "" }
     }
 
-    func showSession(_ session: StudySession) async {
+    func showSession(_ session: StudySession, animateFirstTurn: Bool = false) async {
         loadViewIfNeeded()
         scenarioGeneration += 1
         preparation?.cancel(); preparation = nil
@@ -502,6 +503,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             messages.append(message)
         }
         collection.reloadData(); collection.layoutIfNeeded(); scrollToLatest()
+        if animateFirstTurn { for section in messages.indices { animateInsertion(in: section) } }
         status.text = session.title
     }
 
@@ -549,6 +551,20 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             UIView.performWithoutAnimation { collection.insertSections(IndexSet(integer: messages.count - 1)) }
             collection.layoutIfNeeded()
             if followsLatest || value.role == .user { scrollToLatest() }
+            animateInsertion(in: messages.count - 1)
+        }
+    }
+
+    private func animateInsertion(in section: Int) {
+        guard !reduceMotion else { return }
+        for path in collection.indexPathsForVisibleItems where path.section == section {
+            guard let cell = collection.cellForItem(at: path) else { continue }
+            cell.alpha = 0
+            cell.transform = CGAffineTransform(translationX: 0, y: 8)
+            UIView.animate(withDuration: 0.24, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+                cell.alpha = 1
+                cell.transform = .identity
+            }
         }
     }
 

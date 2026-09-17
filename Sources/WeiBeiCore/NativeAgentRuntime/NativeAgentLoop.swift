@@ -303,6 +303,7 @@ public actor NativeAgentLoop {
                     let call = callResult.call
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
+                    await progress?(.toolActivity(.init(id: "\(step):\(call.id)", name: call.name, state: .running)))
                     var result: NativeToolExecutionResult
                     let previousBlocks = contentBlocks
                     if let failure = callResult.failure {
@@ -364,6 +365,8 @@ public actor NativeAgentLoop {
                             imageBase64: result.image?.base64
                         )
                     }
+                    await progress?(.toolActivity(.init(id: "\(step):\(call.id)", name: call.name,
+                        state: result.isError ? .failed : .completed)))
                 }
                 _ = try await ledger.append { seq, time in
                     NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: turn, step: step)

@@ -843,6 +843,7 @@ public enum StudyAgentProgress: Equatable, Sendable {
     /// Tool name plus an optional human-readable argument excerpt
     /// (search query, file title…) surfaced in the chat status line.
     case usingTool(String, String?)
+    case toolActivity(AgentToolActivity)
     case text(String, [AgentMessageContentBlock], [AgentReplySource])
     case visualization(AgentVisualization, [AgentMessageContentBlock])
 }

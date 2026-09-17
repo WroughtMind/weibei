@@ -3628,6 +3628,9 @@ struct AgentBubble: View {
                 }
             }
             }
+            if !message.toolActivities.isEmpty {
+                AgentToolActivityGroup(message: message)
+            }
             if !availableSources.isEmpty {
                 AgentReplySourceTagRow(sources: availableSources) { source in
                     activateSource(source)
@@ -5600,5 +5603,72 @@ private struct AgentStreamingResponse: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=liveRow textlen=\(text.count) compact=\(compact ? 1 : 0)") }
         .accessibilityLabel(Text(store.ui("魏碑正在回答", "WeiBei is responding")))
+    }
+}
+
+
+/// Execution records come from the tool runner, never from streamed name fragments.
+struct AgentToolActivityGroup: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+    let message: AgentMessage
+    @State private var expanded = false
+    private var running: Bool {
+        message.completionState == .generating && message.toolActivities.contains { $0.state == .running }
+    }
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(message.toolActivities) { activity in
+                    HStack(spacing: 8) {
+                        Image(systemName: activity.state == .failed ? "exclamationmark.circle" :
+                            activity.state == .completed ? "checkmark" : "ellipsis")
+                        Text(title(activity.name))
+                        Spacer(minLength: 8)
+                        Text(activity.state == .failed ? store.ui("失败", "Failed") :
+                            activity.state == .completed ? store.ui("完成", "Done") :
+                            message.completionState == .generating ? store.ui("进行中", "Running") : store.ui("已中断", "Interrupted"))
+                    }
+                }
+            }.padding(.top, 6)
+        } label: {
+            HStack(spacing: 6) {
+                if running { ProgressView().controlSize(.mini) }
+                Text(running ? store.ui("正在执行工具", "Using tools") : store.ui("工具活动", "Tool activity"))
+                Text("· \(message.toolActivities.count)")
+                if message.toolActivities.contains(where: { $0.state == .failed }) {
+                    Text(store.ui("· 有失败项", "· includes failures"))
+                }
+            }
+        }
+        .weiBeiText(11)
+        .foregroundStyle(WeiBeiTheme.secondaryInk)
+        .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: expanded)
+        .onChange(of: message.completionState) { _, state in
+            if state != .generating { expanded = false }
+        }
+    }
+    private func title(_ name: String) -> String {
+        switch name {
+        case "weibei_search_workspace": store.ui("搜索资料", "Search materials")
+        case "weibei_course_read": store.ui("读取资料", "Read materials")
+        case "weibei_course_map": store.ui("查看课程关联", "Explore course connections")
+        case "weibei_read_learning_memory": store.ui("回顾学习记忆", "Read learning memory")
+        case "weibei_update_learning_memory": store.ui("更新学习记忆", "Update learning memory")
+        case "weibei_course_profile_update": store.ui("更新课程档案", "Update course profile")
+        case "weibei_note_proposal": store.ui("准备笔记建议", "Prepare note proposal")
+        case "load_skill": store.ui("读取技能指引", "Read skill instructions")
+        case "create_document": store.ui("创建文档", "Create document")
+        case "delegate": store.ui("委派子任务", "Delegate task")
+        case "weibei_visual_asset": store.ui("查找视觉素材", "Find visual assets")
+        case "weibei_find_discussions": store.ui("查找讨论", "Find discussions")
+        case "weibei_read_discussion": store.ui("读取讨论", "Read discussion")
+        case "weibei_web_open": store.ui("读取网页", "Read web page")
+        case "weibei_course_retry_failed_pdf_pages": store.ui("重新识别资料页面", "Retry page recognition")
+        case "weibei_relation_proposal": store.ui("准备关联建议", "Prepare relationship proposal")
+        case "render_ui": store.ui("生成互动内容", "Create interactive content")
+        case "$web_search": store.ui("网络搜索", "Search the web")
+        default: store.ui("执行工具", "Run tool") + " · " + name
+        }
     }
 }

@@ -770,6 +770,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
             )
         )
 
+        actor Capture {
+            var activities: [AgentToolActivity] = []
+            func append(_ progress: StudyAgentProgress) {
+                if case let .toolActivity(activity) = progress { activities.append(activity) }
+            }
+        }
+        let capture = Capture()
         let result = try await NativeAgentLoop().run(
             request: testRequest(),
             ledger: ledger,
@@ -781,9 +788,15 @@ final class NativeAgentRuntimeTests: XCTestCase {
             model: "mock",
             hostToolHandler: nil,
             systemPrompt: "test",
-            progress: nil
+            progress: { await capture.append($0) }
         )
 
+        let activities = await capture.activities
+        XCTAssertEqual(activities.map(\.id), ["1:bad", "1:bad", "1:good", "1:good"])
+        XCTAssertEqual(activities.map(\.state), [.running, .failed, .running, .completed])
+        var message = AgentMessage(role: .assistant, text: result.text, source: nil)
+        message.toolActivities = activities.filter { $0.state != .running }
+        XCTAssertEqual(try JSONDecoder().decode(AgentMessage.self, from: JSONEncoder().encode(message)), message)
         let events = await ledger.allEvents()
         let toolResults = events.filter { $0.type == .toolResult }
         XCTAssertEqual(result.text, "完成")
