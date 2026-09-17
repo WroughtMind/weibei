@@ -700,6 +700,11 @@ struct NotePaneView: View {
 #endif
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
+        .overlay(alignment: .top) {
+            if !showsPaneHeader {
+                WeiBeiHeaderHandoffFade(height: 28, appearanceMode: store.appearanceMode)
+            }
+        }
     }
 
 }
@@ -1466,6 +1471,11 @@ struct AgentPaneView: View {
                             onFocusComposer: { composerFocusTrigger &+= 1 },
                             onReadingMessage: updateAgentRailPosition)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .overlay(alignment: .top) {
+                                if !showsPaneHeader {
+                                    WeiBeiHeaderHandoffFade(height: 28, appearanceMode: store.appearanceMode)
+                                }
+                            }
 #else
                         ScrollView(showsIndicators: true) {
                             // No scrollTargetLayout / scrollPosition / viewport minHeight

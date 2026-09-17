@@ -16,5 +16,18 @@ import AppKit
             print("\(index == 0 ? "main" : "popover"): mouseMoved=\(window.acceptsMouseMovedEvents), visible=\(window.isVisible)")
         }
         if windows.contains(where: { !$0.acceptsMouseMovedEvents }) { exit(1) }
+        // Catalyst installs its toolbar after the bridge is first configured.
+        let main = windows[0]
+        let toolbar = NSToolbar(identifier: "weibei.workspace")
+        main.toolbar = toolbar
+        NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: main)
+        precondition(main.titlebarAppearsTransparent && main.styleMask.contains(.fullSizeContentView))
+        for mode in ["glassLight", "glassDark", "paper"] {
+            bridge.configure(mode: mode, intensity: 1)
+            precondition(main.toolbar === toolbar && main.titlebarAppearsTransparent)
+            precondition(!windows[1].titlebarAppearsTransparent)
+        }
+        precondition(windows.allSatisfy { !$0.isVisible })
+        print("workspace toolbar: transparent, native controls retained, theme changes passed")
     }
 }

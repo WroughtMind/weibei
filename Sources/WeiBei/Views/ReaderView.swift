@@ -283,6 +283,11 @@ struct ReaderView: View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
                 readerBody
+                    .overlay(alignment: .top) {
+                        if store.selectedMaterialItem != nil {
+                            WeiBeiHeaderHandoffFade(height: 28, appearanceMode: store.appearanceMode)
+                        }
+                    }
             }
             // Collapsed split hosts have zero width; retain the last measured reader viewport.
             .frame(width: availableWidth)

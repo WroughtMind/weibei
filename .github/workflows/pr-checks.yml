@@ -211,7 +211,10 @@ jobs:
 
       - name: 逐架构验证正式应用启动
         id: launch
-        run: ./script/verify_app_launch.sh "dist/魏碑.app"
+        run: |
+          swiftc App/WindowBridge/WindowBridgeContract.swift script/check_window_hover.swift -o "$RUNNER_TEMP/check-window-hover"
+          "$RUNNER_TEMP/check-window-hover" "dist/魏碑.app/Contents/PlugIns/WeiBeiWindowBridge.bundle"
+          ./script/verify_app_launch.sh "dist/魏碑.app"
 
       - name: 生成并挂载验收当前架构安装包
         id: package
