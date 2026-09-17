@@ -245,11 +245,20 @@ struct ComposerView: View {
 
 /// Hover lifts the surface with a shadow; pressing settles it without scaling.
 private struct ReasoningModeButtonStyle: ButtonStyle {
-    @Environment(\.weibeiReduceMotion) private var reduceMotion
-    @State private var hovering = false
     var selected: Bool
 
     func makeBody(configuration: Configuration) -> some View {
+        ReasoningModeButtonBody(configuration: configuration, selected: selected)
+    }
+}
+
+private struct ReasoningModeButtonBody: View {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @State private var hovering = false
+    let configuration: ButtonStyleConfiguration
+    let selected: Bool
+
+    var body: some View {
         let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
         configuration.label
             .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -258,7 +267,7 @@ private struct ReasoningModeButtonStyle: ButtonStyle {
                     .fill(hovering || configuration.isPressed ? WeiBeiTheme.paperRaised : Color.clear)
                     .overlay {
                         shape
-                            .fill(WeiBeiTheme.ink.opacity(configuration.isPressed ? 0.12 : hovering || selected ? 0.07 : 0))
+                            .fill(WeiBeiTheme.ink.opacity(configuration.isPressed ? 0.16 : hovering ? 0.11 : selected ? 0.04 : 0))
                     }
                     .compositingGroup()
                     .shadow(
@@ -267,7 +276,6 @@ private struct ReasoningModeButtonStyle: ButtonStyle {
                     )
             }
             .contentShape(.interaction, shape)
-            .zIndex(hovering ? 1 : 0)
             .onHover { hovering = $0 }
             .animation(reduceMotion ? nil : WeiBeiMotion.micro, value: hovering)
             .animation(reduceMotion || configuration.isPressed ? nil : WeiBeiMotion.micro, value: configuration.isPressed)
