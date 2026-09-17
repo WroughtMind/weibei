@@ -1852,6 +1852,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var origin: AgentReplyOrigin?
     public var failureKind: AgentFailureKind?
     public var retryQuestion: String?
+    public var requestContext: AgentRequestContext?
     public var toolTrace: [String]
     public var createdAt: Date
 
@@ -1870,6 +1871,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         origin: AgentReplyOrigin? = nil,
         failureKind: AgentFailureKind? = nil,
         retryQuestion: String? = nil,
+        requestContext: AgentRequestContext? = nil,
         toolTrace: [String] = [],
         createdAt: Date = Date()
     ) {
@@ -1887,6 +1889,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.origin = origin
         self.failureKind = failureKind
         self.retryQuestion = retryQuestion
+        self.requestContext = requestContext
         self.toolTrace = toolTrace
         self.createdAt = createdAt
     }
@@ -1906,6 +1909,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case origin
         case failureKind
         case retryQuestion
+        case requestContext
         case toolTrace
         case createdAt
     }
@@ -2009,6 +2013,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             forKey: .retryQuestion,
             marker: "reply-retry:decode-failed"
         )
+        requestContext = try container.decodeIfPresent(AgentRequestContext.self, forKey: .requestContext)
         toolTrace = decodedToolTrace
         createdAt = try container.decode(Date.self, forKey: .createdAt)
     }
@@ -2037,6 +2042,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         try container.encodeIfPresent(origin, forKey: .origin)
         try container.encodeIfPresent(failureKind, forKey: .failureKind)
         try container.encodeIfPresent(retryQuestion, forKey: .retryQuestion)
+        try container.encodeIfPresent(requestContext, forKey: .requestContext)
         if !toolTrace.isEmpty {
             try container.encode(toolTrace, forKey: .toolTrace)
         }

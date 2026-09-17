@@ -116,9 +116,9 @@ python3 - "$STAGED_APP" "$TARGET_ARCH" "$SIGNING_IDENTITY" <<'SIGN'
 from pathlib import Path
 import os,plistlib,shutil,subprocess,sys
 app,arch,identity=Path(sys.argv[1]),sys.argv[2],sys.argv[3]
-# MarkdownView uses MTFontManager.defaultFont (Latin Modern), with no alternate
-# family selection or font-family fallback. Keep its complete font and metrics,
-# and all licenses; only trim the other families from this staging copy.
+# MarkdownView uses Latin Modern for math and the system font for characters
+# outside its coverage. Keep the complete math font, metrics and licenses;
+# only trim the unused bundled math families from this staging copy.
 math_fonts=app/'Contents/Resources/SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle'
 for suffix in ['.otf','.plist']:
     required=math_fonts/('latinmodern-math'+suffix)

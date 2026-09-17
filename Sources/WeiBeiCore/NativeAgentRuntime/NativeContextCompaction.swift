@@ -86,7 +86,7 @@ enum NativeContextCompaction {
             adapter: adapter,
             model: request.model
         )
-        // 步骤级压缩可能越过本轮问题；已确认笔记仍须留在持久化检查点中。
+        // 步骤级压缩可能越过本轮问题；保留问题原文和附带的参考数据。
         if firstKeptSeq > turnContext.userMessageSeq, !turnContext.text.isEmpty {
             summary += "\n\n" + turnContext.text
         }

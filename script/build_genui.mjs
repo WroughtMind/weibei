@@ -65,11 +65,10 @@ for (const [name, entry] of Object.entries({ three: 'three', 'echarts-full': 'ec
     entryPoints: [require.resolve(`@changfenhuang/dsh-genui/assets/${entry}`)],
     outfile,
   });
-  if (name === 'echarts-full') {
-    // The shared asset loader adopts this promise; charts still load only on demand.
-    const program = await readFile(outfile);
-    await writeFile(outfile, `(window.__GenuiAssets__ ??= {}).echartsFull = ${packedProgram(program)}.then(() => window.__GenuiAssets__.echartsFull);\n`);
-  }
+  // The shared loader adopts the promise; engines still load only on demand.
+  const key = name === 'echarts-full' ? 'echartsFull' : name;
+  const program = await readFile(outfile);
+  await writeFile(outfile, `(window.__GenuiAssets__ ??= {}).${key} = ${packedProgram(program)}.then(() => window.__GenuiAssets__.${key});\n`);
 }
 // Authorize only the exact bundled programs; arbitrary inline scripts stay blocked.
 const htmlPath = resolve(resources, 'genui.html');
@@ -175,7 +174,7 @@ const mainSkill = `# GenUI — 魏碑常用界面规范
 action 只是当前会话的互动请求，不代表检索、记忆或笔记操作已经完成；这些仍用原有工具。
 用户明确要求自测时才使用题目和判分；不编造进度、掌握程度或材料数据。
 不得索取或生成密码、API Key、访问令牌、恢复码等秘密输入。
-渲染器报错时按原因修正后重调 render_ui；工具回执只表示已提交，不保证显示正确。
+只有收到已显示回执才能称已展示；渲染器报错时按原因修正后重调 render_ui。
 
 表格只要需要筛选、导出、展开明细、列类型或联动排序，无论行数，或需要 13 种 ECharts 预设、full option、Diagram、Plot、3D 与低频组件时，先调用 \`load_skill\`，参数 \`{"id":"genui-advanced"}\`；加载后仍用 \`render_ui\`。`;
 
