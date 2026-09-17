@@ -22,6 +22,36 @@ public enum ContentRailPolicy {
     public static let dormantPreviewWidth: CGFloat = 280
     public static let previewImageMinimumWidth: CGFloat = 240
 
+    /// Only the two panes touching the dragged divider participate.
+    public static func dividerWidths(
+        _ widths: [CGFloat], divider: Int, equalize: Bool = false, skipSnap: Bool = false
+    ) -> [CGFloat] {
+        guard !skipSnap, widths.indices.contains(divider),
+              widths.indices.contains(divider + 1) else { return widths }
+        let left = widths[divider], right = widths[divider + 1]
+        let total = left + right
+        guard left.isFinite, right.isFinite, left >= 0, right >= 0, total > 0 else { return widths }
+        let target: CGFloat
+        if equalize {
+            target = total / 2
+        } else if left <= snapThreshold {
+            target = min(dormantWidth, left)
+        } else if right <= snapThreshold {
+            target = total - min(dormantWidth, right)
+        } else {
+            let candidates: [CGFloat] = [0.25, 0.5, 0.75]
+            guard let nearest = candidates.map({ total * $0 })
+                .filter({ $0 >= readableWidth && total - $0 >= readableWidth })
+                .min(by: { abs($0 - left) < abs($1 - left) }),
+                abs(nearest - left) <= magneticSnapDistance else { return widths }
+            target = nearest
+        }
+        var result = widths
+        result[divider] = target
+        result[divider + 1] = total - target
+        return result
+    }
+
     public static func presentation(
         availableWidth: CGFloat,
         allowsRailOnly: Bool
