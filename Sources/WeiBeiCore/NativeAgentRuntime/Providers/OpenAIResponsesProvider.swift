@@ -114,7 +114,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             }
             include.append("web_search_call.action.sources")
         }
-        let assembled = assembleInput(request.messages)
+        let assembled = assembleInput(request.messages, purpose: request.purpose)
         var payload: [String: Any] = [
             "model": request.model,
             "stream": true,
@@ -134,7 +134,9 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         return payload
     }
 
-    static func assembleInput(_ messages: [NativeModelMessage]) -> (instructions: String?, input: [[String: Any]]) {
+    static func assembleInput(
+        _ messages: [NativeModelMessage], purpose: NativeModelCallPurpose = .answer
+    ) -> (instructions: String?, input: [[String: Any]]) {
         var instructions: String?
         var input: [[String: Any]] = []
         for message in messages {
@@ -144,6 +146,13 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             case .user:
                 input.append(["role": "user", "content": Self.userContent(message)])
             case .assistant:
+                if purpose == .answer, let replay = message.replay,
+                   ["openai-responses", "openai-codex-responses"].contains(replay.family),
+                   let items = try? JSONSerialization.jsonObject(with: replay.items) as? [[String: Any]],
+                   !items.isEmpty {
+                    input.append(contentsOf: items)
+                    continue
+                }
                 if let calls = message.toolCalls, !calls.isEmpty {
                     for call in calls {
                         input.append([
@@ -272,7 +281,14 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             if let usage = tokenUsage(response?["usage"]) {
                 chunks.append(.usage(usage))
             }
-            chunks.append(.finish(reason: reason, replayState: nil))
+            let replayState: Data?
+            if type == "response.completed", status != "incomplete",
+               let output = response?["output"] as? [[String: Any]], !output.isEmpty {
+                replayState = try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys])
+            } else {
+                replayState = nil
+            }
+            chunks.append(.finish(reason: reason, replayState: replayState))
             return chunks
         case "response.failed", "error":
             let error = (object["response"] as? [String: Any])?["error"] as? [String: Any]
