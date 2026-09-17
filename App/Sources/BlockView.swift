@@ -140,7 +140,9 @@ final class BlockView: UIView, UITextViewDelegate {
 
     /// Fade only newly appended glyphs. Settled text is never redrawn with a lower opacity.
     func revealAppendedText(animated: Bool) {
-        let current = label.attributedText.string
+        // Paragraph terminators belong to the renderer, not the growing text.
+        // Keeping them in the prefix makes every append look like a replacement.
+        let current = label.attributedText.string.replacingOccurrences(of: "[\\r\\n]+$", with: "", options: .regularExpression)
         let previous = displayedText
         defer { displayedText = current; displayedWidth = bounds.width }
         guard animated, !preparedLabel.isHidden else { finishTextReveal(); return }

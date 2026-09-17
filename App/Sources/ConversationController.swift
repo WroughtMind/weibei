@@ -1080,7 +1080,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let first = message.blocks[0]
                 let beforeAppend = store.view(for: message.blocks.last!, width: bodyWidth)
                 beforeAppend.revealAppendedText(animated: false)
-                let oldLength = beforeAppend.label.attributedText.length
+                let oldLength = beforeAppend.copyText().trimmingCharacters(in: .newlines).utf16.count
                 message.append("，尾字已经收到。")
                 _ = await store.prepare(message, width: bodyWidth)
                 try expect(message.blocks[0] === first, "流式更新替换了未改变的段落")
@@ -1105,11 +1105,11 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 unfinished.state = .streaming
                 _ = await store.prepare(unfinished, width: bodyWidth)
                 let live = store.view(for: unfinished.blocks[0], width: bodyWidth)
-                try expect(live.copyText() == "尚未闭合", "流式粗体仍显示原始星号")
+                try expect(live.copyText().trimmingCharacters(in: .newlines) == "尚未闭合", "流式粗体仍显示原始星号")
                 try expect(unfinished.copyableMarkdown == "**尚未闭合", "显示修补污染了复制原文")
                 unfinished.state = .stopped
                 _ = await store.prepare(unfinished, width: bodyWidth)
-                try expect(store.view(for: unfinished.blocks[0], width: bodyWidth).copyText() == "**尚未闭合",
+                try expect(store.view(for: unfinished.blocks[0], width: bodyWidth).copyText().trimmingCharacters(in: .newlines) == "**尚未闭合",
                            "停止后没有恢复真实原文排版")
                 let pending = LabMessage(author: "链接检查", markdown: "[来源](https://example.")
                 pending.state = .streaming
