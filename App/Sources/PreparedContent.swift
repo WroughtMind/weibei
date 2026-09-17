@@ -96,7 +96,7 @@ final class ContentStore {
         let parsed: MarkdownParser.ParseResult
         if message.parsedRevision == revision, let cached = message.parsed { parsed = cached }
         else {
-            parsed = await Task.detached(priority: .userInitiated) { MarkdownParser().parse(MarkdownEmphasisNormalizer.prepare(streaming ? MarkdownStreamingDisplay.source(text) : text).text) }.value
+            parsed = await Task.detached(priority: .userInitiated) { MarkdownParser().parse(streaming ? MarkdownStreamingDisplay.source(text) : text) }.value
             guard generation == self.generation, revision == message.revision else { return false }
             message.parsed = parsed; message.parsedRevision = revision
             parseCount += 1
