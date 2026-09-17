@@ -219,7 +219,8 @@ extension WorkspaceStore {
         let adapter = try await NativeLLMAdapterFactory.make(
             provider: selectedProvider,
             model: model,
-            endpoint: endpoint
+            endpoint: endpoint,
+            authMethod: agentRun.authMethod
         )
         var resolvedRequest = request
         if selectedProvider == .openaiCodex {

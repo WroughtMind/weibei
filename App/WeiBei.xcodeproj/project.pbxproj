@@ -51,6 +51,7 @@
 		24B41F6DD6442D6DDC9D598B /* SelectionAnchorContentPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4DC97F117C4C9EF8A872EAA /* SelectionAnchorContentPoint.swift */; };
 		24D17FE22AAD67D99C583D71 /* ContextualContentPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51AB9EF50CCEDB319397D8C /* ContextualContentPicker.swift */; };
 		2710FFF4B0438D9457EA84D5 /* NativeProviderRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDE9B5B430C16C2C8DB95AD2 /* NativeProviderRouting.swift */; };
+		9387CA4E62E5A93D69CD65BA /* NativeProviderOAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE6C78C1E289D5F3493FC478 /* NativeProviderOAuth.swift */; };
 		289125D70A361B585884F17D /* NativeAgentBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6E8BBB95785292CA128DEDF /* NativeAgentBackend.swift */; };
 		2C624A003FFDB2EBD1194CF9 /* PreparedContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1727C1C26ADB4A976EC1E885 /* PreparedContent.swift */; };
 		2CD678E8BE84257E5938AAAD /* WorkspaceInteractionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F72E8B83EB4DCD45CBA6C6C2 /* WorkspaceInteractionState.swift */; };
@@ -459,6 +460,7 @@
 		DBE910F7A08873EDEB2E1769 /* DiagramView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagramView.swift; sourceTree = "<group>"; };
 		DD1EC009C99E5D05C5322632 /* NoteRecoveryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteRecoveryStore.swift; sourceTree = "<group>"; };
 		DDE9B5B430C16C2C8DB95AD2 /* NativeProviderRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProviderRouting.swift; sourceTree = "<group>"; };
+		FE6C78C1E289D5F3493FC478 /* NativeProviderOAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProviderOAuth.swift; sourceTree = "<group>"; };
 		E03CCE789A98C2C282869A38 /* WorkspaceResumePoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceResumePoint.swift; sourceTree = "<group>"; };
 		E143536A222BB3EF39386017 /* WorkspaceStore+GoneImportedItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+GoneImportedItems.swift"; sourceTree = "<group>"; };
 		E1C5F74BA013DD4666730861 /* NoteEditorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorBridge.swift; sourceTree = "<group>"; };
@@ -798,6 +800,7 @@
 				5C74F370409208410B218551 /* NativeCopilotSession.swift */,
 				0F82757F4C2076211922411C /* NativeModelUsage.swift */,
 				DDE9B5B430C16C2C8DB95AD2 /* NativeProviderRouting.swift */,
+				FE6C78C1E289D5F3493FC478 /* NativeProviderOAuth.swift */,
 				433E5657BF2C1DCD29347D42 /* NativeSessionTitle.swift */,
 				ED67BE51713D6E75443BEBF3 /* NativeStudyAgentRuntime.swift */,
 				B804330B9F87807BF475EB80 /* NativeToolSchemaValidation.swift */,
@@ -1175,6 +1178,7 @@
 				926D0321E52CA79D81CD00FA /* NativeLLMAdapterFactory.swift in Sources */,
 				41918BF9770E9F4CC9A236BC /* NativeModelUsage.swift in Sources */,
 				2710FFF4B0438D9457EA84D5 /* NativeProviderRouting.swift in Sources */,
+				9387CA4E62E5A93D69CD65BA /* NativeProviderOAuth.swift in Sources */,
 				E60BC6DE707366A0549B937C /* NativeSessionTitle.swift in Sources */,
 				49DE6B677DD3ED924746300C /* NativeStudyAgentRuntime.swift in Sources */,
 				E3C57A914FAF086CBC2EE87E /* NativeToolSchemaValidation.swift in Sources */,
