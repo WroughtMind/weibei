@@ -7621,7 +7621,7 @@ final class WorkspaceStore: ObservableObject {
             targetItemID: foreignItemID,
             proposedMarkdown: "不应进入可携带状态"
         )
-        let reply = AgentMessage(
+        var reply = AgentMessage(
             role: .assistant,
             text: "课程回答正文必须保留。",
             source: "课程 Chat",
@@ -7640,6 +7640,7 @@ final class WorkspaceStore: ObservableObject {
             toolTrace: ["内部工具日志不得携带"],
             createdAt: now
         )
+        reply.toolActivities = [.init(id: "private-call", name: "private-tool", state: .completed)]
         var longHistory = [firstReply]
         for index in 1..<500 {
             longHistory.append(
@@ -9923,8 +9924,9 @@ final class WorkspaceStore: ObservableObject {
                     }
                     if reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                        visibleContentBlocks.isEmpty,
+                       reply.toolTrace.isEmpty,
                        let message = studySessions.first(where: { $0.id == target.sessionID })?.messages.first(where: { $0.id == messageID }),
-                       message.actions.isEmpty, message.memoryUpdate == nil, message.profileUpdate == nil {
+                       message.toolActivities.isEmpty, message.actions.isEmpty, message.memoryUpdate == nil, message.profileUpdate == nil {
                         removeAgentMessage(messageID, from: target.sessionID)
                     }
                 }
@@ -10243,6 +10245,14 @@ final class WorkspaceStore: ObservableObject {
         switch progress {
         case .preparing:
             agentStreaming.activityText = ui("正在思考", "Thinking")
+        case let .toolActivity(activity):
+            _ = updateAgentMessage(replyMessageID, in: chatID) { message in
+                if let index = message.toolActivities.firstIndex(where: { $0.id == activity.id }) {
+                    message.toolActivities[index] = message.toolActivities[index].merging(activity)
+                } else {
+                    message.toolActivities.append(activity)
+                }
+            }
         case let .usingTool(name, detail):
             let base: String
             switch name {

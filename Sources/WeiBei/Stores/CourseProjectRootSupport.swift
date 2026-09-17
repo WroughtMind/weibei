@@ -1092,6 +1092,7 @@ actor CourseProjectFileWorker {
             }
             for index in portable.messages.indices {
                 portable.messages[index].toolTrace = []
+                portable.messages[index].toolActivities = []
                 portable.messages[index].sources =
                     portable.messages[index].sources.filter { source in
                         guard source.kind != .discussion else { return false }

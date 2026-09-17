@@ -6,6 +6,7 @@ public enum NativeStreamChunk: Codable, Equatable, Sendable {
     case blockStart(index: Int, blockType: NativeContentBlockType)
     case textDelta(index: Int, text: String)
     case reasoningDelta(index: Int, text: String)
+    case serverToolActivity(AgentToolActivity)
     case webSearchSource(url: String)
     case toolCallDelta(index: Int, id: String, name: String?, argumentsDelta: String)
     case blockEnd(index: Int, block: NativeContentBlock)
@@ -16,6 +17,7 @@ public enum NativeStreamChunk: Codable, Equatable, Sendable {
         case text
         case reasoning
         case toolCall = "tool_call"
+        case serverTool = "server_tool"
     }
 }
 

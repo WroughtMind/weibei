@@ -1259,6 +1259,85 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
+    func testEveryRegisteredToolHasDetailsAndHonestOutcome() async throws {
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let tools = await registry.resolved(scope: .global)
+        let context = NativeToolExecutionContext(request: testRequest())
+        let arguments: [String: Any] = ["query": "利率", "scope": "library", "title": "复习笔记",
+            "page": 3, "markdown": "复习内容", "task": "整理章节", "url": "https://example.com",
+            "entries": [["text": "已理解利率", "kind": "understood"]]]
+        for tool in tools {
+            let start = NativeToolActivityPresentation.activity(id: "call", name: tool.name, arguments: arguments, context: context)
+            XCTAssertFalse(start.detail?.isEmpty ?? true, tool.name)
+            XCTAssertNotEqual(start.detail, "工具请求", "Registered tool missing presentation: \(tool.name)")
+            let failure = NativeToolActivityPresentation.activity(id: "call", name: tool.name, arguments: arguments,
+                context: context, result: .init(text: "读取被拒绝", isError: true))
+            XCTAssertEqual(failure.state, .failed)
+            XCTAssertEqual(failure.resultSummary, "读取被拒绝")
+            XCTAssertEqual(failure.detail, start.detail)
+        }
+        let cancelled = NativeToolActivityPresentation.activity(id: "call", name: "create_document", arguments: arguments,
+            context: context, result: .init(text: "用户取消，未写入文件", details: ["cancelled": true]))
+        XCTAssertEqual(cancelled.state, .cancelled)
+        XCTAssertEqual(cancelled.resultSummary, "用户取消，未写入文件")
+        for name in ["weibei_update_learning_memory", "weibei_course_profile_update"] {
+            let queued = NativeToolActivityPresentation.activity(id: "call", name: name, arguments: arguments,
+                context: context, result: .init(text: "已提交"))
+            XCTAssertTrue(queued.resultSummary?.contains("等待保存") == true)
+        }
+        let host = StudyAgentHostToolResult(query: "利率", items: [], total: 50, nextCursor: "next")
+        let search = NativeToolActivityPresentation.activity(id: "call", name: "weibei_search_workspace", arguments: arguments,
+            context: context, result: .init(text: String(decoding: try JSONEncoder().encode(host), as: UTF8.self)))
+        XCTAssertTrue(search.resultSummary?.contains("本次返回 0 条命中") == true)
+        XCTAssertFalse(search.resultSummary?.contains("50") == true, "Total hits are not returned hits")
+        XCTAssertEqual(try JSONDecoder().decode(AgentToolActivity.self, from: JSONEncoder().encode(search)), search)
+    }
+
+    func testSearchDetailsSurviveStatusUpdates() throws {
+        let started = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.added","item":{"type":"web_search_call","id":"search1","status":"in_progress","action":{"type":"search","queries":["Barcelona dressing room","Real Madrid dressing room"]}}}"#)
+        guard case let .serverToolActivity(live) = started.first else { return XCTFail("Missing running activity") }
+        XCTAssertEqual(live.state, .running)
+        XCTAssertEqual(live.detail, "Barcelona dressing room · Real Madrid dressing room", "Available queries must be visible before completion")
+        let chunks = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"search1","status":"completed","action":{"type":"search","queries":["Barcelona dressing room","Real Madrid dressing room"],"sources":[{"url":"https://example.com/story"}]}}}"#)
+        guard case let .serverToolActivity(activity) = chunks.first else { return XCTFail("Missing activity") }
+        XCTAssertEqual(activity.detail, "Barcelona dressing room · Real Madrid dressing room")
+        XCTAssertEqual(activity.sourceURLs, ["https://example.com/story"])
+        let merged = activity.merging(.init(id: activity.id, name: activity.name, state: .completed))
+        XCTAssertEqual(merged, activity, "A status-only event must not erase the query or sources")
+        XCTAssertEqual(try JSONDecoder().decode(AgentToolActivity.self, from: JSONEncoder().encode(merged)), activity)
+    }
+
+    func testServerWebActionsKeepTheirIdentityAcrossStatusEvents() throws {
+        for (kind, name) in [("search", "$web_search"), ("open_page", "$web_open"), ("find_in_page", "$web_find")] {
+            let event: [String: Any] = ["type": "response.output_item.done", "item": [
+                "type": "web_search_call", "id": "web1", "status": "completed",
+                "action": ["type": kind, "url": "https://example.com", "pattern": "桥长"]]]
+            let chunks = try OpenAIResponsesProvider.translate(String(decoding: JSONSerialization.data(withJSONObject: event), as: UTF8.self))
+            guard case let .serverToolActivity(activity) = chunks.first else { return XCTFail("Missing web activity") }
+            XCTAssertEqual(activity.name, name)
+            XCTAssertEqual(activity.detail, "桥长 · https://example.com")
+            let merged = activity.merging(.init(id: activity.id, name: "$web_activity", state: .completed))
+            XCTAssertEqual(merged.name, name)
+            XCTAssertEqual(merged.detail, activity.detail)
+        }
+    }
+
+    func testServerSearchLifecycleIncludesEmptyResultsAndFailure() throws {
+        let start = try OpenAIResponsesProvider.translate(#"{"type":"response.web_search_call.in_progress","item_id":"search1"}"#)
+        let done = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"search1","status":"completed","action":{"sources":[]}}}"#)
+        XCTAssertEqual(start, [.serverToolActivity(.init(id: "search1", name: "$web_activity", state: .running))])
+        XCTAssertEqual(done, [.serverToolActivity(.init(id: "search1", name: "$web_activity", state: .completed, sourceURLs: []))])
+        let anthropicStart = try AnthropicMessagesProvider.translate(#"{"type":"content_block_start","content_block":{"type":"server_tool_use","name":"web_search","id":"search2"}}"#)
+        let failed = try AnthropicMessagesProvider.translate(#"{"type":"content_block_start","content_block":{"type":"web_search_tool_result","tool_use_id":"search2","content":{"type":"web_search_tool_result_error","error_code":"too_many_requests"}}}"#)
+        XCTAssertEqual(anthropicStart, [.blockStart(index: 0, blockType: .serverTool), .serverToolActivity(.init(id: "search2", name: "$web_search", state: .running))])
+        XCTAssertEqual(failed, [.serverToolActivity(.init(id: "search2", name: "$web_search", state: .failed))])
+        var assembler = NativeToolCallAssembler()
+        for chunk in start + done + anthropicStart + failed { assembler.apply(chunk) }
+        assembler.apply(.toolCallDelta(index: 0, id: "", name: nil, argumentsDelta: "{\"query\":\"news\"}"))
+        XCTAssertTrue(try assembler.completedCalls().isEmpty, "Server searches must not be executed again locally")
+    }
+
     func testMalformedToolArgumentsDoNotBlockValidSiblingOrCompletion() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-mixed-tools-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -1275,23 +1354,45 @@ final class NativeAgentRuntimeTests: XCTestCase {
             )
         )
 
+        actor Capture {
+            var activities: [AgentToolActivity] = []
+            func append(_ progress: StudyAgentProgress) {
+                if case let .toolActivity(activity) = progress { activities.append(activity) }
+            }
+        }
+        let capture = Capture()
         let result = try await NativeAgentLoop().run(
             request: testRequest(),
             ledger: ledger,
             registry: registry,
             adapter: ToolRecoveryMockLLMAdapter(toolChunks: [
+                .textDelta(index: 2, text: "先说明"),
+                .webSearchSource(url: "https://example.com/a"),
+                .webSearchSource(url: "https://example.com/b"),
+                .serverToolActivity(.init(id: "search2", name: "$web_search", state: .running)),
+                .textDelta(index: 2, text: "再说明"),
+                .serverToolActivity(.init(id: "search2", name: "$web_search", state: .completed)),
                 .toolCallDelta(index: 0, id: "bad", name: "test_tool", argumentsDelta: "{\"value\":"),
                 .toolCallDelta(index: 1, id: "good", name: "test_tool", argumentsDelta: "{}"),
             ], expectedToolResults: 2),
             model: "mock",
             hostToolHandler: nil,
             systemPrompt: "test",
-            progress: nil
+            progress: { await capture.append($0) }
         )
 
+        let activities = await capture.activities
+        XCTAssertEqual(activities.map(\.textOffset), [3, 3, 3, 6, 6, 6, 6, 6])
+        XCTAssertEqual(activities[2].merging(activities[3]).textOffset, 3)
+        XCTAssertEqual(activities[1].sourceURLs, ["https://example.com/a", "https://example.com/b"])
+        XCTAssertEqual(activities.map(\.id), ["1:server:sources", "1:server:sources", "1:server:search2", "1:server:search2", "1:bad", "1:bad", "1:good", "1:good"])
+        XCTAssertEqual(activities.map(\.state), [.completed, .completed, .running, .completed, .running, .failed, .running, .completed])
+        var message = AgentMessage(role: .assistant, text: result.text, source: nil)
+        message.toolActivities = activities.filter { $0.state != .running }
+        XCTAssertEqual(try JSONDecoder().decode(AgentMessage.self, from: JSONEncoder().encode(message)), message)
         let events = await ledger.allEvents()
         let toolResults = events.filter { $0.type == .toolResult }
-        XCTAssertEqual(result.text, "完成")
+        XCTAssertEqual(result.text, "先说明再说明完成")
         XCTAssertEqual(events.filter { $0.type == .toolCall }.map(\.toolCallID), ["bad", "good"])
         XCTAssertEqual(toolResults.map(\.toolCallID), ["bad", "good"])
         XCTAssertEqual(toolResults.map(\.isError), [true, false])

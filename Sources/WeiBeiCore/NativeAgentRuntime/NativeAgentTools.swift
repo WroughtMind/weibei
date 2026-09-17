@@ -1198,3 +1198,101 @@ public enum NativeBuiltinTools {
         return value
     }
 }
+
+
+/// User-facing activity details use selected fields, never whole tool payloads.
+public enum NativeToolActivityPresentation {
+    public static func activity(id: String, name: String, arguments: [String: Any],
+                                context: NativeToolExecutionContext, result: NativeToolExecutionResult? = nil, textOffset: Int? = nil) -> AgentToolActivity {
+        func text(_ key: String) -> String? { arguments[key] as? String }
+        func short(_ value: String) -> String { String(value.prefix(240)) }
+        func item(_ key: String) -> String {
+            guard let id = text(key) else { return context.request.materialTitle.isEmpty ? "当前资料" : context.request.materialTitle }
+            let persistent = context.persistentAssetIDsByContextID[id] ?? id
+            return context.request.courseContext.items.first { $0.id == id || $0.id == persistent }?.title
+                ?? context.request.projectScope.items.first { $0.itemID == persistent }?.title ?? "指定资料"
+        }
+        let scope: String
+        switch text("scope") {
+        case "library": scope = "整个资料库"
+        case "material": scope = item("scopeID")
+        default: scope = context.request.projectScope.courseTitle ?? "当前课程"
+        }
+        let entries = arguments["entries"] as? [[String: Any]] ?? []
+        let entryText = entries.compactMap { $0["text"] as? String }.joined(separator: "；")
+        let detail: String
+        switch name {
+        case "load_skill":
+            detail = text("id").flatMap { context.liveStores.skillRegistry.pack(named: $0)?.manifest.name } ?? "指定技能"
+        case "create_document": detail = (text("title") ?? "新文稿") + " · " + (text("format") ?? "markdown")
+        case "delegate": detail = text("task") ?? "子任务"
+        case "render_ui": detail = "当前回答中的互动内容"
+        case "weibei_visual_asset": detail = context.request.materialTitle.isEmpty ? "当前材料图像" : context.request.materialTitle + " · 图像"
+        case "weibei_course_map": detail = scope + (text("name").map { " · " + $0 } ?? " · 资料目录")
+        case "weibei_search_workspace": detail = scope + " · “" + (text("query") ?? "") + "”"
+        case "weibei_course_read":
+            detail = item("itemID") + ((arguments["page"] as? Int).map { " · 第 \($0) 页" }
+                ?? text("location").map { " · " + $0 } ?? (text("cursor") == nil ? " · 从开头读取" : " · 继续读取"))
+        case "weibei_find_discussions":
+            detail = (arguments["allChats"] as? Bool == true ? "全部会话" : "当前相关讨论") + (text("query").map { " · “" + $0 + "”" } ?? "")
+        case "weibei_read_discussion": detail = "读取选定讨论中的真实问答"
+        case "weibei_web_open": detail = text("url") ?? "指定网页"
+        case "weibei_course_retry_failed_pdf_pages": detail = item("itemID") + " · 识别失败的页面"
+        case "weibei_read_learning_memory": detail = (context.request.projectScope.courseTitle ?? "当前课程") + " · 学习记忆与上次位置"
+        case "weibei_update_learning_memory", "weibei_course_profile_update":
+            detail = entryText.isEmpty ? "更新已记录的学习状态" : entryText
+        case "weibei_note_proposal":
+            detail = (context.request.noteTitle.isEmpty ? "目标笔记" : context.request.noteTitle) + " · " + (text("markdown") ?? "")
+        case "weibei_relation_proposal": detail = item("noteItemID") + " ↔ " + item("sourceItemID")
+        case "$web_search": detail = text("query") ?? "模型请求的网络搜索"
+        default: detail = "工具请求"
+        }
+        var activity = AgentToolActivity(id: id, name: name, state: .running, detail: short(detail), textOffset: textOffset)
+        guard let result else { return activity }
+        activity.state = result.isError ? .failed : result.details["cancelled"] as? Bool == true ? .cancelled : .completed
+        if result.isError || activity.state == .cancelled {
+            activity.resultSummary = short(result.text)
+            return activity
+        }
+        let host = try? JSONDecoder().decode(StudyAgentHostToolResult.self, from: Data(result.text.utf8))
+        if let host {
+            let continuation = host.nextCursor == nil ? "" : " · 还有内容可继续读取"
+            let titles = host.items.map { $0.item.title }.filter { !$0.isEmpty }.prefix(3).joined(separator: "、")
+            switch name {
+            case "weibei_course_map": activity.resultSummary = "返回 \(host.items.count) 项目录" + continuation
+            case "weibei_search_workspace": activity.resultSummary = "本次返回 \(host.items.count) 条命中" + continuation
+            case "weibei_find_discussions": activity.resultSummary = "找到 \(host.discussions?.count ?? 0) 段讨论"
+            case "weibei_read_discussion":
+                let discussions = host.discussions ?? []
+                activity.detail = short(discussions.map(\.title).joined(separator: "、"))
+                activity.resultSummary = "读取 \(discussions.reduce(0) { $0 + ($1.messages?.count ?? 0) }) 条消息"
+            case "weibei_web_open":
+                activity.resultSummary = short(host.webPages.map(\.title).joined(separator: "、")) + " · 返回 \(host.webPages.reduce(0) { $0 + $1.text.count }) 字" + continuation
+                activity.sourceURLs = host.webPages.map(\.url)
+            case "weibei_course_retry_failed_pdf_pages":
+                activity.resultSummary = short(host.query)
+            default: activity.resultSummary = "返回 \(host.items.count) 段资料" + continuation
+            }
+            if !titles.isEmpty { activity.resultSummary = (activity.resultSummary ?? "") + " · " + short(titles) }
+            return activity
+        }
+        switch name {
+        case "load_skill": activity.resultSummary = result.details["alreadyLoaded"] as? Bool == true ? "本会话已加载，无需重复读取" : "技能指引已加载"
+        case "weibei_read_learning_memory": activity.resultSummary = "读取 \(context.request.learningContext.memories.count) 条学习记忆"
+        case "weibei_update_learning_memory":
+            activity.resultSummary = result.details["appliedMemoryUpdate"] == nil ? "更新已校验，等待保存" : short(result.text)
+        case "weibei_course_profile_update":
+            activity.resultSummary = result.details["appliedProfileUpdate"] == nil ? "档案更新已校验，等待保存" : short(result.text)
+        case "weibei_note_proposal":
+            activity.resultSummary = arguments["userRequested"] as? Bool == true ? "写入请求已登记，等待笔记保存回执" : "建议已准备，尚未写入笔记"
+        case "weibei_relation_proposal": activity.resultSummary = "关联建议已准备，尚未建立关系"
+        case "create_document": activity.resultSummary = "文稿已创建 · \(result.details["byteCount"] as? Int ?? 0) 字节"
+        case "delegate": activity.resultSummary = (result.details["partial"] as? Bool == true ? "子任务部分完成 · " : "子任务已返回 · ") + short(result.text)
+        case "render_ui": activity.resultSummary = "互动内容已提交到当前回答"
+        case "weibei_visual_asset": activity.resultSummary = "材料图像已读取 · \(result.details["byteCount"] as? Int ?? 0) 字节"
+        case "$web_search": activity.resultSummary = "搜索参数已回传，等待服务端结果"
+        default: activity.resultSummary = short(result.text)
+        }
+        return activity
+    }
+}

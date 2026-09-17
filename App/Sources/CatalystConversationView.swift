@@ -18,6 +18,7 @@ struct CatalystConversationView: View {
         displayedMessages: displayedMessages, floatingThreadID: floatingThreadID, onContentHeight: onContentHeight,
         onFocusComposer: onFocusComposer, onReadingMessage: onReadingMessage).contentShape(Rectangle()) }
     private struct Bridge: UIViewControllerRepresentable {
+        @Environment(\.weibeiReduceMotion) private var reduceMotion
         @ObservedObject var workspace: WorkspaceStore
         @ObservedObject var streaming: AgentStreamingState
         var wideTypography: Bool
@@ -39,6 +40,8 @@ struct CatalystConversationView: View {
             return controller
         }
         func updateUIViewController(_ controller: ConversationController, context: Context) {
+            controller.reduceMotion = reduceMotion
+            controller.reservesReplySpace = floatingThreadID == nil
             controller.workspaceBodyWidth = bodyWidth
             controller.readingMessageChanged = onReadingMessage
             controller.contentHeightChanged = onContentHeight
@@ -82,8 +85,8 @@ struct CatalystConversationView: View {
             session.messages = displayedMessages ?? workspace.messages
             if let id = streaming.displayingMessageID,
                streaming.displayingChatID == targetID,
-               let index = session.messages.firstIndex(where: { $0.id == id && $0.completionState == .generating }) {
-                session.messages[index].text = streaming.text
+               let index = session.messages.firstIndex(where: { $0.id == id }) {
+                session.messages[index] = streaming.applyingDisplayText(to: session.messages[index])
             }
             coordinator.enqueue(session, into: controller, refreshAppearance: appearanceChanged)
         }
@@ -185,7 +188,9 @@ struct CatalystConversationView: View {
                     pending = nil
                     if displayedSessionID != session.id {
                         auxiliaryHosts.removeAll()
-                        await controller.showSession(session)
+                        let firstTurn = displayedSessionID != nil && previous.isEmpty
+                            && session.messages.contains { $0.completionState == .generating }
+                        await controller.showSession(session, animateFirstTurn: firstTurn)
                         displayedSessionID = session.id
                     } else {
                         controller.updateSavedHistory(session.messages)
@@ -234,14 +239,14 @@ private struct CatalystMessageFooter: View {
     @ObservedObject var streaming: AgentStreamingState
     let wideTypography: Bool
     let onHeight: (CGFloat) -> Void
-    private var message: AgentMessage { store.messages.first { $0.id == initial.id } ?? initial }
+    private var message: AgentMessage { streaming.applyingDisplayText(to: store.messages.first { $0.id == initial.id } ?? initial) }
     var body: some View {
         let text = streaming.isDisplaying(message.id) ? streaming.text : message.text
         VStack(alignment: .leading, spacing: 8) {
             if message.role == .user {
                 AgentBubble(message: message, isChatWideTypography: wideTypography)
             } else {
-                if message.completionState == .generating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if message.completionState == .generating && !message.toolActivities.contains(where: { $0.state == .running }) && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     AgentThinkingIndicator(activityText: streaming.activityText, chatWideTypography: wideTypography)
                 }
                 AgentBubble(message: message, isChatWideTypography: wideTypography, showsBody: false)

@@ -178,6 +178,8 @@ public actor NativeAgentLoop {
                 var finish: NativeFinishReason?
                 var stepText = ""
                 var stepUsage: NativeTokenUsage?
+                var reportedSearchActivity = false
+                var sourceOnlyURLs: [String] = []
                 var receivedChunk = false
                 var recoveredOverflow = false
                 streamAttempt: while true {
@@ -208,7 +210,21 @@ public actor NativeAgentLoop {
                                     }
                                 }
                                 await progress?(.text(collectedText, contentBlocks, NativeAgentSources.used(in: collectedText, available: sources)))
+                            case var .serverToolActivity(activity):
+                                reportedSearchActivity = true
+                                activity.id = "\(step):server:\(activity.id)"
+                                activity.textOffset = collectedText.count
+                                await progress?(.toolActivity(activity))
                             case let .webSearchSource(url):
+                                // Some providers expose only sources, not a search lifecycle.
+                                // Report the observed result once, without inventing a running phase.
+                                if !reportedSearchActivity && !sourceOnlyURLs.contains(url) {
+                                    sourceOnlyURLs.append(url)
+                                    await progress?(.toolActivity(.init(
+                                        id: "\(step):server:sources", name: "$web_search_sources", state: .completed,
+                                        sourceURLs: sourceOnlyURLs, textOffset: collectedText.count
+                                    )))
+                                }
                                 if !context.currentRunSourceURLs.contains(url) {
                                     context.currentRunSourceURLs.append(url)
                                 }
@@ -315,6 +331,9 @@ public actor NativeAgentLoop {
                     let call = callResult.call
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
+                    let arguments = (try? JSONSerialization.jsonObject(with: Data(call.arguments.utf8))) as? [String: Any]
+                    await progress?(.toolActivity(NativeToolActivityPresentation.activity(
+                        id: "\(step):\(call.id)", name: call.name, arguments: arguments ?? [:], context: context, textOffset: collectedText.count)))
                     var result: NativeToolExecutionResult
                     if let failure = callResult.failure {
                         result = NativeToolExecutionResult(text: failure.localizedDescription, isError: true)
@@ -383,6 +402,8 @@ public actor NativeAgentLoop {
                             stateAliases: aliases.persistedSnapshot
                         )
                     }
+                    await progress?(.toolActivity(NativeToolActivityPresentation.activity(
+                        id: "\(step):\(call.id)", name: call.name, arguments: arguments ?? [:], context: context, result: result, textOffset: collectedText.count)))
                 }
                 _ = try await ledger.append { seq, time in
                     NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: turn, step: step)

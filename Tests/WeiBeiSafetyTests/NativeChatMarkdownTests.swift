@@ -5,6 +5,45 @@ import XCTest
 @testable import WeiBei
 
 final class NativeChatMarkdownTests: XCTestCase {
+    func testStreamingMarkdownStylesOnlyTheUnfinishedTail() {
+        let cases: [(String, String)] = [
+            ("官方确认其**", "官方确认其"), ("**粗体 *", "**粗体** "),
+            ("**重点", "**重点**"), ("**重点*", "**重点**"), ("*强调", "*强调*"),
+            ("~~删除", "~~删除~~"), ("`print(1)", "`print(1)`"),
+            ("**粗体 *嵌套", "**粗体 *嵌套***"),
+            ("[来源](https://example.", "[来源](weibei-pending-link:)"),
+            ("[来源", "[来源](weibei-pending-link:)"),
+            ("**重点  ", "**重点**  "), ("2*3 和 foo_bar", "2*3 和 foo_bar"),
+            (#"\*字面"#, #"\*字面"#), ("`**字面", "`**字面`"),
+            ("完成 **未闭合\n\n新的段落", "完成 **未闭合\n\n新的段落"),
+            ("```swift\nlet a = **value", "```swift\nlet a = **value"),
+            ("    **代码", "    **代码"), ("正文\n-", "正文\n-\u{200B}")
+        ]
+        for (source, expected) in cases {
+            XCTAssertEqual(MarkdownStreamingDisplay.source(source), expected, source)
+            XCTAssertEqual(MarkdownEmphasisNormalizer.prepare(source).text, source, "Completed text must not receive display-only closers")
+        }
+        let original = "**重点"
+        let display = MarkdownStreamingDisplay.source(original)
+        XCTAssertTrue(NativeChatMarkdownParser.parse(display).runs.contains { $0.style.bold && $0.text == "重点" })
+        XCTAssertEqual(original, "**重点")
+    }
+
+    func testChineseEmphasisIsSharedWithoutChangingCode() {
+        let source = "**举办国家：**美国，**球场（纽约）**举办。\n\n`**举办国家：**美国`\n\n```text\n**球场（纽约）**举办\n```"
+        let prepared = MarkdownEmphasisNormalizer.prepare(source)
+        XCTAssertTrue(prepared.text.contains("**举办国家：** 美国"))
+        XCTAssertTrue(prepared.text.contains("**球场（纽约）** 举办"))
+        let code = prepared.codeRanges.map { (prepared.text as NSString).substring(with: $0) }
+        XCTAssertTrue(code.contains { $0.contains("**举办国家：**美国") })
+        XCTAssertTrue(code.contains { $0.contains("**球场（纽约）**举办") })
+        let adjacent = NativeChatMarkdownParser.parse("如果你想问**梅西和C罗能否参加2026世界杯**，需要核实。")
+        XCTAssertTrue(adjacent.runs.contains { $0.style.bold && $0.text == "梅西和C罗能否参加2026世界杯" })
+        let document = NativeChatMarkdownParser.parse(source)
+        XCTAssertTrue(document.runs.contains { $0.style.bold && $0.text == "举办国家：" })
+        XCTAssertTrue(document.runs.contains { $0.style.bold && $0.text == "球场（纽约）" })
+    }
+
     // Continuous input must publish the already completed answer, then the latest snapshot.
     @MainActor func testPendingInputDoesNotStarveDisplay() async {
         let pipeline = NativeChatMarkdownPipeline()

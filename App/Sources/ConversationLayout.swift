@@ -8,6 +8,7 @@ final class ConversationLayout: UICollectionViewLayout {
     var sectionInset = UIEdgeInsets(top: 14, left: 0, bottom: 10, right: 0)
     var itemWidth: CGFloat = 0
     var itemHeight: ((IndexPath) -> CGFloat)?
+    var replyStartSection: (() -> Int?)?
 
     private struct Section {
         var minY: CGFloat
@@ -25,6 +26,7 @@ final class ConversationLayout: UICollectionViewLayout {
 
     override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
         abs(newBounds.width - (collectionView?.bounds.width ?? 0)) > 0.5
+            || abs(newBounds.height - (collectionView?.bounds.height ?? 0)) > 0.5
     }
 
     override func prepare() {
@@ -56,7 +58,11 @@ final class ConversationLayout: UICollectionViewLayout {
             y += sectionInset.bottom
             sections[section].maxY = y
         }
+        // Leave room below the latest question; a short reply grows in place.
         contentHeight = y
+        if let section = replyStartSection?(), sections.indices.contains(section) {
+            contentHeight = max(y, sections[section].minY + collectionView.bounds.height)
+        }
     }
 
     override var collectionViewContentSize: CGSize {

@@ -10,7 +10,9 @@ final class LabMessage {
     var markdown: String
     var revision = 0
     var displayedRevision = -1
-    var state: State = .complete
+    var state: State = .complete {
+        didSet { if (oldValue == .streaming) != (state == .streaming) { revision += 1 } }
+    }
     var blocks: [PreparedBlock] = []
     var original: AgentMessage?
     var parsed: MarkdownParser.ParseResult?

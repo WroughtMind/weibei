@@ -7,6 +7,8 @@ import QuartzCore
 final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate, UITextViewDelegate {
     let fixtureMode: Bool
     var usesWorkspaceChrome = false
+    var reduceMotion = false
+    var reservesReplySpace = false
     var auxiliaryView: ((LabMessage) -> UIView)?
     var messageLink: ((URL, AgentMessage) -> Void)?
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese {
@@ -80,6 +82,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         collection.keyboardDismissMode = .none
         collection.accessibilityLabel = "会话消息列表"
         flow.itemHeight = { [weak self] path in self?.itemHeight(at: path) ?? 0 }
+        flow.replyStartSection = { [weak self] in
+            guard let self, reservesReplySpace else { return nil }
+            return messages.lastIndex { $0.original?.role == .user }
+        }
         for child in [toolbar, status, collection, input, send, latest] { view.addSubview(child) }
         toolbar.spacing = 16; toolbar.alignment = .center
         toolbar.addArrangedSubview(button("阅读区", symbol: "sidebar.left", action: { [weak self] in self?.toggleWorkspace?() }))
@@ -348,6 +354,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             let block = message.blocks[path.item - 1]
             let stale = block.width != bodyWidth
             cell.show(body: store.view(for: block, width: bodyWidth))
+            cell.body?.revealAppendedText(animated: !reduceMotion && message.state == .streaming && followsLatest)
             selection.paint(cell.body!)
             // A paragraph scrolled in before the width converged was sized from its
             // previous width; the frame in the layout catches up on the next turn.
@@ -484,7 +491,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         if submitQuestion?(input.text) == true { input.text = "" }
     }
 
-    func showSession(_ session: StudySession) async {
+    func showSession(_ session: StudySession, animateFirstTurn: Bool = false) async {
         loadViewIfNeeded()
         scenarioGeneration += 1
         preparation?.cancel(); preparation = nil
@@ -502,6 +509,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             messages.append(message)
         }
         collection.reloadData(); collection.layoutIfNeeded(); scrollToLatest()
+        if animateFirstTurn { for section in messages.indices { animateInsertion(in: section) } }
         status.text = session.title
     }
 
@@ -518,7 +526,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private func formattedMarkdown(_ value: AgentMessage, memo: AgentMessageMarkdownMemo) -> String {
         // The original right-aligned user chip is hosted by the auxiliary row.
         guard value.role == .assistant else { return usesWorkspaceChrome ? "" : value.text }
-        let text = AgentNativeMessageContent.markdown(text: value.text, blocks: value.contentBlocks)
+        let text = AgentNativeMessageContent.markdown(text: value.text, blocks: value.contentBlocks, activities: value.toolActivities)
         return memo.outputs(text: text, sources: value.sources, language: interfaceLanguage).finalized
     }
 
@@ -549,6 +557,23 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             UIView.performWithoutAnimation { collection.insertSections(IndexSet(integer: messages.count - 1)) }
             collection.layoutIfNeeded()
             if followsLatest || value.role == .user { scrollToLatest() }
+            animateInsertion(in: messages.count - 1)
+        }
+    }
+
+    private func animateInsertion(in section: Int) {
+        guard !reduceMotion else { return }
+        for path in collection.indexPathsForVisibleItems where path.section == section {
+            guard let cell = collection.cellForItem(at: path) else { continue }
+            let isQuestion = messages[section].original?.role == .user
+            let travel = isQuestion ? max(8, collection.bounds.maxY - cell.frame.maxY - 16) : 8
+            cell.contentView.alpha = 0
+            cell.contentView.transform = CGAffineTransform(translationX: 0, y: travel)
+            UIView.animate(withDuration: isQuestion ? 0.42 : 0.24, delay: 0,
+                           options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
+                cell.contentView.alpha = 1
+                cell.contentView.transform = .identity
+            }
         }
     }
 
@@ -687,6 +712,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             }
             guard generation == scenarioGeneration else { return }
             if answer.state != .stopped { answer.state = Task.isCancelled ? .stopped : .complete }
+            let previous = answer.blocks
+            _ = await store.prepare(answer, width: bodyWidth)
+            guard generation == scenarioGeneration else { return }
+            applyBlocks(answer, previous: previous)
             refreshFooter(answer)
             send.setImage(UIImage(systemName: "arrow.up.circle.fill"), for: .normal)
             send.accessibilityLabel = "发送并重放固定回答"
@@ -1049,11 +1078,68 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let message = LabMessage(author: "检查样本", markdown: "第一段：中文与 emoji 👩🏽‍💻。\n\n第二段尚在增长")
                 _ = await store.prepare(message, width: bodyWidth)
                 let first = message.blocks[0]
+                let beforeAppend = store.view(for: message.blocks.last!, width: bodyWidth)
+                beforeAppend.revealAppendedText(animated: false)
+                let oldLength = beforeAppend.copyText().trimmingCharacters(in: .newlines).utf16.count
                 message.append("，尾字已经收到。")
                 _ = await store.prepare(message, width: bodyWidth)
                 try expect(message.blocks[0] === first, "流式更新替换了未改变的段落")
-                let rendered = store.view(for: message.blocks.last!, width: bodyWidth).copyText()
+                let growing = store.view(for: message.blocks.last!, width: bodyWidth)
+                growing.revealAppendedText(animated: true)
+                let rendered = growing.copyText()
                 try expect(rendered.contains("尾字已经收到。"), "流式尾字没有显示")
+                try expect(growing === beforeAppend, "新增文字替换了原生段落视图")
+                guard let mask = growing.label.layer.mask,
+                      let settled = (mask.sublayers?.first as? CAShapeLayer)?.path,
+                      let oldGlyph = growing.rect(for: 0), let newGlyph = growing.rect(for: oldLength) else {
+                    throw Failure(message: "流式正文没有进入逐字淡入路径")
+                }
+                try expect(settled.contains(CGPoint(x: oldGlyph.midX, y: oldGlyph.midY), using: .evenOdd)
+                    && !settled.contains(CGPoint(x: newGlyph.midX, y: newGlyph.midY), using: .evenOdd),
+                    "淡入遮罩重播了旧文字，或未覆盖新增文字")
+                try expect(mask.sublayers?.last?.animation(forKey: "stream-reveal") != nil, "新增文字没有淡入动画")
+                growing.revealAppendedText(animated: false)
+                try expect(growing.label.layer.mask == nil, "减少动态效果后仍保留文字动画")
+
+                let unfinished = LabMessage(author: "显示格式检查", markdown: "**尚未闭合")
+                unfinished.state = .streaming
+                _ = await store.prepare(unfinished, width: bodyWidth)
+                let live = store.view(for: unfinished.blocks[0], width: bodyWidth)
+                try expect(live.copyText().trimmingCharacters(in: .newlines) == "尚未闭合", "流式粗体仍显示原始星号")
+                try expect(unfinished.copyableMarkdown == "**尚未闭合", "显示修补污染了复制原文")
+                unfinished.state = .stopped
+                _ = await store.prepare(unfinished, width: bodyWidth)
+                try expect(store.view(for: unfinished.blocks[0], width: bodyWidth).copyText().trimmingCharacters(in: .newlines) == "**尚未闭合",
+                           "停止后没有恢复真实原文排版")
+                let pending = LabMessage(author: "链接检查", markdown: "[来源](https://example.")
+                pending.state = .streaming
+                _ = await store.prepare(pending, width: bodyWidth)
+                let pendingView = store.view(for: pending.blocks[0], width: bodyWidth)
+                let previousOpenLink = store.openLink
+                var openedPendingLink = false
+                store.openLink = { _, _ in openedPendingLink = true }
+                pendingView.onLink?(URL(string: MarkdownStreamingDisplay.pendingLink)!)
+                store.openLink = previousOpenLink
+                try expect(!openedPendingLink, "尚未传完的链接可被打开")
+
+                let anchored = ConversationController(fixtureMode: false)
+                anchored.usesWorkspaceChrome = true
+                anchored.reservesReplySpace = true
+                anchored.reduceMotion = true
+                anchored.loadViewIfNeeded()
+                anchored.view.frame = CGRect(x: 0, y: 0, width: 720, height: 640)
+                anchored.view.setNeedsLayout(); anchored.view.layoutIfNeeded()
+                var turn = StudySession(id: UUID(), title: "发送位置检查")
+                turn.messages = [AgentMessage(role: .user, text: "之前的问题", source: nil),
+                    AgentMessage(role: .assistant, text: String(repeating: "之前的一段回答。\n\n", count: 24), source: nil),
+                    AgentMessage(role: .user, text: "新的问题", source: nil)]
+                await anchored.showSession(turn)
+                let questionTop = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
+                    - anchored.flow.sectionInset.top
+                try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "发送问题后没有留出回答空间")
+                let reply = AgentMessage(role: .assistant, text: "短回答保持原位。", source: nil, completionState: .generating)
+                await anchored.display(reply, streaming: true)
+                try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "短回答把问题顶出了原位")
                 message.state = .stopped
                 try expect(message.blocks[0] === first, "停止时重建了正文")
                 metrics.checks["stream_keeps_unchanged_blocks_and_tail"] = "passed"

@@ -3325,7 +3325,7 @@ private struct FloatingSelectionMessageBubble: View {
 
     private var finalizedMessage: some View {
         AgentMessageMarkdownText(
-            text: isUser ? text : AgentNativeMessageContent.markdown(text: text, blocks: message.contentBlocks),
+            text: isUser ? text : AgentNativeMessageContent.markdown(text: text, blocks: message.contentBlocks, activities: message.toolActivities),
             rendersRichMarkdown: !isUser,
             compact: true,
             isChatWideTypography: false,
@@ -3360,7 +3360,7 @@ private struct FloatingSelectionMessageRow: View {
                 isError: WorkspaceStore.isAgentFailureMessage(message.text),
                 isStreaming: isStreaming
             )
-            if message.completionState == .generating
+            if message.completionState == .generating && !message.toolActivities.contains(where: { $0.state == .running })
                 && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
                     .id(message.id)
@@ -3443,7 +3443,7 @@ struct AgentBubble: View {
             }
         }
         .overlay(alignment: .bottomLeading) {
-            if !isUser {
+            if !isUser && message.completionState != .generating {
                 messageActionBar
                     // Keep actions close to the last rendered line.
                     .offset(x: 16, y: 2)
@@ -3605,13 +3605,13 @@ struct AgentBubble: View {
                 return true
             }
         }
-        let isAwaitingFirstToken = message.completionState == .generating
+        let isAwaitingFirstToken = message.completionState == .generating && !message.toolActivities.contains(where: { $0.state == .running })
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
             if showsBody {
               ZStack(alignment: .topLeading) {
                 AgentMessageMarkdownText(
-                    text: AgentNativeMessageContent.markdown(text: answerText, blocks: message.contentBlocks),
+                    text: AgentNativeMessageContent.markdown(text: answerText, blocks: message.contentBlocks, activities: message.toolActivities),
                     rendersRichMarkdown: true,
                     isChatWideTypography: isChatWideTypography,
                     messageID: message.id,
@@ -5609,3 +5609,6 @@ private struct AgentStreamingResponse: View {
         .accessibilityLabel(Text(store.ui("魏碑正在回答", "WeiBei is responding")))
     }
 }
+
+
+/// Execution records come from the tool runner, never from streamed name fragments.
