@@ -115,7 +115,7 @@ final class AgentAccountService: ObservableObject {
         isConfigured(providerID: provider.credentialProviderID, type: .oauth)
     }
 
-    func startLogin(_ provider: AgentProviderID) {
+    func startLogin(_ provider: AgentProviderID, language: WeiBeiInterfaceLanguage) {
         guard provider == .openaiCodex else {
             lastError = LocalizedMessage(
                 chinese: "该服务暂不支持订阅登录。当前连接未更改；请改用 API Key。",
@@ -136,6 +136,7 @@ final class AgentAccountService: ObservableObject {
                 let store = try NativeAgentCredentialStore.defaultStore()
                 let record = try await NativeOpenAIOAuth.loginWithBrowser(
                     store: store,
+                    language: language,
                     openURL: { url in
 #if targetEnvironment(macCatalyst)
                         UIApplication.shared.open(url, options: [:], completionHandler: nil)

@@ -205,6 +205,7 @@ public enum NativeOpenAIOAuth {
     /// Browser login: local callback on 1455/1457, then token exchange. Does not log secrets.
     public static func loginWithBrowser(
         store: NativeAgentCredentialStore,
+        language: WeiBeiInterfaceLanguage,
         openURL: (URL) -> Void,
         session: URLSession = .shared
     ) async throws -> NativeAgentCredentialRecord {
@@ -213,7 +214,7 @@ public enum NativeOpenAIOAuth {
         let port = try bindAvailablePort()
         let redirectURI = "http://localhost:\(port)/auth/callback"
         let url = authorizeURL(redirectURI: redirectURI, pkce: pkce, state: state)
-        let waiter = CallbackWaiter(expectedState: state)
+        let waiter = CallbackWaiter(expectedState: state, language: language)
         try waiter.listen(port: port)
         openURL(url)
         let code = try await waiter.waitForCode()
@@ -296,12 +297,14 @@ public enum NativeOpenAIOAuth {
 
 final class CallbackWaiter: @unchecked Sendable {
     private let expectedState: String
+    private let language: WeiBeiInterfaceLanguage
     private let lock = NSLock()
     private var continuation: CheckedContinuation<String, Error>?
     private var listenFD: Int32 = -1
 
-    init(expectedState: String) {
+    init(expectedState: String, language: WeiBeiInterfaceLanguage = .english) {
         self.expectedState = expectedState
+        self.language = language
     }
 
     func listen(port: UInt16) throws {
@@ -358,35 +361,99 @@ final class CallbackWaiter: @unchecked Sendable {
         var buffer = [UInt8](repeating: 0, count: 8_192)
         let n = recv(clientFD, &buffer, buffer.count, 0)
         let raw = n > 0 ? String(bytes: buffer[0..<n], encoding: .utf8) ?? "" : ""
-        let html = """
-        HTTP/1.1 200 OK\r
-        Content-Type: text/html; charset=utf-8\r
-        Connection: close\r
-        \r
-        <html><body><p>魏碑已收到 ChatGPT 登录。可以关闭此页。</p></body></html>
-        """
-        _ = html.withCString { pointer in
-            send(clientFD, pointer, strlen(pointer), 0)
+        let code = parseCode(fromHTTP: raw)
+        let response = responseHTML(accepted: code != nil)
+        let bytes = Array(response.utf8)
+        bytes.withUnsafeBytes { buffer in
+            var offset = 0
+            while offset < buffer.count {
+                let sent = send(clientFD, buffer.baseAddress!.advanced(by: offset), buffer.count - offset, 0)
+                if sent < 0 && errno == EINTR { continue }
+                guard sent > 0 else { break }
+                offset += sent
+            }
         }
-        if let code = parseCode(fromHTTP: raw) {
+        if let code {
             finish(code: code)
         } else {
             finish(error: NativeLLMFailure(code: "oauth_callback", message: "callback missing authorization code"))
         }
     }
 
+    /// The callback is only a receipt; token exchange and storage still happen in the app.
+    func responseHTML(accepted: Bool) -> String {
+        let title = accepted
+            ? language.text("已收到 ChatGPT 授权", "ChatGPT authorization received")
+            : language.text("授权未完成", "Authorization incomplete")
+        let detail = accepted
+            ? language.text("请返回魏碑查看登录结果。", "Return to WeiBei to check your sign-in status.")
+            : language.text("未能验证本次授权，请返回魏碑重新登录。", "This authorization could not be verified. Return to WeiBei and sign in again.")
+        let close = language.text("此页面可以关闭。", "You can close this page.")
+        let brand = language.text("魏碑", "WeiBei")
+        let symbol = accepted ? #"<path d="M7 12l3 3 7-7"/>"# : #"<path d="M12 7v6m0 4h.01"/>"#
+        let body = """
+        <!doctype html>
+        <html lang="\(language.rawValue)">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta name="color-scheme" content="light dark">
+          <title>\(title) · \(brand)</title>
+          <style>
+            :root { color-scheme: light dark; --paper: #f8f7f3; --ink: #242922; --muted: #62685f;
+              --accent: #3d6545; --tint: #e7eee4; --rule: #dce0d6; }
+            * { box-sizing: border-box; }
+            body { margin: 0; background: var(--paper); color: var(--ink);
+              font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif; }
+            main { width: min(100%, 560px); margin: 0 auto; padding: clamp(64px, 20vh, 200px) 28px 48px; }
+            .brand { margin: 0 0 52px; font-size: 18px; font-weight: 600; letter-spacing: .06em; }
+            .status { display: grid; place-items: center; width: 48px; height: 48px;
+              border-radius: 50%; color: var(--accent); background: var(--tint); margin-bottom: 24px; }
+            .error { --accent: #95502f; --tint: #f3e8df; }
+            svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8;
+              stroke-linecap: round; stroke-linejoin: round; }
+            h1 { font-size: clamp(26px, 4vw, 32px); line-height: 1.3; font-weight: 600;
+              letter-spacing: -.025em; margin: 0 0 16px; text-wrap: balance; }
+            .detail { color: var(--muted); font-size: 16px; line-height: 1.8; margin: 0; }
+            .close { border-top: 1px solid var(--rule); margin-top: 36px; padding-top: 20px;
+              color: var(--muted); font-size: 13px; line-height: 1.6; }
+            @media (prefers-color-scheme: dark) {
+              :root { --paper: #1d211c; --ink: #edf0e7; --muted: #b4bcaf; --accent: #afcea1;
+                --tint: #303d2e; --rule: #394035; }
+              .error { --accent: #e5b18c; --tint: #423227; }
+            }
+          </style>
+        </head>
+        <body><main class="\(accepted ? "accepted" : "error")">
+          <p class="brand">\(brand)</p>
+          <div class="status" aria-hidden="true"><svg viewBox="0 0 24 24">\(symbol)</svg></div>
+          <h1>\(title)</h1>
+          <p class="detail">\(detail)</p>
+          <p class="close">\(close)</p>
+        </main></body>
+        </html>
+        """
+        return "HTTP/1.1 \(accepted ? "200 OK" : "400 Bad Request")\r\n"
+            + "Content-Type: text/html; charset=utf-8\r\n"
+            + "Content-Length: \(body.utf8.count)\r\n"
+            + "Cache-Control: no-store\r\nReferrer-Policy: no-referrer\r\n"
+            + "Connection: close\r\n\r\n" + body
+    }
+
     func parseCode(fromHTTP request: String) -> String? {
         guard let first = request.split(separator: "\r\n").first else { return nil }
         let parts = first.split(separator: " ")
-        guard parts.count >= 2 else { return nil }
-        guard let url = URL(string: "http://localhost\(parts[1])") else { return nil }
+        guard parts.count >= 2, parts[0] == "GET" else { return nil }
+        guard let url = URL(string: "http://localhost\(parts[1])"),
+              url.path == "/auth/callback" else { return nil }
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         let state = items.first(where: { $0.name == "state" })?.value
         guard state == expectedState else { return nil }
         if let error = items.first(where: { $0.name == "error" })?.value, !error.isEmpty {
             return nil
         }
-        return items.first(where: { $0.name == "code" })?.value
+        guard let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty else { return nil }
+        return code
     }
 
     private func finish(code: String) {

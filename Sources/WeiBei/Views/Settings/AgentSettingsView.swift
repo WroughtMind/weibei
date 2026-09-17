@@ -325,7 +325,7 @@ extension SettingsView {
                         }
                         Button {
                             guard !oauthService.isLoggingIn else { return }
-                            oauthService.startLogin(provider)
+                            oauthService.startLogin(provider, language: store.interfaceLanguage)
                         } label: {
                             Text(
                                 oauthService.isLoggingIn

@@ -12,7 +12,7 @@ enum NativeOAuthCLI {
                 print("native-oauth: opening ChatGPT login in the browser…")
                 print("Sign in with your own account. Tokens stay in the WeiBei credential file and are not printed.")
                 let store = try NativeAgentCredentialStore.defaultStore()
-                _ = try await NativeOpenAIOAuth.loginWithBrowser(store: store) { url in
+                _ = try await NativeOpenAIOAuth.loginWithBrowser(store: store, language: .english) { url in
                     NSWorkspace.shared.open(url)
                 }
                 print("native-oauth login passed: credential stored (no token printed)")
