@@ -38,13 +38,19 @@ final class WorkspaceSafetyTests: XCTestCase {
         try store.configureCourseLibrary(at: library)
         let courseIndex = try XCTUnwrap(store.courses.firstIndex { $0.title == "经济学机制设计与应用" })
         let courseID = store.courses[courseIndex].id
-        let item = try XCTUnwrap(store.importedItems.first { $0.title == "02 Voting" })
-        XCTAssertNotNil(store.courses[courseIndex].sourceRootIdentity)
+        let itemIndex = try XCTUnwrap(store.importedItems.firstIndex { $0.title == "02 Voting" })
+        let item = store.importedItems[itemIndex]
+        let cachedRootIdentity = try XCTUnwrap(store.courses[courseIndex].sourceRootIdentity)
+        let cachedFileIdentity = try XCTUnwrap(item.importedFileIdentity)
         store.selectedItemID = item.id
         XCTAssertEqual(try String(contentsOf: XCTUnwrap(item.url), encoding: .utf8), body)
 
-        for hasCachedIdentity in [true, false] {
-            if !hasCachedIdentity { store.courses[courseIndex].sourceRootIdentity = nil }
+        for (rootIdentity, fileIdentity) in [
+            (cachedRootIdentity, cachedFileIdentity), (nil, cachedFileIdentity),
+            (cachedRootIdentity, nil), (nil, nil),
+        ] {
+            store.courses[courseIndex].sourceRootIdentity = rootIdentity
+            store.importedItems[itemIndex].importedFileIdentity = fileIdentity
             for scope in [courseID, nil] {
                 let read = try store.agentHostReadForSelfCheck(courseID: scope, itemID: item.id)
                 XCTAssertTrue(read.items.contains { $0.item.id == item.id && $0.item.searchText.contains(body) })
