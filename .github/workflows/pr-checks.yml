@@ -203,11 +203,11 @@ jobs:
         id: compile
         run: ./script/build_and_run.sh package
 
-      - name: 检查中文引号加粗与原样代码
+      - name: 检查聊天格式、原样代码与标准用例
         run: |
           swift build --package-path .build/catalyst-packages/checkouts/swift-cmark --product cmark-gfm-bin
           CMARK_BIN_DIR="$(swift build --package-path .build/catalyst-packages/checkouts/swift-cmark --show-bin-path)"
-          python3 script/check_han_strong.py "$CMARK_BIN_DIR/cmark-gfm-bin"
+          python3 script/check_han_strong.py "$CMARK_BIN_DIR/cmark-gfm-bin" .build/catalyst-packages/checkouts/swift-cmark/test/spec.txt
 
       - name: 逐架构验证正式应用启动
         id: launch

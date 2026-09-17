@@ -62,6 +62,8 @@ fi
 CMARK_DIR="$PACKAGES/checkouts/swift-cmark"
 HAN_STRONG_PATCH="$ROOT_DIR/App/script/cmark-han-strong.patch"
 if ! git -C "$CMARK_DIR" apply --reverse --check "$HAN_STRONG_PATCH" 2>/dev/null; then
+  # This generated checkout may contain an older version of our owned patch.
+  git -C "$CMARK_DIR" restore --source=HEAD --worktree -- src/inlines.c
   git -C "$CMARK_DIR" apply --check "$HAN_STRONG_PATCH"
   git -C "$CMARK_DIR" apply "$HAN_STRONG_PATCH"
 fi
@@ -109,7 +111,9 @@ BUILT_UUID="$(dwarfdump --uuid "$CONTENTS/MacOS/WeiBei" | awk 'NR == 1 {print $2
 [[ "$BUILT_UUID" == "$(dwarfdump --uuid "$DSYM_PATH" | awk 'NR == 1 {print $2}')" ]] || {
   echo 'package failed: dSYM does not match the app' >&2; exit 11;
 }
-[[ "$CONFIGURATION" != Release ]] || strip -x "$CONTENTS/MacOS/WeiBei"
+# The executable has no symbol-name plugin API; retain dynamic-library imports
+# and exports. Full debug symbols remain in the matching dSYM above.
+[[ "$CONFIGURATION" != Release ]] || strip -u -r "$CONTENTS/MacOS/WeiBei"
 xattr -cr "$STAGED_APP"
 # Thin all nested code before signing. Keep vendor helper entitlements when re-signing.
 python3 - "$STAGED_APP" "$TARGET_ARCH" "$SIGNING_IDENTITY" <<'SIGN'

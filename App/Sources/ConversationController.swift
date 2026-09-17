@@ -1141,10 +1141,15 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 | *表头 Header* |
                 | --- |
                 | ***单元 Cell*** |
+                | **表格标签： **表格正文 |
 
                 > *引用 Quote*
 
                 - ***列表 List***
+                - **加拿大： **多伦多、温哥华
+                - __墨西哥： __瓜达拉哈拉
+
+                中文*“斜体引号”*继续，中文__“下划线加粗”__继续，中文~~“删除引号”~~继续。
                 """)
                 _ = await typographyStore.prepare(styles, width: bodyWidth)
                 for width in [bodyWidth, max(240, bodyWidth - 160)] {
@@ -1154,12 +1159,24 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                         body.layoutIfNeeded()
                         return ([body.label] + body.attachmentLabels).map(\.attributedText)
                     }
+                    try expect(texts.allSatisfy { !$0.string.contains("**") && !$0.string.contains("__") && !$0.string.contains("~~") },
+                               "中文格式标记泄漏到可见正文")
+                    guard let strike = texts.first(where: { $0.string.contains("删除引号") }) else {
+                        throw Failure(message: "删除线正文缺失")
+                    }
+                    let strikeRange = (strike.string as NSString).range(of: "删除引号")
+                    try expect(((strike.attribute(.strikethroughStyle, at: strikeRange.location, effectiveRange: nil) as? NSNumber)?.intValue ?? 0) != 0,
+                               "中文引号删除线丢失")
                     for (sample, bold, italic) in [
                         ("普通 Plain", false, false), ("加粗 Bold", true, false),
                         ("斜体 Italic", false, true), ("粗斜 Both", true, true),
                         ("内斜 Nested", true, true), ("内粗 Reverse", true, true),
                         ("标题 Heading", true, true), ("表头 Header", true, true),
-                        ("单元 Cell", true, true), ("引用 Quote", false, true), ("列表 List", true, true)
+                        ("单元 Cell", true, true), ("引用 Quote", false, true), ("列表 List", true, true),
+                        ("表格标签：", true, false), ("表格正文", false, false),
+                        ("加拿大：", true, false), ("多伦多、温哥华", false, false),
+                        ("墨西哥：", true, false), ("瓜达拉哈拉", false, false),
+                        ("斜体引号", false, true), ("下划线加粗", true, false)
                     ] {
                         guard let text = texts.first(where: { $0.string.contains(sample) }) else {
                             throw Failure(message: "样式正文缺失：\(sample)")
@@ -1177,6 +1194,22 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                         }
                     }
                 }
+                let streamedSource = "- **加拿大： **多伦多、温哥华"
+                let streamed = LabMessage(author: "排版检查", markdown: "")
+                for end in streamedSource.indices.dropFirst() {
+                    streamed.markdown = String(streamedSource[..<end])
+                    streamed.revision += 1
+                    _ = await typographyStore.prepare(streamed, width: bodyWidth)
+                }
+                streamed.markdown = streamedSource
+                streamed.revision += 1
+                _ = await typographyStore.prepare(streamed, width: bodyWidth)
+                let streamedTexts = streamed.blocks.flatMap { block -> [String] in
+                    let body = typographyStore.view(for: block, width: bodyWidth)
+                    return ([body.label] + body.attachmentLabels).map { $0.attributedText.string }
+                }
+                try expect(streamedTexts.contains { $0.contains("加拿大： 多伦多、温哥华") && !$0.contains("**") },
+                           "流式结束后仍残留加粗标记")
                 let math = LabMessage(author: "排版检查", markdown: "正文与 $E=mc^2$ 同行。\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$")
                 _ = await typographyStore.prepare(math, width: bodyWidth)
                 try expect(math.blocks.count == 2, "行内和独立公式没有保留各自段落")

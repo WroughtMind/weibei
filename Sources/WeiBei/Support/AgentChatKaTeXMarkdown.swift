@@ -1,4 +1,5 @@
 import Foundation
+import WeiBeiCore
 
 /// Normalizes formula delimiters and common model output for Markdown renderers.
 enum AgentChatKaTeXMarkdown {
@@ -47,7 +48,11 @@ enum AgentChatKaTeXMarkdown {
         guard let pattern = singleLineDisplayMath else { return text }
         let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
         var result = text
-        for match in pattern.matches(in: text, range: fullRange).reversed() {
+        let matches = pattern.matches(in: text, range: fullRange)
+        guard !matches.isEmpty else { return text }
+        let literals = MarkdownLiteralRanges.ranges(in: text)
+        for match in matches.reversed() {
+            guard !literals.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else { continue }
             guard let matchRange = Range(match.range, in: result),
                   let contentRange = Range(match.range(at: 1), in: text) else { continue }
             let content = String(text[contentRange]).trimmingCharacters(in: .whitespaces)
@@ -97,8 +102,10 @@ enum AgentChatKaTeXMarkdown {
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
         let matches = regex.matches(in: text, range: nsRange)
         guard !matches.isEmpty else { return text }
+        let literals = MarkdownLiteralRanges.ranges(in: text)
         var output = text
         for match in matches.reversed() {
+            guard !literals.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else { continue }
             guard match.numberOfRanges > 1,
                   let full = Range(match.range, in: output),
                   let capture = Range(match.range(at: 1), in: output) else { continue }

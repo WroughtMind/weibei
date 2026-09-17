@@ -1511,13 +1511,14 @@ public struct AgentReplySourceInlinePresentation: Sendable {
         var direct = [String: AgentReplySource]()
         var additional = [String: [AgentReplySource]]()
         var groupIndex = 0
+        let literals = sources.isEmpty ? [] : MarkdownLiteralRanges.ranges(in: text).compactMap { Range($0, in: text) }
 
-        while let match = Self.earliestSource(in: remaining, sources: sources) {
+        while let match = Self.earliestSource(in: remaining, sources: sources, excluding: literals) {
             rendered += remaining[..<match.range.lowerBound]
             var group = [match.source]
             remaining = remaining[match.range.upperBound...]
 
-            while let next = Self.earliestSource(in: remaining, sources: sources),
+            while let next = Self.earliestSource(in: remaining, sources: sources, excluding: literals),
                   Self.isSourceSeparator(remaining[..<next.range.lowerBound]) {
                 group.append(next.source)
                 remaining = remaining[next.range.upperBound...]
@@ -1561,10 +1562,17 @@ public struct AgentReplySourceInlinePresentation: Sendable {
 
     private static func earliestSource(
         in text: Substring,
-        sources: [AgentReplySource]
+        sources: [AgentReplySource],
+        excluding literals: [Range<String.Index>]
     ) -> (source: AgentReplySource, range: Range<Substring.Index>)? {
-        sources.compactMap { source in
-            text.range(of: source.label).map { (source, $0) }
+        sources.compactMap { source -> (AgentReplySource, Range<String.Index>)? in
+            guard !source.label.isEmpty else { return nil }
+            var remaining = text
+            while let range = remaining.range(of: source.label) {
+                if !literals.contains(where: { $0.overlaps(range) }) { return (source, range) }
+                remaining = remaining[range.upperBound...]
+            }
+            return nil
         }
         .min { $0.1.lowerBound < $1.1.lowerBound }
     }
