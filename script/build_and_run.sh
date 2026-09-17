@@ -62,6 +62,8 @@ fi
 CMARK_DIR="$PACKAGES/checkouts/swift-cmark"
 HAN_STRONG_PATCH="$ROOT_DIR/App/script/cmark-han-strong.patch"
 if ! git -C "$CMARK_DIR" apply --reverse --check "$HAN_STRONG_PATCH" 2>/dev/null; then
+  # This generated checkout may contain an older version of our owned patch.
+  git -C "$CMARK_DIR" restore --source=HEAD --worktree -- src/inlines.c
   git -C "$CMARK_DIR" apply --check "$HAN_STRONG_PATCH"
   git -C "$CMARK_DIR" apply "$HAN_STRONG_PATCH"
 fi

@@ -4187,31 +4187,35 @@ private enum AgentCitationParser {
     )
 
     static func parse(_ text: String) -> (displayText: String, citations: [AgentCitation]) {
-        guard let regex else {
+        guard let regex, text.contains("[") else {
             return (text, [])
         }
+        let literals = MarkdownLiteralRanges.ranges(in: text)
         // Hide an incomplete citation while it arrives. Whitespace belongs to
         // the answer: collapsing it changes code indentation and blank lines.
         var working = text
         if let trailingOpenCitation,
            let match = trailingOpenCitation.firstMatch(in: working, range: fullNSRange(working)),
+           !literals.contains(where: { NSIntersectionRange($0, match.range).length > 0 }),
            let range = Range(match.range, in: working) {
             working = String(working[..<range.lowerBound])
         }
         let nsRange = fullNSRange(working)
         var citations: [AgentCitation] = []
         var seen = Set<String>()
-        regex.enumerateMatches(in: working, options: [], range: nsRange) { match, _, _ in
-            guard let match,
-                  let fullRange = Range(match.range, in: working),
+        let matches = regex.matches(in: working, range: nsRange).filter { match in
+            !literals.contains(where: { NSIntersectionRange($0, match.range).length > 0 })
+        }
+        for match in matches {
+            guard let fullRange = Range(match.range, in: working),
                   let kindRange = Range(match.range(at: 1), in: working),
-                  let valueRange = Range(match.range(at: 2), in: working) else { return }
+                  let valueRange = Range(match.range(at: 2), in: working) else { continue }
             let kindToken = String(working[kindRange])
             let value = String(working[valueRange]).trimmingCharacters(in: .whitespacesAndNewlines)
             let raw = String(working[fullRange])
-            guard let kind = kind(from: kindToken) else { return }
+            guard let kind = kind(from: kindToken) else { continue }
             let key = "\(kind.rawValue)|\(value)"
-            guard seen.insert(key).inserted else { return }
+            guard seen.insert(key).inserted else { continue }
             citations.append(
                 AgentCitation(
                     id: key,
@@ -4221,7 +4225,10 @@ private enum AgentCitationParser {
                 )
             )
         }
-        let cleaned = regex.stringByReplacingMatches(in: working, options: [], range: nsRange, withTemplate: "")
+        var cleaned = working
+        for match in matches.reversed() {
+            if let range = Range(match.range, in: cleaned) { cleaned.removeSubrange(range) }
+        }
         return (cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? working : cleaned, citations)
     }
 

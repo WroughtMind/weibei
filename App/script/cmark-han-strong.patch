@@ -1,10 +1,8 @@
 --- a/src/inlines.c
 +++ b/src/inlines.c
-@@ -424,6 +424,15 @@
- }
- 
- 
-+// Han text does not require spaces around quoted strong emphasis.
+@@ -426,2 +426,17 @@
+
++// Chinese text does not require spaces around emphasis punctuation.
 +static bool is_han_character(int32_t c) {
 +  return (c >= 0x3400 && c <= 0x4DBF) ||
 +         (c >= 0x4E00 && c <= 0x9FFF) ||
@@ -13,19 +11,107 @@
 +         (c >= 0x30000 && c <= 0x323AF);
 +}
 +
++static bool is_cjk_punctuation(int32_t c) {
++  return cmark_utf8proc_is_punctuation(c) &&
++         ((c >= 0x3000 && c <= 0x303F) || (c >= 0xFE10 && c <= 0xFE1F) ||
++          (c >= 0xFE30 && c <= 0xFE4F) || (c >= 0xFF00 && c <= 0xFFEF));
++}
++
  // Scan ***, **, or * and return number scanned, or 0.
- // Advances position.
- static int scan_delims(cmark_parser *parser, subject *subj, unsigned char c,
-@@ -484,6 +493,12 @@
-                    (!cmark_utf8proc_is_punctuation(before_char) ||
-                     cmark_utf8proc_is_space(after_char) ||
+@@ -486,7 +501,13 @@
                      cmark_utf8proc_is_punctuation(after_char));
-+  if (c == '*' && numdelims >= 2) {
-+    left_flanking = left_flanking ||
++  if (c == '*' || c == '_') {
++    left_flanking = left_flanking || is_cjk_punctuation(after_char) ||
 +        (is_han_character(before_char) && cmark_utf8proc_is_punctuation(after_char));
-+    right_flanking = right_flanking ||
++    right_flanking = right_flanking || is_cjk_punctuation(before_char) ||
 +        (cmark_utf8proc_is_punctuation(before_char) && is_han_character(after_char));
 +  }
    if (c == '_') {
      *can_open = left_flanking &&
-                 (!right_flanking || cmark_utf8proc_is_punctuation(before_char));
+-                (!right_flanking || cmark_utf8proc_is_punctuation(before_char));
++                (!right_flanking || cmark_utf8proc_is_punctuation(before_char) || is_han_character(before_char));
+     *can_close = right_flanking &&
+-                 (!left_flanking || cmark_utf8proc_is_punctuation(after_char));
++                 (!left_flanking || cmark_utf8proc_is_punctuation(after_char) || is_han_character(after_char));
+   } else if (c == '\'' || c == '"') {
+@@ -598,3 +619,3 @@
+
+-  if ((can_open || can_close) && (!(c == '\'' || c == '"') || smart)) {
++  if ((can_open || can_close || ((c == '*' || c == '_') && numdelims == 2)) && (!(c == '\'' || c == '"') || smart)) {
+     push_delimiter(subj, c, can_open, can_close, inl_text);
+@@ -680,2 +701,57 @@
+   return NULL;
++}
++
++// Model output can leave horizontal padding inside a strong span. Resolve
++// these only after ordinary emphasis, so valid nested Markdown keeps priority.
++static bool strong_padding(subject *subj, delimiter *delim, bool opening) {
++  bufsize_t pos = opening ? delim->position : delim->position - delim->length - 1;
++  if (pos < 0 || pos >= subj->input.len) return false;
++  if (!opening) {
++    while (pos > 0 && (subj->input.data[pos] >> 6) == 2) pos--;
++  }
++  int32_t ch = 0;
++  return cmark_utf8proc_iterate(subj->input.data + pos, subj->input.len - pos, &ch) > 0 &&
++         ch != '\n' && ch != '\r' && cmark_utf8proc_is_space(ch);
++}
++
++static bool strong_has_content(subject *subj, delimiter *opener, delimiter *closer) {
++  bufsize_t pos = opener->position;
++  const bufsize_t end = closer->position - closer->length;
++  while (pos < end) {
++    int32_t ch = 0;
++    int size = cmark_utf8proc_iterate(subj->input.data + pos, end - pos, &ch);
++    if (size <= 0 || ch == '\n' || ch == '\r') return false;
++    if (!cmark_utf8proc_is_space(ch)) return true;
++    pos += size;
++  }
++  return false;
++}
++
++static void process_padded_strong(subject *subj, bufsize_t stack_bottom) {
++  delimiter *current = subj->last_delim;
++  delimiter *opener = NULL;
++  if (!current || current->position < stack_bottom) return;
++  while (current->previous && current->previous->position >= stack_bottom)
++    current = current->previous;
++  while (current) {
++    if ((current->delim_char == '*' || current->delim_char == '_') &&
++        current->length == 2 && current->inl_text->as.literal.len == 2) {
++      bool opening_padding = strong_padding(subj, current, true);
++      bool closing_padding = strong_padding(subj, current, false);
++      if (opener && opener->delim_char == current->delim_char &&
++          opener->inl_text->parent == current->inl_text->parent &&
++          opener->inl_text->start_line == current->inl_text->start_line &&
++          (current->can_close || closing_padding) &&
++          (strong_padding(subj, opener, true) || closing_padding) &&
++          strong_has_content(subj, opener, current)) {
++        current = S_insert_emph(subj, opener, current);
++        opener = NULL;
++        continue;
++      }
++      opener = (current->can_open || opening_padding) ? current : NULL;
++    } else {
++      opener = NULL;
++    }
++    current = current->next;
++  }
+ }
+@@ -764,3 +840,4 @@
+                 old_closer->position;
+-        if (!old_closer->can_open) {
++        if (!old_closer->can_open &&
++            !((old_closer->delim_char == '*' || old_closer->delim_char == '_') && old_closer->length == 2)) {
+           // we can remove a closer that can't be an
+@@ -775,2 +852,3 @@
+   }
++  process_padded_strong(subj, stack_bottom);
+   // free all delimiters in list until stack_bottom:
+@@ -1956,2 +2034,7 @@
+
++  if (c == '~') {
++    *left_flanking |= is_cjk_punctuation(after_char) || (is_han_character(before_char) && *punct_after);
++    *right_flanking |= is_cjk_punctuation(before_char) || (*punct_before && is_han_character(after_char));
++  }
++
+   return numdelims;

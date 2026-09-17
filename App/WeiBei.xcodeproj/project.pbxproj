@@ -187,6 +187,7 @@
 		C21F9B2F6453AD3F0A0A8FD7 /* WorkspaceStore+CourseLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EAC09AC59D2879EFE130E0F /* WorkspaceStore+CourseLibrary.swift */; };
 		C2683F836E4926D9F60998FD /* ConversationData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E8D9872F023903DF204CF8 /* ConversationData.swift */; };
 		C4F2BC9FEA99015CDD29FE5C /* GoogleGenerativeAIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB3C6B69CB382932D6317937 /* GoogleGenerativeAIProvider.swift */; };
+		0F73C11D3A3E811B090E3855 /* MarkdownLiteralRanges.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F0A58206AD58992303EE1D /* MarkdownLiteralRanges.swift */; };
 		CDCF17FC6DA7A37CD1F01302 /* MarkdownTagSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = E73953CD01471F2679025B14 /* MarkdownTagSearch.swift */; };
 		CEF2E81F9BC424EAF54F4D7E /* UnavailableCourseUnregister.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9759962F54F9001DE79984B0 /* UnavailableCourseUnregister.swift */; };
 		CF4F112CD89D07F2AFC8AAC4 /* lanting-universe.png in Resources */ = {isa = PBXBuildFile; fileRef = 257F0893CACC4F24E9CBBAB0 /* lanting-universe.png */; };
@@ -473,6 +474,7 @@
 		E59061F53CCAA6551A4ABABC /* ConversationWebClippingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationWebClippingView.swift; sourceTree = "<group>"; };
 		E6E8BBB95785292CA128DEDF /* NativeAgentBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentBackend.swift; sourceTree = "<group>"; };
 		E735763B3C23E6288BBF68C9 /* WorkspaceStore+WorkResume.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+WorkResume.swift"; sourceTree = "<group>"; };
+		C0F0A58206AD58992303EE1D /* MarkdownLiteralRanges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownLiteralRanges.swift; sourceTree = "<group>"; };
 		E73953CD01471F2679025B14 /* MarkdownTagSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTagSearch.swift; sourceTree = "<group>"; };
 		E739D32EBD1993C95049134D /* AgentDisplayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDisplayText.swift; sourceTree = "<group>"; };
 		E8CB1F711E169ECC6A8E59E6 /* AgentMessagePlaceholderRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMessagePlaceholderRow.swift; sourceTree = "<group>"; };
@@ -661,6 +663,7 @@
 				A84083090C43A476B9185377 /* MarkdownAttachmentGC.swift */,
 				944C3E108DCDD3497B959C7C /* MarkdownAttachmentStore.swift */,
 				CB8C759711B6BC1EB7095DDB /* MarkdownSelectionSanitizer.swift */,
+				C0F0A58206AD58992303EE1D /* MarkdownLiteralRanges.swift */,
 				E73953CD01471F2679025B14 /* MarkdownTagSearch.swift */,
 				99D5B217237D751A80938AA4 /* NoteBackupRing.swift */,
 				13231B352EF000C1DAB3D58A /* NoteSourceRelations.swift */,
@@ -1155,6 +1158,7 @@
 				765C1A067FD1571617255E55 /* MarkdownAttachmentGC.swift in Sources */,
 				9CB8A7D13329BBBA8BB508C0 /* MarkdownAttachmentStore.swift in Sources */,
 				906EBD96213A616F03F1B5F1 /* MarkdownSelectionSanitizer.swift in Sources */,
+				0F73C11D3A3E811B090E3855 /* MarkdownLiteralRanges.swift in Sources */,
 				CDCF17FC6DA7A37CD1F01302 /* MarkdownTagSearch.swift in Sources */,
 				289125D70A361B585884F17D /* NativeAgentBackend.swift in Sources */,
 				8F1C901FAB9CB7AF1CF2A5CA /* NativeAgentCredentials.swift in Sources */,
