@@ -74,6 +74,28 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         return urlRequest
     }
 
+    private static func webActivityName(_ action: [String: Any]?) -> String {
+        switch action?["type"] as? String {
+        case "search": return "$web_search"
+        case "open_page": return "$web_open"
+        case "find_in_page": return "$web_find"
+        default: return "$web_activity"
+        }
+    }
+
+    private static func webActivity(_ item: [String: Any], id: String) -> AgentToolActivity {
+        let action = item["action"] as? [String: Any]
+        let queries = action?["queries"] as? [String]
+        let pageDetail = [action?["pattern"] as? String, action?["url"] as? String].compactMap { $0 }.joined(separator: " · ")
+        let detail = queries?.joined(separator: " · ") ?? action?["query"] as? String
+            ?? (pageDetail.isEmpty ? nil : pageDetail)
+        let urls = (action?["sources"] as? [[String: Any]])?.compactMap { $0["url"] as? String }
+        let status = item["status"] as? String
+        return .init(id: id, name: webActivityName(action),
+                     state: status == "failed" ? .failed : status == "completed" ? .completed : .running,
+                     detail: detail, sourceURLs: urls)
+    }
+
     public static func payload(for request: NativeLLMRequest, webSearchSupported: Bool = true) -> [String: Any] {
         var tools: [[String: Any]] = request.tools.map { tool in
             [
@@ -198,7 +220,15 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
             let text = object["delta"] as? String ?? ""
             return text.isEmpty ? [] : [.reasoningDelta(index: index, text: text)]
+        case "response.web_search_call.in_progress", "response.web_search_call.searching", "response.web_search_call.completed":
+            guard let id = object["item_id"] as? String, !id.isEmpty else { return [] }
+            return [.serverToolActivity(.init(id: id, name: "$web_activity",
+                state: type == "response.web_search_call.completed" ? .completed : .running))]
         case "response.output_item.added":
+            if let item = object["item"] as? [String: Any],
+               item["type"] as? String == "web_search_call", let id = item["id"] as? String {
+                return [.serverToolActivity(webActivity(item, id: id))]
+            }
             guard let item = object["item"] as? [String: Any],
                   item["type"] as? String == "function_call" else { return [] }
             let id = (item["call_id"] as? String) ?? (item["id"] as? String) ?? ""
@@ -206,12 +236,16 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             return [.toolCallDelta(index: index, id: id, name: name, argumentsDelta: "")]
         case "response.output_item.done":
             guard let item = object["item"] as? [String: Any],
-                  item["type"] as? String == "web_search_call",
-                  let action = item["action"] as? [String: Any],
-                  let sources = action["sources"] as? [[String: Any]] else { return [] }
-            return sources.compactMap { source in
-                (source["url"] as? String).map(NativeStreamChunk.webSearchSource(url:))
+                  item["type"] as? String == "web_search_call" else { return [] }
+            var chunks: [NativeStreamChunk] = []
+            let action = item["action"] as? [String: Any]
+            if let id = item["id"] as? String {
+                chunks.append(.serverToolActivity(webActivity(item, id: id)))
             }
+            for source in action?["sources"] as? [[String: Any]] ?? [] {
+                if let url = source["url"] as? String { chunks.append(.webSearchSource(url: url)) }
+            }
+            return chunks
         case "response.function_call_arguments.delta":
             let delta = object["delta"] as? String ?? ""
             let id = object["call_id"] as? String ?? ""

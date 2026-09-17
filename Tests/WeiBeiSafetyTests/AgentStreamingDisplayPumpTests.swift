@@ -1,5 +1,7 @@
 import XCTest
+import SwiftUI
 @testable import WeiBei
+import WeiBeiCore
 
 @MainActor
 final class AgentStreamingDisplayPumpTests: XCTestCase {
@@ -113,6 +115,127 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         XCTAssertEqual(rig.displayed, "新内容")
         XCTAssertEqual(rig.replacements, ["新内容"])
         XCTAssertEqual(rig.pump.pendingCharacterCount, 0)
+    }
+
+    func testCompletedReplyKeepsItsVisiblePrefixUntilTheDisplayQueueDrains() {
+        let run = AgentConversationRun(chatID: UUID())
+        let message = AgentMessage(role: .assistant, text: "一二三四五六七八九十", source: nil)
+        run.streaming.begin(messageID: message.id, chatID: run.chatID!)
+        run.pump.enqueue(cumulativeText: message.text)
+        run.pump.stepOnce()
+        run.pump.finish(cumulativeText: message.text)
+        XCTAssertEqual(run.streaming.applyingDisplayText(to: message).text, "一二三四")
+        XCTAssertEqual(message.text, "一二三四五六七八九十")
+        XCTAssertEqual(message.completionState, .completed)
+        XCTAssertEqual(run.streaming.applyingDisplayText(to: message).completionState, .generating)
+        while run.pump.pendingCharacterCount > 0 { run.pump.stepOnce() }
+        XCTAssertEqual(run.streaming.applyingDisplayText(to: message).text, message.text)
+        XCTAssertFalse(run.streaming.isDisplaying(message.id))
+    }
+
+    func testToolGroupsFollowTextBoundariesWithoutRevealingFutureActivity() throws {
+        let text = "先👨‍👩‍👧‍👦查后答"
+        let activities = [
+            AgentToolActivity(id: "1", name: "search", state: .completed, textOffset: 2),
+            AgentToolActivity(id: "2", name: "read", state: .completed, textOffset: 2),
+            AgentToolActivity(id: "3", name: "read", state: .running, textOffset: 4)
+        ]
+        let early = AgentNativeMessageContent.markdown(text: String(text.prefix(1)), blocks: [], activities: activities)
+        XCTAssertEqual(early, "先")
+        let output = AgentNativeMessageContent.markdown(text: text, blocks: [], activities: activities)
+        XCTAssertEqual(output, "先👨‍👩‍👧‍👦\n\n![图示](weibei-visualization:activity/2)\n\n查后\n\n![图示](weibei-visualization:activity/4)\n\n答")
+        let start = activities[0]
+        let completed = start.merging(.init(id: "1", name: "search", state: .completed, textOffset: 5))
+        XCTAssertEqual(completed.textOffset, 2)
+        XCTAssertEqual(try JSONDecoder().decode(AgentToolActivity.self, from: JSONEncoder().encode(completed)), completed)
+    }
+
+    func testActivityInterleavesWithRichContentAndRespectsVisiblePrefix() {
+        let blocks: [AgentMessageContentBlock] = [.text("先查"), .unavailable(type: "example", rawJSON: "{}"), .text("后答")]
+        let activities = [AgentToolActivity(id: "1", name: "read", state: .completed, textOffset: 2)]
+        let early = AgentNativeMessageContent.markdown(text: "先", blocks: blocks, activities: activities)
+        XCTAssertEqual(early, "先")
+        let output = AgentNativeMessageContent.markdown(text: "先查后答", blocks: blocks, activities: activities)
+        XCTAssertEqual(output, "先查\n\n![图示](weibei-visualization:activity/2)\n\n\n\n![图示](weibei-visualization:unavailable-1)\n\n后答")
+    }
+
+    func testActivityIdentityAndRevealSurviveUpdatesWithoutReplayingHistory() {
+        let names = ["$web_search", "weibei_course_read", "weibei_note_proposal", "delegate", "render_ui",
+                     "weibei_course_map", "weibei_read_learning_memory", "weibei_update_learning_memory",
+                     "weibei_course_profile_update", "weibei_visual_asset", "weibei_course_retry_failed_pdf_pages",
+                     "create_document", "weibei_read_discussion", "weibei_search_workspace"]
+        for name in names {
+            XCTAssertNotNil(NSImage(systemSymbolName: AgentActivityIcon.symbol(for: name), accessibilityDescription: nil), name)
+        }
+        XCTAssertEqual(Set(names.prefix(5).map { AgentActivityIcon.symbol(for: $0) }).count, 5)
+        let state = AgentStreamingState(), message = UUID(), chat = UUID(), now = Date()
+        XCTAssertTrue(state.activityArrivalTimes(for: ["a"], messageID: message, now: now).isEmpty)
+        state.begin(messageID: message, chatID: chat)
+        let initial = state.activityArrivalTimes(for: ["a", "b"], messageID: message, now: now)
+        XCTAssertLessThan(initial["a"]!, initial["b"]!)
+        XCTAssertEqual(state.activityArrivalTimes(for: ["a", "b"], messageID: message, now: now.addingTimeInterval(5)), initial)
+        let before = AgentActivityRevealTiming(start: initial["a"], now: now, reduceMotion: false)
+        let middle = AgentActivityRevealTiming(start: initial["a"], now: now.addingTimeInterval(0.2), reduceMotion: false)
+        let settled = AgentActivityRevealTiming(start: initial["a"], now: now.addingTimeInterval(1), reduceMotion: false)
+        XCTAssertEqual(before.content, 0)
+        XCTAssertGreaterThan(middle.connector, middle.content)
+        XCTAssertEqual(settled.progress, 1)
+        XCTAssertEqual(settled.content, 1)
+        XCTAssertEqual(AgentActivityRevealTiming(start: initial["a"], now: now, reduceMotion: true).content, 1)
+        state.finishDisplaying()
+        XCTAssertTrue(state.activityArrivalTimes(for: ["a"], messageID: message).isEmpty)
+    }
+
+    func testActivityDisclosureUsesCompactNativeLayout() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let store = WorkspaceStore(workspaceDirectory: folder, selectionAskThreadDefaults: defaults,
+                                   startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        var message = AgentMessage(role: .assistant, text: "回答", source: nil)
+        message.toolActivities = [
+            .init(id: "search", name: "$web_search", state: .completed,
+                  detail: String(repeating: "很长的搜索查询 ", count: 20),
+                  sourceURLs: (1...44).map { "https://example.com/article/\($0)" }),
+            .init(id: "read", name: "weibei_course_read", state: .completed, detail: "课程讲义，第 8 页")
+        ]
+        var heights: [CGFloat] = []
+        for expanded in [false, true] {
+            let renderer = ImageRenderer(content: AgentToolActivityGroup(message: message, autoOpen: expanded)
+                .environmentObject(store).frame(width: 640).padding(24).background(WeiBeiTheme.paper))
+            renderer.scale = 2
+            let image = try XCTUnwrap(renderer.nsImage)
+            heights.append(image.size.height)
+            if let directory = ProcessInfo.processInfo.environment["WEIBEI_ACTIVITY_PREVIEW_DIR"] {
+                let url = URL(fileURLWithPath: directory, isDirectory: true)
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                let bitmap = try XCTUnwrap(NSBitmapImageRep(data: XCTUnwrap(image.tiffRepresentation)))
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to:
+                    url.appendingPathComponent(expanded ? "expanded.png" : "collapsed.png"))
+            }
+        }
+        XCTAssertGreaterThan(heights[1], heights[0])
+        XCTAssertLessThan(heights[1], 150, "Opening a group must not lay out query details or 44 sources")
+    }
+
+    func testLoadingPainterProducesDifferentFramesWithoutMovingText() throws {
+        let view = AgentThinkingOrbitNSView(frame: NSRect(x: 0, y: 0, width: 180, height: 40))
+        var frames: [Data] = []
+        for elapsed in [1.0, 1.7] {
+            view.apply(text: "正在搜索网页", textWidth: 120, orbitWidth: 140, pathHeight: 34,
+                       orbitPadding: 6.5, textLineHeight: 20, lineWidth: 1.25, fontSize: 14,
+                       motionEpoch: Date().addingTimeInterval(-elapsed), appearanceMode: .paper)
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 180,
+                pixelsHigh: 40, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+            view.draw(view.bounds)
+            NSGraphicsContext.restoreGraphicsState()
+            frames.append(try XCTUnwrap(bitmap.representation(using: .png, properties: [:])))
+            XCTAssertEqual(view.intrinsicContentSize, NSSize(width: 140, height: 34))
+        }
+        XCTAssertNotEqual(frames[0], frames[1], "Loading feedback must animate, not remain a static label")
     }
 
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {

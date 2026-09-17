@@ -24,6 +24,12 @@ final class BlockView: UIView, UITextViewDelegate {
     private let selectionOverlay = CAShapeLayer()
     private var lastWidth: CGFloat = 0
     private var lastHeight: CGFloat = 0
+    private var displayedText = ""
+    private var displayedWidth: CGFloat = 0
+    private let revealMask = CALayer()
+    private let settledTextMask = CAShapeLayer()
+    private var revealingText: [(range: NSRange, layer: CAShapeLayer, until: CFTimeInterval)] = []
+    private var revealCleanup: DispatchWorkItem?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -132,6 +138,66 @@ final class BlockView: UIView, UITextViewDelegate {
         accessibilityIdentifier = block.id
     }
 
+    /// Fade only newly appended glyphs. Settled text is never redrawn with a lower opacity.
+    func revealAppendedText(animated: Bool) {
+        // Paragraph terminators belong to the renderer, not the growing text.
+        // Keeping them in the prefix makes every append look like a replacement.
+        let current = label.attributedText.string.replacingOccurrences(of: "[\\r\\n]+$", with: "", options: .regularExpression)
+        let previous = displayedText
+        defer { displayedText = current; displayedWidth = bounds.width }
+        guard animated, !preparedLabel.isHidden else { finishTextReveal(); return }
+        guard current != previous else { return }
+        guard current.hasPrefix(previous), displayedWidth == 0 || displayedWidth == bounds.width else {
+            finishTextReveal(); return
+        }
+        let range = NSRange(location: previous.utf16.count, length: current.utf16.count - previous.utf16.count)
+        guard range.length > 0 else { return }
+        let now = CACurrentMediaTime()
+        revealingText.removeAll { $0.until <= now }
+        let layer = CAShapeLayer()
+        layer.fillColor = UIColor.black.cgColor
+        revealingText.append((range, layer, now + 0.32))
+        let settled = CGMutablePath()
+        settled.addRect(preparedLabel.bounds)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        revealMask.frame = preparedLabel.bounds
+        settledTextMask.frame = preparedLabel.bounds
+        settledTextMask.fillColor = UIColor.black.cgColor
+        settledTextMask.fillRule = .evenOdd
+        for item in revealingText {
+            let path = CGMutablePath()
+            for rect in textGeometry().rects(for: item.range) {
+                let glyphs = CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
+                path.addRect(glyphs)
+                settled.addRect(glyphs)
+            }
+            item.layer.frame = preparedLabel.bounds
+            item.layer.path = path
+        }
+        settledTextMask.path = settled
+        revealMask.sublayers = [settledTextMask] + revealingText.map(\.layer)
+        preparedLabel.layer.mask = revealMask
+        CATransaction.commit()
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        fade.duration = 0.32
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(fade, forKey: "stream-reveal")
+        revealCleanup?.cancel()
+        let cleanup = DispatchWorkItem { [weak self] in self?.finishTextReveal() }
+        revealCleanup = cleanup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32, execute: cleanup)
+    }
+
+    private func finishTextReveal() {
+        revealCleanup?.cancel(); revealCleanup = nil
+        revealingText.removeAll()
+        preparedLabel.layer.mask = nil
+        revealMask.sublayers = nil
+    }
+
     func measure(width: CGFloat) -> CGFloat {
         guard let record else { return 1 }
         if lastWidth != width { geometry = nil }
@@ -158,7 +224,7 @@ final class BlockView: UIView, UITextViewDelegate {
             markdown.frame = CGRect(x: 0, y: 0, width: width, height: lastHeight)
             markdown.layoutIfNeeded()
         case .workspaceAttachment:
-            lastHeight = max(120, record.height)
+            lastHeight = max(1, record.height)
         case .card:
             lastHeight = record.collapsed ? 48 : 204
             draft.isHidden = record.collapsed; save.isHidden = record.collapsed
@@ -175,6 +241,7 @@ final class BlockView: UIView, UITextViewDelegate {
         super.layoutSubviews()
         guard let record else { return }
         if bounds.width != lastWidth { geometry = nil; lastWidth = bounds.width }
+        if displayedWidth != 0, displayedWidth != bounds.width { finishTextReveal() }
         switch record.kind {
         case .markdown:
             if preparedLabel.isHidden { markdown.frame = bounds }
@@ -267,6 +334,7 @@ final class BlockView: UIView, UITextViewDelegate {
     func displaySelection(_ range: NSRange?) {
         let path = CGMutablePath()
         if let range, range.length > 0 {
+            finishTextReveal()
             for rect in textGeometry().rects(for: range) {
                 path.addRect(CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height))
             }
@@ -287,7 +355,7 @@ final class BlockView: UIView, UITextViewDelegate {
             return text
         case let .card(source): return record.draft.isEmpty ? source : record.draft
         case let .diagram(source): return source
-        case .workspaceAttachment: return "[互动内容]"
+        case let .workspaceAttachment(identifier): return identifier.hasPrefix("activity/") ? "" : "[互动内容]"
         }
     }
 }

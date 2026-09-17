@@ -58,13 +58,17 @@ public struct NativeSSEFramer: Sendable {
 /// Assembles streamed tool-call argument fragments. Incomplete JSON is refused.
 public struct NativeToolCallAssembler: Sendable {
     private var calls: [Int: NativeToolCall] = [:]
+    private var serverToolIndices: Set<Int> = []
     private var buffers: [Int: String] = [:]
 
     public init() {}
 
     public mutating func apply(_ chunk: NativeStreamChunk) {
         switch chunk {
+        case let .blockStart(index, .serverTool):
+            serverToolIndices.insert(index)
         case let .toolCallDelta(index, id, name, argumentsDelta):
+            guard !serverToolIndices.contains(index) else { return }
             var current = calls[index] ?? NativeToolCall(id: id, name: name ?? "", arguments: "")
             if let name, !name.isEmpty { current.name = name }
             if current.id.isEmpty { current.id = id }

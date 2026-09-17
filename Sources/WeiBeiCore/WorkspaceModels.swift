@@ -1845,6 +1845,32 @@ public enum AgentMessageContentBlock: Codable, Hashable, Sendable {
     }
 }
 
+public struct AgentToolActivity: Identifiable, Codable, Hashable, Sendable {
+    public enum State: String, Codable, Sendable { case running, completed, failed, cancelled }
+    public var id: String
+    public var name: String
+    public var state: State
+    public var detail: String?
+    public var sourceURLs: [String]?
+    public var resultSummary: String?
+    /// Character position in the cumulative answer when this activity first appeared.
+    public var textOffset: Int?
+    public init(id: String, name: String, state: State, detail: String? = nil, sourceURLs: [String]? = nil, resultSummary: String? = nil, textOffset: Int? = nil) {
+        self.id = id; self.name = name; self.state = state
+        self.detail = detail; self.sourceURLs = sourceURLs; self.resultSummary = resultSummary; self.textOffset = textOffset
+    }
+    public func merging(_ update: Self) -> Self {
+        var next = update
+        // Status-only web events cannot erase an already identified action.
+        if update.name == "$web_activity", ["$web_search", "$web_open", "$web_find"].contains(name) { next.name = name }
+        next.detail = update.detail ?? detail
+        next.sourceURLs = update.sourceURLs ?? sourceURLs
+        next.resultSummary = update.resultSummary ?? resultSummary
+        next.textOffset = textOffset ?? update.textOffset
+        return next
+    }
+}
+
 public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var role: AgentRole
@@ -1860,6 +1886,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var origin: AgentReplyOrigin?
     public var failureKind: AgentFailureKind?
     public var retryQuestion: String?
+    public var toolActivities: [AgentToolActivity] = []
     public var requestContext: AgentRequestContext?
     public var toolTrace: [String]
     public var createdAt: Date
@@ -1917,6 +1944,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case origin
         case failureKind
         case retryQuestion
+        case toolActivities
         case requestContext
         case toolTrace
         case createdAt
@@ -2021,6 +2049,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             forKey: .retryQuestion,
             marker: "reply-retry:decode-failed"
         )
+        toolActivities = try container.decodeIfPresent([AgentToolActivity].self, forKey: .toolActivities) ?? []
         requestContext = try container.decodeIfPresent(AgentRequestContext.self, forKey: .requestContext)
         toolTrace = decodedToolTrace
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -2050,6 +2079,9 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         try container.encodeIfPresent(origin, forKey: .origin)
         try container.encodeIfPresent(failureKind, forKey: .failureKind)
         try container.encodeIfPresent(retryQuestion, forKey: .retryQuestion)
+        if !toolActivities.isEmpty {
+            try container.encode(toolActivities, forKey: .toolActivities)
+        }
         try container.encodeIfPresent(requestContext, forKey: .requestContext)
         if !toolTrace.isEmpty {
             try container.encode(toolTrace, forKey: .toolTrace)
