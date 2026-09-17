@@ -21,7 +21,7 @@ import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
 import { closeHistory, redo, undo } from '@milkdown/kit/prose/history';
-import { markRule, nodeRule } from '@milkdown/kit/prose';
+import { markRule } from '@milkdown/kit/prose';
 import { Fragment } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
@@ -29,6 +29,7 @@ import { addColumn, addColumnAfter, addRow, addRowAfter, columnResizing, deleteC
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $inputRule, $prose } from '@milkdown/kit/utils';
 import {
+  createMathEditingPlugin,
   mathBlockInputRule,
   mathBlockSchema,
   mathInlineSchema,
@@ -37,7 +38,6 @@ import {
 import { loadedKaTeX, loadKaTeX, loadMermaid, loadPrism } from './localRuntime';
 import {
   calloutTypePattern,
-  inlineMathInputPattern,
   joinFrontmatter,
   looksLikeMarkdownSyntax,
   normalizeMarkdownSource,
@@ -118,26 +118,11 @@ const weiBeiStrikethroughInputRule = $inputRule((ctx) => markRule(
   /(?<![\w:/~])(~{1,2})([^~\n]+?)\1(?![\w/~])$/,
   strikethroughSchema.type(ctx),
 ));
-let mathTypedLandingPosition: number | null = null;
-const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => nodeRule(
-  inlineMathInputPattern,
-  mathInlineSchema.type(ctx),
-  {
-    updateCaptured: (captured: any) => ({ group: String(captured.group || '').trim() }),
-    beforeDispatch: ({ tr, match, start }: any) => {
-      const content = String(match[1] || '').trim();
-      if (content) tr.insertText(content, start + 1);
-      const landing = start + content.length + 2;
-      tr.setSelection(TextSelection.create(tr.doc, landing));
-      mathTypedLandingPosition = landing;
-    },
-  },
-)) : null;
 const weiBeiMath = [
   remarkMathPlugin,
   mathInlineSchema,
   mathBlockSchema,
-  ...(WEIBEI_EDITOR_RUNTIME ? [mathBlockInputRule, weiBeiMathInlineInputRule] : []),
+  ...(WEIBEI_EDITOR_RUNTIME ? [mathBlockInputRule] : []),
 ].flat();
 let currentContentGeneration = 0;
 let streamingMarkdownBuffer: string | null = null;
@@ -477,7 +462,7 @@ const slashRuntime: {
   tableMenuBaseLeft: string;
   error: string;
 } = { provider: null, view: null, context: null, commands: [], activeIndex: 0, dismissedContext: '', activationContext: '', tableOpen: false, tableFocus: 'rows', tableRows: 3, tableColumns: 3, tableMenuBaseLeft: '', error: '' };
-const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 'table_row', 'table_header_row', 'table_cell', 'table_header', 'code_block', 'math_block']);
+const slashExcludedAncestors = new Set(['code_block', 'math_block']);
 
 const isEditorReduceMotion = () => document.documentElement.dataset.weibeiReduceMotion === 'true';
 
@@ -503,7 +488,11 @@ const slashContextForView = (view: any) => {
   const { $from } = selection;
   if ($from.parent.type.name !== 'paragraph') return null;
   for (let depth = $from.depth; depth > 0; depth -= 1) if (slashExcludedAncestors.has($from.node(depth).type.name)) return null;
-  const beforeCaret = $from.parent.textBetween(0, $from.parentOffset, '\uFFFC', '\uFFFC');
+  let beforeCaret = '';
+  // Formula nodes include boundary positions; flattening their text shifts the slash range.
+  $from.parent.content.cut(0, $from.parentOffset).forEach((node: any) => {
+    beforeCaret += node.isText ? node.text : '\uFFFC'.repeat(node.nodeSize);
+  });
   const slashOffset = beforeCaret.lastIndexOf('/');
   if (slashOffset < 0) return null;
   const query = beforeCaret.slice(slashOffset + 1);
@@ -568,7 +557,7 @@ const slashReplacement = (commandID: any, schema: any, options: any = {}) => {
   if (commandID === 'inlineMath') {
     const mathInline = schema.nodes.math_inline;
     const node = mathInline?.create(null, schema.text('x'));
-    return node ? { content: Fragment.from(paragraph.create(null, node)), selectionOffset: 1 } : null;
+    return node ? { content: Fragment.from(paragraph.create(null, node)), selectionFromOffset: 2, selectionToOffset: 3 } : null;
   }
   if (commandID === 'link') {
     const link = schema.marks.link;
@@ -589,8 +578,8 @@ const slashReplacement = (commandID: any, schema: any, options: any = {}) => {
   }
   if (commandID === 'blockMath') {
     const mathBlock = schema.nodes.math_block;
-    const node = mathBlock?.create({ value: 'x' });
-    return node ? { content: Fragment.from(node), selectionOffset: 0 } : null;
+    const node = mathBlock?.create(null, schema.text('x'));
+    return node ? { content: Fragment.from(node), selectionFromOffset: 1, selectionToOffset: 2 } : null;
   }
   if (commandID === 'divider') {
     const divider = schema.nodes.hr || schema.nodes.horizontal_rule;
@@ -983,7 +972,7 @@ const handleSlashMenuKeyDown = (view: any, event: any) => {
   const active = slashRuntime.commands[slashRuntime.activeIndex];
   if (event.key === 'ArrowRight' && active?.id === 'table') { slashRuntime.tableOpen = true; syncSlashTablePanel(); event.preventDefault(); return true; }
   if (event.key === 'Enter' && active) { if (active.id === 'table') { slashRuntime.tableOpen = true; syncSlashTablePanel(); } else executeSlashCommand(active.id); event.preventDefault(); return true; }
-  if (event.key === 'Tab' && active?.id !== 'table') { executeSlashCommand(active.id); event.preventDefault(); return true; }
+  if (event.key === 'Tab' && active && active.id !== 'table') { executeSlashCommand(active.id); event.preventDefault(); return true; }
   return false;
 };
 
@@ -1641,6 +1630,7 @@ const wikiTitleFromTarget = (target: any) => {
 };
 
 const activateWikiLink = (target: any) => {
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return false;
   const title = wikiTitleFromTarget(target);
   if (!title) return false;
   post('wikiLinkActivated', { title });
@@ -1779,7 +1769,7 @@ const createReadOnlyMathNodeView = (initialNode: any) => {
   dom.className = `weibei-math-node ${isBlock ? 'weibei-math-block' : 'weibei-math-inline'}`;
   dom.dataset.type = node.type.name;
   let renderRequest = 0;
-  const source = () => isBlock ? String(node.attrs.value || '') : node.textContent;
+  const source = () => node.textContent;
   const render = async () => {
     const request = renderRequest += 1;
     const value = source();
@@ -1805,117 +1795,60 @@ const createReadOnlyMathNodeView = (initialNode: any) => {
   };
 };
 
-/** Renders and edits one math node without scanning the document. */
+/** The source stays in ProseMirror's document; there is no separate form or save state. */
 const createMathNodeView = (initialNode: any, view: any, getPos: any) => {
   let node = initialNode;
   const isBlock = node.type.name === 'math_block';
   const dom = document.createElement(isBlock ? 'div' : 'span');
   dom.className = `weibei-math-node ${isBlock ? 'weibei-math-block' : 'weibei-math-inline'}`;
   dom.dataset.type = node.type.name;
-  dom.contentEditable = 'false';
-  dom.tabIndex = 0;
   const preview = document.createElement(isBlock ? 'div' : 'span');
   preview.className = 'weibei-math-preview';
-  const input = document.createElement(isBlock ? 'textarea' : 'input') as HTMLInputElement | HTMLTextAreaElement;
-  input.className = 'weibei-math-source';
-  input.setAttribute('aria-label', isBlock ? editorLabel('slashBlockMath') : editorLabel('slashInlineMath'));
-  input.setAttribute('autocapitalize', 'none');
-  input.setAttribute('autocomplete', 'off');
-  input.setAttribute('spellcheck', 'false');
-  if (input instanceof HTMLInputElement) input.type = 'text';
-  dom.append(preview, input);
-  let editing = false;
+  preview.contentEditable = 'false';
+  const source = document.createElement(isBlock ? 'div' : 'span');
+  source.className = 'weibei-math-source';
+  const contentDOM = document.createElement(isBlock ? 'div' : 'span');
+  contentDOM.className = 'weibei-math-content';
+  source.append(contentDOM);
+  dom.append(source, preview);
   let renderRequest = 0;
-
-  const source = () => isBlock ? String(node.attrs.value || '') : node.textContent;
-  const render = async (value = source()) => {
-    const request = renderRequest += 1;
+  const render = async () => {
+    const request = ++renderRequest;
+    const value = node.textContent;
     dom.dataset.value = value;
-    preview.replaceChildren();
-    preview.textContent = value || '公式';
-    const apply = (katex: any, requireConnected = false) => {
-      if (request !== renderRequest || (requireConnected && !dom.isConnected)) return;
-      preview.replaceChildren();
+    try {
+      const katex = loadedKaTeX() || await loadKaTeX();
+      if (request !== renderRequest) return;
       addEditorMetric(checkMetrics, 'katexRenders');
       katex.render(value, preview, { throwOnError: true, strict: false, trust: false, displayMode: isBlock });
       dom.classList.remove('weibei-math-invalid');
-      dom.removeAttribute('title');
-    };
-    try {
-      const katex = loadedKaTeX();
-      if (katex) apply(katex);
-      else apply(await loadKaTeX(), true);
     } catch {
       if (request !== renderRequest) return;
       preview.textContent = value || '公式';
       dom.classList.add('weibei-math-invalid');
-      dom.title = currentLanguage === 'en' ? 'Not displayable yet; keep editing.' : '暂时无法显示，继续编辑即可';
     }
   };
-
-  const setEditing = (next: boolean) => {
-    if (!isEditable && next) return;
-    editing = next;
-    dom.classList.toggle('weibei-math-editing', next);
-    if (next) {
-      input.value = source();
-      input.focus();
-      input.select();
-    }
-  };
-
-  const commit = () => {
-    const value = input.value;
-    setEditing(false);
+  const enter = () => {
+    if (!isEditable) return;
     const pos = getPos();
     if (typeof pos !== 'number') return;
-    if (value === source()) {
-      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
-      render();
-      view.focus();
-      return;
-    }
-    const nextNode = isBlock
-      ? node.type.create({ ...node.attrs, value })
-      : node.type.create(node.attrs, value ? view.state.schema.text(value) : null, node.marks);
-    const tr = view.state.tr.replaceWith(pos, pos + node.nodeSize, nextNode);
-    tr.setSelection(NodeSelection.create(tr.doc, pos));
-    view.dispatch(tr.scrollIntoView());
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos + node.nodeSize - 1)));
     view.focus();
   };
-
-  dom.addEventListener('click', (event) => { if (!editing && event.target !== input) setEditing(true); });
-  dom.addEventListener('weibei-edit-math', () => setEditing(true));
-  dom.addEventListener('keydown', (event) => {
-    const keyEvent = event as KeyboardEvent;
-    if (!editing && keyEvent.key === 'Enter') {
-      event.preventDefault();
-      setEditing(true);
-      return;
-    }
-    if (!editing) return;
-    if (keyEvent.key === 'Escape' || (keyEvent.key === 'Enter' && (!isBlock || keyEvent.metaKey || keyEvent.ctrlKey))) {
-      event.preventDefault();
-      commit();
-    }
-  });
-  input.addEventListener('input', () => render(input.value));
-  input.addEventListener('blur', commit);
+  preview.addEventListener('mousedown', (event) => { if (isEditable) event.preventDefault(); });
+  preview.addEventListener('click', enter);
+  dom.addEventListener('weibei-edit-math', enter);
   render();
-
   return {
-    dom,
+    dom, contentDOM,
     update(nextNode: any) {
       if (nextNode.type !== node.type) return false;
-      const changed = (isBlock ? nextNode.attrs.value : nextNode.textContent) !== source();
+      const changed = nextNode.textContent !== node.textContent;
       node = nextNode;
-      if (changed && !editing) render();
+      if (changed) render();
       return true;
     },
-    selectNode() { dom.classList.add('ProseMirror-selectednode'); },
-    deselectNode() { dom.classList.remove('ProseMirror-selectednode'); },
-    stopEvent(event: Event) { return event.target === input || input.contains(event.target as Node); },
-    ignoreMutation() { return true; },
+    ignoreMutation(mutation: any) { return mutation.type !== 'selection' && !contentDOM.contains(mutation.target); },
   };
 };
 
@@ -2036,9 +1969,13 @@ const createStructuredInlineNodeView = (initialNode: any, view: any, getPos: any
     target.setAttribute('aria-label', footnote ? '脚注' : '目标');
     label.setAttribute('aria-label', '标题');
     label.placeholder = '标题';
+    const focusout = (event: FocusEvent) => {
+      if (!(event.relatedTarget instanceof Node) || !dom.contains(event.relatedTarget)) finish(true);
+    };
     const finish = (save: boolean) => {
       if (!editing) return;
       editing = false;
+      dom.removeEventListener('focusout', focusout);
       if (save) {
         const pos = getPos();
         const current = typeof pos === 'number' ? view.state.doc.nodeAt(pos) : null;
@@ -2048,21 +1985,26 @@ const createStructuredInlineNodeView = (initialNode: any, view: any, getPos: any
             : { target: target.value.trim(), label: label.value.trim(), raw: `${target.value.trim()}${label.value.trim() ? `|${label.value.trim()}` : ''}` };
           view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, attrs));
         }
-      } else render();
+      }
+      render();
     };
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Enter') { event.preventDefault(); finish(true); }
-      if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+      if (event.isComposing || event.keyCode === 229 || !['Enter', 'Escape'].includes(event.key)) return;
+      event.preventDefault();
+      finish(event.key === 'Enter');
+      const pos = getPos();
+      if (typeof pos === 'number') view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(pos + node.nodeSize))));
+      view.focus();
     };
     target.addEventListener('keydown', keydown);
     label.addEventListener('keydown', keydown);
     dom.replaceChildren(target);
     if (!footnote) dom.append(label);
-    dom.addEventListener('focusout', () => window.setTimeout(() => { if (!dom.contains(document.activeElement)) finish(true); }), { once: true });
+    dom.addEventListener('focusout', focusout);
     target.focus();
     target.select();
   };
-  dom.addEventListener('click', (event) => { if (isEditable) { event.preventDefault(); event.stopPropagation(); edit(); } });
+  dom.addEventListener('click', (event) => { if (isEditable && !(event.target instanceof HTMLInputElement)) { event.preventDefault(); event.stopPropagation(); edit(); } });
   dom.addEventListener('weibei-edit-structured', edit);
   structuredNodeRenderers.add(render);
   render();
@@ -2350,11 +2292,44 @@ const clearEmptyCodeBlock = (view: any, event: any) => {
 
 /** Inserts a literal tab character without moving focus out of a code block. */
 const insertCodeBlockTab = (view: any, event: any) => {
-  if (!isEditable || event.key !== 'Tab' || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing || event.keyCode === 229) return false;
+  if (!isEditable || event.key !== 'Tab' || event.altKey || event.metaKey || event.ctrlKey || event.isComposing || event.keyCode === 229) return false;
   const { selection } = view.state;
   if (!(selection instanceof TextSelection) || selection.$from.parent !== selection.$to.parent || selection.$from.parent.type.spec.code !== true) return false;
+  if (event.shiftKey) return removeTextIndent(view);
   const transaction = view.state.tr.replaceWith(selection.from, selection.to, view.state.schema.text('\t'));
   view.dispatch(transaction.setSelection(TextSelection.create(transaction.doc, selection.from + 1)).scrollIntoView());
+  return true;
+};
+
+/** Removes one typed indent before the caret, or at the current line's start. */
+const removeTextIndent = (view: any) => {
+  const { $from } = view.state.selection;
+  let text = '';
+  $from.parent.forEach((node: any) => {
+    text += node.isText ? node.text : ['hardbreak', 'hard_break'].includes(node.type.name) ? '\n' : '\uFFFC'.repeat(node.nodeSize);
+  });
+  const before = text.slice(0, $from.parentOffset);
+  const trailing = before.match(/(?:\t|[ \u00a0]{1,4})$/u)?.[0];
+  const lineStart = before.lastIndexOf('\n') + 1;
+  const leading = text.slice(lineStart).match(/^(?:\t|[ \u00a0]{1,4})/u)?.[0];
+  const indent = trailing || leading;
+  if (indent) {
+    const from = trailing ? $from.pos - indent.length : $from.start() + lineStart;
+    view.dispatch(view.state.tr.delete(from, from + indent.length).scrollIntoView());
+  }
+  return true;
+};
+
+/** Paragraph indentation is text, so Markdown must not reinterpret it as a code block. */
+const insertParagraphTab = (view: any, event: KeyboardEvent) => {
+  if (!isEditable || event.key !== 'Tab' || event.altKey || event.metaKey || event.ctrlKey || event.isComposing || event.keyCode === 229 || slashMenuElement.dataset.show === 'true') return false;
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection) || selection.$from.parent !== selection.$to.parent || !['paragraph', 'heading'].includes(selection.$from.parent.type.name)) return false;
+  for (let depth = selection.$from.depth; depth > 0; depth -= 1) {
+    if (['list_item', 'task_list_item', 'table_cell', 'table_header'].includes(selection.$from.node(depth).type.name)) return false;
+  }
+  if (event.shiftKey) return removeTextIndent(view);
+  view.dispatch(view.state.tr.insertText('\u00a0'.repeat(4)).scrollIntoView());
   return true;
 };
 
@@ -2573,8 +2548,10 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     /** Handles keys that must run before WebKit or lower-priority editor keymaps. */
     const handleEditorKeyDown = (event: any) => {
       if (event.target !== view.dom || !view.hasFocus()) return;
-      const handled = insertCodeBlockTab(view, event)
+      const handled = handleSlashMenuKeyDown(view, event)
+        || insertCodeBlockTab(view, event)
         || insertLiteralCodeBlockCharacter(view, event)
+        || insertParagraphTab(view, event)
         || (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && !event.isComposing && event.keyCode !== 229
           && sinkListItem(view.state.schema.nodes.list_item)(view.state, view.dispatch, view));
       if (!handled) return;
@@ -2653,7 +2630,8 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       }
       if (pasteTargetIsCode(view)) return false;
       const text = event.clipboardData?.getData('text/plain') || '';
-      const tsv = parseTSV(text);
+      const tableClipboard = Boolean(event.clipboardData?.getData('text/html').match(/<table[\s>]/i));
+      const tsv = parseTSV(text, isInTable(view.state) || tableClipboard);
       if (tsv) {
         event.preventDefault();
         if (!pasteTSVIntoTable(view, tsv)) {
@@ -3290,9 +3268,14 @@ const pasteTargetIsCode = (view: any) => {
   return marks.some((mark: any) => String(mark?.type?.name || '').toLowerCase().includes('code'));
 };
 
-const parseTSV = (text: string) => {
+const parseTSV = (text: string, tableContext: boolean) => {
   if (!text.includes('\t')) return null;
-  return text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n').map((row) => row.split('\t'));
+  const rows = text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n').map((row) => row.split('\t'));
+  // ponytail: infer plain-text tables only from a populated rectangular grid;
+  // sparse/single-row sheets need clipboard HTML or an existing table destination.
+  if (!tableContext && (rows.length < 2 || !rows.every(row => row.length === rows[0].length
+    && row[0].trim() && row.filter(cell => cell.trim()).length >= 2))) return null;
+  return rows;
 };
 
 const tsvToMarkdown = (rows: string[][]) => {
@@ -3922,9 +3905,8 @@ if (WEIBEI_EDITOR_RUNTIME) {
     .use($prose(() => createSyntaxMarksPlugin({
       isEditable: () => isEditable,
       isStreaming: () => streamingMarkdownBuffer !== null,
-      mathLanding: () => mathTypedLandingPosition,
-      clearMathLanding: () => { mathTypedLandingPosition = null; },
     })))
+    .use($prose(() => createMathEditingPlugin(() => isEditable && streamingMarkdownBuffer === null)))
     .use($prose(createTypewriterPlugin))
     .use($prose(() => columnResizing()))
     .use(weiBeiSlash)
@@ -3948,7 +3930,7 @@ editorBuilder
     document.querySelector('#editor-status')?.remove();
     document.addEventListener('mouseup', reportSelection);
     document.addEventListener('pointerdown', () => {
-      if (window.weiBeiSuppressSelectionReport) return;
+      window.weiBeiSuppressSelectionReport = false;
       lastSelectionRange = null;
       lastSelectionReport.text = '';
       lastSelectionReport.rectKey = '';
@@ -3965,6 +3947,7 @@ editorBuilder
       event.stopPropagation();
     }, true);
     document.addEventListener('keydown', (event) => {
+      window.weiBeiSuppressSelectionReport = false;
       if (event.key !== 'Enter' && event.key !== ' ') return;
       if (!activateWikiLink(event.target)) return;
       event.preventDefault();

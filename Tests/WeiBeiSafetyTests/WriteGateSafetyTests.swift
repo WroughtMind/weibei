@@ -322,6 +322,29 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertTrue(store.importantOperationError?.contains(url.lastPathComponent) == true)
     }
 
+    func testConflictKeepsLatestEditsAndRequiresReviewWhenDiskChangesAgain() throws {
+        let base = makeTempRoot("weibei-conflict-latest")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = try makeStore(base: base, library: base.appendingPathComponent("资料库"), backupRoot: base.appendingPathComponent("backups"))
+        let courseID = try store.createCourseInLibrary(title: "冲突课")
+        let note = try importNote(store, base: base, courseID: courseID, content: "磁盘原文")
+        store.activeNotebookItemID = note.item.id
+        store.noteEditorRecoveryConflict = conflict(itemID: note.item.id, disk: "磁盘原文", pending: "旧草稿")
+        store.acceptNoteEditorSnapshot(NoteEditorSnapshotReadyEvent(
+            requestID: "latest", documentID: note.item.id, documentGeneration: 1,
+            revision: 2, markdown: "刚写的新草稿"
+        ))
+        XCTAssertEqual(store.noteEditorRecoveryConflict?.checkpoint.markdown, "刚写的新草稿")
+        XCTAssertEqual(store.noteEditorRecoveryConflict?.checkpoint.metadata.baseFileDigest, Self.digest(of: "旧基线"))
+        try "磁盘再次修改".write(to: note.url, atomically: true, encoding: .utf8)
+        try store.waitForCourseFileOperation { await store.resolveNoteEditorRecoveryConflict(useDisk: false) }
+        XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "磁盘再次修改")
+        XCTAssertEqual(store.noteEditorRecoveryConflict?.diskMarkdown, "磁盘再次修改")
+        try store.waitForCourseFileOperation { await store.resolveNoteEditorRecoveryConflict(useDisk: false) }
+        XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "刚写的新草稿")
+        XCTAssertNil(store.noteEditorRecoveryConflict)
+    }
+
     func testRestoreWeiBeiContentWritesCheckpointAndClearsConflict() throws {
         let base = makeTempRoot("weibei-restore-conflict")
         defer { try? FileManager.default.removeItem(at: base) }

@@ -28,6 +28,7 @@
 		0565B892BF2EC88944449D5A /* CourseRelationPaperView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C04FB8F235924EE42B40E2 /* CourseRelationPaperView.swift */; };
 		05B34CAB21481FB54B2A0FC5 /* CourseRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28228E2E2950801444E2EC73 /* CourseRecordsView.swift */; };
 		07010C7A1E98300267D925DC /* AgentModelListService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */; };
+		2BB2BB7E7612D5D7909E1D46 /* AgentReasoningEffort.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD595EC19B5E715C6A89E732 /* AgentReasoningEffort.swift */; };
 		07AA0BFB1B0C7EB98204B0DA /* WorkspaceStore+SessionMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E73D78FF30845E50524C3B1 /* WorkspaceStore+SessionMessages.swift */; };
 		E74F27FD84A5744D031CE05E /* WorkspaceStore+SelectionChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CF453C08CC7FE075BE53DB1 /* WorkspaceStore+SelectionChat.swift */; };
 		07D7027AA2BB4385AED66397 /* CatalystBusinessCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB6903E77B7F89AD1758884 /* CatalystBusinessCheck.swift */; };
@@ -483,6 +484,7 @@
 		E143536A222BB3EF39386017 /* WorkspaceStore+GoneImportedItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+GoneImportedItems.swift"; sourceTree = "<group>"; };
 		E1C5F74BA013DD4666730861 /* NoteEditorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorBridge.swift; sourceTree = "<group>"; };
 		E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentModelListService.swift; sourceTree = "<group>"; };
+		DD595EC19B5E715C6A89E732 /* AgentReasoningEffort.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentReasoningEffort.swift; sourceTree = "<group>"; };
 		E351033849C34CF53F7F41EC /* WeiBeiPerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiPerf.swift; sourceTree = "<group>"; };
 		E4DECE1968935604B8E2CB07 /* WorkspaceViewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceViewSupport.swift; sourceTree = "<group>"; };
 		E51AB9EF50CCEDB319397D8C /* ContextualContentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextualContentPicker.swift; sourceTree = "<group>"; };
@@ -657,6 +659,7 @@
 				E739D32EBD1993C95049134D /* AgentDisplayText.swift */,
 				894CEB93CFF53976D74CD4A7 /* AgentHistoryRevealPolicy.swift */,
 				E2485DEC1C6A3709FE47803E /* AgentModelListService.swift */,
+				DD595EC19B5E715C6A89E732 /* AgentReasoningEffort.swift */,
 				3CA222798F14870B9307D012 /* AgentResources */,
 				78E5E769F507FE404011801D /* AgentResources.swift */,
 				08AAEB7FA79FA30300ED13B4 /* AppShortcutCatalog.swift */,
@@ -1156,6 +1159,7 @@
 				8FA1279C216C58094CD3F484 /* AgentDisplayText.swift in Sources */,
 				7FDE7E4802F79DA32B937D49 /* AgentHistoryRevealPolicy.swift in Sources */,
 				07010C7A1E98300267D925DC /* AgentModelListService.swift in Sources */,
+				2BB2BB7E7612D5D7909E1D46 /* AgentReasoningEffort.swift in Sources */,
 				5F0145EF173169542E01DE79 /* AgentResources.swift in Sources */,
 				364263C6477A3FC4B74996B5 /* AnthropicMessagesProvider.swift in Sources */,
 				807FDA7A7F71174A458991F2 /* AppShortcutCatalog.swift in Sources */,

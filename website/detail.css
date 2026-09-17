@@ -15,11 +15,24 @@
 .faq-list details[open] summary::after { transform: rotate(45deg); }
 .faq-list details p { margin: -2px 0 22px; padding: 0 54px 0 24px; color: var(--ink-soft); font-size: 14px; line-height: 1.8; text-align: left; }
 
-.labs-list { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; margin-top: 42px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.lab-item { min-height: 230px; padding: 46px 34px; }
-.lab-item + .lab-item { border-left: 1px solid var(--line); }
-.lab-item h2 { margin: 0; font-size: clamp(23px, 2.4vw, 34px); font-weight: 500; line-height: 1.15; }
-.lab-item p { margin: 20px auto 0; color: var(--ink-soft); font-size: 14px; line-height: 1.75; }
+/* Labs: project sketches, with the existing paper and ink palette. */
+.labs-shell { width: min(1200px, 88vw); text-align: left; }
+.labs-intro { padding: 24px 0 36px; }
+.labs-intro .detail-lead { max-width: none; margin: 18px 0 12px; font-size: clamp(20px, 2.5vw, 28px); color: var(--ink); }
+.labs-note, .labs-more { color: var(--ink-soft); font-size: 13px; line-height: 1.8; }
+.labs-list { border-top: 1px solid var(--line); }
+.lab-item { display: grid; grid-template-columns: .75fr 1.25fr; gap: clamp(28px, 4vw, 56px); align-items: center; padding: 38px 0; border-bottom: 1px solid var(--line); }
+.lab-number { display: block; color: var(--vermilion); font: 12px/1.5 ui-monospace, monospace; margin-bottom: 14px; }
+.lab-item h2 { margin: 0; font-size: clamp(24px, 2.5vw, 32px); line-height: 1.5; text-wrap: balance; }
+.lab-item p { margin: 16px 0; color: var(--ink-soft); font-size: 14px; line-height: 1.9; }
+.lab-caption { display: block; margin-top: 22px; font-size: 12px; color: var(--vermilion); }
+.lab-scene { min-width: 0; margin: 0; }
+.lab-preview { position: relative; display: block; }
+.lab-preview img { display: block; width: 100%; height: auto; border: 1px solid var(--line); }
+.lab-preview:hover img { border-color: var(--vermilion); }
+.lab-expand { position: absolute; right: 12px; bottom: 12px; padding: 6px 10px; color: var(--ink); background: var(--paper-light); border: 1px solid var(--line); font: 11px/1.4 ui-sans-serif, system-ui, sans-serif; }
+.lab-scene figcaption { margin-top: 10px; color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
+.labs-more { margin: 32px 0 0; text-align: center; }
 
 .feedback-shell { width: min(960px, 90vw); padding-top: 94px; }
 .feedback-shell .detail-lead { margin-bottom: 24px; }
@@ -57,11 +70,11 @@
   .faq-list { margin-top: 24px; }
   .faq-list summary { padding: 15px 8px 15px 12px; font-size: 17px; }
   .faq-list details p { padding: 0 34px 0 12px; font-size: 13px; }
-  .labs-list { grid-template-columns: 1fr; margin-top: 28px; }
-  .lab-item { min-height: 0; padding: 27px 22px; }
-  .lab-item + .lab-item { border-top: 1px solid var(--line); border-left: 0; }
+  .labs-intro { padding: 0 0 24px; }
+  .lab-item { grid-template-columns: 1fr; gap: 24px; padding: 28px 0; }
   .lab-item h2 { font-size: 25px; }
-  .lab-item p { margin-top: 10px; font-size: 13px; }
+  .lab-caption { margin-top: 14px; }
+  .lab-expand { right: 8px; bottom: 8px; }
   .feedback-shell { width: 88vw; padding-top: 120px; }
   .feedback-kind-grid { grid-template-columns: 1fr 1fr; }
   .feedback-kind-option > span { min-height: 62px; padding: 11px 12px; }

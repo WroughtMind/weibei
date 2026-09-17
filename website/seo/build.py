@@ -109,7 +109,7 @@ def compile_page(name, language):
                 if any(isinstance(child, Element) for child in node.children):
                     raise ValueError(f'{name}: data-en must annotate a text-only element')
                 node.children = [escape(attrs['data-en'])]
-            for suffix, target in [('label', 'aria-label'), ('placeholder', 'placeholder'), ('alt', 'alt'), ('title', 'title')]:
+            for suffix, target in [('label', 'aria-label'), ('placeholder', 'placeholder'), ('alt', 'alt'), ('title', 'title'), ('src', 'src'), ('srcset', 'srcset'), ('href', 'href')]:
                 if 'data-en-' + suffix in attrs:
                     attrs[target] = attrs['data-en-' + suffix]
             if 'data-submit-en' in attrs:

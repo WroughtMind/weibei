@@ -103,7 +103,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 case .navigateBack: store.navigateBackInWorkspace()
                 case .navigateForward: store.navigateForwardInWorkspace()
                 case .courseIndex: store.toggleLibrary()
-                case .searchInMaterial: store.revealReaderSearch()
+                case .searchInMaterial: store.revealDocumentSearch()
                 case .focusLibrary: store.focus(.library)
                 case .focusReader: store.focus(.reader)
                 case .focusNotes: store.focus(.notes)
@@ -216,9 +216,8 @@ struct CatalystWeiBeiApp: App {
     }
 
     private var workspaceContent: some View {
+        // Native window size restrictions own the minimum; content must fit below the toolbar.
         CatalystWorkspaceRoot(store: AppDelegate.workspace, appDelegate: appDelegate)
-            .frame(minWidth: 520, minHeight: 720)
-            .ignoresSafeArea(.container, edges: .top)
             .onOpenURL { AppDelegate.workspace.importFiles([$0]) }
 #if WEIBEI_ACCEPTANCE_CHECKS
             .task {

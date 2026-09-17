@@ -251,8 +251,8 @@
     },
     {
       "name": "editor-entry.js",
-      "bytes": 268082,
-      "sha256": "35575880b77857023fdda45da318ff5ec3397b62e0a92b0c3c727df667b6a2bd"
+      "bytes": 268450,
+      "sha256": "14f2dffdd4c5916731f47b341cb3b41800600a409608ed7a923a749138d6f13a"
     },
     {
       "name": "editor.css",
@@ -261,8 +261,8 @@
     },
     {
       "name": "index.html",
-      "bytes": 58283,
-      "sha256": "232a08988db43ef8956d51c643a06d046948433975b646c8f179d961a67b8ff2"
+      "bytes": 57948,
+      "sha256": "68ea847598a34c6231e70e96abe53b2543b3929f09d48afbdbba6b192581e9fd"
     },
     {
       "name": "KaTeX_AMS-Regular.woff2",
@@ -391,8 +391,8 @@
     },
     {
       "name": "office-entry.js.deflate",
-      "bytes": 1445560,
-      "sha256": "7e86e6ad1764528b55fa0dca691ff7d7c47ccfd26a52be169b702b47c14ee927"
+      "bytes": 1445572,
+      "sha256": "4b4ec5812fccd5aa002490946d263e0ce05617f639e75d9304dbe499922b2e62"
     },
     {
       "name": "office-licenses.txt",
@@ -421,8 +421,8 @@
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 228290,
-      "sha256": "9984e0ceb10992ab09e6650b0aa14fe2b9dfac7dfab6dd5c46e9b4e6f7b72fd7"
+      "bytes": 233534,
+      "sha256": "feddab252ff06bab73acaad87f90c853ee976a5445c94ae60e91a9694bd3fa25"
     },
     {
       "name": "Virgil-LICENSE.txt",

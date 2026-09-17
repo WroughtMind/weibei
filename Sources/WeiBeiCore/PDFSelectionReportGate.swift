@@ -17,6 +17,8 @@ public struct PDFSelectionReportGate: Equatable, Sendable {
 
     public mutating func beginTracking() {
         isTracking = true
+        // A new gesture may explicitly clear the previous selection.
+        lastNonEmptyAt = 0
     }
 
     public mutating func endTracking() {

@@ -125,11 +125,8 @@ public actor NativeAgentLoop {
                         ? request.id.uuidString.lowercased()
                         : request.projectScope.chatID.lowercased()
                 )
-                // 搜索开关对全协议族生效;推理档仅 Responses 家族支持。
                 llmRequest.enableNativeWebSearch = tools.contains { $0.name == "weibei_course_map" }
-                if adapter.family.contains("responses") {
-                    llmRequest.reasoningEffort = "low"
-                }
+                llmRequest.reasoningEffort = request.reasoningEffort
                 let effectiveContextWindow = contextWindow ?? adapter.contextWindow
                 if let effectiveContextWindow {
                     let candidate: NativeContextCompactionCandidate?

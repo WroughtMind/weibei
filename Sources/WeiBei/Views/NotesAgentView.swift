@@ -282,6 +282,7 @@ struct NotePaneView: View {
     @State private var editorRecoveryState = EditorRecoveryState.idle
     @State private var noteOutline: [NoteEditorOutlineItem] = []
     @State private var activeNoteRailID: String?
+    @State private var reviewingConflict = false
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
 
@@ -310,11 +311,14 @@ struct NotePaneView: View {
                                     "This note was also changed outside WeiBei. Unsaved content remains in the current editor but is not safely stored yet; do not close it, and retry."
                                 ))
                             Spacer(minLength: 8)
-                            Button(store.ui("使用磁盘版本", "Use Disk Version")) {
-                                Task { await store.resolveNoteEditorRecoveryConflict(useDisk: true) }
-                            }
-                            Button(store.ui("恢复魏碑中的内容", "Restore WeiBei Content")) {
-                                Task { await store.resolveNoteEditorRecoveryConflict(useDisk: false) }
+                            Button(store.ui("查看两份内容…", "Compare versions…")) {
+                                Task {
+                                    guard await store.freshActiveNoteEditorSnapshot() else {
+                                        store.showImportantOperationError(store.ui("尚未取得最新编辑内容，请重试。", "Could not capture the latest edits. Please retry."))
+                                        return
+                                    }
+                                    reviewingConflict = true
+                                }
                             }
                         }
                         .weiBeiText(10.5)
@@ -364,10 +368,36 @@ struct NotePaneView: View {
                 .allowsHitTesting(false)
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
+        .allowsHitTesting(!store.notePickerPresented)
+        .accessibilityHidden(store.notePickerPresented)
+        .overlay {
+            if store.notePickerPresented {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text(store.ui("选择其他笔记", "Choose another note")).weiBeiText(14, weight: .medium)
+                        Spacer()
+                        Button(store.ui("返回当前笔记", "Back to current note")) {
+                            store.notePickerPresented = false
+                            store.focus(.notes)
+                        }
+                        .keyboardShortcut(.cancelAction)
+                    }.padding(16)
+                    ContextualContentPicker(kind: .note)
+                }
+                .background(WeiBeiTheme.paper)
+                .foregroundStyle(WeiBeiTheme.ink)
+            }
+        }
+        .sheet(isPresented: $reviewingConflict) {
+            NoteConflictComparisonView()
+                .environmentObject(store)
+        }
         .onDisappear {
             store.noteEditingSession.requestSnapshot()
         }
         .onChange(of: store.activeNoteItemID) { _, _ in
+            store.notePickerPresented = false
+            reviewingConflict = false
             editingNoteTabTitle = false
             editorRecoveryState = .idle
             noteOutline = []
@@ -631,6 +661,8 @@ struct NotePaneView: View {
         focusRequest: paneState.focusRequest,
         markdownBaseURL: store.currentMarkdownBaseURL,
         attachmentDirectory: store.currentAttachmentDirectory,
+        searchQuery: store.noteSearch,
+        searchRequest: store.noteSearchRequest,
         appearanceMode: store.appearanceMode,
         interfaceLanguage: store.interfaceLanguage,
         onSelectionChange: { text, anchor in
@@ -667,6 +699,8 @@ struct NotePaneView: View {
             store.noteEditorContentCommandApplied(command, documentID: documentID)
         }, onCommandRejected: { documentID, command in
             store.noteEditorCommandRejected(command, documentID: documentID)
+        }, onSearchResult: { query, found in
+            if query == store.noteSearch { store.noteSearchFound = found }
         })
 #if targetEnvironment(macCatalyst)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -675,6 +709,63 @@ struct NotePaneView: View {
         .background(WeiBeiTheme.paper)
     }
 
+}
+
+struct NoteConflictComparisonView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var resolving = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(store.ui("选择要保留的正文", "Choose the text to keep")).weiBeiText(18, weight: .semibold)
+            Text(store.ui("两份正文都可以选中复制。确认后，另一份会保留在备份中。", "You can select and copy both versions. The other version is backed up before applying your choice."))
+                .weiBeiText(12).foregroundStyle(WeiBeiTheme.secondaryInk)
+            if let conflict = store.noteEditorRecoveryConflict {
+                HStack(alignment: .top, spacing: 16) {
+                    version(store.ui("磁盘中的正文", "Text on disk"), markdown: conflict.diskMarkdown, useDisk: true)
+                    version(store.ui("魏碑中未写入的正文", "Unsaved text in WeiBei"), markdown: conflict.checkpoint.markdown, useDisk: false)
+                }
+            }
+            if let error = store.importantOperationError {
+                Text(error).weiBeiText(12).foregroundStyle(WeiBeiTheme.cinnabar)
+            }
+            HStack {
+                Spacer()
+                Button(store.ui("暂不处理", "Decide later")) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(resolving)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 620, idealWidth: 820, minHeight: 420, idealHeight: 580)
+        .background(WeiBeiTheme.paper)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .preferredColorScheme(store.appearanceMode.colorScheme)
+    }
+
+    private func version(_ title: String, markdown: String, useDisk: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).weiBeiText(13, weight: .semibold)
+            ScrollView {
+                Text(markdown.isEmpty ? store.ui("（空白正文）", "(Empty text)") : markdown)
+                    .weiBeiText(13)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(WeiBeiTheme.paperRaised)
+            Button(store.ui("保留这份", "Keep this version")) {
+                resolving = true
+                Task {
+                    await store.resolveNoteEditorRecoveryConflict(useDisk: useDisk)
+                    resolving = false
+                    if store.noteEditorRecoveryConflict == nil { dismiss() }
+                }
+            }.disabled(resolving)
+        }.frame(maxWidth: .infinity)
+    }
 }
 
 enum EditorRecoveryState: Equatable {
@@ -2065,7 +2156,8 @@ struct AgentPaneView: View {
                     sendTrailing: wide ? 8 : 10,
                     horizontalPadding: wide ? 16 : 12,
                     verticalPadding: 8,
-                    focusTrigger: composerFocusTrigger
+                    focusTrigger: composerFocusTrigger,
+                    showsReasoningEffort: true
                 ) {
                     submitAgentDraft()
                 }

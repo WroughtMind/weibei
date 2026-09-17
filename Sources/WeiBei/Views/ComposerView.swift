@@ -26,6 +26,7 @@ struct ComposerView: View {
     var showsChrome = true
     var focusesOnAppear = false
     var focusTrigger = 0
+    var showsReasoningEffort = false
     var sessionID: UUID? = nil
     var submit: () -> Void
 
@@ -39,6 +40,10 @@ struct ComposerView: View {
             && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var hasReasoningControl: Bool {
+        showsReasoningEffort && !store.agentReasoningLevels.isEmpty
+    }
+
     private var showsControl: Bool {
         isRunning || canSend
     }
@@ -47,7 +52,7 @@ struct ComposerView: View {
         let corner: CGFloat = showsChrome ? 24 : WeiBeiMetric.controlRadius
         let textHeight = max(editorHeight, fontSize + 3)
         let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
-        VStack(alignment: .leading, spacing: 0) {
+        HStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
                 AgentComposerTextEditor(
                     text: $draft,
@@ -72,9 +77,8 @@ struct ComposerView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .padding(.top, verticalPadding)
-            .padding(.bottom, verticalPadding)
-            .padding(.trailing, trailingPadding)
+            .padding(.vertical, verticalPadding)
+            .padding(.trailing, hasReasoningControl ? 0 : trailingPadding)
             .padding(.horizontal, horizontalPadding)
             .frame(
                 maxWidth: .infinity,
@@ -87,18 +91,27 @@ struct ComposerView: View {
                 alignment: .leading
             )
             .overlay(alignment: .trailing) {
-                if showsControl {
+                if showsControl && !hasReasoningControl {
                     sendButton
                         .padding(.trailing, sendTrailing)
                 }
             }
+            if hasReasoningControl {
+                HStack(spacing: 8) {
+                    reasoningEffortPicker
+                    sendButton
+                        .opacity(showsControl ? 1 : 0)
+                        .disabled(!showsControl)
+                        .accessibilityHidden(!showsControl)
+                }
+                .padding(.trailing, sendTrailing)
+            }
         }
-        .frame(
-            maxWidth: .infinity,
-            minHeight: height,
-            maxHeight: compactMaxHeight,
-            alignment: .topLeading
-        )
+        .frame(maxWidth: .infinity)
+        .frame(height: min(
+            max(height, textHeight + verticalPadding * 2, reservedControlHeight),
+            compactMaxHeight ?? .greatestFiniteMagnitude
+        ), alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
         .weibeiComposerCard(
             cornerRadius: corner,
@@ -143,7 +156,46 @@ struct ComposerView: View {
             }
         }
         .animation(WeiBeiMotion.micro, value: showsControl)
+        .task(id: store.activeAgentProfileID.uuidString + store.agentProviderID.rawValue + store.agentBaseURL) {
+            guard showsReasoningEffort else { return }
+            agentAccount.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        }
         .accessibilityIdentifier("agent-composer-compact")
+    }
+
+    private var reasoningEffortPicker: some View {
+        let levels = store.agentReasoningLevels
+        return Menu {
+            ForEach(levels, id: \.self) { effort in
+                Button {
+                    store.agentReasoningEfforts[store.agentReasoningModelKey] = effort
+                } label: {
+                    if effort == store.agentReasoningEffort {
+                        Label(AgentReasoningEffort.label(effort, language: store.interfaceLanguage), systemImage: "checkmark")
+                    } else {
+                        Text(AgentReasoningEffort.label(effort, language: store.interfaceLanguage))
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(store.agentReasoningEffort.map {
+                    AgentReasoningEffort.label($0, language: store.interfaceLanguage)
+                } ?? "")
+                    .weiBeiText(fontSize, weight: .regular)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9 * textScale, weight: .medium))
+            }
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .frame(minHeight: sendButtonSize * textScale)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel(store.ui("推理强度", "Reasoning effort"))
+        .help(store.ui("强度越高，思考通常越久。仅对支持推理强度的模型生效。", "Higher effort usually takes longer. Applies only to models that support reasoning effort."))
+        .accessibilityIdentifier("agent-reasoning-effort")
     }
 
     private func commitAndSubmit() {

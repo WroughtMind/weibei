@@ -1,4 +1,6 @@
-#if !targetEnvironment(macCatalyst)
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
 import AppKit
 #endif
 import SwiftUI
@@ -100,7 +102,11 @@ struct ContentView: View {
                     || store.transientNoteStatus != nil {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+#if targetEnvironment(macCatalyst)
+                        .padding(.top, 10)
+#else
                         .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
+#endif
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
                 }
@@ -128,7 +134,7 @@ struct ContentView: View {
                     onToggleLibrary: { store.toggleLibrary() },
                     onDismissFloatingAgent: { store.dismissFloatingSelectionAgent() },
                     onHideReaderSearch: {
-                        store.hideReaderSearch()
+                        store.hideDocumentSearch()
                         topSearchFocused = false
                     }
                 )
@@ -263,12 +269,15 @@ private struct PaneChromeFocusBridge: View {
             .onChange(of: paneState.focusedPane) { _, value in
                 focusedPane.wrappedValue = value
             }
-            .onChange(of: paneState.showReaderSearch) { _, visible in
+            .onChange(of: paneState.showDocumentSearch) { _, visible in
                 topSearchFocused.wrappedValue = visible
+            }
+            .onChange(of: paneState.searchFocusRequest) { _, _ in
+                topSearchFocused.wrappedValue = true
             }
             .onAppear {
                 focusedPane.wrappedValue = paneState.focusedPane
-                topSearchFocused.wrappedValue = paneState.showReaderSearch
+                topSearchFocused.wrappedValue = paneState.showDocumentSearch
             }
     }
 }
@@ -278,6 +287,7 @@ private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.weiBeiTextScale) private var textScale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var expanded: Bool
     let canvasSize: CGSize
 
@@ -296,11 +306,13 @@ private struct GlobalFloatingSelectionLayer: View {
                     dimensions.height / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).y
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : WeiBeiMotion.appearance, value: showsGlobalFloatingAgent)
         .transaction { transaction in
+            // Fade visibility only; selection coordinates must track without a spring.
             transaction.animation = nil
-            transaction.disablesAnimations = true
         }
     }
 
@@ -321,13 +333,22 @@ private struct GlobalFloatingSelectionLayer: View {
         let point = SelectionFloatingAgentPlacement.position(
             anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
-            topInset: Double(WeiBeiMetric.topBarHeight * textScale),
+            topInset: selectionTopInset,
             surfaceHalfWidth: Double(size.width / 2),
             measuredHalfHeight: Double(size.height / 2),
             prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
             prefersAnchorCenter: !(expanded || interaction.keepFloatingSelectionForAnswer || interaction.pinnedFloatingAgent)
         )
         return CGPoint(x: point.x, y: point.y)
+    }
+
+    private var selectionTopInset: Double {
+#if targetEnvironment(macCatalyst)
+        // The native toolbar sits outside the workspace's content coordinates.
+        0
+#else
+        Double(WeiBeiMetric.topBarHeight * textScale)
+#endif
     }
 }
 
@@ -472,11 +493,16 @@ private struct LibraryAwareEscapeBridge: View {
 
     var body: some View {
         Group {
-            if !courseWorkspacePresented && libraryDrawer.isOpen {
+            if !courseWorkspacePresented && store.notePickerPresented {
+                EscapeKeyBridge(onEscape: {
+                    store.notePickerPresented = false
+                    store.focus(.notes)
+                })
+            } else if !courseWorkspacePresented && libraryDrawer.isOpen {
                 EscapeKeyBridge(onEscape: onToggleLibrary)
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showsGlobalFloatingAgent {
                 EscapeKeyBridge(onEscape: onDismissFloatingAgent)
-            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showReaderSearch {
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showDocumentSearch {
                 EscapeKeyBridge(onEscape: onHideReaderSearch)
             }
         }
@@ -533,19 +559,82 @@ private struct UnifiedTopBarView: View {
     @State private var appeared = false
 
     var body: some View {
+#if targetEnvironment(macCatalyst)
+        CatalystTopBar(
+            leading: toolbarContent(leftPrimaryControls),
+            center: toolbarContent(paneToggleCluster),
+            trailing: toolbarContent(trailingControls),
+            overflowMenus: toolbarOverflowMenus,
+            isVisible: !store.courseWorkspacePresented
+        )
+        .frame(height: 0)
+        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
+            showSettings()
+        }
+#else
+        customTopBar
+#endif
+    }
+
+#if targetEnvironment(macCatalyst)
+    private var toolbarOverflowMenus: [UIMenu] {
+        var navigation = [
+            toolbarAction(store.ui("课程抽屉", "Course drawer"), selected: libraryDrawer.isOpen, action: store.toggleLibrary),
+            toolbarAction(store.ui("后退", "Back"), enabled: store.canNavigateBack) {
+                withAnimation(WeiBeiMotion.layout) { store.navigateBackInWorkspace() }
+            },
+            toolbarAction(store.ui("前进", "Forward"), enabled: store.canNavigateForward) {
+                withAnimation(WeiBeiMotion.layout) { store.navigateForwardInWorkspace() }
+            }
+        ]
+        if updateService.showsToolbarControl, updateService.availableUpdate != nil {
+            navigation.append(toolbarAction(store.ui("下载并安装魏碑更新", "Download and install the WeiBei update"),
+                enabled: !updateService.isBusy, action: updateService.installAvailableUpdate))
+        }
+        let panes = [
+            toolbarAction(store.ui("文稿", "Document"), selected: store.isPaneToggleActive(.reader), action: store.toggleReader),
+            toolbarAction(store.ui("对话", "Chat"), selected: store.isPaneToggleActive(.agent), action: store.toggleAgent),
+            toolbarAction(store.ui("笔记", "Notes"), selected: store.isPaneToggleActive(.notes), action: store.toggleNotes)
+        ]
+        var actions: [UIAction] = []
+        if shouldShowSearchAction {
+            actions.append(toolbarAction(searchPrompt,
+                selected: paneState.showDocumentSearch, action: toggleReaderSearch))
+        }
+        actions.append(toolbarAction(store.ui("切换深浅外观", "Toggle Light / Dark"), action: toggleAppearance))
+        if store.lastPersistState == .failed {
+            actions.append(toolbarAction(store.ui("重试保存", "Retry save")) { _ = store.retryWorkspaceSave() })
+        }
+        actions.append(toolbarAction(store.ui("打开设置", "Open Settings"), action: showSettings))
+        return [UIMenu(title: store.ui("导航", "Navigation"), children: navigation),
+                UIMenu(title: store.ui("面板", "Panes"), children: panes),
+                UIMenu(title: store.ui("操作", "Actions"), children: actions)]
+    }
+
+    private func toolbarAction(_ title: String, enabled: Bool = true, selected: Bool = false,
+                               action: @escaping () -> Void) -> UIAction {
+        UIAction(title: title, attributes: enabled ? [] : [.disabled], state: selected ? .on : .off) { _ in action() }
+    }
+
+    private func toolbarContent<Content: View>(_ content: Content) -> AnyView {
+        AnyView(content
+            .foregroundStyle(secondaryText)
+            .environmentObject(store)
+            .environmentObject(updateService)
+            .environmentObject(libraryDrawer)
+            .environmentObject(paneState)
+            .environmentObject(interaction)
+            .environment(\.weiBeiTextScale, textScale))
+    }
+#endif
+
+    private var trailingControls: some View {
         HStack(spacing: topBarSpacing) {
-            Spacer()
-                .frame(width: leftInset)
-
-            leftPrimaryControls
-
-            Spacer(minLength: 0)
-
-            if paneState.showReaderSearch && shouldShowSearchAction {
+            if paneState.showDocumentSearch && shouldShowSearchAction {
                 TextField(
                     "",
-                    text: $store.readerSearch,
-                    prompt: Text(store.ui("资料内搜索", "Search in material"))
+                    text: store.searchesNotes ? $store.noteSearch : $store.readerSearch,
+                    prompt: Text(searchPrompt)
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
@@ -557,16 +646,30 @@ private struct UnifiedTopBarView: View {
                     .weiBeiText(12)
                     .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
                     .frame(width: 220)
+                .onSubmit {
+                    if store.searchesNotes { store.noteSearchRequest &+= 1 }
+                }
                 .weiBeiOnExitCommand {
                     withAnimation(WeiBeiMotion.panel) {
-                        store.hideReaderSearch()
+                        store.hideDocumentSearch()
                         searchFocused.wrappedValue = false
                     }
                 }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
+                if store.searchesNotes && !store.noteSearch.isEmpty {
+                    if store.noteSearchFound == false {
+                        Text(store.ui("无匹配", "No matches")).weiBeiText(11)
+                    }
+                    topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
+                    topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
+                }
+                topIconButton("xmark", help: store.ui("关闭查找", "Close search")) {
+                    store.hideDocumentSearch()
+                    searchFocused.wrappedValue = false
+                }
             }
 
-            if shouldShowSearchAction && !paneState.showReaderSearch {
+            if shouldShowSearchAction && !paneState.showDocumentSearch {
                 searchButton
             }
 
@@ -578,7 +681,7 @@ private struct UnifiedTopBarView: View {
                 store.appearanceMode.isDark ? "sun.max" : "moon.stars",
                 help: store.ui("切换深浅外观", "Toggle Light / Dark")
             ) {
-                store.appearancePreference = store.appearanceMode.isDark ? .light : .dark
+                toggleAppearance()
             }
             .animation(WeiBeiMotion.micro, value: store.appearanceMode.isDark)
 
@@ -588,6 +691,20 @@ private struct UnifiedTopBarView: View {
             topIconButton("gearshape", help: store.ui("打开设置", "Open Settings")) {
                 showSettings()
             }
+
+        }
+    }
+
+    private var customTopBar: some View {
+        HStack(spacing: topBarSpacing) {
+            Spacer()
+                .frame(width: leftInset)
+
+            leftPrimaryControls
+
+            Spacer(minLength: 0)
+
+            trailingControls
 
             Spacer()
                 .frame(width: 8)
@@ -612,7 +729,7 @@ private struct UnifiedTopBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
             showSettings()
         }
-        .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
+        .animation(WeiBeiMotion.panel, value: paneState.showDocumentSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
         .animation(WeiBeiMotion.panel, value: paneState.showReader)
@@ -622,6 +739,10 @@ private struct UnifiedTopBarView: View {
 
     private func showSettings() {
         openSettingsWindow(id: "weibei-settings")
+    }
+
+    private func toggleAppearance() {
+        store.appearancePreference = store.appearanceMode.isDark ? .light : .dark
     }
 
     private var barHeight: CGFloat {
@@ -641,11 +762,11 @@ private struct UnifiedTopBarView: View {
     }
 
     private var shouldShowSearchAction: Bool {
-        store.hasSelectedMaterial && hasReaderScopedTopActions
+        store.canSearchCurrentDocument
     }
 
-    private var hasReaderScopedTopActions: Bool {
-        store.isPaneToggleActive(.reader)
+    private var searchPrompt: String {
+        store.searchesNotes ? store.ui("笔记内查找", "Find in note") : store.ui("资料内搜索", "Search in material")
     }
 
     private var primaryText: Color {
@@ -793,18 +914,18 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var searchButton: some View {
-        topIconButton("magnifyingglass", help: store.ui("打开资料内搜索", "Search in material")) {
+        topIconButton("magnifyingglass", help: searchPrompt) {
             toggleReaderSearch()
         }
     }
 
     private func toggleReaderSearch() {
         withAnimation(WeiBeiMotion.panel) {
-            if paneState.showReaderSearch {
-                store.hideReaderSearch()
+            if paneState.showDocumentSearch {
+                store.hideDocumentSearch()
                 searchFocused.wrappedValue = false
             } else {
-                store.revealReaderSearch()
+                store.revealDocumentSearch()
                 searchFocused.wrappedValue = true
             }
         }

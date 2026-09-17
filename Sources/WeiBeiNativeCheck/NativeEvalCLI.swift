@@ -247,7 +247,8 @@ enum NativeEvalCLI {
                 chatID: sessionID.uuidString.lowercased(),
                 courseID: UUID().uuidString.lowercased()
             ),
-            contextRevision: "eval-\(id)"
+            contextRevision: "eval-\(id)",
+            reasoningEffort: "low"
         )
     }
 

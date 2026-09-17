@@ -543,6 +543,7 @@ public struct StudyAgentCourseProfileContext: Codable, Equatable, Sendable {
 }
 
 public struct StudyAgentRequest: Sendable {
+    public var reasoningEffort: String?
     public var id: UUID
     public var purpose: StudyAgentPurpose
     public var answerFormPolicy: StudyAgentAnswerFormPolicy
@@ -589,8 +590,10 @@ public struct StudyAgentRequest: Sendable {
         courseProfile: StudyAgentCourseProfileContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
         contextRevision: String,
-        confirmedNotes: [StudyAgentPersistedNoteRef] = []
+        confirmedNotes: [StudyAgentPersistedNoteRef] = [],
+        reasoningEffort: String? = nil
     ) {
+        self.reasoningEffort = reasoningEffort
         self.id = id
         self.purpose = purpose
         self.answerFormPolicy = answerFormPolicy

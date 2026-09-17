@@ -409,7 +409,7 @@ struct ReaderView: View {
         .background(Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
         .foregroundStyle(Color(weiBeiNativeColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
-        .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
+        .animation(WeiBeiMotion.panel, value: paneState.showDocumentSearch)
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
         .onAppear {
             loadMarkdownSnapshot()
@@ -1780,7 +1780,11 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 guard let self, let view else { return }
                 self.markUserNavigationIntent()
                 if let point { self.lastPointerInView = point }
-                if phase == .began { self.selectionReportGate.beginTracking() }
+                if phase == .began {
+                    self.selectionWork?.cancel()
+                    self.selectionReportGate.beginTracking()
+                    return
+                }
                 if phase == .ended || phase == .cancelled { self.selectionReportGate.endTracking() }
                 self.reportCurrentSelection(in: view)
             }
