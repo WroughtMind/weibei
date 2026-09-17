@@ -159,6 +159,33 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         XCTAssertEqual(output, "先查\n\n![图示](weibei-visualization:activity/2)\n\n\n\n![图示](weibei-visualization:unavailable-1)\n\n后答")
     }
 
+    func testActivityIdentityAndRevealSurviveUpdatesWithoutReplayingHistory() {
+        let names = ["$web_search", "weibei_course_read", "weibei_note_proposal", "delegate", "render_ui",
+                     "weibei_course_map", "weibei_read_learning_memory", "weibei_update_learning_memory",
+                     "weibei_course_profile_update", "weibei_visual_asset", "weibei_course_retry_failed_pdf_pages",
+                     "create_document", "weibei_read_discussion", "weibei_search_workspace"]
+        for name in names {
+            XCTAssertNotNil(NSImage(systemSymbolName: AgentActivityIcon.symbol(for: name), accessibilityDescription: nil), name)
+        }
+        XCTAssertEqual(Set(names.prefix(5).map { AgentActivityIcon.symbol(for: $0) }).count, 5)
+        let state = AgentStreamingState(), message = UUID(), chat = UUID(), now = Date()
+        XCTAssertTrue(state.activityArrivalTimes(for: ["a"], messageID: message, now: now).isEmpty)
+        state.begin(messageID: message, chatID: chat)
+        let initial = state.activityArrivalTimes(for: ["a", "b"], messageID: message, now: now)
+        XCTAssertLessThan(initial["a"]!, initial["b"]!)
+        XCTAssertEqual(state.activityArrivalTimes(for: ["a", "b"], messageID: message, now: now.addingTimeInterval(5)), initial)
+        let before = AgentActivityRevealTiming(start: initial["a"], now: now, reduceMotion: false)
+        let middle = AgentActivityRevealTiming(start: initial["a"], now: now.addingTimeInterval(0.2), reduceMotion: false)
+        let settled = AgentActivityRevealTiming(start: initial["a"], now: now.addingTimeInterval(1), reduceMotion: false)
+        XCTAssertEqual(before.content, 0)
+        XCTAssertGreaterThan(middle.connector, middle.content)
+        XCTAssertEqual(settled.progress, 1)
+        XCTAssertEqual(settled.content, 1)
+        XCTAssertEqual(AgentActivityRevealTiming(start: initial["a"], now: now, reduceMotion: true).content, 1)
+        state.finishDisplaying()
+        XCTAssertTrue(state.activityArrivalTimes(for: ["a"], messageID: message).isEmpty)
+    }
+
     func testActivityDisclosureUsesCompactNativeLayout() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

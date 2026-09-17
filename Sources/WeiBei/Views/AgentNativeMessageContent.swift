@@ -65,7 +65,8 @@ struct AgentInlineToolActivity: View {
             let visibleText = streaming.isDisplaying(message.id) ? streaming.text : message.text
             let active = (streaming.isDisplaying(message.id) || message.completionState == .generating)
                 && visibleText.count <= offset
-            AgentToolActivityGroup(message: message, autoOpen: active)
+            AgentToolActivityGroup(message: message, autoOpen: active,
+                arrivals: streaming.activityArrivalTimes(for: message.toolActivities.map(\.id), messageID: messageID))
         }
     }
 }

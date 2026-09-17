@@ -89,13 +89,14 @@ final class ContentStore {
         let generation = self.generation
         let revision = message.revision
         let text = message.markdown
+        let streaming = message.state == .streaming
         // ponytail: full source parsing preserves late reference definitions;
         // unchanged parsed blocks keep their content and layout. Use parser-owned
         // incremental invalidation only if this measured cost dominates.
         let parsed: MarkdownParser.ParseResult
         if message.parsedRevision == revision, let cached = message.parsed { parsed = cached }
         else {
-            parsed = await Task.detached(priority: .userInitiated) { MarkdownParser().parse(MarkdownEmphasisNormalizer.prepare(text).text) }.value
+            parsed = await Task.detached(priority: .userInitiated) { MarkdownParser().parse(MarkdownEmphasisNormalizer.prepare(streaming ? MarkdownStreamingDisplay.source(text) : text).text) }.value
             guard generation == self.generation, revision == message.revision else { return false }
             message.parsed = parsed; message.parsedRevision = revision
             parseCount += 1
@@ -170,7 +171,10 @@ final class ContentStore {
             guard let self, let block else { return }
             self.changed?(block)
         }
-        body.onLink = { [weak self] in self?.openLink?($0, block.messageID) }
+        body.onLink = { [weak self] url in
+            guard url.absoluteString != MarkdownStreamingDisplay.pendingLink else { return }
+            self?.openLink?(url, block.messageID)
+        }
         body.onSaveNote = { [weak self] in self?.saveNote?($0) }
         if block.width != width {
             block.height = body.measure(width: width)

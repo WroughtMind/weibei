@@ -5,6 +5,29 @@ import XCTest
 @testable import WeiBei
 
 final class NativeChatMarkdownTests: XCTestCase {
+    func testStreamingMarkdownStylesOnlyTheUnfinishedTail() {
+        let cases: [(String, String)] = [
+            ("**重点", "**重点**"), ("**重点*", "**重点**"), ("*强调", "*强调*"),
+            ("~~删除", "~~删除~~"), ("`print(1)", "`print(1)`"),
+            ("**粗体 *嵌套", "**粗体 *嵌套***"),
+            ("[来源](https://example.", "[来源](weibei-pending-link:)"),
+            ("[来源", "[来源](weibei-pending-link:)"),
+            ("**重点  ", "**重点**  "), ("2*3 和 foo_bar", "2*3 和 foo_bar"),
+            (#"\*字面"#, #"\*字面"#), ("`**字面", "`**字面`"),
+            ("完成 **未闭合\n\n新的段落", "完成 **未闭合\n\n新的段落"),
+            ("```swift\nlet a = **value", "```swift\nlet a = **value"),
+            ("    **代码", "    **代码"), ("正文\n-", "正文\n-\u{200B}")
+        ]
+        for (source, expected) in cases {
+            XCTAssertEqual(MarkdownStreamingDisplay.source(source), expected, source)
+            XCTAssertEqual(MarkdownEmphasisNormalizer.prepare(source).text, source, "Completed text must not receive display-only closers")
+        }
+        let original = "**重点"
+        let display = MarkdownStreamingDisplay.source(original)
+        XCTAssertTrue(NativeChatMarkdownParser.parse(display).runs.contains { $0.style.bold && $0.text == "重点" })
+        XCTAssertEqual(original, "**重点")
+    }
+
     func testChineseEmphasisIsSharedWithoutChangingCode() {
         let source = "**举办国家：**美国，**球场（纽约）**举办。\n\n`**举办国家：**美国`\n\n```text\n**球场（纽约）**举办\n```"
         let prepared = MarkdownEmphasisNormalizer.prepare(source)

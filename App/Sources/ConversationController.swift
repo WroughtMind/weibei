@@ -712,6 +712,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             }
             guard generation == scenarioGeneration else { return }
             if answer.state != .stopped { answer.state = Task.isCancelled ? .stopped : .complete }
+            let previous = answer.blocks
+            _ = await store.prepare(answer, width: bodyWidth)
+            guard generation == scenarioGeneration else { return }
+            applyBlocks(answer, previous: previous)
             refreshFooter(answer)
             send.setImage(UIImage(systemName: "arrow.up.circle.fill"), for: .normal)
             send.accessibilityLabel = "发送并重放固定回答"
@@ -743,20 +747,6 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             if let cell = collection.cellForItem(at: path) as? MessageCell { configure(cell, at: path) }
         }
         collection.layoutIfNeeded()
-        if !reduceMotion && follow && message.state == .streaming {
-            for index in old..<max(old, new) {
-                guard case let .workspaceAttachment(identifier) = message.blocks[index].kind,
-                      identifier.hasPrefix("activity/"),
-                      let cell = collection.cellForItem(at: IndexPath(item: index + 1, section: section)) else { continue }
-                cell.contentView.alpha = 0
-                cell.contentView.transform = CGAffineTransform(translationX: 0, y: 6)
-                UIView.animate(withDuration: 0.24, delay: 0,
-                               options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
-                    cell.contentView.alpha = 1
-                    cell.contentView.transform = .identity
-                }
-            }
-        }
         if follow { scrollToLatest() } else if let anchor { restore(anchor) }
         layoutTransaction = false
     }
@@ -1110,6 +1100,28 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 try expect(mask.sublayers?.last?.animation(forKey: "stream-reveal") != nil, "新增文字没有淡入动画")
                 growing.revealAppendedText(animated: false)
                 try expect(growing.label.layer.mask == nil, "减少动态效果后仍保留文字动画")
+
+                let unfinished = LabMessage(author: "显示格式检查", markdown: "**尚未闭合")
+                unfinished.state = .streaming
+                _ = await store.prepare(unfinished, width: bodyWidth)
+                let live = store.view(for: unfinished.blocks[0], width: bodyWidth)
+                try expect(live.copyText() == "尚未闭合", "流式粗体仍显示原始星号")
+                try expect(unfinished.copyableMarkdown == "**尚未闭合", "显示修补污染了复制原文")
+                unfinished.state = .stopped
+                _ = await store.prepare(unfinished, width: bodyWidth)
+                try expect(store.view(for: unfinished.blocks[0], width: bodyWidth).copyText() == "**尚未闭合",
+                           "停止后没有恢复真实原文排版")
+                let pending = LabMessage(author: "链接检查", markdown: "[来源](https://example.")
+                pending.state = .streaming
+                _ = await store.prepare(pending, width: bodyWidth)
+                let pendingView = store.view(for: pending.blocks[0], width: bodyWidth)
+                let previousOpenLink = store.openLink
+                var openedPendingLink = false
+                store.openLink = { _, _ in openedPendingLink = true }
+                pendingView.onLink?(URL(string: MarkdownStreamingDisplay.pendingLink)!)
+                store.openLink = previousOpenLink
+                try expect(!openedPendingLink, "尚未传完的链接可被打开")
+                metrics.checks["stream_markdown_settles_without_changing_source"] = "passed"
 
                 let anchored = ConversationController(fixtureMode: false)
                 anchored.usesWorkspaceChrome = true
