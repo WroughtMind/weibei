@@ -20,14 +20,16 @@ import AppKit
         let main = windows[0]
         let toolbar = NSToolbar(identifier: "weibei.workspace")
         main.toolbar = toolbar
+        let originalStyle = main.styleMask
         NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: main)
-        precondition(main.titlebarAppearsTransparent && main.styleMask.contains(.fullSizeContentView))
+        precondition(main.titlebarAppearsTransparent && main.styleMask == originalStyle)
         for mode in ["glassLight", "glassDark", "paper"] {
             bridge.configure(mode: mode, intensity: 1)
             precondition(main.toolbar === toolbar && main.titlebarAppearsTransparent)
+            precondition(main.styleMask == originalStyle)
             precondition(!windows[1].titlebarAppearsTransparent)
         }
         precondition(windows.allSatisfy { !$0.isVisible })
-        print("workspace toolbar: transparent, native controls retained, theme changes passed")
+        print("workspace toolbar: transparent, native content frame retained, theme changes passed")
     }
 }

@@ -26,7 +26,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             guard let self, let window = note.object as? NSWindow,
                   !window.acceptsMouseMovedEvents
                     || (window.toolbar?.identifier == "weibei.workspace"
-                        && (!window.titlebarAppearsTransparent || !window.styleMask.contains(.fullSizeContentView)))
+                        && !window.titlebarAppearsTransparent)
                     || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
             self.apply(to: window)
         })
@@ -40,7 +40,8 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         window.acceptsMouseMovedEvents = true
         guard window.styleMask.contains(.titled), let content = window.contentView else { return }
         if window.toolbar?.identifier == "weibei.workspace" {
-            window.styleMask.insert(.fullSizeContentView)
+            // Catalyst owns the content frame and NSUIViewToolbarItem hit regions.
+            // Extending its NSWindow content into the titlebar covers those controls.
             window.titlebarAppearsTransparent = true
         }
         let glass = ["glassLight", "glassDark", "glassMist", "glassSlate"].contains(mode)
