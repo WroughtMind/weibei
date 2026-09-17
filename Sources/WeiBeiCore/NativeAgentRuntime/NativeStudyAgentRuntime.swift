@@ -64,9 +64,13 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         if delegateDepth >= NativeSubagentRunner.maximumDepth {
             await registry.hide("delegate", scope: scope)
         }
+        let webSearchAvailable = providerID
+            .flatMap(AgentProviderID.init(rawValue:))
+            .map { NativeProviderRouting.route($0).webSearch != .none }
         let prompt = NativePromptAssembler.webiSystemPrompt(
             bundledText: systemPromptText,
-            skillCatalog: liveStores.skillRegistry.catalogSummary()
+            skillCatalog: liveStores.skillRegistry.catalogSummary(),
+            webSearchAvailable: webSearchAvailable
         )
         let meteredAdapter = NativeMeteredLLMAdapter(
             base: adapter, providerID: providerID, requestID: request.id,

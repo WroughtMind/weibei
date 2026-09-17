@@ -3601,7 +3601,7 @@ struct AgentBubble: View {
                 return false
             case .learningRecord, .learningMemory:
                 return message.origin?.courseID != nil
-            case .session:
+            case .session, .discussion:
                 return true
             }
         }
@@ -3777,7 +3777,7 @@ struct AgentBubble: View {
                     store.presentCourseWorkspace(.memory, courseID: courseID)
                 }
             }
-        case .session:
+        case .session, .discussion:
             break
         }
     }
@@ -3799,6 +3799,7 @@ private enum AgentCitationKind: String, Equatable {
     case learningRecord
     case learningMemory
     case session
+    case discussion
 
     var systemImage: String {
         switch self {
@@ -3807,7 +3808,7 @@ private enum AgentCitationKind: String, Equatable {
         case .selection: return "text.quote"
         case .learningRecord: return "bookmark"
         case .learningMemory: return "brain.head.profile"
-        case .session: return "bubble.left.and.bubble.right"
+        case .session, .discussion: return "bubble.left.and.bubble.right"
         }
     }
 
@@ -3819,6 +3820,7 @@ private enum AgentCitationKind: String, Equatable {
         case .learningRecord: return language.text("学习记录", "Study record")
         case .learningMemory: return language.text("学习记忆", "Memory")
         case .session: return language.text("会话", "Session")
+        case .discussion: return language.text("问答", "Discussion")
         }
     }
 }
@@ -4173,7 +4175,7 @@ final class AgentMessageMarkdownMemo {
 
 private enum AgentCitationParser {
     /// Matches `[材料：…]` / `[学习记录：上次位置]` style Agent citation labels.
-    private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话)[：:]\s*([^\]\n]{1,300})\]"#
+    private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话|问答)[：:]\s*([^\]\n]{1,300})\]"#
     private static let regex = try? NSRegularExpression(pattern: pattern)
     /// Tail of an unterminated citation label (`[材料：书法笔` mid-stream). The
     /// kind tokens are listed with every proper prefix so the tail is withheld
@@ -4183,7 +4185,7 @@ private enum AgentCitationParser {
     /// (reappears with the next character, one pump tick later). Ordinary
     /// brackets with non-citation content (`[x`, `[1`) never match.
     private static let trailingOpenCitation = try? NSRegularExpression(
-        pattern: #"\[(?:(?:材|材料|笔|笔记|选|选区|学|学习|学习记|学习记录|学习记忆|会|会话)[：:]?[^\]\n]*)?$"#
+        pattern: #"\[(?:(?:材|材料|笔|笔记|选|选区|学|学习|学习记|学习记录|学习记忆|会|会话|问|问答)[：:]?[^\]\n]*)?$"#
     )
 
     static func parse(_ text: String) -> (displayText: String, citations: [AgentCitation]) {
@@ -4244,6 +4246,7 @@ private enum AgentCitationParser {
         case "学习记录": return .learningRecord
         case "学习记忆": return .learningMemory
         case "会话": return .session
+        case "问答": return .discussion
         default: return nil
         }
     }
@@ -4519,7 +4522,7 @@ private struct AgentCitationTag: View {
     private var chipLabel: String {
         let kindLabel = citation.kind.shortLabel(language: store.interfaceLanguage)
         switch citation.kind {
-        case .learningRecord, .learningMemory, .session:
+        case .learningRecord, .learningMemory, .session, .discussion:
             // Value is already a short kind phrase ("上次位置").
             return "\(kindLabel) · \(citation.displayTitle)"
         case .material, .note, .selection:
@@ -4544,6 +4547,8 @@ private struct AgentCitationTag: View {
             return store.ui("查看学习记忆", "Open study memory")
         case .session:
             return store.ui("当前会话", "Current session")
+        case .discussion:
+            return store.ui("问答引用", "Discussion citation")
         }
     }
 
@@ -4559,7 +4564,7 @@ private struct AgentCitationTag: View {
             return hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
         case .learningMemory:
             return hovering ? WeiBeiTheme.secondaryInk : WeiBeiTheme.tertiaryInk
-        case .session:
+        case .session, .discussion:
             return WeiBeiTheme.tertiaryInk
         }
     }
@@ -4576,7 +4581,7 @@ private struct AgentCitationTag: View {
             return WeiBeiTheme.paperInset.opacity(hovering ? 0.55 : 0.38)
         case .learningMemory:
             return WeiBeiTheme.paperInset.opacity(hovering ? 0.42 : 0.28)
-        case .session:
+        case .session, .discussion:
             return WeiBeiTheme.paperInset.opacity(0.22)
         }
     }
@@ -4589,7 +4594,7 @@ private struct AgentCitationTag: View {
             return WeiBeiTheme.link.opacity(hovering ? 0.32 : 0.18)
         case .selection:
             return WeiBeiTheme.cinnabar.opacity(hovering ? 0.36 : 0.22)
-        case .learningRecord, .learningMemory, .session:
+        case .learningRecord, .learningMemory, .session, .discussion:
             return WeiBeiTheme.hairline.opacity(hovering ? 0.55 : 0.36)
         }
     }

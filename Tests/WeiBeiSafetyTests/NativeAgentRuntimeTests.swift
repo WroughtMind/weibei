@@ -874,6 +874,48 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
+    // 选区完整原文只经 selection 字段发送一次；Store 侧来源摘录截到 400 字，
+    // 不得作为第二份（截断版）选文随 sources 重复注入。
+    func testTurnContextSendsFullSelectionOnceWithoutTrimmedExcerpts() throws {
+        var request = testRequest()
+        let fullText = (0..<120).map { "选段原文第\($0)句" }.joined(separator: "，")
+        let trimmed = String(fullText.prefix(400))
+        request.selectionText = fullText
+        let source = AgentReplySource(
+            itemID: "material-1",
+            kind: .selection,
+            title: "材料标题",
+            label: "[选区：r1.1]",
+            excerpt: trimmed
+        )
+        let context = try NativePromptAssembler.turnContext(for: request, selections: [source])
+        XCTAssertTrue(context.contains(fullText), "完整选文必须随 selection 字段进入模型输入")
+        XCTAssertTrue(context.contains(source.label), "选区来源标签仍随 sources 提供")
+        XCTAssertEqual(
+            context.components(separatedBy: trimmed).count, 2,
+            "400 字摘录片段只能作为完整选文的一部分出现一次，不得再随 sources 重复"
+        )
+        let json = context.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
+        let reference = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let selection = try XCTUnwrap(reference["selection"] as? [String: Any])
+        XCTAssertEqual(selection["text"] as? String, fullText)
+        let sources = try XCTUnwrap(reference["sources"] as? [[String: Any]])
+        XCTAssertEqual(sources.count, 1)
+        XCTAssertEqual((sources[0]["excerpt"] as? String)?.isEmpty, true)
+    }
+
+    // 能力行按服务商静态注入；nil（无法判定服务商）时不输出该段。
+    func testWebiSystemPromptAppendsWebSearchCapabilityLine() {
+        let enabled = NativePromptAssembler.webiSystemPrompt(bundledText: "固定提示", webSearchAvailable: true)
+        XCTAssertTrue(enabled.contains("本服务提供原生网页搜索。"))
+        XCTAssertFalse(enabled.contains("本服务不提供"))
+        let disabled = NativePromptAssembler.webiSystemPrompt(bundledText: "固定提示", webSearchAvailable: false)
+        XCTAssertTrue(disabled.contains("本服务不提供原生网页搜索；不能声称已搜索，需要外部核实时明确说明未联网。"))
+        XCTAssertFalse(disabled.contains("本服务提供原生网页搜索。"))
+        let unknown = NativePromptAssembler.webiSystemPrompt(bundledText: "固定提示", webSearchAvailable: nil)
+        XCTAssertFalse(unknown.contains("原生网页搜索"))
+    }
+
     // 四种接口重复发送同一上下文时，工具参数与请求字节不能因字典顺序漂移。
     func testProviderRequestEncodingIsStableForPromptCaching() async throws {
         let registry = NativeToolRegistry()
