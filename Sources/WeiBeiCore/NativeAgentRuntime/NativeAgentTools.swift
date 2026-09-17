@@ -1188,7 +1188,7 @@ public enum NativeBuiltinTools {
 /// User-facing activity details use selected fields, never whole tool payloads.
 public enum NativeToolActivityPresentation {
     public static func activity(id: String, name: String, arguments: [String: Any],
-                                context: NativeToolExecutionContext, result: NativeToolExecutionResult? = nil) -> AgentToolActivity {
+                                context: NativeToolExecutionContext, result: NativeToolExecutionResult? = nil, textOffset: Int? = nil) -> AgentToolActivity {
         func text(_ key: String) -> String? { arguments[key] as? String }
         func short(_ value: String) -> String { String(value.prefix(240)) }
         func item(_ key: String) -> String {
@@ -1232,7 +1232,7 @@ public enum NativeToolActivityPresentation {
         case "$web_search": detail = text("query") ?? "模型请求的网络搜索"
         default: detail = "工具请求"
         }
-        var activity = AgentToolActivity(id: id, name: name, state: .running, detail: short(detail))
+        var activity = AgentToolActivity(id: id, name: name, state: .running, detail: short(detail), textOffset: textOffset)
         guard let result else { return activity }
         activity.state = result.isError ? .failed : result.details["cancelled"] as? Bool == true ? .cancelled : .completed
         if result.isError || activity.state == .cancelled {

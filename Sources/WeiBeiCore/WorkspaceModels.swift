@@ -1845,15 +1845,18 @@ public struct AgentToolActivity: Identifiable, Codable, Hashable, Sendable {
     public var detail: String?
     public var sourceURLs: [String]?
     public var resultSummary: String?
-    public init(id: String, name: String, state: State, detail: String? = nil, sourceURLs: [String]? = nil, resultSummary: String? = nil) {
+    /// Character position in the cumulative answer when this activity first appeared.
+    public var textOffset: Int?
+    public init(id: String, name: String, state: State, detail: String? = nil, sourceURLs: [String]? = nil, resultSummary: String? = nil, textOffset: Int? = nil) {
         self.id = id; self.name = name; self.state = state
-        self.detail = detail; self.sourceURLs = sourceURLs; self.resultSummary = resultSummary
+        self.detail = detail; self.sourceURLs = sourceURLs; self.resultSummary = resultSummary; self.textOffset = textOffset
     }
     public func merging(_ update: Self) -> Self {
         var next = update
         next.detail = update.detail ?? detail
         next.sourceURLs = update.sourceURLs ?? sourceURLs
         next.resultSummary = update.resultSummary ?? resultSummary
+        next.textOffset = textOffset ?? update.textOffset
         return next
     }
 }

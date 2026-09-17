@@ -3325,7 +3325,7 @@ private struct FloatingSelectionMessageBubble: View {
 
     private var finalizedMessage: some View {
         AgentMessageMarkdownText(
-            text: isUser ? text : AgentNativeMessageContent.markdown(text: text, blocks: message.contentBlocks),
+            text: isUser ? text : AgentNativeMessageContent.markdown(text: text, blocks: message.contentBlocks, activities: message.toolActivities),
             rendersRichMarkdown: !isUser,
             compact: true,
             isChatWideTypography: false,
@@ -3360,7 +3360,7 @@ private struct FloatingSelectionMessageRow: View {
                 isError: WorkspaceStore.isAgentFailureMessage(message.text),
                 isStreaming: isStreaming
             )
-            if message.completionState == .generating
+            if message.completionState == .generating && message.toolActivities.isEmpty
                 && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
                     .id(message.id)
@@ -3443,7 +3443,7 @@ struct AgentBubble: View {
             }
         }
         .overlay(alignment: .bottomLeading) {
-            if !isUser {
+            if !isUser && message.completionState != .generating {
                 messageActionBar
                     // Keep actions close to the last rendered line.
                     .offset(x: 16, y: 2)
@@ -3605,13 +3605,13 @@ struct AgentBubble: View {
                 return true
             }
         }
-        let isAwaitingFirstToken = message.completionState == .generating
+        let isAwaitingFirstToken = message.completionState == .generating && message.toolActivities.isEmpty
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
             if showsBody {
               ZStack(alignment: .topLeading) {
                 AgentMessageMarkdownText(
-                    text: AgentNativeMessageContent.markdown(text: answerText, blocks: message.contentBlocks),
+                    text: AgentNativeMessageContent.markdown(text: answerText, blocks: message.contentBlocks, activities: message.toolActivities),
                     rendersRichMarkdown: true,
                     isChatWideTypography: isChatWideTypography,
                     messageID: message.id,
@@ -3627,9 +3627,6 @@ struct AgentBubble: View {
                     )
                 }
             }
-            }
-            if !message.toolActivities.isEmpty {
-                AgentToolActivityGroup(message: message)
             }
             if !availableSources.isEmpty {
                 AgentReplySourceTagRow(sources: availableSources) { source in
@@ -5612,86 +5609,120 @@ struct AgentToolActivityGroup: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     let message: AgentMessage
+    var autoOpen: Bool? = nil
     @State private var userExpanded: Bool?
+    @State private var detailIDs: Set<String> = []
     private var running: Bool {
         message.completionState == .generating && message.toolActivities.contains { $0.state == .running }
     }
-    private var expanded: Bool { userExpanded ?? running }
-    private var sources: [String] {
-        Array(Set(message.toolActivities.flatMap { $0.sourceURLs ?? [] }))
-    }
+    private var expanded: Bool { userExpanded ?? autoOpen ?? running }
     private var summary: String {
-        if running, let current = message.toolActivities.last(where: { $0.state == .running }) {
-            return title(current.name) + (current.detail.map { " · " + $0 } ?? "")
-        }
-        let searches = message.toolActivities.filter { $0.name == "$web_search" }.count
+        let searchNames = ["$web_search", "weibei_search_workspace", "weibei_find_discussions"]
+        let readNames = ["load_skill", "weibei_course_read", "weibei_read_discussion", "weibei_web_open", "weibei_read_learning_memory"]
+        let searches = message.toolActivities.filter { searchNames.contains($0.name) }.count
+        let reads = message.toolActivities.filter { readNames.contains($0.name) }.count
+        let others = message.toolActivities.filter {
+            !searchNames.contains($0.name) && !readNames.contains($0.name) && $0.name != "$web_search_sources"
+        }.count
         var parts: [String] = []
         if searches > 0 { parts.append(store.ui("搜索 \(searches) 次", "\(searches) searches")) }
-        let others = message.toolActivities.filter { $0.name != "$web_search" && $0.name != "$web_search_sources" }.count
+        if reads > 0 { parts.append(store.ui("读取 \(reads) 次", "\(reads) reads")) }
         if others > 0 { parts.append(store.ui("执行 \(others) 项操作", "\(others) operations")) }
-        if !sources.isEmpty { parts.append(store.ui("\(sources.count) 个来源", "\(sources.count) sources")) }
+        if parts.isEmpty { parts.append(store.ui("查看搜索来源", "View search sources")) }
         if message.toolActivities.contains(where: { $0.state == .failed }) { parts.append(store.ui("有失败项", "Includes failures")) }
         return parts.joined(separator: " · ")
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             Button { userExpanded = !expanded } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                HStack(spacing: 7) {
+                    Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .medium))
-                    if running { ProgressView().controlSize(.mini) }
-                    Text(summary).lineLimit(2).multilineTextAlignment(.leading)
-                }.contentShape(Rectangle())
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    Text(summary).lineLimit(1)
+                    if running && !expanded { ProgressView().controlSize(.mini) }
+                }
+                .frame(minHeight: 26, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityValue(expanded ? store.ui("已展开", "Expanded") : store.ui("已折叠", "Collapsed"))
-            if expanded {
-                VStack(alignment: .leading, spacing: 14) {
+            AgentActivityRevealLayout(progress: expanded ? 1 : 0) {
+                VStack(alignment: .leading, spacing: 4) {
                     ForEach(message.toolActivities) { activity in
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: activity.state == .failed ? "exclamationmark.circle" :
-                                activity.state == .completed ? "checkmark" : activity.state == .cancelled ? "minus.circle" : "ellipsis")
-                                .frame(width: 12).padding(.top, 2)
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(title(activity.name)).fontWeight(.medium)
-                                if let detail = activity.detail, !detail.isEmpty {
-                                    Text(detail).foregroundStyle(WeiBeiTheme.ink).textSelection(.enabled)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Button {
+                                if !detailIDs.insert(activity.id).inserted { detailIDs.remove(activity.id) }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    if activity.state == .running && running {
+                                        ProgressView().controlSize(.mini).frame(width: 12)
+                                    } else {
+                                        Image(systemName: activity.state == .failed ? "exclamationmark.circle" :
+                                            activity.state == .completed ? "checkmark" : "minus.circle")
+                                            .font(.system(size: 10)).frame(width: 12)
+                                    }
+                                    Text(title(activity.name)).lineLimit(1)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 8))
+                                        .rotationEffect(.degrees(detailIDs.contains(activity.id) ? 90 : 0))
                                 }
-                                if let result = activity.resultSummary, !result.isEmpty {
-                                    Text(result).textSelection(.enabled)
-                                } else if activity.state == .cancelled {
-                                    Text(store.ui("已取消", "Cancelled"))
-                                } else if activity.state == .failed {
-                                    Text(store.ui("未能完成", "Could not complete"))
-                                } else if activity.state == .running && !running {
-                                    Text(store.ui("已中断", "Interrupted"))
-                                }
-                                let urls = Array(Set(activity.sourceURLs ?? [])).sorted()
-                                if !urls.isEmpty {
-                                    DisclosureGroup(store.ui("\(urls.count) 个来源", "\(urls.count) sources")) {
-                                      VStack(alignment: .leading, spacing: 4) {
-                                        ForEach(urls, id: \.self) { raw in
-                                            if let url = URL(string: raw), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-                                                Link(destination: url) {
-                                                    Text(url.host ?? raw).underline().lineLimit(1)
-                                                }.help(raw)
-                                            }
+                                .frame(minHeight: 24, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityValue(detailIDs.contains(activity.id) ? store.ui("已展开", "Expanded") : store.ui("已折叠", "Collapsed"))
+                            if detailIDs.contains(activity.id) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    if let detail = activity.detail, !detail.isEmpty {
+                                        Text(detail).textSelection(.enabled)
+                                    }
+                                    if let result = activity.resultSummary, !result.isEmpty {
+                                        Text(result).textSelection(.enabled)
+                                    } else if activity.state == .cancelled {
+                                        Text(store.ui("已取消", "Cancelled"))
+                                    } else if activity.state == .failed {
+                                        Text(store.ui("未能完成", "Could not complete"))
+                                    } else if activity.state == .running && !running {
+                                        Text(store.ui("已中断", "Interrupted"))
+                                    }
+                                    let urls = Array(Set(activity.sourceURLs ?? [])).sorted()
+                                    if !urls.isEmpty {
+                                        DisclosureGroup(store.ui("\(urls.count) 个来源", "\(urls.count) sources")) {
+                                            ScrollView {
+                                                VStack(alignment: .leading, spacing: 8) {
+                                                    ForEach(urls, id: \.self) { raw in
+                                                        if let url = URL(string: raw), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                                                            Link(destination: url) {
+                                                                Text((url.host ?? "") + url.path)
+                                                                    .lineLimit(2)
+                                                                    .multilineTextAlignment(.leading)
+                                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                                            }
+                                                            .buttonStyle(.plain).help(raw)
+                                                        }
+                                                    }
+                                                }.padding(.vertical, 6)
+                                            }.frame(height: min(CGFloat(urls.count) * 38, 180))
                                         }
-                                      }.padding(.top, 4)
-                                    }.fixedSize(horizontal: false, vertical: true)
+                                    }
                                 }
-                            }.fixedSize(horizontal: false, vertical: true)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.leading, 20).padding(.bottom, 8)
+                            }
                         }
                     }
-                }.padding(.leading, 15)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                }.padding(.leading, 15).padding(.bottom, 4)
             }
+            .clipped()
+            .opacity(expanded ? 1 : 0)
+            .allowsHitTesting(expanded)
+            .accessibilityHidden(!expanded)
         }
         .weiBeiText(11)
         .foregroundStyle(WeiBeiTheme.secondaryInk)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: expanded)
-        .onChange(of: running) { _, _ in userExpanded = nil }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: expanded)
     }
     private func title(_ name: String) -> String {
         switch name {
@@ -5716,5 +5747,22 @@ struct AgentToolActivityGroup: View {
         case "$web_search_sources": store.ui("搜索返回的来源", "Sources returned by search")
         default: store.ui("执行工具", "Run tool") + " · " + name
         }
+    }
+}
+
+/// Keep children anchored while the native attachment reports its animated height.
+private struct AgentActivityRevealLayout: Layout {
+    var progress: CGFloat
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let size = subviews.first?.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) ?? .zero
+        return CGSize(width: size.width, height: size.height * progress)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                             proposal: ProposedViewSize(width: bounds.width, height: nil))
     }
 }

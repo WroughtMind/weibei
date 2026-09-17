@@ -526,7 +526,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private func formattedMarkdown(_ value: AgentMessage, memo: AgentMessageMarkdownMemo) -> String {
         // The original right-aligned user chip is hosted by the auxiliary row.
         guard value.role == .assistant else { return usesWorkspaceChrome ? "" : value.text }
-        let text = AgentNativeMessageContent.markdown(text: value.text, blocks: value.contentBlocks)
+        let text = AgentNativeMessageContent.markdown(text: value.text, blocks: value.contentBlocks, activities: value.toolActivities)
         return memo.outputs(text: text, sources: value.sources, language: interfaceLanguage).finalized
     }
 

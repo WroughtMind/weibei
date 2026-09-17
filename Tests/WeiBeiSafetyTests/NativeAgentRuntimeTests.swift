@@ -842,9 +842,11 @@ final class NativeAgentRuntimeTests: XCTestCase {
             ledger: ledger,
             registry: registry,
             adapter: ToolRecoveryMockLLMAdapter(toolChunks: [
+                .textDelta(index: 2, text: "先说明"),
                 .webSearchSource(url: "https://example.com/a"),
                 .webSearchSource(url: "https://example.com/b"),
                 .serverToolActivity(.init(id: "search2", name: "$web_search", state: .running)),
+                .textDelta(index: 2, text: "再说明"),
                 .serverToolActivity(.init(id: "search2", name: "$web_search", state: .completed)),
                 .toolCallDelta(index: 0, id: "bad", name: "test_tool", argumentsDelta: "{\"value\":"),
                 .toolCallDelta(index: 1, id: "good", name: "test_tool", argumentsDelta: "{}"),
@@ -856,6 +858,8 @@ final class NativeAgentRuntimeTests: XCTestCase {
         )
 
         let activities = await capture.activities
+        XCTAssertEqual(activities.map(\.textOffset), [3, 3, 3, 6, 6, 6, 6, 6])
+        XCTAssertEqual(activities[2].merging(activities[3]).textOffset, 3)
         XCTAssertEqual(activities[1].sourceURLs, ["https://example.com/a", "https://example.com/b"])
         XCTAssertEqual(activities.map(\.id), ["1:server:sources", "1:server:sources", "1:server:search2", "1:server:search2", "1:bad", "1:bad", "1:good", "1:good"])
         XCTAssertEqual(activities.map(\.state), [.completed, .completed, .running, .completed, .running, .failed, .running, .completed])
@@ -864,7 +868,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(AgentMessage.self, from: JSONEncoder().encode(message)), message)
         let events = await ledger.allEvents()
         let toolResults = events.filter { $0.type == .toolResult }
-        XCTAssertEqual(result.text, "完成")
+        XCTAssertEqual(result.text, "先说明再说明完成")
         XCTAssertEqual(events.filter { $0.type == .toolCall }.map(\.toolCallID), ["bad", "good"])
         XCTAssertEqual(toolResults.map(\.toolCallID), ["bad", "good"])
         XCTAssertEqual(toolResults.map(\.isError), [true, false])

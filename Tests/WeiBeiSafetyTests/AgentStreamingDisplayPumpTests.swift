@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import WeiBei
 import WeiBeiCore
 
@@ -130,6 +131,64 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         while run.pump.pendingCharacterCount > 0 { run.pump.stepOnce() }
         XCTAssertEqual(run.streaming.applyingDisplayText(to: message).text, message.text)
         XCTAssertFalse(run.streaming.isDisplaying(message.id))
+    }
+
+    func testToolGroupsFollowTextBoundariesWithoutRevealingFutureActivity() throws {
+        let text = "先👨‍👩‍👧‍👦查后答"
+        let activities = [
+            AgentToolActivity(id: "1", name: "search", state: .completed, textOffset: 2),
+            AgentToolActivity(id: "2", name: "read", state: .completed, textOffset: 2),
+            AgentToolActivity(id: "3", name: "read", state: .running, textOffset: 4)
+        ]
+        let early = AgentNativeMessageContent.markdown(text: String(text.prefix(1)), blocks: [], activities: activities)
+        XCTAssertEqual(early, "先")
+        let output = AgentNativeMessageContent.markdown(text: text, blocks: [], activities: activities)
+        XCTAssertEqual(output, "先👨‍👩‍👧‍👦\n\n![图示](weibei-visualization:activity/2)\n\n查后\n\n![图示](weibei-visualization:activity/4)\n\n答")
+        let start = activities[0]
+        let completed = start.merging(.init(id: "1", name: "search", state: .completed, textOffset: 5))
+        XCTAssertEqual(completed.textOffset, 2)
+        XCTAssertEqual(try JSONDecoder().decode(AgentToolActivity.self, from: JSONEncoder().encode(completed)), completed)
+    }
+
+    func testActivityInterleavesWithRichContentAndRespectsVisiblePrefix() {
+        let blocks: [AgentMessageContentBlock] = [.text("先查"), .unavailable(type: "example", rawJSON: "{}"), .text("后答")]
+        let activities = [AgentToolActivity(id: "1", name: "read", state: .completed, textOffset: 2)]
+        let early = AgentNativeMessageContent.markdown(text: "先", blocks: blocks, activities: activities)
+        XCTAssertEqual(early, "先")
+        let output = AgentNativeMessageContent.markdown(text: "先查后答", blocks: blocks, activities: activities)
+        XCTAssertEqual(output, "先查\n\n![图示](weibei-visualization:activity/2)\n\n\n\n![图示](weibei-visualization:unavailable-1)\n\n后答")
+    }
+
+    func testActivityDisclosureUsesCompactNativeLayout() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let store = WorkspaceStore(workspaceDirectory: folder, selectionAskThreadDefaults: defaults,
+                                   startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        var message = AgentMessage(role: .assistant, text: "回答", source: nil)
+        message.toolActivities = [
+            .init(id: "search", name: "$web_search", state: .completed,
+                  detail: String(repeating: "很长的搜索查询 ", count: 20),
+                  sourceURLs: (1...44).map { "https://example.com/article/\($0)" }),
+            .init(id: "read", name: "weibei_course_read", state: .completed, detail: "课程讲义，第 8 页")
+        ]
+        var heights: [CGFloat] = []
+        for expanded in [false, true] {
+            let renderer = ImageRenderer(content: AgentToolActivityGroup(message: message, autoOpen: expanded)
+                .environmentObject(store).frame(width: 640).padding(24).background(WeiBeiTheme.paper))
+            renderer.scale = 2
+            let image = try XCTUnwrap(renderer.nsImage)
+            heights.append(image.size.height)
+            if let directory = ProcessInfo.processInfo.environment["WEIBEI_ACTIVITY_PREVIEW_DIR"] {
+                let url = URL(fileURLWithPath: directory, isDirectory: true)
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                let bitmap = try XCTUnwrap(NSBitmapImageRep(data: XCTUnwrap(image.tiffRepresentation)))
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to:
+                    url.appendingPathComponent(expanded ? "expanded.png" : "collapsed.png"))
+            }
+        }
+        XCTAssertGreaterThan(heights[1], heights[0])
+        XCTAssertLessThan(heights[1], 150, "Opening a group must not lay out query details or 44 sources")
     }
 
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {

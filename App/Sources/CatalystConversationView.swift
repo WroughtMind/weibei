@@ -246,7 +246,7 @@ private struct CatalystMessageFooter: View {
             if message.role == .user {
                 AgentBubble(message: message, isChatWideTypography: wideTypography)
             } else {
-                if message.completionState == .generating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if message.completionState == .generating && message.toolActivities.isEmpty && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     AgentThinkingIndicator(activityText: streaming.activityText, chatWideTypography: wideTypography)
                 }
                 AgentBubble(message: message, isChatWideTypography: wideTypography, showsBody: false)

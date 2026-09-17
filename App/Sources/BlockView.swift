@@ -353,7 +353,7 @@ final class BlockView: UIView, UITextViewDelegate {
             return text
         case let .card(source): return record.draft.isEmpty ? source : record.draft
         case let .diagram(source): return source
-        case .workspaceAttachment: return "[互动内容]"
+        case let .workspaceAttachment(identifier): return identifier.hasPrefix("activity/") ? "" : "[互动内容]"
         }
     }
 }

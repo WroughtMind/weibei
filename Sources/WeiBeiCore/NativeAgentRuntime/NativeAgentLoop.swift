@@ -201,6 +201,7 @@ public actor NativeAgentLoop {
                             case var .serverToolActivity(activity):
                                 reportedSearchActivity = true
                                 activity.id = "\(step):server:\(activity.id)"
+                                activity.textOffset = collectedText.count
                                 await progress?(.toolActivity(activity))
                             case let .webSearchSource(url):
                                 // Some providers expose only sources, not a search lifecycle.
@@ -209,7 +210,7 @@ public actor NativeAgentLoop {
                                     sourceOnlyURLs.append(url)
                                     await progress?(.toolActivity(.init(
                                         id: "\(step):server:sources", name: "$web_search_sources", state: .completed,
-                                        sourceURLs: sourceOnlyURLs
+                                        sourceURLs: sourceOnlyURLs, textOffset: collectedText.count
                                     )))
                                 }
                                 if !context.currentRunSourceURLs.contains(url) {
@@ -320,7 +321,7 @@ public actor NativeAgentLoop {
                     pendingUnstarted.removeAll { $0.id == call.id }
                     let arguments = (try? JSONSerialization.jsonObject(with: Data(call.arguments.utf8))) as? [String: Any]
                     await progress?(.toolActivity(NativeToolActivityPresentation.activity(
-                        id: "\(step):\(call.id)", name: call.name, arguments: arguments ?? [:], context: context)))
+                        id: "\(step):\(call.id)", name: call.name, arguments: arguments ?? [:], context: context, textOffset: collectedText.count)))
                     var result: NativeToolExecutionResult
                     let previousBlocks = contentBlocks
                     if let failure = callResult.failure {
@@ -383,7 +384,7 @@ public actor NativeAgentLoop {
                         )
                     }
                     await progress?(.toolActivity(NativeToolActivityPresentation.activity(
-                        id: "\(step):\(call.id)", name: call.name, arguments: arguments ?? [:], context: context, result: result)))
+                        id: "\(step):\(call.id)", name: call.name, arguments: arguments ?? [:], context: context, result: result, textOffset: collectedText.count)))
                 }
                 _ = try await ledger.append { seq, time in
                     NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: turn, step: step)
