@@ -164,24 +164,21 @@ struct ComposerView: View {
     }
 
     private var reasoningEffortPicker: some View {
-        let levels = store.agentReasoningLevels
-        return Menu {
-            ForEach(levels, id: \.self) { effort in
+        Menu {
+            ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
                 Button {
-                    store.agentReasoningEfforts[store.agentReasoningModelKey] = effort
+                    store.agentReasoningMode = mode
                 } label: {
-                    if effort == store.agentReasoningEffort {
-                        Label(AgentReasoningEffort.label(effort, language: store.interfaceLanguage), systemImage: "checkmark")
+                    if mode == store.agentReasoningMode {
+                        Label(mode.label, systemImage: "checkmark")
                     } else {
-                        Text(AgentReasoningEffort.label(effort, language: store.interfaceLanguage))
+                        Text(mode.label)
                     }
                 }
             }
         } label: {
             HStack(spacing: 4) {
-                Text(store.agentReasoningEffort.map {
-                    AgentReasoningEffort.label($0, language: store.interfaceLanguage)
-                } ?? "")
+                Text(store.agentReasoningMode.label)
                     .weiBeiText(fontSize, weight: .regular)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9 * textScale, weight: .medium))
@@ -194,7 +191,7 @@ struct ComposerView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .accessibilityLabel(store.ui("推理强度", "Reasoning effort"))
-        .help(store.ui("强度越高，思考通常越久。仅对支持推理强度的模型生效。", "Higher effort usually takes longer. Applies only to models that support reasoning effort."))
+        .help(store.ui("Flash 快速回答，Think 深入思考。可在对话设置中调整对应强度。", "Flash for quick answers, Think for deeper reasoning. Configure their effort in Chat settings."))
         .accessibilityIdentifier("agent-reasoning-effort")
     }
 
