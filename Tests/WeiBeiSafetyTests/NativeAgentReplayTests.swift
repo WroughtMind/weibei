@@ -89,6 +89,35 @@ final class NativeAgentReplayTests: XCTestCase {
         XCTAssertNil(old.replay)
     }
 
+    func testCompletedStreamRetainsDoneItemsWhenTerminalOutputIsEmpty() throws {
+        var completedItems: [Int: [String: Any]] = [:]
+        let expected = items()
+        func feed(_ event: [String: Any]) throws -> [NativeStreamChunk] {
+            try OpenAIResponsesProvider.translate(String(decoding: JSONSerialization.data(withJSONObject: event), as: UTF8.self),
+                completedItems: &completedItems)
+        }
+        // Complete items, not partial deltas, are retained in output_index order.
+        for (index, item) in expected.enumerated().reversed() {
+            _ = try feed(["type": "response.output_item.done", "output_index": index, "item": item])
+        }
+        let terminal: [String: Any] = ["type": "response.completed", "response": ["status": "completed", "output": []]]
+        XCTAssertEqual(try feed(terminal).last, .finish(reason: .stop, replayState: try data(expected)))
+        XCTAssertTrue(completedItems.isEmpty)
+        XCTAssertEqual(try feed(terminal).last, .finish(reason: .stop, replayState: nil), "Previous response cannot leak")
+
+        let call: [String: Any] = ["type": "function_call", "call_id": "c1", "name": "read_test", "arguments": "{}"]
+        _ = try feed(["type": "response.output_item.done", "output_index": 0, "item": call])
+        XCTAssertEqual(try feed(terminal).last, .finish(reason: .toolCalls, replayState: try data([call])))
+        _ = try feed(["type": "response.output_item.done", "output_index": 0, "item": expected[0]])
+        XCTAssertEqual(try feed(["type": "response.incomplete", "response": ["status": "incomplete", "output": []]]).last,
+            .finish(reason: .length, replayState: nil))
+        XCTAssertTrue(completedItems.isEmpty)
+        _ = try feed(["type": "response.output_item.done", "output_index": 0, "item": expected[2]])
+        let completeOutput = items("authoritative")
+        XCTAssertEqual(try feed(["type": "response.completed", "response": ["status": "completed", "output": completeOutput]]).last,
+            .finish(reason: .stop, replayState: try data(completeOutput)), "Terminal output carries any final encrypted fields")
+    }
+
     func testToolOnlyStepReplaysNativeCallOnceBeforeItsMatchingResult() async throws {
         let url = ledgerURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent().deletingLastPathComponent()) }

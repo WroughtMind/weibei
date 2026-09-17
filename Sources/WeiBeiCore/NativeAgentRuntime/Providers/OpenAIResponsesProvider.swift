@@ -35,11 +35,12 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
     }
 
     public func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
-        NativeHTTPByteStream.start(
+        var completedItems: [Int: [String: Any]] = [:]
+        return NativeHTTPByteStream.start(
             session: session,
             request: makeURLRequest(request),
             fallbackRequest: webSearchSupported ? makeURLOrURLRequestWithoutSearch(request) : nil,
-            translate: Self.translate
+            translate: { try Self.translate($0, completedItems: &completedItems) }
         )
     }
 
@@ -210,6 +211,11 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
     }
 
     public static func translate(_ payload: String) throws -> [NativeStreamChunk] {
+        var completedItems: [Int: [String: Any]] = [:]
+        return try translate(payload, completedItems: &completedItems)
+    }
+
+    static func translate(_ payload: String, completedItems: inout [Int: [String: Any]]) throws -> [NativeStreamChunk] {
         guard let data = payload.data(using: .utf8),
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw NativeLLMFailure(code: "invalid_sse", message: "Responses SSE was not JSON")
@@ -244,8 +250,11 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             let name = item["name"] as? String
             return [.toolCallDelta(index: index, id: id, name: name, argumentsDelta: "")]
         case "response.output_item.done":
-            guard let item = object["item"] as? [String: Any],
-                  item["type"] as? String == "web_search_call" else { return [] }
+            guard let item = object["item"] as? [String: Any] else { return [] }
+            if let outputIndex = object["output_index"] as? Int, outputIndex >= 0 {
+                completedItems[outputIndex] = item
+            }
+            guard item["type"] as? String == "web_search_call" else { return [] }
             var chunks: [NativeStreamChunk] = []
             let action = item["action"] as? [String: Any]
             if let id = item["id"] as? String {
@@ -260,13 +269,17 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             let id = object["call_id"] as? String ?? ""
             return [.toolCallDelta(index: index, id: id, name: nil, argumentsDelta: delta)]
         case "response.completed", "response.incomplete":
+            defer { completedItems.removeAll() }
             let response = object["response"] as? [String: Any]
             let status = response?["status"] as? String
-            let hasTools = ((response?["output"] as? [[String: Any]]) ?? []).contains {
+            // Some streams finish with output: []; complete native items arrived in output_item.done.
+            let finalOutput = response?["output"] as? [[String: Any]] ?? []
+            let output = finalOutput.isEmpty ? completedItems.keys.sorted().compactMap { completedItems[$0] } : finalOutput
+            let hasTools = output.contains {
                 $0["type"] as? String == "function_call"
             }
             let incompleteReason = (response?["incomplete_details"] as? [String: Any])?["reason"] as? String
-            let refused = ((response?["output"] as? [[String: Any]]) ?? []).contains { output in
+            let refused = output.contains { output in
                 (output["content"] as? [[String: Any]] ?? []).contains { $0["type"] as? String == "refusal" }
             }
             let reason: NativeFinishReason
@@ -282,8 +295,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
                 chunks.append(.usage(usage))
             }
             let replayState: Data?
-            if type == "response.completed", status != "incomplete",
-               let output = response?["output"] as? [[String: Any]], !output.isEmpty {
+            if type == "response.completed", status != "incomplete", !output.isEmpty {
                 replayState = try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys])
             } else {
                 replayState = nil
