@@ -10,6 +10,7 @@ struct ComposerView: View {
     @State private var editorHeight: CGFloat = 0
     @State private var editorActive = false
     @State private var focusRequest = 0
+    @State private var showsReasoningPicker = false
     var prompt: String
     var focused: FocusState<Bool>.Binding
     var fontSize: CGFloat
@@ -90,6 +91,8 @@ struct ComposerView: View {
                 ),
                 alignment: .leading
             )
+            .contentShape(Rectangle())
+            .onTapGesture { focusRequest &+= 1 }
             .overlay(alignment: .trailing) {
                 if showsControl && !hasReasoningControl {
                     sendButton
@@ -119,9 +122,6 @@ struct ComposerView: View {
             showsChrome: showsChrome
         )
         .contentShape(RoundedRectangle(cornerRadius: corner))
-        .onTapGesture {
-            focusRequest &+= 1
-        }
         .onAppear {
             draft = store.composerDraft(for: targetID)
             if focusesOnAppear || focused.wrappedValue { focusRequest &+= 1 }
@@ -155,7 +155,7 @@ struct ComposerView: View {
                 )
             }
         }
-        .animation(WeiBeiMotion.micro, value: showsControl)
+        .onChange(of: store.agentReasoningModelKey) { _, _ in showsReasoningPicker = false }
         .task(id: store.activeAgentProfileID.uuidString + store.agentProviderID.rawValue + store.agentBaseURL) {
             guard showsReasoningEffort else { return }
             agentAccount.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
@@ -164,33 +164,55 @@ struct ComposerView: View {
     }
 
     private var reasoningEffortPicker: some View {
-        Menu {
-            ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
-                Button {
-                    store.agentReasoningMode = mode
-                } label: {
-                    if mode == store.agentReasoningMode {
-                        Label(mode.label, systemImage: "checkmark")
-                    } else {
-                        Text(mode.label)
-                    }
-                }
-            }
+        Button {
+            showsReasoningPicker.toggle()
         } label: {
-            HStack(spacing: 4) {
-                Text(store.agentReasoningMode.label)
-                    .weiBeiText(fontSize, weight: .regular)
+            HStack(spacing: 5) {
+                ZStack(alignment: .leading) {
+                    // Reserve the widest mode label so selection never resizes the editor.
+                    ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
+                        Text(mode.label).hidden().accessibilityHidden(true)
+                    }
+                    Text(store.agentReasoningMode.label)
+                }
+                .weiBeiText(fontSize, weight: .regular)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9 * textScale, weight: .medium))
             }
-            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .padding(.horizontal, 6)
             .frame(minHeight: sendButtonSize * textScale)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
+        .buttonStyle(ReasoningModeButtonStyle(selected: showsReasoningPicker))
         .fixedSize()
-        .accessibilityLabel(store.ui("推理强度", "Reasoning effort"))
+        .popover(isPresented: $showsReasoningPicker, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+            VStack(spacing: 2) {
+                ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
+                    Button {
+                        store.agentReasoningMode = mode
+                        showsReasoningPicker = false
+                    } label: {
+                        HStack(spacing: 24) {
+                            Text(mode.label)
+                            Spacer(minLength: 0)
+                            Image(systemName: "checkmark")
+                                .opacity(mode == store.agentReasoningMode ? 1 : 0)
+                        }
+                        .weiBeiText(13)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(ReasoningModeButtonStyle(selected: mode == store.agentReasoningMode))
+                    .accessibilityAddTraits(mode == store.agentReasoningMode ? .isSelected : [])
+                }
+            }
+            .padding(6)
+            .fixedSize(horizontal: true, vertical: true)
+            .background(WeiBeiTheme.paperRaised)
+        }
+        .accessibilityLabel(store.ui("推理模式", "Reasoning mode"))
+        .accessibilityValue(store.agentReasoningMode.label)
         .help(store.ui("Flash 快速回答，Think 深入思考。可在对话设置中调整对应强度。", "Flash for quick answers, Think for deeper reasoning. Configure their effort in Chat settings."))
         .accessibilityIdentifier("agent-reasoning-effort")
     }
@@ -218,5 +240,24 @@ struct ComposerView: View {
         .keyboardShortcut(focused.wrappedValue ? KeyboardShortcut(.return, modifiers: [.command]) : nil)
         .transition(WeiBeiTransition.floating)
         .animation(WeiBeiMotion.micro, value: showsControl)
+    }
+}
+
+/// Hover and press change only the tint; the trigger and rows never scale.
+private struct ReasoningModeButtonStyle: ButtonStyle {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @State private var hovering = false
+    var selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(WeiBeiTheme.ink.opacity(configuration.isPressed ? 0.12 : hovering || selected ? 0.07 : 0))
+            }
+            .onHover { hovering = $0 }
+            .animation(reduceMotion ? nil : WeiBeiMotion.micro, value: hovering)
+            .animation(reduceMotion || configuration.isPressed ? nil : WeiBeiMotion.micro, value: configuration.isPressed)
     }
 }
