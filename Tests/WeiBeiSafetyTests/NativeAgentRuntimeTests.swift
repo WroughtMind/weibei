@@ -214,7 +214,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
     // 连续追问、笔记确认和工具续跑只追加上下文，保留已经发给模型的完整前缀。
     func testPromptCachePrefixSurvivesToolStepsAndNewTurns() async throws {
         struct CacheSequenceAdapter: NativeLLMAdapter {
-            let family = "mock"
+            let family = "openai-responses"
             let capture: RequestCapture
 
             func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
@@ -234,9 +234,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
             systemPromptText: "固定系统提示"
         )
         var request = testRequest()
+        XCTAssertNil(request.reasoningEffort)
+        request.reasoningEffort = "high"
         request.projectScope = StudyAgentProjectScope(kind: .global, chatID: "cache-chat")
         request.contextRevision = "first-turn-revision"
         _ = try await runtime.respond(to: request)
+        XCTAssertTrue(capture.requests.allSatisfy { $0.reasoningEffort == "high" })
+        request.reasoningEffort = "medium"
         request.id = UUID()
         request.question = "关联刚刚确认的笔记"
         request.contextRevision = "second-turn-revision"
@@ -244,6 +248,9 @@ final class NativeAgentRuntimeTests: XCTestCase {
         _ = try await runtime.respond(to: request)
 
         XCTAssertEqual(capture.requests.count, 3)
+        XCTAssertEqual(capture.requests.last?.reasoningEffort, "medium")
+        let reasoning = OpenAIResponsesProvider.payload(for: capture.requests[0])["reasoning"] as? [String: String]
+        XCTAssertEqual(reasoning?["effort"], "high")
         for (previous, next) in zip(capture.requests, capture.requests.dropFirst()) {
             XCTAssertEqual(Array(next.messages.prefix(previous.messages.count)), previous.messages)
             XCTAssertEqual(next.tools.map(\.name), previous.tools.map(\.name))
@@ -267,9 +274,11 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("cache-chat/ledger.jsonl"))
         let persisted = await ledger.deriveMessages()
         XCTAssertEqual(Array(persisted.prefix(last.messages.count - 1)), Array(last.messages.dropFirst()))
+        request.reasoningEffort = "low"
         request.projectScope = StudyAgentProjectScope(kind: .global, chatID: "another-chat")
         _ = try await runtime.respond(to: request)
         XCTAssertEqual(capture.requests.last?.promptCacheKey, "another-chat")
+        XCTAssertEqual(capture.requests.last?.reasoningEffort, "low")
     }
 
     // 长工具链压缩到本轮内部后，仍能使用已确认笔记的短别名，且不向模型泄露修订号和真实编号。

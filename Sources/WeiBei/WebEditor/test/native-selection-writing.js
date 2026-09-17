@@ -11,6 +11,22 @@ const reset = async (markdown = '') => {
   editor.selectDocumentEndForCheck();
   await pause();
 };
+// A native Tab in the empty line before text/math must indent that line, not focus the next node.
+for (const nextLine of ['下一行文字', '$x^2$', '$$\ny^2\n$$']) {
+  await reset('占位\n\n' + nextLine);
+  editor.selectFirstTextForCheck('占位');
+  await native('key', '\u007f', { keyCode: 51 });
+  const root = document.querySelector('.ProseMirror');
+  await native('key', '\t', { keyCode: 48 });
+  expect(root.firstElementChild.textContent === '\u00a0'.repeat(4) && document.activeElement === root,
+    'Tab left the empty paragraph before ' + nextLine);
+  await native('insert', '当前行');
+  const saved = editor.getMarkdown();
+  expect(root.firstElementChild.textContent.replaceAll('\u00a0', ' ') === '    当前行', 'Text did not stay after indentation: ' + JSON.stringify({text: root.firstElementChild.textContent, markdown: editor.getMarkdown(), html: root.innerHTML}));
+  editor.setMarkdown(saved);
+  expect(root.firstElementChild.tagName === 'P' && root.firstElementChild.textContent.replaceAll('\u00a0', ' ') === '    当前行',
+    'Paragraph indentation was lost or became a code block after reload');
+}
 // Every inline format accepts pre-typed pairs, ordinary input and committed Chinese.
 for (const [marker, selector] of [
   ['**', 'strong'], ['__', 'strong'], ['*', 'em'], ['_', 'em'],
