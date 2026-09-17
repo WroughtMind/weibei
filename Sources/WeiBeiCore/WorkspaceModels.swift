@@ -1838,20 +1838,22 @@ public enum AgentMessageContentBlock: Codable, Hashable, Sendable {
 }
 
 public struct AgentToolActivity: Identifiable, Codable, Hashable, Sendable {
-    public enum State: String, Codable, Sendable { case running, completed, failed }
+    public enum State: String, Codable, Sendable { case running, completed, failed, cancelled }
     public var id: String
     public var name: String
     public var state: State
     public var detail: String?
     public var sourceURLs: [String]?
-    public init(id: String, name: String, state: State, detail: String? = nil, sourceURLs: [String]? = nil) {
+    public var resultSummary: String?
+    public init(id: String, name: String, state: State, detail: String? = nil, sourceURLs: [String]? = nil, resultSummary: String? = nil) {
         self.id = id; self.name = name; self.state = state
-        self.detail = detail; self.sourceURLs = sourceURLs
+        self.detail = detail; self.sourceURLs = sourceURLs; self.resultSummary = resultSummary
     }
     public func merging(_ update: Self) -> Self {
         var next = update
         next.detail = update.detail ?? detail
         next.sourceURLs = update.sourceURLs ?? sourceURLs
+        next.resultSummary = update.resultSummary ?? resultSummary
         return next
     }
 }

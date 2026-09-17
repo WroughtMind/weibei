@@ -319,8 +319,8 @@ public actor NativeAgentLoop {
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
                     let arguments = (try? JSONSerialization.jsonObject(with: Data(call.arguments.utf8))) as? [String: Any]
-                    let detail = ["query", "url", "title"].compactMap { arguments?[$0] as? String }.first
-                    await progress?(.toolActivity(.init(id: "\(step):\(call.id)", name: call.name, state: .running, detail: detail)))
+                    await progress?(.toolActivity(NativeToolActivityPresentation.activity(
+                        id: "\(step):\(call.id)", name: call.name, arguments: arguments ?? [:], context: context)))
                     var result: NativeToolExecutionResult
                     let previousBlocks = contentBlocks
                     if let failure = callResult.failure {
@@ -382,8 +382,8 @@ public actor NativeAgentLoop {
                             imageBase64: result.image?.base64
                         )
                     }
-                    await progress?(.toolActivity(.init(id: "\(step):\(call.id)", name: call.name,
-                        state: result.isError ? .failed : .completed)))
+                    await progress?(.toolActivity(NativeToolActivityPresentation.activity(
+                        id: "\(step):\(call.id)", name: call.name, arguments: arguments ?? [:], context: context, result: result)))
                 }
                 _ = try await ledger.append { seq, time in
                     NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: turn, step: step)

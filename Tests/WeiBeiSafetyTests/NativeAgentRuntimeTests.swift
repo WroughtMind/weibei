@@ -754,6 +754,41 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
+    func testEveryRegisteredToolHasDetailsAndHonestOutcome() async throws {
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let tools = await registry.resolved(scope: .global)
+        let context = NativeToolExecutionContext(request: testRequest())
+        let arguments: [String: Any] = ["query": "利率", "scope": "library", "title": "复习笔记",
+            "page": 3, "markdown": "复习内容", "task": "整理章节", "url": "https://example.com",
+            "entries": [["text": "已理解利率", "kind": "understood"]]]
+        for tool in tools {
+            let start = NativeToolActivityPresentation.activity(id: "call", name: tool.name, arguments: arguments, context: context)
+            XCTAssertFalse(start.detail?.isEmpty ?? true, tool.name)
+            XCTAssertNotEqual(start.detail, "工具请求", "Registered tool missing presentation: \(tool.name)")
+            let failure = NativeToolActivityPresentation.activity(id: "call", name: tool.name, arguments: arguments,
+                context: context, result: .init(text: "读取被拒绝", isError: true))
+            XCTAssertEqual(failure.state, .failed)
+            XCTAssertEqual(failure.resultSummary, "读取被拒绝")
+            XCTAssertEqual(failure.detail, start.detail)
+        }
+        let cancelled = NativeToolActivityPresentation.activity(id: "call", name: "create_document", arguments: arguments,
+            context: context, result: .init(text: "用户取消，未写入文件", details: ["cancelled": true]))
+        XCTAssertEqual(cancelled.state, .cancelled)
+        XCTAssertEqual(cancelled.resultSummary, "用户取消，未写入文件")
+        for name in ["weibei_update_learning_memory", "weibei_course_profile_update"] {
+            let queued = NativeToolActivityPresentation.activity(id: "call", name: name, arguments: arguments,
+                context: context, result: .init(text: "已提交"))
+            XCTAssertTrue(queued.resultSummary?.contains("等待保存") == true)
+        }
+        let host = StudyAgentHostToolResult(query: "利率", items: [], total: 50, nextCursor: "next")
+        let search = NativeToolActivityPresentation.activity(id: "call", name: "weibei_search_workspace", arguments: arguments,
+            context: context, result: .init(text: String(decoding: try JSONEncoder().encode(host), as: UTF8.self)))
+        XCTAssertTrue(search.resultSummary?.contains("本次返回 0 条命中") == true)
+        XCTAssertFalse(search.resultSummary?.contains("50") == true, "Total hits are not returned hits")
+        XCTAssertEqual(try JSONDecoder().decode(AgentToolActivity.self, from: JSONEncoder().encode(search)), search)
+    }
+
     func testSearchDetailsSurviveStatusUpdates() throws {
         let chunks = try OpenAIResponsesProvider.translate(#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"search1","status":"completed","action":{"queries":["Barcelona dressing room","Real Madrid dressing room"],"sources":[{"url":"https://example.com/story"}]}}}"#)
         guard case let .serverToolActivity(activity) = chunks.first else { return XCTFail("Missing activity") }

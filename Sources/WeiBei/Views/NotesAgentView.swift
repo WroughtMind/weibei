@@ -5650,14 +5650,18 @@ struct AgentToolActivityGroup: View {
                     ForEach(message.toolActivities) { activity in
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: activity.state == .failed ? "exclamationmark.circle" :
-                                activity.state == .completed ? "checkmark" : "ellipsis")
+                                activity.state == .completed ? "checkmark" : activity.state == .cancelled ? "minus.circle" : "ellipsis")
                                 .frame(width: 12).padding(.top, 2)
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(title(activity.name)).fontWeight(.medium)
                                 if let detail = activity.detail, !detail.isEmpty {
                                     Text(detail).foregroundStyle(WeiBeiTheme.ink).textSelection(.enabled)
                                 }
-                                if activity.state == .failed {
+                                if let result = activity.resultSummary, !result.isEmpty {
+                                    Text(result).textSelection(.enabled)
+                                } else if activity.state == .cancelled {
+                                    Text(store.ui("已取消", "Cancelled"))
+                                } else if activity.state == .failed {
                                     Text(store.ui("未能完成", "Could not complete"))
                                 } else if activity.state == .running && !running {
                                     Text(store.ui("已中断", "Interrupted"))
