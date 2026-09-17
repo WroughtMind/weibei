@@ -778,7 +778,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         store.showRightPane = true
         store.focusedPane = .agent
         store.focusRequest += 1
-        store.showReaderSearch = true
+        store.showDocumentSearch = true
 
         store.selectionContext = SelectionContext(
             text: "选区",

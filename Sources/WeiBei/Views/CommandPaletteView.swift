@@ -61,8 +61,8 @@ struct CommandPaletteView: View {
         if store.canCopyReference {
             items.append(PaletteCommand(title: store.copyReferenceActionTitle, shortcut: store.chord(for: .copyCurrentReference).display) { store.copyCurrentReference() })
         }
-        if store.hasSelectedMaterial {
-            items.append(PaletteCommand(title: store.ui("打开资料内搜索", "Search in Material"), shortcut: store.chord(for: .searchInMaterial).display) { store.revealReaderSearch() })
+        if store.canSearchCurrentDocument {
+            items.append(PaletteCommand(title: store.ui("在当前文稿中查找", "Find in Current Document"), shortcut: store.chord(for: .searchInMaterial).display) { store.revealDocumentSearch() })
         }
         if store.selectionContext != nil {
             items.append(PaletteCommand(title: store.ui("问当前选区", "Ask Current Selection"), shortcut: "") {

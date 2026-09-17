@@ -708,6 +708,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     var markdownBaseURL: URL?
     var attachmentDirectory: URL?
     var searchQuery = ""
+    var searchRequest = 0
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var isCompactPreview = false
@@ -936,6 +937,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             interfaceLanguage: interfaceLanguage
         )
         context.coordinator.searchQuery = searchQuery
+        context.coordinator.searchRequest = searchRequest
         if context.coordinator.appearanceMode != appearanceMode {
             context.coordinator.appearanceMode = appearanceMode
             if context.coordinator.isReady {
@@ -1137,6 +1139,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         var markdownBaseURLString: String
         var attachmentDirectory: URL?
         var searchQuery: String
+        var searchRequest = 0
         var appearanceMode: WeiBeiAppearanceMode
         var interfaceLanguage: WeiBeiInterfaceLanguage
         var reduceMotion = false
@@ -1152,6 +1155,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         let performanceInstanceID = UUID()
         fileprivate let imageSchemeHandler = MarkdownImageSchemeHandler()
         private var lastAppliedSearchQuery = ""
+        private var lastAppliedSearchRequest = 0
         private var lastAppliedFocusRequest = -1
         private var lastAppliedSelectionAskMarks = ""
         private var lastAppliedSelectionRemarkMarks = ""
@@ -1896,28 +1900,24 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 
         func applySearch() {
             let query = ReaderSearch.cleaned(searchQuery)
-            guard query != lastAppliedSearchQuery else { return }
+            guard query != lastAppliedSearchQuery || searchRequest != lastAppliedSearchRequest else { return }
+            let configuration = WKFindConfiguration()
+            configuration.backwards = query == lastAppliedSearchQuery && searchRequest < lastAppliedSearchRequest
+            let restoreEditorFocus = query.isEmpty && isFocused && focusRequest != lastAppliedFocusRequest
             lastAppliedSearchQuery = query
-            let script = """
-            (() => {
-              const query = \(Self.json(query));
-              const selection = window.getSelection();
-              selection?.removeAllRanges();
-              window.webkit?.messageHandlers?.selectionChanged?.postMessage({
-                text: "",
-                rect: null,
-                documentID: window.weiBeiDocumentID || ""
-              });
-              if (!query) return false;
-              window.weiBeiSuppressSelectionReport = true;
-              const found = window.find(query, false, false, true, false, true, false);
-              window.setTimeout(() => { window.weiBeiSuppressSelectionReport = false; }, 80);
-              return found;
-            })();
-            """
-            webView?.evaluateJavaScript(script) { [weak self] value, error in
-                guard !query.isEmpty else { return }
-                self?.onSearchResult(query, error == nil && (value as? Bool) == true)
+            lastAppliedSearchRequest = searchRequest
+            if !query.isEmpty { onSelectionChange("", nil) }
+            webView?.evaluateJavaScript("window.weiBeiSuppressSelectionReport = \(!query.isEmpty);") { [weak self] _, _ in
+                self?.webView?.find(query, configuration: configuration) { [weak self] result in
+                    guard let self else { return }
+                    if restoreEditorFocus && self.searchQuery.isEmpty {
+                        // Clearing WebKit's find selection can release its text input client.
+                        self.lastAppliedFocusRequest = -1
+                        self.applyFocus()
+                    }
+                    guard !query.isEmpty else { return }
+                    self.onSearchResult(query, result.matchFound)
+                }
             }
         }
 

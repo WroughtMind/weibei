@@ -41,7 +41,8 @@ extension WorkspaceStore {
 
     func acceptNoteEditorSnapshot(_ snapshot: NoteEditorSnapshotReadyEvent) {
         let digest = Self.noteContentDigest(Data(snapshot.markdown.utf8))
-        let baseDigest = latestNoteEditorSnapshot.flatMap {
+        let baseDigest = noteEditorRecoveryConflictsByItemID[snapshot.documentID]?.checkpoint.metadata.baseFileDigest
+            ?? latestNoteEditorSnapshot.flatMap {
             $0.documentID == snapshot.documentID ? $0.baseDigest : nil
         } ?? noteEditorBaseDigest(for: snapshot.documentID)
         latestNoteEditorSnapshot = (
@@ -50,15 +51,40 @@ extension WorkspaceStore {
             baseDigest,
             snapshot.revision
         )
+        if let conflict = noteEditorRecoveryConflictsByItemID[snapshot.documentID] {
+            noteEditorRecoveryConflictsByItemID[snapshot.documentID] = NoteEditorRecoveryConflict(
+                diskMarkdown: conflict.diskMarkdown,
+                checkpoint: NoteRecoveryCheckpoint(
+                    metadata: NoteRecoveryMetadata(
+                        documentID: snapshot.documentID,
+                        baseFileDigest: baseDigest,
+                        checkpointDigest: digest,
+                        revision: snapshot.revision,
+                        updatedAt: Date(),
+                        dialectVersion: 1
+                    ),
+                    markdown: snapshot.markdown
+                )
+            )
+        }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                _ = try await noteRecoveryStore.store(
+                let checkpoint = try await noteRecoveryStore.store(
                     documentID: snapshot.documentID,
                     baseFileDigest: baseDigest,
                     revision: snapshot.revision,
                     markdown: snapshot.markdown
                 )
+                if let current = noteEditorRecoveryConflictsByItemID[snapshot.documentID],
+                   current.checkpoint.metadata.revision == snapshot.revision,
+                   current.checkpoint.metadata.checkpointDigest == digest {
+                    noteEditorRecoveryConflictsByItemID[snapshot.documentID] = NoteEditorRecoveryConflict(
+                        diskMarkdown: current.diskMarkdown,
+                        checkpoint: checkpoint,
+                        checkpointIsPersisted: true
+                    )
+                }
             } catch {
                 if let url = item(withID: snapshot.documentID)?.url,
                    Self.noteContentDigest(at: url) == digest { return }
@@ -303,6 +329,20 @@ extension WorkspaceStore {
 
     func resolveNoteEditorRecoveryConflict(useDisk: Bool) async {
         guard let conflict = noteEditorRecoveryConflict else { return }
+        guard let url = item(withID: conflict.id)?.url,
+              let disk = try? String(contentsOf: url, encoding: .utf8) else {
+            showImportantOperationError(ui("无法读取磁盘正文，已保留两份内容，请重试。", "Could not read the file. Both versions are retained; please retry."))
+            return
+        }
+        guard disk == conflict.diskMarkdown else {
+            noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
+                diskMarkdown: disk,
+                checkpoint: conflict.checkpoint,
+                checkpointIsPersisted: conflict.checkpointIsPersisted
+            )
+            showImportantOperationError(ui("磁盘正文又有更新，已刷新对照内容，请重新选择。", "The file changed again. Review the updated versions before choosing."))
+            return
+        }
         if useDisk {
             let documentID = conflict.checkpoint.metadata.documentID
             let fileURL = item(withID: documentID)?.url
@@ -386,7 +426,7 @@ extension WorkspaceStore {
             let draftPersisted = await flushPendingWorkspaceSaveAsync()
             var recoveryPersisted = conflict.checkpointIsPersisted
             do {
-                let diskData = try Data(contentsOf: fileURL)
+                let diskData = Data(conflict.diskMarkdown.utf8)
                 _ = try NoteBackupRing.capture(
                     content: diskData,
                     itemID: documentID,
