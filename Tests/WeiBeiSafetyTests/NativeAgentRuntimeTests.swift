@@ -1535,12 +1535,59 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(chunks.first, .textDelta(index: 0, text: "利率"))
     }
 
-    func testSkillRegistryLoadsGenuiAndSocratic() throws {
+    func testBundledGenuiSkillsLoadIdempotently() async throws {
         let root = try AgentResources.bundled().skillsURL
-        let registry = try NativeSkillRegistry.load(from: root)
-        XCTAssertNotNil(registry.pack(named: "genui"))
-        XCTAssertNotNil(registry.pack(named: "socratic-questioning"))
-        XCTAssertTrue(registry.catalogSummary().contains("socratic-questioning"))
+        let packs = try NativeSkillRegistry.load(from: root)
+        let main = try XCTUnwrap(packs.pack(named: "genui"))
+        let mainLineCount = main.body.trimmingCharacters(in: .newlines)
+            .split(separator: "\n", omittingEmptySubsequences: false).count
+        XCTAssertTrue((65...75).contains(mainLineCount), "主 GenUI 技能当前 \(mainLineCount) 行")
+        XCTAssertNotNil(packs.pack(named: "genui-advanced"))
+        XCTAssertNotNil(packs.pack(named: "socratic-questioning"))
+        XCTAssertTrue(packs.catalogSummary().contains("genui-advanced"))
+
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: root)
+        var context = NativeToolExecutionContext(
+            request: testRequest(),
+            liveStores: NativeLiveStores(skillRegistry: packs)
+        )
+        for id in ["genui", "genui-advanced"] {
+            let first = try await registry.execute(
+                NativeToolCallRequest(name: "load_skill", argumentsJSON: "{\"id\":\"\(id)\"}", callID: "\(id)-1"),
+                context: context,
+                scope: .global
+            )
+            XCTAssertFalse(first.text.isEmpty)
+            XCTAssertNotEqual(first.details["alreadyLoaded"] as? Bool, true)
+            let loaded = try XCTUnwrap(first.details["loaded"] as? [String: Any])
+            XCTAssertEqual(loaded["id"] as? String, id)
+            context.loadedSkillIDs.insert(id)
+
+            let second = try await registry.execute(
+                NativeToolCallRequest(name: "load_skill", argumentsJSON: "{\"id\":\"\(id)\"}", callID: "\(id)-2"),
+                context: context,
+                scope: .global
+            )
+            XCTAssertEqual(second.details["alreadyLoaded"] as? Bool, true)
+            XCTAssertLessThan(second.text.count, first.text.count)
+        }
+    }
+
+    func testSkillRegistryRejectsMissingAdvancedGenuiPack() throws {
+        let bundled = try AgentResources.bundled().skillsURL
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("skills-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for id in ["genui", "socratic-questioning"] {
+            try FileManager.default.copyItem(
+                at: bundled.appendingPathComponent(id),
+                to: root.appendingPathComponent(id)
+            )
+        }
+        XCTAssertThrowsError(try NativeSkillRegistry.load(from: root)) { error in
+            XCTAssertEqual(error as? NativeAgentResourcesError, .missing("skill:genui-advanced"))
+        }
     }
 
     func testProviderRoutingCoversCatalog() {
