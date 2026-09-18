@@ -1,0 +1,14 @@
+{
+  "id": "learning-memory",
+  "name": "学习记忆与进度回顾",
+  "version": "1.0.0",
+  "description": "读取和维护魏碑学习进度、长期困惑、目标、偏好及用户自述掌握状态；用于衔接上次学习或记录有证据的持续变化，不替代材料事实。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "weibei_read_learning_memory",
+    "weibei_update_learning_memory",
+    "weibei_course_profile_update"
+  ],
+  "jscHook": null
+}

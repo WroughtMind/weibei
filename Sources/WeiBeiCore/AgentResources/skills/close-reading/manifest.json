@@ -1,0 +1,13 @@
+{
+  "id": "close-reading",
+  "name": "材料精读与讲解",
+  "version": "1.0.0",
+  "description": "解释用户正在读的段落、概念、公式、图表或论证，按原文语境帮助理解；用户说不懂时换讲法，不自动改成测验。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "weibei_course_read",
+    "weibei_visual_asset"
+  ],
+  "jscHook": null
+}

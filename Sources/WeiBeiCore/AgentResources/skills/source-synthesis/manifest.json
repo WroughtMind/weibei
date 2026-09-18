@@ -1,0 +1,13 @@
+{
+  "id": "source-synthesis",
+  "name": "多材料比较与综合",
+  "version": "1.0.0",
+  "description": "对照多份材料、笔记或网页，围绕共同问题解释异同、矛盾与联系，形成可追溯的综合结论；单篇摘要无需加载。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "weibei_course_read",
+    "weibei_web_open"
+  ],
+  "jscHook": null
+}

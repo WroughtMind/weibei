@@ -1,0 +1,12 @@
+{
+  "id": "web-research",
+  "name": "网页搜索与事实核查",
+  "version": "1.0.0",
+  "description": "查询最新或需要外部核实的公开事实、精确统计和比较结论；在首次作答前确定检索与证据核对方法。稳定常识无需加载。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "weibei_web_open"
+  ],
+  "jscHook": null
+}
