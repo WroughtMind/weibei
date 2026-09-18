@@ -4,12 +4,11 @@ enum NativeHTTPByteStream {
     static func start(
         session: URLSession,
         request: URLRequest,
-        fallbackRequest: URLRequest? = nil,
         translate: @escaping (String) throws -> [NativeStreamChunk]
     ) -> AsyncThrowingStream<NativeStreamChunk, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                func pump(_ request: URLRequest) async throws {
+                do {
                     var request = request
                     request.timeoutInterval = 300
                     let (bytes, response) = try await session.bytes(for: request)
@@ -36,20 +35,7 @@ enum NativeHTTPByteStream {
                             continuation.yield(chunk)
                         }
                     }
-                }
-                do {
-                    do {
-                        try await pump(request)
-                        continuation.finish()
-                    } catch let failure as NativeLLMFailure
-                        where failure.status == 400
-                            && !failure.isContextOverflow
-                            && fallbackRequest != nil {
-                        // 端点不认服务端搜索工具(如网关未透传):去掉搜索重试一次,
-                        // 本次回答退化为不联网,不让整轮对话失败。
-                        try await pump(fallbackRequest!)
-                        continuation.finish()
-                    }
+                    continuation.finish()
                 } catch is CancellationError {
                     continuation.finish(throwing: NativeLLMFailure(code: "cancelled", message: "cancelled"))
                 } catch let error as URLError where error.code == .timedOut {
@@ -65,11 +51,25 @@ enum NativeHTTPByteStream {
     static func httpFailure(_ status: Int, body: String) -> NativeLLMFailure {
         let code: String
         switch status {
+        case 400: code = rejectsWebSearch(body) ? "web_search_unsupported" : "invalid_request"
         case 401, 403: code = "unauthorized"
         case 429: code = "rate_limited"
         case 408, 504: code = "timeout"
         default: code = "server_error"
         }
         return NativeLLMFailure(code: code, status: status, message: "HTTP \(status) \(body)")
+    }
+
+    private static func rejectsWebSearch(_ body: String) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any],
+              let error = object["error"] as? [String: Any],
+              let message = error["message"] as? String else { return false }
+        // ponytail: only explicit search rejection wording; extend when another service response is observed.
+        let normalized = message.lowercased().replacingOccurrences(of: #"[`'"]"#, with: "", options: .regularExpression)
+        let search = #"\b(?:web[_ ]search(?:_preview|_\d{8})?|google_search|enable_search)\b"#
+        return normalized.range(
+            of: "(?:^(?:(?:hosted )?tool(?: type)? )?\(search) is not supported\\b|^unsupported tool(?: type)?:? \(search)(?:$|[ .]))",
+            options: .regularExpression
+        ) != nil
     }
 }

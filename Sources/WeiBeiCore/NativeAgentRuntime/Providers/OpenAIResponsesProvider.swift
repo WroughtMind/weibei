@@ -39,19 +39,8 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         return NativeHTTPByteStream.start(
             session: session,
             request: makeURLRequest(request),
-            fallbackRequest: webSearchSupported ? makeURLOrURLRequestWithoutSearch(request) : nil,
             translate: { try Self.translate($0, completedItems: &completedItems) }
         )
-    }
-
-    private func makeURLOrURLRequestWithoutSearch(_ request: NativeLLMRequest) -> URLRequest {
-        var urlRequest = makeURLRequest(request)
-        if let body = try? JSONSerialization.data(
-            withJSONObject: Self.payload(for: request, webSearchSupported: false), options: [.sortedKeys]
-        ) {
-            urlRequest.httpBody = body
-        }
-        return urlRequest
     }
 
     func makeURLRequest(_ request: NativeLLMRequest) -> URLRequest {
@@ -110,9 +99,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             ]
         }
         var include = ["reasoning.encrypted_content"]
-        let enableSearch = request.enableNativeWebSearch
-            || request.tools.contains(where: { $0.name == "weibei_course_map" })
-        if enableSearch, webSearchSupported {
+        if request.enableNativeWebSearch, webSearchSupported {
             if !tools.contains(where: { $0["type"] as? String == "web_search" }) {
                 tools.append(["type": "web_search"])
             }
