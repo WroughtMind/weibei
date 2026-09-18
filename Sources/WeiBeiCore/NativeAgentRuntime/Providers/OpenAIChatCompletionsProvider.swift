@@ -113,9 +113,7 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
             payload["stream_options"] = ["include_usage": true]
         }
         var allTools = tools
-        let enableSearch = request.enableNativeWebSearch
-            || request.tools.contains(where: { $0.name == "weibei_course_map" })
-        if enableSearch {
+        if request.enableNativeWebSearch {
             switch webSearchStyle {
             case .none:
                 break

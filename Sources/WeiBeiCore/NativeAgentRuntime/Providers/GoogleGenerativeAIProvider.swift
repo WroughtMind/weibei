@@ -86,8 +86,7 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
                 },
             ])
         }
-        if groundingSearch, request.enableNativeWebSearch
-            || request.tools.contains(where: { $0.name == "weibei_course_map" }) {
+        if groundingSearch, request.enableNativeWebSearch {
             tools.append(["google_search": [:] as [String: Any]])
         }
         if !tools.isEmpty {

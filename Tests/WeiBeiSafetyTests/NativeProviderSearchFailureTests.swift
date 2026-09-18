@@ -14,7 +14,7 @@ final class NativeProviderSearchFailureTests: XCTestCase {
         }
     }
 
-    func testRejectedRequestsKeepSearchConfigurationAndOriginalFailure() async throws {
+    func testProvidersLeaveRecoveryToTheAgentLoop() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RejectedSearchProtocol.self]
         let session = URLSession(configuration: configuration)
@@ -42,7 +42,7 @@ final class NativeProviderSearchFailureTests: XCTestCase {
             var chunks: [NativeStreamChunk] = []
             do {
                 for try await chunk in adapter.stream(request) { chunks.append(chunk) }
-                XCTFail("\(adapter.family) 应保留请求失败，不能生成无搜索回答")
+                XCTFail("\(adapter.family) 应由 Agent 循环处理降级并告知能力变化")
             } catch let failure as NativeLLMFailure {
                 XCTAssertEqual(failure.status, 400, adapter.family)
                 XCTAssertEqual(failure.message, "HTTP 400 \(RejectedSearchProtocol.errorBody)", adapter.family)
@@ -50,7 +50,151 @@ final class NativeProviderSearchFailureTests: XCTestCase {
             }
             XCTAssertTrue(chunks.isEmpty, adapter.family)
             XCTAssertEqual(RejectedSearchProtocol.requestCount - before, 1,
-                           "\(adapter.family) 不能取消搜索后自动发送第二次请求")
+                           "\(adapter.family) 传输层不能自行取消搜索")
+        }
+    }
+
+    func testOnlyExplicitSearchRejectionAllowsDegradation() throws {
+        // Reported service response: https://github.com/openai/codex/issues/10071
+        let cases: [(String, Bool)] = [
+            ("Tool 'web_search_preview' is not supported with this model.", true),
+            ("web search is not supported", true),
+            ("Unsupported tool type: web_search", true),
+            ("google_search is not supported", true),
+            ("Invalid request", false),
+            ("Tool 'file_search' is not supported. Supported tools: web_search", false),
+            ("Tool choice is not supported with web_search", false),
+            ("Unsupported web_search filter: domains", false),
+            ("Invalid parameter. Input contained: web search is not supported", false),
+            ("maximum context length exceeded while using web_search", false),
+        ]
+        for (message, shouldDegrade) in cases {
+            let body = String(decoding: try JSONSerialization.data(withJSONObject: [
+                "error": ["message": message],
+            ]), as: UTF8.self)
+            XCTAssertEqual(NativeHTTPByteStream.httpFailure(400, body: body).code == "web_search_unsupported",
+                           shouldDegrade, message)
+            for status in [401, 403, 429, 500] {
+                XCTAssertNotEqual(NativeHTTPByteStream.httpFailure(status, body: body).code, "web_search_unsupported")
+            }
+        }
+        XCTAssertEqual(NativeHTTPByteStream.httpFailure(400, body: "web search is not supported").code, "invalid_request")
+    }
+
+    func testSearchRejectionContinuesWithoutLosingLocalToolsOrMisstatingCapabilities() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("search-recovery-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let ledger = try NativeAgentLedger(fileURL: file)
+        let registry = NativeToolRegistry()
+        let courseMap = NativeToolDefinition(name: "weibei_course_map", description: "map",
+            schema: NativeJSONSchema(["type": "object"]), execute: { _, _ in .init(text: "本地资料") })
+        await registry.register(courseMap)
+        let adapter = SearchRecoveryAdapter([
+            ([], NativeHTTPByteStream.httpFailure(400, body: RejectedSearchProtocol.errorBody)),
+            ([.toolCallDelta(index: 0, id: "local", name: courseMap.name, argumentsDelta: "{}"),
+              .finish(reason: .toolCalls, replayState: nil)], nil),
+            ([.textDelta(index: 0, text: "继续回答"), .finish(reason: .stop, replayState: nil)], nil),
+            ([.textDelta(index: 0, text: "下一轮"), .finish(reason: .stop, replayState: nil)], nil),
+        ])
+        actor Capture {
+            var activities: [AgentToolActivity] = []
+            func append(_ progress: StudyAgentProgress) {
+                if case let .toolActivity(activity) = progress { activities.append(activity) }
+            }
+        }
+        let capture = Capture()
+        let question = StudyAgentRequest(purpose: .conversation, question: "查阅公开资料",
+            materialTitle: "", materialText: "", noteTitle: "", noteText: "", contextRevision: "r1")
+        let prompt = NativePromptAssembler.webiSystemPrompt(bundledText: "测试", webSearchAvailable: true)
+        let loop = NativeAgentLoop()
+        let result = try await loop.run(request: question, ledger: ledger, registry: registry, adapter: adapter,
+            model: "test", hostToolHandler: nil, systemPrompt: prompt, progress: { await capture.append($0) })
+        XCTAssertEqual(result.text, "继续回答")
+        XCTAssertEqual(adapter.requests.map(\.enableNativeWebSearch), [true, false, false])
+        for sent in adapter.requests.dropFirst() {
+            XCTAssertEqual(sent.tools.map(\.name), [courseMap.name])
+            XCTAssertEqual(sent.reasoningEffort, question.reasoningEffort)
+            XCTAssertEqual(sent.model, "test")
+            XCTAssertFalse(sent.messages[0].content.contains(NativePromptAssembler.webSearchCapability(available: true)))
+            XCTAssertTrue(sent.messages[0].content.contains(NativePromptAssembler.webSearchUnavailable))
+        }
+        let activities = await capture.activities
+        let notice = try XCTUnwrap(activities.first { $0.state == .failed })
+        XCTAssertFalse(notice.detail?.isEmpty ?? true)
+        XCTAssertFalse(notice.resultSummary?.isEmpty ?? true)
+        let events = await ledger.allEvents()
+        XCTAssertTrue(events.contains { $0.chunk == .serverToolActivity(notice) })
+        XCTAssertEqual(events.filter { $0.type == .toolResult }.count, 1)
+        XCTAssertEqual(events.last?.finishReason, .completed)
+
+        // A single explicit switch must disable provider search even when course tools remain.
+        let disabled = try XCTUnwrap(adapter.requests.last)
+        let responses = OpenAIResponsesProvider.payload(for: disabled)
+        XCTAssertEqual((responses["tools"] as? [[String: Any]])?.count, 1)
+        XCTAssertFalse((responses["include"] as? [String] ?? []).contains("web_search_call.action.sources"))
+        let anthropic = AnthropicMessagesProvider.payload(for: disabled, webSearchTool: true)
+        XCTAssertEqual((anthropic["tools"] as? [[String: Any]])?.count, 1)
+        let google = GoogleGenerativeAIProvider.payload(for: disabled, groundingSearch: true)
+        XCTAssertEqual((google["tools"] as? [[String: Any]])?.count, 1)
+        for style in [ChatWebSearchStyle.zai, .xiaomi, .qwen, .openrouter, .kimi] {
+            let encoded = try OpenAIChatCompletionsProvider(apiKey: "test", webSearchStyle: style).makeURLRequest(disabled)
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(encoded.httpBody)) as? [String: Any])
+            XCTAssertEqual((body["tools"] as? [[String: Any]])?.count, 1, style.rawValue)
+            XCTAssertNil(body["enable_search"], style.rawValue)
+            XCTAssertNil(body["plugins"], style.rawValue)
+        }
+        _ = try await loop.run(request: question, ledger: ledger, registry: registry, adapter: adapter,
+            model: "test", hostToolHandler: nil, systemPrompt: prompt, progress: nil)
+        XCTAssertEqual(adapter.requests.last?.enableNativeWebSearch, true)
+        XCTAssertEqual(adapter.requests.last?.messages.first?.content, prompt)
+    }
+
+    func testRecoveryStopsAfterOneDegradationAndDoesNotReplayPartialOutput() async throws {
+        let rejection = NativeHTTPByteStream.httpFailure(400, body: RejectedSearchProtocol.errorBody)
+        for (chunks, failure, expectedCalls) in [
+            ([], NativeHTTPByteStream.httpFailure(400, body: "invalid request"), 1),
+            ([NativeStreamChunk.textDelta(index: 0, text: "已经输出")], rejection, 1),
+            ([], rejection, 2),
+        ] {
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("search-stop-\(UUID().uuidString).jsonl")
+            defer { try? FileManager.default.removeItem(at: file) }
+            let ledger = try NativeAgentLedger(fileURL: file)
+            let registry = NativeToolRegistry()
+            await registry.register(.init(name: "weibei_course_map", description: "map",
+                schema: NativeJSONSchema(["type": "object"]), execute: { _, _ in .init(text: "") }))
+            let adapter = SearchRecoveryAdapter([(chunks, failure), ([], failure)])
+            do {
+                _ = try await NativeAgentLoop().run(
+                    request: .init(purpose: .conversation, question: "查资料", materialTitle: "", materialText: "",
+                                   noteTitle: "", noteText: "", contextRevision: "r1"),
+                    ledger: ledger, registry: registry, adapter: adapter, model: "test", hostToolHandler: nil,
+                    systemPrompt: "测试", progress: nil)
+                XCTFail("Unrecoverable rejection must remain a failure")
+            } catch let actual as NativeLLMFailure {
+                XCTAssertEqual(actual, failure)
+            }
+            XCTAssertEqual(adapter.requests.count, expectedCalls)
+        }
+    }
+}
+
+private final class SearchRecoveryAdapter: NativeLLMAdapter, @unchecked Sendable {
+    let family = "search-recovery-test"
+    private let lock = NSLock()
+    private var script: [(chunks: [NativeStreamChunk], failure: NativeLLMFailure?)]
+    private var captured: [NativeLLMRequest] = []
+    var requests: [NativeLLMRequest] { lock.lock(); defer { lock.unlock() }; return captured }
+
+    init(_ script: [([NativeStreamChunk], NativeLLMFailure?)]) { self.script = script }
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        lock.lock()
+        captured.append(request)
+        let next = script.isEmpty ? (chunks: [], failure: NativeLLMFailure(code: "unexpected_call", message: "unexpected call")) : script.removeFirst()
+        lock.unlock()
+        return AsyncThrowingStream {
+            for chunk in next.chunks { $0.yield(chunk) }
+            $0.finish(throwing: next.failure)
         }
     }
 }

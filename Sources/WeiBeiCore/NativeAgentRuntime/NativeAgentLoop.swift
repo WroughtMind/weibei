@@ -112,6 +112,8 @@ public actor NativeAgentLoop {
         var readItemIDs: [String] = []
         var contentBlocks: [AgentMessageContentBlock] = []
         var pendingUnstarted: [NativeToolCall] = []
+        var effectiveSystemPrompt = systemPrompt
+        var webSearchDisabled = false
 
         do {
             var step = 0
@@ -124,7 +126,7 @@ public actor NativeAgentLoop {
                         sources.append(source)
                     }
                 }
-                var messages = [NativeModelMessage(role: .system, content: systemPrompt)]
+                var messages = [NativeModelMessage(role: .system, content: effectiveSystemPrompt)]
                 messages.append(contentsOf: projection.messages)
                 if let invariant = NativeAgentInvariant.mismatch(
                     logged: projection.messages,
@@ -138,7 +140,7 @@ public actor NativeAgentLoop {
                         ? request.id.uuidString.lowercased()
                         : request.projectScope.chatID.lowercased()
                 )
-                llmRequest.enableNativeWebSearch = tools.contains { $0.name == "weibei_course_map" }
+                llmRequest.enableNativeWebSearch = !webSearchDisabled && tools.contains { $0.name == "weibei_course_map" }
                 llmRequest.reasoningEffort = request.reasoningEffort
                 let effectiveContextWindow = contextWindow ?? adapter.contextWindow
                 if let effectiveContextWindow {
@@ -186,6 +188,7 @@ public actor NativeAgentLoop {
                 var recoveredOverflow = false
                 streamAttempt: while true {
                     do {
+                        try checkCancelled()
                         // Apply this after compaction too: retained history can come from a checkpoint.
                         llmRequest.messages = llmRequest.messages.map { message in
                             var message = message
@@ -258,6 +261,30 @@ public actor NativeAgentLoop {
                             }
                         }
                         break streamAttempt
+                    } catch let failure as NativeLLMFailure
+                        where failure.code == "web_search_unsupported"
+                            && failure.status == 400
+                            && !failure.isContextOverflow
+                            && llmRequest.enableNativeWebSearch
+                            && !receivedChunk {
+                        try checkCancelled()
+                        webSearchDisabled = true
+                        effectiveSystemPrompt = systemPrompt.replacingOccurrences(
+                            of: NativePromptAssembler.webSearchCapability(available: true), with: ""
+                        ) + "\n\n" + NativePromptAssembler.webSearchUnavailable
+                        llmRequest.enableNativeWebSearch = false
+                        llmRequest.messages[0].content = effectiveSystemPrompt
+                        let activity = AgentToolActivity(
+                            id: "\(step):server:search-unavailable", name: "$web_search", state: .failed,
+                            detail: request.language.text("当前服务不支持网页搜索", "Web search is unavailable from this service"),
+                            resultSummary: request.language.text("已关闭本轮后续搜索，继续回答。", "Continuing with web search disabled for the rest of this turn."),
+                            textOffset: collectedText.count
+                        )
+                        _ = try await ledger.append { seq, time in
+                            NativeSessionEvent(type: .assistantChunk, seq: seq, timeMS: time,
+                                turn: turn, step: step, chunk: .serverToolActivity(activity))
+                        }
+                        await progress?(.toolActivity(activity))
                     } catch let failure as NativeLLMFailure
                         where failure.isContextOverflow
                             && !recoveredOverflow
