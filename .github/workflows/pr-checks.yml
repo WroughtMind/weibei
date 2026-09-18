@@ -213,7 +213,22 @@ jobs:
 
       - name: 逐架构验证正式应用启动
         id: launch
-        run: ./script/verify_app_launch.sh "dist/魏碑.app"
+        run: |
+          swiftc App/WindowBridge/WindowBridgeContract.swift script/check_window_hover.swift -o "$RUNNER_TEMP/check-window-hover"
+          "$RUNNER_TEMP/check-window-hover" "dist/魏碑.app/Contents/PlugIns/WeiBeiWindowBridge.bundle"
+          ./script/verify_app_launch.sh "dist/魏碑.app"
+
+      - name: 保留应用启动失败原因
+        if: always()
+        env:
+          LAUNCH_OUTCOME: ${{ steps.launch.outcome }}
+        run: |
+          [[ "$LAUNCH_OUTCOME" == failure ]] || exit 0
+          mkdir -p App/Evidence
+          /usr/bin/log show --last 5m --style compact --predicate 'process == "WeiBei" OR eventMessage CONTAINS[c] "WeiBei"' > App/Evidence/ci-launch.log
+          for report in "$HOME"/Library/Logs/DiagnosticReports/WeiBei*.ips; do
+            [[ ! -f "$report" ]] || cp "$report" "App/Evidence/ci-$(basename "$report")"
+          done
 
       - name: 生成并挂载验收当前架构安装包
         id: package
@@ -237,6 +252,8 @@ jobs:
             App/Evidence/ci*.jsonl
             App/Evidence/ci*.png
             App/Evidence/ci*.log
+            App/Evidence/ci*.ips
+            .build/ci-launch-console.log
             .build/catalyst-${{ matrix.arch }}/build.log
           retention-days: 2
           if-no-files-found: error

@@ -329,7 +329,8 @@ enum CatalystBusinessCheck {
                 UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.contains { scene in
                     let items = scene.titlebar?.toolbar?.items.compactMap { $0 as? NSUIViewToolbarItem } ?? []
                     return items.count == 3 && items.allSatisfy {
-                        $0.uiView.window != nil && !$0.uiView.bounds.isEmpty
+                        $0.isEnabled && $0.uiView.isUserInteractionEnabled
+                            && $0.uiView.window != nil && !$0.uiView.bounds.isEmpty
                             && !$0.label.isEmpty
                             && (($0.itemMenuFormRepresentation as? UIMenu)?.children.contains { $0 is UIAction } == true)
                     }
@@ -369,6 +370,33 @@ enum CatalystBusinessCheck {
                 return (try? await editor.evaluateJavaScript("Boolean(document.querySelector('.ProseMirror'))") as? Bool) == true
             }
             let noteEditor = await editor(documentID: store.activeNoteEditorDocumentID)!
+            try await until("note viewport extends under the native toolbar") {
+                guard let window = noteEditor.window else { return false }
+                return abs(noteEditor.convert(noteEditor.bounds, to: window).minY) < 1
+                    && noteEditor.scrollView.contentInsetAdjustmentBehavior == .never
+            }
+            if #available(iOS 26.0, *) {
+                try await until("pane edges do not add separate toolbar materials") {
+                    guard let window = noteEditor.window, let chat = conversation(),
+                          let reader = descendants(window).first(where: { $0.accessibilityIdentifier == "persistent-pane-reader" }),
+                          let text = descendants(reader).compactMap({ $0 as? UITextView }).first else { return false }
+                    // Check the three pane viewports, not WebKit's dynamically
+                    // created internal scrollers for HTML overflow content.
+                    let scrolls: [UIScrollView] = [text, chat.collection, noteEditor.scrollView]
+                    return scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
+                }
+            }
+            try await until("all three panes fade within the original toolbar") {
+                guard let window = noteEditor.window else { return false }
+                let panes = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
+                    .filter { !$0.isHidden && $0.bounds.width > 0 }
+                return panes.count == 3 && panes.allSatisfy { pane in
+                    guard let fade = pane.layer.mask as? CAGradientLayer,
+                          let end = fade.locations?.dropLast().last else { return false }
+                    let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
+                    return fade.frame == pane.bounds && abs(fadeBottom - window.safeAreaInsets.top) < 1
+                }
+            }
             try check("original_import_reader_and_editor", materials.count == 1 && notes.count == 1
                 && noteEditor.bounds.width > 100 && noteEditor.bounds.height > 100)
             store.noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "\n\n" + noteMarker)
@@ -527,7 +555,13 @@ enum CatalystBusinessCheck {
                 "agent_running": store.isAgentRunningInActiveChat,
                 "stream_text_count": store.agentStreaming.text.count,
                 "messages": store.messages.map { ["role": $0.role.rawValue, "state": $0.completionState.rawValue, "text_count": String($0.text.count)] },
-                "views": windows.flatMap(descendants).map { ["type": String(reflecting: type(of: $0)), "frame": String(describing: $0.frame), "hidden": String($0.isHidden)] }
+                "views": windows.flatMap(descendants).map { view in
+                    var state = ["type": String(reflecting: type(of: view)), "frame": String(describing: view.frame), "hidden": String(view.isHidden)]
+                    if #available(iOS 26.0, *), let scroll = view as? UIScrollView {
+                        state["top_edge_hidden"] = String(scroll.topEdgeEffect.isHidden)
+                    }
+                    return state
+                }
             ]
             if let controller = conversation() {
                 let collection = controller.collection

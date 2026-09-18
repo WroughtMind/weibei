@@ -696,6 +696,7 @@ struct NotePaneView: View {
         })
 #if targetEnvironment(macCatalyst)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.container, edges: .top)
 #endif
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
@@ -1465,6 +1466,7 @@ struct AgentPaneView: View {
                             onFocusComposer: { composerFocusTrigger &+= 1 },
                             onReadingMessage: updateAgentRailPosition)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .ignoresSafeArea(.container, edges: .top)
 #else
                         ScrollView(showsIndicators: true) {
                             // No scrollTargetLayout / scrollPosition / viewport minHeight

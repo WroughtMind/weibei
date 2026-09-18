@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>魏碑笔记</title>
   <link rel="stylesheet" href="./editor.css">
   <style>
@@ -229,7 +229,8 @@
       overflow: auto;
       scrollbar-width: thin;
       scrollbar-color: transparent transparent;
-      padding: 28px 34px 64px;
+      padding: calc(28px + env(safe-area-inset-top)) 34px 64px;
+      scroll-padding-top: env(safe-area-inset-top);
       background: transparent;
     }
 
@@ -1438,7 +1439,7 @@
       --weibei-writing-font: "Mplus1p", sans-serif;
     }
     body[data-editable="true"] #editor {
-      padding: 36px 36px 64px;
+      padding: calc(36px + env(safe-area-inset-top)) 36px 64px;
     }
     body[data-editable="true"] :is(.milkdown, #frontmatter-panel, .editor-status) {
       box-sizing: border-box;

@@ -23,9 +23,10 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         // A Catalyst scene can acquire its NSWindow after configure(), and a
         // background/PiP window need not become key. Apply input settings too.
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: nil, queue: .main) { [weak self] note in
-            guard let self, let window = note.object as? NSWindow,
-                  !window.acceptsMouseMovedEvents
-                    || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
+            guard let self, let window = note.object as? NSWindow else { return }
+            self.updateToolbarBackground(in: window)
+            guard !window.acceptsMouseMovedEvents
+                || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
             self.apply(to: window)
         })
     }
@@ -36,6 +37,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private func apply(to window: NSWindow) {
         // Popovers are borderless windows too; their rows need mouse-move events.
         window.acceptsMouseMovedEvents = true
+        updateToolbarBackground(in: window)
         guard window.styleMask.contains(.titled), let content = window.contentView else { return }
         let glass = ["glassLight", "glassDark", "glassMist", "glassSlate"].contains(mode)
         window.isOpaque = !glass
@@ -73,6 +75,25 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             material.alphaValue = 1
         default: break
         }
+    }
+    private func updateToolbarBackground(in window: NSWindow) {
+        let owner = window.toolbar?.identifier == "weibei.workspace" ? window : window.parent
+        guard let owner, owner.toolbar?.identifier == "weibei.workspace" else { return }
+        if !owner.titlebarAppearsTransparent { owner.titlebarAppearsTransparent = true }
+        guard let host = owner.toolbar?.items.compactMap({ $0.view?.window }).first,
+              host !== owner, let content = host.contentView else { return }
+        // AppKit moves the native toolbar into another window in full screen.
+        // That host ignores titlebarAppearsTransparent and repaints its backing
+        // view. AppKit also resets isHidden during layout, so clear only the
+        // fill's opacity; keep its layout and the native controls intact.
+        func hideBackground(_ view: NSView) {
+            if NSStringFromClass(type(of: view)) == "NSTitlebarBackgroundView" {
+                if view.alphaValue != 0 { view.alphaValue = 0 }
+                return
+            }
+            view.subviews.forEach(hideBackground)
+        }
+        hideBackground(content)
     }
     func pushCursor(_ name: String) {
         switch name {
