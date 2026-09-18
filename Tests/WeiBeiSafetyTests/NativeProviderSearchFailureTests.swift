@@ -2,6 +2,18 @@ import XCTest
 @testable import WeiBeiCore
 
 final class NativeProviderSearchFailureTests: XCTestCase {
+    func testRejectedRequestIsNotReportedAsTemporaryServiceFailure() {
+        let failure = NativeHTTPByteStream.httpFailure(400, body: RejectedSearchProtocol.errorBody)
+        XCTAssertEqual(AgentFailureKind.classify(failure), .requestRejected)
+        XCTAssertEqual(AgentFailureKind.classify(NSError(domain: "WeiBei.NativeAgent", code: 400)), .requestRejected)
+        XCTAssertEqual(NativeLLMFailure(code: "invalid_request", message: "invalid parameter").asAgentFailureKind, .requestRejected)
+        for (status, expected) in [(401, AgentFailureKind.unauthorized), (403, .unauthorized),
+                                   (429, .rateLimited), (408, .timedOut), (504, .timedOut),
+                                   (500, .serverError), (502, .serverError), (503, .serverError)] {
+            XCTAssertEqual(AgentFailureKind.classify(NativeHTTPByteStream.httpFailure(status, body: "error")), expected)
+        }
+    }
+
     func testRejectedRequestsKeepSearchConfigurationAndOriginalFailure() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RejectedSearchProtocol.self]

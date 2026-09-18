@@ -882,6 +882,7 @@ public typealias StudyAgentSessionTitleHandler = @Sendable (String) async -> Voi
 /// User-facing classification for Agent request failures.
 public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     case offline
+    case requestRejected
     case unauthorized
     case rateLimited
     case serverError
@@ -896,6 +897,8 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         switch self {
         case .offline:
             return language.text("网络不可用", "Network unavailable")
+        case .requestRejected:
+            return language.text("模型服务未接受请求", "Model service rejected the request")
         case .unauthorized:
             return language.text("认证已失效", "Authentication expired")
         case .rateLimited:
@@ -921,6 +924,11 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         switch self {
         case .offline:
             return language.text("请检查本机网络后重试。", "Check your network connection, then retry.")
+        case .requestRejected:
+            return language.text(
+                "请检查所选模型、服务地址或请求内容后重试。",
+                "Check the selected model, service URL, or request content, then retry."
+            )
         case .unauthorized:
             return language.text(
                 "请到设置中重新登录，或重新保存 API Key。",
@@ -969,6 +977,8 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         }
         if ns.domain == "WeiBei.OpenAI" || ns.domain == "WeiBei.NativeAgent" {
             switch ns.code {
+            case 400:
+                return .requestRejected
             case 401, 403:
                 return .unauthorized
             case 429:
