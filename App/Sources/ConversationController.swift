@@ -46,7 +46,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private var replay: Task<Void, Never>?
     private var scenarioGeneration = 0
     private var scenario = "rich"
-    private var earlier = 480
+    private var earlier = 0
     private var layoutTransaction = false
     private var laidOutWidth: CGFloat = 0
     private(set) var messages: [LabMessage] = []
@@ -921,6 +921,13 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             }
             do {
                 try expect(UIDevice.current.userInterfaceIdiom == .mac, "运行界面不是 Mac idiom")
+                let emptyConversation = ConversationController()
+                emptyConversation.usesWorkspaceChrome = true
+                emptyConversation.loadViewIfNeeded()
+                emptyConversation.scrollViewDidScroll(emptyConversation.collection)
+                try expect(emptyConversation.preparation == nil && emptyConversation.messages.isEmpty,
+                           "空会话首次滚动不应读取不存在的历史")
+                metrics.checks["empty_conversation_scroll_does_not_load_history"] = "passed"
                 // An empty top strip must register with its content surface on
                 // attachment, preserve the underlying input target, and detach.
                 let point = CGPoint(x: view.bounds.midX, y: 20)

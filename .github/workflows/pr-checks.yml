@@ -227,28 +227,6 @@ jobs:
           for report in "$HOME"/Library/Logs/DiagnosticReports/WeiBei*.ips; do
             [[ ! -f "$report" ]] || cp "$report" "App/Evidence/ci-$(basename "$report")"
           done
-          python3 - <<'PY'
-          import os, plistlib, subprocess
-          from pathlib import Path
-          app = Path(os.environ['RUNNER_TEMP']) / 'launch-debug' / '魏碑.app'
-          subprocess.run(['ditto', 'dist/魏碑.app', str(app)], check=True)
-          entitlements = app.parent / 'debug.plist'
-          entitlements.write_bytes(plistlib.dumps({
-              'com.apple.security.cs.disable-library-validation': True,
-              'com.apple.security.get-task-allow': True,
-          }))
-          subprocess.run(['codesign', '--force', '--sign', '-', '--options', 'runtime',
-                          '--entitlements', str(entitlements), str(app)], check=True)
-          with open('App/Evidence/ci-launch-backtrace.log', 'w') as output:
-              try:
-                  symbols = next(Path('dist').glob('*.dSYM')).resolve()
-                  subprocess.run(['xcrun', 'lldb', '--batch',
-                                  '-o', f'target symbols add "{symbols}"', '-o', 'run',
-                                  '-k', 'thread backtrace all', '--', str(app / 'Contents/MacOS/WeiBei')],
-                                 stdout=output, stderr=subprocess.STDOUT, timeout=30)
-              except subprocess.TimeoutExpired:
-                  output.write('Debugger timed out after 30 seconds.\n')
-          PY
 
       - name: 生成并挂载验收当前架构安装包
         id: package
