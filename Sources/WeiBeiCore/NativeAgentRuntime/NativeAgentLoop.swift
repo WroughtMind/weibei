@@ -19,6 +19,7 @@ public actor NativeAgentLoop {
         registry: NativeToolRegistry,
         adapter: NativeLLMAdapter,
         model: String,
+        providerID: String? = nil,
         contextWindow: Int? = nil,
         hostToolHandler: StudyAgentHostToolHandler?,
         systemPrompt: String,
@@ -176,6 +177,7 @@ public actor NativeAgentLoop {
                 }
                 var assembler = NativeToolCallAssembler()
                 var finish: NativeFinishReason?
+                var replayState: Data?
                 var stepText = ""
                 var stepUsage: NativeTokenUsage?
                 var reportedSearchActivity = false
@@ -184,10 +186,24 @@ public actor NativeAgentLoop {
                 var recoveredOverflow = false
                 streamAttempt: while true {
                     do {
+                        // Apply this after compaction too: retained history can come from a checkpoint.
+                        llmRequest.messages = llmRequest.messages.map { message in
+                            var message = message
+                            if message.replay?.provider != providerID || message.replay?.family != adapter.family {
+                                message.replay = nil
+                            }
+                            return message
+                        }
                         for try await chunk in adapter.stream(llmRequest) {
                             try checkCancelled()
                             receivedChunk = true
                             assembler.apply(chunk)
+                            let loggedChunk: NativeStreamChunk
+                            if case let .finish(reason, _) = chunk {
+                                loggedChunk = .finish(reason: reason, replayState: nil)
+                            } else {
+                                loggedChunk = chunk
+                            }
                             _ = try await ledger.append { seq, time in
                                 NativeSessionEvent(
                                     type: .assistantChunk,
@@ -195,7 +211,7 @@ public actor NativeAgentLoop {
                                     timeMS: time,
                                     turn: turn,
                                     step: step,
-                                    chunk: chunk
+                                    chunk: loggedChunk
                                 )
                             }
                             switch chunk {
@@ -234,8 +250,9 @@ public actor NativeAgentLoop {
                                 }
                             case let .usage(usage):
                                 stepUsage = stepUsage?.merging(usage) ?? usage
-                            case let .finish(reason, _):
+                            case let .finish(reason, state):
                                 finish = reason
+                                replayState = state
                             default:
                                 break
                             }
@@ -247,7 +264,7 @@ public actor NativeAgentLoop {
                             && !receivedChunk {
                         let candidate: NativeContextCompactionCandidate?
                         do {
-                            let recoveryProjection = await ledger.deriveProjection()
+                            let recoveryProjection = aliases.projectedHistory(await ledger.deriveProjection())
                             candidate = try await NativeContextCompaction.prepareOverflowCandidate(
                                 request: llmRequest,
                                 projection: recoveryProjection,
@@ -277,12 +294,20 @@ public actor NativeAgentLoop {
                         recoveredOverflow = true
                     }
                 }
+                try checkCancelled()
+                let replay: NativeReplayRecord?
+                if (finish == .stop || finish == .toolCalls), let replayState, let providerID,
+                   ["openai-responses", "openai-codex-responses"].contains(adapter.family) {
+                    replay = NativeReplayRecord(provider: providerID, family: adapter.family, model: model, items: replayState)
+                } else {
+                    replay = nil
+                }
                 let completedUsage: NativeTokenUsage? = if finish == .stop || finish == .toolCalls || finish == .length {
                     stepUsage
                 } else {
                     nil
                 }
-                if !stepText.isEmpty || completedUsage != nil {
+                if !stepText.isEmpty || completedUsage != nil || replay != nil {
                     _ = try await ledger.append { seq, time in
                         NativeSessionEvent(
                             type: .assistantMessage,
@@ -291,7 +316,8 @@ public actor NativeAgentLoop {
                             turn: turn,
                             step: step,
                             text: stepText,
-                            usage: completedUsage
+                            usage: completedUsage,
+                            replay: replay
                         )
                     }
                 }

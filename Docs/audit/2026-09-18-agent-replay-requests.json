@@ -1,0 +1,295 @@
+{
+  "requestsUsed": 12,
+  "requestLimit": 12,
+  "requests": [
+    {
+      "request": 1,
+      "case": "high",
+      "model": "gpt-5.6-luna",
+      "requestedEffort": "high",
+      "returnedEffort": "high",
+      "returnedModel": "gpt-5.6-luna",
+      "httpStatus": 200,
+      "nativeInputTypes": [],
+      "encryptedReasoningInputCount": 0,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "message"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 2,
+      "case": "R2-tool-luna",
+      "model": "gpt-5.6-luna",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-luna",
+      "httpStatus": 200,
+      "nativeInputTypes": [],
+      "encryptedReasoningInputCount": 0,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "function_call"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 3,
+      "case": "R2-tool-luna",
+      "model": "gpt-5.6-luna",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-luna",
+      "httpStatus": 200,
+      "nativeInputTypes": [
+        "function_call",
+        "function_call_output"
+      ],
+      "encryptedReasoningInputCount": 0,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "message"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 4,
+      "case": "R3-switch-sol",
+      "model": "gpt-5.6-sol",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-sol",
+      "httpStatus": 200,
+      "nativeInputTypes": [
+        "function_call",
+        "function_call_output",
+        "message"
+      ],
+      "encryptedReasoningInputCount": 0,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "message"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 5,
+      "case": "football-1",
+      "model": "gpt-5.6-luna",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-luna",
+      "httpStatus": 200,
+      "nativeInputTypes": [],
+      "encryptedReasoningInputCount": 0,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "message"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 6,
+      "case": "football-1",
+      "model": "gpt-5.6-luna",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-luna",
+      "httpStatus": 200,
+      "nativeInputTypes": [
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "message"
+      ],
+      "encryptedReasoningInputCount": 2,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "reasoning",
+        "web_search_call",
+        "message"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 7,
+      "case": "football-1",
+      "model": "gpt-5.6-luna",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-luna",
+      "httpStatus": 200,
+      "nativeInputTypes": [
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "message",
+        "reasoning",
+        "web_search_call",
+        "message"
+      ],
+      "encryptedReasoningInputCount": 3,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "reasoning",
+        "web_search_call",
+        "message"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 8,
+      "case": "football-2",
+      "model": "gpt-5.6-luna",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-luna",
+      "httpStatus": 200,
+      "nativeInputTypes": [],
+      "encryptedReasoningInputCount": 0,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "message"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 9,
+      "case": "football-2",
+      "model": "gpt-5.6-luna",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-luna",
+      "httpStatus": 200,
+      "nativeInputTypes": [
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "message"
+      ],
+      "encryptedReasoningInputCount": 3,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "reasoning",
+        "web_search_call",
+        "message"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 10,
+      "case": "football-2",
+      "model": "gpt-5.6-luna",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-luna",
+      "httpStatus": 200,
+      "nativeInputTypes": [
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "message",
+        "reasoning",
+        "web_search_call",
+        "message"
+      ],
+      "encryptedReasoningInputCount": 4,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "reasoning",
+        "web_search_call",
+        "message"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 11,
+      "case": "R2R3-encrypted-tool-sol",
+      "model": "gpt-5.6-sol",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-sol",
+      "httpStatus": 200,
+      "nativeInputTypes": [
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "message",
+        "reasoning",
+        "web_search_call",
+        "message",
+        "reasoning",
+        "web_search_call",
+        "message"
+      ],
+      "encryptedReasoningInputCount": 4,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "function_call"
+      ],
+      "nativeReplayVerified": true
+    },
+    {
+      "request": 12,
+      "case": "R2R3-encrypted-tool-sol",
+      "model": "gpt-5.6-sol",
+      "requestedEffort": "low",
+      "returnedEffort": "low",
+      "returnedModel": "gpt-5.6-sol",
+      "httpStatus": 200,
+      "nativeInputTypes": [
+        "reasoning",
+        "web_search_call",
+        "reasoning",
+        "message",
+        "reasoning",
+        "web_search_call",
+        "message",
+        "reasoning",
+        "web_search_call",
+        "message",
+        "function_call",
+        "function_call_output"
+      ],
+      "encryptedReasoningInputCount": 4,
+      "terminalOutputCount": 0,
+      "completeOutputTypes": [
+        "message"
+      ],
+      "nativeReplayVerified": true
+    }
+  ],
+  "annotationsRemovedAtReplay": 12,
+  "request1SourceCommit": "11d4f03dd7cdbf63c6ce88a12d0b495df26d77c0",
+  "sourceSHA256AppliesToRequests": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "sourceSHA256": {
+    "Sources/WeiBeiCore/NativeAgentRuntime/Providers/OpenAIResponsesProvider.swift": "83d10a5e5a62e7a011caa76b3cb937812ff63b9bcc462736051130b77fab4e8d",
+    "Sources/WeiBeiNativeCheck/NativeEvalCLI.swift": "be7b6510aa375b0e84e665fc55712b1688e290c7a1a226fb338ba05e1d087b18",
+    "Tests/WeiBeiSafetyTests/NativeAgentReplayTests.swift": "74c6a556ef38efac13d0540b128e2609560f4277e7e032cda17461abaebe0152"
+  }
+}

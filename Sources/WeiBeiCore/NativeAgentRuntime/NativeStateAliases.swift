@@ -158,6 +158,7 @@ struct NativeStateAliases: Sendable {
                 message.content = sanitizedText(message.content)
             } else if message.role == .assistant {
                 message.content = sanitizedText(message.content)
+                message.replay = message.replay.flatMap(projectedReplay)
             }
             if let calls = message.toolCalls {
                 message.toolCalls = calls.map { call in
@@ -175,6 +176,34 @@ struct NativeStateAliases: Sendable {
             return record
         }
         return projection
+    }
+
+    private func projectedReplay(_ replay: NativeReplayRecord) -> NativeReplayRecord? {
+        guard var items = try? JSONSerialization.jsonObject(with: replay.items) as? [[String: Any]] else { return nil }
+        for index in items.indices {
+            switch items[index]["type"] as? String {
+            case "message":
+                if var content = items[index]["content"] as? [[String: Any]] {
+                    for part in content.indices {
+                        if let text = content[part]["text"] as? String {
+                            content[part]["text"] = sanitizedText(text)
+                        }
+                        if content[part]["annotations"] != nil { content[part]["annotations"] = [] as [Any] }
+                    }
+                    items[index]["content"] = content
+                }
+            case "function_call":
+                if let arguments = items[index]["arguments"] as? String, let name = items[index]["name"] as? String {
+                    items[index]["arguments"] = sanitizedArguments(arguments, toolName: name)
+                }
+            default:
+                break // Encrypted reasoning and provider IDs are opaque protocol data.
+            }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: items, options: [.sortedKeys]) else { return nil }
+        var result = replay
+        result.items = data
+        return result
     }
 
     private func projected(_ item: StudyAgentHostToolItem) -> StudyAgentHostToolItem {

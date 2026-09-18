@@ -113,6 +113,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
             registry: registry,
             adapter: meteredAdapter,
             model: model,
+            providerID: providerID,
             contextWindow: contextWindow,
             hostToolHandler: hostToolHandler,
             systemPrompt: prompt,

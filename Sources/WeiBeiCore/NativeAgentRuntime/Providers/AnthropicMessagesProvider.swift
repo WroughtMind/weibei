@@ -63,10 +63,6 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
                 if !message.content.isEmpty {
                     content.append(["type": "text", "text": message.content])
                 }
-                if let replay = request.replayState,
-                   let blocks = try? JSONSerialization.jsonObject(with: replay) as? [[String: Any]] {
-                    content.insert(contentsOf: blocks, at: 0)
-                }
                 if let calls = message.toolCalls {
                     for call in calls {
                         let input = (try? JSONSerialization.jsonObject(with: Data(call.arguments.utf8))) ?? [:]

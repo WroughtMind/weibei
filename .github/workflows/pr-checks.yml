@@ -155,7 +155,9 @@ jobs:
       - name: 运行课程目录、数据与 Agent 安全自检
         id: safety
         if: (needs.scope.outputs.data_safety == 'true' || needs.scope.outputs.agent == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: stdbuf -oL -eL swift test --filter WeiBeiSafetyTests
+        run: |
+          stdbuf -oL -eL swift test --filter WeiBeiSafetyTests
+          WEIBEI_NATIVE_EVAL_EFFORT=high swift run WeiBeiNativeCheck --native-eval-self-check
 
       - name: 检查空白与生成文件
         run: |
