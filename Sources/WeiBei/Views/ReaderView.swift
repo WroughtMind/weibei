@@ -367,6 +367,25 @@ struct ReaderView: View {
                 .padding(6)
             }
         }
+        .allowsHitTesting(!store.materialPickerPresented)
+        .accessibilityHidden(store.materialPickerPresented)
+        .overlay {
+            if store.materialPickerPresented {
+                ContextualContentPicker(kind: .material)
+                    .overlay(alignment: .topTrailing) {
+                        Button(store.ui("返回当前文稿", "Back to current document")) {
+                            store.materialPickerPresented = false
+                            store.focus(.reader)
+                        }
+                        .buttonStyle(.plain)
+                        .weiBeiText(11.5)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .keyboardShortcut(.cancelAction)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
+                    }
+            }
+        }
         .onChange(of: store.selectedMaterialItem?.id) { _, _ in
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
