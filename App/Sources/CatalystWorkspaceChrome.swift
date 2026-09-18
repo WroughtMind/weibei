@@ -4,8 +4,9 @@ import WeiBeiCore
 
 /// The shared pane container owns the transition inside the original toolbar.
 @MainActor func configurePaneTopScrollEdges(in view: UIView) {
-    if #available(iOS 26.0, *), let scroll = view as? UIScrollView,
-       !scroll.topEdgeEffect.isHidden {
+    if #available(iOS 26.0, *), let scroll = view as? UIScrollView {
+        // WebKit tracks its temporary hiding separately from the client's
+        // setting. Always register ours, even when the effect is hidden now.
         scroll.topEdgeEffect.isHidden = true
     }
     for child in view.subviews { configurePaneTopScrollEdges(in: child) }

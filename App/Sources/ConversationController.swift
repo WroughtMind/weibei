@@ -1486,7 +1486,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
                 metrics.checks["single_long_answer_complete_and_revisitable"] = "passed"
                 selection.clear()
-                status.text = "13 项必要行为检查通过 · 桌面手感仍需单独体验"
+                status.text = "14 项必要行为检查通过 · 桌面手感仍需单独体验"
             } catch {
                 metrics.checks["failure"] = error.localizedDescription
                 status.text = "行为检查未通过：\(error.localizedDescription)"
@@ -1501,7 +1501,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
             }
             catch { status.text = "检查记录写入失败：\(error.localizedDescription)" }
-            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 13)
+            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 14)
         }
     }
 #endif

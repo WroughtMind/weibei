@@ -550,7 +550,13 @@ enum CatalystBusinessCheck {
                 "agent_running": store.isAgentRunningInActiveChat,
                 "stream_text_count": store.agentStreaming.text.count,
                 "messages": store.messages.map { ["role": $0.role.rawValue, "state": $0.completionState.rawValue, "text_count": String($0.text.count)] },
-                "views": windows.flatMap(descendants).map { ["type": String(reflecting: type(of: $0)), "frame": String(describing: $0.frame), "hidden": String($0.isHidden)] }
+                "views": windows.flatMap(descendants).map { view in
+                    var state = ["type": String(reflecting: type(of: view)), "frame": String(describing: view.frame), "hidden": String(view.isHidden)]
+                    if #available(iOS 26.0, *), let scroll = view as? UIScrollView {
+                        state["top_edge_hidden"] = String(scroll.topEdgeEffect.isHidden)
+                    }
+                    return state
+                }
             ]
             if let controller = conversation() {
                 let collection = controller.collection
