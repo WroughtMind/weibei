@@ -1471,16 +1471,24 @@ struct WeiBeiHeaderHandoffFade: View {
     var appearanceMode: WeiBeiAppearanceMode = WeiBeiThemeRuntime.mode
 
     var body: some View {
-        // These panes also host PDFKit and WebKit; soften their actual content
-        // without moving it underneath the native toolbar's hit regions.
-        Rectangle()
-            .fill(.regularMaterial)
-            .overlay(WeiBeiTheme.paper.opacity(appearanceMode.isGlass ? 0 : 0.8))
-            .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))
+        // Dark: pure paper fade into content (no warm glassTint band under the bar).
+        // Light: keep the soft glass handoff.
+        let colors: [Color] = appearanceMode.isGlass
+            ? [.clear, .clear]
+            : appearanceMode.isDark ? [
+                WeiBeiTheme.paper.opacity(0.55 * opacity),
+                WeiBeiTheme.paper.opacity(0.22 * opacity),
+                .clear
+            ]
+            : [
+                WeiBeiTheme.glassTint.opacity(0.16 * opacity),
+                WeiBeiTheme.paperRaised.opacity(0.13 * opacity),
+                WeiBeiTheme.paper.opacity(0.08 * opacity),
+                .clear
+            ]
+        LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
             .frame(height: height)
-            .opacity(opacity)
             .allowsHitTesting(false)
-            .accessibilityHidden(true)
     }
 }
 

@@ -283,11 +283,9 @@ struct ReaderView: View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
                 readerBody
-                    .overlay(alignment: .top) {
-                        if store.selectedMaterialItem != nil {
-                            WeiBeiHeaderHandoffFade(height: 28, appearanceMode: store.appearanceMode)
-                        }
-                    }
+#if targetEnvironment(macCatalyst)
+                    .ignoresSafeArea(.container, edges: .top)
+#endif
             }
             // Collapsed split hosts have zero width; retain the last measured reader viewport.
             .frame(width: availableWidth)
@@ -2694,6 +2692,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
 #if targetEnvironment(macCatalyst)
         view.isOpaque = false
         view.backgroundColor = .clear
+        configurePaneTopScrollEdges(in: view)
 #else
         view.setValue(false, forKey: "drawsBackground")
 #endif
@@ -3686,7 +3685,9 @@ private struct PlainTextReaderView: View {
             underlineSnippets: store.selectionAskThreads.map(\.selectionText),
             onSelectionChange: onSelectionChange
         )
+#if !targetEnvironment(macCatalyst)
             .padding(32)
+#endif
     }
 }
 

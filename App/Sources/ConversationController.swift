@@ -76,6 +76,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         collection.backgroundColor = .clear
+        configurePaneTopScrollEdges(in: collection)
         collection.dataSource = self; collection.delegate = self
         collection.register(MessageCell.self, forCellWithReuseIdentifier: "message")
         collection.alwaysBounceVertical = true

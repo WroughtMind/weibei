@@ -370,6 +370,28 @@ enum CatalystBusinessCheck {
                 return (try? await editor.evaluateJavaScript("Boolean(document.querySelector('.ProseMirror'))") as? Bool) == true
             }
             let noteEditor = await editor(documentID: store.activeNoteEditorDocumentID)!
+            try await until("note viewport extends under the native toolbar") {
+                guard let window = noteEditor.window else { return false }
+                return abs(noteEditor.convert(noteEditor.bounds, to: window).minY) < 1
+                    && noteEditor.scrollView.contentInsetAdjustmentBehavior == .never
+            }
+            if #available(iOS 26.0, *) {
+                try await until("pane edges do not add separate toolbar materials") {
+                    let scrolls = descendants(noteEditor).compactMap { $0 as? UIScrollView }
+                    return !scrolls.isEmpty && scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
+                }
+            }
+            try await until("all three panes fade within the original toolbar") {
+                guard let window = noteEditor.window else { return false }
+                let panes = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
+                    .filter { !$0.isHidden && $0.bounds.width > 0 }
+                return panes.count == 3 && panes.allSatisfy { pane in
+                    guard let fade = pane.layer.mask as? CAGradientLayer,
+                          let end = fade.locations?.dropLast().last else { return false }
+                    let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
+                    return fade.frame == pane.bounds && abs(fadeBottom - window.safeAreaInsets.top) < 1
+                }
+            }
             try check("original_import_reader_and_editor", materials.count == 1 && notes.count == 1
                 && noteEditor.bounds.width > 100 && noteEditor.bounds.height > 100)
             store.noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "\n\n" + noteMarker)

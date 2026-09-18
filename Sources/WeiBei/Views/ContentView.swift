@@ -43,6 +43,9 @@ struct ContentView: View {
                     ZStack(alignment: .top) {
                         LayoutContentView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+#if targetEnvironment(macCatalyst)
+                            .ignoresSafeArea(.container, edges: .top)
+#endif
                             .background(
                                 store.appearanceMode.isGlass
                                     ? Color.clear
@@ -1347,7 +1350,17 @@ struct PersistentPaneRoot: View {
     let role: WorkspacePaneRole
 
     var body: some View {
-        pane
+        Group {
+#if targetEnvironment(macCatalyst)
+            if #available(iOS 26.0, *) {
+                pane.scrollEdgeEffectHidden(true, for: .top)
+            } else {
+                pane
+            }
+#else
+            pane
+#endif
+        }
 #if targetEnvironment(macCatalyst)
             .environment(\.weiBeiTextScale, store.interfaceTextScale.multiplier)
             .weiBeiMotionScoped()

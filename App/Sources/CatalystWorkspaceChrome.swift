@@ -2,6 +2,15 @@ import UIKit
 import SwiftUI
 import WeiBeiCore
 
+/// The shared pane container owns the transition inside the original toolbar.
+@MainActor func configurePaneTopScrollEdges(in view: UIView) {
+    if #available(iOS 26.0, *), let scroll = view as? UIScrollView,
+       !scroll.topEdgeEffect.isHidden {
+        scroll.topEdgeEffect.isHidden = true
+    }
+    for child in view.subviews { configurePaneTopScrollEdges(in: child) }
+}
+
 /// Native toolbar items own their hit regions; drawing controls under a hidden
 /// titlebar leaves AppKit's window double-click handling over those controls.
 struct CatalystTopBar: UIViewControllerRepresentable {
@@ -205,7 +214,26 @@ struct PersistentPaneHost: UIViewRepresentable {
     }
     final class Container: UIView {
         var onAttachment: (() -> Void)?
+        private let toolbarFade = CAGradientLayer()
         override func didMoveToWindow() { super.didMoveToWindow(); onAttachment?() }
+        override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard let window, window.windowScene?.titlebar?.toolbar != nil, bounds.height > 0 else {
+                layer.mask = nil
+                return
+            }
+            let top = max(0, window.safeAreaInsets.top - convert(bounds, to: window).minY)
+            guard top > 0 else { layer.mask = nil; return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            toolbarFade.frame = bounds
+            toolbarFade.colors = [UIColor.clear.cgColor, UIColor.clear.cgColor, UIColor.black.cgColor, UIColor.black.cgColor]
+            toolbarFade.locations = [0, NSNumber(value: Double(top * 0.25 / bounds.height)),
+                                    NSNumber(value: Double(min(top / bounds.height, 1))), 1]
+            layer.mask = toolbarFade
+            CATransaction.commit()
+        }
     }
     final class Coordinator {
         var owner: OwnerToken?
@@ -244,6 +272,7 @@ struct StableDocumentWorkspace: UIViewRepresentable {
         let view = StableDocumentSplitView()
         for role in WorkspacePaneRole.allCases {
             let host = CatalystHostingView(PersistentPaneHost(role: role, registry: registry)
+                .ignoresSafeArea(.container, edges: .top)
                 .environmentObject(store).environmentObject(store.paneState)
                 .environmentObject(store.interaction).environmentObject(store.threePaneReorder)
                 .environmentObject(store.libraryDrawer).weiBeiMotionScoped())
