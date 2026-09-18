@@ -96,9 +96,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             ]
         }
         var include = ["reasoning.encrypted_content"]
-        let enableSearch = request.enableNativeWebSearch
-            || request.tools.contains(where: { $0.name == "weibei_course_map" })
-        if enableSearch, webSearchSupported {
+        if request.enableNativeWebSearch, webSearchSupported {
             if !tools.contains(where: { $0["type"] as? String == "web_search" }) {
                 tools.append(["type": "web_search"])
             }

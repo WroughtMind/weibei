@@ -300,7 +300,7 @@ private func checkWebSearchPayloadInjection() throws {
         schema: NativeJSONSchema(["type": "object"]),
         execute: { _, _ in NativeToolExecutionResult(text: "") }
     )
-    let request = NativeLLMRequest(model: "test", messages: [], tools: [courseMap])
+    let request = NativeLLMRequest(model: "test", messages: [], tools: [courseMap], enableNativeWebSearch: true)
 
     let responsesOn = OpenAIResponsesProvider.payload(for: request, webSearchSupported: true)
     try nativeRequire(

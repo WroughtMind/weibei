@@ -105,8 +105,7 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
                 "input_schema": tool.schema.object,
             ]
         }
-        if webSearchTool, request.enableNativeWebSearch
-            || request.tools.contains(where: { $0.name == "weibei_course_map" }) {
+        if webSearchTool, request.enableNativeWebSearch {
             if !tools.contains(where: { $0["type"] as? String == "web_search_20250305" }) {
                 tools.append([
                     "type": "web_search_20250305",
