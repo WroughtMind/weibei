@@ -8,7 +8,6 @@ public struct NativeLLMRequest: Sendable {
     public var temperature: Double?
     public var reasoningEffort: String?
     public var enableNativeWebSearch: Bool
-    public var replayState: Data?
     public var maxTokens: Int?
     public var promptCacheKey: String?
 
@@ -19,7 +18,6 @@ public struct NativeLLMRequest: Sendable {
         temperature: Double? = nil,
         reasoningEffort: String? = nil,
         enableNativeWebSearch: Bool = false,
-        replayState: Data? = nil,
         maxTokens: Int? = nil,
         promptCacheKey: String? = nil
     ) {
@@ -29,7 +27,6 @@ public struct NativeLLMRequest: Sendable {
         self.temperature = temperature
         self.reasoningEffort = reasoningEffort
         self.enableNativeWebSearch = enableNativeWebSearch
-        self.replayState = replayState
         self.maxTokens = maxTokens
         self.promptCacheKey = promptCacheKey
     }

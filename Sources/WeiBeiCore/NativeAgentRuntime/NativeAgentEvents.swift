@@ -182,6 +182,21 @@ public enum NativeSessionEventType: String, Codable, Sendable {
     case closer = "session/closer"
 }
 
+/// Opaque provider output for one completed model step, separate from visible text.
+public struct NativeReplayRecord: Codable, Equatable, Sendable {
+    public var provider: String
+    public var family: String
+    public var model: String
+    public var items: Data
+
+    public init(provider: String, family: String, model: String, items: Data) {
+        self.provider = provider
+        self.family = family
+        self.model = model
+        self.items = items
+    }
+}
+
 public struct NativeSessionEvent: Codable, Equatable, Sendable {
     public var type: NativeSessionEventType
     public var seq: Int
@@ -196,6 +211,7 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
     public var finishReason: NativeTurnEndReason?
     public var chunk: NativeStreamChunk?
     public var usage: NativeTokenUsage?
+    public var replay: NativeReplayRecord?
     public var summary: String?
     public var firstKeptSeq: Int?
     public var imageMediaType: String?
@@ -218,6 +234,7 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         finishReason: NativeTurnEndReason? = nil,
         chunk: NativeStreamChunk? = nil,
         usage: NativeTokenUsage? = nil,
+        replay: NativeReplayRecord? = nil,
         summary: String? = nil,
         firstKeptSeq: Int? = nil,
         imageMediaType: String? = nil,
@@ -238,6 +255,7 @@ public struct NativeSessionEvent: Codable, Equatable, Sendable {
         self.finishReason = finishReason
         self.chunk = chunk
         self.usage = usage
+        self.replay = replay
         self.summary = summary
         self.firstKeptSeq = firstKeptSeq
         self.imageMediaType = imageMediaType
@@ -282,19 +300,22 @@ public struct NativeModelMessage: Equatable, Sendable {
     public var toolCallID: String?
     public var toolCalls: [NativeToolCall]?
     public var images: [NativeImagePart]
+    public var replay: NativeReplayRecord?
 
     public init(
         role: Role,
         content: String,
         toolCallID: String? = nil,
         toolCalls: [NativeToolCall]? = nil,
-        images: [NativeImagePart] = []
+        images: [NativeImagePart] = [],
+        replay: NativeReplayRecord? = nil
     ) {
         self.role = role
         self.content = content
         self.toolCallID = toolCallID
         self.toolCalls = toolCalls
         self.images = images
+        self.replay = replay
     }
 }
 

@@ -191,9 +191,10 @@ public actor NativeAgentLedger {
         var pendingFirstSeq: Int?
         var pendingLastSeq: Int?
         var pendingUsage: NativeTokenUsage?
+        var pendingReplay: NativeReplayRecord?
 
         func flushAssistant() {
-            guard !pendingAssistant.isEmpty || !pendingCalls.isEmpty || pendingUsage != nil,
+            guard !pendingAssistant.isEmpty || !pendingCalls.isEmpty || pendingUsage != nil || pendingReplay != nil,
                   let firstSeq = pendingFirstSeq,
                   let lastSeq = pendingLastSeq else { return }
             records.append(
@@ -201,7 +202,8 @@ public actor NativeAgentLedger {
                     message: NativeModelMessage(
                         role: .assistant,
                         content: pendingAssistant,
-                        toolCalls: pendingCalls.isEmpty ? nil : pendingCalls
+                        toolCalls: pendingCalls.isEmpty ? nil : pendingCalls,
+                        replay: pendingReplay
                     ),
                     firstSeq: firstSeq,
                     lastSeq: lastSeq,
@@ -213,6 +215,7 @@ public actor NativeAgentLedger {
             pendingFirstSeq = nil
             pendingLastSeq = nil
             pendingUsage = nil
+            pendingReplay = nil
         }
 
         for event in visibleEvents {
@@ -230,9 +233,11 @@ public actor NativeAgentLedger {
                     )
                 )
             case .assistantMessage:
+                if pendingReplay != nil { flushAssistant() }
                 pendingFirstSeq = pendingFirstSeq ?? event.seq
                 pendingLastSeq = event.seq
                 pendingAssistant += event.text ?? ""
+                pendingReplay = event.replay
                 if let usage = event.usage {
                     pendingUsage = pendingUsage?.merging(usage) ?? usage
                 }
