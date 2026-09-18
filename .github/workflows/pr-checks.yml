@@ -223,7 +223,7 @@ jobs:
         run: |
           [[ "$LAUNCH_OUTCOME" == failure ]] || exit 0
           mkdir -p App/Evidence
-          /usr/bin/log show --last 5m --style compact --predicate 'process == "WeiBei"' > App/Evidence/ci-launch.log
+          /usr/bin/log show --last 5m --style compact --predicate 'process == "WeiBei" OR eventMessage CONTAINS[c] "WeiBei"' > App/Evidence/ci-launch.log
           for report in "$HOME"/Library/Logs/DiagnosticReports/WeiBei*.ips; do
             [[ ! -f "$report" ]] || cp "$report" "App/Evidence/ci-$(basename "$report")"
           done

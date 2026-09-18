@@ -4,8 +4,11 @@ set -euo pipefail
 [[ "${CI:-}" == true ]] || { echo '本机候选请在画中画验收。' >&2; exit 1; }
 APP="$(cd "${1:?application path required}" && pwd)"
 BINARY="$APP/Contents/MacOS/WeiBei"
+launch_log="$PWD/App/Evidence/ci-launch-console.log"
+mkdir -p "$(dirname "$launch_log")"
+: > "$launch_log"
 pid=""
-open -n "$APP"
+open -n "$APP" --stdout "$launch_log" --stderr "$launch_log"
 for _ in {1..120}; do
   while IFS= read -r candidate; do
     command="$(ps -p "$candidate" -o command= 2>/dev/null || true)"
@@ -16,10 +19,10 @@ for _ in {1..120}; do
   done < <(pgrep -x WeiBei 2>/dev/null || true)
   sleep 0.25
 done
-[[ -n "$pid" ]] || { echo '应用未能启动。' >&2; exit 2; }
+[[ -n "$pid" ]] || { cat "$launch_log" >&2; echo '应用未能启动。' >&2; exit 2; }
 trap 'kill -TERM "$pid" 2>/dev/null || true' EXIT
 sleep 5
-kill -0 "$pid" || { echo '应用启动后异常退出。' >&2; exit 3; }
+kill -0 "$pid" || { cat "$launch_log" >&2; echo '应用启动后异常退出。' >&2; exit 3; }
 kill -TERM "$pid"
 for _ in {1..200}; do
   if ! kill -0 "$pid" 2>/dev/null; then
