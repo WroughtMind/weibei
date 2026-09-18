@@ -51,6 +51,7 @@ enum NativeHTTPByteStream {
     static func httpFailure(_ status: Int, body: String) -> NativeLLMFailure {
         let code: String
         switch status {
+        case 400: code = "invalid_request"
         case 401, 403: code = "unauthorized"
         case 429: code = "rate_limited"
         case 408, 504: code = "timeout"
