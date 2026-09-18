@@ -43,15 +43,10 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
 
     public func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
         do {
-            let primary = try makeURLRequest(request, webSearchStyle: webSearchStyle)
-            let fallback = webSearchStyle == .none
-                ? nil
-                : try makeURLRequest(request, webSearchStyle: .none)
             var textIndex = 0
             return NativeHTTPByteStream.start(
                 session: session,
-                request: primary,
-                fallbackRequest: fallback,
+                request: try makeURLRequest(request),
                 translate: { try Self.translate(payload: $0, textIndex: &textIndex) }
             )
         } catch {
@@ -60,10 +55,6 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
     }
 
     func makeURLRequest(_ request: NativeLLMRequest) throws -> URLRequest {
-        try makeURLRequest(request, webSearchStyle: webSearchStyle)
-    }
-
-    func makeURLRequest(_ request: NativeLLMRequest, webSearchStyle style: ChatWebSearchStyle) throws -> URLRequest {
         var urlRequest = URLRequest(url: baseURL.appendingPathComponent("chat/completions"))
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -125,7 +116,7 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         let enableSearch = request.enableNativeWebSearch
             || request.tools.contains(where: { $0.name == "weibei_course_map" })
         if enableSearch {
-            switch style {
+            switch webSearchStyle {
             case .none:
                 break
             case .zai:

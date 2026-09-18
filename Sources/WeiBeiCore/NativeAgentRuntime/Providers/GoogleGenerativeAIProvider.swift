@@ -24,19 +24,8 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
         NativeHTTPByteStream.start(
             session: session,
             request: makeURLRequest(request),
-            fallbackRequest: groundingSearch ? makeURLRequestWithoutSearch(request) : nil,
             translate: Self.translate
         )
-    }
-
-    private func makeURLRequestWithoutSearch(_ request: NativeLLMRequest) -> URLRequest {
-        var urlRequest = makeURLRequest(request)
-        if let body = try? JSONSerialization.data(
-            withJSONObject: Self.payload(for: request, groundingSearch: false), options: [.sortedKeys]
-        ) {
-            urlRequest.httpBody = body
-        }
-        return urlRequest
     }
 
     func makeURLRequest(_ request: NativeLLMRequest) -> URLRequest {
