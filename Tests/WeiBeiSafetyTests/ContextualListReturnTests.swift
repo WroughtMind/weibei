@@ -166,7 +166,9 @@ final class ContextualListReturnTests: XCTestCase {
         }
         store.openContextualItem(noteB.id, kind: .note)
         store.showContextualBrowser(.note)
+        try capture(ContextualContentPicker(kind: .material), name: "选择资料", width: 700)
         try capture(NotePaneView(), name: "选择笔记", width: 700)
+        try capture(ContextualContentPicker(kind: .note), name: "窄栏选择笔记", width: 240)
         store.noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
             diskMarkdown: "# 导数\n\n磁盘中补充了导数的定义。\n\n$f'(x) = 2x$",
             checkpoint: NoteRecoveryCheckpoint(metadata: NoteRecoveryMetadata(

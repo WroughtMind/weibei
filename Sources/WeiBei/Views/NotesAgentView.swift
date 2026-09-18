@@ -366,20 +366,7 @@ struct NotePaneView: View {
         .accessibilityHidden(store.notePickerPresented)
         .overlay {
             if store.notePickerPresented {
-                VStack(spacing: 0) {
-                    HStack {
-                        Text(store.ui("选择其他笔记", "Choose another note")).weiBeiText(14, weight: .medium)
-                        Spacer()
-                        Button(store.ui("返回当前笔记", "Back to current note")) {
-                            store.notePickerPresented = false
-                            store.focus(.notes)
-                        }
-                        .keyboardShortcut(.cancelAction)
-                    }.padding(16)
-                    ContextualContentPicker(kind: .note)
-                }
-                .background(WeiBeiTheme.paper)
-                .foregroundStyle(WeiBeiTheme.ink)
+                ContextualContentPicker(kind: .note)
             }
         }
         .sheet(isPresented: $reviewingConflict) {
