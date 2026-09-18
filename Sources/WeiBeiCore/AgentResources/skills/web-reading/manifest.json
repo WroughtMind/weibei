@@ -1,0 +1,12 @@
+{
+  "id": "web-reading",
+  "name": "网页阅读与引用",
+  "version": "1.0.0",
+  "description": "读取指定网页或核对搜索结果原文，完成摘要、摘录、表格解释与来源引用；已有网址时直接阅读，不先做无关搜索。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "weibei_web_open"
+  ],
+  "jscHook": null
+}

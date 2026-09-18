@@ -1,0 +1,14 @@
+{
+  "id": "course-search",
+  "name": "课程资料检索",
+  "version": "1.0.0",
+  "description": "在魏碑已登记材料和笔记中定位原文，适用于查出处、找相关课程、跨资料检索；选区已经足够回答时无需检索。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "weibei_course_map",
+    "weibei_search_workspace",
+    "weibei_course_read"
+  ],
+  "jscHook": null
+}
