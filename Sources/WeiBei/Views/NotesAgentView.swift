@@ -367,6 +367,18 @@ struct NotePaneView: View {
         .overlay {
             if store.notePickerPresented {
                 ContextualContentPicker(kind: .note)
+                    .overlay(alignment: .topTrailing) {
+                        Button(store.ui("返回当前笔记", "Back to current note")) {
+                            store.notePickerPresented = false
+                            store.focus(.notes)
+                        }
+                        .buttonStyle(.plain)
+                        .weiBeiText(11.5)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .keyboardShortcut(.cancelAction)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
+                    }
             }
         }
         .sheet(isPresented: $reviewingConflict) {

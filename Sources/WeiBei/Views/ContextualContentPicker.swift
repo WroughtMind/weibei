@@ -41,38 +41,25 @@ struct ContextualContentPicker: View {
     var body: some View {
         GeometryReader { geometry in
             let groups = groups
-            let width = max(1, min(geometry.size.width - 48, 760))
-            let columns = max(1, min(groups.count, Int((width + 20) / 300)))
+            let available = max(1, geometry.size.width - 40)
+            let columns = max(1, min(groups.count, Int((min(available, 1140) + 16) / 200)))
+            let width = min(available, CGFloat(columns) * 220 + CGFloat(columns - 1) * 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    pickerHeader
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        TextField("", text: $search, prompt: Text(store.ui("搜索名称、文件名或标签", "Search title, filename or tag"))
-                            .foregroundStyle(WeiBeiTheme.placeholderInk))
-                            .textFieldStyle(.plain)
-                            .foregroundStyle(WeiBeiTheme.ink)
-                            .focused($searchFocused)
-                            .accessibilityLabel(store.ui("搜索内容", "Search content"))
-                            .accessibilityIdentifier("contextual-content-filter")
-                        if !search.isEmpty {
-                            Button { search = "" } label: {
-                                Image(systemName: "xmark.circle.fill")
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .accessibilityLabel(store.ui("清除搜索", "Clear search"))
-                        }
-                    }
-                    .weiBeiText(13)
-                    .weibeiInputSurface(active: searchFocused, height: 36)
+                    TextField("", text: $search, prompt: Text(store.ui("按名称、文件名或标签筛选", "Filter by title, filename or tag"))
+                        .foregroundStyle(WeiBeiTheme.placeholderInk))
+                        .textFieldStyle(.plain)
+                        .weiBeiText(13)
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .focused($searchFocused)
+                        .weibeiInputSurface(active: searchFocused, height: 32)
+                        .accessibilityIdentifier("contextual-content-filter")
                     globalActions
                     if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && groups.allSatisfy({ $0.items.isEmpty }) {
                         Text(store.ui("没有匹配的内容", "No matching content"))
                             .weiBeiText(13).foregroundStyle(WeiBeiTheme.secondaryInk)
                     }
-                    CoursePickerColumns(columns: columns, spacing: 20) {
+                    CoursePickerColumns(columns: columns, spacing: 16) {
                         ForEach(groups) { group in
                             courseBlock(group)
                         }
@@ -81,7 +68,7 @@ struct ContextualContentPicker: View {
                 .frame(width: width)
                 // Animate discrete reflow; ordinary live resizing must keep tracking the pointer.
                 .animation(reduceMotion ? nil : WeiBeiMotion.panel, value: columns)
-                .padding(.top, 32)
+                .padding(.top, min(100, max(28, geometry.size.height * 0.12)))
                 .padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
             }
@@ -130,31 +117,6 @@ struct ContextualContentPicker: View {
         .accessibilityIdentifier(kind == .note ? "contextual-note-picker" : "contextual-material-picker")
     }
 
-    private var pickerHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(kind == .note ? store.ui("笔记", "Notes") : store.ui("资料", "Materials"))
-                    .weiBeiText(24, weight: .semibold, design: .serif)
-                    .foregroundStyle(WeiBeiTheme.ink)
-                Spacer(minLength: 8)
-                if kind == .note && store.notePickerPresented {
-                    Button(store.ui("返回当前笔记", "Back to current note")) {
-                        store.notePickerPresented = false
-                        store.focus(.notes)
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28))
-                    .keyboardShortcut(.cancelAction)
-                }
-            }
-            .frame(minHeight: 36)
-            Text(kind == .note
-                 ? store.ui("选择笔记，继续写作。", "Choose a note and keep writing.")
-                 : store.ui("选择资料，开始阅读。", "Choose material and start reading."))
-                .weiBeiText(13)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-        }
-    }
-
     private var commonTitle: String {
         kind == .note ? store.ui("通用笔记", "Common Notes") : store.ui("通用资料", "Common Materials")
     }
@@ -180,7 +142,6 @@ struct ContextualContentPicker: View {
                 Text(group.course?.title ?? commonTitle)
                     .weiBeiText(14, weight: .semibold)
                     .lineLimit(2)
-                Spacer(minLength: 0)
                 Button {
                     if kind == .note {
                         if let id = group.course?.id { store.createBlankNotebookNote(in: id) }
@@ -191,11 +152,11 @@ struct ContextualContentPicker: View {
                 } label: {
                     Image(systemName: "plus").weiBeiText(12, weight: .medium).frame(width: 24, height: 24)
                 }
-                .buttonStyle(WeiBeiIconButtonStyle(size: 28))
+                .buttonStyle(.plain)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .accessibilityLabel(kind == .note ? store.ui("新建笔记", "New Note") : store.ui("导入资料", "Import Materials"))
+                Spacer(minLength: 0)
             }
-            Divider().overlay(WeiBeiTheme.ink.opacity(0.08))
             if kind == .note {
                 Button {
                     store.notePickerPresented = false
@@ -219,7 +180,7 @@ struct ContextualContentPicker: View {
                         Text(kind == .note ? store.noteListDisplayTitle(for: item) : store.displayTitle(for: item))
                             .weiBeiText(13).lineLimit(2).multilineTextAlignment(.leading)
                         Spacer(minLength: 0)
-                    }.frame(maxWidth: .infinity, minHeight: 32, alignment: .leading).contentShape(Rectangle())
+                    }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(store.noteListDisplayTitle(for: item) + "\n" + store.displaySubtitle(for: item))
@@ -234,19 +195,18 @@ struct ContextualContentPicker: View {
         .foregroundStyle(WeiBeiTheme.ink)
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.paperInset.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .background(courseWorkspaceAccent(colorIndex: group.course?.colorIndex ?? 3).opacity(0.075), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var globalActions: some View {
         HStack(spacing: 12) {
-            Button { courseEntry = CourseProjectEntryPresentation(intent: .create) } label: {
-                Label(store.ui("新建课程", "New Course"), systemImage: "plus")
-            }
+            Button(store.ui("＋ 新建课程", "+ New Course")) { courseEntry = CourseProjectEntryPresentation(intent: .create) }
             Button(kind == .note ? store.ui("导入笔记…", "Import notes…") : store.ui("导入资料…", "Import materials…")) {
                 choosingImportTarget = true
             }
         }
-        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 30))
+        .buttonStyle(.plain)
+        .weiBeiText(11.5)
         .foregroundStyle(WeiBeiTheme.secondaryInk)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
