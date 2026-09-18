@@ -174,9 +174,9 @@ public enum NativeProviderRouting {
                 family: .openaiResponses,
                 auth: .apiKey,
                 baseURL: URL(string: "https://api.deepseek.com"),
-                defaultModel: "deepseek-v4-flash",
-                note: "官方 Responses API；内置搜索待实测",
-                webSearch: .responsesTool
+                defaultModel: "deepseek-flash",
+                note: "官方 Responses API；服务端不执行 web_search（2026-09-18 实测）",
+                webSearch: .none
             )
         case .antLing:
             return completions("https://api.ant-ling.com/v1")

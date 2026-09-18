@@ -375,8 +375,8 @@ private func checkWebSearchPayloadInjection() throws {
 }
 
 private func checkProviderRouting() throws {
-    try nativeRequire(NativeProviderRouting.route(.deepseek).family == .openaiResponses, "deepseek moved to Responses for web search")
-    try nativeRequire(NativeProviderRouting.route(.deepseek).webSearch == .responsesTool, "deepseek carries server web search")
+    try nativeRequire(NativeProviderRouting.route(.deepseek).family == .openaiResponses, "deepseek stays on Responses")
+    try nativeRequire(NativeProviderRouting.route(.deepseek).webSearch == .none, "deepseek has no server web search (silently ignores the tool, verified 2026-09-18)")
     try nativeRequire(NativeProviderRouting.route(.xai).webSearch == .responsesTool, "xai carries server web search")
     try nativeRequire(NativeProviderRouting.route(.anthropic).webSearch == .anthropicTool, "anthropic carries server web search")
     try nativeRequire(NativeProviderRouting.route(.google).webSearch == .googleGrounding, "google carries grounding search")
