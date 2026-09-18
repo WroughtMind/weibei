@@ -39,19 +39,8 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         return NativeHTTPByteStream.start(
             session: session,
             request: makeURLRequest(request),
-            fallbackRequest: webSearchSupported ? makeURLOrURLRequestWithoutSearch(request) : nil,
             translate: { try Self.translate($0, completedItems: &completedItems) }
         )
-    }
-
-    private func makeURLOrURLRequestWithoutSearch(_ request: NativeLLMRequest) -> URLRequest {
-        var urlRequest = makeURLRequest(request)
-        if let body = try? JSONSerialization.data(
-            withJSONObject: Self.payload(for: request, webSearchSupported: false), options: [.sortedKeys]
-        ) {
-            urlRequest.httpBody = body
-        }
-        return urlRequest
     }
 
     func makeURLRequest(_ request: NativeLLMRequest) -> URLRequest {
