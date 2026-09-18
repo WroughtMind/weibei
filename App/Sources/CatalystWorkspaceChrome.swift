@@ -8,6 +8,9 @@ import WeiBeiCore
         // WebKit tracks its temporary hiding separately from the client's
         // setting. Always register ours, even when the effect is hidden now.
         scroll.topEdgeEffect.isHidden = true
+        // The outer viewport owns the window edge. Nested HTML scrollers
+        // belong to WebKit and may be created after this view is configured.
+        return
     }
     for child in view.subviews { configurePaneTopScrollEdges(in: child) }
 }

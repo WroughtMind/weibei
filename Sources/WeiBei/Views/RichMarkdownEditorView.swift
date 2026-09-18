@@ -532,10 +532,6 @@ final class MarkdownWebView: WKWebView {
     var passesVerticalScrollToSuperview = false {
         didSet { scrollView.isScrollEnabled = !passesVerticalScrollToSuperview }
     }
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        configurePaneTopScrollEdges(in: self)
-    }
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window != nil { onWindowAttachment?() }

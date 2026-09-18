@@ -377,8 +377,13 @@ enum CatalystBusinessCheck {
             }
             if #available(iOS 26.0, *) {
                 try await until("pane edges do not add separate toolbar materials") {
-                    let scrolls = descendants(noteEditor).compactMap { $0 as? UIScrollView }
-                    return !scrolls.isEmpty && scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
+                    guard let window = noteEditor.window, let chat = conversation(),
+                          let reader = descendants(window).first(where: { $0.accessibilityIdentifier == "persistent-pane-reader" }),
+                          let text = descendants(reader).compactMap({ $0 as? UITextView }).first else { return false }
+                    // Check the three pane viewports, not WebKit's dynamically
+                    // created internal scrollers for HTML overflow content.
+                    let scrolls: [UIScrollView] = [text, chat.collection, noteEditor.scrollView]
+                    return scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
                 }
             }
             try await until("all three panes fade within the original toolbar") {
