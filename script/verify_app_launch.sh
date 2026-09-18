@@ -4,7 +4,7 @@ set -euo pipefail
 [[ "${CI:-}" == true ]] || { echo '本机候选请在画中画验收。' >&2; exit 1; }
 APP="$(cd "${1:?application path required}" && pwd)"
 BINARY="$APP/Contents/MacOS/WeiBei"
-launch_log="$PWD/App/Evidence/ci-launch-console.log"
+launch_log="$PWD/.build/ci-launch-console.log"
 mkdir -p "$(dirname "$launch_log")"
 : > "$launch_log"
 pid=""

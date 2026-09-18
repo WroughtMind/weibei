@@ -251,6 +251,7 @@ jobs:
             App/Evidence/ci*.png
             App/Evidence/ci*.log
             App/Evidence/ci*.ips
+            .build/ci-launch-console.log
             .build/catalyst-${{ matrix.arch }}/build.log
           retention-days: 2
           if-no-files-found: error
