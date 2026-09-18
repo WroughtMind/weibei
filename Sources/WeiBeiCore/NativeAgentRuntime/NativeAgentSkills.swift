@@ -37,9 +37,42 @@ public struct NativeSkillPack: Equatable, Sendable {
     public var body: String
     public var relativePath: String
     public var sha256: String
+    var directoryURL: URL?
 
     public var id: String { manifest.id }
     public var byteCount: Int { body.utf8.count }
+
+    /// Only bundled Markdown references inside this skill can be disclosed.
+    /// Resource text is read on demand, never added to the catalog or entrypoint.
+    public func reference(named path: String) throws -> NativeSkillPack {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard let directoryURL,
+              components.count >= 2, components.first == "references",
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+              !path.contains("\\"), !path.contains("\0"), path.hasSuffix(".md") else {
+            throw NativeLLMFailure(code: "skill_resource_invalid", message: "只能读取该技能 references 目录内的 Markdown 指引")
+        }
+        let root = directoryURL.resolvingSymlinksInPath().standardizedFileURL
+        let url = root.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
+        guard url.path.hasPrefix(root.appendingPathComponent("references").path + "/") else {
+            throw NativeLLMFailure(code: "skill_resource_invalid", message: "参考指引不能越出该技能的 references 目录")
+        }
+        guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+              let text = try? String(contentsOf: url, encoding: .utf8),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NativeLLMFailure(code: "skill_resource_missing", message: "未找到可读取的技能参考指引：\(path)")
+        }
+        var resourceManifest = manifest
+        resourceManifest.id = "\(id)/\(path)"
+        let title = text.split(separator: "\n").first(where: { $0.hasPrefix("# ") })
+            .map { String($0.dropFirst(2)) } ?? "参考指引"
+        resourceManifest.name = "\(manifest.name) · \(title)"
+        return NativeSkillPack(
+            manifest: resourceManifest, body: text,
+            relativePath: "skills/\(id)/\(path)",
+            sha256: SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        )
+    }
 
     public func asLoadedSkill(contextRevision: String) -> StudyAgentLoadedSkill {
         StudyAgentLoadedSkill(
@@ -108,7 +141,7 @@ public struct NativeSkillRegistry: Sendable {
             "- \(pack.manifest.id): \(pack.manifest.description)"
         }
         return """
-        技能目录（只注入摘要；需要正文时调用 load_skill。加载是纯指令注入，不改变工具注册）：
+        技能目录（这里只提供用途摘要。匹配任务先用 load_skill(id) 读取核心流程；流程指向的场景细节再用 load_skill(id, resource: "references/文件名.md") 按需读取。不要一次加载全部技能或参考文件；加载不改变工具权限）：
         \(lines.joined(separator: "\n"))
         """
     }
@@ -147,7 +180,7 @@ public struct NativeSkillRegistry: Sendable {
             )
         }
         _ = root
-        return NativeSkillPack(manifest: manifest, body: body, relativePath: relative, sha256: digest)
+        return NativeSkillPack(manifest: manifest, body: body, relativePath: relative, sha256: digest, directoryURL: directory)
     }
 
     private static func frontmatterDescription(in body: String) -> String? {

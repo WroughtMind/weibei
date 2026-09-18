@@ -1,0 +1,14 @@
+{
+  "id": "note-writing",
+  "name": "笔记整理与修订",
+  "version": "1.0.0",
+  "description": "根据已读材料整理笔记、补充现有笔记或准备修订稿，并通过魏碑笔记工具处理写入与回执；普通解释不自动保存。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "weibei_course_read",
+    "weibei_note_proposal",
+    "weibei_relation_proposal"
+  ],
+  "jscHook": null
+}
