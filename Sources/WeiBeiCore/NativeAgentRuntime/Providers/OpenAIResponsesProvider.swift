@@ -104,6 +104,9 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
                 "name": tool.name,
                 "description": tool.description,
                 "parameters": tool.schema.object,
+                // Keep optional fields optional; Responses otherwise normalizes them into required fields.
+                // NativeToolRegistry validates arguments and permissions before execution.
+                "strict": false,
             ]
         }
         var include = ["reasoning.encrypted_content"]
