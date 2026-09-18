@@ -294,7 +294,10 @@ final class LibraryDrawerState: ObservableObject {
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
     @Published var selectedItemID: String? {
-        didSet { if oldValue != selectedItemID { clearAutomaticSelectionAttachment() } }
+        didSet {
+            if materialPickerPresented { materialPickerPresented = false }
+            if oldValue != selectedItemID { clearAutomaticSelectionAttachment() }
+        }
     }
     @Published var activeNotebookItemID: String? {
         didSet {
@@ -383,6 +386,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var blankNoteDraftMaterialID: String?
     @Published var linkedSourcesPresented = false
     @Published var notePickerPresented = false
+    @Published var materialPickerPresented = false
     var studyLocationsByItemID: [String: StudyLocation] = [:]
     var studyLocationsByCourseID: [String: [String: StudyLocation]] = [:]
     var courseResumePoints: [CourseResumePoint] = []
@@ -482,7 +486,7 @@ final class WorkspaceStore: ObservableObject {
     var canSearchCurrentDocument: Bool {
         searchesNotes
             ? isPaneToggleActive(.notes) && !activeNoteEditorDocumentID.isEmpty && !notePickerPresented
-            : hasSelectedMaterial && isPaneToggleActive(.reader)
+            : hasSelectedMaterial && isPaneToggleActive(.reader) && !materialPickerPresented
     }
     /// Reader viewport (HTML section / PDF page). Scroll commits must not auto-publish:
     /// every EnvironmentObject consumer would remasure and freeze main (sample 2026-08-01).
@@ -4774,9 +4778,7 @@ final class WorkspaceStore: ObservableObject {
     func showContextualBrowser(_ kind: ContextualContentKind) {
         switch kind {
         case .material:
-            if selectedMaterialItem != nil {
-                select(itemID: nil)
-            }
+            materialPickerPresented = selectedMaterialItem != nil
             openDocumentPane(.reader)
         case .note:
             notePickerPresented = activeNoteItem != nil || blankNoteDraftMaterialID != nil

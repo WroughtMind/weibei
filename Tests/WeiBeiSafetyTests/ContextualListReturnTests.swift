@@ -121,6 +121,41 @@ final class ContextualListReturnTests: XCTestCase {
     }
 
     @MainActor
+    func testMaterialPickerPreservesReadingStateAndClosesOnSelection() throws {
+        let (fixture, store, material, _, noteB) = try makeFixture()
+        defer { fixture.remove() }
+        store.openContextualItem(material.id, kind: .material)
+        store.openContextualItem(noteB.id, kind: .note)
+        store.readerPageIndex = 7
+        store.readerLocationID = "chapter-two"
+        store.showContextualBrowser(.material)
+        XCTAssertTrue(store.materialPickerPresented)
+        XCTAssertEqual(store.selectedMaterialItem?.id, material.id)
+        XCTAssertFalse(store.canSearchCurrentDocument)
+        store.materialPickerPresented = false
+        XCTAssertEqual(store.readerPageIndex, 7)
+        XCTAssertEqual(store.readerLocationID, "chapter-two")
+        XCTAssertEqual(store.activeNoteItem?.id, noteB.id)
+        store.showContextualBrowser(.material)
+        store.openContextualItem(material.id, kind: .material)
+        XCTAssertFalse(store.materialPickerPresented)
+        XCTAssertEqual(store.readerPageIndex, 7)
+        let another = StudyItem(id: "another-material", title: "另一篇文稿", subtitle: "", kind: .text,
+                                urlPath: material.urlPath, isSample: false)
+        store.importedItems.append(another)
+        store.showContextualBrowser(.material)
+        store.openContextualItem(another.id, kind: .material)
+        XCTAssertFalse(store.materialPickerPresented)
+        XCTAssertEqual(store.selectedMaterialItem?.id, another.id)
+        XCTAssertEqual(store.activeNoteItem?.id, noteB.id)
+        store.showContextualBrowser(.material)
+        store.selectMeasured(itemID: nil, opensNotebook: false)
+        XCTAssertFalse(store.materialPickerPresented)
+        store.showContextualBrowser(.material)
+        XCTAssertFalse(store.materialPickerPresented, "没有当前文稿时无需返回入口")
+    }
+
+    @MainActor
     func testNoteDisplayNameSearchAndFindStayInWritingPane() throws {
         let (fixture, store, _, _, noteB) = try makeFixture()
         defer { fixture.remove() }
@@ -147,7 +182,7 @@ final class ContextualListReturnTests: XCTestCase {
             throw XCTSkip("Opt-in review of the actual note views in hidden windows")
         }
         NSApplication.shared.setActivationPolicy(.prohibited)
-        let (fixture, store, _, _, noteB) = try makeFixture()
+        let (fixture, store, material, _, noteB) = try makeFixture()
         defer { fixture.remove() }
         func capture<V: View>(_ view: V, name: String, width: CGFloat) throws {
             let host = NSHostingView(rootView: view.environmentObject(store).environmentObject(store.paneState)
@@ -166,7 +201,10 @@ final class ContextualListReturnTests: XCTestCase {
         }
         store.openContextualItem(noteB.id, kind: .note)
         store.showContextualBrowser(.note)
-        try capture(ContextualContentPicker(kind: .material), name: "选择资料", width: 700)
+        store.openContextualItem(material.id, kind: .material)
+        store.showContextualBrowser(.material)
+        try capture(ReaderView(), name: "选择资料", width: 700)
+        try capture(ReaderView(), name: "窄栏选择资料", width: 240)
         try capture(NotePaneView(), name: "选择笔记", width: 700)
         try capture(ContextualContentPicker(kind: .note), name: "窄栏选择笔记", width: 240)
         store.noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
@@ -240,7 +278,8 @@ final class ContextualListReturnTests: XCTestCase {
         store.toggleReader()
 
         XCTAssertTrue(store.showReader, "前置条件:文稿窗格已重新打开")
-        XCTAssertNil(store.selectedMaterialItem, "打开文稿窗格应停在列表,不得自动跳配对资料")
+        XCTAssertTrue(store.materialPickerPresented, "打开文稿窗格应保持列表状态")
+        XCTAssertEqual(store.selectedMaterialItem?.id, material.id, "保留文稿用于返回阅读")
         XCTAssertEqual(store.activeNoteItem?.id, noteB.id, "笔记区打开的笔记不受影响")
     }
 
