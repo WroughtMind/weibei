@@ -174,7 +174,8 @@ public enum NativeProviderRouting {
                 family: .openaiResponses,
                 auth: .apiKey,
                 baseURL: URL(string: "https://api.deepseek.com"),
-                defaultModel: "deepseek-chat",
+                defaultModel: "deepseek-v4-flash",
+                note: "官方 Responses API；内置搜索待实测",
                 webSearch: .responsesTool
             )
         case .antLing:

@@ -1758,6 +1758,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
     func testProviderRoutingCoversCatalog() {
         XCTAssertEqual(NativeProviderRouting.route(.deepseek).family, .openaiResponses)
         XCTAssertEqual(NativeProviderRouting.route(.deepseek).webSearch, .responsesTool)
+        XCTAssertEqual(NativeProviderRouting.route(.deepseek).defaultModel, "deepseek-v4-flash")
         XCTAssertEqual(NativeProviderRouting.route(.anthropic).webSearch, .anthropicTool)
         XCTAssertEqual(NativeProviderRouting.route(.google).webSearch, .googleGrounding)
         XCTAssertEqual(NativeProviderRouting.route(.xai).family, .openaiResponses)
