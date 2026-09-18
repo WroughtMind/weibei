@@ -172,6 +172,8 @@ public actor NativeAgentLoop {
                             )
                         }
                         llmRequest = candidate.request
+                        // Compaction may remove skill bodies; permit reading them again.
+                        context.loadedSkillIDs.removeAll()
                     }
                 }
                 _ = try await ledger.append { seq, time in
@@ -318,6 +320,7 @@ public actor NativeAgentLoop {
                             )
                         }
                         llmRequest = candidate.request
+                        context.loadedSkillIDs.removeAll()
                         recoveredOverflow = true
                     }
                 }

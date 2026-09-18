@@ -286,16 +286,22 @@ public enum NativeBuiltinTools {
     private static var loadSkill: NativeToolDefinition {
         NativeToolDefinition(
             name: "load_skill",
-            description: "按技能 id 加载技能正文并注入当前对话。同一会话每个技能只需加载一次；再次加载同一技能会返回已加载短提示，不再注入全文。加载不改变工具注册，附带工具声明只解析不落注册。",
+            description: "按 id 读取技能核心流程；需要其中链接的场景细节时，再传 resource（如 references/comparison.md）仅读取该参考指引。当前执行在上次上下文压缩后加载的同一文件不重复注入；正文和各参考分别记录。仅能读取随 App 打包的技能，不改变工具权限。",
             schema: NativeJSONSchema([
                 "type": "object",
-                "properties": ["id": ["type": "string"]],
+                "properties": [
+                    "id": ["type": "string"],
+                    "resource": ["type": "string", "description": "可选，技能正文中给出的 references/…md 相对路径；省略时读取核心流程。"],
+                ],
                 "required": ["id"],
             ]),
             execute: { arguments, context in
                 let id = arguments["id"] as? String ?? ""
-                guard let pack = context.liveStores.skillRegistry.pack(named: id) else {
+                guard var pack = context.liveStores.skillRegistry.pack(named: id) else {
                     throw NativeLLMFailure(code: "skill_missing", message: "未找到技能 \(id)")
+                }
+                if let resource = arguments["resource"] as? String {
+                    pack = try pack.reference(named: resource)
                 }
                 _ = pack.manifest.tools
                 _ = pack.manifest.jscHook
@@ -307,7 +313,7 @@ public enum NativeBuiltinTools {
                     "sha256": pack.sha256,
                     "byteCount": pack.byteCount,
                 ]
-                if context.loadedSkillIDs.contains(pack.manifest.id) || context.loadedSkillIDs.contains(id) {
+                if context.loadedSkillIDs.contains(pack.manifest.id) {
                     return NativeToolExecutionResult(
                         text: "技能 \(pack.manifest.id) 已加载。",
                         details: [
@@ -1223,7 +1229,8 @@ public enum NativeToolActivityPresentation {
         let detail: String
         switch name {
         case "load_skill":
-            detail = text("id").flatMap { context.liveStores.skillRegistry.pack(named: $0)?.manifest.name } ?? "指定技能"
+            let name = text("id").flatMap { context.liveStores.skillRegistry.pack(named: $0)?.manifest.name } ?? "指定技能"
+            detail = name + (text("resource") == nil ? "" : " · 参考指引")
         case "create_document": detail = (text("title") ?? "新文稿") + " · " + (text("format") ?? "markdown")
         case "delegate": detail = text("task") ?? "子任务"
         case "render_ui": detail = "当前回答中的互动内容"

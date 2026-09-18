@@ -1,0 +1,13 @@
+{
+  "id": "discussion-recall",
+  "name": "历史讨论回顾与纠错",
+  "version": "1.0.0",
+  "description": "回顾之前的问答、核对谁说过什么、综合讨论结论或处理前后矛盾；读取真实消息和后续修正，不凭模糊记忆认错或归因。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [
+    "weibei_find_discussions",
+    "weibei_read_discussion"
+  ],
+  "jscHook": null
+}
