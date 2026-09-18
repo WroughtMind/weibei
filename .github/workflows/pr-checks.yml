@@ -241,8 +241,10 @@ jobs:
                           '--entitlements', str(entitlements), str(app)], check=True)
           with open('App/Evidence/ci-launch-backtrace.log', 'w') as output:
               try:
-                  subprocess.run(['xcrun', 'lldb', '--batch', '-o', 'run',
-                                  '-o', 'thread backtrace all', '--', str(app / 'Contents/MacOS/WeiBei')],
+                  symbols = next(Path('dist').glob('*.dSYM')).resolve()
+                  subprocess.run(['xcrun', 'lldb', '--batch',
+                                  '-o', f'target symbols add "{symbols}"', '-o', 'run',
+                                  '-k', 'thread backtrace all', '--', str(app / 'Contents/MacOS/WeiBei')],
                                  stdout=output, stderr=subprocess.STDOUT, timeout=30)
               except subprocess.TimeoutExpired:
                   output.write('Debugger timed out after 30 seconds.\n')
