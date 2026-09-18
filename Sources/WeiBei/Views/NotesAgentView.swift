@@ -366,20 +366,19 @@ struct NotePaneView: View {
         .accessibilityHidden(store.notePickerPresented)
         .overlay {
             if store.notePickerPresented {
-                VStack(spacing: 0) {
-                    HStack {
-                        Text(store.ui("选择其他笔记", "Choose another note")).weiBeiText(14, weight: .medium)
-                        Spacer()
+                ContextualContentPicker(kind: .note)
+                    .overlay(alignment: .topTrailing) {
                         Button(store.ui("返回当前笔记", "Back to current note")) {
                             store.notePickerPresented = false
                             store.focus(.notes)
                         }
+                        .buttonStyle(.plain)
+                        .weiBeiText(11.5)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .keyboardShortcut(.cancelAction)
-                    }.padding(16)
-                    ContextualContentPicker(kind: .note)
-                }
-                .background(WeiBeiTheme.paper)
-                .foregroundStyle(WeiBeiTheme.ink)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
+                    }
             }
         }
         .sheet(isPresented: $reviewingConflict) {
@@ -697,6 +696,7 @@ struct NotePaneView: View {
         })
 #if targetEnvironment(macCatalyst)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.container, edges: .top)
 #endif
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
@@ -1466,6 +1466,7 @@ struct AgentPaneView: View {
                             onFocusComposer: { composerFocusTrigger &+= 1 },
                             onReadingMessage: updateAgentRailPosition)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .ignoresSafeArea(.container, edges: .top)
 #else
                         ScrollView(showsIndicators: true) {
                             // No scrollTargetLayout / scrollPosition / viewport minHeight

@@ -2,6 +2,19 @@ import UIKit
 import SwiftUI
 import WeiBeiCore
 
+/// The shared pane container owns the transition inside the original toolbar.
+@MainActor func configurePaneTopScrollEdges(in view: UIView) {
+    if #available(iOS 26.0, *), let scroll = view as? UIScrollView {
+        // WebKit tracks its temporary hiding separately from the client's
+        // setting. Always register ours, even when the effect is hidden now.
+        scroll.topEdgeEffect.isHidden = true
+        // The outer viewport owns the window edge. Nested HTML scrollers
+        // belong to WebKit and may be created after this view is configured.
+        return
+    }
+    for child in view.subviews { configurePaneTopScrollEdges(in: child) }
+}
+
 /// Native toolbar items own their hit regions; drawing controls under a hidden
 /// titlebar leaves AppKit's window double-click handling over those controls.
 struct CatalystTopBar: UIViewControllerRepresentable {
@@ -82,6 +95,10 @@ struct CatalystTopBar: UIViewControllerRepresentable {
                      willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
             guard let index = identifiers.firstIndex(of: identifier) else { return nil }
             let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: hosts[index])
+            // The hosted SwiftUI buttons own their individual enabled states.
+            // This container has no target/action for AppKit to validate.
+            item.autovalidates = false
+            item.isEnabled = true
             item.isBordered = false
             if index == 2 { item.visibilityPriority = .high }
             item.label = menus[index].title
@@ -201,7 +218,26 @@ struct PersistentPaneHost: UIViewRepresentable {
     }
     final class Container: UIView {
         var onAttachment: (() -> Void)?
+        private let toolbarFade = CAGradientLayer()
         override func didMoveToWindow() { super.didMoveToWindow(); onAttachment?() }
+        override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard let window, window.windowScene?.titlebar?.toolbar != nil, bounds.height > 0 else {
+                layer.mask = nil
+                return
+            }
+            let top = max(0, window.safeAreaInsets.top - convert(bounds, to: window).minY)
+            guard top > 0 else { layer.mask = nil; return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            toolbarFade.frame = bounds
+            toolbarFade.colors = [UIColor.clear.cgColor, UIColor.clear.cgColor, UIColor.black.cgColor, UIColor.black.cgColor]
+            toolbarFade.locations = [0, NSNumber(value: Double(top * 0.25 / bounds.height)),
+                                    NSNumber(value: Double(min(top / bounds.height, 1))), 1]
+            layer.mask = toolbarFade
+            CATransaction.commit()
+        }
     }
     final class Coordinator {
         var owner: OwnerToken?
@@ -240,6 +276,7 @@ struct StableDocumentWorkspace: UIViewRepresentable {
         let view = StableDocumentSplitView()
         for role in WorkspacePaneRole.allCases {
             let host = CatalystHostingView(PersistentPaneHost(role: role, registry: registry)
+                .ignoresSafeArea(.container, edges: .top)
                 .environmentObject(store).environmentObject(store.paneState)
                 .environmentObject(store.interaction).environmentObject(store.threePaneReorder)
                 .environmentObject(store.libraryDrawer).weiBeiMotionScoped())

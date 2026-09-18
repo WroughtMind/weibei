@@ -365,9 +365,9 @@ enum ImportedIdentitySelfCheck {
         store.openContextualItem(note.id, kind: .note)
         store.showContextualBrowser(.material)
         try check(
-            store.selectedMaterialItem == nil
+            store.materialPickerPresented && store.selectedMaterialItem?.id == material.id
                 && store.activeNoteItem?.id == note.id,
-            "文稿内容页不能稳定返回文稿列表"
+            "文稿列表应保留当前阅读现场"
         )
     }
 

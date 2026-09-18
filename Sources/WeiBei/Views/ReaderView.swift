@@ -283,6 +283,9 @@ struct ReaderView: View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
                 readerBody
+#if targetEnvironment(macCatalyst)
+                    .ignoresSafeArea(.container, edges: .top)
+#endif
             }
             // Collapsed split hosts have zero width; retain the last measured reader viewport.
             .frame(width: availableWidth)
@@ -362,6 +365,25 @@ struct ReaderView: View {
                     .padding().frame(maxWidth: 320)
                 }
                 .padding(6)
+            }
+        }
+        .allowsHitTesting(!store.materialPickerPresented)
+        .accessibilityHidden(store.materialPickerPresented)
+        .overlay {
+            if store.materialPickerPresented {
+                ContextualContentPicker(kind: .material)
+                    .overlay(alignment: .topTrailing) {
+                        Button(store.ui("返回当前文稿", "Back to current document")) {
+                            store.materialPickerPresented = false
+                            store.focus(.reader)
+                        }
+                        .buttonStyle(.plain)
+                        .weiBeiText(11.5)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .keyboardShortcut(.cancelAction)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
+                    }
             }
         }
         .onChange(of: store.selectedMaterialItem?.id) { _, _ in
@@ -2689,6 +2711,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
 #if targetEnvironment(macCatalyst)
         view.isOpaque = false
         view.backgroundColor = .clear
+        configurePaneTopScrollEdges(in: view)
 #else
         view.setValue(false, forKey: "drawsBackground")
 #endif
@@ -3681,7 +3704,9 @@ private struct PlainTextReaderView: View {
             underlineSnippets: store.selectionAskThreads.map(\.selectionText),
             onSelectionChange: onSelectionChange
         )
+#if !targetEnvironment(macCatalyst)
             .padding(32)
+#endif
     }
 }
 

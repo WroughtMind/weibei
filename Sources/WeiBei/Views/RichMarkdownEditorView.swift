@@ -857,6 +857,10 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 #if targetEnvironment(macCatalyst)
         view.isOpaque = false
         view.backgroundColor = .clear
+        // The editor owns its scrolling inside the page; a second native inset
+        // would leave its viewport permanently below the toolbar.
+        view.scrollView.contentInsetAdjustmentBehavior = .never
+        configurePaneTopScrollEdges(in: view)
 #else
         view.setValue(false, forKey: "drawsBackground")
 #endif

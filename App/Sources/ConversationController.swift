@@ -46,7 +46,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private var replay: Task<Void, Never>?
     private var scenarioGeneration = 0
     private var scenario = "rich"
-    private var earlier = 480
+    private var earlier = 0
     private var layoutTransaction = false
     private var laidOutWidth: CGFloat = 0
     private(set) var messages: [LabMessage] = []
@@ -76,6 +76,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         collection.backgroundColor = .clear
+        configurePaneTopScrollEdges(in: collection)
         collection.dataSource = self; collection.delegate = self
         collection.register(MessageCell.self, forCellWithReuseIdentifier: "message")
         collection.alwaysBounceVertical = true
@@ -920,6 +921,13 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             }
             do {
                 try expect(UIDevice.current.userInterfaceIdiom == .mac, "运行界面不是 Mac idiom")
+                let emptyConversation = ConversationController()
+                emptyConversation.usesWorkspaceChrome = true
+                emptyConversation.loadViewIfNeeded()
+                emptyConversation.scrollViewDidScroll(emptyConversation.collection)
+                try expect(emptyConversation.preparation == nil && emptyConversation.messages.isEmpty,
+                           "空会话首次滚动不应读取不存在的历史")
+                metrics.checks["empty_conversation_scroll_does_not_load_history"] = "passed"
                 // An empty top strip must register with its content surface on
                 // attachment, preserve the underlying input target, and detach.
                 let point = CGPoint(x: view.bounds.midX, y: 20)
@@ -1478,7 +1486,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
                 metrics.checks["single_long_answer_complete_and_revisitable"] = "passed"
                 selection.clear()
-                status.text = "13 项必要行为检查通过 · 桌面手感仍需单独体验"
+                status.text = "14 项必要行为检查通过 · 桌面手感仍需单独体验"
             } catch {
                 metrics.checks["failure"] = error.localizedDescription
                 status.text = "行为检查未通过：\(error.localizedDescription)"
@@ -1493,7 +1501,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
             }
             catch { status.text = "检查记录写入失败：\(error.localizedDescription)" }
-            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 13)
+            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 14)
         }
     }
 #endif

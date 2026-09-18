@@ -23,6 +23,10 @@ final class ReaderPDFView: PDFView {
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hover(_:))))
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        configurePaneTopScrollEdges(in: self)
+    }
     override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
     @objc private func pointer(_ gesture: UIGestureRecognizer) {
         onPointerEvent?(gesture.location(in: self), gesture.state)
@@ -123,7 +127,10 @@ struct SelectablePlainTextReader: UIViewRepresentable {
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
         view.isEditable = false; view.isSelectable = true; view.backgroundColor = .clear
-        view.textContainerInset = UIEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+        // Keep reading margins inside the scroll content so text can pass under
+        // the toolbar instead of being clipped by an outer padding rectangle.
+        view.textContainerInset = UIEdgeInsets(top: 50, left: 50, bottom: 50, right: 50)
+        configurePaneTopScrollEdges(in: view)
         view.delegate = context.coordinator
         updateUIView(view, context: context)
         return view
