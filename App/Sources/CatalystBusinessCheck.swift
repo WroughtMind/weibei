@@ -375,6 +375,13 @@ enum CatalystBusinessCheck {
                 return abs(noteEditor.convert(noteEditor.bounds, to: window).minY) < 1
                     && noteEditor.scrollView.contentInsetAdjustmentBehavior == .never
             }
+            try await until("conversation viewport extends under the native toolbar") {
+                guard let chat = conversation(), let window = chat.collection.window else { return false }
+                return chat.collection.contentInsetAdjustmentBehavior == .never
+                    && chat.collection.adjustedContentInset.top == 0
+                    && abs(chat.collection.convert(chat.collection.bounds, to: window).minY) < 1
+                    && abs(chat.flow.topInset - window.safeAreaInsets.top) < 1
+            }
             if #available(iOS 26.0, *) {
                 try await until("pane edges do not add separate toolbar materials") {
                     guard let window = noteEditor.window, let chat = conversation(),

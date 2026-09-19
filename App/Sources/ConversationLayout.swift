@@ -6,6 +6,9 @@ import UIKit
 /// flow layout's per-item sizing dictionary and row computation.
 final class ConversationLayout: UICollectionViewLayout {
     var sectionInset = UIEdgeInsets(top: 14, left: 0, bottom: 10, right: 0)
+    /// 工作区里工具栏盖住的顶部高度。第一个 section 前留出这段，
+    /// 回答留白的计算也扣掉它，让置顶的问题停在工具栏下方而不是窗口顶边。
+    var topInset: CGFloat = 0
     var itemWidth: CGFloat = 0
     var itemHeight: ((IndexPath) -> CGFloat)?
     var replyStartSection: (() -> Int?)?
@@ -33,7 +36,7 @@ final class ConversationLayout: UICollectionViewLayout {
         super.prepare()
         guard needsRebuild, let collectionView else { return }
         needsRebuild = false
-        var y: CGFloat = 0
+        var y: CGFloat = topInset
         let x = sectionInset.left
         let sectionCount = collectionView.numberOfSections
         if sections.count > sectionCount { sections.removeLast(sections.count - sectionCount) }
@@ -61,7 +64,7 @@ final class ConversationLayout: UICollectionViewLayout {
         // Leave room below the latest question; a short reply grows in place.
         contentHeight = y
         if let section = replyStartSection?(), sections.indices.contains(section) {
-            contentHeight = max(y, sections[section].minY + collectionView.bounds.height)
+            contentHeight = max(y, sections[section].minY - topInset + collectionView.bounds.height)
         }
     }
 
