@@ -79,7 +79,9 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private func updateToolbarBackground(in window: NSWindow) {
         let owner = window.toolbar?.identifier == "weibei.workspace" ? window : window.parent
         guard let owner, owner.toolbar?.identifier == "weibei.workspace" else { return }
-        if !owner.titlebarAppearsTransparent { owner.titlebarAppearsTransparent = true }
+        // titlebarAppearsTransparent=true 会吞掉窗口模式的工具栏点击（含全屏退出后残留，
+        // 2026-09-19 实测）；全屏透明由下方 hideBackground 单独负责。
+        guard owner.styleMask.contains(.fullScreen) else { return }
         guard let host = owner.toolbar?.items.compactMap({ $0.view?.window }).first,
               host !== owner, let content = host.contentView else { return }
         // AppKit moves the native toolbar into another window in full screen.
