@@ -335,4 +335,51 @@ final class ContextualListReturnTests: XCTestCase {
             "额度耗尽后应显示可行动文案,实际:\(store.noteSelectionStatusMessage ?? "nil")"
         )
     }
+
+    /// 标题栏与笔记列表共用显示名管道:编辑正文后即时跟随,
+    /// 保存、重开与自定义名覆盖均保持同一口径。
+    @MainActor
+    func testNoteTitlesFollowCurrentBodyThroughSaveAndReopen() throws {
+        let fixture = try Fixture(name: "titles")
+        defer { fixture.remove() }
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        try store.configureCourseLibrary(at: fixture.importsDirectory)
+        let courseID = try store.createCourseInLibrary(title: "标题测试")
+        let createdID = try store.waitForCourseFileOperation {
+            await store.createCourseNotebookNote(
+                courseID: courseID, title: "新笔记", markdown: "# 旧标题"
+            )
+        }
+        let noteID = try XCTUnwrap(createdID)
+        let note = try XCTUnwrap(store.activeNoteItem)
+        let url = try XCTUnwrap(note.url)
+
+        for (body, expected) in [("# 新的正文标题\n内容", "新的正文标题"),
+                                 ("普通首行也作为标题\n内容", "普通首行也作为标题")] {
+            store.updateNote(body)
+            XCTAssertEqual(store.agentNoteTitle, expected)
+            XCTAssertEqual(store.noteListDisplayTitle(for: note), expected)
+            store.flushPendingNotePersistence(for: noteID)
+            XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), body)
+            XCTAssertEqual(store.agentNoteTitle, expected)
+            store.showContextualBrowser(.note)
+            XCTAssertEqual(store.noteListDisplayTitle(for: note), expected)
+            store.openContextualItem(noteID, kind: .note)
+            let deadline = Date().addingTimeInterval(2)
+            while store.courseNoteLoadTasksByItemID[noteID] != nil, Date() < deadline {
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+            }
+            XCTAssertEqual(store.agentNoteTitle, expected)
+        }
+
+        store.setNoteCustomDisplayTitle("手动标题", for: noteID)
+        XCTAssertEqual(store.agentNoteTitle, "手动标题")
+        store.setNoteCustomDisplayTitle("", for: noteID)
+        XCTAssertEqual(store.agentNoteTitle, "普通首行也作为标题")
+    }
 }
