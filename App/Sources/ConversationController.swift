@@ -1159,14 +1159,19 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 await anchored.display(reply, streaming: true)
                 try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "短回答把问题顶出了原位")
                 // The workspace covers the collection's top with the native toolbar.
-                // Simulate that 40pt and verify the pinned question lands below it.
-                anchored.additionalSafeAreaInsets = UIEdgeInsets(top: 40, left: 0, bottom: 0, right: 0)
-                anchored.view.setNeedsLayout(); anchored.view.layoutIfNeeded()
+                // additionalSafeAreaInsets does not retally an off-window view's
+                // safeAreaInsets, so inject the toolbar height directly; the real
+                // window's sync path is covered by the business check's viewport
+                // assertions instead.
+                anchored.flow.topInset = 40
+                anchored.flow.invalidateLayout()
+                anchored.collection.layoutIfNeeded()
                 let pinned = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
                     - anchored.collection.contentOffset.y
-                try expect(abs(pinned - (40 + anchored.flow.sectionInset.top)) < 1, "置顶的问题没有停在工具栏下方")
+                try expect(abs(pinned - (40 + anchored.flow.sectionInset.top)) < 1,
+                           "置顶的问题没有停在工具栏下方（pinned=\(pinned)，topInset=\(anchored.flow.topInset)）")
                 try expect(anchored.collection.adjustedContentInset.top == 0, "工作区会话不应再叠加系统内边距")
-                anchored.additionalSafeAreaInsets = .zero
+                anchored.flow.topInset = 0
                 message.state = .stopped
                 try expect(message.blocks[0] === first, "停止时重建了正文")
                 metrics.checks["stream_keeps_unchanged_blocks_and_tail"] = "passed"
