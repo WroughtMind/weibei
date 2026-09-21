@@ -197,8 +197,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         let topInset: CGFloat = 0
         let topInsetChanged = flow.topInset != topInset
         if topInsetChanged { flow.topInset = topInset }
-        if usesWorkspaceChrome, view.safeAreaInsets.top > 0,
-           abs(collection.contentInset.top - view.safeAreaInsets.top) > 0.5 {
+        if usesWorkspaceChrome, abs(collection.contentInset.top - view.safeAreaInsets.top) > 0.5 {
             collection.contentInset = UIEdgeInsets(top: view.safeAreaInsets.top, left: 0,
                                                    bottom: collection.contentInset.bottom, right: 0)
         }
@@ -1183,18 +1182,16 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let reply = AgentMessage(role: .assistant, text: "短回答保持原位。", source: nil, completionState: .generating)
                 await anchored.display(reply, streaming: true)
                 try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "短回答把问题顶出了原位")
-                // 与笔记一致的顶部行为：滚动视图持 contentInset（离屏视图以
-                // additionalSafeAreaInsets 注入），静止首行完整可见，上滚内容
-                // 穿过 0-40pt 渐变带被洗白。
-                anchored.additionalSafeAreaInsets = UIEdgeInsets(top: 40, left: 0, bottom: 0, right: 0)
-                anchored.view.setNeedsLayout(); anchored.view.layoutIfNeeded()
-                try expect(abs(anchored.collection.contentInset.top - 40) < 1,
-                           "会话滚动视图没有拿到顶部 contentInset（\(anchored.collection.contentInset.top)）")
+                // 与笔记一致的顶部行为：布局零留位 + 滚动视图持 contentInset。
+                // 离屏视图 safeAreaInsets 恒为 0，故断言 inset 与安全区一致；
+                // 真实窗口的 40pt 由 business check 的 viewport 断言覆盖。
+                try expect(anchored.collection.contentInset.top == anchored.view.safeAreaInsets.top,
+                           "会话滚动视图 contentInset 与安全区不一致（\(anchored.collection.contentInset.top) vs \(anchored.view.safeAreaInsets.top)）")
+                try expect(anchored.flow.topInset == 0, "会话布局仍有顶部留位（\(anchored.flow.topInset)）")
                 let pinned = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
-                    - (anchored.collection.contentOffset.y + anchored.collection.contentInset.top)
+                    - anchored.collection.contentOffset.y
                 try expect(abs(pinned - anchored.flow.sectionInset.top) < 1,
                            "置顶的问题没有停在渐变带下方完整位置（pinned=\(pinned)）")
-                anchored.additionalSafeAreaInsets = .zero
                 try expect(anchored.collection.adjustedContentInset.top == 0, "工作区会话不应再叠加系统内边距")
                 anchored.flow.topInset = 0
                 message.state = .stopped
