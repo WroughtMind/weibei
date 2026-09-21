@@ -197,10 +197,6 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         let topInset: CGFloat = 0
         let topInsetChanged = flow.topInset != topInset
         if topInsetChanged { flow.topInset = topInset }
-        if usesWorkspaceChrome, abs(collection.contentInset.top - view.safeAreaInsets.top) > 0.5 {
-            collection.contentInset = UIEdgeInsets(top: view.safeAreaInsets.top, left: 0,
-                                                   bottom: collection.contentInset.bottom, right: 0)
-        }
         let requestedWidth = usesWorkspaceChrome
             ? (workspaceBodyWidth ?? max(1, min(960, width - 24)))
             : max(240, min(maximumBodyWidth, width - 56))
