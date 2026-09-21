@@ -378,7 +378,7 @@ enum CatalystBusinessCheck {
             try await until("conversation viewport extends under the native toolbar") {
                 guard let chat = conversation(), let window = chat.collection.window else { return false }
                 return chat.collection.contentInsetAdjustmentBehavior == .never
-                    && chat.collection.adjustedContentInset.top == 0
+                    && abs(chat.collection.adjustedContentInset.top - chat.collection.contentInset.top) < 1
                     && abs(chat.collection.convert(chat.collection.bounds, to: window).minY) < 1
                     // 顶部行为与笔记对齐：布局零留位，滚动视图持 contentInset，
                     // 静止首行完整可见，上滚内容穿过 0-40pt 渐变带。
@@ -799,7 +799,7 @@ enum CatalystBusinessCheck {
             return abs(pane.convert(pane.bounds, to: window).minY) < 1
                 && abs(fadeBottom - window.safeAreaInsets.top) < 1
                 && abs(controller.collection.convert(controller.collection.bounds, to: window).minY) < 1
-                && controller.collection.adjustedContentInset.top == 0
+                && abs(controller.collection.adjustedContentInset.top - controller.collection.contentInset.top) < 1
         }
         var measured: [String: Any] = [
             "first_history_page_ms": (CACurrentMediaTime() - started) * 1000,
