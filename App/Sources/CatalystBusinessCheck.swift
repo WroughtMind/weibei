@@ -380,7 +380,8 @@ enum CatalystBusinessCheck {
                 return chat.collection.contentInsetAdjustmentBehavior == .never
                     && chat.collection.adjustedContentInset.top == 0
                     && abs(chat.collection.convert(chat.collection.bounds, to: window).minY) < 1
-                    && abs(chat.flow.topInset - window.safeAreaInsets.top) < 1
+                    // 首行留位收敛到 14pt，保证内容穿进窗格遮罩渐变带（0-40pt）。
+                    && abs(chat.flow.topInset - min(window.safeAreaInsets.top, 14)) < 1
             }
             if #available(iOS 26.0, *) {
                 try await until("pane edges do not add separate toolbar materials") {
@@ -784,6 +785,20 @@ enum CatalystBusinessCheck {
             conversation()?.messages.count == 240 && conversation()?.messages.last?.id == history.last?.id.uuidString
         }
         let controller = conversation()!
+        // The immersive host is a separate SwiftUI branch from the three-pane
+        // split; it must extend under the toolbar and carry the fade mask too.
+        try await until("immersive conversation pane fades within the original toolbar") {
+            guard let window = controller.collection.window,
+                  let pane = descendants(window).compactMap({ $0 as? PersistentPaneHost.Container })
+                      .first(where: { !$0.isHidden && $0.bounds.width > 0 }),
+                  let fade = pane.layer.mask as? CAGradientLayer,
+                  let end = fade.locations?.dropLast().last else { return false }
+            let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
+            return abs(pane.convert(pane.bounds, to: window).minY) < 1
+                && abs(fadeBottom - window.safeAreaInsets.top) < 1
+                && abs(controller.collection.convert(controller.collection.bounds, to: window).minY) < 1
+                && controller.collection.adjustedContentInset.top == 0
+        }
         var measured: [String: Any] = [
             "first_history_page_ms": (CACurrentMediaTime() - started) * 1000,
             "first_page_messages": 240,

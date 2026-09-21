@@ -162,7 +162,7 @@ final class PersistentPaneHostRegistry: ObservableObject {
     private var hosts: [WorkspacePaneRole: CatalystHostingView] = [:]
     private var owners: [WorkspacePaneRole: OwnerToken] = [:]
     private var sequence = 0
-    func attach(_ role: WorkspacePaneRole, to container: UIView, store: WorkspaceStore) -> OwnerToken {
+    @MainActor func attach(_ role: WorkspacePaneRole, to container: UIView, store: WorkspaceStore) -> OwnerToken {
         sequence += 1
         let owner = OwnerToken(role: role, generation: sequence)
         owners[role] = owner
@@ -242,7 +242,7 @@ struct PersistentPaneHost: UIViewRepresentable {
     final class Coordinator {
         var owner: OwnerToken?
         var registry: PersistentPaneHostRegistry?
-        func attach(_ role: WorkspacePaneRole, registry: PersistentPaneHostRegistry, store: WorkspaceStore, view: UIView) {
+        @MainActor func attach(_ role: WorkspacePaneRole, registry: PersistentPaneHostRegistry, store: WorkspaceStore, view: UIView) {
             guard owner?.role != role || self.registry !== registry else { return }
             detach(view)
             self.registry = registry

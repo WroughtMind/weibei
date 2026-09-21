@@ -1040,14 +1040,21 @@ private struct LayoutContentView: View {
             switch store.layout {
             case .documentAgentNotes, .documentNotesAgent:
                 documentPaneLayoutView()
+            // Each representable pane host re-insets to the toolbar safe area on
+            // its own; the outer ignoresSafeArea does not reach it. Without this
+            // the pane container starts at y=40, its toolbar fade mask is nil and
+            // content is cut at the toolbar edge. Same rule as StableDocumentWorkspace.
             case .immersiveReading:
                 PersistentPaneHost(role: .reader, registry: paneHostRegistry)
+                    .ignoresSafeArea(.container, edges: .top)
             case .immersiveConversation:
                 PersistentPaneHost(role: .agent, registry: paneHostRegistry)
+                    .ignoresSafeArea(.container, edges: .top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(WeiBeiTransition.layout)
             case .immersiveWriting:
                 PersistentPaneHost(role: .notes, registry: paneHostRegistry)
+                    .ignoresSafeArea(.container, edges: .top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -1353,7 +1360,14 @@ struct PersistentPaneRoot: View {
         Group {
 #if targetEnvironment(macCatalyst)
             if #available(iOS 26.0, *) {
-                pane.scrollEdgeEffectHidden(true, for: .top)
+                if role == .agent {
+                    // 会话窗格与文稿/笔记统一使用系统滚动边缘渐淡：它的渐淡
+                    // 来自 UIKit 列表自身的 topEdgeEffect，不能在这里关掉。
+                    // 文稿/笔记的渐淡来自 WebKit 内层滚动视图，不受本修饰影响。
+                    pane
+                } else {
+                    pane.scrollEdgeEffectHidden(true, for: .top)
+                }
             } else {
                 pane
             }

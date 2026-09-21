@@ -74,7 +74,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        // 遮罩渐隐处透出的必须是纸色：systemBackground 被遮罩带压暗后与窗口
+        // 纸色形成刺眼色差（2026-09-21 渲染探针实测 0-10pt 纯黑观感）。
+        // 主题色在 updateJumpToLatestAppearance 随外观更新。
+        view.backgroundColor = WeiBeiNativePalette.paper(for: jumpToLatestAppearance)
         collection.backgroundColor = .clear
         configurePaneTopScrollEdges(in: collection)
         collection.dataSource = self; collection.delegate = self
@@ -183,7 +186,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         guard width > 0 else { return }
         // Entering or leaving full screen retallies the safe area without moving
         // the collection's frame; the layout must re-derive its top inset then.
-        let topInset = usesWorkspaceChrome ? view.safeAreaInsets.top : 0
+        // 内容必须穿进窗格遮罩带（0-40pt）才有渐淡可看：留位只保留首行
+        // 在渐变带内的最小余量（14pt，与笔记首行起始一致），不再退到工具栏下方。
+        let topInset = usesWorkspaceChrome ? min(view.safeAreaInsets.top, 14) : 0
         let topInsetChanged = flow.topInset != topInset
         if topInsetChanged { flow.topInset = topInset }
         let requestedWidth = usesWorkspaceChrome
@@ -595,7 +600,12 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         status.text = text
     }
 
+    /// 当前工作区外观，供背景色等非滚动部件跟随主题。
+    private(set) var jumpToLatestAppearance: WeiBeiAppearanceMode = .paper
+
     func updateJumpToLatestAppearance(_ appearance: WeiBeiAppearanceMode) {
+        jumpToLatestAppearance = appearance
+        view.backgroundColor = WeiBeiNativePalette.paper(for: appearance)
         let ink = WeiBeiNativePalette.ink(for: appearance)
         latest.tintColor = ink.withAlphaComponent(0.85)
         latest.backgroundColor = WeiBeiNativePalette.paperRaised(for: appearance)
@@ -1158,18 +1168,15 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let reply = AgentMessage(role: .assistant, text: "短回答保持原位。", source: nil, completionState: .generating)
                 await anchored.display(reply, streaming: true)
                 try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "短回答把问题顶出了原位")
-                // The workspace covers the collection's top with the native toolbar.
-                // additionalSafeAreaInsets does not retally an off-window view's
-                // safeAreaInsets, so inject the toolbar height directly; the real
-                // window's sync path is covered by the business check's viewport
-                // assertions instead.
-                anchored.flow.topInset = 40
+                // 离屏视图的 additionalSafeAreaInsets 不会同步重算 safeAreaInsets，
+                // 直接注入 topInset 验证布局几何：置顶问题应停在遮罩渐变带内。
+                anchored.flow.topInset = 14
                 anchored.flow.invalidateLayout()
                 anchored.collection.layoutIfNeeded()
                 let pinned = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
                     - anchored.collection.contentOffset.y
-                try expect(abs(pinned - (40 + anchored.flow.sectionInset.top)) < 1,
-                           "置顶的问题没有停在工具栏下方（pinned=\(pinned)，topInset=\(anchored.flow.topInset)）")
+                try expect(abs(pinned - (14 + anchored.flow.sectionInset.top)) < 1,
+                           "置顶的问题没有停在遮罩带内（pinned=\(pinned)，topInset=\(anchored.flow.topInset)）")
                 try expect(anchored.collection.adjustedContentInset.top == 0, "工作区会话不应再叠加系统内边距")
                 anchored.flow.topInset = 0
                 message.state = .stopped
