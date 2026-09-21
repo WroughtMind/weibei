@@ -186,11 +186,17 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         guard width > 0 else { return }
         // Entering or leaving full screen retallies the safe area without moving
         // the collection's frame; the layout must re-derive its top inset then.
-        // 与笔记一致的渐隐观感要求内容从窗口 y=0 起就穿过整条遮罩带
-        // （0-10pt 几乎全隐、10-40pt 线性渐显），顶部不留额外余量。
+        // 与笔记（WebKit）一致的顶部行为：布局零留位，滚动视图持 contentInset——
+        // 静止在顶时首行停在渐变带下方完整可见；上滚时内容穿过 0-40pt 渐变带
+        // 被洗白。之前用布局留位导致列表项在顶边被硬切、带内无内容可淡。
         let topInset: CGFloat = 0
         let topInsetChanged = flow.topInset != topInset
         if topInsetChanged { flow.topInset = topInset }
+        if usesWorkspaceChrome, view.safeAreaInsets.top > 0,
+           abs(collection.contentInset.top - view.safeAreaInsets.top) > 0.5 {
+            collection.contentInset = UIEdgeInsets(top: view.safeAreaInsets.top, left: 0,
+                                                   bottom: collection.contentInset.bottom, right: 0)
+        }
         let requestedWidth = usesWorkspaceChrome
             ? (workspaceBodyWidth ?? max(1, min(960, width - 24)))
             : max(240, min(maximumBodyWidth, width - 56))
@@ -667,7 +673,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         }
         guard let section = messages.firstIndex(where: { $0.id == id.uuidString }) else { return }
         collection.scrollToItem(at: IndexPath(item: 0, section: section), at: .top, animated: false)
-        collection.contentOffset.y = max(0, collection.contentOffset.y - flow.topInset)
+        collection.contentOffset.y = max(-collection.contentInset.top, collection.contentOffset.y)
         followsLatest = false
     }
 
@@ -839,18 +845,22 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             let body = store.view(for: message.blocks[path.item - 1], width: bodyWidth)
             textY = body.rect(for: character)?.minY ?? 0
         }
-        collection.contentOffset.y = min(max(0, frame.minY + textY - anchor.offset), max(0, collection.contentSize.height - collection.bounds.height))
+        let topLimit = -collection.contentInset.top
+        collection.contentOffset.y = min(max(topLimit, frame.minY + textY - anchor.offset),
+                                          max(0, collection.contentSize.height - collection.bounds.height))
     }
     func scrollToLatest() {
         let wasUpdating = layoutTransaction
         layoutTransaction = true
         defer { layoutTransaction = wasUpdating }
         collection.layoutIfNeeded()
-        collection.contentOffset.y = max(0, collection.contentSize.height - collection.bounds.height)
+        let topLimit = -collection.contentInset.top
+        collection.contentOffset.y = max(topLimit, collection.contentSize.height - collection.bounds.height)
         followsLatest = true; latest.isHidden = true
     }
     func selectionScroll(by distance: CGFloat) {
-        collection.contentOffset.y = min(max(0, collection.contentOffset.y + distance), max(0, collection.contentSize.height - collection.bounds.height))
+        let topLimit = -collection.contentInset.top
+        collection.contentOffset.y = min(max(topLimit, collection.contentOffset.y + distance), max(0, collection.contentSize.height - collection.bounds.height))
         followsLatest = false
     }
     func quote(_ text: String) {
@@ -1168,16 +1178,18 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let reply = AgentMessage(role: .assistant, text: "短回答保持原位。", source: nil, completionState: .generating)
                 await anchored.display(reply, streaming: true)
                 try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "短回答把问题顶出了原位")
-                // 离屏视图的 additionalSafeAreaInsets 不会同步重算 safeAreaInsets，
-                // 直接注入 topInset 验证布局几何：置顶问题应停在遮罩渐变带内
-                // （与笔记一致：首行在 14pt，处于渐显区间）。
-                anchored.flow.topInset = 0
-                anchored.flow.invalidateLayout()
-                anchored.collection.layoutIfNeeded()
+                // 与笔记一致的顶部行为：滚动视图持 contentInset（离屏视图以
+                // additionalSafeAreaInsets 注入），静止首行完整可见，上滚内容
+                // 穿过 0-40pt 渐变带被洗白。
+                anchored.additionalSafeAreaInsets = UIEdgeInsets(top: 40, left: 0, bottom: 0, right: 0)
+                anchored.view.setNeedsLayout(); anchored.view.layoutIfNeeded()
+                try expect(abs(anchored.collection.contentInset.top - 40) < 1,
+                           "会话滚动视图没有拿到顶部 contentInset（\(anchored.collection.contentInset.top)）")
                 let pinned = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
-                    - anchored.collection.contentOffset.y
+                    - (anchored.collection.contentOffset.y + anchored.collection.contentInset.top)
                 try expect(abs(pinned - anchored.flow.sectionInset.top) < 1,
-                           "置顶的问题没有停在遮罩带内（pinned=\(pinned)，topInset=\(anchored.flow.topInset)）")
+                           "置顶的问题没有停在渐变带下方完整位置（pinned=\(pinned)）")
+                anchored.additionalSafeAreaInsets = .zero
                 try expect(anchored.collection.adjustedContentInset.top == 0, "工作区会话不应再叠加系统内边距")
                 anchored.flow.topInset = 0
                 message.state = .stopped
