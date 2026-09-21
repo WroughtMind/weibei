@@ -390,10 +390,12 @@ enum CatalystBusinessCheck {
                     guard let window = noteEditor.window, let chat = conversation(),
                           let reader = descendants(window).first(where: { $0.accessibilityIdentifier == "persistent-pane-reader" }),
                           let text = descendants(reader).compactMap({ $0 as? UITextView }).first else { return false }
-                    // Check the three pane viewports, not WebKit's dynamically
-                    // created internal scrollers for HTML overflow content.
+                    // Check the pane viewports, not WebKit's dynamically created
+                    // internal scrollers for HTML overflow content. 会话列表保留
+                    // 系统边缘渐隐（与笔记的双层渐隐对齐），文稿/笔记仍隐藏。
                     let scrolls: [UIScrollView] = [text, chat.collection, noteEditor.scrollView]
-                    return scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
+                    return !chat.collection.topEdgeEffect.isHidden
+                        && text.topEdgeEffect.isHidden && noteEditor.scrollView.topEdgeEffect.isHidden
                 }
             }
             try await until("all three panes fade within the original toolbar") {
