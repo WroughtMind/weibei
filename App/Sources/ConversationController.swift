@@ -677,7 +677,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         }
         guard let section = messages.firstIndex(where: { $0.id == id.uuidString }) else { return }
         collection.scrollToItem(at: IndexPath(item: 0, section: section), at: .top, animated: false)
-        collection.contentOffset.y = max(-collection.contentInset.top, collection.contentOffset.y)
+        collection.contentOffset.y = max(0, collection.contentOffset.y)
         followsLatest = false
     }
 
@@ -849,8 +849,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             let body = store.view(for: message.blocks[path.item - 1], width: bodyWidth)
             textY = body.rect(for: character)?.minY ?? 0
         }
-        let topLimit = -collection.contentInset.top
-        collection.contentOffset.y = min(max(topLimit, frame.minY + textY - anchor.offset),
+        collection.contentOffset.y = min(max(0, frame.minY + textY - anchor.offset),
                                           max(0, collection.contentSize.height - collection.bounds.height))
     }
     func scrollToLatest() {
@@ -858,13 +857,11 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         layoutTransaction = true
         defer { layoutTransaction = wasUpdating }
         collection.layoutIfNeeded()
-        let topLimit = -collection.contentInset.top
-        collection.contentOffset.y = max(topLimit, collection.contentSize.height - collection.bounds.height)
+        collection.contentOffset.y = max(0, collection.contentSize.height - collection.bounds.height)
         followsLatest = true; latest.isHidden = true
     }
     func selectionScroll(by distance: CGFloat) {
-        let topLimit = -collection.contentInset.top
-        collection.contentOffset.y = min(max(topLimit, collection.contentOffset.y + distance), max(0, collection.contentSize.height - collection.bounds.height))
+        collection.contentOffset.y = min(max(0, collection.contentOffset.y + distance), max(0, collection.contentSize.height - collection.bounds.height))
         followsLatest = false
     }
     func quote(_ text: String) {
