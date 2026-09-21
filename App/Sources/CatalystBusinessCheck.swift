@@ -380,8 +380,8 @@ enum CatalystBusinessCheck {
                 return chat.collection.contentInsetAdjustmentBehavior == .never
                     && chat.collection.adjustedContentInset.top == 0
                     && abs(chat.collection.convert(chat.collection.bounds, to: window).minY) < 1
-                    // 首行留位收敛到 14pt，保证内容穿进窗格遮罩渐变带（0-40pt）。
-                    && abs(chat.flow.topInset - min(window.safeAreaInsets.top, 14)) < 1
+                    // 顶部零留位：内容从 y=0 穿过整条遮罩渐变带（0-40pt）。
+                    && chat.flow.topInset == 0
             }
             if #available(iOS 26.0, *) {
                 try await until("pane edges do not add separate toolbar materials") {

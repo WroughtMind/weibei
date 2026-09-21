@@ -186,9 +186,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         guard width > 0 else { return }
         // Entering or leaving full screen retallies the safe area without moving
         // the collection's frame; the layout must re-derive its top inset then.
-        // 内容必须穿进窗格遮罩带（0-40pt）才有渐淡可看：留位只保留首行
-        // 在渐变带内的最小余量（14pt，与笔记首行起始一致），不再退到工具栏下方。
-        let topInset = usesWorkspaceChrome ? min(view.safeAreaInsets.top, 14) : 0
+        // 与笔记一致的渐隐观感要求内容从窗口 y=0 起就穿过整条遮罩带
+        // （0-10pt 几乎全隐、10-40pt 线性渐显），顶部不留额外余量。
+        let topInset: CGFloat = 0
         let topInsetChanged = flow.topInset != topInset
         if topInsetChanged { flow.topInset = topInset }
         let requestedWidth = usesWorkspaceChrome
@@ -1169,13 +1169,14 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 await anchored.display(reply, streaming: true)
                 try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "短回答把问题顶出了原位")
                 // 离屏视图的 additionalSafeAreaInsets 不会同步重算 safeAreaInsets，
-                // 直接注入 topInset 验证布局几何：置顶问题应停在遮罩渐变带内。
-                anchored.flow.topInset = 14
+                // 直接注入 topInset 验证布局几何：置顶问题应停在遮罩渐变带内
+                // （与笔记一致：首行在 14pt，处于渐显区间）。
+                anchored.flow.topInset = 0
                 anchored.flow.invalidateLayout()
                 anchored.collection.layoutIfNeeded()
                 let pinned = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
                     - anchored.collection.contentOffset.y
-                try expect(abs(pinned - (14 + anchored.flow.sectionInset.top)) < 1,
+                try expect(abs(pinned - anchored.flow.sectionInset.top) < 1,
                            "置顶的问题没有停在遮罩带内（pinned=\(pinned)，topInset=\(anchored.flow.topInset)）")
                 try expect(anchored.collection.adjustedContentInset.top == 0, "工作区会话不应再叠加系统内边距")
                 anchored.flow.topInset = 0
