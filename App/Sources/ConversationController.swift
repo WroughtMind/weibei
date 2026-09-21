@@ -80,6 +80,11 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         view.backgroundColor = WeiBeiNativePalette.paper(for: jumpToLatestAppearance)
         collection.backgroundColor = .clear
         configurePaneTopScrollEdges(in: collection)
+        if #available(iOS 26.0, *), usesWorkspaceChrome {
+            // 与笔记一致的双层渐隐：遮罩只覆盖 0-40pt，到带下沿是硬切；
+            // WebKit 内层的系统边缘渐隐会在带下继续柔化过渡，原生列表同样打开它。
+            collection.topEdgeEffect.isHidden = false
+        }
         collection.dataSource = self; collection.delegate = self
         // 工作区窗格：消息延伸到工具栏底下，由窗格容器的遮罩负责渐淡。
         // VC 根视图会被 UIKit 按窗口几何重新算出安全区，这里关掉自动内边距，
