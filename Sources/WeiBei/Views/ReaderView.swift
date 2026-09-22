@@ -1768,15 +1768,19 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 object: view,
                 queue: .main
             ) { [weak self] _ in
-                guard let self, let view = self.observedView, let document = view.document, let page = view.currentPage else { return }
-                self.pageCount.wrappedValue = document.pageCount
-                let index = document.index(for: page)
-                self.pageIndex.wrappedValue = index
-                if Date() <= self.userNavigationDeadline {
-                    self.onUserPageChange(index)
+                // PDFKit can notify synchronously inside updateUIView/go(to:).
+                // Publish after that update, otherwise SwiftUI drops the page binding write.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, let view = self.observedView, let document = view.document, let page = view.currentPage else { return }
+                    self.pageCount.wrappedValue = document.pageCount
+                    let index = document.index(for: page)
+                    self.pageIndex.wrappedValue = index
+                    if Date() <= self.userNavigationDeadline {
+                        self.onUserPageChange(index)
+                    }
+                    self.updateSelectableTextState(in: view)
+                    self.ensureOCRForCurrentPage(in: view)
                 }
-                self.updateSelectableTextState(in: view)
-                self.ensureOCRForCurrentPage(in: view)
             }
 #if targetEnvironment(macCatalyst)
             (view as? ReaderPDFView)?.onPointerEvent = { [weak self, weak view] point, phase in

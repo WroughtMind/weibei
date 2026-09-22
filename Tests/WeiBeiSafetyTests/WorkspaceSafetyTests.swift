@@ -798,13 +798,15 @@ final class WorkspaceSafetyTests: XCTestCase {
         )
     }
 
-    func testStandardTextEditingShortcutsAreNotAppActions() {
-        for key in ["b", "f"] {
-            XCTAssertNil(AppShortcutCatalog.action(
-                matching: AppShortcutChord(key: key, modifiers: .command),
-                overrides: [:]
-            ))
-        }
+    func testCommandFFindsAndCommandBRemainsAnEditingShortcut() {
+        XCTAssertEqual(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "f", modifiers: .command),
+            overrides: [:]
+        ), .searchInMaterial)
+        XCTAssertNil(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "b", modifiers: .command),
+            overrides: [:]
+        ))
     }
 
     func testStoredShortcutConflictIsPreservedAndNotExecutable() throws {

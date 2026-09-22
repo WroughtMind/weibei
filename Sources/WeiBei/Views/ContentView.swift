@@ -548,6 +548,32 @@ private struct WorkspaceChromeBackdrop: View {
     }
 }
 
+/// Focus new and repeated find requests after the field enters its view hierarchy.
+private struct ToolbarSearchField: View {
+    @Binding var text: String
+    let prompt: String
+    let focusRequest: Int
+    let height: CGFloat
+    let onSubmit: () -> Void
+    let onEscape: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $text,
+                  prompt: Text(prompt).foregroundStyle(WeiBeiTheme.placeholderInk))
+            .textFieldStyle(.plain)
+            .weiBeiText(12)
+            .focused($focused)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .tint(WeiBeiTheme.link)
+            .weibeiInputSurface(active: focused, height: height)
+            .frame(width: 220)
+            .task(id: focusRequest) { focused = true }
+            .onSubmit(onSubmit)
+            .weiBeiOnExitCommand(perform: onEscape)
+    }
+}
+
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var updateService: WeiBeiUpdateService
@@ -563,17 +589,29 @@ private struct UnifiedTopBarView: View {
 
     var body: some View {
 #if targetEnvironment(macCatalyst)
-        CatalystTopBar(
-            leading: toolbarContent(leftPrimaryControls),
-            center: toolbarContent(paneToggleCluster),
-            trailing: toolbarContent(trailingControls),
-            overflowMenus: toolbarOverflowMenus,
-            isVisible: !store.courseWorkspacePresented
-        )
-        .frame(height: 0)
-        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
-            showSettings()
+        VStack(spacing: 0) {
+            CatalystTopBar(
+                leading: toolbarContent(leftPrimaryControls),
+                center: toolbarContent(paneToggleCluster),
+                trailing: toolbarContent(trailingControls),
+                overflowMenus: toolbarOverflowMenus,
+                isVisible: !store.courseWorkspacePresented
+            )
+            .frame(height: 0)
+            .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
+                showSettings()
+            }
+            if paneState.showDocumentSearch && shouldShowSearchAction {
+                HStack(spacing: topBarSpacing) {
+                    Spacer(minLength: 0)
+                    searchControls
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(WeiBeiTheme.paperRaised)
+            }
         }
+
 #else
         customTopBar
 #endif
@@ -631,50 +669,43 @@ private struct UnifiedTopBarView: View {
     }
 #endif
 
-    private var trailingControls: some View {
-        HStack(spacing: topBarSpacing) {
-            if paneState.showDocumentSearch && shouldShowSearchAction {
-                TextField(
-                    "",
-                    text: store.searchesNotes ? $store.noteSearch : $store.readerSearch,
-                    prompt: Text(searchPrompt)
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
-                )
-                    .textFieldStyle(.plain)
-                    .weiBeiText(12)
-                    .focused(searchFocused)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .foregroundStyle(WeiBeiTheme.ink)
-                    .tint(WeiBeiTheme.link)
-                    .weiBeiText(12)
-                    .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
-                    .frame(width: 220)
-                .onSubmit {
-                    if store.searchesNotes { store.noteSearchRequest &+= 1 }
-                }
-                .weiBeiOnExitCommand {
-                    withAnimation(WeiBeiMotion.panel) {
-                        store.hideDocumentSearch()
-                        searchFocused.wrappedValue = false
-                    }
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-                if store.searchesNotes && !store.noteSearch.isEmpty {
-                    if store.noteSearchFound == false {
-                        Text(store.ui("无匹配", "No matches")).weiBeiText(11)
-                    }
-                    topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
-                    topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
-                }
-                topIconButton("xmark", help: store.ui("关闭查找", "Close search")) {
+    @ViewBuilder
+    private var searchControls: some View {
+        ToolbarSearchField(
+            text: store.searchesNotes ? $store.noteSearch : $store.readerSearch,
+            prompt: searchPrompt,
+            focusRequest: paneState.searchFocusRequest,
+            height: controlHeight,
+            onSubmit: { if store.searchesNotes { store.noteSearchRequest &+= 1 } },
+            onEscape: {
+                withAnimation(WeiBeiMotion.panel) {
                     store.hideDocumentSearch()
                     searchFocused.wrappedValue = false
                 }
             }
-
-            if shouldShowSearchAction && !paneState.showDocumentSearch {
-                searchButton
+        )
+        .transition(.move(edge: .trailing).combined(with: .opacity))
+        if store.searchesNotes && !store.noteSearch.isEmpty {
+            if store.noteSearchFound == false {
+                Text(store.ui("无匹配", "No matches")).weiBeiText(11)
             }
+            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
+            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
+        }
+        topIconButton("xmark", help: store.ui("关闭查找", "Close search")) {
+            store.hideDocumentSearch()
+            searchFocused.wrappedValue = false
+        }
+    }
+
+    private var trailingControls: some View {
+        HStack(spacing: topBarSpacing) {
+#if !targetEnvironment(macCatalyst)
+            if paneState.showDocumentSearch && shouldShowSearchAction { searchControls }
+            if shouldShowSearchAction && !paneState.showDocumentSearch { searchButton }
+#else
+            if shouldShowSearchAction { searchButton }
+#endif
 
             // Copy-reference is not top-bar chrome: use its configured shortcut, menu, or command palette when needed.
 
@@ -917,7 +948,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var searchButton: some View {
-        topIconButton("magnifyingglass", help: searchPrompt) {
+        topIconButton("magnifyingglass", help: searchPrompt, active: paneState.showDocumentSearch) {
             toggleReaderSearch()
         }
     }
@@ -937,6 +968,7 @@ private struct UnifiedTopBarView: View {
     private func topIconButton(_ systemName: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
+                .frame(width: 24 * textScale, height: 24 * textScale)
                 .contentShape(Rectangle())
         }
         .buttonStyle(WeiBeiIconButtonStyle(active: active, size: 24))
