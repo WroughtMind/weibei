@@ -394,7 +394,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private func itemHeight(at path: IndexPath) -> CGFloat {
         guard path.section < messages.count else { return 0 }
         let message = messages[path.section]
-        if path.item == 0 { return usesWorkspaceChrome ? 12 : 30 }
+        // 工作区模式下 header 只渲染一个空标题（title.text 为 nil），
+        // 那 12pt 纯属把首行推离渐淡带；置 0 让首行与笔记一样落在带内。
+        if path.item == 0 { return usesWorkspaceChrome ? 0 : 30 }
         if path.item > message.blocks.count { return usesWorkspaceChrome ? message.auxiliaryHeight : 42 }
         return message.blocks[path.item - 1].height + store.theme.spacings.paragraph
     }
