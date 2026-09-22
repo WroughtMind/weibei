@@ -566,7 +566,12 @@ private struct ToolbarSearchField: View {
             .focused($focused)
             .foregroundStyle(WeiBeiTheme.ink)
             .tint(WeiBeiTheme.link)
+#if targetEnvironment(macCatalyst)
+            .padding(.horizontal, 8)
+            .frame(minHeight: height)
+#else
             .weibeiInputSurface(active: focused, height: height)
+#endif
             .frame(width: 220)
             .task(id: focusRequest) { focused = true }
             .onSubmit(onSubmit)
@@ -605,8 +610,8 @@ private struct UnifiedTopBarView: View {
                 HStack(spacing: topBarSpacing) {
                     searchControls
                 }
-                .padding(5)
-                .background(WeiBeiTheme.paperRaised)
+                .padding(4)
+                .weibeiFloatingPanel(cornerRadius: 8, shadowOpacity: 0.08)
                 .fixedSize()
                 .padding(.trailing, 12)
                 .padding(.top, 5)
