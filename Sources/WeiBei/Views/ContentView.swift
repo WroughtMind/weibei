@@ -1040,14 +1040,21 @@ private struct LayoutContentView: View {
             switch store.layout {
             case .documentAgentNotes, .documentNotesAgent:
                 documentPaneLayoutView()
+            // Each representable pane host re-insets to the toolbar safe area on
+            // its own; the outer ignoresSafeArea does not reach it. Without this
+            // the pane container starts at y=40, its toolbar fade mask is nil and
+            // content is cut at the toolbar edge. Same rule as StableDocumentWorkspace.
             case .immersiveReading:
                 PersistentPaneHost(role: .reader, registry: paneHostRegistry)
+                    .ignoresSafeArea(.container, edges: .top)
             case .immersiveConversation:
                 PersistentPaneHost(role: .agent, registry: paneHostRegistry)
+                    .ignoresSafeArea(.container, edges: .top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(WeiBeiTransition.layout)
             case .immersiveWriting:
                 PersistentPaneHost(role: .notes, registry: paneHostRegistry)
+                    .ignoresSafeArea(.container, edges: .top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

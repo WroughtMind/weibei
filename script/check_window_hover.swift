@@ -36,12 +36,15 @@ final class ToolbarCheckDelegate: NSObject, NSToolbarDelegate {
         main.toolbar = toolbar
         let originalStyle = main.styleMask
         NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: main)
-        precondition(main.titlebarAppearsTransparent && main.styleMask == originalStyle)
+        // #21: the bridge must never set titlebarAppearsTransparent — on macOS 27
+        // beta it swallows window-mode toolbar clicks. Transparency comes from
+        // clearing the titlebar background view's alpha instead.
+        precondition(!main.titlebarAppearsTransparent && main.styleMask == originalStyle)
         // Catalyst owns its full-height content and toolbar input geometry.
         main.styleMask.insert(.fullSizeContentView)
         for mode in ["glassLight", "glassDark", "paper"] {
             bridge.configure(mode: mode, intensity: 1)
-            precondition(main.toolbar === toolbar && main.titlebarAppearsTransparent)
+            precondition(main.toolbar === toolbar && !main.titlebarAppearsTransparent)
             precondition(main.styleMask == originalStyle.union(.fullSizeContentView))
             precondition(main.contentView!.frame.height > main.contentLayoutRect.height)
             // Native glass backgrounds stay below content; no tint or hit-test
@@ -58,6 +61,9 @@ final class ToolbarCheckDelegate: NSObject, NSToolbarDelegate {
             return view.subviews.lazy.compactMap { background(in: $0) }.first
         }
         let fill = background(in: main.contentView!.superview!)!
+        // Window mode: the titlebar background view stays reachable in this
+        // window's NSThemeFrame and the bridge must already have cleared it.
+        precondition(fill.alphaValue == 0)
         let button = delegate.item.view!
         let buttonFrame = button.frame
         let host = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 160, height: 40), styleMask: [], backing: .buffered, defer: false)

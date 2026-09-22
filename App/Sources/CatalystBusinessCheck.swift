@@ -375,13 +375,21 @@ enum CatalystBusinessCheck {
                 return abs(noteEditor.convert(noteEditor.bounds, to: window).minY) < 1
                     && noteEditor.scrollView.contentInsetAdjustmentBehavior == .never
             }
+            try await until("conversation viewport extends under the native toolbar") {
+                guard let chat = conversation(), let window = chat.collection.window else { return false }
+                return chat.collection.contentInsetAdjustmentBehavior == .never
+                    && abs(chat.collection.adjustedContentInset.top - chat.collection.contentInset.top) < 1
+                    && abs(chat.collection.convert(chat.collection.bounds, to: window).minY) < 1
+                    && conversationReachesToolbar(chat)
+                    && abs(chat.flow.topInset - chat.view.safeAreaInsets.top) < 1
+                    && chat.collection.contentInset.top == 0
+            }
             if #available(iOS 26.0, *) {
                 try await until("pane edges do not add separate toolbar materials") {
                     guard let window = noteEditor.window, let chat = conversation(),
                           let reader = descendants(window).first(where: { $0.accessibilityIdentifier == "persistent-pane-reader" }),
                           let text = descendants(reader).compactMap({ $0 as? UITextView }).first else { return false }
-                    // Check the three pane viewports, not WebKit's dynamically
-                    // created internal scrollers for HTML overflow content.
+                    // The shared pane mask owns the effect for all three viewports.
                     let scrolls: [UIScrollView] = [text, chat.collection, noteEditor.scrollView]
                     return scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
                 }
@@ -777,6 +785,21 @@ enum CatalystBusinessCheck {
             conversation()?.messages.count == 240 && conversation()?.messages.last?.id == history.last?.id.uuidString
         }
         let controller = conversation()!
+        // The immersive host is a separate SwiftUI branch from the three-pane
+        // split; it must extend under the toolbar and carry the fade mask too.
+        try await until("immersive conversation pane fades within the original toolbar") {
+            guard let window = controller.collection.window,
+                  let pane = descendants(window).compactMap({ $0 as? PersistentPaneHost.Container })
+                      .first(where: { !$0.isHidden && $0.bounds.width > 0 }),
+                  let fade = pane.layer.mask as? CAGradientLayer,
+                  let end = fade.locations?.dropLast().last else { return false }
+            let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
+            return abs(pane.convert(pane.bounds, to: window).minY) < 1
+                && abs(fadeBottom - window.safeAreaInsets.top) < 1
+                && abs(controller.collection.convert(controller.collection.bounds, to: window).minY) < 1
+                && abs(controller.collection.adjustedContentInset.top - controller.collection.contentInset.top) < 1
+                && conversationReachesToolbar(controller)
+        }
         var measured: [String: Any] = [
             "first_history_page_ms": (CACurrentMediaTime() - started) * 1000,
             "first_page_messages": 240,
@@ -847,6 +870,18 @@ enum CatalystBusinessCheck {
             if ContinuousClock.now >= deadline { throw Failure("timeout: " + description) }
             try await Task.sleep(for: .milliseconds(40))
         }
+    }
+    private static func conversationReachesToolbar(_ controller: ConversationController) -> Bool {
+        guard let window = controller.collection.window else { return false }
+        var ancestor: UIView? = controller.collection
+        while let view = ancestor {
+            // A viewport at y=0 is insufficient if an intermediate SwiftUI clip
+            // still starts below the toolbar. Inspect the complete drawing path.
+            if view.clipsToBounds && view.convert(view.bounds, to: window).minY > 1 { return false }
+            if view is PersistentPaneHost.Container { return true }
+            ancestor = view.superview
+        }
+        return false
     }
     private static func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
     private static func editor(documentID: String) async -> MarkdownWebView? {

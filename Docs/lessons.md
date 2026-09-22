@@ -34,3 +34,9 @@
 - 现象：用户报「最新版会话窗口改宽卡顿」，本地 main 停在 PR #430，读到的还是 AppKit `NativeChatMarkdownView` 路线；用户提醒「去 GitHub 看最新版」后才发现正式 App 已切到 Mac Catalyst（`App/Sources/ConversationController.swift`）。
 - 规则：接到任何「最新版」问题，开工第一步 `git fetch` 并核对已安装 App 的 `WeiBeiGitCommit` 与 `origin/main`，再读代码；本地 checkout 不等于用户手里的版本。
 - 附带：画中画是 Codex 侧的桌面操作工具，本会话不用；验收用 App 自带的隔离身份验收包 `--self-check` 在进程内跑，每次会弹一个独立窗口约两分钟，先跟用户说明再跑。
+
+## 2026-09-20 会话顶部栏渐淡失效：叠加效果要逐层验证，"属性吞点击"≠"背景不可能透明"
+
+- 现象：#505 合入后会话窗格发问即被工具栏盖住、没有渐淡；#21 修点击时断言"窗口模式标题栏背景不可达"并关掉透明；Codex/Cursor 随后在两条错路上各绕一天。
+- 根因：① 把会话 collection 延伸到窗口顶边时，没有同步改回答留白与置顶滚动的几何，遮罩有了、内容却停在遮罩带里；② 把"某属性（titlebarAppearsTransparent）吞点击"误推成"背景透明不可能"，没区分属性与视图——真正可达的 NSTitlebarBackgroundView 清 alphaValue 即透明且命中链不变。
+- 规则：**叠加效果要逐层验证**——遮罩存在 ≠ 内容进了遮罩区，验收要断言内容相对窗口顶边的位置，不只断言遮罩存在。**改一个变量看不到变化时先问"是不是被另一层挡住"**，再换方向。层级 dump 已经拿到手就以 dump 为准，不以提交说明里的结论为准。给窗格延伸安全区时，凡是手写 contentOffset 的滚动容器都要自己持有顶部留位（如 ConversationLayout.topInset + `.never`），不能靠 `.automatic`。

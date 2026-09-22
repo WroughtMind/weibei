@@ -74,10 +74,17 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        // 遮罩渐隐处透出的必须是纸色：systemBackground 被遮罩带压暗后与窗口
+        // 纸色形成刺眼色差（2026-09-21 渲染探针实测 0-10pt 纯黑观感）。
+        // 主题色在 updateJumpToLatestAppearance 随外观更新。
+        view.backgroundColor = WeiBeiNativePalette.paper(for: jumpToLatestAppearance)
         collection.backgroundColor = .clear
         configurePaneTopScrollEdges(in: collection)
         collection.dataSource = self; collection.delegate = self
+        // 工作区窗格：消息延伸到工具栏底下，由窗格容器的遮罩负责渐淡。
+        // VC 根视图会被 UIKit 按窗口几何重新算出安全区，这里关掉自动内边距，
+        // 顶部留位由 ConversationLayout.topInset 统一持有。
+        if usesWorkspaceChrome { collection.contentInsetAdjustmentBehavior = .never }
         collection.register(MessageCell.self, forCellWithReuseIdentifier: "message")
         collection.alwaysBounceVertical = true
         collection.keyboardDismissMode = .none
@@ -177,6 +184,11 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         }
         let width = view.bounds.width
         guard width > 0 else { return }
+        // Keep the first message below the toolbar at rest. This is scrollable
+        // content spacing: the viewport still reaches the shared pane fade.
+        let topInset = usesWorkspaceChrome ? view.safeAreaInsets.top : 0
+        let topInsetChanged = flow.topInset != topInset
+        if topInsetChanged { flow.topInset = topInset }
         let requestedWidth = usesWorkspaceChrome
             ? (workspaceBodyWidth ?? max(1, min(960, width - 24)))
             : max(240, min(maximumBodyWidth, width - 56))
@@ -189,7 +201,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         if anchor != nil { dragAnchor = anchor }
         let started = CACurrentMediaTime()
         let wasUpdating = layoutTransaction
-        if resized {
+        if resized || topInsetChanged {
             layoutTransaction = true
             let widthChanged = nextWidth != bodyWidth
             bodyWidth = nextWidth
@@ -222,7 +234,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         collection.frame = usesWorkspaceChrome ? view.bounds
             : CGRect(x: 0, y: 78, width: width, height: max(100, view.bounds.height - 202))
         latest.frame = CGRect(x: (width - 34) / 2, y: collection.frame.maxY - 68, width: 34, height: 34)
-        if resized {
+        if resized || topInsetChanged {
             collection.layoutIfNeeded()
             if let anchor { restore(anchor) }
             layoutTransaction = wasUpdating
@@ -374,7 +386,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private func itemHeight(at path: IndexPath) -> CGFloat {
         guard path.section < messages.count else { return 0 }
         let message = messages[path.section]
-        if path.item == 0 { return usesWorkspaceChrome ? 12 : 30 }
+        // Workspace messages have no separate author header.
+        if path.item == 0 { return usesWorkspaceChrome ? 0 : 30 }
         if path.item > message.blocks.count { return usesWorkspaceChrome ? message.auxiliaryHeight : 42 }
         return message.blocks[path.item - 1].height + store.theme.spacings.paragraph
     }
@@ -586,7 +599,12 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         status.text = text
     }
 
+    /// 当前工作区外观，供背景色等非滚动部件跟随主题。
+    private(set) var jumpToLatestAppearance: WeiBeiAppearanceMode = .paper
+
     func updateJumpToLatestAppearance(_ appearance: WeiBeiAppearanceMode) {
+        jumpToLatestAppearance = appearance
+        view.backgroundColor = WeiBeiNativePalette.paper(for: appearance)
         let ink = WeiBeiNativePalette.ink(for: appearance)
         latest.tintColor = ink.withAlphaComponent(0.85)
         latest.backgroundColor = WeiBeiNativePalette.paperRaised(for: appearance)
@@ -647,7 +665,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             if Task.isCancelled { return }
         }
         guard let section = messages.firstIndex(where: { $0.id == id.uuidString }) else { return }
-        collection.scrollToItem(at: IndexPath(item: 0, section: section), at: .top, animated: false)
+        collection.layoutIfNeeded()
+        guard let frame = collection.layoutAttributesForItem(at: IndexPath(item: 0, section: section))?.frame else { return }
+        collection.contentOffset.y = min(max(0, frame.minY - flow.topInset),
+                                          max(0, collection.contentSize.height - collection.bounds.height))
         followsLatest = false
     }
 
@@ -819,7 +840,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             let body = store.view(for: message.blocks[path.item - 1], width: bodyWidth)
             textY = body.rect(for: character)?.minY ?? 0
         }
-        collection.contentOffset.y = min(max(0, frame.minY + textY - anchor.offset), max(0, collection.contentSize.height - collection.bounds.height))
+        collection.contentOffset.y = min(max(0, frame.minY + textY - anchor.offset),
+                                          max(0, collection.contentSize.height - collection.bounds.height))
     }
     func scrollToLatest() {
         let wasUpdating = layoutTransaction
@@ -1148,6 +1170,25 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let reply = AgentMessage(role: .assistant, text: "短回答保持原位。", source: nil, completionState: .generating)
                 await anchored.display(reply, streaming: true)
                 try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "短回答把问题顶出了原位")
+                // The offscreen check has no titlebar. Inject its height to test
+                // first-message, reply-space and reveal geometry; the real pane
+                // clipping path is checked by CatalystBusinessCheck.
+                anchored.flow.topInset = 40
+                anchored.flow.invalidateLayout()
+                anchored.scrollToLatest()
+                let pinned = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
+                    - anchored.collection.contentOffset.y
+                try expect(abs(pinned - anchored.flow.topInset - anchored.flow.sectionInset.top) < 1,
+                           "置顶的问题没有停在渐变带下方完整位置（pinned=\(pinned)）")
+                let firstTop = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))!.frame.minY
+                try expect(firstTop >= anchored.flow.topInset, "首条消息被放进了顶部渐淡区域")
+                await anchored.revealMessage(turn.messages[2].id)
+                let revealed = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
+                    - anchored.collection.contentOffset.y
+                try expect(revealed >= anchored.flow.topInset - 1
+                    && revealed <= anchored.flow.topInset + anchored.flow.sectionInset.top + 1,
+                    "跳转的问题未停在工具栏下方（revealed=\(revealed)）")
+                try expect(anchored.collection.adjustedContentInset.top == 0, "工作区会话不应再叠加系统内边距")
                 message.state = .stopped
                 try expect(message.blocks[0] === first, "停止时重建了正文")
                 metrics.checks["stream_keeps_unchanged_blocks_and_tail"] = "passed"
