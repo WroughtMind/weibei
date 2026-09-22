@@ -6,12 +6,7 @@ import UIKit
 /// flow layout's per-item sizing dictionary and row computation.
 final class ConversationLayout: UICollectionViewLayout {
     var sectionInset = UIEdgeInsets(top: 14, left: 0, bottom: 10, right: 0)
-    /// 第一个 section 之前的顶距。窗格容器的渐淡带就是工具栏高度（0-40pt），
-    /// 首条消息的行必须落进带里，静止在顶时才能看到和文稿/笔记一样的洗白；
-    /// 若跟其他 section 一样留 14pt，首行停在带下沿 y=40，带内只剩纸色。
-    var firstSectionInset: CGFloat = 0
-    /// 布局整体顶距。工作区里是 0：第一个 section 之前由 firstSectionInset
-    /// 决定，其余 section 之间由 sectionInset.top 决定。
+    /// Scrollable space under the workspace toolbar; does not inset the viewport.
     var topInset: CGFloat = 0
     var itemWidth: CGFloat = 0
     var itemHeight: ((IndexPath) -> CGFloat)?
@@ -52,7 +47,7 @@ final class ConversationLayout: UICollectionViewLayout {
             var items: [UICollectionViewLayoutAttributes] = []
             items.reserveCapacity(count)
             sections[section].minY = y
-            y += section == 0 ? firstSectionInset : sectionInset.top
+            y += sectionInset.top
             for item in 0..<count {
                 let path = IndexPath(item: item, section: section)
                 let height = itemHeight?(path) ?? 0

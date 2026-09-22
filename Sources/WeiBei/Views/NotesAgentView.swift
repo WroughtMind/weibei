@@ -1599,7 +1599,11 @@ struct AgentPaneView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+#if !targetEnvironment(macCatalyst)
+                // Catalyst clips at the outer pane's window edge. Clipping here
+                // uses the safe-area rectangle and removes the whole toolbar band.
                 .clipped()
+#endif
                 .overlay(alignment: .top) {
                     if showsPaneHeader {
                         LinearGradient(

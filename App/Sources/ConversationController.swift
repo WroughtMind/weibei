@@ -80,11 +80,6 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         view.backgroundColor = WeiBeiNativePalette.paper(for: jumpToLatestAppearance)
         collection.backgroundColor = .clear
         configurePaneTopScrollEdges(in: collection)
-        if #available(iOS 26.0, *), usesWorkspaceChrome {
-            // 与笔记一致的双层渐隐：遮罩只覆盖 0-40pt，到带下沿是硬切；
-            // WebKit 内层的系统边缘渐隐会在带下继续柔化过渡，原生列表同样打开它。
-            collection.topEdgeEffect.isHidden = false
-        }
         collection.dataSource = self; collection.delegate = self
         // 工作区窗格：消息延伸到工具栏底下，由窗格容器的遮罩负责渐淡。
         // VC 根视图会被 UIKit 按窗口几何重新算出安全区，这里关掉自动内边距，
@@ -189,12 +184,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         }
         let width = view.bounds.width
         guard width > 0 else { return }
-        // Entering or leaving full screen retallies the safe area without moving
-        // the collection's frame; the layout must re-derive its top inset then.
-        // 与笔记（WebKit）一致的顶部行为：布局零留位，滚动视图持 contentInset——
-        // 静止在顶时首行停在渐变带下方完整可见；上滚时内容穿过 0-40pt 渐变带
-        // 被洗白。之前用布局留位导致列表项在顶边被硬切、带内无内容可淡。
-        let topInset: CGFloat = 0
+        // Keep the first message below the toolbar at rest. This is scrollable
+        // content spacing: the viewport still reaches the shared pane fade.
+        let topInset = usesWorkspaceChrome ? view.safeAreaInsets.top : 0
         let topInsetChanged = flow.topInset != topInset
         if topInsetChanged { flow.topInset = topInset }
         let requestedWidth = usesWorkspaceChrome
@@ -394,8 +386,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private func itemHeight(at path: IndexPath) -> CGFloat {
         guard path.section < messages.count else { return 0 }
         let message = messages[path.section]
-        // 工作区模式下 header 只渲染一个空标题（title.text 为 nil），
-        // 那 12pt 纯属把首行推离渐淡带；置 0 让首行与笔记一样落在带内。
+        // Workspace messages have no separate author header.
         if path.item == 0 { return usesWorkspaceChrome ? 0 : 30 }
         if path.item > message.blocks.count { return usesWorkspaceChrome ? message.auxiliaryHeight : 42 }
         return message.blocks[path.item - 1].height + store.theme.spacings.paragraph
@@ -674,8 +665,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             if Task.isCancelled { return }
         }
         guard let section = messages.firstIndex(where: { $0.id == id.uuidString }) else { return }
-        collection.scrollToItem(at: IndexPath(item: 0, section: section), at: .top, animated: false)
-        collection.contentOffset.y = max(0, collection.contentOffset.y)
+        collection.layoutIfNeeded()
+        guard let frame = collection.layoutAttributesForItem(at: IndexPath(item: 0, section: section))?.frame else { return }
+        collection.contentOffset.y = min(max(0, frame.minY - flow.topInset),
+                                          max(0, collection.contentSize.height - collection.bounds.height))
         followsLatest = false
     }
 
@@ -1177,18 +1170,25 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let reply = AgentMessage(role: .assistant, text: "短回答保持原位。", source: nil, completionState: .generating)
                 await anchored.display(reply, streaming: true)
                 try expect(abs(anchored.collection.contentOffset.y - questionTop) < 1, "短回答把问题顶出了原位")
-                // 与笔记一致的顶部行为：布局零留位 + 滚动视图持 contentInset。
-                // 离屏视图 safeAreaInsets 恒为 0，故断言 inset 与安全区一致；
-                // 真实窗口的 40pt 由 business check 的 viewport 断言覆盖。
-                try expect(anchored.collection.contentInset.top == anchored.view.safeAreaInsets.top,
-                           "会话滚动视图 contentInset 与安全区不一致（\(anchored.collection.contentInset.top) vs \(anchored.view.safeAreaInsets.top)）")
-                try expect(anchored.flow.topInset == 0, "会话布局仍有顶部留位（\(anchored.flow.topInset)）")
+                // The offscreen check has no titlebar. Inject its height to test
+                // first-message, reply-space and reveal geometry; the real pane
+                // clipping path is checked by CatalystBusinessCheck.
+                anchored.flow.topInset = 40
+                anchored.flow.invalidateLayout()
+                anchored.scrollToLatest()
                 let pinned = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
                     - anchored.collection.contentOffset.y
-                try expect(abs(pinned - anchored.flow.sectionInset.top) < 1,
+                try expect(abs(pinned - anchored.flow.topInset - anchored.flow.sectionInset.top) < 1,
                            "置顶的问题没有停在渐变带下方完整位置（pinned=\(pinned)）")
+                let firstTop = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))!.frame.minY
+                try expect(firstTop >= anchored.flow.topInset, "首条消息被放进了顶部渐淡区域")
+                await anchored.revealMessage(turn.messages[2].id)
+                let revealed = anchored.collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 2))!.frame.minY
+                    - anchored.collection.contentOffset.y
+                try expect(revealed >= anchored.flow.topInset - 1
+                    && revealed <= anchored.flow.topInset + anchored.flow.sectionInset.top + 1,
+                    "跳转的问题未停在工具栏下方（revealed=\(revealed)）")
                 try expect(anchored.collection.adjustedContentInset.top == 0, "工作区会话不应再叠加系统内边距")
-                anchored.flow.topInset = 0
                 message.state = .stopped
                 try expect(message.blocks[0] === first, "停止时重建了正文")
                 metrics.checks["stream_keeps_unchanged_blocks_and_tail"] = "passed"

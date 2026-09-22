@@ -380,9 +380,8 @@ enum CatalystBusinessCheck {
                 return chat.collection.contentInsetAdjustmentBehavior == .never
                     && abs(chat.collection.adjustedContentInset.top - chat.collection.contentInset.top) < 1
                     && abs(chat.collection.convert(chat.collection.bounds, to: window).minY) < 1
-                    // 顶部行为与笔记对齐：布局零留位、无 contentInset，
-                    // 首行内容从渐淡带内（y=14）开始，上滚时穿过整条带。
-                    && chat.flow.topInset == 0
+                    && conversationReachesToolbar(chat)
+                    && abs(chat.flow.topInset - chat.view.safeAreaInsets.top) < 1
                     && chat.collection.contentInset.top == 0
             }
             if #available(iOS 26.0, *) {
@@ -390,12 +389,9 @@ enum CatalystBusinessCheck {
                     guard let window = noteEditor.window, let chat = conversation(),
                           let reader = descendants(window).first(where: { $0.accessibilityIdentifier == "persistent-pane-reader" }),
                           let text = descendants(reader).compactMap({ $0 as? UITextView }).first else { return false }
-                    // Check the pane viewports, not WebKit's dynamically created
-                    // internal scrollers for HTML overflow content. 会话列表保留
-                    // 系统边缘渐隐（与笔记的双层渐隐对齐），文稿/笔记仍隐藏。
+                    // The shared pane mask owns the effect for all three viewports.
                     let scrolls: [UIScrollView] = [text, chat.collection, noteEditor.scrollView]
-                    return !chat.collection.topEdgeEffect.isHidden
-                        && text.topEdgeEffect.isHidden && noteEditor.scrollView.topEdgeEffect.isHidden
+                    return scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
                 }
             }
             try await until("all three panes fade within the original toolbar") {
@@ -802,6 +798,7 @@ enum CatalystBusinessCheck {
                 && abs(fadeBottom - window.safeAreaInsets.top) < 1
                 && abs(controller.collection.convert(controller.collection.bounds, to: window).minY) < 1
                 && abs(controller.collection.adjustedContentInset.top - controller.collection.contentInset.top) < 1
+                && conversationReachesToolbar(controller)
         }
         var measured: [String: Any] = [
             "first_history_page_ms": (CACurrentMediaTime() - started) * 1000,
@@ -873,6 +870,18 @@ enum CatalystBusinessCheck {
             if ContinuousClock.now >= deadline { throw Failure("timeout: " + description) }
             try await Task.sleep(for: .milliseconds(40))
         }
+    }
+    private static func conversationReachesToolbar(_ controller: ConversationController) -> Bool {
+        guard let window = controller.collection.window else { return false }
+        var ancestor: UIView? = controller.collection
+        while let view = ancestor {
+            // A viewport at y=0 is insufficient if an intermediate SwiftUI clip
+            // still starts below the toolbar. Inspect the complete drawing path.
+            if view.clipsToBounds && view.convert(view.bounds, to: window).minY > 1 { return false }
+            if view is PersistentPaneHost.Container { return true }
+            ancestor = view.superview
+        }
+        return false
     }
     private static func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
     private static func editor(documentID: String) async -> MarkdownWebView? {

@@ -1360,14 +1360,7 @@ struct PersistentPaneRoot: View {
         Group {
 #if targetEnvironment(macCatalyst)
             if #available(iOS 26.0, *) {
-                if role == .agent {
-                    // 会话窗格与文稿/笔记统一使用系统滚动边缘渐淡：它的渐淡
-                    // 来自 UIKit 列表自身的 topEdgeEffect，不能在这里关掉。
-                    // 文稿/笔记的渐淡来自 WebKit 内层滚动视图，不受本修饰影响。
-                    pane
-                } else {
-                    pane.scrollEdgeEffectHidden(true, for: .top)
-                }
+                pane.scrollEdgeEffectHidden(true, for: .top)
             } else {
                 pane
             }
