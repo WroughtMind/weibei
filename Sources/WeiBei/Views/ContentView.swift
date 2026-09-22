@@ -589,28 +589,30 @@ private struct UnifiedTopBarView: View {
 
     var body: some View {
 #if targetEnvironment(macCatalyst)
-        VStack(spacing: 0) {
-            CatalystTopBar(
-                leading: toolbarContent(leftPrimaryControls),
-                center: toolbarContent(paneToggleCluster),
-                trailing: toolbarContent(trailingControls),
-                overflowMenus: toolbarOverflowMenus,
-                isVisible: !store.courseWorkspacePresented
-            )
-            .frame(height: 0)
-            .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
-                showSettings()
-            }
+        CatalystTopBar(
+            leading: toolbarContent(leftPrimaryControls),
+            center: toolbarContent(paneToggleCluster),
+            trailing: toolbarContent(trailingControls),
+            overflowMenus: toolbarOverflowMenus,
+            isVisible: !store.courseWorkspacePresented
+        )
+        .frame(height: 0)
+        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
+            showSettings()
+        }
+        .overlay(alignment: .topTrailing) {
             if paneState.showDocumentSearch && shouldShowSearchAction {
                 HStack(spacing: topBarSpacing) {
-                    Spacer(minLength: 0)
                     searchControls
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
+                .padding(5)
                 .background(WeiBeiTheme.paperRaised)
+                .fixedSize()
+                .padding(.trailing, 12)
+                .padding(.top, 5)
             }
         }
+        .zIndex(10)
 
 #else
         customTopBar
@@ -678,13 +680,10 @@ private struct UnifiedTopBarView: View {
             height: controlHeight,
             onSubmit: { if store.searchesNotes { store.noteSearchRequest &+= 1 } },
             onEscape: {
-                withAnimation(WeiBeiMotion.panel) {
-                    store.hideDocumentSearch()
-                    searchFocused.wrappedValue = false
-                }
+                store.hideDocumentSearch()
+                searchFocused.wrappedValue = false
             }
         )
-        .transition(.move(edge: .trailing).combined(with: .opacity))
         if store.searchesNotes && !store.noteSearch.isEmpty {
             if store.noteSearchFound == false {
                 Text(store.ui("无匹配", "No matches")).weiBeiText(11)
@@ -763,7 +762,6 @@ private struct UnifiedTopBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
             showSettings()
         }
-        .animation(WeiBeiMotion.panel, value: paneState.showDocumentSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
         .animation(WeiBeiMotion.panel, value: paneState.showReader)
@@ -954,14 +952,12 @@ private struct UnifiedTopBarView: View {
     }
 
     private func toggleReaderSearch() {
-        withAnimation(WeiBeiMotion.panel) {
-            if paneState.showDocumentSearch {
-                store.hideDocumentSearch()
-                searchFocused.wrappedValue = false
-            } else {
-                store.revealDocumentSearch()
-                searchFocused.wrappedValue = true
-            }
+        if paneState.showDocumentSearch {
+            store.hideDocumentSearch()
+            searchFocused.wrappedValue = false
+        } else {
+            store.revealDocumentSearch()
+            searchFocused.wrappedValue = true
         }
     }
 
