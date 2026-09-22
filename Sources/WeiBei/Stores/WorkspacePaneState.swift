@@ -47,6 +47,19 @@ final class WorkspacePaneState: ObservableObject {
 
     @Published var showDocumentSearch = false
     @Published var searchFocusRequest = 0
+    @Published var pdfSearchResults: [ReaderSearchResult] = []
+    @Published var pdfSearchResultIndex = 0
+    @Published var pdfSearchResultQuery = ""
+    @Published var pdfSearchResultMaterialID: String?
+    @Published var pdfSearchNavigationRequest = 0
+    var pdfSearchRequestedIndex = 0
+
+    func selectPDFSearchResult(_ index: Int) {
+        guard pdfSearchResults.indices.contains(index) else { return }
+        pdfSearchRequestedIndex = index
+        pdfSearchNavigationRequest &+= 1
+    }
+
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
 

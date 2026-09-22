@@ -2305,7 +2305,35 @@ public enum PDFModeChipPresentation {
     }
 }
 
+public struct ReaderSearchResult: Equatable, Identifiable {
+    public let id: Int
+    public let pageIndex: Int
+    public let preview: String
+
+    public init(id: Int, pageIndex: Int, preview: String) {
+        self.id = id
+        self.pageIndex = pageIndex
+        self.preview = preview
+    }
+}
+
 public enum ReaderSearch {
+    public static func matchIndex(current: Int, step: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        return ((current % count + step % count) % count + count) % count
+    }
+
+    public static func preview(in text: String, around range: NSRange) -> String {
+        let source = text as NSString
+        guard range.location != NSNotFound, range.location <= source.length,
+              range.length <= source.length - range.location else { return "" }
+        let start = max(0, range.location - 32)
+        let end = min(source.length, range.location + range.length + 48)
+        let slice = source.rangeOfComposedCharacterSequences(for: NSRange(location: start, length: end - start))
+        let excerpt = source.substring(with: slice).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return (start > 0 ? "…" : "") + excerpt + (end < source.length ? "…" : "")
+    }
+
     public static func cleaned(_ query: String) -> String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
     }

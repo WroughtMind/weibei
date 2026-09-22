@@ -1092,6 +1092,16 @@ struct ReaderView: View {
                         browseMode: pdfBrowseMode,
                         searchQuery: store.effectiveReaderSearch,
                         searchTargetPageIndex: store.readerSourceHighlightPageIndex,
+                        searchNavigationRequest: paneState.pdfSearchNavigationRequest,
+                        searchRequestedIndex: paneState.pdfSearchRequestedIndex,
+                        onSearchResults: { query, results, index in
+                            guard store.selectedMaterialItem?.id == item.id,
+                                  ReaderSearch.cleaned(store.readerSearch) == query else { return }
+                            paneState.pdfSearchResults = results
+                            paneState.pdfSearchResultIndex = index
+                            paneState.pdfSearchResultQuery = query
+                            paneState.pdfSearchResultMaterialID = item.id
+                        },
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         pageIndex: $pdfPageIndex,
@@ -1343,6 +1353,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var browseMode: PDFBrowseMode
     var searchQuery: String
     var searchTargetPageIndex: Int?
+    var searchNavigationRequest: Int
+    var searchRequestedIndex: Int
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
     @Binding var pageIndex: Int
@@ -1440,6 +1453,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.onUserPageChange = onUserPageChange
         context.coordinator.onSelectableTextChange = onSelectableTextChange
         context.coordinator.onSelectionChange = onSelectionChange
+        context.coordinator.onSearchResults = onSearchResults
         context.coordinator.onAskUnderlineActivate = onAskUnderlineActivate
         context.coordinator.onRemarkMarkActivate = onRemarkMarkActivate
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
@@ -1477,7 +1491,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.applySearch(
             searchQuery,
             targetPageIndex: searchTargetPageIndex,
-            in: view
+            in: view,
+            navigationRequest: searchNavigationRequest,
+            requestedIndex: searchRequestedIndex
         )
         context.coordinator.applyAskUnderlines(askUnderlineMarks.isEmpty
             ? underlineSnippets.map { (id: "", text: $0, anchor: nil) }
@@ -1520,6 +1536,18 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var pendingOCRPageIndexes: Set<Int> = []
         private var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]
         private var lastSearchQuery = ""
+        var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
+        private struct SearchHit {
+            let selection: PDFSelection?
+            let pageIndex: Int
+            let ocrLineIndex: Int?
+            let bounds: CGRect
+            let preview: String
+        }
+        private var searchHits: [SearchHit] = []
+        private var searchResultIndex = 0
+        private var lastSearchNavigationRequest = 0
+        private var searchPublication = 0
         private var lastSearchTargetPageIndex: Int?
         private var loadGeneration = 0
         private var userNavigationDeadline = Date.distantPast
@@ -1568,6 +1596,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             view.document = nil
             nativeTextPageIndexes = []
             clearOCROverlays(in: view)
+            searchPublication &+= 1
+            searchHits = []
+            searchResultIndex = 0
             lastSearchQuery = ""
             lastSearchTargetPageIndex = nil
             lastAppliedAskUnderlineMarks = []
@@ -1927,46 +1958,77 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             _ query: String,
             targetPageIndex: Int?,
             in view: PDFView,
-            force: Bool = false
+            force: Bool = false,
+            navigationRequest: Int? = nil,
+            requestedIndex: Int? = nil
         ) {
             let query = ReaderSearch.cleaned(query)
-            guard force
-                    || query != lastSearchQuery
-                    || targetPageIndex != lastSearchTargetPageIndex else {
-                return
-            }
+            let queryChanged = query != lastSearchQuery || targetPageIndex != lastSearchTargetPageIndex
+            let navigated = navigationRequest.map { $0 != lastSearchNavigationRequest } ?? false
+            guard force || queryChanged || navigated else { return }
+            if let navigationRequest { lastSearchNavigationRequest = navigationRequest }
             lastSearchQuery = query
             lastSearchTargetPageIndex = targetPageIndex
+            if queryChanged { searchResultIndex = 0 }
 
-            guard !query.isEmpty else {
-                view.highlightedSelections = nil
-                view.clearSelection()
-                setOCRHighlightedLines([:], in: view)
-                return
-            }
-
-            let allMatches = view.document?.findString(
-                query,
-                withOptions: [.caseInsensitive, .diacriticInsensitive]
-            ) ?? []
-            let matches = targetPageIndex.map { targetPageIndex in
-                allMatches.filter { selection in
-                    selection.pages.contains { page in
-                        guard let document = view.document else { return false }
-                        return document.index(for: page) == targetPageIndex
+            if force || queryChanged {
+                searchHits = []
+                if !query.isEmpty, let document = view.document {
+                    for selection in document.findString(query, withOptions: [.caseInsensitive, .diacriticInsensitive]) {
+                        guard let page = selection.pages.first else { continue }
+                        let pageIndex = document.index(for: page)
+                        guard targetPageIndex == nil || pageIndex == targetPageIndex else { continue }
+                        let range = selection.range(at: 0, on: page)
+                        searchHits.append(SearchHit(selection: selection, pageIndex: pageIndex, ocrLineIndex: nil,
+                            bounds: selection.bounds(for: page), preview: ReaderSearch.preview(in: page.string ?? "", around: range)))
+                    }
+                    for ocrPage in ocrPagesByPageIndex.values {
+                        guard targetPageIndex == nil || ocrPage.pageIndex == targetPageIndex,
+                              let page = document.page(at: ocrPage.pageIndex) else { continue }
+                        let bounds = page.bounds(for: .mediaBox)
+                        for (lineIndex, line) in ocrPage.lines.enumerated() {
+                            guard ReaderSearch.firstMatch(in: line.text, query: query) != nil else { continue }
+                            let rect = line.boundingBox
+                            searchHits.append(SearchHit(selection: nil, pageIndex: ocrPage.pageIndex, ocrLineIndex: lineIndex,
+                                bounds: CGRect(x: bounds.minX + rect.minX * bounds.width, y: bounds.minY + rect.minY * bounds.height,
+                                    width: rect.width * bounds.width, height: rect.height * bounds.height), preview: line.text))
+                        }
+                    }
+                    searchHits.sort {
+                        if $0.pageIndex != $1.pageIndex { return $0.pageIndex < $1.pageIndex }
+                        if $0.bounds.midY != $1.bounds.midY { return $0.bounds.midY > $1.bounds.midY }
+                        return $0.bounds.minX < $1.bounds.minX
                     }
                 }
-            } ?? allMatches
-            view.highlightedSelections = matches
-            if let first = matches.first {
-                setOCRHighlightedLines([:], in: view)
-                view.go(to: first)
-            } else {
-                applyOCRSearch(
-                    query,
-                    targetPageIndex: targetPageIndex,
-                    in: view
-                )
+            }
+            if navigated, !queryChanged, let requestedIndex { searchResultIndex = requestedIndex }
+            searchResultIndex = min(max(0, searchResultIndex), max(0, searchHits.count - 1))
+            var selections: [PDFSelection] = []
+            var ocrLines: [Int: Set<Int>] = [:]
+            for (index, hit) in searchHits.enumerated() {
+                if let selection = hit.selection {
+                    selection.color = WeiBeiNativePalette.selectionFill(for: appearanceMode)
+                        .withAlphaComponent(index == searchResultIndex ? 0.65 : 0.22)
+                    selections.append(selection)
+                } else if let lineIndex = hit.ocrLineIndex { ocrLines[hit.pageIndex, default: []].insert(lineIndex) }
+            }
+            view.highlightedSelections = selections.isEmpty ? nil : selections
+            setOCRHighlightedLines(ocrLines, in: view)
+            if query.isEmpty { view.clearSelection() }
+            if searchHits.indices.contains(searchResultIndex) {
+                let hit = searchHits[searchResultIndex]
+                if let selection = hit.selection { view.go(to: selection) }
+                else if let page = view.document?.page(at: hit.pageIndex) { view.go(to: hit.bounds, on: page) }
+            }
+            let results = searchHits.enumerated().map {
+                ReaderSearchResult(id: $0.offset, pageIndex: $0.element.pageIndex, preview: $0.element.preview)
+            }
+            let index = searchResultIndex
+            searchPublication &+= 1
+            let publication = searchPublication
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.searchPublication == publication else { return }
+                self.onSearchResults(query, results, index)
             }
         }
 
@@ -2114,35 +2176,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                         page.removeAnnotation(annotation)
                     }
                 }
-            }
-        }
-
-        private func applyOCRSearch(
-            _ query: String,
-            targetPageIndex: Int?,
-            in view: PDFView
-        ) {
-            var highlightedLines: [Int: Set<Int>] = [:]
-            var firstPageIndex: Int?
-
-            for page in ocrPagesByPageIndex.values
-                .filter({ targetPageIndex == nil || $0.pageIndex == targetPageIndex })
-                .sorted(by: { $0.pageIndex < $1.pageIndex }) {
-                for (lineIndex, line) in page.lines.enumerated() {
-                    guard line.text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil else { continue }
-                    highlightedLines[page.pageIndex, default: []].insert(lineIndex)
-                    if firstPageIndex == nil {
-                        firstPageIndex = page.pageIndex
-                    }
-                }
-            }
-
-            view.clearSelection()
-            setOCRHighlightedLines(highlightedLines, in: view)
-
-            if let firstPageIndex,
-               let page = view.document?.page(at: firstPageIndex) {
-                view.go(to: page)
             }
         }
 

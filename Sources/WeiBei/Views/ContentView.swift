@@ -607,10 +607,12 @@ private struct UnifiedTopBarView: View {
         }
         .overlay(alignment: .topTrailing) {
             if paneState.showDocumentSearch && shouldShowSearchAction {
-                HStack(spacing: topBarSpacing) {
-                    searchControls
+                VStack(spacing: 0) {
+                    HStack(spacing: topBarSpacing) { searchControls }
+                        .padding(4)
+                    if showsPDFSearchResults { pdfSearchResultsList }
                 }
-                .padding(4)
+
                 .weibeiFloatingPanel(cornerRadius: 8, shadowOpacity: 0.08)
                 .fixedSize()
                 .padding(.trailing, 12)
@@ -683,12 +685,27 @@ private struct UnifiedTopBarView: View {
             prompt: searchPrompt,
             focusRequest: paneState.searchFocusRequest,
             height: controlHeight,
-            onSubmit: { if store.searchesNotes { store.noteSearchRequest &+= 1 } },
+            onSubmit: {
+                if store.searchesNotes { store.noteSearchRequest &+= 1 }
+                else if showsPDFSearchResults { movePDFSearchResult(1) }
+            },
             onEscape: {
                 store.hideDocumentSearch()
                 searchFocused.wrappedValue = false
             }
         )
+        if showsPDFSearchResults {
+            Text(pdfSearchResultStatus)
+                .weiBeiText(11)
+                .monospacedDigit()
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .fixedSize()
+                .accessibilityLabel(Text(store.ui("搜索结果：", "Search results: ") + pdfSearchResultStatus))
+            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { movePDFSearchResult(-1) }
+                .disabled(!pdfSearchResultsReady || paneState.pdfSearchResults.isEmpty)
+            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { movePDFSearchResult(1) }
+                .disabled(!pdfSearchResultsReady || paneState.pdfSearchResults.isEmpty)
+        }
         if store.searchesNotes && !store.noteSearch.isEmpty {
             if store.noteSearchFound == false {
                 Text(store.ui("无匹配", "No matches")).weiBeiText(11)
@@ -699,6 +716,63 @@ private struct UnifiedTopBarView: View {
         topIconButton("xmark", help: store.ui("关闭查找", "Close search")) {
             store.hideDocumentSearch()
             searchFocused.wrappedValue = false
+        }
+    }
+
+    private var showsPDFSearchResults: Bool {
+        !store.searchesNotes && store.selectedMaterialItem?.kind == .pdf && !ReaderSearch.cleaned(store.readerSearch).isEmpty
+    }
+
+    private var pdfSearchResultsReady: Bool {
+        paneState.pdfSearchResultQuery == ReaderSearch.cleaned(store.readerSearch)
+            && paneState.pdfSearchResultMaterialID == store.selectedMaterialItem?.id
+    }
+
+    private var pdfSearchResultStatus: String {
+        guard pdfSearchResultsReady else { return store.ui("查找中", "Finding…") }
+        let count = paneState.pdfSearchResults.count
+        return count == 0 ? store.ui("无匹配", "No matches") : "\(paneState.pdfSearchResultIndex + 1) / \(count)"
+    }
+
+    private func movePDFSearchResult(_ step: Int) {
+        guard pdfSearchResultsReady else { return }
+        paneState.selectPDFSearchResult(ReaderSearch.matchIndex(current: paneState.pdfSearchResultIndex,
+            step: step, count: paneState.pdfSearchResults.count))
+    }
+
+    @ViewBuilder
+    private var pdfSearchResultsList: some View {
+        if pdfSearchResultsReady && !paneState.pdfSearchResults.isEmpty {
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(paneState.pdfSearchResults) { result in
+                            Button { paneState.selectPDFSearchResult(result.id) } label: {
+                                HStack(alignment: .top, spacing: 10) {
+                                    Text(store.ui("第 \(result.pageIndex + 1) 页", "Page \(result.pageIndex + 1)"))
+                                        .weiBeiText(10)
+                                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                        .frame(width: 48, alignment: .leading)
+                                    Text(result.preview)
+                                        .weiBeiText(11)
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.leading)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(.horizontal, 10)
+                                .frame(height: 44)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: result.id == paneState.pdfSearchResultIndex, fontSize: 11, height: 44))
+                            .id(result.id)
+                        }
+                    }
+                    .padding(4)
+                }
+                .frame(width: 360, height: CGFloat(min(paneState.pdfSearchResults.count, 4)) * 46 + 8)
+                .onChange(of: paneState.pdfSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
+            }
         }
     }
 
