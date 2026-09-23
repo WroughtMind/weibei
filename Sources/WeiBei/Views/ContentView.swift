@@ -766,14 +766,14 @@ private struct UnifiedTopBarView: View {
                             if index == 0 || result.location != results[index - 1].location {
                                 HStack(spacing: 8) {
                                     Text(compactLocation(result))
-                                        .weiBeiText(10, weight: .medium)
+                                        .weiBeiText(11, weight: .semibold)
                                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                                     Rectangle()
-                                        .fill(WeiBeiTheme.hairline.opacity(0.4))
+                                        .fill(WeiBeiTheme.secondaryInk.opacity(0.28))
                                         .frame(height: 1)
                                 }
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .frame(height: 20)
+                                    .frame(height: 22)
                                     .padding(.horizontal, 8)
                             }
                             Button { paneState.selectReaderSearchResult(result.id) } label: {
@@ -793,7 +793,7 @@ private struct UnifiedTopBarView: View {
                     }
                     .padding(3)
                 }
-                .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 20 + 6), 380))
+                .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 22 + 6), 380))
                 .onChange(of: paneState.readerSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
             }
         }
