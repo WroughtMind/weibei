@@ -367,6 +367,10 @@ struct ReaderView: View {
                 .padding(6)
             }
         }
+        // SwiftUI chrome (page controls, title, rail) follows opacity. The
+        // hosted PDF / web / text views are hidden separately: glass paper is
+        // clear, and those views keep drawing through a transparent list.
+        .opacity(store.materialPickerPresented ? 0 : 1)
         .allowsHitTesting(!store.materialPickerPresented)
         .accessibilityHidden(store.materialPickerPresented)
         .overlay {
@@ -1101,6 +1105,7 @@ struct ReaderView: View {
                         },
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
+                        hidesHostedDocument: store.materialPickerPresented,
                         pageIndex: $pdfPageIndex,
                         pageCount: $pdfPageCount,
                         railTargetPageIndex: $pdfRailTargetPageIndex,
@@ -1151,6 +1156,7 @@ struct ReaderView: View {
                         onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: adaptsWebDocumentColors,
+                        hidesHostedDocument: store.materialPickerPresented,
                         onResourceIssuesChange: { htmlResourceIssues = $0 },
                         contentRailTarget: htmlContentRailTarget,
                         selectionAskMarks: selectionAskMarksJSON(for: item.id),
@@ -1384,6 +1390,8 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var onSearchResults: (String, [ReaderSearchResult], Int) -> Void
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
+    /// Glass paper is clear, and PDFView ignores ancestor opacity.
+    var hidesHostedDocument = false
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
     @Binding var railTargetPageIndex: Int?
@@ -1473,6 +1481,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
 #endif
 
     private func updateReaderView(_ view: ReaderPDFView, context: Context) {
+        view.isHidden = hidesHostedDocument
         context.coordinator.pageIndex = $pageIndex
         context.coordinator.pageCount = $pageCount
         context.coordinator.appearanceMode = appearanceMode
@@ -2777,6 +2786,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
     var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
+    /// Glass paper is clear, and WKWebView ignores ancestor opacity.
+    var hidesHostedDocument = false
     var contentRailTarget: WebReaderContentRailTarget?
     /// JSON array of `{id,text}` for selection-ask underline marks.
     var selectionAskMarks: String = "[]"
@@ -2850,6 +2861,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onSearchResults: @escaping (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in },
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = false,
+        hidesHostedDocument: Bool = false,
         onResourceIssuesChange: @escaping ([String]) -> Void = { _ in },
         contentRailTarget: WebReaderContentRailTarget? = nil,
         selectionAskMarks: String = "[]",
@@ -2872,6 +2884,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.onSearchResults = onSearchResults
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
+        self.hidesHostedDocument = hidesHostedDocument
         self.contentRailTarget = contentRailTarget
         self.selectionAskMarks = selectionAskMarks
         self.selectionRemarkMarks = selectionRemarkMarks
@@ -2975,6 +2988,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
 #endif
 
     private func updateReaderView(_ view: WKWebView, context: Context) {
+        view.isHidden = hidesHostedDocument
         context.coordinator.searchQuery = searchQuery
         context.coordinator.searchNavigationRequest = searchNavigationRequest
         context.coordinator.searchRequestedIndex = searchRequestedIndex
@@ -3866,6 +3880,7 @@ private struct MarkdownDocumentReaderView: View {
             onReaderSearchResults: onSearchResults,
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
+            hidesHostedDocument: store.materialPickerPresented,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onWikiLink: onWikiLink,
@@ -3997,6 +4012,7 @@ private struct PlainTextReaderView: View {
             searchReturnRequest: searchReturnRequest,
             onSearchResults: onSearchResults,
             appearanceMode: appearanceMode,
+            hidesHostedDocument: store.materialPickerPresented,
             underlineSnippets: store.selectionAskThreads.map(\.selectionText),
             onSelectionChange: onSelectionChange
         )
@@ -4016,6 +4032,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     var searchReturnRequest = 0
     var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode
+    var hidesHostedDocument = false
     var underlineSnippets: [String]
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
 
@@ -4047,6 +4064,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        scrollView.isHidden = hidesHostedDocument
         guard let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.onSearchResults = onSearchResults
         context.coordinator.navigationRequest = searchNavigationRequest
