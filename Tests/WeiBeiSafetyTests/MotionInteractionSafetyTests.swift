@@ -121,6 +121,24 @@ final class MotionInteractionSafetyTests: XCTestCase {
         XCTAssertEqual(label("第二节"), "第二节")
     }
 
+    @MainActor
+    func testReaderSearchKeyboardFocusAdvancesBeforeReaderReportsNavigation() {
+        let paneState = WorkspacePaneState()
+        paneState.readerSearchResultMaterialID = "material"
+        paneState.readerSearchResults = (0..<3).map {
+            ReaderSearchResult(id: $0, pageIndex: $0, preview: "匹配", location: "第 \($0 + 1) 页")
+        }
+
+        paneState.selectReaderSearchResult(0)
+        paneState.selectReaderSearchResult(ReaderSearch.matchIndex(
+            current: paneState.readerSearchResultIndex, step: 1, count: 3))
+        paneState.selectReaderSearchResult(ReaderSearch.matchIndex(
+            current: paneState.readerSearchResultIndex, step: 1, count: 3))
+
+        XCTAssertEqual(paneState.readerSearchResultIndex, 2)
+        XCTAssertEqual(paneState.readerSearchNavigationRequest, 3)
+    }
+
     /// Recovery retracts the banner: when a note's file error clears and the
     /// banner still shows that exact message (with no other item failing on the
     /// same message), the banner is dismissed instead of lingering as a false alarm.

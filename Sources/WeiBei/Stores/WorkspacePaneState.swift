@@ -80,6 +80,7 @@ final class WorkspacePaneState: ObservableObject {
             readerSearchOriginMaterialID = readerSearchResultMaterialID
         }
         readerSearchCanReturn = true
+        readerSearchResultIndex = index
         readerSearchRequestedIndex = index
         readerSearchNavigationRequest &+= 1
     }

@@ -815,7 +815,7 @@ private struct UnifiedTopBarView: View {
                                 .frame(height: 38)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(WeiBeiTextActionButtonStyle(active: result.id == paneState.readerSearchResultIndex, fontSize: 11, height: 38, horizontalPadding: 0))
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: result.id == paneState.readerSearchResultIndex, fontSize: 11, height: 38, horizontalPadding: 0, neutralHoverWhenInactive: true))
                             .id(result.id)
                         }
                     }

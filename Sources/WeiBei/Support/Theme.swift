@@ -1703,6 +1703,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     var fontSize: CGFloat = 11
     var height: CGFloat = 24
     var horizontalPadding: CGFloat = 8
+    var neutralHoverWhenInactive = false
     @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -1727,9 +1728,9 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     }
 
     private func background(isPressed: Bool) -> Color {
-        if hovering || isPressed { return WeiBeiTheme.cinnabarSoft }
-        if active { return WeiBeiTheme.cinnabarSoft }
-        return isPressed ? WeiBeiTheme.paperInset.opacity(0.40) : WeiBeiTheme.paperInset.opacity(0.20)
+        if active || isPressed { return WeiBeiTheme.cinnabarSoft }
+        if hovering { return neutralHoverWhenInactive ? WeiBeiTheme.paperInset.opacity(0.40) : WeiBeiTheme.cinnabarSoft }
+        return WeiBeiTheme.paperInset.opacity(0.20)
     }
 }
 
