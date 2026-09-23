@@ -1092,15 +1092,10 @@ struct ReaderView: View {
                         browseMode: pdfBrowseMode,
                         searchQuery: store.effectiveReaderSearch,
                         searchTargetPageIndex: store.readerSourceHighlightPageIndex,
-                        searchNavigationRequest: paneState.pdfSearchNavigationRequest,
-                        searchRequestedIndex: paneState.pdfSearchRequestedIndex,
+                        searchNavigationRequest: paneState.readerSearchNavigationRequest,
+                        searchRequestedIndex: paneState.readerSearchRequestedIndex,
                         onSearchResults: { query, results, index in
-                            guard store.selectedMaterialItem?.id == item.id,
-                                  ReaderSearch.cleaned(store.readerSearch) == query else { return }
-                            paneState.pdfSearchResults = results
-                            paneState.pdfSearchResultIndex = index
-                            paneState.pdfSearchResultQuery = query
-                            paneState.pdfSearchResultMaterialID = item.id
+                            reportSearchResults(query, results, index, for: item.id)
                         },
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
@@ -1147,6 +1142,9 @@ struct ReaderView: View {
                         url: url,
                         contentRevision: item.contentRevision,
                         searchQuery: store.effectiveReaderSearch,
+                        searchNavigationRequest: paneState.readerSearchNavigationRequest,
+                        searchRequestedIndex: paneState.readerSearchRequestedIndex,
+                        onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: adaptsWebDocumentColors,
                         onResourceIssuesChange: { htmlResourceIssues = $0 },
@@ -1194,7 +1192,10 @@ struct ReaderView: View {
                             .markdownMaximumByteCount
                     ),
                    let text = String(data: data, encoding: .utf8) {
-                    PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode) { text, anchor in
+                    PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode,
+                        searchNavigationRequest: paneState.readerSearchNavigationRequest,
+                        searchRequestedIndex: paneState.readerSearchRequestedIndex,
+                        onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) }) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
                 } else {
@@ -1206,6 +1207,15 @@ struct ReaderView: View {
         } else {
             EmptyReaderView()
         }
+    }
+
+    private func reportSearchResults(_ query: String, _ results: [ReaderSearchResult], _ index: Int, for materialID: String) {
+        guard store.selectedMaterialItem?.id == materialID,
+              ReaderSearch.cleaned(store.readerSearch) == query else { return }
+        paneState.readerSearchResults = results
+        paneState.readerSearchResultIndex = index
+        paneState.readerSearchResultQuery = query
+        paneState.readerSearchResultMaterialID = materialID
     }
 
     private func loadMarkdownSnapshot() {
@@ -1235,6 +1245,12 @@ struct ReaderView: View {
             markdown: markdown,
             markdownBaseURL: markdownBaseURL,
             searchQuery: store.effectiveReaderSearch,
+            searchNavigationRequest: paneState.readerSearchNavigationRequest,
+            searchRequestedIndex: paneState.readerSearchRequestedIndex,
+            onSearchResults: { query, results, index in
+                guard let id = store.selectedMaterialItem?.id else { return }
+                reportSearchResults(query, results, index, for: id)
+            },
             appearanceMode: store.appearanceMode,
             interfaceLanguage: store.interfaceLanguage,
             selectionAskMarks: selectionAskMarksJSON(for: store.selectedMaterialItem?.id ?? ""),
@@ -1543,6 +1559,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             let ocrLineIndex: Int?
             let bounds: CGRect
             let preview: String
+            let matchRange: NSRange
         }
         private var searchHits: [SearchHit] = []
         private var searchResultIndex = 0
@@ -1979,19 +1996,23 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                         let pageIndex = document.index(for: page)
                         guard targetPageIndex == nil || pageIndex == targetPageIndex else { continue }
                         let range = selection.range(at: 0, on: page)
+                        let snippet = ReaderSearch.snippet(in: page.string ?? "", around: range)
                         searchHits.append(SearchHit(selection: selection, pageIndex: pageIndex, ocrLineIndex: nil,
-                            bounds: selection.bounds(for: page), preview: ReaderSearch.preview(in: page.string ?? "", around: range)))
+                            bounds: selection.bounds(for: page), preview: snippet.text, matchRange: snippet.matchRange))
                     }
                     for ocrPage in ocrPagesByPageIndex.values {
                         guard targetPageIndex == nil || ocrPage.pageIndex == targetPageIndex,
                               let page = document.page(at: ocrPage.pageIndex) else { continue }
                         let bounds = page.bounds(for: .mediaBox)
                         for (lineIndex, line) in ocrPage.lines.enumerated() {
-                            guard ReaderSearch.firstMatch(in: line.text, query: query) != nil else { continue }
-                            let rect = line.boundingBox
-                            searchHits.append(SearchHit(selection: nil, pageIndex: ocrPage.pageIndex, ocrLineIndex: lineIndex,
-                                bounds: CGRect(x: bounds.minX + rect.minX * bounds.width, y: bounds.minY + rect.minY * bounds.height,
-                                    width: rect.width * bounds.width, height: rect.height * bounds.height), preview: line.text))
+                            for match in ReaderSearch.matches(in: line.text, query: query) {
+                                let snippet = ReaderSearch.snippet(in: line.text, around: match)
+                                let rect = line.boundingBox
+                                searchHits.append(SearchHit(selection: nil, pageIndex: ocrPage.pageIndex, ocrLineIndex: lineIndex,
+                                    bounds: CGRect(x: bounds.minX + rect.minX * bounds.width, y: bounds.minY + rect.minY * bounds.height,
+                                        width: rect.width * bounds.width, height: rect.height * bounds.height),
+                                    preview: snippet.text, matchRange: snippet.matchRange))
+                            }
                         }
                     }
                     searchHits.sort {
@@ -2020,8 +2041,10 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 if let selection = hit.selection { view.go(to: selection) }
                 else if let page = view.document?.page(at: hit.pageIndex) { view.go(to: hit.bounds, on: page) }
             }
-            let results = searchHits.enumerated().map {
-                ReaderSearchResult(id: $0.offset, pageIndex: $0.element.pageIndex, preview: $0.element.preview)
+            let results = searchHits.enumerated().map { entry -> ReaderSearchResult in
+                let page = entry.element.pageIndex
+                return ReaderSearchResult(id: entry.offset, pageIndex: page, preview: entry.element.preview,
+                    location: "第 \(page + 1) 页", matchRange: entry.element.matchRange)
             }
             let index = searchResultIndex
             searchPublication &+= 1
@@ -2586,11 +2609,111 @@ final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler {
     )
 }
 
+enum ReaderWebSearch {
+    static func json(_ value: String) -> String {
+        let data = (try? JSONEncoder().encode(value)) ?? Data("\"\"".utf8)
+        return String(data: data, encoding: .utf8) ?? "\"\""
+    }
+
+    static func results(from value: Any?) -> [ReaderSearchResult] {
+        guard let rows = value as? [[String: Any]] else { return [] }
+        return rows.enumerated().compactMap { index, row in
+            guard let preview = row["preview"] as? String,
+                  let location = row["location"] as? String,
+                  let matchStart = row["matchStart"] as? Int,
+                  let matchLength = row["matchLength"] as? Int else { return nil }
+            return ReaderSearchResult(id: index, pageIndex: row["pageIndex"] as? Int ?? 0,
+                preview: preview, location: location,
+                matchRange: NSRange(location: matchStart, length: matchLength))
+        }
+    }
+
+    static func script(query: String, root: String) -> String {
+        #"""
+        (() => {
+          const query = \#(json(query));
+          const officeResults = window.WeiBeiOffice?.searchResults?.(query);
+          if (officeResults) return officeResults;
+          const root = document.querySelector(\#(json(root))) || document.body;
+          CSS.highlights.delete('weibei-search');
+          CSS.highlights.delete('weibei-search-current');
+          document.getElementById('weibei-search-style')?.remove();
+          const style = document.createElement('style');
+          style.id = 'weibei-search-style';
+          style.textContent = '::highlight(weibei-search){background:rgba(166,54,43,.24)}::highlight(weibei-search-current){background:rgba(166,54,43,.55)}';
+          document.head.append(style);
+          const hits = [], rows = [];
+          if (!query) { window.weiBeiSearchHits = hits; return rows; }
+          const selector = 'p,li,h1,h2,h3,h4,h5,h6,td,th,blockquote,pre,div,section,article';
+          const nodes = Array.from(root.querySelectorAll(selector));
+          if (!nodes.length) nodes.push(root);
+          let blockIndex = 0;
+          let heading = '';
+          for (const block of nodes) {
+            if (block.closest('script,style,nav,button,[hidden],[aria-hidden="true"],[data-weibei-annotation-ui]')) continue;
+            if (block.querySelector(selector) || !block.getClientRects().length) continue;
+            const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+            const parts = []; let text = '', node;
+            while (node = walker.nextNode()) {
+              if (!node.textContent || node.parentElement?.closest('script,style,button,[hidden],[aria-hidden="true"]')) continue;
+              parts.push({node, start: text.length, end: text.length + node.textContent.length});
+              text += node.textContent;
+            }
+            if (!text.trim()) continue;
+            blockIndex++;
+            if (/^H[1-6]$/.test(block.tagName) || /heading|标题/i.test(block.className)) {
+              heading = text.trim().split(/[：:]/)[0].slice(0, 8);
+            }
+            const location = heading || '段 ' + blockIndex;
+            const lower = text.toLocaleLowerCase(), needle = query.toLocaleLowerCase();
+            let from = 0, at;
+            while ((at = lower.indexOf(needle, from)) !== -1) {
+              const first = parts.find(part => part.end > at);
+              const last = parts.find(part => part.end >= at + needle.length);
+              if (!first || !last) break;
+              const range = document.createRange();
+              range.setStart(first.node, at - first.start);
+              range.setEnd(last.node, at + needle.length - last.start);
+              hits.push(range);
+              const start = Math.max(0, at - 8), end = Math.min(text.length, at + needle.length + 32);
+              const before = text.slice(start, at).replace(/\s+/g, ' ').trimStart();
+              const match = text.slice(at, at + needle.length);
+              const after = text.slice(at + needle.length, end).replace(/\s+/g, ' ');
+              const prefix = (start ? '…' : '') + before;
+              rows.push({preview: prefix + match + after + (end < text.length ? '…' : ''),
+                matchStart: prefix.length, matchLength: match.length,
+                location,
+                pageIndex: 0});
+              from = at + needle.length;
+            }
+          }
+          window.weiBeiSearchHits = hits;
+          if (hits.length) CSS.highlights.set('weibei-search', new Highlight(...hits));
+          return rows;
+        })();
+        """#
+    }
+
+    static func activate(_ index: Int) -> String {
+        """
+        (() => { if (window.WeiBeiOffice?.isPresentation) { window.WeiBeiOffice.activateSearchResult(\(index)); return; }
+          const range = window.weiBeiSearchHits?.[\(index)];
+          CSS.highlights.delete('weibei-search-current');
+          if (range) { CSS.highlights.set('weibei-search-current', new Highlight(range));
+            range.startContainer.parentElement?.scrollIntoView({block:'center',behavior:'instant'}); }
+        })();
+        """
+    }
+}
+
 struct WebReaderRepresentable: ReaderRepresentable {
     var html: String?
     var url: URL?
     var contentRevision: UInt64 = 0
     var searchQuery: String
+    var searchNavigationRequest = 0
+    var searchRequestedIndex = 0
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
     var contentRailTarget: WebReaderContentRailTarget?
@@ -2619,6 +2742,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
     init(
         html: String,
         searchQuery: String = "",
+        searchNavigationRequest: Int = 0,
+        searchRequestedIndex: Int = 0,
+        onSearchResults: @escaping (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in },
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = true,
         contentRailTarget: WebReaderContentRailTarget? = nil,
@@ -2633,6 +2759,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.html = html
         self.url = nil
         self.searchQuery = searchQuery
+        self.searchNavigationRequest = searchNavigationRequest
+        self.searchRequestedIndex = searchRequestedIndex
+        self.onSearchResults = onSearchResults
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
         self.contentRailTarget = contentRailTarget
@@ -2649,6 +2778,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
         url: URL,
         contentRevision: UInt64 = 0,
         searchQuery: String = "",
+        searchNavigationRequest: Int = 0,
+        searchRequestedIndex: Int = 0,
+        onSearchResults: @escaping (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in },
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = false,
         onResourceIssuesChange: @escaping ([String]) -> Void = { _ in },
@@ -2666,6 +2798,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.url = url
         self.contentRevision = contentRevision
         self.searchQuery = searchQuery
+        self.searchNavigationRequest = searchNavigationRequest
+        self.searchRequestedIndex = searchRequestedIndex
+        self.onSearchResults = onSearchResults
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
         self.contentRailTarget = contentRailTarget
@@ -2772,6 +2907,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     private func updateReaderView(_ view: WKWebView, context: Context) {
         context.coordinator.searchQuery = searchQuery
+        context.coordinator.searchNavigationRequest = searchNavigationRequest
+        context.coordinator.searchRequestedIndex = searchRequestedIndex
+        context.coordinator.onSearchResults = onSearchResults
         context.coordinator.onResourceIssuesChange = onResourceIssuesChange
 #if targetEnvironment(macCatalyst)
         view.isOpaque = !adaptsDocumentColors
@@ -3280,6 +3418,12 @@ struct WebReaderRepresentable: ReaderRepresentable {
         var contentRailTarget: WebReaderContentRailTarget?
         var loadedSignature: String?
         var searchQuery = ""
+        var searchNavigationRequest = 0
+        var searchRequestedIndex = 0
+        var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
+        private var lastSearchNavigationRequest = 0
+        private var searchResults: [ReaderSearchResult] = []
+        private var searchResultIndex = 0
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
         var selectionAskMarks = "[]"
@@ -3555,26 +3699,23 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
         func applySearch(in view: WKWebView) {
             let query = ReaderSearch.cleaned(searchQuery)
-            guard query != lastAppliedSearchQuery else { return }
+            let navigated = searchNavigationRequest != lastSearchNavigationRequest
+            guard query != lastAppliedSearchQuery || navigated else { return }
+            lastSearchNavigationRequest = searchNavigationRequest
+            if query == lastAppliedSearchQuery {
+                searchResultIndex = min(searchRequestedIndex, max(0, searchResults.count - 1))
+                view.evaluateJavaScript(ReaderWebSearch.activate(searchResultIndex))
+                onSearchResults(query, searchResults, searchResultIndex)
+                return
+            }
             lastAppliedSearchQuery = query
-            let script = """
-            (() => {
-              const query = \(Self.json(query));
-              const selection = window.getSelection();
-              selection?.removeAllRanges();
-              window.webkit?.messageHandlers?.selection?.postMessage({
-                text: "",
-                x: null,
-                y: null
-              });
-              if (!query) { window.WeiBeiOffice?.find(""); return false; }
-              window.weiBeiSuppressSelectionReport = true;
-              const found = window.WeiBeiOffice ? window.WeiBeiOffice.find(query) : window.find(query, false, false, true, false, true, false);
-              window.setTimeout(() => { window.weiBeiSuppressSelectionReport = false; }, 80);
-              return found;
-            })();
-            """
-            view.evaluateJavaScript(script)
+            searchResultIndex = 0
+            view.evaluateJavaScript(ReaderWebSearch.script(query: query, root: isOfficeDocument ? "#office-document" : "body")) { [weak self, weak view] value, _ in
+                guard let self, let view, self.searchQuery == query else { return }
+                self.searchResults = ReaderWebSearch.results(from: value)
+                self.onSearchResults(query, self.searchResults, self.searchResultIndex)
+                if !self.searchResults.isEmpty { view.evaluateJavaScript(ReaderWebSearch.activate(0)) }
+            }
         }
 
         func applyContentRailTarget(in view: WKWebView) {
@@ -3596,6 +3737,9 @@ private struct MarkdownDocumentReaderView: View {
     var markdown: String
     var markdownBaseURL: URL?
     var searchQuery: String
+    var searchNavigationRequest = 0
+    var searchRequestedIndex = 0
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var selectionAskMarks: String = "[]"
@@ -3614,6 +3758,9 @@ private struct MarkdownDocumentReaderView: View {
             isEditable: false,
             markdownBaseURL: markdownBaseURL,
             searchQuery: searchQuery,
+            readerSearchNavigationRequest: searchNavigationRequest,
+            readerSearchRequestedIndex: searchRequestedIndex,
+            onReaderSearchResults: onSearchResults,
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
             onSelectionChange: onSelectionChange,
@@ -3730,12 +3877,18 @@ private struct PlainTextReaderView: View {
     var text: String
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
+    var searchNavigationRequest = 0
+    var searchRequestedIndex = 0
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
 
     var body: some View {
         SelectablePlainTextReader(
             text: text,
             searchQuery: searchQuery,
+            searchNavigationRequest: searchNavigationRequest,
+            searchRequestedIndex: searchRequestedIndex,
+            onSearchResults: onSearchResults,
             appearanceMode: appearanceMode,
             underlineSnippets: store.selectionAskThreads.map(\.selectionText),
             onSelectionChange: onSelectionChange
@@ -3750,6 +3903,9 @@ private struct PlainTextReaderView: View {
 private struct SelectablePlainTextReader: NSViewRepresentable {
     var text: String
     var searchQuery: String
+    var searchNavigationRequest = 0
+    var searchRequestedIndex = 0
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode
     var underlineSnippets: [String]
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
@@ -3783,6 +3939,9 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
+        context.coordinator.onSearchResults = onSearchResults
+        context.coordinator.navigationRequest = searchNavigationRequest
+        context.coordinator.requestedIndex = searchRequestedIndex
         applyTheme(to: textView)
         applyAttributedText(to: textView, coordinator: context.coordinator)
         context.coordinator.applySearch(searchQuery, in: textView)
@@ -3820,6 +3979,9 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
                 search = NSRange(location: next, length: max(0, attributed.length - next))
             }
         }
+        for range in ReaderSearch.matches(in: text, query: searchQuery) {
+            attributed.addAttribute(.backgroundColor, value: weiBeiColor(red: 0.67, green: 0.24, blue: 0.16, alpha: 0.24), range: range)
+        }
         guard !textView.attributedString().isEqual(to: attributed) else { return }
         coordinator.withoutSelectionReports {
             let selectedRange = textView.selectedRange()
@@ -3841,7 +4003,14 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+        var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
+        var navigationRequest = 0
+        var requestedIndex = 0
+        private var lastNavigationRequest = 0
+        private var matches: [NSRange] = []
+        private var resultIndex = 0
         private var lastSearchQuery = ""
+        private var lastSearchText = ""
         private var suppressSelectionReport = false
 
         init(onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void) {
@@ -3875,14 +4044,33 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 
         func applySearch(_ query: String, in textView: NSTextView) {
             let query = ReaderSearch.cleaned(query)
-            guard query != lastSearchQuery else { return }
-            lastSearchQuery = query
+            let changed = query != lastSearchQuery || textView.string != lastSearchText
+            let navigated = navigationRequest != lastNavigationRequest
+            guard changed || navigated else { return }
+            lastNavigationRequest = navigationRequest
+            if changed {
+                lastSearchQuery = query
+                lastSearchText = textView.string
+                matches = ReaderSearch.matches(in: textView.string, query: query)
+                resultIndex = 0
+            }
+            else { resultIndex = min(requestedIndex, max(0, matches.count - 1)) }
+            let source = textView.string as NSString
+            let results = matches.enumerated().map { entry -> ReaderSearchResult in
+                let range = entry.element
+                let line = source.substring(to: range.location).reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+                let snippet = ReaderSearch.snippet(in: textView.string, around: range)
+                return ReaderSearchResult(id: entry.offset, pageIndex: 0, preview: snippet.text,
+                    location: "第 \(line) 行", matchRange: snippet.matchRange)
+            }
+            onSearchResults(query, results, resultIndex)
             guard !query.isEmpty else {
                 textView.setSelectedRange(NSRange(location: 0, length: 0))
                 return
             }
             onSelectionChange("", nil)
-            guard let range = ReaderSearch.firstMatch(in: textView.string, query: query) else { return }
+            guard matches.indices.contains(resultIndex) else { return }
+            let range = matches[resultIndex]
             suppressSelectionReport = true
             textView.setSelectedRange(range)
             suppressSelectionReport = false

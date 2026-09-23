@@ -27,6 +27,9 @@ let mainPart = '';
 let loadError = '';
 let searchQuery = '';
 let searchResult = -1;
+let pptSearchHits: ReturnType<PptxViewer['searchText']> = [];
+let pptNoteSearchHits: { slideIndex: number; location: string; text: string; start: number; end: number }[] = [];
+let pptSearchOrder: { note: boolean; index: number }[] = [];
 const clean = (text?: string | null) => (text ?? '').replace(/\s+/g, ' ').trim();
 
 function fail(error: unknown) {
@@ -195,6 +198,79 @@ async function find(query: string) {
   return (window as any).find(query, false, false, false, false, true, false);
 }
 
+function searchResults(query: string) {
+  if (!viewer) return null;
+  viewer.clearSearchHighlights();
+  pptSearchHits = query ? viewer.searchText(query) : [];
+  pptNoteSearchHits = [];
+  if (query) viewer.presentationData?.slides.forEach((slide, slideIndex) => {
+    for (const paragraph of notes.get(noteParts.get(slide.slidePath) ?? '') ?? []) {
+      const text = paragraph.textContent ?? '';
+      let from = 0, start;
+      while ((start = text.toLocaleLowerCase().indexOf(query.toLocaleLowerCase(), from)) !== -1) {
+        pptNoteSearchHits.push({ slideIndex, location: paragraph.getAttribute('data-weibei-location')!,
+          text, start, end: start + query.length });
+        from = start + query.length;
+      }
+    }
+  });
+  const slideRows = pptSearchHits.map(hit => {
+    const start = Math.max(0, hit.matchStart - 8);
+    const end = Math.min(hit.text.length, hit.matchEnd + 32);
+    const prefix = (start ? '…' : '') + hit.text.slice(start, hit.matchStart).replace(/\s+/g, ' ');
+    return {
+      preview: prefix + hit.text.slice(hit.matchStart, hit.matchEnd) + hit.text.slice(hit.matchEnd, end).replace(/\s+/g, ' ') + (end < hit.text.length ? '…' : ''),
+      matchStart: prefix.length, matchLength: hit.matchEnd - hit.matchStart,
+      location: `第 ${hit.slideIndex + 1} 页`, pageIndex: hit.slideIndex
+    };
+  });
+  const noteRows = pptNoteSearchHits.map(hit => {
+    const start = Math.max(0, hit.start - 8), end = Math.min(hit.text.length, hit.end + 32);
+    const prefix = (start ? '…' : '') + hit.text.slice(start, hit.start);
+    return { preview: prefix + hit.text.slice(hit.start, end) + (end < hit.text.length ? '…' : ''),
+      matchStart: prefix.length, matchLength: hit.end - hit.start,
+      location: `第 ${hit.slideIndex + 1} 页备注`, pageIndex: hit.slideIndex };
+  });
+  const ordered = [
+    ...slideRows.map((row, index) => ({ row, note: false, index })),
+    ...noteRows.map((row, index) => ({ row, note: true, index }))
+  ].sort((a, b) => a.row.pageIndex - b.row.pageIndex || Number(a.note) - Number(b.note));
+  pptSearchOrder = ordered.map(({ note, index }) => ({ note, index }));
+  return ordered.map(({ row }) => row);
+}
+async function activateSearchResult(index: number) {
+  const target = pptSearchOrder[index];
+  const hit = target && !target.note ? pptSearchHits[target.index] : undefined;
+  if (!viewer) return;
+  if (!hit) {
+    const note = target?.note ? pptNoteSearchHits[target.index] : undefined;
+    if (!note) return;
+    await goTo(note.location);
+    const block = sourceElement(note.location);
+    if (!block) return;
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    const parts: { node: Node; start: number; end: number }[] = [];
+    let node, offset = 0;
+    while (node = walker.nextNode()) {
+      const length = node.textContent?.length ?? 0;
+      parts.push({ node, start: offset, end: offset + length }); offset += length;
+    }
+    const first = parts.find(part => part.end > note.start);
+    const last = parts.find(part => part.end >= note.end);
+    if (first && last) {
+      const range = document.createRange();
+      range.setStart(first.node, note.start - first.start);
+      range.setEnd(last.node, note.end - last.start);
+      const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+    }
+    return;
+  }
+  viewer.clearSearchHighlights();
+  await viewer.goToSlide(hit.slideIndex);
+  const match = await viewer.highlightSearchResult(hit, { scrollIntoView: false });
+  match?.element.scrollIntoView({ block: 'center', behavior: 'instant' });
+}
+
 function positionNote(note: HTMLElement) {
   const rect = note.previousElementSibling!.getBoundingClientRect();
   if (rect.bottom <= 0 || rect.top >= innerHeight) {
@@ -335,5 +411,5 @@ window.addEventListener('scroll', () => {
   if (active) post('contentRailActive', { id: active.dataset.weibeiLocation, reason: 'scroll' });
 }, { passive: true });
 
-(window as any).WeiBeiOffice = { open, math, drawWMFText, renderGraphic, graphicRelations, has3DChart, render3DChart, goTo, find, sections, sourceOrder, applyMarks, attachNote, get error() { return loadError; } };
+(window as any).WeiBeiOffice = { open, math, drawWMFText, renderGraphic, graphicRelations, has3DChart, render3DChart, goTo, find, searchResults, activateSearchResult, sections, sourceOrder, applyMarks, attachNote, get isPresentation() { return Boolean(viewer); }, get error() { return loadError; } };
 (window as any).WeiBeiContentRail = { installed: true, scrollTo: (id: string) => { void goTo(id); }, scan: () => post('contentRailSections', sections()) };

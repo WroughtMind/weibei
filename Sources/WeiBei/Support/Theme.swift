@@ -1702,13 +1702,14 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     var active = false
     var fontSize: CGFloat = 11
     var height: CGFloat = 24
+    var horizontalPadding: CGFloat = 8
     @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .weiBeiText(fontSize, weight: .medium)
             .foregroundStyle(foreground)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, horizontalPadding)
             .frame(minWidth: height)
             .frame(height: height)
             .contentShape(Rectangle())

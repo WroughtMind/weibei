@@ -554,6 +554,7 @@ private struct ToolbarSearchField: View {
     let prompt: String
     let focusRequest: Int
     let height: CGFloat
+    var width: CGFloat = 220
     let onSubmit: () -> Void
     let onEscape: () -> Void
     @FocusState private var focused: Bool
@@ -572,7 +573,7 @@ private struct ToolbarSearchField: View {
 #else
             .weibeiInputSurface(active: focused, height: height)
 #endif
-            .frame(width: 220)
+            .frame(width: width)
             .task(id: focusRequest) { focused = true }
             .onSubmit(onSubmit)
             .weiBeiOnExitCommand(perform: onEscape)
@@ -608,9 +609,10 @@ private struct UnifiedTopBarView: View {
         .overlay(alignment: .topTrailing) {
             if paneState.showDocumentSearch && shouldShowSearchAction {
                 VStack(spacing: 0) {
-                    HStack(spacing: topBarSpacing) { searchControls }
-                        .padding(4)
-                    if showsPDFSearchResults { pdfSearchResultsList }
+                    HStack(spacing: 5) { searchControls }
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                    if showsReaderSearchResults { readerSearchResultsList }
                 }
 
                 .weibeiFloatingPanel(cornerRadius: 8, shadowOpacity: 0.08)
@@ -684,27 +686,28 @@ private struct UnifiedTopBarView: View {
             text: store.searchesNotes ? $store.noteSearch : $store.readerSearch,
             prompt: searchPrompt,
             focusRequest: paneState.searchFocusRequest,
-            height: controlHeight,
+            height: searchControlHeight,
+            width: searchFieldWidth,
             onSubmit: {
                 if store.searchesNotes { store.noteSearchRequest &+= 1 }
-                else if showsPDFSearchResults { movePDFSearchResult(1) }
+                else if showsReaderSearchResults { moveReaderSearchResult(1) }
             },
             onEscape: {
                 store.hideDocumentSearch()
                 searchFocused.wrappedValue = false
             }
         )
-        if showsPDFSearchResults {
-            Text(pdfSearchResultStatus)
+        if showsReaderSearchResults {
+            Text(readerSearchResultStatus)
                 .weiBeiText(11)
                 .monospacedDigit()
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .fixedSize()
-                .accessibilityLabel(Text(store.ui("搜索结果：", "Search results: ") + pdfSearchResultStatus))
-            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { movePDFSearchResult(-1) }
-                .disabled(!pdfSearchResultsReady || paneState.pdfSearchResults.isEmpty)
-            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { movePDFSearchResult(1) }
-                .disabled(!pdfSearchResultsReady || paneState.pdfSearchResults.isEmpty)
+                .accessibilityLabel(Text(store.ui("搜索结果：", "Search results: ") + readerSearchResultStatus))
+            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { moveReaderSearchResult(-1) }
+                .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
+            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { moveReaderSearchResult(1) }
+                .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
         }
         if store.searchesNotes && !store.noteSearch.isEmpty {
             if store.noteSearchFound == false {
@@ -719,61 +722,72 @@ private struct UnifiedTopBarView: View {
         }
     }
 
-    private var showsPDFSearchResults: Bool {
-        !store.searchesNotes && store.selectedMaterialItem?.kind == .pdf && !ReaderSearch.cleaned(store.readerSearch).isEmpty
+    private var showsReaderSearchResults: Bool {
+        !store.searchesNotes && store.selectedMaterialItem != nil && !ReaderSearch.cleaned(store.readerSearch).isEmpty
     }
 
-    private var pdfSearchResultsReady: Bool {
-        paneState.pdfSearchResultQuery == ReaderSearch.cleaned(store.readerSearch)
-            && paneState.pdfSearchResultMaterialID == store.selectedMaterialItem?.id
+    private var readerSearchResultsReady: Bool {
+        paneState.readerSearchResultQuery == ReaderSearch.cleaned(store.readerSearch)
+            && paneState.readerSearchResultMaterialID == store.selectedMaterialItem?.id
     }
 
-    private var pdfSearchResultStatus: String {
-        guard pdfSearchResultsReady else { return store.ui("查找中", "Finding…") }
-        let count = paneState.pdfSearchResults.count
-        return count == 0 ? store.ui("无匹配", "No matches") : "\(paneState.pdfSearchResultIndex + 1) / \(count)"
+    private var readerSearchResultStatus: String {
+        guard readerSearchResultsReady else { return store.ui("查找中", "Finding…") }
+        let count = paneState.readerSearchResults.count
+        return count == 0 ? store.ui("无匹配", "No matches") : "\(paneState.readerSearchResultIndex + 1) / \(count)"
     }
 
-    private func movePDFSearchResult(_ step: Int) {
-        guard pdfSearchResultsReady else { return }
-        paneState.selectPDFSearchResult(ReaderSearch.matchIndex(current: paneState.pdfSearchResultIndex,
-            step: step, count: paneState.pdfSearchResults.count))
+    private func moveReaderSearchResult(_ step: Int) {
+        guard readerSearchResultsReady else { return }
+        paneState.selectReaderSearchResult(ReaderSearch.matchIndex(current: paneState.readerSearchResultIndex,
+            step: step, count: paneState.readerSearchResults.count))
     }
 
     @ViewBuilder
-    private var pdfSearchResultsList: some View {
-        if pdfSearchResultsReady && !paneState.pdfSearchResults.isEmpty {
+    private var readerSearchResultsList: some View {
+        if readerSearchResultsReady && !paneState.readerSearchResults.isEmpty {
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(paneState.pdfSearchResults) { result in
-                            Button { paneState.selectPDFSearchResult(result.id) } label: {
-                                HStack(alignment: .top, spacing: 10) {
-                                    Text(store.ui("第 \(result.pageIndex + 1) 页", "Page \(result.pageIndex + 1)"))
-                                        .weiBeiText(10)
-                                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                                        .frame(width: 48, alignment: .leading)
-                                    Text(result.preview)
-                                        .weiBeiText(11)
-                                        .lineLimit(2)
-                                        .multilineTextAlignment(.leading)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .padding(.horizontal, 10)
-                                .frame(height: 44)
+                    LazyVStack(spacing: 0) {
+                        ForEach(paneState.readerSearchResults) { result in
+                            Button { paneState.selectReaderSearchResult(result.id) } label: {
+                                highlightedPreview(result)
+                                    .weiBeiText(11)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 6)
+                                .frame(height: 38)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(WeiBeiTextActionButtonStyle(active: result.id == paneState.pdfSearchResultIndex, fontSize: 11, height: 44))
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: result.id == paneState.readerSearchResultIndex, fontSize: 11, height: 38, horizontalPadding: 0))
                             .id(result.id)
                         }
                     }
-                    .padding(4)
+                    .padding(3)
                 }
-                .frame(width: 360, height: CGFloat(min(paneState.pdfSearchResults.count, 4)) * 46 + 8)
-                .onChange(of: paneState.pdfSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
+                .frame(width: 320, height: CGFloat(min(paneState.readerSearchResults.count, 4)) * 38 + 6)
+                .onChange(of: paneState.readerSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
             }
         }
+    }
+
+    private func compactLocation(_ result: ReaderSearchResult) -> String {
+        let location = result.location.isEmpty ? store.ui("第 \(result.pageIndex + 1) 页", "Page \(result.pageIndex + 1)") : result.location
+        return location.hasPrefix("第 ") ? location.replacingOccurrences(of: "第 ", with: "").replacingOccurrences(of: " ", with: "") : location
+    }
+
+    private func highlightedPreview(_ result: ReaderSearchResult) -> Text {
+        let position = "\(compactLocation(result))  "
+        let label = Text(position).foregroundColor(WeiBeiTheme.secondaryInk)
+        let source = result.preview as NSString
+        let range = result.matchRange
+        guard range.location != NSNotFound, NSMaxRange(range) <= source.length else { return label + Text(result.preview) }
+        let before = source.substring(to: range.location)
+        let match = source.substring(with: range)
+        let after = source.substring(from: NSMaxRange(range))
+        return label + Text(before) + Text(match).foregroundColor(WeiBeiTheme.cinnabar).bold() + Text(after)
     }
 
     private var trailingControls: some View {
@@ -870,6 +884,22 @@ private struct UnifiedTopBarView: View {
 
     private var controlHeight: CGFloat {
         28 * textScale
+    }
+
+    private var searchFieldWidth: CGFloat {
+#if targetEnvironment(macCatalyst)
+        170
+#else
+        220
+#endif
+    }
+
+    private var searchControlHeight: CGFloat {
+#if targetEnvironment(macCatalyst)
+        24 * textScale
+#else
+        controlHeight
+#endif
     }
 
     private var shouldShowSearchAction: Bool {

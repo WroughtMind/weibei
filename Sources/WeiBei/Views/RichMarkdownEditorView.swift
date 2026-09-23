@@ -709,6 +709,9 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     var attachmentDirectory: URL?
     var searchQuery = ""
     var searchRequest = 0
+    var readerSearchNavigationRequest = 0
+    var readerSearchRequestedIndex = 0
+    var onReaderSearchResults: ((String, [ReaderSearchResult], Int) -> Void)?
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var isCompactPreview = false
@@ -742,7 +745,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     private static let localImageScheme = "weibeiimage"
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(
+        let coordinator = Coordinator(
             documentID: documentID,
             markdown: markdown,
             command: $command,
@@ -777,6 +780,10 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             onSelectionAskMark: onSelectionAskMark,
             onSelectionRemarkMark: onSelectionRemarkMark
         )
+        coordinator.onReaderSearchResults = onReaderSearchResults
+        coordinator.readerSearchNavigationRequest = readerSearchNavigationRequest
+        coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
+        return coordinator
     }
 
 #if targetEnvironment(macCatalyst)
@@ -942,6 +949,9 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         )
         context.coordinator.searchQuery = searchQuery
         context.coordinator.searchRequest = searchRequest
+        context.coordinator.onReaderSearchResults = onReaderSearchResults
+        context.coordinator.readerSearchNavigationRequest = readerSearchNavigationRequest
+        context.coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
         if context.coordinator.appearanceMode != appearanceMode {
             context.coordinator.appearanceMode = appearanceMode
             if context.coordinator.isReady {
@@ -1129,6 +1139,12 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         var onContentCommandApplied: (String, NoteEditorCommand) -> Void
         var onCommandRejected: (String, NoteEditorCommand) -> Void
         var onSearchResult: (String, Bool) -> Void
+        var onReaderSearchResults: ((String, [ReaderSearchResult], Int) -> Void)?
+        var readerSearchNavigationRequest = 0
+        var readerSearchRequestedIndex = 0
+        private var lastReaderSearchNavigationRequest = 0
+        private var readerSearchResults: [ReaderSearchResult] = []
+        private var readerSearchResultIndex = 0
         var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void
         var selectionAskMarks: String
         var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void
@@ -1904,6 +1920,27 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 
         func applySearch() {
             let query = ReaderSearch.cleaned(searchQuery)
+            if !isEditable, let onReaderSearchResults {
+                guard let webView, isReady else { return }
+                let navigated = readerSearchNavigationRequest != lastReaderSearchNavigationRequest
+                guard query != lastAppliedSearchQuery || navigated else { return }
+                lastReaderSearchNavigationRequest = readerSearchNavigationRequest
+                if query == lastAppliedSearchQuery {
+                    readerSearchResultIndex = min(readerSearchRequestedIndex, max(0, readerSearchResults.count - 1))
+                    webView.evaluateJavaScript(ReaderWebSearch.activate(readerSearchResultIndex))
+                    onReaderSearchResults(query, readerSearchResults, readerSearchResultIndex)
+                    return
+                }
+                lastAppliedSearchQuery = query
+                readerSearchResultIndex = 0
+                webView.evaluateJavaScript(ReaderWebSearch.script(query: query, root: ".ProseMirror")) { [weak self, weak webView] value, _ in
+                    guard let self, let webView, self.searchQuery == query else { return }
+                    self.readerSearchResults = ReaderWebSearch.results(from: value)
+                    self.onReaderSearchResults?(query, self.readerSearchResults, 0)
+                    if !self.readerSearchResults.isEmpty { webView.evaluateJavaScript(ReaderWebSearch.activate(0)) }
+                }
+                return
+            }
             guard query != lastAppliedSearchQuery || searchRequest != lastAppliedSearchRequest else { return }
             let configuration = WKFindConfiguration()
             configuration.backwards = query == lastAppliedSearchQuery && searchRequest < lastAppliedSearchRequest

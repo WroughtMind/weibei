@@ -810,6 +810,14 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertTrue(preview.hasPrefix("…"))
         XCTAssertTrue(preview.hasSuffix("…"))
         XCTAssertEqual(ReaderSearch.preview(in: text, around: NSRange(location: NSNotFound, length: 0)), "")
+        let adjacent = "购买 A，购买 B；购买 C"
+        let matches = ReaderSearch.matches(in: adjacent, query: "购买")
+        XCTAssertEqual(matches.count, 3)
+        for match in matches {
+            let snippet = ReaderSearch.snippet(in: adjacent, around: match)
+            XCTAssertEqual((snippet.text as NSString).substring(with: snippet.matchRange), "购买")
+        }
+        XCTAssertEqual(ReaderSearch.matches(in: "苹果 APPLE", query: "apple").count, 1)
     }
 
     func testCommandFFindsAndCommandBRemainsAnEditingShortcut() {

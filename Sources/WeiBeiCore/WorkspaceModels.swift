@@ -2309,11 +2309,15 @@ public struct ReaderSearchResult: Equatable, Identifiable {
     public let id: Int
     public let pageIndex: Int
     public let preview: String
+    public let location: String
+    public let matchRange: NSRange
 
-    public init(id: Int, pageIndex: Int, preview: String) {
+    public init(id: Int, pageIndex: Int, preview: String, location: String = "", matchRange: NSRange = NSRange(location: NSNotFound, length: 0)) {
         self.id = id
         self.pageIndex = pageIndex
         self.preview = preview
+        self.location = location
+        self.matchRange = matchRange
     }
 }
 
@@ -2324,14 +2328,24 @@ public enum ReaderSearch {
     }
 
     public static func preview(in text: String, around range: NSRange) -> String {
+        snippet(in: text, around: range).text
+    }
+
+    public static func snippet(in text: String, around range: NSRange) -> (text: String, matchRange: NSRange) {
         let source = text as NSString
         guard range.location != NSNotFound, range.location <= source.length,
-              range.length <= source.length - range.location else { return "" }
-        let start = max(0, range.location - 32)
-        let end = min(source.length, range.location + range.length + 48)
+              range.length <= source.length - range.location else { return ("", NSRange(location: NSNotFound, length: 0)) }
+        let start = max(0, range.location - 8)
+        let end = min(source.length, range.location + range.length + 32)
         let slice = source.rangeOfComposedCharacterSequences(for: NSRange(location: start, length: end - start))
-        let excerpt = source.substring(with: slice).split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        return (start > 0 ? "…" : "") + excerpt + (end < source.length ? "…" : "")
+        let before = source.substring(with: NSRange(location: slice.location, length: range.location - slice.location))
+        let match = source.substring(with: range)
+        let after = source.substring(with: NSRange(location: NSMaxRange(range), length: NSMaxRange(slice) - NSMaxRange(range)))
+        func compact(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        let prefix = (start > 0 ? "…" : "") + compact(before)
+        let separator = prefix.hasSuffix(" ") || prefix.hasSuffix("…") || prefix.isEmpty ? "" : " "
+        let text = prefix + separator + match + (after.first?.isWhitespace == true ? " " : "") + compact(after) + (end < source.length ? "…" : "")
+        return (text, NSRange(location: (prefix + separator).utf16.count, length: match.utf16.count))
     }
 
     public static func cleaned(_ query: String) -> String {
@@ -2343,6 +2357,22 @@ public enum ReaderSearch {
         guard !query.isEmpty else { return nil }
         let range = (text as NSString).range(of: query, options: [.caseInsensitive, .diacriticInsensitive])
         return range.location == NSNotFound ? nil : range
+    }
+
+    public static func matches(in text: String, query: String) -> [NSRange] {
+        let query = cleaned(query)
+        guard !query.isEmpty else { return [] }
+        let source = text as NSString
+        var search = NSRange(location: 0, length: source.length)
+        var result: [NSRange] = []
+        while search.length > 0 {
+            let found = source.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: search)
+            guard found.location != NSNotFound else { break }
+            result.append(found)
+            let next = NSMaxRange(found)
+            search = NSRange(location: next, length: source.length - next)
+        }
+        return result
     }
 }
 
