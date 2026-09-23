@@ -614,7 +614,10 @@ private struct UnifiedTopBarView: View {
                         .padding(.vertical, 2)
                     if showsReaderSearchResults { readerSearchResultsList }
                 }
-
+                .background {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(weiBeiNativeColor: WeiBeiNativePalette.paperRaised().withAlphaComponent(1)))
+                }
                 .weibeiFloatingPanel(cornerRadius: 8, shadowOpacity: 0.08)
                 .fixedSize()
                 .padding(.trailing, 12)
@@ -746,11 +749,21 @@ private struct UnifiedTopBarView: View {
     @ViewBuilder
     private var readerSearchResultsList: some View {
         if readerSearchResultsReady && !paneState.readerSearchResults.isEmpty {
+            let results = paneState.readerSearchResults
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(paneState.readerSearchResults) { result in
+                        ForEach(results.indices, id: \.self) { index in
+                            let result = results[index]
+                            if index == 0 || result.location != results[index - 1].location {
+                                Text(compactLocation(result))
+                                    .weiBeiText(10, weight: .semibold)
+                                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .frame(height: 22)
+                                    .padding(.horizontal, 8)
+                            }
                             Button { paneState.selectReaderSearchResult(result.id) } label: {
                                 highlightedPreview(result)
                                     .weiBeiText(11)
@@ -767,10 +780,15 @@ private struct UnifiedTopBarView: View {
                     }
                     .padding(3)
                 }
-                .frame(width: 320, height: CGFloat(min(paneState.readerSearchResults.count, 4)) * 38 + 6)
+                .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 22 + 6), 480))
                 .onChange(of: paneState.readerSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
             }
         }
+    }
+
+    private var readerSearchLocationCount: Int {
+        let results = paneState.readerSearchResults
+        return results.indices.filter { $0 == 0 || results[$0].location != results[$0 - 1].location }.count
     }
 
     private func compactLocation(_ result: ReaderSearchResult) -> String {
@@ -779,15 +797,13 @@ private struct UnifiedTopBarView: View {
     }
 
     private func highlightedPreview(_ result: ReaderSearchResult) -> Text {
-        let position = "\(compactLocation(result))  "
-        let label = Text(position).foregroundColor(WeiBeiTheme.secondaryInk)
         let source = result.preview as NSString
         let range = result.matchRange
-        guard range.location != NSNotFound, NSMaxRange(range) <= source.length else { return label + Text(result.preview) }
+        guard range.location != NSNotFound, NSMaxRange(range) <= source.length else { return Text(result.preview) }
         let before = source.substring(to: range.location)
         let match = source.substring(with: range)
         let after = source.substring(from: NSMaxRange(range))
-        return label + Text(before) + Text(match).foregroundColor(WeiBeiTheme.cinnabar).bold() + Text(after)
+        return Text(before) + Text(match).foregroundColor(WeiBeiTheme.cinnabar).bold() + Text(after)
     }
 
     private var trailingControls: some View {
