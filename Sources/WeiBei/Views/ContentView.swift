@@ -608,6 +608,7 @@ private struct UnifiedTopBarView: View {
     let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
     @State private var appeared = false
+    @State private var readerSearchKeyboardFocusRequest = 0
 
     var body: some View {
 #if targetEnvironment(macCatalyst)
@@ -654,6 +655,10 @@ private struct UnifiedTopBarView: View {
             }
         }
         .zIndex(10)
+        .onChange(of: store.readerSearch) { _, _ in readerSearchKeyboardFocusRequest = 0 }
+        .onChange(of: paneState.showDocumentSearch) { _, visible in
+            if !visible { readerSearchKeyboardFocusRequest = 0 }
+        }
 
 #else
         customTopBar
@@ -722,7 +727,9 @@ private struct UnifiedTopBarView: View {
             width: searchFieldWidth,
             onSubmit: {
                 if store.searchesNotes { store.noteSearchRequest &+= 1 }
-                else if showsReaderSearchResults { moveReaderSearchResult(1) }
+                else if showsReaderSearchResults {
+                    moveReaderSearchResult(1, focusResults: true)
+                }
             },
             onEscape: {
                 store.hideDocumentSearch()
@@ -740,9 +747,9 @@ private struct UnifiedTopBarView: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .fixedSize()
                 .accessibilityLabel(Text(store.ui("搜索结果：", "Search results: ") + readerSearchResultStatus))
-            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { moveReaderSearchResult(-1) }
+            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { moveReaderSearchResult(-1, focusResults: true) }
                 .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
-            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { moveReaderSearchResult(1) }
+            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { moveReaderSearchResult(1, focusResults: true) }
                 .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
         }
         if store.searchesNotes && !store.noteSearch.isEmpty {
@@ -775,10 +782,11 @@ private struct UnifiedTopBarView: View {
         return "\(paneState.readerSearchResultIndex + 1) / \(count)"
     }
 
-    private func moveReaderSearchResult(_ step: Int) {
+    private func moveReaderSearchResult(_ step: Int, focusResults: Bool = false) {
         guard readerSearchResultsReady else { return }
         paneState.selectReaderSearchResult(ReaderSearch.matchIndex(current: paneState.readerSearchResultIndex,
             step: step, count: paneState.readerSearchResults.count))
+        if focusResults { readerSearchKeyboardFocusRequest &+= 1 }
     }
 
     @ViewBuilder
@@ -804,7 +812,10 @@ private struct UnifiedTopBarView: View {
                                     .frame(height: 22)
                                     .padding(.horizontal, 8)
                             }
-                            Button { paneState.selectReaderSearchResult(result.id) } label: {
+                            Button {
+                                paneState.selectReaderSearchResult(result.id)
+                                readerSearchKeyboardFocusRequest &+= 1
+                            } label: {
                                 highlightedPreview(result)
                                     .weiBeiText(11)
                                     .lineLimit(2)
@@ -822,6 +833,14 @@ private struct UnifiedTopBarView: View {
                     .padding(3)
                 }
                 .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 22 + 6), 380))
+#if targetEnvironment(macCatalyst)
+                .background {
+                    CatalystSearchResultsKeyboardBridge(focusRequest: readerSearchKeyboardFocusRequest) { step in
+                        moveReaderSearchResult(step, focusResults: true)
+                    }
+                    .frame(width: 1, height: 1)
+                }
+#endif
                 .onChange(of: paneState.readerSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
             }
         }

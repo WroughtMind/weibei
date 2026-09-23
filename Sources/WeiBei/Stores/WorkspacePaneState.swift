@@ -83,7 +83,6 @@ final class WorkspacePaneState: ObservableObject {
         readerSearchResultIndex = index
         readerSearchRequestedIndex = index
         readerSearchNavigationRequest &+= 1
-        searchFocusRequest &+= 1
     }
 
     func returnToReaderSearchOrigin() {
