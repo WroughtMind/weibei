@@ -799,6 +799,8 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     func testReaderSearchResultNavigationAndContext() {
+        XCTAssertEqual(ReaderSearch.matchIndex(current: -1, step: 1, count: 3), 0)
+        XCTAssertEqual(ReaderSearch.matchIndex(current: -1, step: -1, count: 3), 2)
         XCTAssertEqual(ReaderSearch.matchIndex(current: 0, step: -1, count: 3), 2)
         XCTAssertEqual(ReaderSearch.matchIndex(current: 2, step: 1, count: 3), 0)
         XCTAssertEqual(ReaderSearch.matchIndex(current: 0, step: 1, count: 0), 0)
@@ -817,6 +819,10 @@ final class WorkspaceSafetyTests: XCTestCase {
             let snippet = ReaderSearch.snippet(in: adjacent, around: match)
             XCTAssertEqual((snippet.text as NSString).substring(with: snippet.matchRange), "购买")
         }
+        let pdfTextLayer = "评价是否真实、是否足够多。\n.\n.\n.\n.\n平台经济学"
+        let pdfSnippet = ReaderSearch.snippet(in: pdfTextLayer, around: (pdfTextLayer as NSString).range(of: "真实"))
+        XCTAssertFalse(pdfSnippet.text.contains(". ."))
+        XCTAssertEqual((pdfSnippet.text as NSString).substring(with: pdfSnippet.matchRange), "真实")
         XCTAssertEqual(ReaderSearch.matches(in: "苹果 APPLE", query: "apple").count, 1)
     }
 

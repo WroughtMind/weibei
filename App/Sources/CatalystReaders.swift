@@ -168,19 +168,19 @@ struct SelectablePlainTextReader: UIViewRepresentable {
                 attributed.addAttribute(.backgroundColor, value: weiBeiColor(red: 0.67, green: 0.24, blue: 0.16, alpha: 0.24), range: range)
             }
             let selected = view.selectedRange
+            let readingOffset = view.contentOffset
             view.attributedText = attributed
             if NSMaxRange(selected) <= attributed.length { view.selectedRange = selected }
+            if !sourceChanged { view.setContentOffset(readingOffset, animated: false) }
         }
         let query = ReaderSearch.cleaned(searchQuery)
         if coordinator.query != query || sourceChanged {
             coordinator.query = query
-            coordinator.index = 0
+            coordinator.index = -1
             onSelectionChange("", nil)
             let matches = ReaderSearch.matches(in: text, query: query)
             coordinator.matches = matches
             coordinator.publish(matches, query: query)
-            if let match = matches.first { view.selectedRange = match; view.scrollRangeToVisible(match) }
-            else { view.selectedRange = NSRange(location: 0, length: 0) }
         } else if coordinator.navigationRequest != searchNavigationRequest {
             coordinator.navigationRequest = searchNavigationRequest
             coordinator.index = min(searchRequestedIndex, max(0, coordinator.matches.count - 1))
@@ -196,7 +196,7 @@ struct SelectablePlainTextReader: UIViewRepresentable {
         var suppressSelection = false
         var query = ""
         var navigationRequest = 0
-        var index = 0
+        var index = -1
         var matches: [NSRange] = []
         init(_ parent: SelectablePlainTextReader) { self.parent = parent }
         func publish(_ matches: [NSRange], query: String) {

@@ -744,7 +744,9 @@ private struct UnifiedTopBarView: View {
     private var readerSearchResultStatus: String {
         guard readerSearchResultsReady else { return store.ui("查找中", "Finding…") }
         let count = paneState.readerSearchResults.count
-        return count == 0 ? store.ui("无匹配", "No matches") : "\(paneState.readerSearchResultIndex + 1) / \(count)"
+        if count == 0 { return store.ui("无匹配", "No matches") }
+        if paneState.readerSearchResultIndex < 0 { return store.ui("\(count) 处", "\(count) matches") }
+        return "\(paneState.readerSearchResultIndex + 1) / \(count)"
     }
 
     private func moveReaderSearchResult(_ step: Int) {

@@ -1562,7 +1562,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             let matchRange: NSRange
         }
         private var searchHits: [SearchHit] = []
-        private var searchResultIndex = 0
+        private var searchResultIndex = -1
         private var lastSearchNavigationRequest = 0
         private var searchPublication = 0
         private var lastSearchTargetPageIndex: Int?
@@ -1615,7 +1615,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             clearOCROverlays(in: view)
             searchPublication &+= 1
             searchHits = []
-            searchResultIndex = 0
+            searchResultIndex = -1
             lastSearchQuery = ""
             lastSearchTargetPageIndex = nil
             lastAppliedAskUnderlineMarks = []
@@ -1986,7 +1986,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             if let navigationRequest { lastSearchNavigationRequest = navigationRequest }
             lastSearchQuery = query
             lastSearchTargetPageIndex = targetPageIndex
-            if queryChanged { searchResultIndex = 0 }
+            if queryChanged { searchResultIndex = -1 }
 
             if force || queryChanged {
                 searchHits = []
@@ -2022,8 +2022,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                     }
                 }
             }
-            if navigated, !queryChanged, let requestedIndex { searchResultIndex = requestedIndex }
-            searchResultIndex = min(max(0, searchResultIndex), max(0, searchHits.count - 1))
+            if navigated, let requestedIndex {
+                searchResultIndex = min(max(0, requestedIndex), max(0, searchHits.count - 1))
+            }
             var selections: [PDFSelection] = []
             var ocrLines: [Int: Set<Int>] = [:]
             for (index, hit) in searchHits.enumerated() {
@@ -2036,7 +2037,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             view.highlightedSelections = selections.isEmpty ? nil : selections
             setOCRHighlightedLines(ocrLines, in: view)
             if query.isEmpty { view.clearSelection() }
-            if searchHits.indices.contains(searchResultIndex) {
+            if navigated, searchHits.indices.contains(searchResultIndex) {
                 let hit = searchHits[searchResultIndex]
                 if let selection = hit.selection { view.go(to: selection) }
                 else if let page = view.document?.page(at: hit.pageIndex) { view.go(to: hit.bounds, on: page) }
@@ -3423,7 +3424,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
         private var lastSearchNavigationRequest = 0
         private var searchResults: [ReaderSearchResult] = []
-        private var searchResultIndex = 0
+        private var searchResultIndex = -1
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
         var selectionAskMarks = "[]"
@@ -3709,12 +3710,11 @@ struct WebReaderRepresentable: ReaderRepresentable {
                 return
             }
             lastAppliedSearchQuery = query
-            searchResultIndex = 0
-            view.evaluateJavaScript(ReaderWebSearch.script(query: query, root: isOfficeDocument ? "#office-document" : "body")) { [weak self, weak view] value, _ in
-                guard let self, let view, self.searchQuery == query else { return }
+            searchResultIndex = -1
+            view.evaluateJavaScript(ReaderWebSearch.script(query: query, root: isOfficeDocument ? "#office-document" : "body")) { [weak self] value, _ in
+                guard let self, self.searchQuery == query else { return }
                 self.searchResults = ReaderWebSearch.results(from: value)
                 self.onSearchResults(query, self.searchResults, self.searchResultIndex)
-                if !self.searchResults.isEmpty { view.evaluateJavaScript(ReaderWebSearch.activate(0)) }
             }
         }
 
@@ -3983,12 +3983,19 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
             attributed.addAttribute(.backgroundColor, value: weiBeiColor(red: 0.67, green: 0.24, blue: 0.16, alpha: 0.24), range: range)
         }
         guard !textView.attributedString().isEqual(to: attributed) else { return }
+        let scrollView = textView.enclosingScrollView
+        let readingOrigin = scrollView?.contentView.bounds.origin
+        let preservesReadingPosition = textView.string == text
         coordinator.withoutSelectionReports {
             let selectedRange = textView.selectedRange()
             textView.textStorage?.setAttributedString(attributed)
             if NSMaxRange(selectedRange) <= attributed.length {
                 textView.setSelectedRange(selectedRange)
             }
+        }
+        if preservesReadingPosition, let scrollView, let readingOrigin {
+            scrollView.contentView.scroll(to: readingOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
     }
 
@@ -4008,7 +4015,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         var requestedIndex = 0
         private var lastNavigationRequest = 0
         private var matches: [NSRange] = []
-        private var resultIndex = 0
+        private var resultIndex = -1
         private var lastSearchQuery = ""
         private var lastSearchText = ""
         private var suppressSelectionReport = false
@@ -4052,9 +4059,9 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
                 lastSearchQuery = query
                 lastSearchText = textView.string
                 matches = ReaderSearch.matches(in: textView.string, query: query)
-                resultIndex = 0
+                resultIndex = -1
             }
-            else { resultIndex = min(requestedIndex, max(0, matches.count - 1)) }
+            if navigated { resultIndex = min(requestedIndex, max(0, matches.count - 1)) }
             let source = textView.string as NSString
             let results = matches.enumerated().map { entry -> ReaderSearchResult in
                 let range = entry.element
@@ -4069,7 +4076,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
                 return
             }
             onSelectionChange("", nil)
-            guard matches.indices.contains(resultIndex) else { return }
+            guard navigated, matches.indices.contains(resultIndex) else { return }
             let range = matches[resultIndex]
             suppressSelectionReport = true
             textView.setSelectedRange(range)

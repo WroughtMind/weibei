@@ -1144,7 +1144,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         var readerSearchRequestedIndex = 0
         private var lastReaderSearchNavigationRequest = 0
         private var readerSearchResults: [ReaderSearchResult] = []
-        private var readerSearchResultIndex = 0
+        private var readerSearchResultIndex = -1
         var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void
         var selectionAskMarks: String
         var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void
@@ -1932,12 +1932,11 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                     return
                 }
                 lastAppliedSearchQuery = query
-                readerSearchResultIndex = 0
-                webView.evaluateJavaScript(ReaderWebSearch.script(query: query, root: ".ProseMirror")) { [weak self, weak webView] value, _ in
-                    guard let self, let webView, self.searchQuery == query else { return }
+                readerSearchResultIndex = -1
+                webView.evaluateJavaScript(ReaderWebSearch.script(query: query, root: ".ProseMirror")) { [weak self] value, _ in
+                    guard let self, self.searchQuery == query else { return }
                     self.readerSearchResults = ReaderWebSearch.results(from: value)
-                    self.onReaderSearchResults?(query, self.readerSearchResults, 0)
-                    if !self.readerSearchResults.isEmpty { webView.evaluateJavaScript(ReaderWebSearch.activate(0)) }
+                    self.onReaderSearchResults?(query, self.readerSearchResults, self.readerSearchResultIndex)
                 }
                 return
             }

@@ -48,7 +48,7 @@ final class WorkspacePaneState: ObservableObject {
     @Published var showDocumentSearch = false
     @Published var searchFocusRequest = 0
     @Published var readerSearchResults: [ReaderSearchResult] = []
-    @Published var readerSearchResultIndex = 0
+    @Published var readerSearchResultIndex = -1
     @Published var readerSearchResultQuery = ""
     @Published var readerSearchResultMaterialID: String?
     @Published var readerSearchNavigationRequest = 0

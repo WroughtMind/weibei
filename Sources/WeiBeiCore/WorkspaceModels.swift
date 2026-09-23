@@ -2324,6 +2324,7 @@ public struct ReaderSearchResult: Equatable, Identifiable {
 public enum ReaderSearch {
     public static func matchIndex(current: Int, step: Int, count: Int) -> Int {
         guard count > 0 else { return 0 }
+        if current < 0 { return step < 0 ? count - 1 : 0 }
         return ((current % count + step % count) % count + count) % count
     }
 
@@ -2341,7 +2342,13 @@ public enum ReaderSearch {
         let before = source.substring(with: NSRange(location: slice.location, length: range.location - slice.location))
         let match = source.substring(with: range)
         let after = source.substring(with: NSRange(location: NSMaxRange(range), length: NSMaxRange(slice) - NSMaxRange(range)))
-        func compact(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        func compact(_ value: String) -> String {
+            value.components(separatedBy: .newlines)
+                .filter { $0.trimmingCharacters(in: .whitespaces) != "." }
+                .joined(separator: " ")
+                .split(whereSeparator: \.isWhitespace)
+                .joined(separator: " ")
+        }
         let prefix = (start > 0 ? "…" : "") + compact(before)
         let separator = prefix.hasSuffix(" ") || prefix.hasSuffix("…") || prefix.isEmpty ? "" : " "
         let text = prefix + separator + match + (after.first?.isWhitespace == true ? " " : "") + compact(after) + (end < source.length ? "…" : "")
