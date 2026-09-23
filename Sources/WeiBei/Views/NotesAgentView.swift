@@ -362,6 +362,8 @@ struct NotePaneView: View {
                 .allowsHitTesting(false)
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
+        // Note chrome follows opacity. The editor web view is hidden separately.
+        .opacity(store.notePickerPresented ? 0 : 1)
         .allowsHitTesting(!store.notePickerPresented)
         .accessibilityHidden(store.notePickerPresented)
         .overlay {
@@ -657,6 +659,7 @@ struct NotePaneView: View {
         searchRequest: store.noteSearchRequest,
         appearanceMode: store.appearanceMode,
         interfaceLanguage: store.interfaceLanguage,
+        hidesHostedDocument: store.notePickerPresented,
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
         }, onSelectionFormattingChange: { formatting in

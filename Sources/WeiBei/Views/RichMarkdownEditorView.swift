@@ -716,6 +716,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     var onReaderSearchResults: ((String, [ReaderSearchResult], Int) -> Void)?
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    /// Glass paper is clear, and WKWebView ignores ancestor opacity.
+    var hidesHostedDocument = false
     var isCompactPreview = false
     var isChatWideTypography = false
     /// A live read-only answer uses Milkdown's cumulative streaming document
@@ -925,6 +927,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     }
 
     private func updateWebView(_ view: WKWebView, context: Context) {
+        view.isHidden = hidesHostedDocument
         (view as? MarkdownWebView)?.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         context.coordinator.markdown = markdown

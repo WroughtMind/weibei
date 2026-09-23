@@ -126,6 +126,7 @@ struct SelectablePlainTextReader: UIViewRepresentable {
     var searchReturnRequest = 0
     var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode
+    var hidesHostedDocument = false
     var underlineSnippets: [String]
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -141,6 +142,7 @@ struct SelectablePlainTextReader: UIViewRepresentable {
         return view
     }
     func updateUIView(_ view: UITextView, context: Context) {
+        view.isHidden = hidesHostedDocument
         let coordinator = context.coordinator
         let sourceChanged = coordinator.parent.text != text
         let changed = coordinator.parent.text != text || coordinator.parent.appearanceMode != appearanceMode
