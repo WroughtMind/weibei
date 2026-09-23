@@ -557,6 +557,7 @@ private struct ToolbarSearchField: View {
     var width: CGFloat = 220
     let onSubmit: () -> Void
     let onEscape: () -> Void
+    let onMove: (Int) -> Void
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -577,6 +578,8 @@ private struct ToolbarSearchField: View {
             .task(id: focusRequest) { focused = true }
             .onSubmit(onSubmit)
             .weiBeiOnExitCommand(perform: onEscape)
+            .onKeyPress(.upArrow) { onMove(-1); return .handled }
+            .onKeyPress(.downArrow) { onMove(1); return .handled }
     }
 }
 
@@ -698,6 +701,10 @@ private struct UnifiedTopBarView: View {
             onEscape: {
                 store.hideDocumentSearch()
                 searchFocused.wrappedValue = false
+            },
+            onMove: { step in
+                if store.searchesNotes { store.noteSearchRequest &+= step }
+                else if showsReaderSearchResults { moveReaderSearchResult(step) }
             }
         )
         if showsReaderSearchResults {
@@ -757,9 +764,14 @@ private struct UnifiedTopBarView: View {
                         ForEach(results.indices, id: \.self) { index in
                             let result = results[index]
                             if index == 0 || result.location != results[index - 1].location {
-                                Text(compactLocation(result))
-                                    .weiBeiText(10, weight: .semibold)
-                                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                HStack(spacing: 8) {
+                                    Text(compactLocation(result))
+                                        .weiBeiText(11, weight: .semibold)
+                                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                    Rectangle()
+                                        .fill(WeiBeiTheme.hairline.opacity(0.55))
+                                        .frame(height: 1)
+                                }
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .frame(height: 22)
                                     .padding(.horizontal, 8)
@@ -770,7 +782,8 @@ private struct UnifiedTopBarView: View {
                                     .lineLimit(2)
                                     .multilineTextAlignment(.leading)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 6)
+                                .padding(.leading, 12)
+                                .padding(.trailing, 6)
                                 .frame(height: 38)
                                 .contentShape(Rectangle())
                             }
@@ -780,7 +793,7 @@ private struct UnifiedTopBarView: View {
                     }
                     .padding(3)
                 }
-                .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 22 + 6), 480))
+                .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 22 + 6), 380))
                 .onChange(of: paneState.readerSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
             }
         }
