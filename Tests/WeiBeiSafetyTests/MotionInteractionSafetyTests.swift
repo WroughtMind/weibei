@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import WeiBei
+import WeiBeiCore
 
 /// Targeted guards for the interaction/motion rework: expansion-request acks,
 /// visible status isolation, and the latest-first PDF render queue.
@@ -78,6 +79,32 @@ final class MotionInteractionSafetyTests: XCTestCase {
             paneState.centersInitialAgentComposer,
             "closing other panes around an already-open chat must not re-center its composer"
         )
+    }
+
+    @MainActor
+    func testReaderSearchReturnKeepsFirstNavigationOriginUntilExplicitReturn() {
+        let paneState = WorkspacePaneState()
+        paneState.readerSearchResultMaterialID = "material"
+        paneState.readerSearchResults = [ReaderSearchResult(
+            id: 0, pageIndex: 0, preview: "推荐", location: "第 1 页",
+            matchRange: NSRange(location: 0, length: 2)
+        )]
+
+        paneState.resetReaderSearchSession()
+        paneState.selectReaderSearchResult(0)
+        let session = paneState.readerSearchSessionID
+        paneState.selectReaderSearchResult(0)
+        paneState.readerSearchResultQuery = "新关键词"
+        XCTAssertEqual(paneState.readerSearchSessionID, session)
+        XCTAssertTrue(paneState.canReturnToReaderSearchOrigin(for: "material"))
+        XCTAssertFalse(paneState.canReturnToReaderSearchOrigin(for: "other"))
+
+        paneState.returnToReaderSearchOrigin()
+        XCTAssertEqual(paneState.readerSearchReturnRequest, 1)
+        XCTAssertEqual(paneState.readerSearchResultIndex, -1)
+        XCTAssertFalse(paneState.readerSearchCanReturn)
+        paneState.selectReaderSearchResult(0)
+        XCTAssertEqual(paneState.readerSearchSessionID, session + 1)
     }
 
     /// Recovery retracts the banner: when a note's file error clears and the

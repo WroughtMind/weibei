@@ -711,6 +711,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     var searchRequest = 0
     var readerSearchNavigationRequest = 0
     var readerSearchRequestedIndex = 0
+    var readerSearchSessionID = 0
+    var readerSearchReturnRequest = 0
     var onReaderSearchResults: ((String, [ReaderSearchResult], Int) -> Void)?
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
@@ -783,6 +785,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         coordinator.onReaderSearchResults = onReaderSearchResults
         coordinator.readerSearchNavigationRequest = readerSearchNavigationRequest
         coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
+        coordinator.readerSearchSessionID = readerSearchSessionID
+        coordinator.readerSearchReturnRequest = readerSearchReturnRequest
         return coordinator
     }
 
@@ -952,6 +956,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         context.coordinator.onReaderSearchResults = onReaderSearchResults
         context.coordinator.readerSearchNavigationRequest = readerSearchNavigationRequest
         context.coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
+        context.coordinator.readerSearchSessionID = readerSearchSessionID
+        context.coordinator.readerSearchReturnRequest = readerSearchReturnRequest
         if context.coordinator.appearanceMode != appearanceMode {
             context.coordinator.appearanceMode = appearanceMode
             if context.coordinator.isReady {
@@ -1142,7 +1148,12 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         var onReaderSearchResults: ((String, [ReaderSearchResult], Int) -> Void)?
         var readerSearchNavigationRequest = 0
         var readerSearchRequestedIndex = 0
+        var readerSearchSessionID = 0
+        var readerSearchReturnRequest = 0
         private var lastReaderSearchNavigationRequest = 0
+        private var lastReaderSearchSessionID = 0
+        private var lastReaderSearchReturnRequest = 0
+        private var hasReaderSearchOrigin = false
         private var readerSearchResults: [ReaderSearchResult] = []
         private var readerSearchResultIndex = -1
         var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void
@@ -1923,11 +1934,35 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             if !isEditable, let onReaderSearchResults {
                 guard let webView, isReady else { return }
                 let navigated = readerSearchNavigationRequest != lastReaderSearchNavigationRequest
-                guard query != lastAppliedSearchQuery || navigated else { return }
+                let returned = readerSearchReturnRequest != lastReaderSearchReturnRequest
+                guard query != lastAppliedSearchQuery || navigated || returned else { return }
+                if readerSearchSessionID != lastReaderSearchSessionID {
+                    lastReaderSearchSessionID = readerSearchSessionID
+                    hasReaderSearchOrigin = false
+                }
+                lastReaderSearchReturnRequest = readerSearchReturnRequest
                 lastReaderSearchNavigationRequest = readerSearchNavigationRequest
+                if returned {
+                    lastAppliedSearchQuery = query
+                    readerSearchResultIndex = -1
+                    let shouldRestore = hasReaderSearchOrigin
+                    let navigationRequest = readerSearchNavigationRequest
+                    hasReaderSearchOrigin = false
+                    webView.evaluateJavaScript(ReaderWebSearch.script(query: query, root: ".ProseMirror")) { [weak self, weak webView] value, _ in
+                        guard let self, let webView else { return }
+                        if shouldRestore, self.readerSearchNavigationRequest == navigationRequest {
+                            webView.evaluateJavaScript(ReaderWebSearch.restoreOrigin())
+                        }
+                        guard self.searchQuery == query else { return }
+                        self.readerSearchResults = ReaderWebSearch.results(from: value)
+                        self.onReaderSearchResults?(query, self.readerSearchResults, -1)
+                    }
+                    return
+                }
                 if query == lastAppliedSearchQuery {
                     readerSearchResultIndex = min(readerSearchRequestedIndex, max(0, readerSearchResults.count - 1))
-                    webView.evaluateJavaScript(ReaderWebSearch.activate(readerSearchResultIndex))
+                    webView.evaluateJavaScript(ReaderWebSearch.activate(readerSearchResultIndex, captureOrigin: !hasReaderSearchOrigin))
+                    hasReaderSearchOrigin = true
                     onReaderSearchResults(query, readerSearchResults, readerSearchResultIndex)
                     return
                 }

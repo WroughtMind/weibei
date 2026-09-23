@@ -616,6 +616,19 @@ private struct UnifiedTopBarView: View {
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2)
                     if showsReaderSearchResults { readerSearchResultsList }
+                    if paneState.canReturnToReaderSearchOrigin(for: store.selectedMaterialItem?.id) {
+                        Button {
+                            paneState.returnToReaderSearchOrigin()
+                        } label: {
+                            Label(store.ui("回到查找前", "Back to reading position"), systemImage: "arrow.uturn.backward")
+                                .weiBeiText(11, weight: .medium)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(height: 30)
+                                .padding(.horizontal, 12)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text(store.ui("回到查找前的阅读位置", "Return to reading position before search")))
+                    }
                 }
                 .background {
                     RoundedRectangle(cornerRadius: 8)

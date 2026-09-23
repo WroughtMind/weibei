@@ -122,6 +122,8 @@ struct SelectablePlainTextReader: UIViewRepresentable {
     var searchQuery: String
     var searchNavigationRequest = 0
     var searchRequestedIndex = 0
+    var searchSessionID = 0
+    var searchReturnRequest = 0
     var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode
     var underlineSnippets: [String]
@@ -174,21 +176,40 @@ struct SelectablePlainTextReader: UIViewRepresentable {
             if !sourceChanged { view.setContentOffset(readingOffset, animated: false) }
         }
         let query = ReaderSearch.cleaned(searchQuery)
+        if coordinator.sessionID != searchSessionID {
+            coordinator.sessionID = searchSessionID
+            coordinator.searchOrigin = nil
+        }
+        let returned = coordinator.returnRequest != searchReturnRequest
+        coordinator.returnRequest = searchReturnRequest
         if coordinator.query != query || sourceChanged {
             coordinator.query = query
+            coordinator.navigationRequest = searchNavigationRequest
             coordinator.index = -1
             onSelectionChange("", nil)
             let matches = ReaderSearch.matches(in: text, query: query)
             coordinator.matches = matches
             coordinator.publish(matches, query: query)
-        } else if coordinator.navigationRequest != searchNavigationRequest {
+        } else if !returned && coordinator.navigationRequest != searchNavigationRequest {
             coordinator.navigationRequest = searchNavigationRequest
             coordinator.index = min(searchRequestedIndex, max(0, coordinator.matches.count - 1))
             coordinator.publish(coordinator.matches, query: query)
             if coordinator.matches.indices.contains(coordinator.index) {
+                if coordinator.searchOrigin == nil {
+                    coordinator.searchOrigin = (view.contentOffset, view.selectedRange)
+                }
                 let match = coordinator.matches[coordinator.index]
                 view.selectedRange = match; view.scrollRangeToVisible(match)
             }
+        }
+        if returned {
+            coordinator.index = -1
+            if let origin = coordinator.searchOrigin {
+                view.selectedRange = origin.range
+                view.setContentOffset(origin.offset, animated: false)
+            }
+            coordinator.searchOrigin = nil
+            coordinator.publish(coordinator.matches, query: query)
         }
     }
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -196,6 +217,9 @@ struct SelectablePlainTextReader: UIViewRepresentable {
         var suppressSelection = false
         var query = ""
         var navigationRequest = 0
+        var sessionID = 0
+        var returnRequest = 0
+        var searchOrigin: (offset: CGPoint, range: NSRange)?
         var index = -1
         var matches: [NSRange] = []
         init(_ parent: SelectablePlainTextReader) { self.parent = parent }
