@@ -15,6 +15,9 @@ struct ContentView: View {
     @FocusState private var topSearchFocused: Bool
     @State private var floatingAgentExpanded = false
     @State private var windowIsFullScreen = false
+    /// Size of the document area under the top bar. The float uses it for placement
+    /// and must not measure that area with a GeometryReader laid over the reader.
+    @State private var documentCanvas = CGSize.zero
 
     var body: some View {
         GeometryReader { geometry in
@@ -55,6 +58,32 @@ struct ContentView: View {
                             // the document family is owned by AppKit StableDocumentWorkspace animation
                             // — a second SwiftUI layout animation here made toggles feel split/janky.
                             .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
+                            .background {
+                                GeometryReader { content in
+                                    Color.clear.preference(
+                                        key: DocumentCanvasSizeKey.self,
+                                        value: content.size
+                                    )
+                                }
+                            }
+                            .onPreferenceChange(DocumentCanvasSizeKey.self) { size in
+                                guard size.width > 1, size.height > 1 else { return }
+                                if abs(documentCanvas.width - size.width) > 0.5
+                                    || abs(documentCanvas.height - size.height) > 0.5 {
+                                    documentCanvas = size
+                                }
+                            }
+                            // Above the document, outside its layout. A ZStack sibling was
+                            // resizing the reader for a frame, so the page painted again.
+                            .overlay {
+                                ZStack(alignment: .topLeading) {
+                                    Color.clear.allowsHitTesting(false)
+                                    GlobalFloatingSelectionLayer(
+                                        expanded: $floatingAgentExpanded,
+                                        canvasSize: documentCanvas == .zero ? geometry.size : documentCanvas
+                                    )
+                                }
+                            }
 
                         // AppKit drawer: slide starts immediately; sidebar not store-synced while closed.
                         CourseLibraryDrawerLayer(store: store) {
@@ -67,13 +96,6 @@ struct ContentView: View {
                                 .transition(WeiBeiTransition.commandPalette)
                                 .zIndex(40)
                         }
-
-                        // Selection float observes `interaction` only — drag must not rebuild ContentView.
-                        GlobalFloatingSelectionLayer(
-                            expanded: $floatingAgentExpanded,
-                            canvasSize: geometry.size
-                        )
-                        .zIndex(30)
                     }
                 }
                 .allowsHitTesting(!store.courseWorkspacePresented)
@@ -285,6 +307,14 @@ private struct PaneChromeFocusBridge: View {
     }
 }
 
+private struct DocumentCanvasSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next.width > 1, next.height > 1 { value = next }
+    }
+}
+
 /// Selection float layer. Observes `WorkspaceInteractionState` (+ store for chat routing).
 private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var store: WorkspaceStore
@@ -293,22 +323,26 @@ private struct GlobalFloatingSelectionLayer: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var expanded: Bool
     let canvasSize: CGSize
+    /// Top-left of the expanded panel. Nil until 「问」/「记」 opens; cleared when the float hides.
+    @State private var placedOrigin: CGPoint? = nil
 
     var body: some View {
         Group {
             if showsGlobalFloatingAgent {
                 FloatingSelectionAgentView(
-                    expanded: $expanded
+                    expanded: $expanded,
+                    placedOrigin: $placedOrigin,
+                    canvasSize: canvasSize,
+                    topInset: CGFloat(selectionTopInset)
                 )
-                // Place from this layout pass's actual size. Writing measured
-                // size back into State moved the click target again next frame.
+                // Center is derived from the parked top-left plus this layout pass's size,
+                // so growing the answer pushes the bottom down and does not pick a new side.
                 .alignmentGuide(.leading) { dimensions in
                     dimensions.width / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).x
                 }
                 .alignmentGuide(.top) { dimensions in
                     dimensions.height / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).y
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .transition(.opacity)
             }
         }
@@ -316,6 +350,13 @@ private struct GlobalFloatingSelectionLayer: View {
         .transaction { transaction in
             // Fade visibility only; selection coordinates must track without a spring.
             transaction.animation = nil
+        }
+        .onChange(of: usesPlacedOrigin) { _, placed in
+            guard placed, placedOrigin == nil else { return }
+            placedOrigin = initialOrigin
+        }
+        .onChange(of: showsGlobalFloatingAgent) { _, shown in
+            if !shown { placedOrigin = nil }
         }
     }
 
@@ -327,12 +368,30 @@ private struct GlobalFloatingSelectionLayer: View {
                 surface: interaction.agentSurface,
                 hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
                 hasAnchor: interaction.selectionAnchor != nil,
-                pinned: interaction.pinnedFloatingAgent,
+                pinned: false,
                 keepOpen: interaction.keepFloatingSelectionForAnswer
             )
     }
 
+    private var usesPlacedOrigin: Bool {
+        expanded || interaction.keepFloatingSelectionForAnswer
+    }
+
+    private var initialOrigin: CGPoint {
+        let point = SelectionFloatingAgentPlacement.initialTopLeft(
+            anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
+            canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
+            topInset: selectionTopInset,
+            prefersAbove: interaction.selectionAnchor?.prefersAbove == true
+        )
+        return CGPoint(x: point.x, y: point.y)
+    }
+
     private func floatingAgentPosition(size: CGSize) -> CGPoint {
+        if usesPlacedOrigin {
+            let origin = placedOrigin ?? initialOrigin
+            return CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+        }
         let point = SelectionFloatingAgentPlacement.position(
             anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
@@ -340,7 +399,7 @@ private struct GlobalFloatingSelectionLayer: View {
             surfaceHalfWidth: Double(size.width / 2),
             measuredHalfHeight: Double(size.height / 2),
             prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
-            prefersAnchorCenter: !(expanded || interaction.keepFloatingSelectionForAnswer || interaction.pinnedFloatingAgent)
+            prefersAnchorCenter: true
         )
         return CGPoint(x: point.x, y: point.y)
     }
@@ -518,7 +577,7 @@ private struct LibraryAwareEscapeBridge: View {
                 surface: interaction.agentSurface,
                 hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
                 hasAnchor: interaction.selectionAnchor != nil,
-                pinned: interaction.pinnedFloatingAgent,
+                pinned: false,
                 keepOpen: interaction.keepFloatingSelectionForAnswer
             )
     }
@@ -1812,7 +1871,9 @@ private struct LayoutContentView: View {
         .transition(WeiBeiTransition.layout)
         // Document-internal pane toggles must not re-trigger SwiftUI layout animation.
         .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
-        .animation(WeiBeiMotion.panel, value: interaction.agentSurface)
+        // Opening the selection float must not animate this workspace. That
+        // transaction was rebuilding the reader and painting the document again.
+        .animation(nil, value: interaction.agentSurface)
         // Touch pane flags so SwiftUI rebuilds visibleOrder when only paneState publishes.
         .animation(nil, value: paneState.showReader)
         .animation(nil, value: paneState.showAgent)

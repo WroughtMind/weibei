@@ -1338,6 +1338,99 @@ let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
 )
 expect(edgeFloatingPoint.x == 958 && edgeFloatingPoint.y == 552, "selection agent flips to the left of text near the window edge")
+expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 0) == 0,
+    "opening ask does not reserve an empty answer area")
+expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 80) == 80,
+    "a short answer stays as tall as its text")
+expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 360) == 360,
+    "the answer viewport grows with the reply")
+expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 900)
+    == SelectionFloatingAgentPlacement.maximumAutomaticContentHeight,
+    "automatic growth stops at the scroll cap")
+expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 300, userFloor: 360) == 360,
+    "enlarging the answer area keeps that height as a floor")
+expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 500, userFloor: 360)
+    == SelectionFloatingAgentPlacement.maximumAutomaticContentHeight,
+    "a floor still grows with the reply up to the automatic cap")
+expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 200, userFloor: 500) == 500,
+    "a floor above the automatic cap can grow up to the resize limit")
+expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 400, userFixed: 180) == 180,
+    "shrinking below the text fixes the viewport and scrolls inside")
+let openingTopLeft = SelectionFloatingAgentPlacement.initialTopLeft(
+    anchor: FloatingAgentCoordinate(x: 320, y: 200),
+    canvas: FloatingAgentCoordinate(x: 1200, y: 800)
+)
+let openingCenter = SelectionFloatingAgentPlacement.position(
+    anchor: FloatingAgentCoordinate(x: 320, y: 200),
+    canvas: FloatingAgentCoordinate(x: 1200, y: 800),
+    surfaceHalfWidth: SelectionFloatingAgentPlacement.expandedHalfWidth,
+    measuredHalfHeight: SelectionFloatingAgentPlacement.initialPlacedPanelHeight / 2
+)
+expect(openingTopLeft.x == openingCenter.x - SelectionFloatingAgentPlacement.expandedHalfWidth
+    && openingTopLeft.y == openingCenter.y - SelectionFloatingAgentPlacement.initialPlacedPanelHeight / 2,
+    "opening placement is the compact panel's top-left beside the selection")
+let rightEdgeDrag = SelectionFloatingAgentPlacement.edgeAnchoredResize(
+    origin: FloatingAgentCoordinate(x: 100, y: 80),
+    size: FloatingAgentSize(width: 380, height: 280),
+    translation: FloatingAgentSize(width: 80, height: 0),
+    canvas: FloatingAgentSize(width: 1200, height: 800),
+    edge: .trailing
+)
+expect(rightEdgeDrag.origin == FloatingAgentCoordinate(x: 100, y: 80)
+    && rightEdgeDrag.size == FloatingAgentSize(width: 460, height: 280),
+    "dragging the right edge keeps the left and top edges still")
+let leftEdgeDrag = SelectionFloatingAgentPlacement.edgeAnchoredResize(
+    origin: FloatingAgentCoordinate(x: 100, y: 80),
+    size: FloatingAgentSize(width: 380, height: 280),
+    translation: FloatingAgentSize(width: -80, height: 0),
+    canvas: FloatingAgentSize(width: 1200, height: 800),
+    edge: .leading
+)
+expect(leftEdgeDrag.origin.x == 20
+    && leftEdgeDrag.size.width == 460
+    && leftEdgeDrag.origin.x + leftEdgeDrag.size.width == 480,
+    "dragging the left edge keeps the right edge still")
+let bottomEdgeDrag = SelectionFloatingAgentPlacement.edgeAnchoredResize(
+    origin: FloatingAgentCoordinate(x: 100, y: 80),
+    size: FloatingAgentSize(width: 380, height: 280),
+    translation: FloatingAgentSize(width: 0, height: 90),
+    canvas: FloatingAgentSize(width: 1200, height: 800),
+    edge: .bottom
+)
+expect(bottomEdgeDrag.origin.y == 80 && bottomEdgeDrag.size.height == 370,
+    "dragging the bottom edge keeps the top edge still")
+let topEdgeDrag = SelectionFloatingAgentPlacement.edgeAnchoredResize(
+    origin: FloatingAgentCoordinate(x: 100, y: 80),
+    size: FloatingAgentSize(width: 380, height: 280),
+    translation: FloatingAgentSize(width: 0, height: -70),
+    canvas: FloatingAgentSize(width: 1200, height: 800),
+    edge: .top
+)
+expect(topEdgeDrag.origin.y == 10
+    && topEdgeDrag.size.height == 350
+    && topEdgeDrag.origin.y + topEdgeDrag.size.height == 360,
+    "dragging the top edge keeps the bottom edge still")
+let stoppedEdgeDrag = SelectionFloatingAgentPlacement.edgeAnchoredResize(
+    origin: FloatingAgentCoordinate(x: 700, y: 80),
+    size: FloatingAgentSize(width: 380, height: 280),
+    translation: FloatingAgentSize(width: 400, height: 0),
+    canvas: FloatingAgentSize(width: 1200, height: 800),
+    edge: .trailing
+)
+expect(stoppedEdgeDrag.origin.x == 700
+    && stoppedEdgeDrag.origin.x + stoppedEdgeDrag.size.width <= 1_192
+    && stoppedEdgeDrag.size.width >= SelectionFloatingAgentPlacement.minimumResizableWidth,
+    "a right-edge drag stops at the canvas instead of jumping to the other side")
+let stoppedTopDrag = SelectionFloatingAgentPlacement.edgeAnchoredResize(
+    origin: FloatingAgentCoordinate(x: 100, y: 20),
+    size: FloatingAgentSize(width: 380, height: 280),
+    translation: FloatingAgentSize(width: 0, height: -2_000),
+    canvas: FloatingAgentSize(width: 1200, height: 800),
+    edge: .top
+)
+expect(stoppedTopDrag.origin.y == 8
+    && stoppedTopDrag.origin.y + stoppedTopDrag.size.height == 300,
+    "a top-edge drag stops at the canvas and keeps the bottom edge still")
 expect(AgentMessage(role: .assistant, text: "整理完成", source: nil).isUsableAgentAnswer, "usable agent answer")
 expect(!AgentMessage(role: .assistant, text: "认证已失效", source: nil, failureKind: .unauthorized).isUsableAgentAnswer, "structured authentication failures are not writable")
 expect(!AgentMessage(role: .assistant, text: "请求失败", source: nil, failureKind: .generic).isUsableAgentAnswer, "structured agent failures are not writable")

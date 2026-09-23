@@ -941,13 +941,16 @@ final class WorkspaceStore: ObservableObject {
     }
 
     static func userFacingAgentFailureDetail(for error: Error) -> String? {
-        guard let targetError = error as? AgentConversationTargetError else {
+        let message: String
+        if let targetError = error as? AgentConversationTargetError {
+            message = targetError.message
+        } else if let failure = error as? NativeLLMFailure {
+            message = failure.message
+        } else {
             return nil
         }
-        let message = targetError.message.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        return message.isEmpty ? nil : message
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private struct ResolvedImportedFileBookmark {
@@ -5437,7 +5440,7 @@ final class WorkspaceStore: ObservableObject {
             surface: .selectionFloat,
             hasSelection: selectionContext != nil || keepFloatingSelectionForAnswer,
             hasAnchor: selectionAnchor != nil,
-            pinned: pinnedFloatingAgent,
+            pinned: false,
             keepOpen: keepFloatingSelectionForAnswer
         )
     }
@@ -6355,8 +6358,6 @@ final class WorkspaceStore: ObservableObject {
             ownerTitle: resolvedOwnerTitle, itemID: selectionItemID, isEditable: isEditable,
             documentAnchor: documentAnchor)
         updateAutomaticSelection(composerSelection)
-        // The open floating conversation keeps its own original passage.
-        guard !pinnedFloatingAgent else { return }
         // Multi-pane and immersive both get the selection capsule when there is an anchor
         // (previously suppressed whenever the chat column was open — looked "broken").
         let shouldRevealSelectionPrompt = anchor != nil
@@ -9059,10 +9060,9 @@ final class WorkspaceStore: ObservableObject {
                 addSelectionAttachment(context)
                 floatingSelectionPrompt = context.label(language: interfaceLanguage)
             }
-            // Prefer keeping float if user is mid answer; otherwise collapse into chat.
+            // An open question stays until the answer finishes.
             if !keepFloatingSelectionForAnswer, agentSurface == .selectionFloat {
                 agentSurface = .hidden
-                pinnedFloatingAgent = false
             }
             if !keepFloatingSelectionForAnswer {
                 selectionAnchor = nil
@@ -9080,11 +9080,12 @@ final class WorkspaceStore: ObservableObject {
         selectionChatRevealMessageID = revealMessageID
         do { try ensureSelectionChat(thread) }
         catch { selectionChatError = error.localizedDescription }
-        withAnimation(WeiBeiMotion.panel) {
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
             activeSelectionAskThreadID = thread.id
             floatingSelectionPrompt = thread.ownerTitle
             keepFloatingSelectionForAnswer = true
-            // Do not force-pin on reopen — pin is an explicit user choice.
             agentSurface = .selectionFloat
             if let anchor {
                 selectionAnchor = anchor
@@ -9808,7 +9809,7 @@ final class WorkspaceStore: ObservableObject {
                         }
                     }
                     // Opening another conversation pane does not dismiss the user's floating answer.
-                    if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
+                    if keepFloatingSelectionForAnswer {
                         agentSurface = .selectionFloat
                     } else if shouldClearSentDocumentSelection {
                         clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
@@ -11028,9 +11029,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true) {
-        // Never kill the float while a selection answer is streaming / pinned for reading.
-        if keepFloatingSelectionForAnswer
-            || (pinnedFloatingAgent && agentSurface == .selectionFloat && isAgentRunningInActiveChat) {
+        // An answer still arriving stays up. A finished window closes on an empty selection.
+        if keepFloatingSelectionForAnswer && isFloatingChatRunning {
             return
         }
         if !keepContext {
@@ -11054,29 +11054,29 @@ final class WorkspaceStore: ObservableObject {
             if floatingSelectionPrompt != clearedPrompt {
                 floatingSelectionPrompt = clearedPrompt
             }
-            pinnedFloatingAgent = false
+            keepFloatingSelectionForAnswer = false
             if agentSurface == .selectionFloat {
                 agentSurface = .hidden
             }
             return
         }
-        guard !pinnedFloatingAgent else { return }
         if selectionAnchor == nil, agentSurface != .selectionFloat {
             return
         }
         selectionAnchor = nil
+        keepFloatingSelectionForAnswer = false
         if agentSurface == .selectionFloat {
             agentSurface = .hidden
         }
     }
 
     private func collapseSelectionFloatIntoConversationIfVisible() {
-        // Keep dual-surface answer: do not auto-collapse float into chat while answering.
-        guard !keepFloatingSelectionForAnswer else { return }
+        // An answer still arriving stays beside the passage.
+        guard !(keepFloatingSelectionForAnswer && isFloatingChatRunning) else { return }
         guard isConversationSurfaceVisible, agentSurface == .selectionFloat else { return }
         agentSurface = .hidden
         selectionAnchor = nil
-        pinnedFloatingAgent = false
+        keepFloatingSelectionForAnswer = false
     }
 
     private func scheduleCourseNoteLoad(_ item: StudyItem) {

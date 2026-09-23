@@ -2072,6 +2072,23 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(chatParts.first?["type"] as? String, "image_url")
     }
 
+    func testResponsesToolFollowUpKeepsCallNextToItsOutput() {
+        let input = OpenAIResponsesProvider.assembleInput([
+            NativeModelMessage(role: .user, content: "解释一下"),
+            NativeModelMessage(
+                role: .assistant,
+                content: "我先读一下这页。",
+                toolCalls: [NativeToolCall(id: "call_1", name: "weibei_course_read", arguments: "{}")]
+            ),
+            NativeModelMessage(role: .tool, content: "页内容", toolCallID: "call_1"),
+        ]).input
+        let kinds = input.map { item -> String in
+            if let type = item["type"] as? String { return type }
+            return item["role"] as? String ?? ""
+        }
+        XCTAssertEqual(kinds, ["user", "assistant", "function_call", "function_call_output"])
+    }
+
     func testLiveModelListURLAndIDParsing() throws {
         XCTAssertEqual(
             try AgentModelListService.resolvedModelsURL(base: "https://api.deepseek.com").absoluteString,

@@ -250,7 +250,12 @@ final class SelectionExperienceTests: XCTestCase {
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
         store.updateSelection("直接开始提问", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
         store.askSelection()
-        let host = NSHostingView(rootView: FloatingSelectionAgentView(expanded: .constant(true))
+        let host = NSHostingView(rootView: FloatingSelectionAgentView(
+            expanded: .constant(true),
+            placedOrigin: .constant(nil),
+            canvasSize: CGSize(width: 800, height: 600),
+            topInset: 0
+        )
             .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 180),
                               styleMask: .borderless, backing: .buffered, defer: false)
@@ -300,7 +305,11 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertTrue(store.isAgentRunningInActiveChat)
         var expanded = false
         let host = NSHostingView(rootView: FloatingSelectionAgentView(
-            expanded: Binding(get: { expanded }, set: { expanded = $0 }))
+            expanded: Binding(get: { expanded }, set: { expanded = $0 }),
+            placedOrigin: .constant(nil),
+            canvasSize: CGSize(width: 800, height: 600),
+            topInset: 0
+        )
             .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
                               styleMask: .borderless, backing: .buffered, defer: false)

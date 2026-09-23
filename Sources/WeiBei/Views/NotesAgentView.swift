@@ -2564,15 +2564,24 @@ struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Binding var expanded: Bool
-    @GestureState private var dragOffset = CGSize.zero
-    @State private var settledOffset = CGSize.zero
+    @Binding var placedOrigin: CGPoint?
+    var canvasSize: CGSize
+    var topInset: CGFloat
+    @State private var dragAnchorOrigin: CGPoint?
     @State private var panelWidth = CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2)
-    @State private var userFeedHeight: CGFloat?
-    @State private var measuredFeedContentHeight = CGFloat(SelectionFloatingAgentPlacement.minimumAutomaticContentHeight)
-    @State private var previousFeedContentHeight: CGFloat?
-    @State private var feedHeightLocked = false
-    @State private var resizeOrigin: FloatingAgentSize?
-    @State private var resizeOriginOffset: CGSize?
+    @State private var measuredPanelSize = CGSize(
+        width: SelectionFloatingAgentPlacement.expandedHalfWidth * 2,
+        height: SelectionFloatingAgentPlacement.initialPlacedPanelHeight
+    )
+    @State private var measuredFeedContentHeight: CGFloat = 0
+    /// Stays on after the answer passes the cap, so a viewport measurement cannot shrink the panel back open.
+    @State private var feedExceededCap = false
+    /// Set when the user enlarges the answer area. The reply can still grow up to the cap.
+    @State private var userFloor: Double?
+    /// Set when the user shrinks the answer area below its text.
+    @State private var userFixed: Double?
+    @State private var resizePreviewHeight: CGFloat?
+    @State private var resizeSession: FloatingResizeSession?
     @State private var linkDraft = ""
     @State private var showsLinkEditor = false
     @State private var savingRemark = false
@@ -2594,12 +2603,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
-        .offset(
-            x: dragOffset.width + settledOffset.width,
-            y: dragOffset.height + settledOffset.height
-        )
         .onChange(of: interaction.selectionContext) { previous, next in
-            guard !interaction.pinnedFloatingAgent else { return }
             let sameContent = previous?.text == next?.text
                 && previous?.source == next?.source
                 && previous?.ownerTitle == next?.ownerTitle
@@ -2614,39 +2618,40 @@ struct FloatingSelectionAgentView: View {
             if isReopen, interaction.keepFloatingSelectionForAnswer {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
-                    settledOffset = .zero
                 }
                 return
             }
-            // Live reselection → capsule only.
+            // Live reselection → capsule only. Keep the parked origin so the next 「问」 does not jump.
             withAnimation(WeiBeiMotion.panel) {
                 expanded = false
                 interaction.keepFloatingSelectionForAnswer = false
                 interaction.activeSelectionAskThreadID = nil
-                settledOffset = .zero
             }
         }
         .onChange(of: interaction.keepFloatingSelectionForAnswer) { _, keep in
             if keep {
-                withAnimation(WeiBeiMotion.panel) {
-                    expanded = true
-                    settledOffset = .zero
-                }
+                placeIfNeeded()
+                var transaction = Transaction()
+                transaction.animation = nil
+                withTransaction(transaction) { expanded = true }
             }
         }
         .onChange(of: interaction.activeSelectionAskThreadID) { _, id in
             if id != nil, interaction.keepFloatingSelectionForAnswer {
-                withAnimation(WeiBeiMotion.panel) {
-                    expanded = true
-                    settledOffset = .zero
-                }
+                placeIfNeeded()
+                var transaction = Transaction()
+                transaction.animation = nil
+                withTransaction(transaction) { expanded = true }
             }
         }
         .onChange(of: paneState.focusRequest) { _, _ in
             draftFocused = paneState.focusedPane == .agent
         }
         .onAppear {
-            expanded = interaction.pinnedFloatingAgent || interaction.keepFloatingSelectionForAnswer
+            expanded = interaction.keepFloatingSelectionForAnswer
+            if expanded || interaction.keepFloatingSelectionForAnswer {
+                placeIfNeeded()
+            }
             draftFocused = expanded && paneState.focusedPane == .agent
         }
         .weiBeiOnExitCommand {
@@ -2654,7 +2659,7 @@ struct FloatingSelectionAgentView: View {
             if interaction.floatingComposerMode == .remark,
                store.selectionRemarkRecords.contains(where: { $0.id == interaction.selectionContext?.id }) {
                 closeFloatingAgent()
-            } else if showsExpandedBody && !store.isFloatingChatRunning && !interaction.pinnedFloatingAgent {
+            } else if showsExpandedBody && !store.isFloatingChatRunning {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = false
                     store.keepFloatingSelectionForAnswer = false
@@ -2669,7 +2674,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var showsExpandedBody: Bool {
-        expanded || interaction.pinnedFloatingAgent || interaction.keepFloatingSelectionForAnswer
+        expanded || interaction.keepFloatingSelectionForAnswer
     }
 
     private var promptBody: some View {
@@ -2874,23 +2879,6 @@ struct FloatingSelectionAgentView: View {
                     Spacer(minLength: 4)
                 }
                 .frame(maxWidth: .infinity, minHeight: 28)
-                .contentShape(Rectangle())
-                .gesture(moveFloatingAgentGesture, including: interaction.pinnedFloatingAgent ? .none : .all)
-                Button {
-                    withAnimation(WeiBeiMotion.micro) { togglePinnedFloatingAgent() }
-                } label: {
-                    Image(systemName: store.pinnedFloatingAgent ? "pin.fill" : "pin")
-                        .weiBeiText(12, weight: .semibold)
-                        .foregroundStyle(store.pinnedFloatingAgent ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(store.pinnedFloatingAgent
-                      ? store.ui("取消固定", "Unpin")
-                      : store.ui("固定在当前位置", "Keep in place"))
-                .accessibilityLabel(Text(store.pinnedFloatingAgent ? store.ui("取消固定", "Unpin") : store.ui("固定在当前位置", "Keep in place")))
-
                 Button {
                     closeFloatingAgent()
                 } label: {
@@ -2907,6 +2895,8 @@ struct FloatingSelectionAgentView: View {
             .padding(.horizontal, 12)
             .padding(.top, 9)
             .padding(.bottom, 7)
+            .contentShape(Rectangle())
+            .simultaneousGesture(moveFloatingAgentGesture)
 
             Rectangle()
                 .fill(WeiBeiTheme.hairline.opacity(0.35))
@@ -2914,91 +2904,113 @@ struct FloatingSelectionAgentView: View {
                 .padding(.horizontal, 12)
 
             if showsFloatingFeed {
-#if targetEnvironment(macCatalyst)
-                CatalystConversationView(displayedMessages: visibleFloatingMessages,
-                    floatingThreadID: interaction.activeSelectionAskThreadID,
-                    onContentHeight: { height in
-                        guard userFeedHeight == nil, height > 1 else { return }
-                        measuredFeedContentHeight = height
-                    }, onFocusComposer: { composerFocusTrigger &+= 1 }, onReadingMessage: { _ in })
-                    .frame(height: resolvedFloatingFeedHeight)
-#else
-                ScrollViewReader { proxy in
-                    ScrollView(showsIndicators: false) {
-                        // Same order as immersive chat: messages → streaming → thinking.
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(visibleFloatingMessages) { message in
-                                FloatingSelectionMessageRow(
-                                    message: message,
-                                    streaming: message.completionState == .generating
-                                        || floatingStreaming.isDisplaying(message.id)
-                                        ? floatingStreaming
-                                        : inertAgentStreamingState
-                                )
-                                .id(message.id)
-                            }
-
-                            if store.isFloatingChatRunning
-                                && !visibleFloatingMessages.contains(where: { $0.completionState == .generating }) {
-                                AgentLiveResponse(
-                                    streaming: floatingStreaming,
-                                    compact: true
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
-                        .background {
-                            GeometryReader { proxy in
-                                Color.clear.preference(
-                                    key: FloatingSelectionFeedHeightKey.self,
-                                    value: proxy.size.height
-                                )
-                            }
-                        }
-                    }
-                    .frame(height: resolvedFloatingFeedHeight)
-                    .onPreferenceChange(FloatingSelectionFeedHeightKey.self) { height in
-                        guard userFeedHeight == nil, !feedHeightLocked, height > 1,
-                              abs(height - measuredFeedContentHeight) > 1 else { return }
-                        // Two-state oscillation lock: the LazyVStack row set depends on the
-                        // frame height, so an A/B alternation means this measure-writeback
-                        // loop cannot converge. Lock instead of churning layout (and
-                        // re-entering the AttributeGraph cycle) on every frame.
-                        if let previousFeedContentHeight,
-                           abs(height - previousFeedContentHeight) <= 1 {
-                            feedHeightLocked = true
-                            return
-                        }
-                        previousFeedContentHeight = measuredFeedContentHeight
-                        measuredFeedContentHeight = height
-                    }
-                    .onAppear { revealFloatingMessage(using: proxy) }
-                    .onChange(of: store.selectionChatRevealMessageID) { _, _ in
-                        revealFloatingMessage(using: proxy)
-                    }
-                }
-#endif
+                floatingAnswerFeed
             }
 
             composerField
         }
         .frame(width: panelWidth, alignment: .leading)
-        .overlay {
-            if !interaction.pinnedFloatingAgent {
-                floatingResizeBorder
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: FloatingPanelSizeKey.self, value: proxy.size)
             }
         }
-        .onChange(of: showsFloatingFeed) { _, _ in
-            unlockFeedHeightFeedback()
+        .onPreferenceChange(FloatingPanelSizeKey.self) { size in
+            guard resizeSession == nil, size.width > 1, size.height > 1 else { return }
+            measuredPanelSize = size
+            keepPanelOnScreen(panelHeight: size.height)
         }
-        .onChange(of: visibleFloatingMessages.count) { _, _ in
-            unlockFeedHeightFeedback()
+        .onChange(of: showsFloatingFeed) { _, shown in
+            if !shown {
+                measuredFeedContentHeight = 0
+                feedExceededCap = false
+            }
+        }
+        .overlay {
+            floatingResizeBorder
         }
         .onAppear {
             draftFocused = true
         }
+    }
+
+    /// The answer is the text's own height. A fixed frame is only for a cap, a pin, or a drag.
+    @ViewBuilder
+    private var floatingAnswerFeed: some View {
+        if locksFloatingFeedHeight {
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    floatingAnswerStack
+                }
+                .frame(height: resolvedFloatingFeedHeight)
+                .onAppear {
+                    if store.selectionChatRevealMessageID != nil {
+                        revealFloatingMessage(using: proxy)
+                    } else {
+                        scrollFloatingFeedToEnd(using: proxy)
+                    }
+                }
+                .onChange(of: store.selectionChatRevealMessageID) { _, _ in
+                    revealFloatingMessage(using: proxy)
+                }
+                .onChange(of: floatingStreaming.text) { _, _ in
+                    scrollFloatingFeedToEnd(using: proxy)
+                }
+                .onChange(of: visibleFloatingMessages.count) { _, _ in
+                    scrollFloatingFeedToEnd(using: proxy)
+                }
+            }
+        } else {
+            floatingAnswerStack
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var floatingAnswerStack: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(visibleFloatingMessages) { message in
+                FloatingSelectionMessageRow(
+                    message: message,
+                    streaming: message.completionState == .generating
+                        || floatingStreaming.isDisplaying(message.id)
+                        ? floatingStreaming
+                        : inertAgentStreamingState
+                )
+                .id(message.id)
+            }
+
+            if store.isFloatingChatRunning
+                && !visibleFloatingMessages.contains(where: { $0.completionState == .generating }) {
+                AgentLiveResponse(
+                    streaming: floatingStreaming,
+                    compact: true
+                )
+            }
+            Color.clear.frame(height: 1).id("floating-feed-end")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: FloatingSelectionFeedHeightKey.self,
+                    value: proxy.size.height
+                )
+            }
+        }
+        .onPreferenceChange(FloatingSelectionFeedHeightKey.self) { height in
+            adoptMeasuredFeedHeight(height)
+        }
+    }
+
+    private var locksFloatingFeedHeight: Bool {
+        resizePreviewHeight != nil || userFixed != nil || userFloor != nil || feedExceededCap
+    }
+
+    private func scrollFloatingFeedToEnd(using proxy: ScrollViewProxy) {
+        proxy.scrollTo("floating-feed-end", anchor: .bottom)
     }
 
     private func revealFloatingMessage(using proxy: ScrollViewProxy) {
@@ -3054,9 +3066,33 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
-    private func unlockFeedHeightFeedback() {
-        feedHeightLocked = false
-        previousFeedContentHeight = nil
+    private func adoptMeasuredFeedHeight(_ height: CGFloat) {
+        // The list reports its height inside the layout pass. Applying it on the
+        // next turn is what lets the panel frame actually change.
+        DispatchQueue.main.async {
+            applyMeasuredFeedHeight(height)
+        }
+    }
+
+    private func applyMeasuredFeedHeight(_ height: CGFloat) {
+        guard resizeSession == nil, height > 1, abs(height - measuredFeedContentHeight) > 1 else { return }
+        if height + 8 >= SelectionFloatingAgentPlacement.maximumAutomaticContentHeight {
+            feedExceededCap = true
+        }
+        measuredFeedContentHeight = height
+    }
+
+    private func keepPanelOnScreen(panelHeight: CGFloat) {
+        guard dragAnchorOrigin == nil, resizeSession == nil, let origin = placedOrigin else { return }
+        let contentHeight = max(1, canvasSize.height - topInset)
+        let bottom = origin.y + panelHeight
+        let limit = contentHeight - 8
+        guard bottom > limit else { return }
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            placedOrigin = CGPoint(x: origin.x, y: max(8, origin.y - (bottom - limit)))
+        }
     }
 
     private var visibleFloatingMessages: [AgentMessage] {
@@ -3076,57 +3112,66 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var resolvedFloatingFeedHeight: CGFloat {
-        userFeedHeight ?? CGFloat(
-            SelectionFloatingAgentPlacement.automaticContentHeight(
-                measuredContentHeight: Double(measuredFeedContentHeight)
-            )
-        )
+        if let resizePreviewHeight { return resizePreviewHeight }
+        let resolved = CGFloat(SelectionFloatingAgentPlacement.resolvedFeedHeight(
+            measuredContentHeight: Double(measuredFeedContentHeight),
+            userFloor: userFloor,
+            userFixed: userFixed
+        ))
+        // A zero frame never lays out, so the first answer line has nothing to measure.
+        if resolved < 1, showsFloatingFeed { return 1 }
+        return resolved
     }
 
     private var moveFloatingAgentGesture: some Gesture {
         DragGesture(minimumDistance: 8, coordinateSpace: .global)
-            .updating($dragOffset) { value, offset, transaction in
-                transaction.animation = nil
-                offset = value.translation
+            .onChanged { value in
+                let base = dragAnchorOrigin ?? placedOrigin ?? initialOriginPoint
+                if dragAnchorOrigin == nil { dragAnchorOrigin = base }
+                setPlacedOrigin(CGPoint(
+                    x: base.x + value.translation.width,
+                    y: base.y + value.translation.height
+                ))
             }
-            .onEnded { value in
-                settledOffset = CGSize(
-                    width: settledOffset.width + value.translation.width,
-                    height: settledOffset.height + value.translation.height
-                )
+            .onEnded { _ in
+                dragAnchorOrigin = nil
             }
     }
 
     private var floatingResizeBorder: some View {
-        ZStack {
+        let thickness: CGFloat = 6
+        let headerClearance: CGFloat = 46
+        return ZStack {
             FloatingSelectionResizeHitRegion(edge: .top, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
-                .frame(height: 8)
+                .frame(height: thickness)
                 .padding(.horizontal, 10)
                 .frame(maxHeight: .infinity, alignment: .top)
             FloatingSelectionResizeHitRegion(edge: .bottom, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
-                .frame(height: 8)
+                .frame(height: thickness)
                 .padding(.horizontal, 10)
                 .frame(maxHeight: .infinity, alignment: .bottom)
             FloatingSelectionResizeHitRegion(edge: .leading, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
-                .frame(width: 8)
-                .padding(.vertical, 10)
+                .frame(width: thickness)
+                .padding(.top, headerClearance)
+                .padding(.bottom, thickness)
                 .frame(maxWidth: .infinity, alignment: .leading)
             FloatingSelectionResizeHitRegion(edge: .trailing, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
-                .frame(width: 8)
-                .padding(.vertical, 10)
+                .frame(width: thickness)
+                .padding(.top, headerClearance)
+                .padding(.bottom, thickness)
                 .frame(maxWidth: .infinity, alignment: .trailing)
 
             FloatingSelectionResizeHitRegion(edge: .topLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 12, height: 12)
+                .frame(width: 10, height: 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             FloatingSelectionResizeHitRegion(edge: .topTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 12, height: 12)
+                .frame(width: 10, height: 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             FloatingSelectionResizeHitRegion(edge: .bottomLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 12, height: 12)
+                .frame(width: 10, height: 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             FloatingSelectionResizeHitRegion(edge: .bottomTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 12, height: 12)
+                .frame(width: 10, height: 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
         .accessibilityElement(children: .ignore)
@@ -3136,57 +3181,61 @@ struct FloatingSelectionAgentView: View {
 
     private func resizeFloatingAgent(edge: FloatingAgentResizeEdge, value: DragGesture.Value?) {
         guard let value else {
-            resizeOrigin = nil
-            resizeOriginOffset = nil
+            commitResize()
             return
         }
 
-        let origin = resizeOrigin ?? FloatingAgentSize(
-            width: Double(panelWidth),
-            height: Double(resolvedFloatingFeedHeight)
+        let session = resizeSession ?? FloatingResizeSession(
+            origin: placedOrigin ?? initialOriginPoint,
+            size: measuredPanelSize,
+            feedHeight: resolvedFloatingFeedHeight
         )
-        let originOffset = resizeOriginOffset ?? settledOffset
-        if resizeOrigin == nil {
-            resizeOrigin = origin
-            resizeOriginOffset = originOffset
-        }
+        if resizeSession == nil { resizeSession = session }
 
-#if targetEnvironment(macCatalyst)
-        let screen = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.coordinateSpace.bounds.size }.first ?? CGSize(width: 1_200, height: 800)
-#else
-        let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1_200, height: 800)
-#endif
-        let resized = SelectionFloatingAgentPlacement.resizedFrame(
-            current: origin,
+        let chrome = max(80, session.size.height - session.feedHeight)
+        let resized = SelectionFloatingAgentPlacement.edgeAnchoredResize(
+            origin: FloatingAgentCoordinate(x: Double(session.origin.x), y: Double(session.origin.y)),
+            size: FloatingAgentSize(width: Double(session.size.width), height: Double(session.size.height)),
             translation: FloatingAgentSize(
                 width: Double(value.translation.width),
                 height: Double(value.translation.height)
             ),
-            canvas: FloatingAgentSize(width: Double(screen.width), height: Double(screen.height)),
-            edge: edge
+            canvas: FloatingAgentSize(
+                width: Double(canvasSize.width),
+                height: Double(max(1, canvasSize.height - topInset))
+            ),
+            edge: edge,
+            minimumHeight: Double(chrome) + SelectionFloatingAgentPlacement.minimumResizableContentHeight,
+            maximumHeight: Double(chrome) + SelectionFloatingAgentPlacement.maximumResizableContentHeight
         )
-        let feedGrowthCorrection = (origin.height - resized.size.height) / 2
-
-        // Drag updates stay animation-free and use global coordinates. The old
-        // local-coordinate corner drag changed its own coordinate space while
-        // resizing, so the panel visibly shook under the pointer.
         var transaction = Transaction()
         transaction.animation = nil
         withTransaction(transaction) {
             panelWidth = CGFloat(resized.size.width)
-            userFeedHeight = CGFloat(resized.size.height)
-            settledOffset = CGSize(
-                width: originOffset.width + CGFloat(resized.offset.x),
-                height: originOffset.height + CGFloat(resized.offset.y + feedGrowthCorrection)
-            )
+            resizePreviewHeight = CGFloat(resized.size.height) - chrome
+            placedOrigin = CGPoint(x: resized.origin.x, y: resized.origin.y)
         }
     }
 
-    private func togglePinnedFloatingAgent() {
-        store.pinnedFloatingAgent.toggle()
+    private func commitResize() {
+        let preview = resizePreviewHeight
+        let session = resizeSession
+        resizeSession = nil
+        resizePreviewHeight = nil
+        guard let preview, let session, abs(preview - session.feedHeight) > 1 else { return }
+        // No answer yet: leave the viewport on the automatic height.
+        guard showsFloatingFeed else { return }
+        if Double(preview) + 1 < Double(measuredFeedContentHeight) {
+            userFixed = Double(preview)
+            userFloor = nil
+        } else {
+            userFloor = Double(preview)
+            userFixed = nil
+        }
     }
 
     private func openExpandedComposer() {
+        placeIfNeeded()
         withAnimation(WeiBeiMotion.panel) {
             interaction.floatingComposerMode = .ask
             expanded = true
@@ -3205,6 +3254,7 @@ struct FloatingSelectionAgentView: View {
 
     /// 胶囊"记":展开共用浮层进入札记模式,不建提问线程、不带附件。
     private func openRemarkComposer() {
+        placeIfNeeded()
         withAnimation(WeiBeiMotion.panel) {
             interaction.floatingComposerMode = .remark
             expanded = true
@@ -3242,8 +3292,59 @@ struct FloatingSelectionAgentView: View {
     private func closeFloatingAgent() {
         withAnimation(WeiBeiMotion.panel) {
             expanded = false
-            settledOffset = .zero
             store.dismissFloatingSelectionAgent()
+        }
+    }
+
+    private var initialOriginPoint: CGPoint {
+        let point = SelectionFloatingAgentPlacement.initialTopLeft(
+            anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
+            canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
+            topInset: Double(topInset),
+            prefersAbove: interaction.selectionAnchor?.prefersAbove == true
+        )
+        return CGPoint(x: point.x, y: point.y)
+    }
+
+    private func placeIfNeeded() {
+        guard placedOrigin == nil else { return }
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            placedOrigin = initialOriginPoint
+        }
+    }
+
+    private func setPlacedOrigin(_ origin: CGPoint) {
+        // Origin is in the content area below the top bar, same space as initialTopLeft.
+        let contentHeight = max(1, canvasSize.height - topInset)
+        let maxX = max(8, canvasSize.width - 48)
+        let maxY = max(8, contentHeight - 48)
+        let parked = CGPoint(
+            x: min(max(8, origin.x), maxX),
+            y: min(max(8, origin.y), maxY)
+        )
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            placedOrigin = parked
+        }
+    }
+}
+
+private struct FloatingResizeSession {
+    var origin: CGPoint
+    var size: CGSize
+    var feedHeight: CGFloat
+}
+
+private struct FloatingPanelSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next.width > 1, next.height > 1 {
+            value = next
         }
     }
 }
