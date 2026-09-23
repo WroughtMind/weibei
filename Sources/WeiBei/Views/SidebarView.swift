@@ -4,7 +4,7 @@ import WeiBeiCore
 struct SidebarView: View {
     let store: WorkspaceStore
     @ObservedObject var model: CourseSidebarModel
-    @FocusState private var librarySearchFocused: Bool
+    @State private var librarySearchFocused = false
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
     @State private var courseToRename: Course?
     @State private var renameCourseTitle = ""
@@ -102,22 +102,18 @@ struct SidebarView: View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
                 .weiBeiText(10.5, weight: .medium)
-                .foregroundStyle(librarySearchFocused
-                    ? WeiBeiTheme.link.opacity(0.72)
-                    : WeiBeiTheme.placeholderInk)
-            TextField(
-                "",
+                .foregroundStyle(librarySearchFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.placeholderInk)
+            WeiBeiSearchField(
                 text: Binding(
                     get: { model.query },
                     set: model.updateQuery
                 ),
-                prompt: Text(ui("搜索课程资料与笔记", "Search course materials and notes"))
-                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+                prompt: ui("搜索课程资料与笔记", "Search course materials and notes"),
+                isFocused: $librarySearchFocused,
+                drawsChrome: false,
+                chromeHeight: 28
             )
-            .textFieldStyle(.plain)
-            .focused($librarySearchFocused)
-            .foregroundColor(WeiBeiTheme.ink)
-            .weiBeiText(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .weibeiInputSurface(

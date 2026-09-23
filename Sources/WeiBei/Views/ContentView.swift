@@ -548,38 +548,496 @@ private struct WorkspaceChromeBackdrop: View {
     }
 }
 
+#if targetEnvironment(macCatalyst)
+/// Find field we own. SwiftUI `TextField` on Catalyst keeps the system gray well
+/// and blue focus ring no matter which theme is active.
+struct WeiBeiPlainTextField: UIViewRepresentable {
+    @Binding var text: String
+    var prompt: String
+    var fontSize: CGFloat
+    var isFocused: Binding<Bool>
+    var focusRequest: Int
+    var focusesOnAppear: Bool
+    var brandLanguage: WeiBeiInterfaceLanguage?
+    var onSubmit: (() -> Void)?
+    var onEscape: (() -> Void)?
+    var onMove: ((Int) -> Void)?
+
+    func makeUIView(context: Context) -> WeiBeiSearchTextField {
+        let field = WeiBeiSearchTextField()
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .editingChanged)
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateUIView(_ field: WeiBeiSearchTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.text != text { field.text = text }
+        let font = Self.font(size: fontSize, brandLanguage: brandLanguage)
+        field.font = font
+        field.textColor = WeiBeiNativePalette.ink()
+        field.tintColor = WeiBeiNativePalette.cinnabar()
+        field.attributedPlaceholder = NSAttributedString(
+            string: prompt,
+            attributes: [
+                .foregroundColor: WeiBeiNativePalette.placeholderInk(),
+                .font: font
+            ]
+        )
+        field.accessibilityLabel = prompt
+        field.onSubmit = onSubmit
+        field.onEscape = onEscape
+        field.onMove = onMove
+        field.stripSystemChrome()
+        if field.appliedFocusRequest != focusRequest {
+            let shouldFocus = field.appliedFocusRequest != -1 || focusesOnAppear || isFocused.wrappedValue
+            field.appliedFocusRequest = focusRequest
+            if shouldFocus { field.scheduleFocus() }
+        } else if isFocused.wrappedValue, !field.wasFocusedBinding {
+            field.scheduleFocus()
+        }
+        field.wasFocusedBinding = isFocused.wrappedValue
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: WeiBeiSearchTextField, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 160, height: proposal.height ?? max(fontSize + 8, 22))
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    private static func font(size: CGFloat, brandLanguage: WeiBeiInterfaceLanguage?) -> UIFont {
+        guard let brandLanguage else { return .systemFont(ofSize: size) }
+        if brandLanguage == .english {
+            WeiBeiTypography.registerBundledFonts()
+            if let named = UIFont(name: WeiBeiTypography.englishDisplayFontName, size: size) { return named }
+        }
+        let base = UIFont.systemFont(ofSize: size, weight: .semibold)
+        if let descriptor = base.fontDescriptor.withDesign(.serif) {
+            return UIFont(descriptor: descriptor, size: size)
+        }
+        return base
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: WeiBeiPlainTextField
+        init(_ parent: WeiBeiPlainTextField) { self.parent = parent }
+
+        @objc func changed(_ field: UITextField) {
+            let next = field.text ?? ""
+            if parent.text != next { parent.text = next }
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            if !parent.isFocused.wrappedValue { parent.isFocused.wrappedValue = true }
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            if parent.isFocused.wrappedValue { parent.isFocused.wrappedValue = false }
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            guard let onSubmit = parent.onSubmit else { return true }
+            onSubmit()
+            return false
+        }
+    }
+}
+
+final class WeiBeiSearchTextField: UITextField {
+    var onSubmit: (() -> Void)?
+    var onEscape: (() -> Void)?
+    var onMove: ((Int) -> Void)?
+    var appliedFocusRequest = -1
+    var wasFocusedBinding = false
+    private var pendingFocus = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        borderStyle = .none
+        backgroundColor = .clear
+        autocorrectionType = .no
+        spellCheckingType = .no
+        clearButtonMode = .never
+        returnKeyType = .search
+        tintColor = WeiBeiNativePalette.cinnabar()
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override var focusEffect: UIFocusEffect? {
+        get { nil }
+        set { }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        stripSystemChrome()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        stripSystemChrome()
+        return accepted
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil, pendingFocus { scheduleFocus() }
+    }
+
+    func scheduleFocus() {
+        pendingFocus = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.pendingFocus = !self.becomeFirstResponder()
+        }
+    }
+
+    func stripSystemChrome() {
+        borderStyle = .none
+        backgroundColor = .clear
+        layer.borderWidth = 0
+        layer.borderColor = UIColor.clear.cgColor
+        layer.shadowOpacity = 0
+        for subview in subviews {
+            let name = NSStringFromClass(type(of: subview))
+            let isChrome = name.contains("Background") || name.contains("Rounded") || name.contains("Focus") || name.contains("Halo")
+            guard isChrome else { continue }
+            subview.isHidden = true
+            subview.alpha = 0
+            subview.backgroundColor = .clear
+            subview.layer.borderWidth = 0
+        }
+    }
+
+    override func textRect(forBounds bounds: CGRect) -> CGRect { bounds.insetBy(dx: 1, dy: 0) }
+    override func editingRect(forBounds bounds: CGRect) -> CGRect { textRect(forBounds: bounds) }
+    override func placeholderRect(forBounds bounds: CGRect) -> CGRect { textRect(forBounds: bounds) }
+
+    override var keyCommands: [UIKeyCommand]? {
+        var commands: [UIKeyCommand] = []
+        if onMove != nil {
+            let up = UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(moveUp))
+            let down = UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(moveDown))
+            up.wantsPriorityOverSystemBehavior = true
+            down.wantsPriorityOverSystemBehavior = true
+            commands.append(contentsOf: [up, down])
+        }
+        if onEscape != nil {
+            let escape = UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(escape))
+            escape.wantsPriorityOverSystemBehavior = true
+            commands.append(escape)
+        }
+        return commands.isEmpty ? nil : commands
+    }
+
+    @objc private func moveUp() { onMove?(-1) }
+    @objc private func moveDown() { onMove?(1) }
+    @objc private func escape() { onEscape?() }
+}
+
+/// One plate for the find cluster. Glass is a blur plus that theme's own tint.
+/// Paper themes use raised paper. Neither path is the system gray search well.
+private struct ReaderSearchPlate: UIViewRepresentable {
+    var mode: WeiBeiAppearanceMode
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView()
+        view.isUserInteractionEnabled = false
+        view.clipsToBounds = true
+        return view
+    }
+
+    func updateUIView(_ view: UIVisualEffectView, context: Context) {
+        if mode.isGlass {
+            view.effect = UIBlurEffect(style: mode.isDark ? .systemThinMaterialDark : .systemThinMaterialLight)
+            view.contentView.backgroundColor = WeiBeiNativePalette.glassTint(for: mode)
+                .withAlphaComponent(mode.isDark ? 0.78 : 0.70)
+        } else {
+            view.effect = nil
+            view.contentView.backgroundColor = WeiBeiNativePalette.paperRaised(for: mode)
+        }
+    }
+}
+#endif
+
+/// Search text used by the find cluster and the other search fields.
+/// On Catalyst this is a borderless field; the surrounding plate or
+/// `weibeiInputSurface` is the only chrome.
+struct WeiBeiSearchField: View {
+    @Binding var text: String
+    var prompt: String
+    var isFocused: Binding<Bool>
+    var fontSize: CGFloat = 12
+    var focusRequest: Int = 0
+    var focusesOnAppear: Bool = false
+    var drawsChrome: Bool = true
+    var chromeHeight: CGFloat = 28
+    var horizontalPadding: CGFloat = 10
+    var brandLanguage: WeiBeiInterfaceLanguage? = nil
+    var onSubmit: (() -> Void)? = nil
+    var onEscape: (() -> Void)? = nil
+    var onMove: ((Int) -> Void)? = nil
+
+    var body: some View {
+        field
+            .modifier(WeiBeiSearchFieldChrome(
+                drawsChrome: drawsChrome,
+                active: isFocused.wrappedValue,
+                height: chromeHeight,
+                horizontalPadding: horizontalPadding
+            ))
+    }
+
+    @ViewBuilder
+    private var field: some View {
+#if targetEnvironment(macCatalyst)
+        WeiBeiPlainTextField(
+            text: $text,
+            prompt: prompt,
+            fontSize: fontSize,
+            isFocused: isFocused,
+            focusRequest: focusRequest,
+            focusesOnAppear: focusesOnAppear,
+            brandLanguage: brandLanguage,
+            onSubmit: onSubmit,
+            onEscape: onEscape,
+            onMove: onMove
+        )
+#else
+        MacSearchField(
+            text: $text,
+            prompt: prompt,
+            isFocused: isFocused,
+            fontSize: fontSize,
+            focusRequest: focusRequest,
+            focusesOnAppear: focusesOnAppear,
+            brandLanguage: brandLanguage,
+            onSubmit: onSubmit,
+            onEscape: onEscape,
+            onMove: onMove
+        )
+#endif
+    }
+}
+
+#if !targetEnvironment(macCatalyst)
+private struct MacSearchField: View {
+    @Binding var text: String
+    var prompt: String
+    var isFocused: Binding<Bool>
+    var fontSize: CGFloat
+    var focusRequest: Int
+    var focusesOnAppear: Bool
+    var brandLanguage: WeiBeiInterfaceLanguage?
+    var onSubmit: (() -> Void)?
+    var onEscape: (() -> Void)?
+    var onMove: ((Int) -> Void)?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $text, prompt: promptText)
+            .textFieldStyle(.plain)
+            .focusEffectDisabled()
+            .modifier(MacSearchFieldFont(fontSize: fontSize, brandLanguage: brandLanguage))
+            .focused($focused)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .tint(WeiBeiTheme.cinnabar)
+            .onChange(of: focused) { _, value in
+                if isFocused.wrappedValue != value { isFocused.wrappedValue = value }
+            }
+            .onChange(of: isFocused.wrappedValue) { _, value in
+                if focused != value { focused = value }
+            }
+            .onAppear { focused = focusesOnAppear || isFocused.wrappedValue }
+            .onChange(of: focusRequest) { _, _ in focused = true }
+            .onSubmit { onSubmit?() }
+            .modifier(SearchExitCommand(action: onEscape))
+            .onKeyPress(.upArrow) {
+                guard onMove != nil else { return .ignored }
+                onMove?(-1)
+                return .handled
+            }
+            .onKeyPress(.downArrow) {
+                guard onMove != nil else { return .ignored }
+                onMove?(1)
+                return .handled
+            }
+    }
+
+    private var promptText: Text {
+        let prompt = Text(prompt).foregroundStyle(WeiBeiTheme.placeholderInk)
+        guard let brandLanguage else { return prompt }
+        return prompt.font(WeiBeiTypography.brandFont(language: brandLanguage, size: fontSize, weight: .semibold))
+    }
+}
+
+private struct SearchExitCommand: ViewModifier {
+    var action: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if let action {
+            content.weiBeiOnExitCommand(perform: action)
+        } else {
+            content
+        }
+    }
+}
+
+private struct MacSearchFieldFont: ViewModifier {
+    var fontSize: CGFloat
+    var brandLanguage: WeiBeiInterfaceLanguage?
+
+    func body(content: Content) -> some View {
+        if let brandLanguage {
+            content.weiBeiBrandFont(language: brandLanguage, size: fontSize, weight: .semibold)
+        } else {
+            content.weiBeiText(fontSize)
+        }
+    }
+}
+#endif
+
+private struct WeiBeiSearchFieldChrome: ViewModifier {
+    var drawsChrome: Bool
+    var active: Bool
+    var height: CGFloat
+    var horizontalPadding: CGFloat
+
+    func body(content: Content) -> some View {
+        if drawsChrome {
+            content.weibeiInputSurface(active: active, height: height, horizontalPadding: horizontalPadding)
+        } else {
+            content
+                .padding(.horizontal, 2)
+                .frame(minHeight: height)
+        }
+    }
+}
+
 /// Focus new and repeated find requests after the field enters its view hierarchy.
 private struct ToolbarSearchField: View {
     @Binding var text: String
     let prompt: String
     let focusRequest: Int
     let height: CGFloat
-    var width: CGFloat = 220
+    var width: CGFloat? = 220
+    var drawsOwnChrome = true
+    var onFocusedChange: (Bool) -> Void = { _ in }
     let onSubmit: () -> Void
     let onEscape: () -> Void
     let onMove: (Int) -> Void
-    @FocusState private var focused: Bool
+    @State private var isFocused = false
 
     var body: some View {
-        TextField("", text: $text,
-                  prompt: Text(prompt).foregroundStyle(WeiBeiTheme.placeholderInk))
-            .textFieldStyle(.plain)
-            .weiBeiText(12)
-            .focused($focused)
-            .foregroundStyle(WeiBeiTheme.ink)
-            .tint(WeiBeiTheme.link)
-#if targetEnvironment(macCatalyst)
-            .padding(.horizontal, 8)
-            .frame(minHeight: height)
-#else
-            .weibeiInputSurface(active: focused, height: height)
-#endif
-            .frame(width: width)
-            .task(id: focusRequest) { focused = true }
-            .onSubmit(onSubmit)
-            .weiBeiOnExitCommand(perform: onEscape)
-            .onKeyPress(.upArrow) { onMove(-1); return .handled }
-            .onKeyPress(.downArrow) { onMove(1); return .handled }
+        WeiBeiSearchField(
+            text: $text,
+            prompt: prompt,
+            isFocused: $isFocused,
+            fontSize: 12,
+            focusRequest: focusRequest,
+            focusesOnAppear: true,
+            drawsChrome: drawsOwnChrome,
+            chromeHeight: height,
+            horizontalPadding: drawsOwnChrome ? 8 : 2,
+            onSubmit: onSubmit,
+            onEscape: onEscape,
+            onMove: onMove
+        )
+        .frame(width: width)
+        .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+        .onChange(of: isFocused) { _, value in onFocusedChange(value) }
+    }
+}
+
+private struct SearchClusterIconStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        SearchClusterIconBody(configuration: configuration, isEnabled: isEnabled)
+    }
+}
+
+private struct SearchClusterIconBody: View {
+    let configuration: ButtonStyle.Configuration
+    let isEnabled: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        configuration.label
+            .foregroundStyle(foreground)
+            .background {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(hovering && isEnabled ? WeiBeiTheme.ink.opacity(0.08) : Color.clear)
+            }
+            .contentShape(Rectangle())
+            .onHover { hovering = isEnabled && $0 }
+    }
+
+    private var foreground: Color {
+        guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.45) }
+        return hovering || configuration.isPressed ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
+    }
+}
+
+private struct SearchClusterTextRow: View {
+    let title: String
+    let systemImage: String
+    var accessibilityLabel: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .weiBeiText(12, weight: .medium)
+                .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(hovering ? WeiBeiTheme.ink.opacity(0.06) : Color.clear)
+        .accessibilityLabel(Text(accessibilityLabel))
+        .onHover { hovering = $0 }
+    }
+}
+
+private struct SearchResultRow<Label: View>: View {
+    var selected: Bool
+    let action: () -> Void
+    @ViewBuilder var label: () -> Label
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .weiBeiText(12)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 14)
+                .padding(.trailing, 12)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(rowFill)
+        }
+        .onHover { hovering = $0 }
+    }
+
+    private var rowFill: Color {
+        if selected { return WeiBeiTheme.cinnabarSoft }
+        if hovering { return WeiBeiTheme.ink.opacity(0.06) }
+        return .clear
     }
 }
 
@@ -609,6 +1067,7 @@ private struct UnifiedTopBarView: View {
     var searchFocused: FocusState<Bool>.Binding
     @State private var appeared = false
     @State private var readerSearchKeyboardFocusRequest = 0
+    @State private var searchFieldFocused = false
 
     var body: some View {
 #if targetEnvironment(macCatalyst)
@@ -625,31 +1084,33 @@ private struct UnifiedTopBarView: View {
         }
         .overlay(alignment: .topTrailing) {
             if paneState.showDocumentSearch && shouldShowSearchAction {
+                let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
                 VStack(spacing: 0) {
-                    HStack(spacing: 5) { searchControls }
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                    if showsReaderSearchResults { readerSearchResultsList }
+                    HStack(spacing: 2) {
+                        Image(systemName: "magnifyingglass")
+                            .weiBeiText(11, weight: .medium)
+                            .foregroundStyle(searchFieldFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                            .frame(width: 18)
+                        searchControls
+                    }
+                    .padding(.leading, 10)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 4)
+                    if showsReaderSearchResults {
+                        searchClusterHairline
+                        readerSearchResultsList
+                    }
                     if paneState.canReturnToReaderSearchOrigin(for: store.selectedMaterialItem?.id) {
-                        Button {
-                            paneState.returnToReaderSearchOrigin()
-                        } label: {
-                            Label(store.ui("回到查找前", "Back to reading position"), systemImage: "arrow.uturn.backward")
-                                .weiBeiText(11, weight: .medium)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .frame(height: 30)
-                                .padding(.horizontal, 12)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(Text(store.ui("回到查找前的阅读位置", "Return to reading position before search")))
+                        searchClusterHairline
+                        readerSearchReturnRow
                     }
                 }
-                .background {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(weiBeiNativeColor: WeiBeiNativePalette.paperRaised().withAlphaComponent(1)))
-                }
-                .weibeiFloatingPanel(cornerRadius: 8, shadowOpacity: 0.08)
-                .fixedSize()
+                .frame(width: searchClusterExpanded ? 348 : nil, alignment: .leading)
+                .fixedSize(horizontal: !searchClusterExpanded, vertical: true)
+                .background { ReaderSearchPlate(mode: store.appearanceMode) }
+                .clipShape(shape)
+                .overlay { shape.stroke(searchClusterStroke, lineWidth: 1) }
+                .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.36 : 0.16), radius: 16, y: 8)
                 .padding(.trailing, 12)
                 .padding(.top, 5)
             }
@@ -724,7 +1185,9 @@ private struct UnifiedTopBarView: View {
             prompt: searchPrompt,
             focusRequest: paneState.searchFocusRequest,
             height: searchControlHeight,
-            width: searchFieldWidth,
+            width: searchFieldLayoutWidth,
+            drawsOwnChrome: searchFieldDrawsOwnChrome,
+            onFocusedChange: { searchFieldFocused = $0 },
             onSubmit: {
                 if store.searchesNotes { store.noteSearchRequest &+= 1 }
                 else if showsReaderSearchResults {
@@ -742,27 +1205,85 @@ private struct UnifiedTopBarView: View {
         )
         if showsReaderSearchResults {
             Text(readerSearchResultStatus)
-                .weiBeiText(11)
+                .weiBeiText(11, weight: .medium)
                 .monospacedDigit()
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .foregroundStyle(readerSearchStatusColor)
                 .fixedSize()
                 .accessibilityLabel(Text(store.ui("搜索结果：", "Search results: ") + readerSearchResultStatus))
-            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { moveReaderSearchResult(-1, focusResults: true) }
+            searchStepButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { moveReaderSearchResult(-1, focusResults: true) }
                 .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
-            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { moveReaderSearchResult(1, focusResults: true) }
+            searchStepButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { moveReaderSearchResult(1, focusResults: true) }
                 .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
         }
         if store.searchesNotes && !store.noteSearch.isEmpty {
             if store.noteSearchFound == false {
-                Text(store.ui("无匹配", "No matches")).weiBeiText(11)
+                Text(store.ui("无匹配", "No matches"))
+                    .weiBeiText(11, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    .fixedSize()
             }
-            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
-            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
+            searchStepButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
+            searchStepButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
         }
-        topIconButton("xmark", help: store.ui("关闭查找", "Close search")) {
+        searchStepButton("xmark", help: store.ui("关闭查找", "Close search")) {
             store.hideDocumentSearch()
             searchFocused.wrappedValue = false
         }
+    }
+
+    private var searchFieldLayoutWidth: CGFloat? {
+#if targetEnvironment(macCatalyst)
+        searchClusterExpanded ? nil : searchFieldWidth
+#else
+        searchFieldWidth
+#endif
+    }
+
+    private var searchClusterExpanded: Bool {
+        showsReaderSearchResults || paneState.canReturnToReaderSearchOrigin(for: store.selectedMaterialItem?.id)
+    }
+
+    private var searchClusterStroke: Color {
+        WeiBeiTheme.hairline.opacity(store.appearanceMode.isDark ? 0.58 : 0.42)
+    }
+
+    private var searchClusterHairline: some View {
+        Rectangle()
+            .fill(WeiBeiTheme.hairline.opacity(store.appearanceMode.isDark ? 0.55 : 0.42))
+            .frame(height: 1)
+    }
+
+    private var readerSearchStatusColor: Color {
+        if readerSearchResultsReady, paneState.readerSearchResults.isEmpty {
+            return WeiBeiTheme.tertiaryInk
+        }
+        return WeiBeiTheme.secondaryInk
+    }
+
+    private var readerSearchReturnRow: some View {
+        SearchClusterTextRow(
+            title: store.ui("回到查找前", "Back to reading position"),
+            systemImage: "arrow.uturn.backward",
+            accessibilityLabel: store.ui("回到查找前的阅读位置", "Return to reading position before search")
+        ) {
+            paneState.returnToReaderSearchOrigin()
+        }
+    }
+
+    private func searchStepButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
+#if targetEnvironment(macCatalyst)
+        Button(action: action) {
+            Image(systemName: systemName)
+                .weiBeiText(11, weight: .semibold)
+                .frame(width: 22 * textScale, height: 22 * textScale)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(SearchClusterIconStyle())
+        .accessibilityLabel(Text(help))
+        .help(help)
+#else
+        topIconButton(systemName, help: help, action: action)
+#endif
     }
 
     private var showsReaderSearchResults: Bool {
@@ -791,9 +1312,12 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var readerSearchResultsList: some View {
-        if readerSearchResultsReady && !paneState.readerSearchResults.isEmpty {
+        if !readerSearchResultsReady {
+            searchClusterStatusRow(store.ui("查找中", "Finding…"))
+        } else if paneState.readerSearchResults.isEmpty {
+            searchClusterStatusRow(store.ui("没有找到匹配", "No matches"))
+        } else {
             let results = paneState.readerSearchResults
-            Divider()
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -802,37 +1326,31 @@ private struct UnifiedTopBarView: View {
                             if index == 0 || result.location != results[index - 1].location {
                                 HStack(spacing: 8) {
                                     Text(compactLocation(result))
-                                        .weiBeiText(11, weight: .semibold)
-                                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                        .weiBeiText(10, weight: .semibold)
+                                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                                        .fixedSize()
                                     Rectangle()
-                                        .fill(WeiBeiTheme.secondaryInk.opacity(0.28))
+                                        .fill(WeiBeiTheme.hairline.opacity(store.appearanceMode.isDark ? 0.55 : 0.42))
                                         .frame(height: 1)
                                 }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .frame(height: 22)
-                                    .padding(.horizontal, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.top, index == 0 ? 8 : 10)
+                                .padding(.bottom, 2)
                             }
-                            Button {
+                            SearchResultRow(selected: result.id == paneState.readerSearchResultIndex) {
                                 paneState.selectReaderSearchResult(result.id)
                                 readerSearchKeyboardFocusRequest &+= 1
                             } label: {
                                 highlightedPreview(result)
-                                    .weiBeiText(11)
-                                    .lineLimit(2)
-                                    .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.leading, 12)
-                                .padding(.trailing, 6)
-                                .frame(height: 38)
-                                .contentShape(Rectangle())
                             }
-                            .buttonStyle(WeiBeiTextActionButtonStyle(active: result.id == paneState.readerSearchResultIndex, fontSize: 11, height: 38, horizontalPadding: 0, neutralHoverWhenInactive: true))
                             .id(result.id)
                         }
                     }
-                    .padding(3)
+                    .padding(.bottom, 6)
                 }
-                .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 22 + 6), 380))
+                .scrollContentBackground(.hidden)
+                .frame(height: min(CGFloat(results.count * 40 + readerSearchLocationCount * 26 + 8), 360))
 #if targetEnvironment(macCatalyst)
                 .background {
                     CatalystSearchResultsKeyboardBridge(focusRequest: readerSearchKeyboardFocusRequest) { step in
@@ -844,6 +1362,15 @@ private struct UnifiedTopBarView: View {
                 .onChange(of: paneState.readerSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
             }
         }
+    }
+
+    private func searchClusterStatusRow(_ title: String) -> some View {
+        Text(title)
+            .weiBeiText(12)
+            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
     }
 
     private var readerSearchLocationCount: Int {
@@ -859,14 +1386,14 @@ private struct UnifiedTopBarView: View {
         let source = result.preview as NSString
         let range = result.matchRange
         guard range.location != NSNotFound, NSMaxRange(range) <= source.length else {
-            return Text(result.preview).foregroundColor(WeiBeiTheme.secondaryInk)
+            return Text(result.preview).foregroundColor(WeiBeiTheme.ink)
         }
         let before = source.substring(to: range.location)
         let match = source.substring(with: range)
         let after = source.substring(from: NSMaxRange(range))
-        return Text(before).foregroundColor(WeiBeiTheme.secondaryInk)
+        return Text(before).foregroundColor(WeiBeiTheme.ink)
             + Text(match).foregroundColor(WeiBeiTheme.cinnabar).bold()
-            + Text(after).foregroundColor(WeiBeiTheme.secondaryInk)
+            + Text(after).foregroundColor(WeiBeiTheme.ink)
     }
 
     private var trailingControls: some View {
@@ -963,6 +1490,14 @@ private struct UnifiedTopBarView: View {
 
     private var controlHeight: CGFloat {
         28 * textScale
+    }
+
+    private var searchFieldDrawsOwnChrome: Bool {
+#if targetEnvironment(macCatalyst)
+        false
+#else
+        true
+#endif
     }
 
     private var searchFieldWidth: CGFloat {
