@@ -766,14 +766,14 @@ private struct UnifiedTopBarView: View {
                             if index == 0 || result.location != results[index - 1].location {
                                 HStack(spacing: 8) {
                                     Text(compactLocation(result))
-                                        .weiBeiText(11, weight: .semibold)
+                                        .weiBeiText(10, weight: .medium)
                                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                                     Rectangle()
-                                        .fill(WeiBeiTheme.hairline.opacity(0.55))
+                                        .fill(WeiBeiTheme.hairline.opacity(0.4))
                                         .frame(height: 1)
                                 }
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .frame(height: 22)
+                                    .frame(height: 20)
                                     .padding(.horizontal, 8)
                             }
                             Button { paneState.selectReaderSearchResult(result.id) } label: {
@@ -793,7 +793,7 @@ private struct UnifiedTopBarView: View {
                     }
                     .padding(3)
                 }
-                .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 22 + 6), 380))
+                .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 20 + 6), 380))
                 .onChange(of: paneState.readerSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
             }
         }
@@ -812,11 +812,15 @@ private struct UnifiedTopBarView: View {
     private func highlightedPreview(_ result: ReaderSearchResult) -> Text {
         let source = result.preview as NSString
         let range = result.matchRange
-        guard range.location != NSNotFound, NSMaxRange(range) <= source.length else { return Text(result.preview) }
+        guard range.location != NSNotFound, NSMaxRange(range) <= source.length else {
+            return Text(result.preview).foregroundColor(WeiBeiTheme.secondaryInk)
+        }
         let before = source.substring(to: range.location)
         let match = source.substring(with: range)
         let after = source.substring(from: NSMaxRange(range))
-        return Text(before) + Text(match).foregroundColor(WeiBeiTheme.cinnabar).bold() + Text(after)
+        return Text(before).foregroundColor(WeiBeiTheme.secondaryInk)
+            + Text(match).foregroundColor(WeiBeiTheme.cinnabar).bold()
+            + Text(after).foregroundColor(WeiBeiTheme.secondaryInk)
     }
 
     private var trailingControls: some View {
