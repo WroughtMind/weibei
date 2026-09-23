@@ -8,7 +8,7 @@ struct CommandPaletteView: View {
     @State private var hits: [GlobalSearchHit] = []
     @State private var searching = false
     @State private var selectedIndex = 0
-    @FocusState private var searchFocused: Bool
+    @State private var searchFocused = true
 
     private var commands: [PaletteCommand] {
         var items = [
@@ -156,18 +156,17 @@ struct CommandPaletteView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     Image(systemName: "command")
-                        .foregroundStyle(WeiBeiTheme.link)
-                    TextField(
-                        "",
+                        .foregroundStyle(searchFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                    WeiBeiSearchField(
                         text: $query,
-                        prompt: Text(store.ui("搜索资料、笔记、对话或命令", "Search files, notes, chats or commands"))
-                            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 18, weight: .semibold))
-                            .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        prompt: store.ui("搜索资料、笔记、对话或命令", "Search files, notes, chats or commands"),
+                        isFocused: $searchFocused,
+                        fontSize: 18,
+                        drawsChrome: false,
+                        chromeHeight: 36,
+                        brandLanguage: store.interfaceLanguage
                     )
-                        .textFieldStyle(.plain)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .focused($searchFocused)
-                        .weiBeiBrandFont(language: store.interfaceLanguage, size: 18, weight: .semibold)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .weibeiInputSurface(active: searchFocused, height: 36)
                 .padding(.horizontal, 12)

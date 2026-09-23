@@ -55,7 +55,7 @@ struct CourseWorkspaceView: View {
         CourseManagementPresentation?
     @State private var coursePendingDeletion: Course?
     @State private var courseDeletionError: String?
-    @FocusState private var searchFocused: Bool
+    @State private var searchFocused = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -385,7 +385,7 @@ struct CourseWorkspaceHeader: View {
     @Binding var page: CourseWorkspacePage
     @Namespace private var tabUnderlineNamespace
     @Binding var search: String
-    var searchFocused: FocusState<Bool>.Binding
+    var searchFocused: Binding<Bool>
     let isCompact: Bool
     let dismiss: () -> Void
     let manageCourse: () -> Void
@@ -450,11 +450,15 @@ struct CourseWorkspaceHeader: View {
 
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                TextField(searchPrompt, text: $search)
-                    .textFieldStyle(.plain)
-                    .focused(searchFocused)
-                    .weiBeiText(12)
+                    .foregroundStyle(searchFocused.wrappedValue ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                WeiBeiSearchField(
+                    text: $search,
+                    prompt: searchPrompt,
+                    isFocused: searchFocused,
+                    drawsChrome: false,
+                    chromeHeight: 30
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .weibeiInputSurface(active: searchFocused.wrappedValue, height: 30)
             .frame(width: isCompact ? 160 : 220)

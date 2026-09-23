@@ -403,6 +403,8 @@ enum WeiBeiTheme {
     static var paper: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.paper()) }
     static var paperRaised: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.paperRaised()) }
     static var paperInset: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.paperInset()) }
+    static var searchPanelFill: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.searchPanelFill()) }
+    static var searchFieldFill: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.searchFieldFill()) }
     static var chrome: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.chrome()) }
     static var ink: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.ink()) }
     static var secondaryInk: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.secondaryInk()) }
@@ -621,6 +623,35 @@ enum WeiBeiNativePalette {
         case .glassSlate:
             return weiBeiColor(red: 0.157, green: 0.157, blue: 0.149, alpha: 0.55)
         }
+    }
+
+    /// Find panel card. Glass `paperRaised` is a thin tint; forcing that RGB
+    /// opaque makes the search card a flat color that does not match the theme.
+    static func searchPanelFill(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
+        mode.isGlass ? glassTint(for: mode) : paperRaised(for: mode)
+    }
+
+    /// Inset well for a standalone find field. Glass uses its own tint, not the
+    /// gray `paperInset` wash that read as a system search box.
+    static func searchFieldFill(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
+        switch mode {
+        case .paper, .xuan, .inkstone, .stele:
+            return paperInset(for: mode)
+        case .glassLight:
+            return weiBeiColor(red: 0.93, green: 0.96, blue: 1.00, alpha: 0.72)
+        case .glassDark:
+            return weiBeiColor(red: 0.07, green: 0.10, blue: 0.15, alpha: 0.78)
+        case .glassMist:
+            return weiBeiColor(red: 0.99, green: 0.98, blue: 0.96, alpha: 0.78)
+        case .glassSlate:
+            return weiBeiColor(red: 0.09, green: 0.09, blue: 0.085, alpha: 0.78)
+        }
+    }
+
+    /// Field outline. Focus stays on the caret; the box keeps the theme hairline.
+    static func searchFieldStroke(for mode: WeiBeiAppearanceMode = current, active: Bool = false) -> WeiBeiPlatformColor {
+        _ = active
+        return hairline(for: mode).withAlphaComponent(mode.isDark ? 0.58 : 0.42)
     }
 
     static func paperInset(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
@@ -1704,6 +1735,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     var height: CGFloat = 24
     var horizontalPadding: CGFloat = 8
     var neutralHoverWhenInactive = false
+    var idleOpacity: Double = 0.20
     @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -1730,7 +1762,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     private func background(isPressed: Bool) -> Color {
         if active || isPressed { return WeiBeiTheme.cinnabarSoft }
         if hovering { return neutralHoverWhenInactive ? WeiBeiTheme.paperInset.opacity(0.40) : WeiBeiTheme.cinnabarSoft }
-        return WeiBeiTheme.paperInset.opacity(0.20)
+        return WeiBeiTheme.paperInset.opacity(idleOpacity)
     }
 }
 
@@ -1864,30 +1896,19 @@ extension View {
         height: CGFloat = WeiBeiMetric.inputHeight,
         horizontalPadding: CGFloat = 10
     ) -> some View {
-        self
+        let shape = RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous)
+        return self
             .foregroundColor(WeiBeiTheme.ink)
             .foregroundStyle(WeiBeiTheme.ink)
-            .tint(WeiBeiTheme.link)
+            .tint(WeiBeiTheme.cinnabar)
             .padding(.horizontal, horizontalPadding)
             .frame(minHeight: height)
-            .background {
-                RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
-                    .fill(WeiBeiTheme.paperRaised.opacity(active ? 0.66 : 0.60))
-            }
-            .clipShape(RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius))
-            .overlay(alignment: .top) {
-                RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
-                    .stroke(WeiBeiTheme.glassHighlight.opacity(active ? 0.34 : 0.24), lineWidth: 1)
-                    .padding(1)
-            }
-            .overlay(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
-                    .stroke(WeiBeiTheme.paperInset.opacity(active ? 0.30 : 0.38), lineWidth: 1)
-                    .padding(0.5)
-            }
+            .background { shape.fill(WeiBeiTheme.searchFieldFill) }
             .overlay {
-                RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
-                    .stroke(active ? WeiBeiTheme.link.opacity(0.34) : WeiBeiTheme.hairline.opacity(0.54), lineWidth: 1)
+                shape.stroke(
+                    Color(weiBeiNativeColor: WeiBeiNativePalette.searchFieldStroke(active: active)),
+                    lineWidth: 1
+                )
             }
             .animation(WeiBeiMotion.reveal, value: active)
     }
