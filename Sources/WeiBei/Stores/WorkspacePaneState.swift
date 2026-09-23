@@ -47,6 +47,53 @@ final class WorkspacePaneState: ObservableObject {
 
     @Published var showDocumentSearch = false
     @Published var searchFocusRequest = 0
+    @Published var readerSearchResults: [ReaderSearchResult] = []
+    @Published var readerSearchResultIndex = -1
+    @Published var readerSearchResultQuery = ""
+    @Published var readerSearchResultMaterialID: String?
+    @Published var readerSearchNavigationRequest = 0
+    @Published var readerSearchSessionID = 0
+    @Published var readerSearchReturnRequest = 0
+    @Published private(set) var readerSearchCanReturn = false
+    var readerSearchRequestedIndex = 0
+    private var readerSearchOriginMaterialID: String?
+
+    func resetReaderSearchSession() {
+        readerSearchSessionID &+= 1
+        endReaderSearchSession()
+    }
+
+    func endReaderSearchSession() {
+        readerSearchCanReturn = false
+        readerSearchOriginMaterialID = nil
+        readerSearchResultIndex = -1
+    }
+
+    func canReturnToReaderSearchOrigin(for materialID: String?) -> Bool {
+        readerSearchCanReturn && readerSearchOriginMaterialID == materialID
+    }
+
+    func selectReaderSearchResult(_ index: Int) {
+        guard readerSearchResults.indices.contains(index) else { return }
+        if readerSearchOriginMaterialID != readerSearchResultMaterialID {
+            readerSearchSessionID &+= 1
+            readerSearchOriginMaterialID = readerSearchResultMaterialID
+        }
+        readerSearchCanReturn = true
+        readerSearchResultIndex = index
+        readerSearchRequestedIndex = index
+        readerSearchNavigationRequest &+= 1
+    }
+
+    func returnToReaderSearchOrigin() {
+        guard readerSearchCanReturn else { return }
+        readerSearchCanReturn = false
+        readerSearchOriginMaterialID = nil
+        readerSearchResultIndex = -1
+        readerSearchReturnRequest &+= 1
+        searchFocusRequest &+= 1
+    }
+
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
 

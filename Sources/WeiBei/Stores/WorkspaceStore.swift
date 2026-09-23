@@ -4944,6 +4944,7 @@ final class WorkspaceStore: ObservableObject {
         if !showDocumentSearch || layout == .immersiveConversation || layout == .immersiveWriting {
             recordNavigationPoint()
         }
+        if !showDocumentSearch { paneState.resetReaderSearchSession() }
         if layout == .immersiveConversation || layout == .immersiveWriting {
             setLayout(.immersiveReading)
         }
@@ -4956,6 +4957,7 @@ final class WorkspaceStore: ObservableObject {
         if showDocumentSearch || !readerSearch.isEmpty {
             recordNavigationPoint()
         }
+        if !searchesNotes { paneState.endReaderSearchSession() }
         showDocumentSearch = false
         if searchesNotes { noteSearch = "" }
         else { readerSearch = "" }

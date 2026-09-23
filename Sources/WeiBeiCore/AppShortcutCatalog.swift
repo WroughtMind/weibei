@@ -97,7 +97,7 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
         case .navigateBack: return AppShortcutChord(key: "[", modifiers: .command)
         case .navigateForward: return AppShortcutChord(key: "]", modifiers: .command)
         case .courseIndex: return AppShortcutChord(key: "b", modifiers: [.command, .option])
-        case .searchInMaterial: return AppShortcutChord(key: "f", modifiers: [.command, .option])
+        case .searchInMaterial: return AppShortcutChord(key: "f", modifiers: .command)
         case .focusLibrary: return AppShortcutChord(key: "1", modifiers: .command)
         case .focusReader: return AppShortcutChord(key: "2", modifiers: .command)
         case .focusNotes: return AppShortcutChord(key: "3", modifiers: .command)
@@ -317,7 +317,7 @@ public enum AppShortcutCatalog {
     }
 
     public static func isReservedTextEditingChord(_ chord: AppShortcutChord) -> Bool {
-        chord.modifiers == .command && (chord.key == "b" || chord.key == "f")
+        chord.modifiers == .command && chord.key == "b"
     }
 
     /// Another action already using this chord (excluding `excluding`).

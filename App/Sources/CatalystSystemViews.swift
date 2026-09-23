@@ -32,6 +32,58 @@ struct PaletteKeyboardBridge: View {
     }
 }
 
+struct CatalystSearchResultsKeyboardBridge: UIViewRepresentable {
+    let focusRequest: Int
+    let onMove: (Int) -> Void
+
+    func makeUIView(context: Context) -> Responder { Responder() }
+
+    func updateUIView(_ view: Responder, context: Context) {
+        view.onMove = onMove
+        if focusRequest == 0 { view.lastFocusRequest = 0; return }
+        guard view.lastFocusRequest != focusRequest else { return }
+        view.lastFocusRequest = focusRequest
+        view.requestFocus()
+    }
+
+    static func dismantleUIView(_ view: Responder, coordinator: ()) { view.resignFirstResponder() }
+
+    final class Responder: UIView {
+        var onMove: ((Int) -> Void)?
+        var lastFocusRequest = 0
+        private var pendingFocus = false
+        override var canBecomeFirstResponder: Bool { true }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil, pendingFocus { requestFocus() }
+        }
+        func requestFocus() {
+            pendingFocus = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window != nil else { return }
+                self.pendingFocus = !self.becomeFirstResponder()
+            }
+        }
+        override var keyCommands: [UIKeyCommand]? {
+            let up = UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(up))
+            let down = UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(down))
+            up.wantsPriorityOverSystemBehavior = true
+            down.wantsPriorityOverSystemBehavior = true
+            return [up, down]
+        }
+        @objc private func up() { onMove?(-1) }
+        @objc private func down() { onMove?(1) }
+        override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            guard let key = presses.first?.key else { super.pressesBegan(presses, with: event); return }
+            switch key.keyCode {
+            case .keyboardUpArrow: onMove?(-1)
+            case .keyboardDownArrow: onMove?(1)
+            default: super.pressesBegan(presses, with: event)
+            }
+        }
+    }
+}
+
 struct CatalystShortcutRecorder: UIViewRepresentable {
     var onChord: (AppShortcutChord) -> Void
     var onCancel: () -> Void

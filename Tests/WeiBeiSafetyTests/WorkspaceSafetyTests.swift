@@ -798,13 +798,43 @@ final class WorkspaceSafetyTests: XCTestCase {
         )
     }
 
-    func testStandardTextEditingShortcutsAreNotAppActions() {
-        for key in ["b", "f"] {
-            XCTAssertNil(AppShortcutCatalog.action(
-                matching: AppShortcutChord(key: key, modifiers: .command),
-                overrides: [:]
-            ))
+    func testReaderSearchResultNavigationAndContext() {
+        XCTAssertEqual(ReaderSearch.matchIndex(current: -1, step: 1, count: 3), 0)
+        XCTAssertEqual(ReaderSearch.matchIndex(current: -1, step: -1, count: 3), 2)
+        XCTAssertEqual(ReaderSearch.matchIndex(current: 0, step: -1, count: 3), 2)
+        XCTAssertEqual(ReaderSearch.matchIndex(current: 2, step: 1, count: 3), 0)
+        XCTAssertEqual(ReaderSearch.matchIndex(current: 0, step: 1, count: 0), 0)
+        let text = String(repeating: "前文", count: 40) + "购买 A\n接着购买 B" + String(repeating: "后文", count: 40)
+        let range = (text as NSString).range(of: "购买 B")
+        let preview = ReaderSearch.preview(in: text, around: range)
+        XCTAssertTrue(preview.contains("购买 B"))
+        XCTAssertFalse(preview.contains("\n"))
+        XCTAssertTrue(preview.hasPrefix("…"))
+        XCTAssertTrue(preview.hasSuffix("…"))
+        XCTAssertEqual(ReaderSearch.preview(in: text, around: NSRange(location: NSNotFound, length: 0)), "")
+        let adjacent = "购买 A，购买 B；购买 C"
+        let matches = ReaderSearch.matches(in: adjacent, query: "购买")
+        XCTAssertEqual(matches.count, 3)
+        for match in matches {
+            let snippet = ReaderSearch.snippet(in: adjacent, around: match)
+            XCTAssertEqual((snippet.text as NSString).substring(with: snippet.matchRange), "购买")
         }
+        let pdfTextLayer = "评价是否真实、是否足够多。\n.\n.\n.\n.\n平台经济学"
+        let pdfSnippet = ReaderSearch.snippet(in: pdfTextLayer, around: (pdfTextLayer as NSString).range(of: "真实"))
+        XCTAssertFalse(pdfSnippet.text.contains(". ."))
+        XCTAssertEqual((pdfSnippet.text as NSString).substring(with: pdfSnippet.matchRange), "真实")
+        XCTAssertEqual(ReaderSearch.matches(in: "苹果 APPLE", query: "apple").count, 1)
+    }
+
+    func testCommandFFindsAndCommandBRemainsAnEditingShortcut() {
+        XCTAssertEqual(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "f", modifiers: .command),
+            overrides: [:]
+        ), .searchInMaterial)
+        XCTAssertNil(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "b", modifiers: .command),
+            overrides: [:]
+        ))
     }
 
     func testStoredShortcutConflictIsPreservedAndNotExecutable() throws {

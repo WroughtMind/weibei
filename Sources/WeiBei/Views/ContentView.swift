@@ -548,6 +548,54 @@ private struct WorkspaceChromeBackdrop: View {
     }
 }
 
+/// Focus new and repeated find requests after the field enters its view hierarchy.
+private struct ToolbarSearchField: View {
+    @Binding var text: String
+    let prompt: String
+    let focusRequest: Int
+    let height: CGFloat
+    var width: CGFloat = 220
+    let onSubmit: () -> Void
+    let onEscape: () -> Void
+    let onMove: (Int) -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $text,
+                  prompt: Text(prompt).foregroundStyle(WeiBeiTheme.placeholderInk))
+            .textFieldStyle(.plain)
+            .weiBeiText(12)
+            .focused($focused)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .tint(WeiBeiTheme.link)
+#if targetEnvironment(macCatalyst)
+            .padding(.horizontal, 8)
+            .frame(minHeight: height)
+#else
+            .weibeiInputSurface(active: focused, height: height)
+#endif
+            .frame(width: width)
+            .task(id: focusRequest) { focused = true }
+            .onSubmit(onSubmit)
+            .weiBeiOnExitCommand(perform: onEscape)
+            .onKeyPress(.upArrow) { onMove(-1); return .handled }
+            .onKeyPress(.downArrow) { onMove(1); return .handled }
+    }
+}
+
+func readerSearchLocationLabel(_ result: ReaderSearchResult, language: WeiBeiInterfaceLanguage) -> String {
+    let raw = result.location.isEmpty ? "第 \(result.pageIndex + 1) 页" : result.location
+    let location = raw.hasPrefix("第 ")
+        ? raw.replacingOccurrences(of: "第 ", with: "").replacingOccurrences(of: " ", with: "")
+        : raw
+    guard language == .english else { return location }
+    if location.hasSuffix("页备注"), let page = Int(location.dropLast(3)) { return "Page \(page) notes" }
+    if location.hasSuffix("页"), let page = Int(location.dropLast()) { return "Page \(page)" }
+    if location.hasSuffix("行"), let line = Int(location.dropLast()) { return "Line \(line)" }
+    if location.hasPrefix("段 "), let paragraph = Int(location.dropFirst(2)) { return "Paragraph \(paragraph)" }
+    return location
+}
+
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var updateService: WeiBeiUpdateService
@@ -560,6 +608,7 @@ private struct UnifiedTopBarView: View {
     let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
     @State private var appeared = false
+    @State private var readerSearchKeyboardFocusRequest = 0
 
     var body: some View {
 #if targetEnvironment(macCatalyst)
@@ -574,6 +623,43 @@ private struct UnifiedTopBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
             showSettings()
         }
+        .overlay(alignment: .topTrailing) {
+            if paneState.showDocumentSearch && shouldShowSearchAction {
+                VStack(spacing: 0) {
+                    HStack(spacing: 5) { searchControls }
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                    if showsReaderSearchResults { readerSearchResultsList }
+                    if paneState.canReturnToReaderSearchOrigin(for: store.selectedMaterialItem?.id) {
+                        Button {
+                            paneState.returnToReaderSearchOrigin()
+                        } label: {
+                            Label(store.ui("回到查找前", "Back to reading position"), systemImage: "arrow.uturn.backward")
+                                .weiBeiText(11, weight: .medium)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(height: 30)
+                                .padding(.horizontal, 12)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text(store.ui("回到查找前的阅读位置", "Return to reading position before search")))
+                    }
+                }
+                .background {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(weiBeiNativeColor: WeiBeiNativePalette.paperRaised().withAlphaComponent(1)))
+                }
+                .weibeiFloatingPanel(cornerRadius: 8, shadowOpacity: 0.08)
+                .fixedSize()
+                .padding(.trailing, 12)
+                .padding(.top, 5)
+            }
+        }
+        .zIndex(10)
+        .onChange(of: store.readerSearch) { _, _ in readerSearchKeyboardFocusRequest = 0 }
+        .onChange(of: paneState.showDocumentSearch) { _, visible in
+            if !visible { readerSearchKeyboardFocusRequest = 0 }
+        }
+
 #else
         customTopBar
 #endif
@@ -631,50 +717,166 @@ private struct UnifiedTopBarView: View {
     }
 #endif
 
+    @ViewBuilder
+    private var searchControls: some View {
+        ToolbarSearchField(
+            text: store.searchesNotes ? $store.noteSearch : $store.readerSearch,
+            prompt: searchPrompt,
+            focusRequest: paneState.searchFocusRequest,
+            height: searchControlHeight,
+            width: searchFieldWidth,
+            onSubmit: {
+                if store.searchesNotes { store.noteSearchRequest &+= 1 }
+                else if showsReaderSearchResults {
+                    moveReaderSearchResult(1, focusResults: true)
+                }
+            },
+            onEscape: {
+                store.hideDocumentSearch()
+                searchFocused.wrappedValue = false
+            },
+            onMove: { step in
+                if store.searchesNotes { store.noteSearchRequest &+= step }
+                else if showsReaderSearchResults { moveReaderSearchResult(step) }
+            }
+        )
+        if showsReaderSearchResults {
+            Text(readerSearchResultStatus)
+                .weiBeiText(11)
+                .monospacedDigit()
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .fixedSize()
+                .accessibilityLabel(Text(store.ui("搜索结果：", "Search results: ") + readerSearchResultStatus))
+            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { moveReaderSearchResult(-1, focusResults: true) }
+                .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
+            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { moveReaderSearchResult(1, focusResults: true) }
+                .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
+        }
+        if store.searchesNotes && !store.noteSearch.isEmpty {
+            if store.noteSearchFound == false {
+                Text(store.ui("无匹配", "No matches")).weiBeiText(11)
+            }
+            topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
+            topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
+        }
+        topIconButton("xmark", help: store.ui("关闭查找", "Close search")) {
+            store.hideDocumentSearch()
+            searchFocused.wrappedValue = false
+        }
+    }
+
+    private var showsReaderSearchResults: Bool {
+        !store.searchesNotes && store.selectedMaterialItem != nil && !ReaderSearch.cleaned(store.readerSearch).isEmpty
+    }
+
+    private var readerSearchResultsReady: Bool {
+        paneState.readerSearchResultQuery == ReaderSearch.cleaned(store.readerSearch)
+            && paneState.readerSearchResultMaterialID == store.selectedMaterialItem?.id
+    }
+
+    private var readerSearchResultStatus: String {
+        guard readerSearchResultsReady else { return store.ui("查找中", "Finding…") }
+        let count = paneState.readerSearchResults.count
+        if count == 0 { return store.ui("无匹配", "No matches") }
+        if paneState.readerSearchResultIndex < 0 { return store.ui("\(count) 处", "\(count) \(count == 1 ? "match" : "matches")") }
+        return "\(paneState.readerSearchResultIndex + 1) / \(count)"
+    }
+
+    private func moveReaderSearchResult(_ step: Int, focusResults: Bool = false) {
+        guard readerSearchResultsReady else { return }
+        paneState.selectReaderSearchResult(ReaderSearch.matchIndex(current: paneState.readerSearchResultIndex,
+            step: step, count: paneState.readerSearchResults.count))
+        if focusResults { readerSearchKeyboardFocusRequest &+= 1 }
+    }
+
+    @ViewBuilder
+    private var readerSearchResultsList: some View {
+        if readerSearchResultsReady && !paneState.readerSearchResults.isEmpty {
+            let results = paneState.readerSearchResults
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(results.indices, id: \.self) { index in
+                            let result = results[index]
+                            if index == 0 || result.location != results[index - 1].location {
+                                HStack(spacing: 8) {
+                                    Text(compactLocation(result))
+                                        .weiBeiText(11, weight: .semibold)
+                                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                    Rectangle()
+                                        .fill(WeiBeiTheme.secondaryInk.opacity(0.28))
+                                        .frame(height: 1)
+                                }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .frame(height: 22)
+                                    .padding(.horizontal, 8)
+                            }
+                            Button {
+                                paneState.selectReaderSearchResult(result.id)
+                                readerSearchKeyboardFocusRequest &+= 1
+                            } label: {
+                                highlightedPreview(result)
+                                    .weiBeiText(11)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.leading, 12)
+                                .padding(.trailing, 6)
+                                .frame(height: 38)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: result.id == paneState.readerSearchResultIndex, fontSize: 11, height: 38, horizontalPadding: 0, neutralHoverWhenInactive: true))
+                            .id(result.id)
+                        }
+                    }
+                    .padding(3)
+                }
+                .frame(width: 320, height: min(CGFloat(results.count * 38 + readerSearchLocationCount * 22 + 6), 380))
+#if targetEnvironment(macCatalyst)
+                .background {
+                    CatalystSearchResultsKeyboardBridge(focusRequest: readerSearchKeyboardFocusRequest) { step in
+                        moveReaderSearchResult(step, focusResults: true)
+                    }
+                    .frame(width: 1, height: 1)
+                }
+#endif
+                .onChange(of: paneState.readerSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
+            }
+        }
+    }
+
+    private var readerSearchLocationCount: Int {
+        let results = paneState.readerSearchResults
+        return results.indices.filter { $0 == 0 || results[$0].location != results[$0 - 1].location }.count
+    }
+
+    private func compactLocation(_ result: ReaderSearchResult) -> String {
+        readerSearchLocationLabel(result, language: store.interfaceLanguage)
+    }
+
+    private func highlightedPreview(_ result: ReaderSearchResult) -> Text {
+        let source = result.preview as NSString
+        let range = result.matchRange
+        guard range.location != NSNotFound, NSMaxRange(range) <= source.length else {
+            return Text(result.preview).foregroundColor(WeiBeiTheme.secondaryInk)
+        }
+        let before = source.substring(to: range.location)
+        let match = source.substring(with: range)
+        let after = source.substring(from: NSMaxRange(range))
+        return Text(before).foregroundColor(WeiBeiTheme.secondaryInk)
+            + Text(match).foregroundColor(WeiBeiTheme.cinnabar).bold()
+            + Text(after).foregroundColor(WeiBeiTheme.secondaryInk)
+    }
+
     private var trailingControls: some View {
         HStack(spacing: topBarSpacing) {
-            if paneState.showDocumentSearch && shouldShowSearchAction {
-                TextField(
-                    "",
-                    text: store.searchesNotes ? $store.noteSearch : $store.readerSearch,
-                    prompt: Text(searchPrompt)
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
-                )
-                    .textFieldStyle(.plain)
-                    .weiBeiText(12)
-                    .focused(searchFocused)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .foregroundStyle(WeiBeiTheme.ink)
-                    .tint(WeiBeiTheme.link)
-                    .weiBeiText(12)
-                    .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
-                    .frame(width: 220)
-                .onSubmit {
-                    if store.searchesNotes { store.noteSearchRequest &+= 1 }
-                }
-                .weiBeiOnExitCommand {
-                    withAnimation(WeiBeiMotion.panel) {
-                        store.hideDocumentSearch()
-                        searchFocused.wrappedValue = false
-                    }
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-                if store.searchesNotes && !store.noteSearch.isEmpty {
-                    if store.noteSearchFound == false {
-                        Text(store.ui("无匹配", "No matches")).weiBeiText(11)
-                    }
-                    topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
-                    topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
-                }
-                topIconButton("xmark", help: store.ui("关闭查找", "Close search")) {
-                    store.hideDocumentSearch()
-                    searchFocused.wrappedValue = false
-                }
-            }
-
-            if shouldShowSearchAction && !paneState.showDocumentSearch {
-                searchButton
-            }
+#if !targetEnvironment(macCatalyst)
+            if paneState.showDocumentSearch && shouldShowSearchAction { searchControls }
+            if shouldShowSearchAction && !paneState.showDocumentSearch { searchButton }
+#else
+            if shouldShowSearchAction { searchButton }
+#endif
 
             // Copy-reference is not top-bar chrome: use its configured shortcut, menu, or command palette when needed.
 
@@ -732,7 +934,6 @@ private struct UnifiedTopBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
             showSettings()
         }
-        .animation(WeiBeiMotion.panel, value: paneState.showDocumentSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
         .animation(WeiBeiMotion.panel, value: paneState.showReader)
@@ -762,6 +963,22 @@ private struct UnifiedTopBarView: View {
 
     private var controlHeight: CGFloat {
         28 * textScale
+    }
+
+    private var searchFieldWidth: CGFloat {
+#if targetEnvironment(macCatalyst)
+        170
+#else
+        220
+#endif
+    }
+
+    private var searchControlHeight: CGFloat {
+#if targetEnvironment(macCatalyst)
+        24 * textScale
+#else
+        controlHeight
+#endif
     }
 
     private var shouldShowSearchAction: Bool {
@@ -917,26 +1134,25 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var searchButton: some View {
-        topIconButton("magnifyingglass", help: searchPrompt) {
+        topIconButton("magnifyingglass", help: searchPrompt, active: paneState.showDocumentSearch) {
             toggleReaderSearch()
         }
     }
 
     private func toggleReaderSearch() {
-        withAnimation(WeiBeiMotion.panel) {
-            if paneState.showDocumentSearch {
-                store.hideDocumentSearch()
-                searchFocused.wrappedValue = false
-            } else {
-                store.revealDocumentSearch()
-                searchFocused.wrappedValue = true
-            }
+        if paneState.showDocumentSearch {
+            store.hideDocumentSearch()
+            searchFocused.wrappedValue = false
+        } else {
+            store.revealDocumentSearch()
+            searchFocused.wrappedValue = true
         }
     }
 
     private func topIconButton(_ systemName: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
+                .frame(width: 24 * textScale, height: 24 * textScale)
                 .contentShape(Rectangle())
         }
         .buttonStyle(WeiBeiIconButtonStyle(active: active, size: 24))

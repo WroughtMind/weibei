@@ -52,7 +52,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         guard !Self.usesFixture, builder.system == .main else { return }
         let store = Self.workspace
         func command(_ title: String, _ key: String, _ id: String, modifiers: UIKeyModifierFlags = .command) -> UIKeyCommand {
-            UIKeyCommand(title: title, action: #selector(performWorkspaceCommand(_:)), input: key, modifierFlags: modifiers, propertyList: id)
+            let command = UIKeyCommand(title: title, action: #selector(performWorkspaceCommand(_:)), input: key, modifierFlags: modifiers, propertyList: id)
+            command.wantsPriorityOverSystemBehavior = id == AppShortcutID.searchInMaterial.rawValue
+            return command
         }
         builder.replaceChildren(ofMenu: .preferences) { _ in [command(store.ui("设置…", "Settings…"), ",", "settings")] }
         builder.replaceChildren(ofMenu: .newScene) { _ in [
