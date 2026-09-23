@@ -83,6 +83,7 @@ final class WorkspacePaneState: ObservableObject {
         readerSearchResultIndex = index
         readerSearchRequestedIndex = index
         readerSearchNavigationRequest &+= 1
+        searchFocusRequest &+= 1
     }
 
     func returnToReaderSearchOrigin() {
@@ -91,6 +92,7 @@ final class WorkspacePaneState: ObservableObject {
         readerSearchOriginMaterialID = nil
         readerSearchResultIndex = -1
         readerSearchReturnRequest &+= 1
+        searchFocusRequest &+= 1
     }
 
     @Published var focusedPane: PaneFocus = .reader

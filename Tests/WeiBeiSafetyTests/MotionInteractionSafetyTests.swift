@@ -93,9 +93,11 @@ final class MotionInteractionSafetyTests: XCTestCase {
         paneState.resetReaderSearchSession()
         paneState.selectReaderSearchResult(0)
         let session = paneState.readerSearchSessionID
+        XCTAssertEqual(paneState.searchFocusRequest, 1)
         paneState.selectReaderSearchResult(0)
         paneState.readerSearchResultQuery = "新关键词"
         XCTAssertEqual(paneState.readerSearchSessionID, session)
+        XCTAssertEqual(paneState.searchFocusRequest, 2)
         XCTAssertTrue(paneState.canReturnToReaderSearchOrigin(for: "material"))
         XCTAssertFalse(paneState.canReturnToReaderSearchOrigin(for: "other"))
 
@@ -103,6 +105,7 @@ final class MotionInteractionSafetyTests: XCTestCase {
         XCTAssertEqual(paneState.readerSearchReturnRequest, 1)
         XCTAssertEqual(paneState.readerSearchResultIndex, -1)
         XCTAssertFalse(paneState.readerSearchCanReturn)
+        XCTAssertEqual(paneState.searchFocusRequest, 3)
         paneState.selectReaderSearchResult(0)
         XCTAssertEqual(paneState.readerSearchSessionID, session + 1)
     }
