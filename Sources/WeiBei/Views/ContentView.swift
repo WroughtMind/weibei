@@ -583,6 +583,19 @@ private struct ToolbarSearchField: View {
     }
 }
 
+func readerSearchLocationLabel(_ result: ReaderSearchResult, language: WeiBeiInterfaceLanguage) -> String {
+    let raw = result.location.isEmpty ? "第 \(result.pageIndex + 1) 页" : result.location
+    let location = raw.hasPrefix("第 ")
+        ? raw.replacingOccurrences(of: "第 ", with: "").replacingOccurrences(of: " ", with: "")
+        : raw
+    guard language == .english else { return location }
+    if location.hasSuffix("页备注"), let page = Int(location.dropLast(3)) { return "Page \(page) notes" }
+    if location.hasSuffix("页"), let page = Int(location.dropLast()) { return "Page \(page)" }
+    if location.hasSuffix("行"), let line = Int(location.dropLast()) { return "Line \(line)" }
+    if location.hasPrefix("段 "), let paragraph = Int(location.dropFirst(2)) { return "Paragraph \(paragraph)" }
+    return location
+}
+
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var updateService: WeiBeiUpdateService
@@ -758,7 +771,7 @@ private struct UnifiedTopBarView: View {
         guard readerSearchResultsReady else { return store.ui("查找中", "Finding…") }
         let count = paneState.readerSearchResults.count
         if count == 0 { return store.ui("无匹配", "No matches") }
-        if paneState.readerSearchResultIndex < 0 { return store.ui("\(count) 处", "\(count) matches") }
+        if paneState.readerSearchResultIndex < 0 { return store.ui("\(count) 处", "\(count) \(count == 1 ? "match" : "matches")") }
         return "\(paneState.readerSearchResultIndex + 1) / \(count)"
     }
 
@@ -820,8 +833,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private func compactLocation(_ result: ReaderSearchResult) -> String {
-        let location = result.location.isEmpty ? store.ui("第 \(result.pageIndex + 1) 页", "Page \(result.pageIndex + 1)") : result.location
-        return location.hasPrefix("第 ") ? location.replacingOccurrences(of: "第 ", with: "").replacingOccurrences(of: " ", with: "") : location
+        readerSearchLocationLabel(result, language: store.interfaceLanguage)
     }
 
     private func highlightedPreview(_ result: ReaderSearchResult) -> Text {

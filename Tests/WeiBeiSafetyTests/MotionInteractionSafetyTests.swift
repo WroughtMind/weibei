@@ -107,6 +107,20 @@ final class MotionInteractionSafetyTests: XCTestCase {
         XCTAssertEqual(paneState.readerSearchSessionID, session + 1)
     }
 
+    func testReaderSearchLocationUsesInterfaceLanguageWithoutChangingDocumentHeadings() {
+        func label(_ location: String, language: WeiBeiInterfaceLanguage = .english) -> String {
+            readerSearchLocationLabel(ReaderSearchResult(id: 0, pageIndex: 2, preview: "", location: location), language: language)
+        }
+
+        XCTAssertEqual(label("第 72 页"), "Page 72")
+        XCTAssertEqual(label("第 72 页备注"), "Page 72 notes")
+        XCTAssertEqual(label("第 12 行"), "Line 12")
+        XCTAssertEqual(label("段 3"), "Paragraph 3")
+        XCTAssertEqual(label("", language: .english), "Page 3")
+        XCTAssertEqual(label("第 72 页", language: .chinese), "72页")
+        XCTAssertEqual(label("第二节"), "第二节")
+    }
+
     /// Recovery retracts the banner: when a note's file error clears and the
     /// banner still shows that exact message (with no other item failing on the
     /// same message), the banner is dismissed instead of lingering as a false alarm.
