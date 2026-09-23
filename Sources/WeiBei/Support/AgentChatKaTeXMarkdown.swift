@@ -15,12 +15,16 @@ enum AgentChatKaTeXMarkdown {
     )
     private static let hatSpacedArgument = try? NSRegularExpression(pattern: #"\\hat\s+([A-Za-z\\]+)"#)
     private static let hatGluedArgument = try? NSRegularExpression(pattern: #"\\hat(?!\{)(\\[A-Za-z]+|[A-Za-z])"#)
+    private static let unsupportedUnderbrace = try? NSRegularExpression(pattern: #"(\\underbrace)(?=\s*\{)"#)
 
     static func prepare(_ raw: String) -> String {
         var text = raw
         text = convertBracketDisplayMath(in: text)
         text = expandSingleLineDisplayMath(in: text)
         text = fixHatArguments(in: text)
+        if let unsupportedUnderbrace {
+            text = replaceMatches(in: text, regex: unsupportedUnderbrace) { _ in #"\underline"# }
+        }
         return text
     }
 
