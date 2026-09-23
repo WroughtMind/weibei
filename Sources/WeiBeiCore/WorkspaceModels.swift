@@ -973,6 +973,17 @@ public struct FloatingAgentResizeResult: Equatable {
     }
 }
 
+/// Top-left frame. Resize keeps the opposite edge still instead of recentering.
+public struct FloatingAgentTopLeftFrame: Equatable {
+    public var origin: FloatingAgentCoordinate
+    public var size: FloatingAgentSize
+
+    public init(origin: FloatingAgentCoordinate, size: FloatingAgentSize) {
+        self.origin = origin
+        self.size = size
+    }
+}
+
 public enum FloatingAgentResizeEdge {
     case top
     case bottom
@@ -1005,6 +1016,8 @@ public enum SelectionFloatingAgentPlacement {
     /// A typed question may grow to five lines, but never consume the floating panel.
     public static let expandedComposerMaxHeight = 96.0
     public static let expandedComposerCollapsedHeight = 40.0
+    /// Nominal height of the panel before an answer exists. Side choice uses this once.
+    public static let initialPlacedPanelHeight = 96.0
 
     public static func composerControlHostMinimumHeight(composerMinimumHeight: Double) -> Double {
         composerMinimumHeight
@@ -1015,6 +1028,127 @@ public enum SelectionFloatingAgentPlacement {
             measuredContentHeight,
             min: minimumAutomaticContentHeight,
             max: maximumAutomaticContentHeight
+        )
+    }
+
+    /// Answer viewport height. A fixed height scrolls inside. A floor still grows with the reply up to the cap.
+    public static func resolvedFeedHeight(
+        measuredContentHeight: Double,
+        userFloor: Double? = nil,
+        userFixed: Double? = nil
+    ) -> Double {
+        if let userFixed {
+            return clamp(userFixed, min: minimumResizableContentHeight, max: maximumResizableContentHeight)
+        }
+        let measured = max(0, measuredContentHeight)
+        if measured <= 1, (userFloor ?? 0) <= 1 { return 0 }
+        let preferred = max(measured, userFloor ?? 0)
+        let cap = (userFloor ?? 0) > maximumAutomaticContentHeight
+            ? maximumResizableContentHeight
+            : maximumAutomaticContentHeight
+        // A dragged floor keeps the resize minimum. Untouched text uses its own height.
+        let minimum = (userFloor ?? 0) > 1 ? minimumResizableContentHeight : 0
+        return clamp(preferred, min: minimum, max: cap)
+    }
+
+    /// Opening placement, returned as the panel's top-left. Side choice uses the nominal size only.
+    public static func initialTopLeft(
+        anchor: FloatingAgentCoordinate?,
+        canvas: FloatingAgentCoordinate,
+        topInset: Double = 0,
+        prefersAbove: Bool = false
+    ) -> FloatingAgentCoordinate {
+        let center = position(
+            anchor: anchor,
+            canvas: canvas,
+            topInset: topInset,
+            surfaceHalfWidth: expandedHalfWidth,
+            measuredHalfHeight: initialPlacedPanelHeight / 2,
+            prefersAbove: prefersAbove,
+            prefersAnchorCenter: false
+        )
+        return FloatingAgentCoordinate(
+            x: center.x - expandedHalfWidth,
+            y: center.y - initialPlacedPanelHeight / 2
+        )
+    }
+
+    /// Resize from the top-left. The edge under the pointer moves; the opposite edge stays.
+    /// Hitting the canvas stops that edge. The panel does not jump to the other side of the anchor.
+    public static func edgeAnchoredResize(
+        origin: FloatingAgentCoordinate,
+        size: FloatingAgentSize,
+        translation: FloatingAgentSize,
+        canvas: FloatingAgentSize,
+        edge: FloatingAgentResizeEdge,
+        minimumWidth: Double = minimumResizableWidth,
+        maximumWidth: Double = maximumResizableWidth,
+        minimumHeight: Double = minimumResizableContentHeight,
+        maximumHeight: Double = maximumResizableContentHeight,
+        edgePadding: Double = 8
+    ) -> FloatingAgentTopLeftFrame {
+        let resizesLeading = edge == .leading || edge == .topLeading || edge == .bottomLeading
+        let resizesTrailing = edge == .trailing || edge == .topTrailing || edge == .bottomTrailing
+        let resizesTop = edge == .top || edge == .topLeading || edge == .topTrailing
+        let resizesBottom = edge == .bottom || edge == .bottomLeading || edge == .bottomTrailing
+
+        var width = size.width
+        var height = size.height
+        var x = origin.x
+        var y = origin.y
+        let right = origin.x + size.width
+        let bottom = origin.y + size.height
+
+        if resizesLeading {
+            width = clamp(size.width - translation.width, min: minimumWidth, max: maximumWidth)
+            x = right - width
+        } else if resizesTrailing {
+            width = clamp(size.width + translation.width, min: minimumWidth, max: maximumWidth)
+        }
+        if resizesTop {
+            height = clamp(size.height - translation.height, min: minimumHeight, max: maximumHeight)
+            y = bottom - height
+        } else if resizesBottom {
+            height = clamp(size.height + translation.height, min: minimumHeight, max: maximumHeight)
+        }
+
+        let minimumX = edgePadding
+        let minimumY = edgePadding
+        let maximumX = max(minimumX + minimumWidth, canvas.width - edgePadding)
+        let maximumY = max(minimumY + minimumHeight, canvas.height - edgePadding)
+
+        if x < minimumX {
+            let keptRight = x + width
+            x = minimumX
+            if resizesLeading {
+                width = clamp(keptRight - x, min: minimumWidth, max: maximumWidth)
+            }
+        }
+        if x + width > maximumX {
+            if resizesLeading {
+                x = min(x, maximumX - width)
+            } else {
+                width = clamp(maximumX - x, min: minimumWidth, max: width)
+            }
+        }
+        if y < minimumY {
+            let keptBottom = y + height
+            y = minimumY
+            if resizesTop {
+                height = clamp(keptBottom - y, min: minimumHeight, max: maximumHeight)
+            }
+        }
+        if y + height > maximumY {
+            if resizesTop {
+                y = min(y, maximumY - height)
+            } else {
+                height = clamp(maximumY - y, min: minimumHeight, max: height)
+            }
+        }
+
+        return FloatingAgentTopLeftFrame(
+            origin: FloatingAgentCoordinate(x: x, y: y),
+            size: FloatingAgentSize(width: width, height: height)
         )
     }
 

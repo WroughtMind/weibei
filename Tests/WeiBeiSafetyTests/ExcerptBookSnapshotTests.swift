@@ -40,7 +40,12 @@ final class ExcerptBookSnapshotTests: XCTestCase {
 
         let record = store.selectionRemarkRecords[0]
         store.openSelectionRemarkRecord(record.id.uuidString, anchor: nil)
-        let preview = NSHostingView(rootView: FloatingSelectionAgentView(expanded: .constant(true))
+        let preview = NSHostingView(rootView: FloatingSelectionAgentView(
+            expanded: .constant(true),
+            placedOrigin: .constant(nil),
+            canvasSize: CGSize(width: 800, height: 600),
+            topInset: 0
+        )
             .environmentObject(store).environmentObject(store.interaction).environmentObject(store.paneState)
             .preferredColorScheme(store.appearanceMode.colorScheme))
         preview.frame = NSRect(x: 0, y: 0, width: 380, height: 160)

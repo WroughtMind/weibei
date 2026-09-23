@@ -145,6 +145,11 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
                     continue
                 }
                 if let calls = message.toolCalls, !calls.isEmpty {
+                    // Text first, then the calls. A message inserted between a
+                    // function_call and its output is rejected by the provider.
+                    if !message.content.isEmpty {
+                        input.append(["role": "assistant", "content": message.content])
+                    }
                     for call in calls {
                         input.append([
                             "type": "function_call",
@@ -152,9 +157,6 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
                             "name": call.name,
                             "arguments": call.arguments,
                         ])
-                    }
-                    if !message.content.isEmpty {
-                        input.append(["role": "assistant", "content": message.content])
                     }
                 } else {
                     input.append(["role": "assistant", "content": message.content])
@@ -212,7 +214,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         }
         if let error = object["error"] as? [String: Any] {
             throw NativeLLMFailure(
-                code: error["code"] as? String ?? "server_error",
+                code: error["code"] as? String ?? "provider_error",
                 message: error["message"] as? String ?? "Responses error"
             )
         }
@@ -296,7 +298,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             let error = (object["response"] as? [String: Any])?["error"] as? [String: Any]
                 ?? object["error"] as? [String: Any]
             throw NativeLLMFailure(
-                code: error?["code"] as? String ?? "server_error",
+                code: error?["code"] as? String ?? "provider_error",
                 usage: tokenUsage((object["response"] as? [String: Any])?["usage"]),
                 message: error?["message"] as? String ?? object["message"] as? String ?? type
             )
