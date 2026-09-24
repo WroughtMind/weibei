@@ -4,6 +4,7 @@ import UIKit
 import AppKit
 #endif
 import SwiftUI
+import UniformTypeIdentifiers
 import WeiBeiCore
 
 struct ContentView: View {
@@ -96,6 +97,11 @@ struct ContentView: View {
                                 .transition(WeiBeiTransition.commandPalette)
                                 .zIndex(40)
                         }
+                    }
+                }
+                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                    WeiBeiDroppedFileURLs.load(providers) { urls in
+                        store.importFiles(urls)
                     }
                 }
                 .allowsHitTesting(!store.courseWorkspacePresented)
@@ -2327,5 +2333,37 @@ private struct PaneDropTargetView: View {
                 .padding(14)
             }
             .allowsHitTesting(false)
+    }
+}
+
+enum WeiBeiDroppedFileURLs {
+    static func load(_ providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) -> Bool {
+        let fileProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        }
+        guard !fileProviders.isEmpty else { return false }
+        let urlsLock = NSLock()
+        var urls: [URL] = []
+        let group = DispatchGroup()
+        for provider in fileProviders {
+            group.enter()
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                defer { group.leave() }
+                let url: URL?
+                if let data = item as? Data {
+                    url = URL(dataRepresentation: data, relativeTo: nil)
+                } else {
+                    url = item as? URL
+                }
+                guard let url else { return }
+                urlsLock.lock()
+                urls.append(url)
+                urlsLock.unlock()
+            }
+        }
+        group.notify(queue: .main) {
+            if !urls.isEmpty { completion(urls) }
+        }
+        return true
     }
 }

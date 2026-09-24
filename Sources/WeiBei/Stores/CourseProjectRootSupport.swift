@@ -5526,59 +5526,103 @@ enum CourseProjectRootError: LocalizedError {
     case migrationFailed(String)
 
     var errorDescription: String? {
+        userFacingDescription(language: .chinese)
+    }
+
+    func userFacingDescription(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .emptyTitle:
-            return "课程名称不能为空。"
+            return language.text("课程名称不能为空。", "The course name cannot be empty.")
         case .invalidDirectoryName:
-            return "这个课程名称无法生成安全的文件夹名，请换一个名称。"
+            return language.text(
+                "这个课程名称无法生成安全的文件夹名，请换一个名称。",
+                "This course name cannot become a safe folder name. Choose another name."
+            )
         case .nonFileURL:
-            return "课程根目录必须是本地文件夹。"
+            return language.text("课程根目录必须是本地文件夹。", "The course root must be a local folder.")
         case .missingLibrary:
-            return "请先配置课程资料库。"
+            return language.text("请先配置课程资料库。", "Set up a course library first.")
         case .unavailableLibrary:
-            return "课程资料库当前不可访问。"
+            return language.text("课程资料库当前不可访问。", "The course library is not accessible right now.")
         case .rootMustNotExist:
-            return "新建课程的位置已经存在。请换一个课程名，或先在 Finder 中整理资料库里的文件夹。"
+            return language.text(
+                "新建课程的位置已经存在。请换一个课程名，或先在 Finder 中整理资料库里的文件夹。",
+                "A folder with this course name already exists. Choose another name, or tidy the library folder in Finder first."
+            )
         case .rootMustExist:
-            return "要接管的课程文件夹不存在。"
+            return language.text("要接管的课程文件夹不存在。", "The course folder to take over does not exist.")
         case .rootMustBeDirectory:
-            return "课程根必须是文件夹。"
+            return language.text("课程根必须是文件夹。", "The course root must be a folder.")
         case .rootOutsideLibrary:
-            return "新建课程必须位于已配置的课程资料库内。"
+            return language.text(
+                "新建课程必须位于已配置的课程资料库内。",
+                "A new course must live inside the configured course library."
+            )
         case .dangerousRoot:
-            return "不能把系统根、主目录、文稿目录、资料库根或魏碑共享状态目录作为课程根。"
+            return language.text(
+                "不能把系统根、主目录、文稿目录、资料库根或魏碑共享状态目录作为课程根。",
+                "The system root, home folder, Documents, the library root, or WeiBei’s shared state folder cannot be a course root."
+            )
         case .overlappingRoot:
-            return "课程根不能与已有课程互相包含。"
+            return language.text("课程根不能与已有课程互相包含。", "A course root cannot contain or sit inside another course.")
         case .rootAlreadyRegistered:
-            return "这个课程文件夹已经被魏碑纳入。"
+            return language.text("这个课程文件夹已经被魏碑纳入。", "WeiBei already includes this course folder.")
         case .rootIdentityUnavailable:
-            return "无法确认课程根的本地文件身份。"
+            return language.text("无法确认课程根的本地文件身份。", "The course root’s local file identity could not be confirmed.")
         case .bookmarkUnavailable:
-            return "无法保存文件夹访问授权。"
+            return language.text("无法保存文件夹访问授权。", "The folder access bookmark could not be saved.")
         case .bookmarkResolutionFailed:
-            return "无法恢复文件夹访问授权。"
+            return language.text("无法恢复文件夹访问授权。", "The folder access bookmark could not be restored.")
         case .securityScopeDenied:
-            return "系统没有授予文件夹访问权限。"
+            return language.text("系统没有授予文件夹访问权限。", "The system did not grant access to the folder.")
         case .libraryIdentityMismatch:
-            return "所选文件夹不是原来的课程资料库；更换资料库需要单独迁移，不能静默改绑。"
+            return language.text(
+                "所选文件夹不是原来的课程资料库；更换资料库需要单独迁移，不能静默改绑。",
+                "That folder is not the original course library. Switching libraries is a separate move and is not done silently."
+            )
         case .metadataConflict:
-            return "这个文件夹已有未知或损坏的 .weibei 元数据，魏碑不会覆盖它。"
+            return language.text(
+                "这个文件夹已有未知或损坏的 .weibei 元数据，魏碑不会覆盖它。",
+                "This folder already has unknown or damaged .weibei metadata. WeiBei will not overwrite it."
+            )
         case .manifestMismatch:
-            return "课程 manifest 与当前课程记录冲突。"
+            return language.text("课程 manifest 与当前课程记录冲突。", "The course manifest conflicts with the current course record.")
         case .workspaceSaveFailed:
-            return "课程状态没有成功保存。魏碑只撤销能确认属于本次操作的内容；如果磁盘内容已经变化，会原样保留。"
+            return language.text(
+                "课程状态没有成功保存。魏碑只撤销能确认属于本次操作的内容；如果磁盘内容已经变化，会原样保留。",
+                "The course state was not saved. WeiBei only undoes what it can confirm belongs to this operation; disk changes that already happened are left as they are."
+            )
         case .destinationInsideLibrary:
-            return "所选位置在当前资料库内部，请选择资料库之外的位置。"
+            return language.text(
+                "所选位置在当前资料库内部，请选择资料库之外的位置。",
+                "That location is inside the current library. Choose a place outside it."
+            )
         case .destinationContainsLibrary:
-            return "所选位置是当前资料库的上级目录，请选择其他位置。"
+            return language.text(
+                "所选位置是当前资料库的上级目录，请选择其他位置。",
+                "That location is a parent of the current library. Choose another place."
+            )
         case .destinationIsLibrary:
-            return "所选位置已经是一个魏碑资料库，可以直接认领。"
+            return language.text(
+                "所选位置已经是一个魏碑资料库，可以直接认领。",
+                "That location is already a WeiBei library and can be claimed directly."
+            )
         case .destinationNotEmpty:
-            return "所选位置下的「魏碑资料库」文件夹里已有内容，不能覆盖。请换一个位置。"
+            return language.text(
+                "所选位置下的「魏碑资料库」文件夹里已有内容，不能覆盖。请换一个位置。",
+                "The WeiBei library folder in that location already has contents and cannot be overwritten. Choose another place."
+            )
         case .migrationFailed(let detail):
-            return detail.isEmpty
-                ? "资料库迁移未完成，原资料库保持不变。"
-                : "资料库迁移未完成：\(detail)。原资料库保持不变。"
+            if detail.isEmpty {
+                return language.text(
+                    "资料库迁移未完成，原资料库保持不变。",
+                    "The library move did not finish. The original library is unchanged."
+                )
+            }
+            return language.text(
+                "资料库迁移未完成：\(detail)。原资料库保持不变。",
+                "The library move did not finish: \(detail). The original library is unchanged."
+            )
         }
     }
 }

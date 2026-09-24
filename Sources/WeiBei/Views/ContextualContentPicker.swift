@@ -201,14 +201,19 @@ struct ContextualContentPicker: View {
 
     private var globalActions: some View {
         HStack(spacing: 12) {
-            Button(store.ui("＋ 新建课程", "+ New Course")) { courseEntry = CourseProjectEntryPresentation(intent: .create) }
-            Button(kind == .note ? store.ui("导入笔记…", "Import notes…") : store.ui("导入资料…", "Import materials…")) {
-                choosingImportTarget = true
+            Button(store.ui("新建课程", "New Course")) {
+                courseEntry = CourseProjectEntryPresentation(intent: .create)
             }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+            Button(kind == .note ? store.ui("导入笔记…", "Import Notes…") : store.ui("导入资料…", "Import Materials…")) {
+                if store.courses.isEmpty {
+                    importFiles(into: nil)
+                } else {
+                    choosingImportTarget = true
+                }
+            }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
         }
-        .buttonStyle(.plain)
-        .weiBeiText(11.5)
-        .foregroundStyle(WeiBeiTheme.secondaryInk)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
     }

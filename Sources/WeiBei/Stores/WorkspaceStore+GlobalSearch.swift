@@ -1,6 +1,21 @@
 import Foundation
 import WeiBeiCore
 
+enum CourseSearchAvailability {
+    static func decide(
+        countedItemIDs: [String],
+        states: [String: CourseDocumentIndexAvailability]
+    ) -> CourseDocumentIndexAvailability {
+        if countedItemIDs.contains(where: { states[$0] == nil || states[$0] == .unavailable }) {
+            return .unavailable
+        }
+        if countedItemIDs.contains(where: { states[$0] == .indexing }) {
+            return .indexing
+        }
+        return .ready
+    }
+}
+
 // MARK: - 课程首页搜索 + 跨课程全局搜索
 //
 // searchCourseHome 的实现自 WorkspaceStore.swift 原样迁来(共享内核),
@@ -78,6 +93,7 @@ extension WorkspaceStore {
             return GlobalSearchOutcome(hits: [], availability: .ready)
         }
         ensureAllStudySessionMessagesLoaded()
+        let availabilityItemIDs = currentCourseSearchAvailabilityItemIDs(currentCourseID)
         let courseTitleByID = Dictionary(
             uniqueKeysWithValues: courses.map { ($0.id, $0.title) }
         )
@@ -102,7 +118,8 @@ extension WorkspaceStore {
             sessions: sessions,
             query: query,
             chatDetail: ui("%d 条消息", "%d messages"),
-            resultLimit: resultLimit
+            resultLimit: resultLimit,
+            availabilityItemIDs: availabilityItemIDs
         )
         guard !Task.isCancelled else {
             return GlobalSearchOutcome(hits: [], availability: .ready)
@@ -150,17 +167,58 @@ extension WorkspaceStore {
         return GlobalSearchOutcome(hits: ordered, availability: search.availability)
     }
 
-    func openGlobalSearchHit(_ hit: GlobalSearchHit) {
+    func openGlobalSearchHit(_ hit: GlobalSearchHit, query: String = "") {
+        let cleaned = ReaderSearch.cleaned(query)
         switch hit.result.kind {
         case .material:
-            if let id = hit.result.itemID { openContextualItem(id, kind: .material) }
+            guard let id = hit.result.itemID else { return }
+            if openCourseMaterial(id, in: hit.courseID) {
+                locateReaderSearch(cleaned)
+            } else {
+                revealCourseFolder(containing: id, in: hit.courseID)
+            }
         case .note:
-            if let id = hit.result.itemID { openContextualItem(id, kind: .note) }
+            guard let id = hit.result.itemID else { return }
+            if openCourseNote(id, in: hit.courseID) {
+                locateNoteSearch(cleaned)
+            } else {
+                revealCourseFolder(containing: id, in: hit.courseID)
+            }
         case .chat:
             if let id = hit.result.sessionID {
                 continueCourseSession(id, expectedCourseID: hit.courseID, expectedScopeNeedsReview: false)
             }
         }
+    }
+
+    /// Hands a course-search term to the reader find and jumps to the first match once results arrive.
+    func locateReaderSearch(_ query: String) {
+        guard !query.isEmpty else { return }
+        if !showDocumentSearch { paneState.resetReaderSearchSession() }
+        readerSearch = query
+        paneState.pendingFirstReaderMatch = true
+        showDocumentSearch = true
+        focus(.reader)
+        paneState.searchFocusRequest &+= 1
+    }
+
+    /// Availability for global search counts only the current course, and skips
+    /// items already registered as missing or belonging to an unavailable course root.
+    func currentCourseSearchAvailabilityItemIDs(_ currentCourseID: UUID?) -> Set<String> {
+        guard let currentCourseID, courseRootUnavailableReasons[currentCourseID] == nil else {
+            return []
+        }
+        return Set(courseItems(in: currentCourseID).map(\.id))
+            .subtracting(fileMissingSinceByItemID.keys)
+    }
+
+    func locateNoteSearch(_ query: String) {
+        guard !query.isEmpty else { return }
+        noteSearch = query
+        noteSearchRequest &+= 1
+        showDocumentSearch = true
+        focus(.notes)
+        paneState.searchFocusRequest &+= 1
     }
 
     // MARK: - 共享内核(自 WorkspaceStore.searchCourseHome 原样迁移)
@@ -183,7 +241,8 @@ extension WorkspaceStore {
         sessions: [StudySession],
         query: String,
         chatDetail: String,
-        resultLimit: Int = 50
+        resultLimit: Int = 50,
+        availabilityItemIDs: Set<String>? = nil
     ) async -> CourseSearchKernelOutcome {
         let searchIndex = courseDocumentSearchIndex
         let searchTask = Task.detached(priority: .userInitiated) {
@@ -196,19 +255,16 @@ extension WorkspaceStore {
                 query: query,
                 maximumCharactersPerItem: 1_200
             )
-            let availability: CourseDocumentIndexAvailability
-            if indexedItems.contains(where: {
-                indexed[$0.id]?.availability == .unavailable
-                    || indexed[$0.id] == nil
-            }) {
-                availability = .unavailable
-            } else if indexedItems.contains(where: {
-                indexed[$0.id]?.availability == .indexing
-            }) {
-                availability = .indexing
-            } else {
-                availability = .ready
-            }
+            let countedItems = availabilityItemIDs.map { ids in
+                indexedItems.filter { ids.contains($0.id) }
+            } ?? indexedItems
+            let availability = CourseSearchAvailability.decide(
+                countedItemIDs: countedItems.map(\.id),
+                states: Dictionary(uniqueKeysWithValues: countedItems.compactMap { item -> (String, CourseDocumentIndexAvailability)? in
+                    guard let state = indexed[item.id]?.availability else { return nil }
+                    return (item.id, state)
+                })
+            )
             func snippet(_ text: String?) -> String? {
                 guard let text else { return nil }
                 let compact = text

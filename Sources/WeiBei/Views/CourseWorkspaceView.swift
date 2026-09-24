@@ -475,7 +475,7 @@ struct CourseWorkspaceHeader: View {
     private var searchPrompt: String {
         switch page {
         case .hub:
-            store.ui("搜索本课", "Search this course")
+            store.ui("搜索全部课程", "Search all courses")
         case .map:
             store.ui("搜索本课文稿与笔记", "Search Docs and Notes in this course")
         case .records:

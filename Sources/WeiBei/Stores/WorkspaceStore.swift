@@ -714,7 +714,7 @@ final class WorkspaceStore: ObservableObject {
     /// macOS switch by `WeiBeiMotionScope`. Persisted in UserDefaults, not workspace.json.
     @Published var motionPreference: WeiBeiMotionPreference = .system
     @Published var adaptImportedDocumentColors = true
-    @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .preferred
     @Published var interfaceTextScale: WeiBeiTypography.TextScale = .standard
     @Published var courseWorkspacePresented = false
     @Published var courseWorkspaceCourseID: UUID?

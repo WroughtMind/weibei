@@ -440,21 +440,26 @@ extension WorkspaceStore {
         pendingNotePersistenceByItemID.removeValue(forKey: itemID)
     }
 
-    func openCourseNote(_ itemID: String, in requestedCourseID: UUID? = nil) {
+    @discardableResult
+    func openCourseNote(_ itemID: String, in requestedCourseID: UUID? = nil) -> Bool {
         guard importedItems.contains(where: {
             $0.id == itemID && $0.isNotebookNote
         }) else {
-            return
+            return false
         }
         if let requestedCourseID {
             guard itemIsAvailableInCourseContext(itemID: itemID, courseID: requestedCourseID) else {
-                return
+                return false
             }
             activeCourseID = requestedCourseID
+        }
+        if fileMissingSinceByItemID[itemID] != nil {
+            return false
         }
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
         select(itemID: itemID)
+        return true
     }
 
     @discardableResult

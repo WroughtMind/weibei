@@ -111,8 +111,8 @@ struct CourseRecordsView: View {
                     : store.ui("没有匹配的对话", "No matching Chats"),
                 detail: cleanedSearch.isEmpty
                     ? store.ui(
-                        "从课程概览提问或开始新对话后，对话会出现在这里。对话本身仍保存在全局。",
-                        "Ask from the course overview or start a new Chat. The Chat itself remains global."
+                        "在文稿里选中文字后点「问」，或在对话窗格开始新对话。对话本身仍保存在全局。",
+                        "Select text and choose Ask, or start a new conversation in the chat pane. The conversation itself stays global."
                     )
                     : store.ui("换一个搜索词再试。", "Try another search term."),
                 systemImage: "bubble.left.and.text.bubble.right",

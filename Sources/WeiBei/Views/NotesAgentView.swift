@@ -3039,6 +3039,8 @@ struct FloatingSelectionAgentView: View {
                 .padding(.horizontal, 14)
             Button(store.ui("重试", "Retry")) { store.askSelection() }
         } else {
+            VStack(alignment: .leading, spacing: 8) {
+                AgentUnconfiguredHint(store: store)
             ComposerView(
                 prompt: showsFloatingFeed
                     ? store.ui("再问一点…", "Ask a follow-up…")
@@ -3061,6 +3063,7 @@ struct FloatingSelectionAgentView: View {
                 sendDraft()
             }
             .id(interaction.activeSelectionAskThreadID)
+            }
             .padding(.horizontal, 14)
             .padding(.bottom, 5)
         }
