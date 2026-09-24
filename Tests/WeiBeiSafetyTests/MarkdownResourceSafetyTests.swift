@@ -202,6 +202,105 @@ final class MarkdownResourceSafetyTests: XCTestCase {
         )
     }
 
+    func testAttachmentStoreDownscalesOversizedStillImage() throws {
+        let fixture = try makeFixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let attachments = fixture.appendingPathComponent("attachments")
+        let pixels = try encodedJPEG(width: 8_064, height: 6_048)
+        let saved = try MarkdownAttachmentStore.save(
+            data: pixels,
+            originalName: "iphone.heic",
+            mime: "image/jpeg",
+            attachmentDirectory: attachments,
+            markdownBaseURLString: fixture.absoluteString
+        )
+        let file = fixture.appendingPathComponent(saved.src)
+        let stored = try Data(contentsOf: file)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(stored as CFData, nil))
+        let properties = try XCTUnwrap(
+            CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        )
+        let width = try XCTUnwrap((properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue)
+        let height = try XCTUnwrap((properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue)
+        XCTAssertLessThanOrEqual(max(width, height), MarkdownAttachmentStore.downscaledImageLongEdge)
+        XCTAssertTrue(saved.src.hasSuffix(".jpg"))
+        XCTAssertLessThanOrEqual(stored.count, MarkdownAttachmentStore.maximumImageByteCount)
+    }
+
+    func testAttachmentStoreKeepsLongAnimationWhenEachFrameFits() throws {
+        let fixture = try makeFixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let attachments = fixture.appendingPathComponent("attachments")
+        let frame = try makeImage(width: 2_000, height: 2_000)
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(
+            CGImageDestinationCreateWithData(data, UTType.gif.identifier as CFString, 11, nil)
+        )
+        for _ in 0..<11 {
+            CGImageDestinationAddImage(destination, frame, nil)
+        }
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let saved = try MarkdownAttachmentStore.save(
+            data: data as Data,
+            originalName: "long.gif",
+            mime: "image/gif",
+            attachmentDirectory: attachments,
+            markdownBaseURLString: fixture.absoluteString
+        )
+        XCTAssertTrue(saved.src.hasSuffix(".gif"))
+        let stored = try Data(contentsOf: fixture.appendingPathComponent(saved.src))
+        XCTAssertEqual(stored, data as Data)
+    }
+
+    func testAttachmentStoreRasterizesSVGToPNG() throws {
+        let fixture = try makeFixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let attachments = fixture.appendingPathComponent("attachments")
+        let svg = Data("""
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="12">\
+        <rect width="24" height="12" fill="red"/></svg>
+        """.utf8)
+        let saved = try MarkdownAttachmentStore.save(
+            data: svg,
+            originalName: "diagram.svg",
+            mime: "image/svg+xml",
+            attachmentDirectory: attachments,
+            markdownBaseURLString: fixture.absoluteString
+        )
+        XCTAssertTrue(saved.src.hasSuffix(".png"))
+        let stored = try Data(contentsOf: fixture.appendingPathComponent(saved.src))
+        XCTAssertEqual(Array(stored.prefix(8)), [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    }
+
+    func testAttachmentStoreRejectsUndecodableImage() throws {
+        let fixture = try makeFixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let attachments = fixture.appendingPathComponent("attachments")
+        XCTAssertThrowsError(
+            try MarkdownAttachmentStore.save(
+                data: Data([0x00, 0x01, 0x02, 0x03]),
+                originalName: "broken.png",
+                mime: "image/png",
+                attachmentDirectory: attachments,
+                markdownBaseURLString: fixture.absoluteString
+            )
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: attachments.path))
+    }
+
+    private func encodedJPEG(width: Int, height: Int) throws -> Data {
+        let image = try makeImage(width: width, height: height)
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(
+            CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil)
+        )
+        CGImageDestinationAddImage(destination, image, [
+            kCGImageDestinationLossyCompressionQuality: 0.8,
+        ] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
     private func makeImage(width: Int, height: Int) throws -> CGImage {
         let context = try XCTUnwrap(
             CGContext(
