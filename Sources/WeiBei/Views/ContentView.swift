@@ -1587,7 +1587,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private func showSettings() {
-        openSettingsWindow(id: "weibei-settings")
+        openSettingsWindow(id: "weibei-settings", value: "settings")
     }
 
     private func toggleAppearance() {
@@ -1900,9 +1900,9 @@ private struct LayoutContentView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @StateObject private var paneHostRegistry = PersistentPaneHostRegistry()
-    @SceneStorage("documentThreePaneFirstSplit") private var firstSplitStorage: Double = 0.34
-    @SceneStorage("documentThreePaneSecondSplit") private var secondSplitStorage: Double = 0.67
-    @SceneStorage("documentNotesHalfSplit") private var halfSplitStorage: Double = 0.50
+    @AppStorage("documentThreePaneFirstSplit") private var firstSplitStorage: Double = 0.34
+    @AppStorage("documentThreePaneSecondSplit") private var secondSplitStorage: Double = 0.67
+    @AppStorage("documentNotesHalfSplit") private var halfSplitStorage: Double = 0.50
     
     var body: some View {
         Group {

@@ -745,10 +745,10 @@ struct SettingsView: View {
 
     private func applyRecordedShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
         defer { stopShortcutRecording() }
-        guard !AppShortcutCatalog.isReservedTextEditingChord(chord) else {
+        guard AppShortcutCatalog.acceptsRecording(chord) else {
             shortcutStatusMessage = store.ui(
-                "⌘B 和 ⌘F 保留给文本编辑，请使用其他组合。",
-                "⌘B and ⌘F are reserved for text editing. Choose another shortcut."
+                "系统编辑键不能占用，并且组合里要有 ⌘、⌃ 或 ⌥。",
+                "System editing keys stay reserved, and the shortcut needs ⌘, ⌃, or ⌥."
             )
             return
         }

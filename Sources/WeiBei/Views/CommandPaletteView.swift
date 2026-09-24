@@ -15,6 +15,10 @@ struct CommandPaletteView: View {
             PaletteCommand(title: store.ui("打开课程空间", "Open Course Space"), shortcut: "⌘0", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace(.hub) },
             PaletteCommand(title: store.ui("打开资料", "Open Material"), shortcut: "⌘O") { store.importFilesFromPanel() },
             PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.promptCreateBlankNotebookNote() },
+            PaletteCommand(title: store.ui("新建对话", "New Chat"), shortcut: store.chord(for: .newConversation).display) {
+                if store.courseWorkspacePresented { store.dismissCourseWorkspace() }
+                _ = store.createStudySession(courseID: nil)
+            },
             PaletteCommand(title: store.ui("聚焦课程目录", "Focus Course Index"), shortcut: store.chord(for: .focusLibrary).display, animation: WeiBeiMotion.layout) { store.focus(.library) },
             PaletteCommand(title: store.ui("聚焦阅读", "Focus Reader"), shortcut: store.chord(for: .focusReader).display, animation: WeiBeiMotion.layout) { store.focus(.reader) },
             PaletteCommand(title: store.ui("聚焦笔记", "Focus Notes"), shortcut: store.chord(for: .focusNotes).display, animation: WeiBeiMotion.layout) { store.focus(.notes) },
@@ -115,9 +119,10 @@ struct CommandPaletteView: View {
     }
 
     private var rightPaneCommand: PaletteCommand? {
-        guard store.layout.hasCollapsibleRightPane else { return nil }
+        guard store.layout != .immersiveConversation else { return nil }
+        let showingThree = store.layout.isDocumentThreePane && store.showReader && store.showAgent && store.showNotes
         return PaletteCommand(
-            title: store.showRightPane ? store.ui("收起辅助栏", "Hide Assistant Pane") : store.ui("展开辅助栏", "Show Assistant Pane"),
+            title: showingThree ? store.ui("只看文稿", "Document Only") : store.ui("恢复三栏", "Restore Three Panes"),
             shortcut: store.chord(for: .toggleRightPane).display,
             animation: WeiBeiMotion.layout
         ) {
