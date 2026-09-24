@@ -202,6 +202,8 @@ struct ComposerView: View {
 
     private func commitAndSubmit() {
         guard AgentProviderReadiness.isConfigured(for: store) else { return }
+        // A1: 正在回答或正在停止时，回车不做任何事；停止只留给停止按钮。
+        guard !isRunning, !isStopping else { return }
         store.saveComposerDraft(draft, for: targetID)
         submit()
     }
@@ -220,7 +222,7 @@ struct ComposerView: View {
         ))
         .accessibilityLabel(Text(isRunning ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
         .help(isRunning ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
-        .keyboardShortcut(focused.wrappedValue ? KeyboardShortcut(.return, modifiers: [.command]) : nil)
+        .keyboardShortcut(focused.wrappedValue && !isRunning ? KeyboardShortcut(.return, modifiers: [.command]) : nil)
         .transition(WeiBeiTransition.floating)
         .animation(WeiBeiMotion.micro, value: showsControl)
     }

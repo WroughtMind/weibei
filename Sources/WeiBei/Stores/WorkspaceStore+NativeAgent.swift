@@ -77,12 +77,6 @@ extension WorkspaceStore {
         return ui("复制笔记引用", "Copy note reference")
     }
 
-    var sendAgentActionTitle: String {
-        isAgentRunningInActiveChat
-            ? ui("停止回答", "Stop response")
-            : ui("发送问题", "Send question")
-    }
-
     var isAgentRunningInActiveChat: Bool {
         agentRequestTask != nil && agentRun.chatID == activeStudySessionID
     }
@@ -101,7 +95,9 @@ extension WorkspaceStore {
               message.completionState == .generating else {
             return message.text
         }
-        return run.latestAgentStreamingText
+        // A3: before the first new character, keep the persisted reply.
+        let streamed = run.latestAgentStreamingText
+        return streamed.isEmpty ? message.text : streamed
     }
 
     func agentReplyDisplayedStreamingText(_ message: AgentMessage) -> Bool {

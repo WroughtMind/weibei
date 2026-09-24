@@ -85,6 +85,17 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         ]), atEndOfMenu: .view)
     }
 
+    override func validate(_ command: UICommand) {
+        // K4: 菜单项未启用时，⌘↩ 不会被菜单吃掉，公式块、笔记和摘抄框能收到自己的快捷键。
+        guard let value = command.propertyList as? String,
+              value == AppShortcutID.submitAgentDraft.rawValue else { return }
+        if Self.agentComposerIsFirstResponder() {
+            command.attributes.remove(.disabled)
+        } else {
+            command.attributes.insert(.disabled)
+        }
+    }
+
     @objc private func performWorkspaceCommand(_ command: UICommand) {
         guard let value = command.propertyList as? String else { return }
         let store = Self.workspace
@@ -124,10 +135,36 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 case .replaceNoteSelection: store.replaceSelectionWithLastAgentAnswer()
                 case .applyAgentPatchToEditor: store.applyAgentPatchToEditor()
                 case .copyCurrentReference: store.copyCurrentReference()
-                case .submitAgentDraft: store.submitAgentDraft()
+                case .submitAgentDraft:
+                    // K4: ⌘↩ 只服务对话输入框（主对话与选区浮层共用同一输入框实现）。
+                    // 焦点在笔记、公式块或摘抄框时不触发发送，把按键留给那里的第一响应者。
+                    guard Self.agentComposerIsFirstResponder() else { return }
+                    store.submitAgentDraft()
                 }
             }
         }
+    }
+
+    /// K4: 判断当前第一响应者是否为对话输入框（主对话与选区浮层的 ComposerTextView）。
+    private static func agentComposerIsFirstResponder() -> Bool {
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                if let responder = firstResponder(in: window) as? AgentComposerTextEditor.ComposerTextView,
+                   responder.submitsAgentDraft {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private static func firstResponder(in view: UIView) -> UIView? {
+        if view.isFirstResponder { return view }
+        for subview in view.subviews {
+            if let found = firstResponder(in: subview) { return found }
+        }
+        return nil
     }
 
     // Catalyst lets UIApplication background tasks finish during normal Quit.

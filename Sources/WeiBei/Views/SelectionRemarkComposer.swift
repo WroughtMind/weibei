@@ -51,6 +51,7 @@ struct SelectionRemarkField: View {
                     focusRequest: focusRequest,
                     appearanceMode: store.appearanceMode,
                     accessibilityLabel: store.ui("记一句，留空只存原文", "Add a remark; empty saves the passage"),
+                    submitsAgentDraft: false,
                     submit: submit
                 )
                 .frame(height: max(20, editorHeight))

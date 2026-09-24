@@ -33,6 +33,8 @@ struct AgentComposerTextEditor: NSViewRepresentable {
     var focusRequest: Int
     var appearanceMode: WeiBeiAppearanceMode
     var accessibilityLabel: String
+    /// 摘抄框与对话输入框共用这个视图。只有对话输入框才响应菜单里的 ⌘↩。
+    var submitsAgentDraft = true
     var submit: () -> Void
 
     func makeCoordinator() -> Coordinator {
