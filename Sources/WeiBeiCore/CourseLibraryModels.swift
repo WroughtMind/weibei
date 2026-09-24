@@ -17,14 +17,12 @@ public enum CourseLibraryLayout {
             return workspace.deletingLastPathComponent()
                 .appendingPathComponent(workspace.lastPathComponent + "-" + defaultFolderName, isDirectory: true)
         }
-#if targetEnvironment(macCatalyst)
-        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(defaultFolderName, isDirectory: true)
-#else
+        // 默认库放在主目录（~/魏碑资料库），不再放进「文稿」：macOS 的
+        // ~/Documents 常被 iCloud「桌面与文稿」同步接管，占位符与同步冲突
+        // 会直接干扰课程文件。仅影响从未配置过资料库的新安装；已配置的
+        // 用户靠 workspace.json 里的 courseLibraryRootPath 原样重连。
         return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents", isDirectory: true)
             .appendingPathComponent(defaultFolderName, isDirectory: true)
-#endif
     }
 }
 

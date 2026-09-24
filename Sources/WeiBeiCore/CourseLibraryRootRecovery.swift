@@ -2,7 +2,7 @@ import Foundation
 
 /// Finds this computer's course library without a hardcoded user path.
 /// Bookmarks are machine- and signature-specific; relative course folders
-/// (`test/文稿/paper.pdf`) plus this user's Documents library are what travel.
+/// (`test/文稿/paper.pdf`) plus this user's home-directory library are what travel.
 public enum CourseLibraryRootRecovery {
     public static func candidates(
         storedPath: String?,

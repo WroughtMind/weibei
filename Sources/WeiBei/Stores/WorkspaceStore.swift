@@ -5951,6 +5951,9 @@ final class WorkspaceStore: ObservableObject {
         completion: @escaping ([StudyItem]) -> Void = { _ in }
     ) {
         if courseLibraryRootURL == nil {
+            // 只在「从未配置」时建默认库；原库暂时连不上（URL 为 nil 但
+            // path/identity/bookmark 仍在）时这里是空操作，导入走下面的
+            // 「不可用」报错，绝不静默改绑。
             bootstrapDefaultLibraryIfNeeded()
         }
         guard let libraryRoot = courseLibraryRootURL else {

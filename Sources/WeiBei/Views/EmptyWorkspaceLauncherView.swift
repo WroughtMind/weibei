@@ -697,8 +697,8 @@ private struct LibraryPlacementNoticeCard: View {
                 confirmed = true
             } catch CourseProjectRootError.destinationIsLibrary {
                 relocationErrorText = store.ui(
-                    "所选位置已经是一个魏碑资料库，请选择其他空文件夹。",
-                    "That location is already a WeiBei library. Choose an empty folder instead."
+                    "所选位置已经是一个魏碑资料库，请选择其他位置。",
+                    "That location is already a WeiBei library. Choose a different location."
                 )
             } catch {
                 store.recordCourseLibraryUIFailure(
@@ -706,9 +706,11 @@ private struct LibraryPlacementNoticeCard: View {
                     operation: "first_run_library_migration",
                     path: url
                 )
+                let reason = (error as? CourseProjectRootError)?.errorDescription
+                    ?? error.localizedDescription
                 relocationErrorText = store.ui(
-                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用所选位置。请先确认原位置内容完整、所选文件夹可写，再重试；也可以稍后在设置中更换。",
-                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the selected location. Check the original contents and make sure the selected folder is writable before trying again, or change it later in Settings."
+                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用所选位置。原因：\(reason) 可以重试，也可以稍后在设置中更换。",
+                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the selected location. Reason: \(error.localizedDescription) You can retry or change it later in Settings."
                 )
             }
             isRelocating = false

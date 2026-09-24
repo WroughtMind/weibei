@@ -5574,7 +5574,7 @@ enum CourseProjectRootError: LocalizedError {
         case .destinationIsLibrary:
             return "所选位置已经是一个魏碑资料库，可以直接认领。"
         case .destinationNotEmpty:
-            return "所选文件夹不是空的，迁移需要一个空文件夹。"
+            return "所选位置下的「魏碑资料库」文件夹里已有内容，不能覆盖。请换一个位置。"
         case .migrationFailed(let detail):
             return detail.isEmpty
                 ? "资料库迁移未完成，原资料库保持不变。"

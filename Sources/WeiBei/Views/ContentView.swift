@@ -509,6 +509,18 @@ private struct WorkspaceStatusBanner: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(store.ui("重试保存并切换笔记", "Retry saving and switching notes")))
             } else if isImportant {
+                if case .defaultLibraryBootstrapFailed = store.importantOperationNotice {
+                    Button {
+                        store.retryBootstrapDefaultLibrary()
+                    } label: {
+                        Text(store.ui("重试", "Retry"))
+                            .weiBeiText(12, weight: .semibold)
+                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text(store.ui("重试建立默认资料库", "Retry creating the default library")))
+                }
                 Button {
                     store.dismissImportantOperationError()
                 } label: {

@@ -4847,6 +4847,17 @@ extension WorkspaceStore {
 #endif
     }
 
+    /// 在访达中显示资料库根。课程文件夹报「暂不可用」而资料库本身仍可
+    /// 访问时，这是用户排查的最直接出路。
+    func revealCourseLibraryRootInFinder() {
+        guard let root = courseLibraryRootURL else { return }
+#if targetEnvironment(macCatalyst)
+        CatalystDesktopWindow.shared.reveal(root)
+#else
+        NSWorkspace.shared.activateFileViewerSelecting([root])
+#endif
+    }
+
     func removeCourseFromWeiBeiForSelfCheck(
         _ courseID: UUID
     ) throws {

@@ -30,13 +30,13 @@ struct CourseLibraryVolatilityBanner: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(
-                store.ui("迁移/更换魏碑资料库", "Move / Change WeiBei Library"),
+                store.ui("更换资料库…", "Change Library…"),
                 action: store.presentCourseLibraryMigrationPicker
             )
             .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
             .accessibilityHint(Text(store.ui(
-                "即使当前资料库仍可访问，也可以更换到更持久的位置",
-                "You can change the library even while the current folder is still reachable"
+                "换用别的文件夹；课程文件不会被移动",
+                "Switch to another folder; course files are not moved"
             )))
         }
         .padding(.horizontal, 16)

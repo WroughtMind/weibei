@@ -396,7 +396,7 @@ struct CourseProjectEntrySheet: View {
         }
         if needsLibrary {
             return libraryNeedsReauthorization
-                ? store.ui("重新授权魏碑资料库", "Reconnect WeiBei Library")
+                ? store.ui("重新选择资料库", "Re-select Library")
                 : store.ui("选择魏碑资料库", "Choose WeiBei Library")
         }
         switch intent {
@@ -417,8 +417,8 @@ struct CourseProjectEntrySheet: View {
         if needsLibrary {
             if libraryNeedsReauthorization {
                 return store.ui(
-                    "魏碑记得原资料库，但当前无法访问。请重新选择同一资料库；为避免课程误绑到别处，选择不同文件夹会被拒绝。",
-                    "WeiBei remembers the library but cannot access it. Re-select the same library; a different folder will be rejected to protect course identity."
+                    "魏碑记得原资料库，但当前无法访问。重新选择后魏碑会改用所选文件夹，课程文件不会被移动；要找回原课程，请选回原来的资料库。",
+                    "WeiBei remembers the library but cannot access it. Re-selecting switches WeiBei to the chosen folder without moving any course files; to find your original courses, pick the original library."
                 )
             }
             return store.ui(
@@ -451,8 +451,8 @@ struct CourseProjectEntrySheet: View {
                 }
                 Label(
                     store.ui(
-                        "原资料库当前无法访问，课程记录仍保留。请重新选择同一资料库以恢复访问。",
-                        "The original library is currently unavailable, but course records are preserved. Re-select the same library to restore access."
+                        "原资料库当前无法访问，课程记录仍保留。选择别的文件夹会改用那个文件夹，课程文件不会被移动。",
+                        "The original library is currently unavailable, but course records are preserved. Choosing another folder switches to that folder; course files are not moved."
                     ),
                     systemImage: "exclamationmark.triangle"
                 )
@@ -470,7 +470,7 @@ struct CourseProjectEntrySheet: View {
 
             Button(
                 libraryNeedsReauthorization
-                    ? store.ui("重新选择同一资料库…", "Re-select the Same Library…")
+                    ? store.ui("重新选择资料库…", "Re-select Library…")
                     : store.ui("选择魏碑资料库…", "Choose WeiBei Library…"),
                 action: chooseLibrary
             )
@@ -647,19 +647,19 @@ struct CourseProjectEntrySheet: View {
 #else
         let panel = NSOpenPanel()
         panel.title = libraryNeedsReauthorization
-            ? store.ui("重新选择同一魏碑资料库", "Re-select the Same WeiBei Library")
+            ? store.ui("重新选择资料库", "Re-select Library")
             : store.ui("选择魏碑资料库", "Choose WeiBei Library")
         panel.message = libraryNeedsReauthorization
             ? store.ui(
-                "请选择原来的魏碑资料库。若选择不同文件夹，魏碑会拒绝改绑。",
-                "Choose the original WeiBei Library. WeiBei will reject a different folder."
+                "选择别的文件夹会改用那个文件夹，课程文件不会被移动。要找回原课程，请选回原来的资料库。",
+                "Choosing another folder switches to that folder; course files are not moved. To find your original courses, pick the original library."
             )
             : store.ui(
                 "选择或新建一个总文件夹；每门课程会在其中建立独立项目目录。",
                 "Choose or create a parent folder for independent course projects."
             )
         panel.prompt = libraryNeedsReauthorization
-            ? store.ui("重新授权", "Reconnect")
+            ? store.ui("重新选择资料库", "Re-select Library")
             : store.ui("设为魏碑资料库", "Use as WeiBei Library")
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = true
@@ -668,15 +668,14 @@ struct CourseProjectEntrySheet: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 #endif
         perform(
-            failureMessage: libraryNeedsReauthorization
-                ? store.ui(
-                    "没有重新连接资料库，原课程记录仍保留。请重新选择原来的同一资料库。",
-                    "The library was not reconnected, and existing course records are preserved. Re-select the same original library."
+            failureMessageFor: { [store] error in
+                let reason = (error as? CourseProjectRootError)?.errorDescription
+                    ?? error.localizedDescription
+                return store.ui(
+                    "资料库没有更改，原课程记录和文件未被移动。原因：\(reason)",
+                    "The library was not changed. Existing course records and files were not moved. Reason: \(error.localizedDescription)"
                 )
-                : store.ui(
-                    "资料库没有更改，原课程记录和文件未被移动。请选择可访问的本地文件夹后重试。",
-                    "The library was not changed. Existing course records and files were not moved. Choose an accessible local folder and try again."
-                ),
+            },
             operation: "course_entry_configure_library",
             path: url
         ) {
@@ -834,6 +833,23 @@ struct CourseProjectEntrySheet: View {
         path: URL? = nil,
         _ action: @escaping @MainActor () async throws -> Void
     ) {
+        perform(
+            failureMessageFor: { _ in failureMessage },
+            operation: operation,
+            path: path,
+            action
+        )
+    }
+
+    /// 失败文案按真实错误派生的变体：资料库选点失败的原因各不相同
+    /// （越界、已是资料库、书签失败…），统一折叠成一句「请确认可写」
+    /// 会把准确原因藏起来。
+    private func perform(
+        failureMessageFor makeFailureMessage: @escaping (Error) -> String,
+        operation: String,
+        path: URL? = nil,
+        _ action: @escaping @MainActor () async throws -> Void
+    ) {
         guard !isWorking else { return }
         isWorking = true
         errorMessage = nil
@@ -847,8 +863,9 @@ struct CourseProjectEntrySheet: View {
                     operation: operation,
                     path: path
                 )
-                errorMessage = failureMessage
-                announceError(failureMessage)
+                let message = makeFailureMessage(error)
+                errorMessage = message
+                announceError(message)
             }
             isWorking = false
         }
