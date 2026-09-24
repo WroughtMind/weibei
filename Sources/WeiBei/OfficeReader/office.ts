@@ -132,6 +132,17 @@ function verifyEquations(element: Element, part: string) {
   const found = expected.filter(id => rendered.has(id)).length;
   if (found !== expected.length) throw new Error(`原文公式未能完整显示：应有 ${expected.length} 个，已显示 ${found} 个`);
 }
+// R6: single broken images/equations downgrade to the resource-issue dot
+// (htmlResourceIssues) instead of failing the whole document.
+let resourceIssues: string[] = [];
+const reportResourceIssue = (message: string) => {
+  if (!resourceIssues.includes(message)) resourceIssues.push(message);
+  post('htmlResourceIssues', resourceIssues.slice(0, 100));
+};
+const verifyEquationsQuietly = (element: Element, part: string) => {
+  try { verifyEquations(element, part); }
+  catch (error) { reportResourceIssue(error instanceof Error ? error.message : String(error)); }
+};
 function sourceElement(location: string) {
   return Array.from(root.querySelectorAll<HTMLElement>('[data-weibei-location]')).find(e => e.dataset.weibeiLocation === location);
 }
@@ -323,14 +334,14 @@ function attachNote(index: number, wrapper: HTMLElement | null) {
     body.append(block);
   }
   note.addEventListener('beforetoggle', event => { if ((event as ToggleEvent).newState === 'open') positionNote(note); });
-  verifyEquations(note, path);
+  verifyEquationsQuietly(note, path);
   wrapper.append(button, note);
 }
 
 async function open(url: string | ArrayBuffer, format: string) {
   root = document.getElementById('office-document')!;
   document.documentElement.style.setProperty('-webkit-text-size-adjust', '100%');
-  kind = format; loadError = ''; notes.clear(); noteParts.clear(); equations.clear(); mainPart = '';
+  kind = format; loadError = ''; resourceIssues = []; notes.clear(); noteParts.clear(); equations.clear(); mainPart = '';
   try {
     const bytes = typeof url === 'string' ? await (await fetch(url)).arrayBuffer() : url;
     const zip = await prepare(bytes, format);
@@ -341,7 +352,7 @@ async function open(url: string | ArrayBuffer, format: string) {
       root.dataset.weibeiLocation = 'word/document.xml';
       await renderAsync(zip, root, undefined, { useBase64URL: true, renderAltChunks: false, renderComments: true, ignoreWidth: false, ignoreHeight: false });
       await mountWordGraphics(root);
-      verifyEquations(root, mainPart);
+      verifyEquationsQuietly(root, mainPart);
     } else {
       delete root.dataset.weibeiLocation;
       viewer = new PptxViewer(root, {
@@ -353,8 +364,7 @@ async function open(url: string | ArrayBuffer, format: string) {
           const slide = viewer?.presentationData?.slides[index];
           if (slide) {
             element.dataset.weibeiLocation = slide.slidePath;
-            try { verifyEquations(element, slide.slidePath); }
-            catch (error) { loadError = String(error); queueMicrotask(() => fail(error)); return; }
+            verifyEquationsQuietly(element, slide.slidePath);
           }
           post('officeReady', {});
         },
@@ -382,7 +392,8 @@ async function open(url: string | ArrayBuffer, format: string) {
     }
     await document.fonts.ready;
     const broken = await Promise.all(Array.from(root.querySelectorAll('img, svg image')).map(async element => { const img = new Image(); img.src = element instanceof HTMLImageElement ? element.src : (element as SVGImageElement).href.baseVal; try { await img.decode(); return false; } catch { return true; } }));
-    if (broken.some(Boolean)) throw new Error('文档中的图片未能完整显示');
+    const brokenCount = broken.filter(Boolean).length;
+    if (brokenCount > 0) reportResourceIssue(`文档中有 ${brokenCount} 张图片未能显示，正文已导入`);
     post('contentRailSections', sections());
     post('officeReady', { loaded: true });
   } catch (error) { fail(error); }

@@ -64,17 +64,23 @@ try {
   const completeWord = await zip.file('word/document.xml').async('string');
   zip.file('word/document.xml', completeWord.replace(/<m:oMath>([\s\S]*?)<\/m:oMath>/, '<w:customXml><m:oMath>$1</m:oMath></w:customXml>'));
   await writeFile(join(output, 'omitted-formula.docx'), await zip.generateAsync({ type: 'nodebuffer' }));
+  // R6: one undecodable image must downgrade to a resource notice, not fail the document.
+  zip.file('word/document.xml', completeWord.replace('<w:sectPr>', `${graphic(`${ns}/drawingml/2006/picture`, '<pic:pic><pic:blipFill><a:blip r:embed="broken"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic>', 914400, 914400)}<w:sectPr>`));
+  zip.file('word/_rels/document.xml.rels', relationships([['flat', 'chart', 'charts/chart1.xml'], ['deep', 'chart', 'charts/chart2.xml'], ['pie', 'chart', 'charts/chart3.xml'], ['diagram', 'diagramData', 'diagrams/data7.xml'], ['drawing', 'diagramDrawing', 'diagrams/drawing42.xml'], ['emf', 'image', 'media/rectangle.emf'], ['broken', 'image', 'media/broken.png']]));
+  zip.file('word/media/broken.png', Buffer.from('this file is not a real png'));
+  await writeFile(join(output, 'broken-image.docx'), await zip.generateAsync({ type: 'nodebuffer' }));
   await writeFile(join(output, 'check.swift'), `
 import AppKit
 import WebKit
 func require(_ ok: Bool, _ message: String) { if !ok { fputs("FAILED: \\(message)\\n", stderr); exit(1) } }
 func wait(_ done: () -> Bool) { let end = Date().addingTimeInterval(45); while !done() && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }; require(done(), "WebKit timeout") }
 final class Page: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
-  let web: WKWebView; var loaded = false; var activeJumps: [String] = []
-  override init() { let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent(); web = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 1200), configuration: config); super.init(); web.navigationDelegate = self; config.userContentController.add(self, name: "contentRailActive") }
+  let web: WKWebView; var loaded = false; var activeJumps: [String] = []; var resourceIssues: [String] = []
+  override init() { let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent(); web = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 1200), configuration: config); super.init(); web.navigationDelegate = self; config.userContentController.add(self, name: "contentRailActive"); config.userContentController.add(self, name: "htmlResourceIssues") }
   func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) { loaded = true }
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
     if let body = message.body as? [String: Any], body["reason"] as? String == "jump", let id = body["id"] as? String { activeJumps.append(id) }
+    if message.name == "htmlResourceIssues", let issues = message.body as? [String] { resourceIssues.append(contentsOf: issues) }
   }
   func js(_ source: String, _ args: [String: Any]) -> Any? {
     var done = false; var result: Any?
@@ -181,11 +187,23 @@ for width in [600.0, 900.0] {
     """, [:])
 }
 let omittedFormula = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[4]))
+page.resourceIssues.removeAll()
 _ = page.js("""
   await WeiBeiOffice.open(Uint8Array.from(atob(bytes), c => c.charCodeAt(0)).buffer, 'docx');
-  if (!WeiBeiOffice.error.includes('公式未能完整显示') || !document.querySelector('[role="alert"]')) throw Error('a skipped source formula must fail explicitly instead of reporting a complete document');
+  if (WeiBeiOffice.error || document.querySelector('[role="alert"]')) throw Error('an incomplete equation must not fail the whole document: ' + WeiBeiOffice.error);
+  if (!document.body.innerText.includes('图形回归检查')) throw Error('document text must stay readable when an equation is incomplete');
   return true;
   """, ["bytes": omittedFormula.base64EncodedString()])
+require(page.resourceIssues.contains { $0.contains("公式未能完整显示") }, "an incomplete equation must surface as a resource notice, got: \\(page.resourceIssues)")
+let brokenImage = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[6]))
+page.resourceIssues.removeAll()
+_ = page.js("""
+  await WeiBeiOffice.open(Uint8Array.from(atob(bytes), c => c.charCodeAt(0)).buffer, 'docx');
+  if (WeiBeiOffice.error || document.querySelector('[role="alert"]')) throw Error('one broken image must not fail the whole document: ' + WeiBeiOffice.error);
+  if (!document.body.innerText.includes('图形回归检查')) throw Error('document text must stay readable when an image is broken');
+  return true;
+  """, ["bytes": brokenImage.base64EncodedString()])
+require(page.resourceIssues.contains { $0.contains("图片未能显示") }, "a broken image must surface as a resource notice, got: \\(page.resourceIssues)")
 window.setContentSize(NSSize(width: 1200, height: 600))
 let deck = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments.last!))
 _ = page.js("""
@@ -239,15 +257,17 @@ _ = page.js("""
   """, ["bytes": deck.base64EncodedString()])
 require(page.activeJumps == [2, 2, 2, 1, 2].map { "ppt/slides/slide\\($0).xml" }, "PPT navigation, note search and excerpt returns must report their owning slide: \\(page.activeJumps)")
 let omittedSlideFormula = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[5]))
+page.resourceIssues.removeAll()
 _ = page.js("""
   await WeiBeiOffice.open(Uint8Array.from(atob(bytes), c => c.charCodeAt(0)).buffer, 'pptx');
   if (!WeiBeiOffice.error) await WeiBeiOffice.goTo('ppt/slides/slide2.xml');
   await new Promise(resolve => setTimeout(resolve, 0));
-  if (!WeiBeiOffice.error.includes('公式未能完整显示') || !document.querySelector('[role="alert"]')) throw Error('a skipped slide formula must reach the reader error state through the slide event');
+  if (WeiBeiOffice.error || document.querySelector('[role="alert"]')) throw Error('a skipped slide formula must not fail the whole deck: ' + WeiBeiOffice.error);
   return true;
   """, ["bytes": omittedSlideFormula.base64EncodedString()])
+require(page.resourceIssues.contains { $0.contains("公式未能完整显示") }, "a skipped slide formula must surface as a resource notice, got: \\(page.resourceIssues)")
 print("Office graphics and reading: Word charts, 3D bar/pie images and rotation, diagram, math, EMF; Word resize position; PPT title navigation, search, excerpt return, themed note popovers and Word/PPT sunglasses passed")
 `);
   execFileSync('xcrun', ['swiftc', join(output, 'check.swift'), '-o', join(output, 'check')], { stdio: 'inherit' });
-  execFileSync(join(output, 'check'), [office, join(output, '20.docx'), join(output, '65.docx'), join(output, 'omitted-formula.docx'), join(output, 'omitted-formula.pptx'), join(output, 'navigation.pptx')], { stdio: 'inherit', timeout: 120000 });
+  execFileSync(join(output, 'check'), [office, join(output, '20.docx'), join(output, '65.docx'), join(output, 'omitted-formula.docx'), join(output, 'omitted-formula.pptx'), join(output, 'broken-image.docx'), join(output, 'navigation.pptx')], { stdio: 'inherit', timeout: 120000 });
 } finally { await rm(output, { recursive: true, force: true }); }

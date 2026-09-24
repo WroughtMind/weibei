@@ -9,7 +9,13 @@ final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
     var handleAskUnderlineHover: ((CGPoint) -> Void)?
     var handleAskUnderlineClick: ((CGPoint) -> Bool)?
+    /// X8: plain tap inside the document (not on an ask-underline) — clears the
+    /// source-reference jump highlight, mirroring the AppKit mouseDown path.
+    var handleTapInDocument: (() -> Void)?
     var onPointerEvent: ((CGPoint?, UIGestureRecognizer.State) -> Void)?
+    /// R1: trackpad / scroll-wheel only. Kept off the touch pan so text selection
+    /// does not share a recognizer with scrolling.
+    var onScrollNavigation: (() -> Void)?
     private var adaptsDocumentColors = true
     private var documentAppearanceMode: WeiBeiAppearanceMode = .paper
     override init(frame: CGRect) {
@@ -17,6 +23,12 @@ final class ReaderPDFView: PDFView {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(pointer(_:)))
         pan.cancelsTouchesInView = false; pan.delegate = self
         addGestureRecognizer(pan)
+        let scroll = UIPanGestureRecognizer(target: self, action: #selector(scrollNavigation(_:)))
+        scroll.allowedScrollTypesMask = .all
+        scroll.allowedTouchTypes = []
+        scroll.cancelsTouchesInView = false
+        scroll.delegate = self
+        addGestureRecognizer(scroll)
         let tap = UITapGestureRecognizer(target: self, action: #selector(tap(_:)))
         tap.cancelsTouchesInView = false; tap.delegate = self
         addGestureRecognizer(tap)
@@ -32,9 +44,18 @@ final class ReaderPDFView: PDFView {
         onPointerEvent?(gesture.location(in: self), gesture.state)
         reportCurrentSelection?()
     }
+    @objc private func scrollNavigation(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began, .changed, .ended:
+            onScrollNavigation?()
+        default:
+            break
+        }
+    }
     @objc private func tap(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: self)
         if handleAskUnderlineClick?(point) == true { return }
+        handleTapInDocument?()
         onPointerEvent?(point, .began)
         clearSelection()
         onPointerEvent?(point, .ended)
@@ -128,11 +149,15 @@ struct SelectablePlainTextReader: UIViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
     var hidesHostedDocument = false
     var underlineSnippets: [String]
+    var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
         view.isEditable = false; view.isSelectable = true; view.backgroundColor = .clear
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.documentTapped))
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
         // Keep reading margins inside the scroll content so text can pass under
         // the toolbar instead of being clipped by an outer padding rectangle.
         view.textContainerInset = UIEdgeInsets(top: 50, left: 50, bottom: 50, right: 50)
@@ -225,6 +250,7 @@ struct SelectablePlainTextReader: UIViewRepresentable {
         var index = -1
         var matches: [NSRange] = []
         init(_ parent: SelectablePlainTextReader) { self.parent = parent }
+        @objc func documentTapped() { parent.onDocumentTap() }
         func publish(_ matches: [NSRange], query: String) {
             let source = parent.text as NSString
             let results = matches.enumerated().map { entry -> ReaderSearchResult in
