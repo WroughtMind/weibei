@@ -465,7 +465,16 @@ final class WorkspaceStore: ObservableObject {
         }
     }
     @Published var showDailyInspiration = true
-    @Published var commandPalettePresented = false
+    @Published var commandPalettePresented = false {
+        didSet {
+            if !commandPalettePresented {
+                commandPaletteChatsOnly = false
+                commandPaletteQuery = ""
+            }
+        }
+    }
+    @Published var commandPaletteChatsOnly = false
+    @Published var commandPaletteQuery = ""
     var librarySearch = ""
     @Published private(set) var readerSourceHighlight = ""
     @Published private(set) var readerSourceHighlightPageIndex: Int?
@@ -953,6 +962,9 @@ final class WorkspaceStore: ObservableObject {
         if let targetError = error as? AgentConversationTargetError {
             message = targetError.message
         } else if let failure = error as? NativeLLMFailure {
+            if failure.message.hasPrefix("HTTP ") || failure.message.contains("{") {
+                return nil
+            }
             message = failure.message
         } else {
             return nil
@@ -5196,20 +5208,36 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
+    func presentAllConversationsSearch() {
+        commandPaletteChatsOnly = true
+        commandPaletteQuery = ""
+        commandPalettePresented = true
+    }
+
     @discardableResult
     func openAgentReplySource(_ source: AgentReplySource) -> Bool {
         if let discussionID = source.discussionID {
             if selectionAskThreads.contains(where: { $0.id == discussionID }) {
                 openSelectionAskThread(discussionID, revealMessageID: source.messageID)
-                return selectionChatError == nil
+                if selectionChatError != nil {
+                    reportMissingCourseDocument()
+                    return false
+                }
+                return true
             }
-            guard activateStudySession(discussionID, expectedCourseID: nil, expectedScopeNeedsReview: false) else { return false }
+            guard activateStudySession(discussionID, expectedCourseID: nil, expectedScopeNeedsReview: false) else {
+                reportMissingCourseDocument()
+                return false
+            }
             if let messageID = source.messageID {
                 NotificationCenter.default.post(name: .weiBeiScrollAgentToMessage, object: messageID)
             }
             return true
         }
-        guard let item = agentReplySourceItem(source) else { return false }
+        guard let item = agentReplySourceItem(source) else {
+            reportMissingCourseDocument()
+            return false
+        }
         let chatID = activeStudySessionID
         if let courseID = source.courseID {
             activateCourse(courseID)
@@ -5238,9 +5266,7 @@ final class WorkspaceStore: ObservableObject {
             opened = openCourseMaterial(item.id)
         }
         guard opened else {
-            showTransientNoteStatus(
-                ui("资料不存在或无法打开。", "Source not found or unavailable.")
-            )
+            reportMissingCourseDocument()
             return false
         }
 
@@ -5290,7 +5316,10 @@ final class WorkspaceStore: ObservableObject {
         if openSourceReference("来源：\(trimmed)") { return true }
         if openSourceReference(trimmed) { return true }
         // Fuzzy title match for Agent short labels like "货币金融学课程 HTML".
-        guard let item = resolveStudyItem(matchingCitationTitle: trimmed) else { return false }
+        guard let item = resolveStudyItem(matchingCitationTitle: trimmed) else {
+            reportMissingCourseDocument()
+            return false
+        }
         if item.isNotebookNote || kind == "note" {
             if layout == .immersiveConversation || layout == .immersiveReading {
                 setLayout(.immersiveWriting)
@@ -5300,8 +5329,18 @@ final class WorkspaceStore: ObservableObject {
             focus(.notes)
             return true
         }
-        openCourseMaterial(item.id)
+        guard openCourseMaterial(item.id) else {
+            reportMissingCourseDocument()
+            return false
+        }
         return true
+    }
+
+    private func reportMissingCourseDocument() {
+        showTransientNoteStatus(ui(
+            "这份文稿已不在课程里",
+            "This document is no longer in the course."
+        ))
     }
 
     func setLayout(_ layout: WorkspaceLayout) {

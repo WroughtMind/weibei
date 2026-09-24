@@ -2,6 +2,26 @@ import Foundation
 import Markdown
 
 /// Source ranges whose spelling must survive display-only prose cleanup.
+public enum AgentCitationMarkup {
+    private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话|问答)[：:]\s*([^\]\n]{1,300})\]"#
+    private static let regex = try? NSRegularExpression(pattern: pattern)
+
+    public static func displayText(from text: String) -> String {
+        guard let regex, text.contains("[") else { return text }
+        let literals = MarkdownLiteralRanges.ranges(in: text)
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        let matches = regex.matches(in: text, range: range).filter { match in
+            !literals.contains(where: { NSIntersectionRange($0, match.range).length > 0 })
+        }
+        var cleaned = text
+        for match in matches.reversed() {
+            if let span = Range(match.range, in: cleaned) { cleaned.removeSubrange(span) }
+        }
+        let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? text : cleaned
+    }
+}
+
 public enum MarkdownLiteralRanges {
     public static func ranges(in source: String) -> [NSRange] {
         guard !source.isEmpty else { return [] }

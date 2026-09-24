@@ -130,6 +130,13 @@ public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Senda
     }
 
     public var asAgentFailureKind: AgentFailureKind {
+        let normalized = code.lowercased()
+        if normalized == "insufficient_quota" || status == 402 {
+            return .insufficientQuota
+        }
+        if normalized == "model_not_found" || status == 404 {
+            return .modelUnavailable
+        }
         if let status {
             switch status {
             case 400: return .requestRejected

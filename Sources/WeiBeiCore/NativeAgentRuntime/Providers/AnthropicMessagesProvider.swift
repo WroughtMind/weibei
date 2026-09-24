@@ -249,9 +249,12 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
             return []
         case "error":
             let error = object["error"] as? [String: Any]
-            throw NativeLLMFailure(
-                code: error?["type"] as? String ?? "server_error",
-                message: error?["message"] as? String ?? "Anthropic error"
+            let message = error?["message"] as? String ?? "Anthropic error"
+            throw NativeHTTPByteStream.providerFailure(
+                code: error?["code"] as? String,
+                type: error?["type"] as? String,
+                statusName: error?["status"] as? String,
+                message: message
             )
         default:
             return []

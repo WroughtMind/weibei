@@ -2249,7 +2249,7 @@ struct AgentPaneView: View {
                         "查看全部 \(courseSessions.count) 个对话",
                         "View all \(courseSessions.count) chats"
                     )) {
-                        store.presentCourseWorkspace(.sessions, courseID: courseID)
+                        store.presentAllConversationsSearch()
                     }
                 }
             }
@@ -2260,16 +2260,12 @@ struct AgentPaneView: View {
                 ForEach(store.historicalStudySessions.prefix(30)) { session in
                     sessionMenuButton(session)
                 }
-                if store.historicalStudySessions.count > 30,
-                   let courseID = store.activeCourseID {
-                    Button(store.ui(
-                        "查看全部 \(store.historicalStudySessions.count) 个对话",
-                        "View all \(store.historicalStudySessions.count) chats"
-                    )) {
-                        store.presentCourseWorkspace(.sessions, courseID: courseID)
-                    }
-                }
             }
+        }
+
+        Divider()
+        Button(store.ui("查看全部对话…", "View all chats…")) {
+            store.presentAllConversationsSearch()
         }
 
         if let active = store.activeStudySession,
@@ -3653,12 +3649,24 @@ struct AgentBubble: View {
                     )
             }
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .onTapGesture {
-                copyMessage()
+            .overlay(alignment: .topLeading) {
+                if hovering {
+                    Button {
+                        copyMessage()
+                    } label: {
+                        Image(systemName: copiedMessage ? "checkmark" : "doc.on.doc")
+                            .weiBeiText(12, weight: .medium)
+                            .foregroundStyle(copiedMessage ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
+                    .accessibilityLabel(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
+                    .offset(x: -4, y: -4)
+                }
             }
-            .help(store.ui(copiedMessage ? "已复制" : "点击复制消息", copiedMessage ? "Copied" : "Click to copy message"))
             .accessibilityLabel(message.text)
-            .accessibilityAddTraits(.isButton)
             .accessibilityAction(named: Text(store.ui("复制消息", "Copy message"))) {
                 copyMessage()
             }
@@ -3783,6 +3791,9 @@ struct AgentBubble: View {
                             .weiBeiText(10.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                     }
+                    if offersFailureSettings {
+                        failureSettingsButton
+                    }
                     if store.canRetryAgentRequest(
                         question: message.retryQuestion,
                         failureKind: message.failureKind,
@@ -3823,16 +3834,8 @@ struct AgentBubble: View {
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    if message.failureKind == .unauthorized
-                        || !AgentProviderReadiness.isConfigured(for: store) {
-                        Button(store.ui("去设置", "Open Settings")) {
-#if targetEnvironment(macCatalyst)
-                            NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
-#else
-                            openSettingsWindow(id: "weibei-settings")
-#endif
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                    if offersFailureSettings || !AgentProviderReadiness.isConfigured(for: store) {
+                        failureSettingsButton
                     }
                 }
                 .padding(.top, 2)
@@ -3900,12 +3903,26 @@ struct AgentBubble: View {
         message.role == .assistant && WorkspaceStore.isAgentFailureMessage(message.text)
     }
 
-    /// A3: 用户主动停止保持原说明；失败时改为显示具体失败原因。
+    /// A5: 停止写「已停止」；其他失败写原因。没有收到正文时不说已保留内容。
     private var interruptedNoticeTitle: String {
-        if let kind = message.failureKind, kind != .cancelled {
-            return kind.title(language: store.interfaceLanguage)
+        let kind = message.failureKind ?? .cancelled
+        let received = !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return kind.partialFailureNotice(language: store.interfaceLanguage, receivedText: received)
+    }
+
+    private var offersFailureSettings: Bool {
+        message.failureKind == .unauthorized || message.failureKind == .insufficientQuota
+    }
+
+    private var failureSettingsButton: some View {
+        Button(store.ui("去设置", "Open Settings")) {
+#if targetEnvironment(macCatalyst)
+            NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
+#else
+            openSettingsWindow(id: "weibei-settings")
+#endif
         }
-        return store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept")
+        .buttonStyle(WeiBeiTextActionButtonStyle())
     }
 }
 

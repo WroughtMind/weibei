@@ -20,7 +20,11 @@ final class LabMessage {
     var preparedTheme = -1
     var auxiliaryHeight: CGFloat = 32
     let markdownMemo = AgentMessageMarkdownMemo()
-    var copyableMarkdown: String { original?.text ?? markdown }
+    var copyableMarkdown: String {
+        let raw = original?.text ?? markdown
+        guard original?.role != .user else { return raw }
+        return AgentCitationMarkup.displayText(from: raw)
+    }
 
     init(id: String = UUID().uuidString, author: String, markdown: String) {
         self.id = id; self.author = author; self.markdown = markdown

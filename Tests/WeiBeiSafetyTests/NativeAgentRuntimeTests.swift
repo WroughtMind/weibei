@@ -1316,7 +1316,8 @@ final class NativeAgentRuntimeTests: XCTestCase {
             let failure = NativeToolActivityPresentation.activity(id: "call", name: tool.name, arguments: arguments,
                 context: context, result: .init(text: "读取被拒绝", isError: true))
             XCTAssertEqual(failure.state, .failed)
-            XCTAssertEqual(failure.resultSummary, "读取被拒绝")
+            XCTAssertEqual(failure.resultSummary, "未能完成")
+            XCTAssertFalse(failure.resultSummary?.contains("{") == true)
             XCTAssertEqual(failure.detail, start.detail)
         }
         let cancelled = NativeToolActivityPresentation.activity(id: "call", name: "create_document", arguments: arguments,
@@ -1334,6 +1335,31 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(search.resultSummary?.contains("本次返回 0 条命中") == true)
         XCTAssertFalse(search.resultSummary?.contains("50") == true, "Total hits are not returned hits")
         XCTAssertEqual(try JSONDecoder().decode(AgentToolActivity.self, from: JSONEncoder().encode(search)), search)
+    }
+
+    func testFailedToolSummaryOmitsRawJSON() {
+        let context = NativeToolExecutionContext(request: testRequest())
+        let failure = NativeToolActivityPresentation.activity(
+            id: "call",
+            name: "weibei_update_learning_memory",
+            arguments: [:],
+            context: context,
+            result: .init(text: #"{"error":"rejected"}"#, isError: true)
+        )
+        XCTAssertEqual(failure.resultSummary, "未能完成")
+        XCTAssertFalse(failure.resultSummary?.contains("{") == true)
+        let remembered = NativeToolActivityPresentation.activity(
+            id: "call",
+            name: "weibei_update_learning_memory",
+            arguments: [:],
+            context: context,
+            result: .init(
+                text: #"{"memoryIDs":["a","b"]}"#,
+                details: ["appliedMemoryUpdate": ["memoryIDs": ["a", "b"], "summary": "{\"raw\":true}"]]
+            )
+        )
+        XCTAssertEqual(remembered.resultSummary, "已记住 2 条")
+        XCTAssertFalse(remembered.resultSummary?.contains("{") == true)
     }
 
     func testSearchDetailsSurviveStatusUpdates() throws {
