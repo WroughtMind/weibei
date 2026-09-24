@@ -9208,15 +9208,20 @@ final class WorkspaceStore: ObservableObject {
         focus(.notes)
     }
 
+    /// A1: 回车与 ⌘↩ 只负责发送；「当前对话正在回答或正在停止」时直接返回，
+    /// 绝不把一次提交变成取消。停止只走 `cancelAgentRequest(in:)`。
     func submitAgentDraft(targetCourseID: UUID? = nil, sessionID: UUID? = nil) {
         guard let id = sessionID ?? activeStudySessionID else { return }
-        if isAgentRunning(in: id) {
-            cancelAgentRequest(in: id)
-            return
-        }
+        guard !isAgentRunning(in: id), agentRuns[id]?.isStoppingAgent != true else { return }
         guard !composerDraft(for: id).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let selection = selectionAskThreads.first(where: { $0.id == id }).map(selectionChatContext)
         askAgent(replayingSelections: selection.map { [$0] }, targetCourseID: targetCourseID, targetSessionID: id)
+    }
+
+    /// 命令面板「停止回答」的显式入口：只停止当前会话的回答，不碰草稿。
+    func stopActiveAgentChat() {
+        guard let id = activeStudySessionID else { return }
+        cancelAgentRequest(in: id)
     }
 
     @discardableResult
@@ -9443,7 +9448,8 @@ final class WorkspaceStore: ObservableObject {
                 lastFailedAgentQuestion = question
             }
             if !preserveComposerDraft {
-                replaceComposerDraft(question, for: session.id)
+                // A2: 本地准备失败也只在输入框为空时回填，不覆盖用户正在写的新草稿。
+                restoreComposerDraftIfEmpty(question, for: session.id)
             }
             focusedPane = .agent
             if appendUserMessage {
@@ -9754,7 +9760,9 @@ final class WorkspaceStore: ObservableObject {
                 let assistantMessage = AgentMessage(
                     id: previousReply?.id ?? UUID(),
                     role: .assistant,
-                    text: "",
+                    // A3: 重新生成在收到第一个字之前不清空原回答；流式首字落地时才替换。
+                    text: previousReply?.text ?? "",
+                    contentBlocks: previousReply?.contentBlocks ?? [],
                     source: sourceTitle,
                     backend: .native,
                     completionState: .generating,
@@ -9792,7 +9800,12 @@ final class WorkspaceStore: ObservableObject {
                 }
 
                 if questionOverride == nil {
-                    replaceComposerDraft("", for: target.sessionID)
+                    // 只清掉这次发出的问题。准备期间用户已经写下的新草稿必须留下。
+                    let current = composerDraft(for: target.sessionID)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if current.isEmpty || current == question {
+                        replaceComposerDraft("", for: target.sessionID)
+                    }
                 }
                 if activeStudySessionID == target.sessionID {
                     lastFailedAgentQuestion = nil
@@ -9925,7 +9938,24 @@ final class WorkspaceStore: ObservableObject {
                        reply.toolTrace.isEmpty,
                        let message = studySessions.first(where: { $0.id == target.sessionID })?.messages.first(where: { $0.id == messageID }),
                        message.toolActivities.isEmpty, message.actions.isEmpty, message.memoryUpdate == nil, message.profileUpdate == nil {
-                        removeAgentMessage(messageID, from: target.sessionID)
+                        // A6: 模型返回空内容时保留一条可重试的中断消息，不再整条删除；
+                        // 重新生成收到空回复则恢复原回答（与 A3 同一处）。
+                        if let previousReply {
+                            _ = updateAgentMessage(messageID, in: target.sessionID) {
+                                $0.text = previousReply.text
+                                $0.contentBlocks = previousReply.contentBlocks
+                                $0.completionState = .interrupted
+                                $0.failureKind = .emptyReply
+                                $0.retryQuestion = question
+                            }
+                        } else {
+                            _ = updateAgentMessage(messageID, in: target.sessionID) {
+                                $0.text = ui("模型没有返回内容", "The model returned no content")
+                                $0.completionState = .interrupted
+                                $0.failureKind = .emptyReply
+                                $0.retryQuestion = question
+                            }
+                        }
                     }
                 }
                 associateStudySession(
@@ -9959,13 +9989,13 @@ final class WorkspaceStore: ObservableObject {
                         restoreDraft: questionOverride == nil
                     )
                 }
-                if questionOverride == nil {
-                    replaceComposerDraft(question, for: target.sessionID)
+                // A2: 用户主动停止（stopAgent 已置 isStoppingAgent）不回填旧问题；
+                // 其他取消仅在输入框为空时回填。
+                let userStopped = agentRuns[target.sessionID]?.isStoppingAgent == true
+                if questionOverride == nil, !userStopped {
+                    restoreComposerDraftIfEmpty(question, for: target.sessionID)
                 }
-                if questionOverride == nil,
-                   activeStudySessionID == target.sessionID,
-                   agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    agentDraft = question
+                if questionOverride == nil, !userStopped, activeStudySessionID == target.sessionID {
                     lastAgentFailureKind = .cancelled
                 }
                 return
@@ -9980,7 +10010,7 @@ final class WorkspaceStore: ObservableObject {
                         )
                     )
                 }
-                // Always restore the failed question so composer matches the failure copy.
+                // A2: the failed question comes back only when the composer is empty.
                 let kind = AgentFailureKind.classify(error)
                 if didStartModelRequest {
                     agentAuthenticationStatus.recordFailure(
@@ -9990,12 +10020,10 @@ final class WorkspaceStore: ObservableObject {
                     )
                 }
                 if questionOverride == nil {
-                    replaceComposerDraft(question, for: target.sessionID)
+                    // A2: 失败时仅在输入框为空时回填上一问。
+                    restoreComposerDraftIfEmpty(question, for: target.sessionID)
                 }
                 if activeStudySessionID == target.sessionID {
-                    if questionOverride == nil {
-                        agentDraft = question
-                    }
                     focusedPane = .agent
                     lastAgentFailureKind = kind
                     lastFailedAgentQuestion = question
@@ -10015,8 +10043,8 @@ final class WorkspaceStore: ObservableObject {
                         restoreDraft: questionOverride == nil
                     )
                 } else if let previousReply {
+                    // A3: 重新生成在消息创建前就失败时，原回答保持原样，只标中断、失败原因和重试。
                     _ = updateAgentMessage(previousReply.id, in: target.sessionID) {
-                        $0.text = failureText
                         $0.completionState = .interrupted
                         $0.failureKind = kind
                         $0.retryQuestion = question
@@ -10070,22 +10098,20 @@ final class WorkspaceStore: ObservableObject {
             $0.failureKind = kind
         }
         if restoreDraft, let question = updated?.retryQuestion {
-            replaceComposerDraft(question, for: chatID)
+            // A2: 回填只在输入框为空时发生。
+            restoreComposerDraftIfEmpty(question, for: chatID)
         }
         settleAgentStreamingDisplayImmediately()
         guard activeStudySessionID == chatID else { return }
         lastAgentFailureKind = kind
         lastFailedAgentQuestion = updated?.retryQuestion
-        if restoreDraft,
-           agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           let question = updated?.retryQuestion {
-            agentDraft = question
-        }
     }
 
+    /// A2: 用户主动停止（停止按钮、命令面板「停止回答」）不回填旧问题，
+    /// 输入框保持用户当下的状态。A1 之后这是停止的唯一 UI 入口。
     func cancelAgentRequest(in sessionID: UUID) {
         guard let run = agentRuns[sessionID] else { return }
-        AgentConversationExecution.$run.withValue(run) { stopAgent(restoreDraft: true) }
+        AgentConversationExecution.$run.withValue(run) { stopAgent(restoreDraft: false) }
     }
 
     func cancelAgentRequest(restoreDraft: Bool = true) {
@@ -10111,14 +10137,15 @@ final class WorkspaceStore: ObservableObject {
     private func stopAgent(restoreDraft: Bool, completion: (@MainActor () -> Void)? = nil) {
         let run = agentRun
         guard !run.isStoppingAgent, let requestTask = run.agentRequestTask else { return }
+        // 先标记，取消处理里才能分清「用户主动停止」和别的取消。
+        run.isStoppingAgent = true
+        objectWillChange.send()
         if let requestID = run.activeAgentRequestID,
            let messageID = run.activeAgentReplyMessageID,
            let chatID = run.chatID {
             interruptAgentReply(requestID: requestID, messageID: messageID, chatID: chatID, kind: .cancelled, restoreDraft: restoreDraft)
         }
         requestTask.cancel()
-        run.isStoppingAgent = true
-        objectWillChange.send()
         run.agentStopTask = Task { @MainActor [weak self] in
             await run.runtime?.cancel()
             await requestTask.value
@@ -10146,12 +10173,16 @@ final class WorkspaceStore: ObservableObject {
             replaceAgentAnswer(reply, in: id)
             return
         }
-        replaceComposerDraft(cleaned, for: id)
+        // A2: 重试不再把旧问题写回输入框，直接按原问题重新发送；用户正在写的草稿保持不动。
         if id == activeStudySessionID {
             lastFailedAgentQuestion = nil
             lastAgentFailureKind = nil
         }
-        submitAgentDraft(targetCourseID: targetCourseID, sessionID: id)
+        _ = askAgent(
+            targetCourseID: targetCourseID,
+            questionOverride: cleaned,
+            targetSessionID: id
+        )
     }
 
     func regenerateLastAssistantReply() {
@@ -10169,7 +10200,7 @@ final class WorkspaceStore: ObservableObject {
             [SelectionContext(id: thread.id, text: thread.selectionText, source: thread.source,
                 ownerTitle: thread.ownerTitle, itemID: thread.itemID, isEditable: thread.source == .note)]
         } ?? []
-        replaceComposerDraft(question, for: sessionID)
+        // A2: 重新生成不再覆盖输入框草稿；问题经 questionOverride 传入。
         _ = askAgent(reusingLastUserMessage: true, replayingSelections: selections,
             targetCourseID: reply.origin?.courseID, questionOverride: question, targetSessionID: sessionID)
     }

@@ -678,13 +678,15 @@ enum CatalystBusinessCheck {
         guard store.activeStudySessionID == mainID, mainComposer.text == mainDraft else { throw Failure("citation replaced the main conversation") }
         try capture("selection-discussion.png")
         mainConversation.quoteText?("主会话引用片段")
-        try await until("main quote focuses its own composer") {
-            mainComposer.isFirstResponder && mainComposer.text == "> 主会话引用片段\n\n" && floatingComposer()?.text == draft
+        // A2: 引用追加到各自草稿末尾（前面空一行），不再替换已写的草稿。
+        let mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
+        try await until("main quote appends to its own composer") {
+            mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
         }
         conversation(containing: messageID)?.quoteText?("浮窗引用片段")
-        try await until("floating quote focuses its own composer") {
-            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == "> 浮窗引用片段\n\n"
-                && mainComposer.text == "> 主会话引用片段\n\n"
+        try await until("floating quote appends to its own composer") {
+            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == draft + "\n\n> 浮窗引用片段\n\n"
+                && mainComposer.text == mainQuoted
         }
         store.dismissFloatingSelectionAgent()
         store.clearSelectionAttachments()

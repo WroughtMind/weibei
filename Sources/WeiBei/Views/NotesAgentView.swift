@@ -3460,7 +3460,7 @@ private struct FloatingSelectionMessageRow: View {
     @ViewBuilder
     var body: some View {
         let isStreaming = streaming.isDisplaying(message.id)
-        let text = isStreaming ? streaming.text : store.agentDisplayText(for: message)
+        let text = (isStreaming && !streaming.text.isEmpty) ? streaming.text : store.agentDisplayText(for: message)
         // Keep the native body mounted while the first-token indicator is visible.
         ZStack(alignment: .topLeading) {
             FloatingSelectionMessageBubble(
@@ -3508,7 +3508,7 @@ private struct AgentMessageBubble: View {
         let isStreaming = streaming.isDisplaying(message.id)
         AgentBubble(
             message: message,
-            liveStreamingText: isStreaming ? streaming.text : nil,
+            liveStreamingText: (isStreaming && !streaming.text.isEmpty) ? streaming.text : nil,
             liveActivityText: message.completionState == .generating ? streaming.activityText : nil,
             isStreaming: isStreaming,
             isChatWideTypography: isChatWideTypography
@@ -3777,9 +3777,12 @@ struct AgentBubble: View {
 
             if message.completionState == .interrupted && !isFailureMessage {
                 HStack(spacing: 6) {
-                    Text(store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept"))
-                        .weiBeiText(10.5)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    // A3: 中断标注给出失败原因；emptyReply 的提示已写在正文里，不在这里重复。
+                    if message.failureKind != .emptyReply {
+                        Text(interruptedNoticeTitle)
+                            .weiBeiText(10.5)
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    }
                     if store.canRetryAgentRequest(
                         question: message.retryQuestion,
                         failureKind: message.failureKind,
@@ -3895,6 +3898,14 @@ struct AgentBubble: View {
     private var isUser: Bool { message.role == .user }
     private var isFailureMessage: Bool {
         message.role == .assistant && WorkspaceStore.isAgentFailureMessage(message.text)
+    }
+
+    /// A3: 用户主动停止保持原说明；失败时改为显示具体失败原因。
+    private var interruptedNoticeTitle: String {
+        if let kind = message.failureKind, kind != .cancelled {
+            return kind.title(language: store.interfaceLanguage)
+        }
+        return store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept")
     }
 }
 

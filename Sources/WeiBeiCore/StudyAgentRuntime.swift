@@ -892,6 +892,8 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     case truncated
     case paused
     case refused
+    /// 模型正常返回但正文为空（不来自错误分类，由空回复分支手动标记）。
+    case emptyReply
 
     public func title(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
@@ -915,6 +917,8 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
             return language.text("回答已暂停，尚未完成", "Response paused and incomplete")
         case .refused:
             return language.text("模型拒绝了这次请求", "The model declined this request")
+        case .emptyReply:
+            return language.text("模型没有返回内容", "The model returned no content")
         case .generic:
             return language.text("请求失败", "Request failed")
         }
@@ -946,6 +950,8 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
             return language.text("已收到的内容已保留，可以继续提问。", "The received content is preserved. You can continue the conversation.")
         case .refused:
             return language.text("可以调整问题后再发送。", "You can revise the question and send it again.")
+        case .emptyReply:
+            return language.text("可以重试这次回答。", "You can retry this response.")
         case .generic:
             return language.text("可直接重试。", "You can retry.")
         }

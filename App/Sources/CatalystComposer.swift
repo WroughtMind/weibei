@@ -12,6 +12,8 @@ struct AgentComposerTextEditor: UIViewRepresentable {
     var focusRequest: Int
     var appearanceMode: WeiBeiAppearanceMode
     var accessibilityLabel: String
+    /// 摘抄框与对话输入框共用这个视图。只有对话输入框才响应菜单里的 ⌘↩。
+    var submitsAgentDraft = true
     var submit: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -37,6 +39,7 @@ struct AgentComposerTextEditor: UIViewRepresentable {
         view.textColor = WeiBeiNativePalette.ink(for: appearanceMode)
         view.tintColor = view.textColor
         view.accessibilityLabel = accessibilityLabel
+        view.submitsAgentDraft = submitsAgentDraft
         if view.markedTextRange == nil, view.text != text { view.text = text }
         context.coordinator.applyFocus(to: view)
         view.setNeedsLayout()
@@ -83,6 +86,7 @@ struct AgentComposerTextEditor: UIViewRepresentable {
         }
     }
     final class ComposerTextView: UITextView {
+        var submitsAgentDraft = true
         var onAttachment: (() -> Void)?
         var onLayout: ((UITextView) -> Void)?
         override func layoutSubviews() {

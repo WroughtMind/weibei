@@ -83,9 +83,16 @@ struct CommandPaletteView: View {
             items.append(PaletteCommand(title: store.ui("替换笔记选区", "Replace Note Selection"), shortcut: store.chord(for: .replaceNoteSelection).display) { store.replaceSelectionWithLastAgentAnswer() })
         }
         if canControlAgent {
-            items.append(PaletteCommand(title: store.sendAgentActionTitle, shortcut: store.chord(for: .submitAgentDraft).display) {
-                store.submitAgentDraft()
-            })
+            // A1: 发送与停止拆开；停止只调 stopActiveAgentChat，提交路径不再兼做停止。
+            if store.isAgentRunningInActiveChat {
+                items.append(PaletteCommand(title: store.ui("停止回答", "Stop response"), shortcut: "") {
+                    store.stopActiveAgentChat()
+                })
+            } else {
+                items.append(PaletteCommand(title: store.ui("发送问题", "Send question"), shortcut: store.chord(for: .submitAgentDraft).display) {
+                    store.submitAgentDraft()
+                })
+            }
         }
         return items
     }
