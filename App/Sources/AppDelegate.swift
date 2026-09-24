@@ -107,7 +107,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             )
         }
         builder.insertChild(UIMenu(title: store.ui("工作台", "Workspace"), children: groups), atEndOfMenu: .view)
-        let zoomInEquals = command(store.ui("放大文字", "Zoom In"), "=", "zoom-in")
+        // ⌘= is the unlabeled key under ⌘+. It must not reuse propertyList "zoom-in":
+        // UIMenuBuilder rejects a second performWorkspaceCommand: with that list.
+        let zoomInEquals = command(store.ui("放大文字", "Zoom In"), "=", "zoom-in-equals")
         zoomInEquals.attributes = .hidden
         builder.insertChild(UIMenu(title: store.ui("文字大小", "Text Size"), children: [
             command(store.ui("放大文字", "Zoom In"), "+", "zoom-in"),
@@ -156,7 +158,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         case "new-note": Self.revealWorkspaceThen { store.promptCreateBlankNotebookNote() }
         case "open": Self.revealWorkspaceThen { store.importFilesFromPanel() }
         case "courses": store.presentCourseWorkspace(.hub)
-        case "zoom-in": if let scale = store.interfaceTextScale.nextLarger { store.setInterfaceTextScale(scale) }
+        case "zoom-in", "zoom-in-equals": if let scale = store.interfaceTextScale.nextLarger { store.setInterfaceTextScale(scale) }
         case "zoom-out": if let scale = store.interfaceTextScale.nextSmaller { store.setInterfaceTextScale(scale) }
         case "zoom-reset": store.setInterfaceTextScale(.standard)
         default:
