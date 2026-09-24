@@ -350,10 +350,6 @@ final class CatalystDividerView: UIView {
         accent.opacity = 0; layer.addSublayer(accent)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        refreshCopy()
-    }
     private func refreshCopy() {
         accessibilityLabel = CatalystInterfaceCopy.text("调整分栏宽度", "Resize panes")
         accessibilityHint = CatalystInterfaceCopy.text("双击均分相邻两栏；按住 Option 松手可跳过吸附。", "Double-click to split the adjacent panes evenly. Hold Option while releasing to skip snapping.")
@@ -381,6 +377,7 @@ final class CatalystDividerView: UIView {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
+        refreshCopy()
         accent.frame = CGRect(x: bounds.midX - 0.5, y: 14, width: 1, height: max(0, bounds.height - 28))
         accent.backgroundColor = WeiBeiNativePalette.cinnabar(for: appearanceMode).cgColor
     }

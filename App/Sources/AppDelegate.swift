@@ -90,7 +90,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             fileCommands.append(newConversation)
         }
         fileCommands.append(contentsOf: [
-            command(store.ui("打开资料", "Open Material"), "o", "open"),
+            command(store.ui("打开文稿", "Open Document"), "o", "open"),
             command(store.ui("打开课程空间", "Open Course Space"), "0", "courses")
         ])
         builder.replaceChildren(ofMenu: .newScene) { _ in fileCommands }
@@ -119,7 +119,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         if !editCommands.isEmpty {
             builder.insertChild(UIMenu(options: .displayInline, children: editCommands), atEndOfMenu: .edit)
         }
-        builder.insertChild(plainCommand(store.ui("检查更新…", "Check for Updates…"), "check-updates"), atEndOfMenu: .application)
+        builder.insertChild(UIMenu(options: .displayInline, children: [
+            plainCommand(store.ui("检查更新…", "Check for Updates…"), "check-updates")
+        ]), atEndOfMenu: .application)
         builder.replaceChildren(ofMenu: .help) { _ in [
             plainCommand(store.ui("反馈问题…", "Report an Issue…"), "help-feedback"),
             plainCommand(store.ui("魏碑官网", "WeiBei Website"), "help-website"),

@@ -13,7 +13,7 @@ struct CommandPaletteView: View {
     private var commands: [PaletteCommand] {
         var items = [
             PaletteCommand(title: store.ui("打开课程空间", "Open Course Space"), shortcut: "⌘0", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace(.hub) },
-            PaletteCommand(title: store.ui("打开资料", "Open Material"), shortcut: "⌘O") { store.importFilesFromPanel() },
+            PaletteCommand(title: store.ui("打开文稿", "Open Document"), shortcut: "⌘O") { store.importFilesFromPanel() },
             PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.promptCreateBlankNotebookNote() },
             PaletteCommand(title: store.ui("新建对话", "New Chat"), shortcut: store.chord(for: .newConversation).display) {
                 if store.courseWorkspacePresented { store.dismissCourseWorkspace() }
