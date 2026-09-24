@@ -680,7 +680,7 @@ struct CourseRelationPaperView: View {
 
     @ViewBuilder
     private func relationMenu(for node: CourseRelationGraphNode) -> some View {
-        Button(node.kind == .material ? store.ui("打开资料", "Open material") : store.ui("打开笔记", "Open note")) {
+        Button(node.kind == .material ? store.ui("打开文稿", "Open document") : store.ui("打开笔记", "Open note")) {
             open(node)
         }
         Divider()
