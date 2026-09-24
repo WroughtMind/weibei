@@ -514,6 +514,17 @@ private struct WorkspaceStatusBanner: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(store.ui("重试保存并切换笔记", "Retry saving and switching notes")))
+            } else if store.pendingDeletionUndo != nil {
+                Button {
+                    store.undoPendingDeletion()
+                } label: {
+                    Text(store.ui("撤销", "Undo"))
+                        .weiBeiText(12, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("撤销删除", "Undo delete")))
             } else if isImportant {
                 if case .defaultLibraryBootstrapFailed = store.importantOperationNotice {
                     Button {
@@ -577,7 +588,7 @@ private struct WorkspaceStatusBanner: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
-        .allowsHitTesting(isAlert || showsBackupReveal)
+        .allowsHitTesting(isAlert || showsBackupReveal || store.pendingDeletionUndo != nil)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(store.ui("工作区状态提示", "Workspace status")))
     }

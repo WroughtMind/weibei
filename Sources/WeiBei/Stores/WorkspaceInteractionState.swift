@@ -41,7 +41,37 @@ final class WorkspaceInteractionState: ObservableObject {
     /// 问/记共用浮层的当前模式;胶囊"问/记"点击时切换。
     @Published var floatingComposerMode: FloatingSelectionComposerMode = .ask
     /// "记"模式的独立草稿;与问的 agentDraft 互不覆盖,提交后清空。
+    /// 按选区锚点分开存放。换到另一段时只显示那段自己的草稿。
     @Published var selectionNoteDraft = ""
+    private var selectionNoteDraftsByAnchor: [String: String] = [:]
+
+    func rebaseSelectionNoteDraft(from previous: SelectionContext?, to next: SelectionContext?) {
+        let previousKey = previous.map(Self.selectionNoteDraftKey)
+        let nextKey = next.map(Self.selectionNoteDraftKey)
+        guard previousKey != nextKey else { return }
+        if let previousKey {
+            if selectionNoteDraft.isEmpty {
+                selectionNoteDraftsByAnchor.removeValue(forKey: previousKey)
+            } else {
+                selectionNoteDraftsByAnchor[previousKey] = selectionNoteDraft
+            }
+        }
+        selectionNoteDraft = nextKey.flatMap { selectionNoteDraftsByAnchor[$0] } ?? ""
+    }
+
+    static func selectionNoteDraftKey(for context: SelectionContext) -> String {
+        var parts = [
+            "\(context.source)",
+            context.itemID ?? "",
+            SelectionAttachmentMerge.normalized(context.text),
+        ]
+        if let anchor = context.documentAnchor,
+           let data = try? JSONEncoder().encode(anchor),
+           let encoded = String(data: data, encoding: .utf8) {
+            parts.append(encoded)
+        }
+        return parts.joined(separator: "\u{1f}")
+    }
 
     /// Selection capsule position. Anchor-only drag/scroll updates can suppress
     /// publish so agent chat SelectionOverlay is not remasured every pixel.

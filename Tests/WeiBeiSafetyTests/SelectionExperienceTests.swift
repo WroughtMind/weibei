@@ -457,6 +457,96 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertEqual(store.excerptBookTargetRecordID, record.id)
         XCTAssertFalse(store.keepFloatingSelectionForAnswer)
     }
+
+    @MainActor
+    func testEmptyAskThreadIsUnmarkedAndDeletingItPersistsWithoutRemovingTheParentChat() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let parent = try XCTUnwrap(store.createStudySession(courseID: nil))
+        store.appendAgentMessage(AgentMessage(role: .user, text: "父对话里的问题", source: nil))
+        let selection = SelectionContext(
+            text: "只点了问",
+            source: .document,
+            ownerTitle: "文稿",
+            itemID: "doc",
+            documentAnchor: SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 0, endOffset: 4))
+        )
+        let thread = try store.beginOrReuseSelectionAskThread(for: selection)
+        let threadIndex = try XCTUnwrap(store.selectionAskThreads.firstIndex(where: { $0.id == thread.id }))
+        store.selectionAskThreads[threadIndex].parentSessionID = parent.id
+        XCTAssertTrue(store.markedSelectionAskThreads(forItemID: "doc").isEmpty)
+        store.selectionAskThreads[threadIndex].messageIDs = [UUID()]
+        XCTAssertEqual(store.markedSelectionAskThreads(forItemID: "doc").map(\.id), [thread.id])
+
+        store.deleteSelectionAskThread(thread.id)
+        XCTAssertFalse(store.selectionAskThreads.contains(where: { $0.id == thread.id }))
+        XCTAssertFalse(store.studySessions.contains(where: { $0.id == thread.id }))
+        XCTAssertTrue(store.studySessions.contains(where: { $0.id == parent.id }))
+        XCTAssertNotNil(store.pendingDeletionUndo)
+        XCTAssertEqual(store.transientNoteStatus, store.ui("已删除", "Deleted"))
+
+        store.undoPendingDeletion()
+        XCTAssertTrue(store.selectionAskThreads.contains(where: { $0.id == thread.id }))
+        XCTAssertNil(store.pendingDeletionUndo)
+
+        store.deleteSelectionAskThread(thread.id)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        XCTAssertFalse(reopened.selectionAskThreads.contains(where: { $0.id == thread.id }))
+        XCTAssertTrue(reopened.studySessions.contains(where: { $0.id == parent.id }))
+    }
+
+    @MainActor
+    func testRemarkDraftFollowsSelectionAnchorAndExcerptInsertsWithoutReplacing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let firstAnchor = SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 0, endOffset: 2))
+        let secondAnchor = SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 8, endOffset: 10))
+        store.updateSelection(
+            "甲段",
+            source: .document,
+            anchor: SelectionPopoverAnchor(x: 10, y: 10),
+            documentAnchor: firstAnchor
+        )
+        store.interaction.selectionNoteDraft = "草稿甲"
+        store.updateSelection(
+            "乙段",
+            source: .document,
+            anchor: SelectionPopoverAnchor(x: 20, y: 20),
+            documentAnchor: secondAnchor
+        )
+        XCTAssertEqual(store.interaction.selectionNoteDraft, "")
+        store.updateSelection(
+            "甲段",
+            source: .document,
+            anchor: SelectionPopoverAnchor(x: 10, y: 12),
+            documentAnchor: firstAnchor
+        )
+        XCTAssertEqual(store.interaction.selectionNoteDraft, "草稿甲")
+
+        let record = SelectionRemarkRecord(
+            selectionText: "摘抄原文",
+            remarkText: "批注一句",
+            source: .document,
+            ownerTitle: "文稿"
+        )
+        store.selectionRemarkRecords = [record]
+        store.insertExcerptIntoCurrentNote(record)
+        let command = try XCTUnwrap(store.noteEditorCommand)
+        XCTAssertEqual(command.kind, .insertMarkdown)
+        XCTAssertTrue(command.markdown.contains("摘抄原文"))
+        XCTAssertTrue(command.markdown.contains("批注一句"))
+
+        store.deleteExcerpt(record.id)
+        XCTAssertTrue(store.selectionRemarkRecords.isEmpty)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        XCTAssertTrue(reopened.selectionRemarkRecords.isEmpty)
+        store.undoPendingDeletion()
+        XCTAssertEqual(store.selectionRemarkRecords.map(\.id), [record.id])
+    }
 }
 
 @MainActor
