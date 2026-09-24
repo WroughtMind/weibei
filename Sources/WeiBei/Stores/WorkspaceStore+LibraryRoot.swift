@@ -421,7 +421,7 @@ extension WorkspaceStore {
                   ),
                   courseManifestCourseID(at: folder) == course.id else {
                 throw CourseProjectRootError.migrationFailed(
-                    ui("课程 \(course.title) 的清单校验未通过", "Course manifest check failed for \(course.title)")
+                    ui("课程 \(course.title) 的文件核对未通过", "Course file check failed for \(course.title)")
                 )
             }
         }

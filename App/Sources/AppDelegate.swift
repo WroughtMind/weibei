@@ -106,7 +106,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 }
             )
         }
-        builder.insertChild(UIMenu(title: store.ui("工作区", "Workspace"), children: groups), atEndOfMenu: .view)
+        builder.insertChild(UIMenu(title: store.ui("工作台", "Workspace"), children: groups), atEndOfMenu: .view)
         let zoomInEquals = command(store.ui("放大文字", "Zoom In"), "=", "zoom-in")
         zoomInEquals.attributes = .hidden
         builder.insertChild(UIMenu(title: store.ui("文字大小", "Text Size"), children: [
@@ -304,7 +304,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func saveWorkspace() {
         guard !Self.usesFixture else { return }
         guard saveTask == nil else { return }
-        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "保存魏碑工作区") { [weak self] in
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "保存魏碑工作台") { [weak self] in
             MainActor.assumeIsolated {
                 self?.saveTask?.cancel()
                 _ = Self.workspace.flushPendingWorkspaceSave()

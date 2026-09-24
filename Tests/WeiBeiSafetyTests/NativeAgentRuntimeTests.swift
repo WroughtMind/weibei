@@ -1312,11 +1312,11 @@ final class NativeAgentRuntimeTests: XCTestCase {
         for tool in tools {
             let start = NativeToolActivityPresentation.activity(id: "call", name: tool.name, arguments: arguments, context: context)
             XCTAssertFalse(start.detail?.isEmpty ?? true, tool.name)
-            XCTAssertNotEqual(start.detail, "工具请求", "Registered tool missing presentation: \(tool.name)")
+            XCTAssertNotEqual(start.detail, context.request.language.text("工具请求", "Tool request"), "Registered tool missing presentation: \(tool.name)")
             let failure = NativeToolActivityPresentation.activity(id: "call", name: tool.name, arguments: arguments,
                 context: context, result: .init(text: "读取被拒绝", isError: true))
             XCTAssertEqual(failure.state, .failed)
-            XCTAssertEqual(failure.resultSummary, "未能完成")
+            XCTAssertEqual(failure.resultSummary, context.request.language.text("未能完成", "Could not finish"))
             XCTAssertFalse(failure.resultSummary?.contains("{") == true)
             XCTAssertEqual(failure.detail, start.detail)
         }
@@ -1327,12 +1327,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
         for name in ["weibei_update_learning_memory", "weibei_course_profile_update"] {
             let queued = NativeToolActivityPresentation.activity(id: "call", name: name, arguments: arguments,
                 context: context, result: .init(text: "已提交"))
-            XCTAssertTrue(queued.resultSummary?.contains("等待保存") == true)
+            XCTAssertTrue(queued.resultSummary?.contains("等待保存") == true || queued.resultSummary?.localizedCaseInsensitiveContains("waiting") == true)
         }
         let host = StudyAgentHostToolResult(query: "利率", items: [], total: 50, nextCursor: "next")
         let search = NativeToolActivityPresentation.activity(id: "call", name: "weibei_search_workspace", arguments: arguments,
             context: context, result: .init(text: String(decoding: try JSONEncoder().encode(host), as: UTF8.self)))
-        XCTAssertTrue(search.resultSummary?.contains("本次返回 0 条命中") == true)
+        XCTAssertTrue(search.resultSummary?.contains("0") == true)
+        XCTAssertTrue(search.resultSummary?.contains("本次返回") == true || search.resultSummary?.localizedCaseInsensitiveContains("returned") == true)
         XCTAssertFalse(search.resultSummary?.contains("50") == true, "Total hits are not returned hits")
         XCTAssertEqual(try JSONDecoder().decode(AgentToolActivity.self, from: JSONEncoder().encode(search)), search)
     }
@@ -1346,7 +1347,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             context: context,
             result: .init(text: #"{"error":"rejected"}"#, isError: true)
         )
-        XCTAssertEqual(failure.resultSummary, "未能完成")
+        XCTAssertEqual(failure.resultSummary, context.request.language.text("未能完成", "Could not finish"))
         XCTAssertFalse(failure.resultSummary?.contains("{") == true)
         let remembered = NativeToolActivityPresentation.activity(
             id: "call",

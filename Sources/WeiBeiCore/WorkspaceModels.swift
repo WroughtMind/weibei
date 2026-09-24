@@ -127,7 +127,7 @@ public enum WorkspacePaneRole: String, Codable, CaseIterable, Identifiable, Hash
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .reader:
-            return language.text("文档", "Document")
+            return language.text("文稿", "Document")
         case .agent:
             return language.text("对话", "Chat")
         case .notes:
@@ -842,7 +842,7 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch source {
         case .document:
-            return language.text("文档选区：\(ownerTitle)", "Document selection: \(ownerTitle)")
+            return language.text("文稿选区：\(ownerTitle)", "Document selection: \(ownerTitle)")
         case .note:
             return language.text("笔记选区：\(ownerTitle)", "Note selection: \(ownerTitle)")
         }

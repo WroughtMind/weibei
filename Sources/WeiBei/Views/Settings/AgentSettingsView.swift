@@ -77,15 +77,16 @@ extension SettingsView {
                         title: mode.label,
                         detail: store.ui("当前模型的推理强度", "Reasoning effort for this model")
                     ) {
-                        compactMenu(store.agentReasoningEffort(for: mode) ?? mode.defaultEffort) {
+                        compactMenu(AgentReasoningEffort.label(store.agentReasoningEffort(for: mode) ?? mode.defaultEffort, language: store.interfaceLanguage)) {
                             ForEach(store.agentReasoningLevels, id: \.self) { effort in
+                                let label = AgentReasoningEffort.label(effort, language: store.interfaceLanguage)
                                 Button {
                                     store.agentReasoningMappings[store.agentReasoningMappingKey(mode)] = effort
                                 } label: {
                                     if effort == store.agentReasoningEffort(for: mode) {
-                                        Label(effort, systemImage: "checkmark")
+                                        Label(label, systemImage: "checkmark")
                                     } else {
-                                        Text(effort)
+                                        Text(label)
                                     }
                                 }
                             }
@@ -131,7 +132,7 @@ extension SettingsView {
                 // New / rename / delete all live in the menu — low-frequency, keeps the row calm.
                 compactMenu(activeProfileName) {
                     ForEach(store.agentCredentialProfiles) { profile in
-                        Button(profile.name) {
+                        Button(profileTitle(profile.name)) {
                             apiKeyDraft = ""
                             store.selectAgentCredentialProfile(profile.id)
                         }
@@ -204,8 +205,14 @@ extension SettingsView {
     }
 
     private var activeProfileName: String {
-        store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.name
-            ?? store.ui("默认", "Default")
+        guard let name = store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.name else {
+            return store.ui("默认", "Default")
+        }
+        return profileTitle(name)
+    }
+
+    private func profileTitle(_ name: String) -> String {
+        name == "Default" ? store.ui("默认", "Default") : name
     }
 
     private func applyProvider(_ provider: AgentProviderID) {
@@ -254,7 +261,7 @@ extension SettingsView {
         } else {
             settingsRow(title: store.ui("认证", "Authentication")) {
                 settingsNote(
-                    store.ui("该服务尚未接入原生运行时。", "This service is not available in the native runtime yet."),
+                    store.ui("这个服务暂时还不能直接使用。", "This service cannot be used directly yet."),
                     icon: "exclamationmark.triangle"
                 )
             }
@@ -462,7 +469,7 @@ extension SettingsView {
                 )
             } else if !oauthService.isAvailable(store.agentProviderID) {
                 settingsNote(
-                    store.ui("该服务尚未接入原生运行时。", "This service is not available in the native runtime yet."),
+                    store.ui("这个服务暂时还不能直接使用。", "This service cannot be used directly yet."),
                     icon: "exclamationmark.triangle"
                 )
             } else {

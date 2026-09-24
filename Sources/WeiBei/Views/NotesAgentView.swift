@@ -307,7 +307,7 @@ struct NotePaneView: View {
                                     "This note was also changed outside WeiBei. Unsaved content is stored in WeiBei. Choose what to do next."
                                 )
                                 : store.ui(
-                                    "这份笔记在应用外也发生了修改。未写内容仍在当前编辑中，但尚未安全保存；请不要关闭并重试。",
+                                    "这份笔记在应用外也发生了修改。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                                     "This note was also changed outside WeiBei. Unsaved content remains in the current editor but is not safely stored yet; do not close it, and retry."
                                 ))
                             Spacer(minLength: 8)
@@ -515,7 +515,7 @@ struct NotePaneView: View {
                         store.promptCreateBlankNotebookNote()
                     }
                 }
-                Button(store.ui("当前资料笔记", "Current Material Note")) {
+                Button(store.ui("当前文稿笔记", "Note for this document")) {
                     withAnimation(WeiBeiMotion.panel) {
                         store.promptCreateNotebookNoteFromCurrentMaterial()
                     }
@@ -525,7 +525,7 @@ struct NotePaneView: View {
             }
             .buttonStyle(WeiBeiIconButtonStyle(size: 24))
             .accessibilityLabel(Text(store.ui("新建课程笔记", "New Course Note")))
-            .help(store.ui("新建空白笔记或当前资料笔记", "Create a blank note or a note for the current material"))
+            .help(store.ui("新建空白笔记或当前文稿笔记", "Create a blank note or a note for this document"))
         } else {
             Button {
                 withAnimation(WeiBeiMotion.panel) {
@@ -1718,10 +1718,10 @@ struct AgentPaneView: View {
             }
         }
         .alert(
-            store.ui("重命名会话", "Rename Chat"),
+            store.ui("重命名对话", "Rename chat"),
             isPresented: $isRenamingSession
         ) {
-            TextField(store.ui("会话名称", "Chat name"), text: $sessionRenameDraft)
+            TextField(store.ui("对话名称", "Chat name"), text: $sessionRenameDraft)
             Button(store.ui("取消", "Cancel"), role: .cancel) {}
             Button(store.ui("保存", "Save")) {
                 if let sessionID = store.activeStudySessionID {
@@ -1751,7 +1751,7 @@ struct AgentPaneView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stable-document-slot-agent")
-        .accessibilityLabel(Text("agent chat pane"))
+        .accessibilityLabel(Text(store.ui("对话窗格", "Chat pane")))
     }
 
     /// AppKit owns live frames. SwiftUI state receives only the final semantic width so
@@ -2226,7 +2226,7 @@ struct AgentPaneView: View {
             Image(systemName: "list.bullet.rectangle")
         }
         .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-        .accessibilityLabel(Text(store.ui("学习会话", "Study Sessions")))
+        .accessibilityLabel(Text(store.ui("对话", "Chats")))
         .help(store.ui("新建或切换对话", "Create or switch Chats"))
     }
 
@@ -2279,12 +2279,12 @@ struct AgentPaneView: View {
                 sessionRenameDraft = active.title
                 isRenamingSession = true
             } label: {
-                Label(store.ui("重命名当前会话", "Rename Current Chat"), systemImage: "pencil")
+                Label(store.ui("重命名当前对话", "Rename current chat"), systemImage: "pencil")
             }
             Button(role: .destructive) {
                 sessionPendingDeletion = active
             } label: {
-                Label(store.ui("删除当前会话", "Delete Current Session"), systemImage: "trash")
+                Label(store.ui("删除当前对话", "Delete current chat"), systemImage: "trash")
             }
         }
     }
@@ -2316,7 +2316,7 @@ struct AgentPaneView: View {
         }
         guard !courseNames.isEmpty else {
             return store.ui(
-                "消息和本地 Agent 运行记录都会删除。",
+                "消息和助手的运行记录都会删除。",
                 "Messages and the local Agent run will be deleted."
             )
         }
@@ -2714,7 +2714,7 @@ struct FloatingSelectionAgentView: View {
                 }
                 .foregroundStyle(WeiBeiTheme.link)
                 .accessibilityLabel(Text(store.ui("记下这段", "Remark on this passage")))
-                .help(store.ui("记下这段(留空只存原文)", "Remark on this passage (empty saves excerpt only)"))
+                .help(store.ui("记下这段（留空只存原文）", "Remark on this passage (empty saves the passage)"))
             }
         }
         .weiBeiText(13, weight: .medium)
@@ -3850,7 +3850,7 @@ struct AgentBubble: View {
                       store.selectionContext != nil || store.canReplaceNoteSelection {
                 HStack(spacing: 6) {
                     if store.selectionContext != nil {
-                        Button(store.ui("摘录", "Excerpt")) {
+                        Button(store.ui("放入笔记", "Add to note")) {
                             store.appendSelectionToNote()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
@@ -3958,12 +3958,12 @@ private enum AgentCitationKind: String, Equatable {
 
     func shortLabel(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
-        case .material: return language.text("材料", "Material")
+        case .material: return language.text("文稿", "Document")
         case .note: return language.text("笔记", "Note")
         case .selection: return language.text("选区", "Selection")
         case .learningRecord: return language.text("学习记录", "Study record")
         case .learningMemory: return language.text("学习记忆", "Memory")
-        case .session: return language.text("会话", "Session")
+        case .session: return language.text("对话", "Chat")
         case .discussion: return language.text("问答", "Discussion")
         }
     }
@@ -4015,9 +4015,18 @@ private struct AgentReplyActionCard: View {
             if let draft = store.interaction.agentActionDrafts[action.id] {
                 title = draft.title; bodyText = draft.body
             }
+            if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                title = store.ui("整理建议", "Organization suggestion")
+            }
         }
         .onChange(of: title) { _, _ in retainDraft() }
         .onChange(of: bodyText) { _, _ in retainDraft() }
+#else
+        .onAppear {
+            if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                title = store.ui("整理建议", "Organization suggestion")
+            }
+        }
 #endif
         .padding(12)
         .frame(
@@ -4284,7 +4293,7 @@ private struct AgentReplyActionCard: View {
         }
         return (
             "##",
-            "整理建议",
+            "",
             markdown.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
@@ -4680,7 +4689,7 @@ private struct AgentCitationTag: View {
     private var helpText: String {
         switch citation.kind {
         case .material:
-            return store.ui("打开材料：\(citation.displayTitle)", "Open material: \(citation.displayTitle)")
+            return store.ui("打开文稿：\(citation.displayTitle)", "Open document: \(citation.displayTitle)")
         case .note:
             return store.ui("打开笔记：\(citation.displayTitle)", "Open note: \(citation.displayTitle)")
         case .selection:
@@ -4690,7 +4699,7 @@ private struct AgentCitationTag: View {
         case .learningMemory:
             return store.ui("查看学习记忆", "Open study memory")
         case .session:
-            return store.ui("当前会话", "Current session")
+            return store.ui("当前对话", "Current chat")
         case .discussion:
             return store.ui("问答引用", "Discussion citation")
         }

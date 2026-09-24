@@ -340,10 +340,8 @@ final class CatalystDividerView: UIView {
         super.init(frame: frame)
         isOpaque = false
         isAccessibilityElement = true
-        accessibilityLabel = "调整分栏宽度"
         accessibilityTraits = .adjustable
-        accessibilityHint = "双击均分相邻两栏；按住 Option 松手可跳过吸附。"
-        accessibilityCustomActions = [UIAccessibilityCustomAction(name: "均分相邻两栏", target: self, selector: #selector(equalize))]
+        refreshCopy()
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(equalize))
         doubleTap.numberOfTapsRequired = 2
         addGestureRecognizer(doubleTap)
@@ -352,6 +350,15 @@ final class CatalystDividerView: UIView {
         accent.opacity = 0; layer.addSublayer(accent)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        refreshCopy()
+    }
+    private func refreshCopy() {
+        accessibilityLabel = CatalystInterfaceCopy.text("调整分栏宽度", "Resize panes")
+        accessibilityHint = CatalystInterfaceCopy.text("双击均分相邻两栏；按住 Option 松手可跳过吸附。", "Double-click to split the adjacent panes evenly. Hold Option while releasing to skip snapping.")
+        accessibilityCustomActions = [UIAccessibilityCustomAction(name: CatalystInterfaceCopy.text("均分相邻两栏", "Split adjacent panes evenly"), target: self, selector: #selector(equalize))]
+    }
     @objc private func drag(_ gesture: UIPanGestureRecognizer) {
         skipSnap = gesture.modifierFlags.contains(.alternate) || gesture.state == .cancelled
         switch gesture.state {

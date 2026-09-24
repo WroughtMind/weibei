@@ -52,7 +52,11 @@ final class MessageCell: UICollectionViewCell {
                      source: @escaping () -> Void) {
         unbind()
         actions.isHidden = false
-        for (name, symbol, action) in [("复制整条回答", "doc.on.doc", copy), ("引用到输入框", "text.quote", quote), ("查看来源材料", "book", source)] {
+        for (name, symbol, action) in [
+            (CatalystInterfaceCopy.text("复制整条回答", "Copy the whole answer"), "doc.on.doc", copy),
+            (CatalystInterfaceCopy.text("引用到输入框", "Quote into the input"), "text.quote", quote),
+            (CatalystInterfaceCopy.text("查看来源文稿", "View source document"), "book", source)
+        ] {
             let button = UIButton(type: .system)
             button.setImage(UIImage(systemName: symbol), for: .normal)
             button.tintColor = .secondaryLabel
@@ -63,7 +67,9 @@ final class MessageCell: UICollectionViewCell {
         let status = UILabel()
         status.font = .systemFont(ofSize: 12)
         status.textColor = .tertiaryLabel
-        status.text = message.state == .streaming ? "正在重放…" : (message.state == .stopped ? "已停止 · 正文保留" : "")
+        status.text = message.state == .streaming
+            ? CatalystInterfaceCopy.text("正在重放…", "Replaying…")
+            : (message.state == .stopped ? CatalystInterfaceCopy.text("已停止 · 正文保留", "Stopped · text kept") : "")
         actions.addArrangedSubview(status)
     }
     override func layoutSubviews() {

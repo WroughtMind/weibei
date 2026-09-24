@@ -368,7 +368,7 @@ struct SettingsView: View {
                     settingsRow(
                         title: store.ui("以底纹呈现", "As paper watermark"),
                         detail: store.ui(
-                            "开:句子化作纸面淡墨,点击换句;关:句子成块展示,悬停看出处。",
+                            "开：句子化作纸面淡墨，点击换句；关：句子成块展示，悬停看出处。",
                             "On: the line becomes faint ink in the paper. Off: shown as a block with credit on hover."
                         ),
                         showsBottomDivider: false

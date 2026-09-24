@@ -596,7 +596,7 @@ private struct WorkspaceStatusBanner: View {
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
         .allowsHitTesting(isAlert || showsBackupReveal || store.pendingDeletionUndo != nil)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text(store.ui("工作区状态提示", "Workspace status")))
+        .accessibilityLabel(Text(store.ui("工作台状态提示", "Workspace status")))
     }
 }
 
@@ -1249,7 +1249,7 @@ private struct UnifiedTopBarView: View {
 #if targetEnvironment(macCatalyst)
     private var toolbarOverflowMenus: [UIMenu] {
         var navigation = [
-            toolbarAction(store.ui("课程抽屉", "Course drawer"), selected: libraryDrawer.isOpen, action: store.toggleLibrary),
+            toolbarAction(store.ui("课程栏", "Course sidebar"), selected: libraryDrawer.isOpen, action: store.toggleLibrary),
             toolbarAction(store.ui("后退", "Back"), enabled: store.canNavigateBack) {
                 withAnimation(WeiBeiMotion.layout) { store.navigateBackInWorkspace() }
             },
@@ -1645,7 +1645,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var searchPrompt: String {
-        store.searchesNotes ? store.ui("笔记内查找", "Find in note") : store.ui("资料内搜索", "Search in material")
+        store.searchesNotes ? store.ui("在笔记中查找", "Find in note") : store.ui("在文稿中查找", "Find in document")
     }
 
     private var primaryText: Color {
@@ -1784,7 +1784,7 @@ private struct UnifiedTopBarView: View {
     private var libraryButton: some View {
         topIconButton(
             "sidebar.left",
-            help: libraryDrawer.isOpen ? store.ui("收起课程抽屉", "Hide course drawer") : store.ui("打开课程抽屉", "Show course drawer"),
+            help: libraryDrawer.isOpen ? store.ui("收起课程栏", "Hide course sidebar") : store.ui("打开课程栏", "Show course sidebar"),
             active: libraryDrawer.isOpen
         ) {
             store.toggleLibrary()

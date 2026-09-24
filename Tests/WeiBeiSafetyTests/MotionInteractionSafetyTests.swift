@@ -148,7 +148,7 @@ final class MotionInteractionSafetyTests: XCTestCase {
     @MainActor
     func testNoteFileErrorRecoveryRetractsMatchingBanner() {
         let store = makeStore()
-        let message = "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。"
+        let message = "找不到笔记文件，所以这里只显示空白模板；已暂停写回，以免盖掉磁盘上的内容。"
         store.setNoteFileError(message, for: "note-a")
         store.showImportantOperationError(message)
 
@@ -162,7 +162,7 @@ final class MotionInteractionSafetyTests: XCTestCase {
     @MainActor
     func testNoteFileErrorRecoveryKeepsUnrelatedOrSharedBanner() {
         let store = makeStore()
-        let message = "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。"
+        let message = "找不到笔记文件，所以这里只显示空白模板；已暂停写回，以免盖掉磁盘上的内容。"
 
         store.setNoteFileError(message, for: "note-a")
         store.showImportantOperationError("另一条重要错误")

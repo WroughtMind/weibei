@@ -19,13 +19,13 @@ struct CommandPaletteView: View {
                 if store.courseWorkspacePresented { store.dismissCourseWorkspace() }
                 _ = store.createStudySession(courseID: nil)
             },
-            PaletteCommand(title: store.ui("聚焦课程目录", "Focus Course Index"), shortcut: store.chord(for: .focusLibrary).display, animation: WeiBeiMotion.layout) { store.focus(.library) },
+            PaletteCommand(title: store.ui("聚焦课程栏", "Focus course sidebar"), shortcut: store.chord(for: .focusLibrary).display, animation: WeiBeiMotion.layout) { store.focus(.library) },
             PaletteCommand(title: store.ui("聚焦阅读", "Focus Reader"), shortcut: store.chord(for: .focusReader).display, animation: WeiBeiMotion.layout) { store.focus(.reader) },
             PaletteCommand(title: store.ui("聚焦笔记", "Focus Notes"), shortcut: store.chord(for: .focusNotes).display, animation: WeiBeiMotion.layout) { store.focus(.notes) },
             PaletteCommand(title: store.ui("聚焦对话", "Focus Chat"), shortcut: store.chord(for: .focusChat).display, animation: WeiBeiMotion.layout) { store.focus(.agent) },
             PaletteCommand(title: store.ui("上一份资料", "Previous Material"), shortcut: store.chord(for: .previousMaterial).display, animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
             PaletteCommand(title: store.ui("下一份资料", "Next Material"), shortcut: store.chord(for: .nextMaterial).display, animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
-            PaletteCommand(title: store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index"), shortcut: store.chord(for: .courseIndex).display) { store.toggleLibrary() },
+            PaletteCommand(title: store.showLibrary ? store.ui("收起课程栏", "Hide course sidebar") : store.ui("打开课程栏", "Show course sidebar"), shortcut: store.chord(for: .courseIndex).display) { store.toggleLibrary() },
             PaletteCommand(title: store.ui("三栏工作台", "Three-Pane Workspace"), shortcut: store.chord(for: .threePaneWorkspace).display, animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
             PaletteCommand(title: WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage), shortcut: store.chord(for: .immersiveReading).display, animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
             PaletteCommand(title: WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage), shortcut: store.chord(for: .immersiveChat).display, animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
@@ -43,7 +43,7 @@ struct CommandPaletteView: View {
         }
         if store.hasSelectedMaterial {
             items.insert(
-                PaletteCommand(title: store.ui("从当前资料开笔记", "Note from Current Material"), shortcut: "", animation: WeiBeiMotion.layout) { store.promptCreateNotebookNoteFromCurrentMaterial() },
+                PaletteCommand(title: store.ui("从当前文稿开笔记", "Note from this document"), shortcut: "", animation: WeiBeiMotion.layout) { store.promptCreateNotebookNoteFromCurrentMaterial() },
                 at: 2
             )
         }
@@ -66,7 +66,7 @@ struct CommandPaletteView: View {
             items.append(PaletteCommand(title: store.copyReferenceActionTitle, shortcut: store.chord(for: .copyCurrentReference).display) { store.copyCurrentReference() })
         }
         if store.canSearchCurrentDocument {
-            items.append(PaletteCommand(title: store.ui("在当前文稿中查找", "Find in Current Document"), shortcut: store.chord(for: .searchInMaterial).display) { store.revealDocumentSearch() })
+            items.append(PaletteCommand(title: store.ui("在文稿中查找", "Find in document"), shortcut: store.chord(for: .searchInMaterial).display) { store.revealDocumentSearch() })
         }
         if store.selectionContext != nil {
             items.append(PaletteCommand(title: store.ui("问当前选区", "Ask Current Selection"), shortcut: "") {
@@ -198,7 +198,7 @@ struct CommandPaletteView: View {
                         text: $query,
                         prompt: store.commandPaletteChatsOnly
                             ? store.ui("搜索对话", "Search chats")
-                            : store.ui("搜索资料、笔记、对话或命令", "Search files, notes, chats or commands"),
+                            : store.ui("搜索文稿、笔记、对话或命令", "Search documents, notes, or chats"),
                         isFocused: $searchFocused,
                         fontSize: 18,
                         drawsChrome: false,

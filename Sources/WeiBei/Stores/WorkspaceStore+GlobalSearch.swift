@@ -125,7 +125,7 @@ extension WorkspaceStore {
             return GlobalSearchOutcome(hits: [], availability: .ready)
         }
         lastCourseHomeSearchRanOnMainThread = search.ranOnMainThread
-        let unaffiliatedLabel = ui("未关联课程", "No course")
+        let unaffiliatedLabel = ui("通用资料", "General materials")
         let hits = search.results.enumerated().compactMap { pair -> (index: Int, hit: GlobalSearchHit)? in
             let result = pair.element
             switch result.kind {

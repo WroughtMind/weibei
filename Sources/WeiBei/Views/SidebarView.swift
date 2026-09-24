@@ -49,7 +49,7 @@ struct SidebarView: View {
             SidebarCourseNameSheet(
                 store: store,
                 heading: ui("重命名课程", "Rename Course"),
-                detail: ui("只修改显示名称，资料与笔记保持原位。", "Only the display title changes; files stay where they are."),
+                detail: ui("只修改显示名称，文稿与笔记保持原位。", "Only the display title changes; files stay where they are."),
                 confirmTitle: ui("保存", "Save"),
                 title: $renameCourseTitle,
                 cancel: { courseToRename = nil },
@@ -108,7 +108,7 @@ struct SidebarView: View {
                     get: { model.query },
                     set: model.updateQuery
                 ),
-                prompt: ui("搜索课程资料与笔记", "Search course materials and notes"),
+                prompt: ui("搜索课程文稿与笔记", "Search course documents and notes"),
                 isFocused: $librarySearchFocused,
                 drawsChrome: false,
                 chromeHeight: 28
@@ -181,7 +181,7 @@ struct CourseSidebarList: View {
                         itemRow(row, compact: false, accent: nil, opensNotebook: false)
                     }
                 } header: {
-                    SidebarSectionHeader(title: ui("独立资料", "Unassigned Materials"))
+                    SidebarSectionHeader(title: ui("通用资料", "General materials"))
                 }
             }
 
@@ -248,7 +248,8 @@ struct CourseSidebarList: View {
 
         if expanded {
             SidebarCourseGroupHeader(
-                title: ui("资料", "Materials"),
+                title: ui("文稿", "Documents"),
+                language: model.interfaceLanguage,
                 systemImage: "doc.text",
                 count: row.materials.count,
                 accent: accent,
@@ -264,8 +265,8 @@ struct CourseSidebarList: View {
 
             if row.materials.isEmpty {
                 SidebarEmptyRow(
-                    title: ui("暂无资料", "No materials"),
-                    actionTitle: ui("导入资料…", "Import…"),
+                    title: ui("暂无文稿", "No documents"),
+                    actionTitle: ui("导入文稿…", "Import…"),
                     action: { store.importCourseMaterialsFromPanel(courseID: course.id) }
                 )
                 .id("\(course.id.uuidString)-materials-empty")
@@ -279,6 +280,7 @@ struct CourseSidebarList: View {
 
             SidebarCourseGroupHeader(
                 title: ui("笔记", "Notes"),
+                language: model.interfaceLanguage,
                 systemImage: "note.text",
                 count: row.notes.count,
                 accent: accent,
@@ -430,7 +432,7 @@ struct CourseSidebarList: View {
             } label: {
                 Text(opensNotebook
                     ? ui("删除笔记…", "Delete Note…")
-                    : ui("删除资料…", "Delete Material…"))
+                    : ui("删除文稿…", "Delete document…"))
             }
         }
     }
@@ -512,6 +514,7 @@ private struct SidebarEmptyRow: View {
 
 private struct SidebarCourseGroupHeader: View {
     let title: String
+    let language: WeiBeiInterfaceLanguage
     let systemImage: String
     let count: Int
     let accent: Color
@@ -550,8 +553,8 @@ private struct SidebarCourseGroupHeader: View {
                 .buttonStyle(.plain)
                 .onHover { hoveringAdd = $0 }
                 .foregroundStyle(accent.opacity(0.82))
-                .accessibilityLabel(Text("添加\(title)"))
-                .help("添加\(title)")
+                .accessibilityLabel(Text(language.text("添加\(title)", "Add \(title)")))
+                .help(language.text("添加\(title)", "Add \(title)"))
             }
         }
         .frame(height: 18)

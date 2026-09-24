@@ -103,7 +103,7 @@ final class ImageMarkdownView: MarkdownTextView {
             view.frame = CGRect(origin: .zero, size: holder.size)
             view.contentMode = .scaleAspectFit
             view.isAccessibilityElement = true
-            view.accessibilityLabel = "图片：" + source
+            view.accessibilityLabel = CatalystInterfaceCopy.text("图片：", "Image: ") + source
             container.addSubview(view)
         } else {
             holder.size = CGSize(width: min(contentWidth, 500), height: 96)
@@ -111,7 +111,7 @@ final class ImageMarkdownView: MarkdownTextView {
             status.numberOfLines = 0
             status.font = .systemFont(ofSize: 14)
             status.textColor = .secondaryLabel
-            status.text = images.error(for: source).map { "图片读取失败：" + $0 } ?? "图片准备中…"
+            status.text = images.error(for: source).map { CatalystInterfaceCopy.text("图片读取失败：", "Could not read the image: ") + $0 } ?? CatalystInterfaceCopy.text("图片准备中…", "Preparing the image…")
             container.addSubview(status)
             images.load(source)
         }

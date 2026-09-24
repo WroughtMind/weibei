@@ -53,14 +53,14 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
         case .toggleAppearance: return language.text("切换深浅色", "Toggle Light and Dark")
         case .navigateBack: return language.text("后退", "Back")
         case .navigateForward: return language.text("前进", "Forward")
-        case .courseIndex: return language.text("课程目录", "Course Index")
-        case .searchInMaterial: return language.text("当前文稿内查找", "Find in Current Document")
-        case .focusLibrary: return language.text("聚焦课程目录", "Focus Course Index")
+        case .courseIndex: return language.text("课程栏", "Course sidebar")
+        case .searchInMaterial: return language.text("在文稿中查找", "Find in document")
+        case .focusLibrary: return language.text("聚焦课程栏", "Focus course sidebar")
         case .focusReader: return language.text("聚焦阅读", "Focus Reader")
         case .focusNotes: return language.text("聚焦笔记", "Focus Notes")
         case .focusChat: return language.text("聚焦对话", "Focus Chat")
-        case .previousMaterial: return language.text("上一份资料", "Previous Material")
-        case .nextMaterial: return language.text("下一份资料", "Next Material")
+        case .previousMaterial: return language.text("上一份文稿", "Previous document")
+        case .nextMaterial: return language.text("下一份文稿", "Next document")
         case .toggleRightPane: return language.text("只看文稿 / 恢复三栏", "Document Only / Restore Three Panes")
         case .threePaneWorkspace: return language.text("三栏工作台", "Three-Pane Workspace")
         case .swapThreePaneSecondaryPanes: return language.text("交换笔记与对话", "Swap Notes and Chat")
@@ -73,7 +73,7 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
         case .replaceNoteSelection: return language.text("替换笔记选区", "Replace Note Selection")
         case .applyAgentPatchToEditor: return language.text("追加整理建议", "Append Organization Suggestion")
         case .copyCurrentReference: return language.text("复制当前引用", "Copy Current Reference")
-        case .submitAgentDraft: return language.text("发送对话", "Send Chat")
+        case .submitAgentDraft: return language.text("发送问题", "Send question")
         }
     }
 
