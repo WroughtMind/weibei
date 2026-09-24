@@ -684,6 +684,8 @@ private func checkContextRevisionEcho() throws {
 private func checkFailureMapping() throws {
     try nativeRequire(NativeLLMFailure(code: "unauthorized", status: 401, message: "no").asAgentFailureKind == .unauthorized, "401 maps unauthorized")
     try nativeRequire(NativeLLMFailure(code: "rate_limited", status: 429, message: "slow").asAgentFailureKind == .rateLimited, "429 maps rateLimited")
+    try nativeRequire(NativeLLMFailure(code: "insufficient_quota", status: 429, message: "quota").asAgentFailureKind == .insufficientQuota, "429 insufficient_quota is quota")
+    try nativeRequire(!AgentFailureKind.insufficientQuota.isRetryable, "quota is not retryable")
     try nativeRequire(NativeLLMFailure(code: "timeout", message: "idle").asAgentFailureKind == .timedOut, "timeout maps timedOut")
     try nativeRequire(NativeLLMFailure(code: "cancelled", message: "stop").asAgentFailureKind == .cancelled, "cancel maps cancelled")
     let mapped = NSError(

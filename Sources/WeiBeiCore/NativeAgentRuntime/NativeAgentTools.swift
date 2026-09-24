@@ -1257,7 +1257,12 @@ public enum NativeToolActivityPresentation {
         var activity = AgentToolActivity(id: id, name: name, state: .running, detail: short(detail), textOffset: textOffset)
         guard let result else { return activity }
         activity.state = result.isError ? .failed : result.details["cancelled"] as? Bool == true ? .cancelled : .completed
-        if result.isError || activity.state == .cancelled {
+        if result.isError {
+            WeiBeiLog.workspace.error("code=tool_failed name=\(name, privacy: .public) detail=\(WeiBeiLog.truncated(result.text), privacy: .public)")
+            activity.resultSummary = "未能完成"
+            return activity
+        }
+        if activity.state == .cancelled {
             activity.resultSummary = short(result.text)
             return activity
         }
@@ -1287,19 +1292,36 @@ public enum NativeToolActivityPresentation {
         case "load_skill": activity.resultSummary = result.details["alreadyLoaded"] as? Bool == true ? "本会话已加载，无需重复读取" : "技能指引已加载"
         case "weibei_read_learning_memory": activity.resultSummary = "读取 \(context.request.learningContext.memories.count) 条学习记忆"
         case "weibei_update_learning_memory":
-            activity.resultSummary = result.details["appliedMemoryUpdate"] == nil ? "更新已校验，等待保存" : short(result.text)
+            activity.resultSummary = rememberedSummary(result, key: "appliedMemoryUpdate", waiting: "更新已校验，等待保存")
         case "weibei_course_profile_update":
-            activity.resultSummary = result.details["appliedProfileUpdate"] == nil ? "档案更新已校验，等待保存" : short(result.text)
+            activity.resultSummary = rememberedSummary(result, key: "appliedProfileUpdate", waiting: "档案更新已校验，等待保存")
         case "weibei_note_proposal":
             activity.resultSummary = arguments["userRequested"] as? Bool == true ? "写入请求已登记，等待笔记保存回执" : "建议已准备，尚未写入笔记"
         case "weibei_relation_proposal": activity.resultSummary = "关联建议已准备，尚未建立关系"
         case "create_document": activity.resultSummary = "文稿已创建 · \(result.details["byteCount"] as? Int ?? 0) 字节"
-        case "delegate": activity.resultSummary = (result.details["partial"] as? Bool == true ? "子任务部分完成 · " : "子任务已返回 · ") + short(result.text)
+        case "delegate": activity.resultSummary = (result.details["partial"] as? Bool == true ? "子任务部分完成 · " : "子任务已返回 · ") + visibleResult(result.text, fallback: "已返回")
         case "render_ui": activity.resultSummary = "互动内容已提交到当前回答"
         case "weibei_visual_asset": activity.resultSummary = "材料图像已读取 · \(result.details["byteCount"] as? Int ?? 0) 字节"
         case "$web_search": activity.resultSummary = "搜索参数已回传，等待服务端结果"
-        default: activity.resultSummary = short(result.text)
+        default: activity.resultSummary = visibleResult(result.text, fallback: "已完成")
         }
         return activity
+    }
+
+    private static func rememberedSummary(_ result: NativeToolExecutionResult, key: String, waiting: String) -> String {
+        guard let applied = result.details[key] as? [String: Any] else { return waiting }
+        if let summary = applied["summary"] as? String {
+            let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, !trimmed.contains("{") { return String(trimmed.prefix(240)) }
+        }
+        let count = (applied["memoryIDs"] as? [String])?.count
+            ?? (applied["texts"] as? [String])?.count
+            ?? (applied["entryIDs"] as? [String])?.count
+            ?? 0
+        return count > 0 ? "已记住 \(count) 条" : waiting
+    }
+
+    private static func visibleResult(_ text: String, fallback: String) -> String {
+        text.contains("{") ? fallback : String(text.prefix(240))
     }
 }

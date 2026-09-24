@@ -147,9 +147,12 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
             throw NativeLLMFailure(code: "invalid_sse", message: "Gemini SSE was not JSON")
         }
         if let error = object["error"] as? [String: Any] {
-            throw NativeLLMFailure(
-                code: error["status"] as? String ?? "server_error",
-                message: error["message"] as? String ?? "Gemini error"
+            let message = error["message"] as? String ?? "Gemini error"
+            throw NativeHTTPByteStream.providerFailure(
+                code: error["code"] as? String ?? (error["code"] as? NSNumber).map { $0.stringValue },
+                type: error["type"] as? String,
+                statusName: error["status"] as? String,
+                message: message
             )
         }
         var chunks: [NativeStreamChunk] = []

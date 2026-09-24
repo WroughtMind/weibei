@@ -230,7 +230,7 @@ struct AgentToolActivityGroup: View {
         case "$web_find": store.ui("页内查找", "Find in page")
         case "$web_search": store.ui("网络搜索", "Search the web")
         case "$web_search_sources": store.ui("搜索返回的来源", "Sources returned by search")
-        default: store.ui("执行工具", "Run tool") + " · " + name
+        default: store.ui("正在处理", "Working")
         }
     }
 }

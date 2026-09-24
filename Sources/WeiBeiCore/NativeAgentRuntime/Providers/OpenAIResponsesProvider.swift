@@ -213,9 +213,12 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             throw NativeLLMFailure(code: "invalid_sse", message: "Responses SSE was not JSON")
         }
         if let error = object["error"] as? [String: Any] {
-            throw NativeLLMFailure(
-                code: error["code"] as? String ?? "provider_error",
-                message: error["message"] as? String ?? "Responses error"
+            let message = error["message"] as? String ?? "Responses error"
+            throw NativeHTTPByteStream.providerFailure(
+                code: error["code"] as? String,
+                type: error["type"] as? String,
+                statusName: error["status"] as? String,
+                message: message
             )
         }
         let type = object["type"] as? String ?? ""
@@ -297,10 +300,13 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         case "response.failed", "error":
             let error = (object["response"] as? [String: Any])?["error"] as? [String: Any]
                 ?? object["error"] as? [String: Any]
-            throw NativeLLMFailure(
-                code: error?["code"] as? String ?? "provider_error",
-                usage: tokenUsage((object["response"] as? [String: Any])?["usage"]),
-                message: error?["message"] as? String ?? object["message"] as? String ?? type
+            let message = error?["message"] as? String ?? object["message"] as? String ?? type
+            throw NativeHTTPByteStream.providerFailure(
+                code: error?["code"] as? String,
+                type: error?["type"] as? String,
+                statusName: error?["status"] as? String,
+                message: message,
+                usage: tokenUsage((object["response"] as? [String: Any])?["usage"])
             )
         default:
             return []

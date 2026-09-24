@@ -169,17 +169,6 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         return parts
     }
 
-    private static func httpFailure(_ status: Int, body: String) -> NativeLLMFailure {
-        let code: String
-        switch status {
-        case 401, 403: code = "unauthorized"
-        case 429: code = "rate_limited"
-        case 408, 504: code = "timeout"
-        default: code = "server_error"
-        }
-        return NativeLLMFailure(code: code, status: status, message: "HTTP \(status) \(body)")
-    }
-
     public static func translate(payload: String, textIndex: inout Int) throws -> [NativeStreamChunk] {
         guard let data = payload.data(using: .utf8),
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -187,7 +176,12 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         }
         if let error = object["error"] as? [String: Any] {
             let message = error["message"] as? String ?? "provider error"
-            throw NativeLLMFailure(code: error["code"] as? String ?? "server_error", message: message)
+            throw NativeHTTPByteStream.providerFailure(
+                code: error["code"] as? String,
+                type: error["type"] as? String,
+                statusName: error["status"] as? String,
+                message: message
+            )
         }
         var chunks: [NativeStreamChunk] = []
         if let usage = object["usage"] as? [String: Any] {

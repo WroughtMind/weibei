@@ -127,6 +127,31 @@ struct CommandPaletteView: View {
 
     private var filtered: [PaletteCommand] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if store.commandPaletteChatsOnly {
+            let chats = store.historicalStudySessions.map { session in
+                PaletteCommand(
+                    title: session.title,
+                    shortcut: "",
+                    detail: store.ui("对话", "Chat"),
+                    resultID: session.id.uuidString,
+                    action: {
+                        store.activateStudySession(session.id, expectedCourseID: nil, expectedScopeNeedsReview: false)
+                    }
+                )
+            }
+            guard !query.isEmpty else { return chats }
+            let searched = hits.filter { $0.result.kind == .chat }.map { hit in
+                PaletteCommand(
+                    title: hit.result.title,
+                    shortcut: "",
+                    detail: store.ui("对话", "Chat") + " · " + hit.courseTitle,
+                    snippet: hit.result.matchedText,
+                    resultID: hit.id,
+                    action: { store.openGlobalSearchHit(hit) }
+                )
+            }
+            return searched + chats.filter { $0.title.localizedCaseInsensitiveContains(query) }
+        }
         guard !query.isEmpty else { return commands }
         let content = hits.map { hit in
             let kind: String
@@ -166,7 +191,9 @@ struct CommandPaletteView: View {
                         .foregroundStyle(searchFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
                     WeiBeiSearchField(
                         text: $query,
-                        prompt: store.ui("搜索资料、笔记、对话或命令", "Search files, notes, chats or commands"),
+                        prompt: store.commandPaletteChatsOnly
+                            ? store.ui("搜索对话", "Search chats")
+                            : store.ui("搜索资料、笔记、对话或命令", "Search files, notes, chats or commands"),
                         isFocused: $searchFocused,
                         fontSize: 18,
                         drawsChrome: false,
@@ -263,6 +290,7 @@ struct CommandPaletteView: View {
             }
         }
         .onAppear {
+            query = store.commandPaletteQuery
             searchFocused = true
         }
         .onChange(of: query) { _, _ in
