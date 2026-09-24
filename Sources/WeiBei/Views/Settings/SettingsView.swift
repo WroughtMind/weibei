@@ -504,8 +504,8 @@ struct SettingsView: View {
                 )
             } catch CourseProjectRootError.destinationIsLibrary {
                 migrationErrorText = store.ui(
-                    "所选位置已经是一个魏碑资料库，请在对话中打开它或选择其他空文件夹。",
-                    "That location is already a WeiBei library. Open it instead, or choose an empty folder."
+                    "所选位置已经是一个魏碑资料库，请选择其他位置。",
+                    "That location is already a WeiBei library. Choose a different location."
                 )
             } catch {
                 store.recordCourseLibraryUIFailure(
@@ -513,13 +513,21 @@ struct SettingsView: View {
                     operation: "settings_library_migration",
                     path: destination
                 )
-                migrationErrorText = store.ui(
-                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用目标位置。请先确认原位置内容完整、目标文件夹可写，再重试。",
-                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the destination. Check the original contents and make sure the destination is writable before trying again."
-                )
+                migrationErrorText = Self.libraryMigrationFailureText(store: store, error: error)
             }
             isMigratingLibrary = false
         }
+    }
+
+    /// 迁移失败统一出口：不再把所有失败折叠成「请确认目标文件夹可写」，
+    /// 而是带上 `CourseProjectRootError.errorDescription` 的真实原因。
+    static func libraryMigrationFailureText(store: WorkspaceStore, error: Error) -> String {
+        let reason = (error as? CourseProjectRootError)?.errorDescription
+            ?? error.localizedDescription
+        return store.ui(
+            "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用目标位置。原因：\(reason)",
+            "The move was not confirmed. WeiBei still keeps the original library record and has not activated the destination. Reason: \(error.localizedDescription)"
+        )
     }
 
     static func isCloudSyncPath(_ url: URL) -> Bool {

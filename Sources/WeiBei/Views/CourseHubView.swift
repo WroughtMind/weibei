@@ -665,10 +665,17 @@ struct CourseHubView: View {
 
             Spacer(minLength: 8)
 
-            Button(store.ui("重新选择资料库…", "Re-select Library…")) {
-                courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
+            if store.courseLibraryRootURL != nil {
+                Button(store.ui("在访达中显示", "Reveal in Finder")) {
+                    store.revealCourseLibraryRootInFinder()
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+            } else {
+                Button(store.ui("重新选择资料库…", "Re-select Library…")) {
+                    store.presentCourseLibraryMigrationPicker()
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
             }
-            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
         }
         .padding(14)
         .background(

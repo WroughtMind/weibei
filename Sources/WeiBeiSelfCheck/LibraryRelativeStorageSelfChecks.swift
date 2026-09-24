@@ -5,7 +5,7 @@ func checkLibraryRelativeStorage() throws {
     expect(
         CourseLibraryLayout.defaultRootURL().lastPathComponent
             == CourseLibraryLayout.defaultFolderName,
-        "default library lives under Documents/魏碑资料库"
+        "default library folder is named 魏碑资料库"
     )
     expect(
         CourseLibraryLayout.commonMaterialsDirectoryName == "通用资料"

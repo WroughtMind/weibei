@@ -100,7 +100,7 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: itemURL, encoding: .utf8), "第一讲正文")
     }
 
-    func testMigrateLibraryRejectsNestedAndNonEmpty() throws {
+    func testMigrateLibraryRejectsNestedAndLibraryItself() throws {
         let base = makeTempRoot("weibei-migration-reject")
         defer { try? FileManager.default.removeItem(at: base) }
         let library = base.appendingPathComponent("资料库", isDirectory: true)
@@ -127,16 +127,25 @@ final class LibraryMigrationSafetyTests: XCTestCase {
                 return XCTFail("期望 destinationIsLibrary，实际 \(error)")
             }
         }
-
-        let nonEmpty = base.appendingPathComponent("非空目录", isDirectory: true)
-        try FileManager.default.createDirectory(at: nonEmpty, withIntermediateDirectories: true)
-        try "占位".write(to: nonEmpty.appendingPathComponent("其他文件.txt"), atomically: true, encoding: .utf8)
+        // 所选文件夹的「魏碑资料库」子位置已经是另一个资料库时，同样拒绝。
+        let withNestedLibrary = base.appendingPathComponent("内含资料库", isDirectory: true)
+        let nestedLibrary = withNestedLibrary.appendingPathComponent(
+            CourseLibraryLayout.defaultFolderName, isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: nestedLibrary.appendingPathComponent(".weibei", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let manifestData = try JSONEncoder().encode(CourseProjectManifest(courseID: UUID()))
+        try manifestData.write(
+            to: nestedLibrary.appendingPathComponent(".weibei/course.json")
+        )
         do {
-            _ = try migrate(store, to: nonEmpty)
-            XCTFail("非空目标应被拒绝")
+            _ = try migrate(store, to: withNestedLibrary)
+            XCTFail("目标下的魏碑资料库子目录已是资料库时应被拒绝")
         } catch let error as CourseProjectRootError {
-            guard case .destinationNotEmpty = error else {
-                return XCTFail("期望 destinationNotEmpty，实际 \(error)")
+            guard case .destinationIsLibrary = error else {
+                return XCTFail("期望 destinationIsLibrary，实际 \(error)")
             }
         }
 
@@ -144,6 +153,113 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         XCTAssertEqual(store.courseManifestCourseID(at: courseRoot), courseID)
         XCTAssertEqual(store.courseLibraryRootURL?.standardizedFileURL, library.standardizedFileURL)
         XCTAssertTrue(FileManager.default.fileExists(atPath: courseRoot.appendingPathComponent(".weibei/course.json").path))
+    }
+
+    /// 审查 L2：用户几乎选不到空文件夹。非空、又不是资料库的所选文件夹，
+    /// 迁移目标改为「所选文件夹/魏碑资料库」子目录，原有内容一律不动。
+    func testMigrateLibraryIntoNonEmptyFolderCreatesWeiBeiSubdirectory() throws {
+        let base = makeTempRoot("weibei-migration-nonempty")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(
+            workspace: base.appendingPathComponent("workspace", isDirectory: true),
+            library: library
+        )
+        let courseID = try store.createCourseInLibrary(title: "课程乙")
+
+        let nonEmpty = base.appendingPathComponent("非空目录", isDirectory: true)
+        try FileManager.default.createDirectory(at: nonEmpty, withIntermediateDirectories: true)
+        let bystander = nonEmpty.appendingPathComponent("其他文件.txt")
+        try "别人的文件，不许动".write(to: bystander, atomically: true, encoding: .utf8)
+
+        let result = try migrate(store, to: nonEmpty)
+        let expectedDestination = nonEmpty.appendingPathComponent(
+            CourseLibraryLayout.defaultFolderName, isDirectory: true
+        )
+        XCTAssertEqual(
+            result.destination.standardizedFileURL,
+            expectedDestination.standardizedFileURL,
+            "非空非库目标应迁入其下的魏碑资料库子目录"
+        )
+        XCTAssertEqual(
+            store.courseLibraryRootURL?.standardizedFileURL,
+            expectedDestination.standardizedFileURL
+        )
+        // 原有内容原样留在所选文件夹里。
+        XCTAssertEqual(try String(contentsOf: bystander, encoding: .utf8), "别人的文件，不许动")
+        // 课程跟到了新库位置。
+        let courseRoot = try XCTUnwrap(store.courseRootURL(for: courseID))
+        XCTAssertTrue(courseRoot.path.hasPrefix(expectedDestination.path))
+        XCTAssertEqual(store.courseManifestCourseID(at: courseRoot), courseID)
+        // 旧库位置已腾空。
+        let leftover = (try? FileManager.default.contentsOfDirectory(atPath: library.path)) ?? []
+        XCTAssertTrue(leftover.isEmpty, "旧库目录残留：\(leftover)")
+    }
+
+    /// 审查 L2：只含 `.DS_Store` 的文件夹按「空」处理，直接迁入，不再报非空。
+    func testMigrateLibraryTreatsHiddenOnlyFolderAsEmpty() throws {
+        let base = makeTempRoot("weibei-migration-dsstore")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(
+            workspace: base.appendingPathComponent("workspace", isDirectory: true),
+            library: library
+        )
+        _ = try store.createCourseInLibrary(title: "课程丙")
+
+        let hiddenOnly = base.appendingPathComponent("只有隐藏文件", isDirectory: true)
+        try FileManager.default.createDirectory(at: hiddenOnly, withIntermediateDirectories: true)
+        try Data("junk".utf8).write(to: hiddenOnly.appendingPathComponent(".DS_Store"))
+
+        let result = try migrate(store, to: hiddenOnly)
+        XCTAssertEqual(
+            result.destination.standardizedFileURL,
+            hiddenOnly.standardizedFileURL,
+            "只有隐藏文件的文件夹应视为空，直接作为迁移目标"
+        )
+        XCTAssertEqual(
+            store.courseLibraryRootURL?.standardizedFileURL,
+            hiddenOnly.standardizedFileURL
+        )
+    }
+
+    /// 所选文件夹的「魏碑资料库」子目录已有别的可见内容时，仍报非空。
+    func testMigrateLibraryRejectsOccupiedNestedSubdirectory() throws {
+        let base = makeTempRoot("weibei-migration-occupied-nested")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(
+            workspace: base.appendingPathComponent("workspace", isDirectory: true),
+            library: library
+        )
+        _ = try store.createCourseInLibrary(title: "课程丁")
+
+        let selected = base.appendingPathComponent("目标", isDirectory: true)
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true)
+        try "占位".write(to: selected.appendingPathComponent("已有内容.txt"), atomically: true, encoding: .utf8)
+        let nested = selected.appendingPathComponent(
+            CourseLibraryLayout.defaultFolderName, isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try "不许覆盖".write(to: nested.appendingPathComponent("重要文件.md"), atomically: true, encoding: .utf8)
+
+        do {
+            _ = try migrate(store, to: selected)
+            XCTFail("子目录已有可见内容时应报非空")
+        } catch let error as CourseProjectRootError {
+            guard case .destinationNotEmpty = error else {
+                return XCTFail("期望 destinationNotEmpty，实际 \(error)")
+            }
+        }
+        XCTAssertEqual(
+            try String(contentsOf: nested.appendingPathComponent("重要文件.md"), encoding: .utf8),
+            "不许覆盖"
+        )
+        XCTAssertEqual(
+            store.courseLibraryRootURL?.standardizedFileURL,
+            library.standardizedFileURL,
+            "失败后必须仍绑定原库"
+        )
     }
 
     func testMigrateLibraryAdoptsExistingLibrary() throws {
