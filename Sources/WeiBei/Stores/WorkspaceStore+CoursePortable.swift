@@ -498,12 +498,6 @@ extension WorkspaceStore {
                     noteText = markdown
                     revealRichWritingSurface()
                     focus(.notes)
-                    showTransientNoteStatus(
-                        ui(
-                            "已在课程“笔记”目录新建：\(result.item.subtitle)",
-                            "Created in the course Notes folder: \(result.item.subtitle)"
-                        )
-                    )
                 }
             }
             return result.item.id

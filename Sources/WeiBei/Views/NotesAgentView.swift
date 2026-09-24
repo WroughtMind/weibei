@@ -808,10 +808,14 @@ private struct NoteSaveStatusLabel: View {
     }
 
     private var title: String? {
+        if store.activeNoteSaveStatus == .saving {
+            guard session.showsProlongedSavingLabel else { return nil }
+            return store.ui("保存中", "Saving")
+        }
         guard store.activeNoteSaveStatus.showsStatusLabel else { return nil }
         switch store.activeNoteSaveStatus {
         case .saving:
-            return store.ui("保存中", "Saving")
+            return nil
         case .failed:
             return store.ui("保存失败", "Save Failed")
         case .externallyModified:
