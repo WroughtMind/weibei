@@ -317,10 +317,8 @@ extension WorkspaceStore {
         )
         refreshActiveNoteFromBackingFile()
         guard diskChanged else { return }
-        noteEditingSession.markExternallyModified(documentID: documentID)
         guard previousDigest != Self.noteContentDigest(Data(noteText.utf8)) else { return }
         noteEditingSession.replaceDocument(with: item.id)
-        noteEditingSession.markExternallyModified(documentID: documentID)
         noteEditorCommand = NoteEditorCommand(
             kind: .reloadDocument,
             markdown: noteText
@@ -348,8 +346,9 @@ extension WorkspaceStore {
             let fileURL = item(withID: documentID)?.url
             let fileName = fileURL?.lastPathComponent
                 ?? ui("这份笔记", "this note")
+            let backupEntry: NoteBackupRing.Entry
             do {
-                _ = try NoteBackupRing.capture(
+                backupEntry = try NoteBackupRing.capture(
                     content: Data(conflict.checkpoint.markdown.utf8),
                     itemID: documentID,
                     rootURL: noteBackupRootURL
@@ -415,7 +414,7 @@ extension WorkspaceStore {
             showTransientNoteStatus(ui(
                 "已采用“\(fileName)”的磁盘版本；未写内容已保存在魏碑备份中。",
                 "Used the disk version of \(fileName); unsaved content was kept in a WeiBei backup."
-            ))
+            ), revealURL: backupEntry.url)
         } else {
             let documentID = conflict.checkpoint.metadata.documentID
             guard let fileURL = item(withID: documentID)?.url else { return }

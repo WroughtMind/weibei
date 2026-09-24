@@ -9,8 +9,9 @@ enum NoteSaveStatus: Equatable {
     case failed
     case externallyModified
 
+    /// 失败和冲突立刻显示。`.saving` 本身不占标题栏，持续过久才由会话单独亮出。
     var showsStatusLabel: Bool {
-        self == .saving || self == .failed || self == .externallyModified
+        self == .failed || self == .externallyModified
     }
 }
 
@@ -42,6 +43,8 @@ final class NoteEditingSession: ObservableObject {
     private let idleSnapshotDelay: Duration
     private let maximumSnapshotAge: Duration
     private let snapshotTimeout: Duration
+    private let savingLabelDelay: Duration
+    private var savingLabelTask: Task<Void, Never>?
 
     private(set) var documentID: String
     private(set) var documentGeneration: UInt64
@@ -49,6 +52,8 @@ final class NoteEditingSession: ObservableObject {
     private(set) var savedRevision: UInt64
     private(set) var dirty = false
     @Published private(set) var saveStatus: NoteSaveStatus = .idle
+    /// 「保存中」持续超过 `savingLabelDelay` 才为真；失败和冲突不走这条延迟。
+    @Published private(set) var showsProlongedSavingLabel = false
 
     init(
         documentID: String,
@@ -56,6 +61,7 @@ final class NoteEditingSession: ObservableObject {
         idleSnapshotDelay: Duration = .milliseconds(850),
         maximumSnapshotAge: Duration = .seconds(5),
         snapshotTimeout: Duration = .seconds(5),
+        savingLabelDelay: Duration = .seconds(2),
         onSnapshotRequest: ((NoteEditorSnapshotRequest) -> Void)? = nil,
         onSnapshotAccepted: @escaping (NoteEditorSnapshotReadyEvent) -> Void = { _ in }
     ) {
@@ -66,6 +72,7 @@ final class NoteEditingSession: ObservableObject {
         self.idleSnapshotDelay = idleSnapshotDelay
         self.maximumSnapshotAge = maximumSnapshotAge
         self.snapshotTimeout = snapshotTimeout
+        self.savingLabelDelay = savingLabelDelay
         self.onSnapshotRequest = onSnapshotRequest
         snapshotRequestHandlerToken = onSnapshotRequest == nil ? nil : UUID()
         self.onSnapshotAccepted = onSnapshotAccepted
@@ -103,7 +110,7 @@ final class NoteEditingSession: ObservableObject {
         currentRevision = initialRevision
         savedRevision = initialRevision
         dirty = false
-        saveStatus = .idle
+        adoptSaveStatus(.idle)
         return documentGeneration
     }
 
@@ -129,7 +136,7 @@ final class NoteEditingSession: ObservableObject {
         dirty = event.dirty || currentRevision != savedRevision
         if dirty {
             if saveStatus != .externallyModified {
-                saveStatus = .saving
+                adoptSaveStatus(.saving)
             }
             scheduleSnapshot()
         }
@@ -211,18 +218,43 @@ final class NoteEditingSession: ObservableObject {
         guard revision <= currentRevision else { return false }
         savedRevision = max(savedRevision, revision)
         dirty = currentRevision != savedRevision
-        saveStatus = dirty ? .saving : status
+        adoptSaveStatus(dirty ? .saving : status)
         return true
     }
 
     func markSaveFailed(documentID: String) {
         guard self.documentID == documentID else { return }
-        saveStatus = .failed
+        adoptSaveStatus(.failed)
     }
 
     func markExternallyModified(documentID: String) {
         guard self.documentID == documentID else { return }
-        saveStatus = .externallyModified
+        adoptSaveStatus(.externallyModified)
+    }
+
+    private func adoptSaveStatus(_ status: NoteSaveStatus) {
+        let wasSaving = saveStatus == .saving
+        saveStatus = status
+        guard status == .saving else {
+            cancelSavingLabel()
+            return
+        }
+        guard !wasSaving else { return }
+        showsProlongedSavingLabel = false
+        let delay = savingLabelDelay
+        savingLabelTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled, saveStatus == .saving else { return }
+            showsProlongedSavingLabel = true
+        }
+    }
+
+    private func cancelSavingLabel() {
+        savingLabelTask?.cancel()
+        savingLabelTask = nil
+        if showsProlongedSavingLabel {
+            showsProlongedSavingLabel = false
+        }
     }
 
     @discardableResult

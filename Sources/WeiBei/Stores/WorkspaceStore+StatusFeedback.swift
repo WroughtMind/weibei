@@ -38,20 +38,31 @@ extension WorkspaceStore {
         inspirationAsWatermark = enabled
     }
 
-    func showTransientNoteStatus(_ message: String) {
+    func showTransientNoteStatus(_ message: String, revealURL: URL? = nil) {
         // S5: sole transient feedback channel (auto-expires). Identity is the
         // generation, not the text — the same sentence shown twice still gets its
         // own full 2.4s window, and only the newest generation may clear the slot.
+        // A Finder reveal stays until replaced, so the backup location remains reachable.
         transientNoteStatusGeneration += 1
         let generation = transientNoteStatusGeneration
         transientNoteStatusTask?.cancel()
         transientNoteStatus = message
+        transientNoteStatusRevealURL = revealURL
+        guard revealURL == nil else { return }
         transientNoteStatusTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 2_400_000_000)
             guard let self, !Task.isCancelled else { return }
             guard self.transientNoteStatusGeneration == generation else { return }
             self.transientNoteStatus = nil
+            self.transientNoteStatusRevealURL = nil
         }
+    }
+
+    func dismissTransientNoteStatus() {
+        transientNoteStatusGeneration += 1
+        transientNoteStatusTask?.cancel()
+        transientNoteStatus = nil
+        transientNoteStatusRevealURL = nil
     }
 
     func showImportantOperationError(_ message: String) {

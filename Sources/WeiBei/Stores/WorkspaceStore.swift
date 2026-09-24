@@ -658,6 +658,8 @@ final class WorkspaceStore: ObservableObject {
     @Published private var unresolvedContentCommands: [TrackedNoteEditorCommand] = []
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
+    /// 备份落点。有值时这条提示留着，直到用户打开访达或被下一条提示换掉。
+    @Published var transientNoteStatusRevealURL: URL?
     @Published private var noteSelectionTransitionState = NoteSelectionTransitionState.idle
     /// 卡死逃生:切换等待若长时间停在 .saving(如编辑器命令未回执、快照循环不收敛),
     /// 降级为失败态,让底部状态条的重试入口与新的切换恢复可用。只改状态,不动数据。
@@ -4122,14 +4124,6 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
             courseFileOperationProgress = nil
-            if !imported.isEmpty {
-                showTransientNoteStatus(
-                    ui(
-                        "已把 \(imported.count) 个文件移入课程目录。",
-                        "Moved \(imported.count) file(s) into the course folder."
-                    )
-                )
-            }
             completion(imported)
         }
     }
@@ -4700,9 +4694,9 @@ final class WorkspaceStore: ObservableObject {
         if draft.kind == .currentMaterial,
            let sourceItemID = draft.sourceItemID,
            let item = allItems.first(where: { $0.id == sourceItemID && $0.isCourseMaterial }) {
-            createNotebookNote(seed: .currentMaterial(item), title: title)
+            createNotebookNote(seed: .currentMaterial(item), title: title, keepsUserChosenFileName: true)
         } else {
-            createNotebookNote(seed: .blank, title: title, courseID: courseWorkspaceCourseID)
+            createNotebookNote(seed: .blank, title: title, courseID: courseWorkspaceCourseID, keepsUserChosenFileName: true)
         }
     }
 
@@ -6137,7 +6131,6 @@ final class WorkspaceStore: ObservableObject {
             importedItems[index].isNotebookNote = true
             removeLinksWhereSourceItemID(importedItems[index].id)
             select(itemID: importedItems[index].id)
-            showTransientNoteStatus(ui("已打开双链笔记：\(importedItems[index].subtitle)", "Opened wiki note: \(importedItems[index].subtitle)"))
             save()
             return
         }
@@ -6175,7 +6168,6 @@ final class WorkspaceStore: ObservableObject {
             }
             courseDocumentSearchIndex.synchronize(allItems)
             select(itemID: item.id)
-            showTransientNoteStatus(ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)"))
         } catch {
             recordCourseLibraryUIFailure(
                 error,
@@ -6194,7 +6186,8 @@ final class WorkspaceStore: ObservableObject {
         seed: NotebookNoteSeed,
         title rawTitle: String? = nil,
         initialMarkdown: String? = nil,
-        courseID: UUID? = nil
+        courseID: UUID? = nil,
+        keepsUserChosenFileName: Bool = false
     ) -> StudyItem? {
         let sourceItem: StudyItem?
         let defaultTitle = suggestedNotebookTitle(for: seed)
@@ -6252,7 +6245,7 @@ final class WorkspaceStore: ObservableObject {
                         "\(CourseLibraryLayout.commonNotesDirectoryName)/\(url.lastPathComponent)"
                 )
             }
-            let item = StudyItem(
+            var item = StudyItem(
                 id: Self.makeImportedItemID(),
                 title: url.deletingPathExtension().lastPathComponent,
                 subtitle: url.lastPathComponent,
@@ -6262,11 +6255,16 @@ final class WorkspaceStore: ObservableObject {
                 isNotebookNote: true,
                 storage: resolvedStorage
             )
+            if keepsUserChosenFileName {
+                item.customDisplayTitle = title
+            }
             let markdown = initialMarkdown
                 ?? defaultNotebookNote()
             try markdown.write(to: url, atomically: true, encoding: .utf8)
             noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(Data(markdown.utf8))
-            headingSyncedNoteStemByItemID[item.id] = url.deletingPathExtension().lastPathComponent
+            if !keepsUserChosenFileName {
+                headingSyncedNoteStemByItemID[item.id] = url.deletingPathExtension().lastPathComponent
+            }
             importedItems.append(item)
             courseDocumentSearchIndex.synchronize(allItems)
             if let sourceItem {

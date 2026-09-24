@@ -229,10 +229,6 @@ extension WorkspaceStore {
                             "Rename was aborted because the file identity at the destination did not match the original note. The original content was retained."
                         )
                     )
-                    showImportantOperationError(ui(
-                        "重命名已中止：目标文件身份异常。",
-                        "Rename aborted: unexpected file identity."
-                    ))
                     return
                 }
             }
@@ -290,7 +286,6 @@ extension WorkspaceStore {
             courseDocumentSearchIndex.synchronize(allItems)
             _ = await persistWorkspaceNow()
             notebookRenameDraft = nil
-            showTransientNoteStatus(ui("已重命名为：\(newURL.lastPathComponent)", "Renamed to: \(newURL.lastPathComponent)"))
         } catch {
             let originalContentDigest = Self.noteContentDigest(
                 Data(sourceMarkdown.utf8)

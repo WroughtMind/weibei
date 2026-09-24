@@ -405,4 +405,57 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertNotNil(store.noteEditorRecoveryConflict)
     }
 
+    func testCleanExternalEditAdoptsDiskWithoutExternalModificationLabel() async throws {
+        let base = makeTempRoot("weibei-external-adopt")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = try await makeStoreAsync(
+            base: base,
+            library: base.appendingPathComponent("资料库"),
+            backupRoot: base.appendingPathComponent("backups")
+        )
+        store.createBlankNotebookNote()
+        let note = try XCTUnwrap(store.activeNoteItem)
+        let url = try XCTUnwrap(note.url)
+        let external = "# 外部正文\n磁盘上的新内容\n"
+        try external.write(to: url, atomically: true, encoding: .utf8)
+
+        await store.reconcileActiveNoteEditorWithBackingFile()
+
+        XCTAssertEqual(store.noteEditingSession.saveStatus, .idle)
+        XCTAssertNotEqual(store.activeNoteSaveStatus, .externallyModified)
+        XCTAssertNil(store.noteEditorRecoveryConflict)
+        XCTAssertTrue(store.noteText.contains("磁盘上的新内容"))
+    }
+
+    func testUserNamedNoteKeepsFileNameAfterHeadingSave() throws {
+        let base = makeTempRoot("weibei-named-note")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = try makeStore(
+            base: base,
+            library: base.appendingPathComponent("资料库"),
+            backupRoot: base.appendingPathComponent("backups")
+        )
+        store.notebookCreationDraft = NotebookCreationDraft(
+            kind: .blank,
+            sourceItemID: nil,
+            title: "我的速记"
+        )
+        store.confirmNotebookNoteCreation()
+        let note = try XCTUnwrap(store.activeNoteItem)
+        let originalURL = try XCTUnwrap(note.url)
+        XCTAssertEqual(originalURL.deletingPathExtension().lastPathComponent, "我的速记")
+
+        store.persistNote("# 另一标题\n正文", for: note)
+
+        let current = try XCTUnwrap(store.importedItems.first { $0.id == note.id })
+        XCTAssertEqual(current.url?.lastPathComponent, "我的速记.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: originalURL.path))
+        XCTAssertEqual(try String(contentsOf: originalURL, encoding: .utf8), "# 另一标题\n正文")
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: originalURL.deletingLastPathComponent().appendingPathComponent("另一标题.md").path
+            )
+        )
+    }
+
 }

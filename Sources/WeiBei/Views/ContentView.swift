@@ -467,6 +467,12 @@ private struct WorkspaceStatusBanner: View {
         isImportant || isEditorCommandFailure || isNoteSelectionFailure
     }
 
+    private var showsBackupReveal: Bool {
+        !isAlert
+            && store.noteSelectionStatusMessage == nil
+            && store.transientNoteStatusRevealURL != nil
+    }
+
     private var message: String {
         store.importantOperationError
             ?? store.noteEditorCommandFailureMessage
@@ -531,6 +537,29 @@ private struct WorkspaceStatusBanner: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(store.ui("关闭错误提示", "Dismiss error")))
+            } else if showsBackupReveal {
+                Button {
+                    if let url = store.transientNoteStatusRevealURL {
+                        store.revealMaterialFileInFinder(url)
+                    }
+                } label: {
+                    Text(store.ui("在访达中显示", "Show in Finder"))
+                        .weiBeiText(12, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("在访达中显示备份", "Show backup in Finder")))
+                Button {
+                    store.dismissTransientNoteStatus()
+                } label: {
+                    Image(systemName: "xmark")
+                        .weiBeiText(10.5, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("关闭提示", "Dismiss notice")))
             }
         }
         .padding(.horizontal, 12)
@@ -548,7 +577,7 @@ private struct WorkspaceStatusBanner: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
-        .allowsHitTesting(isAlert)
+        .allowsHitTesting(isAlert || showsBackupReveal)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(store.ui("工作区状态提示", "Workspace status")))
     }
