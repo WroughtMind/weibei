@@ -578,6 +578,9 @@ private struct LibraryAwareEscapeBridge: View {
                 EscapeKeyBridge(onEscape: onDismissFloatingAgent)
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showDocumentSearch {
                 EscapeKeyBridge(onEscape: onHideReaderSearch)
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && !store.readerSourceHighlight.isEmpty {
+                // X8: Esc clears the source-reference jump highlight (search UI closed).
+                EscapeKeyBridge(onEscape: { store.clearReaderSourceHighlight() })
             }
         }
     }
@@ -1281,9 +1284,11 @@ private struct UnifiedTopBarView: View {
                 .foregroundStyle(readerSearchStatusColor)
                 .fixedSize()
                 .accessibilityLabel(Text(store.ui("搜索结果：", "Search results: ") + readerSearchResultStatus))
-            searchStepButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { moveReaderSearchResult(-1, focusResults: true) }
+            searchStepButton("chevron.up", help: store.ui("上一个匹配（⇧⌘G）", "Previous match (⇧⌘G)")) { moveReaderSearchResult(-1, focusResults: true) }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
                 .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
-            searchStepButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { moveReaderSearchResult(1, focusResults: true) }
+            searchStepButton("chevron.down", help: store.ui("下一个匹配（⌘G）", "Next match (⌘G)")) { moveReaderSearchResult(1, focusResults: true) }
+                .keyboardShortcut("g", modifiers: .command)
                 .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
         }
         if store.searchesNotes && !store.noteSearch.isEmpty {
@@ -1293,8 +1298,10 @@ private struct UnifiedTopBarView: View {
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .fixedSize()
             }
-            searchStepButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
-            searchStepButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
+            searchStepButton("chevron.up", help: store.ui("上一个匹配（⇧⌘G）", "Previous match (⇧⌘G)")) { store.noteSearchRequest &-= 1 }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+            searchStepButton("chevron.down", help: store.ui("下一个匹配（⌘G）", "Next match (⌘G)")) { store.noteSearchRequest &+= 1 }
+                .keyboardShortcut("g", modifiers: .command)
         }
         searchStepButton("xmark", help: store.ui("关闭查找", "Close search")) {
             store.hideDocumentSearch()

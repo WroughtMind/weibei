@@ -476,6 +476,14 @@ final class WorkspaceStore: ObservableObject {
             readerSourceHighlightPageIndex = nil
         }
     }
+
+    /// X8: 引用跳转留下的原文高亮，按 Esc 或点击文稿时清除。
+    /// 只作用于「点引用跳原文」的高亮；正常查找的高亮由查找浮层自己管理。
+    func clearReaderSourceHighlight() {
+        guard !readerSourceHighlight.isEmpty || readerSourceHighlightPageIndex != nil else { return }
+        readerSourceHighlight = ""
+        readerSourceHighlightPageIndex = nil
+    }
     @Published var noteSearch = "" {
         didSet { if noteSearch != oldValue { noteSearchFound = nil } }
     }
@@ -4252,6 +4260,15 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
+    /// R6: 读不出来的文稿在失败页提供「在访达中显示」，直接定位原文件。
+    func revealMaterialFileInFinder(_ url: URL) {
+#if targetEnvironment(macCatalyst)
+        CatalystDesktopWindow.shared.reveal(url)
+#else
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+#endif
+    }
+
     func revealCourseFolder(containing itemID: String, in requestedCourseID: UUID? = nil) {
         guard let courseID = courseItemMemberships.first(where: {
             $0.itemID == itemID
@@ -6319,13 +6336,14 @@ final class WorkspaceStore: ObservableObject {
         let reference: String
         if !selectionAttachments.isEmpty {
             reference = selectionAttachments
-                .map { quotedReferenceBlock(text: $0.text, sourceTitle: $0.ownerTitle) }
+                .map { quotedReferenceBlock(text: $0.text, sourceTitle: Self.userFacingReferenceTitle($0.ownerTitle)) }
                 .joined(separator: "\n\n")
         } else if let selectionContext, let selection, !selection.isEmpty {
-            reference = quotedReferenceBlock(text: selection, sourceTitle: selectionContext.ownerTitle)
+            reference = quotedReferenceBlock(text: selection, sourceTitle: Self.userFacingReferenceTitle(selectionContext.ownerTitle))
         } else {
             guard selectedMaterialItem != nil || activeNoteItem?.isNotebookNote == true else { return }
-            reference = ui("来源：\(currentSourceReferenceTitle)", "Source: \(currentSourceReferenceTitle)")
+            let title = Self.userFacingReferenceTitle(currentSourceReferenceTitle)
+            reference = ui("来源：\(title)", "Source: \(title)")
         }
 #if targetEnvironment(macCatalyst)
         UIPasteboard.general.string = reference
@@ -6333,6 +6351,17 @@ final class WorkspaceStore: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(reference, forType: .string)
 #endif
+    }
+
+    /// C9: ⌘⇧C 的输出是给人看的，剥掉内部定位用的「章节标识」段（文件内位置 ID）。
+    /// 内部引用标记（Agent 来源、选区锚点）不走这里，仍保留完整标题用于跳转。
+    nonisolated static func userFacingReferenceTitle(_ title: String) -> String {
+        guard let range = title.range(
+            of: #"(?:，章节标识：\s*[A-Za-z0-9._/#%+-]+|,\s*section\s*(?:id|identifier):?\s*[A-Za-z0-9._/#%+-]+)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) else { return title }
+        return title.replacingCharacters(in: range, with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func updateSelection(_ text: String, source: SelectionSource, anchor: SelectionPopoverAnchor? = nil, ownerTitle: String? = nil, isEditable: Bool = true, documentAnchor: SelectionDocumentAnchor? = nil) {

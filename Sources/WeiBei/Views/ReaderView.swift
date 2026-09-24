@@ -236,6 +236,9 @@ struct ReaderView: View {
     @State private var pdfBrowseMode: PDFBrowseMode = .scroll
     @State private var pdfPageIndex = 0
     @State private var pdfPageCount = 0
+    /// R6: true when the selected PDF exists on disk but PDFKit cannot parse or
+    /// unlock it — the reader then shows the failure page instead of blank paper.
+    @State private var pdfDocumentUnreadable = false
     @State private var pdfControlsHovering = false
     @State private var pdfControlsExpanded = false
     /// Two independent timers, two independent tokens: text auto-collapse and
@@ -254,7 +257,6 @@ struct ReaderView: View {
     @State private var pdfRailHoveredPageIndex: Int?
     @State private var htmlResourceIssues: [String] = []
     @State private var htmlIssueDetailsPresented = false
-    @State private var adaptsWebDocumentColors = false
     @State private var htmlContentRailItems: [ContentRailItem] = []
     @State private var htmlContentRailActiveID: String?
     @State private var htmlContentRailTarget: WebReaderContentRailTarget?
@@ -393,7 +395,6 @@ struct ReaderView: View {
         .onChange(of: store.selectedMaterialItem?.id) { _, _ in
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
-            adaptsWebDocumentColors = false
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         // Width/height probe as background sibling — never parent of WKWebView/PDFView.
@@ -437,6 +438,7 @@ struct ReaderView: View {
             pdfPageIndex = 0
             pdfPageCount = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? 1 : 0
             pdfHasSelectableText = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? true : nil
+            pdfDocumentUnreadable = false
             pdfContentRailItems = []
             pdfRailTargetPageIndex = nil
             pdfRailHoveredPageIndex = nil
@@ -791,11 +793,9 @@ struct ReaderView: View {
         if supportsImportedDocumentColorAdaptation {
             Button {
                 withAnimation(WeiBeiMotion.appearance) {
-                    if store.selectedMaterialItem?.kind.isWebDocument == true {
-                        adaptsWebDocumentColors.toggle()
-                    } else {
-                        store.toggleImportedDocumentColorAdaptation()
-                    }
+                    // R11: HTML/Office shares the PDF's persisted global preference
+                    // instead of a per-document local that resets on every switch.
+                    store.toggleImportedDocumentColorAdaptation()
                 }
             } label: {
                 Image(systemName: "eyeglasses")
@@ -854,7 +854,7 @@ struct ReaderView: View {
     }
 
     private var adaptsSelectedDocumentColors: Bool {
-        store.selectedMaterialItem?.kind.isWebDocument == true ? adaptsWebDocumentColors : store.adaptImportedDocumentColors
+        store.adaptImportedDocumentColors
     }
 
     private var importedDocumentAdaptationLabel: String {
@@ -869,11 +869,12 @@ struct ReaderView: View {
               let requestID = pendingPDFPageRequestID,
               store.selectedMaterialItem?.kind == .pdf,
               pdfPageCount > 0 else { return }
-        pdfBrowseMode = .page
-        let resolvedPageIndex = min(max(target, 0), max(pdfPageCount - 1, 0))
-        pdfPageIndex = resolvedPageIndex
+        // R2: 跳页不改变浏览模式；滚动模式通过 rail 目标（PDFView.go(to:)）跳页。
+        let plan = PDFPageJumpPlan.resolve(targetPageIndex: target, pageCount: pdfPageCount, browseMode: pdfBrowseMode)
+        pdfRailTargetPageIndex = plan.railTargetPageIndex
+        pdfPageIndex = plan.pageIndex
         if pendingPDFPageRecordsLocation {
-            schedulePDFLocationCommit(resolvedPageIndex)
+            schedulePDFLocationCommit(plan.pageIndex)
         }
         pendingPDFPageIndex = nil
         pendingPDFPageRequestID = nil
@@ -1091,6 +1092,10 @@ struct ReaderView: View {
             switch item.kind {
             case .pdf:
                 if let url = item.url {
+                    if pdfDocumentUnreadable {
+                        // R6: damaged or password-locked PDF — say so instead of blank paper.
+                        MaterialReadFailureView(fileName: store.displayTitle(for: item), revealURL: url)
+                    } else {
                     PDFReaderRepresentable(
                         url: url,
                         browseMode: pdfBrowseMode,
@@ -1127,7 +1132,9 @@ struct ReaderView: View {
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
                         onUserPageChange: schedulePDFLocationCommit,
-                        onSelectableTextChange: { available in pdfHasSelectableText = available }
+                        onSelectableTextChange: { available in pdfHasSelectableText = available },
+                        onDocumentTap: { store.clearReaderSourceHighlight() },
+                        onDocumentReadabilityChange: { readable in pdfDocumentUnreadable = !readable }
                     ) { text, anchor, selectionPageIndex, documentAnchor in
                         let title = store.displayTitle(for: item)
                         let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
@@ -1139,6 +1146,7 @@ struct ReaderView: View {
                             ownerTitle: ownerTitle,
                             documentAnchor: documentAnchor.map { SelectionDocumentAnchor(pdf: $0) }
                         )
+                    }
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -1155,7 +1163,7 @@ struct ReaderView: View {
                         searchReturnRequest: paneState.readerSearchReturnRequest,
                         onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
                         appearanceMode: store.appearanceMode,
-                        adaptsDocumentColors: adaptsWebDocumentColors,
+                        adaptsDocumentColors: store.adaptImportedDocumentColors,
                         hidesHostedDocument: store.materialPickerPresented,
                         onResourceIssuesChange: { htmlResourceIssues = $0 },
                         contentRailTarget: htmlContentRailTarget,
@@ -1170,7 +1178,8 @@ struct ReaderView: View {
                         },
                         onSelectionRemarkMark: { recordID, anchor in
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
-                        }
+                        },
+                        onDocumentTap: { store.clearReaderSourceHighlight() }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
@@ -1201,13 +1210,15 @@ struct ReaderView: View {
                         maximumByteCount: CourseProjectFileWorker
                             .markdownMaximumByteCount
                     ),
-                   let text = String(data: data, encoding: .utf8) {
+                   let text = Self.decodeTextMaterial(data) {
                     PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode,
                         searchNavigationRequest: paneState.readerSearchNavigationRequest,
                         searchRequestedIndex: paneState.readerSearchRequestedIndex,
                         searchSessionID: paneState.readerSearchSessionID,
                         searchReturnRequest: paneState.readerSearchReturnRequest,
-                        onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) }) { text, anchor in
+                        onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
+                        underlineSnippets: store.selectionAskThreads(forItemID: item.id).map(\.selectionText),
+                        onDocumentTap: { store.clearReaderSourceHighlight() }) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
                 } else {
@@ -1243,13 +1254,26 @@ struct ReaderView: View {
         guard let data = try? CourseProjectFileWorker.readBoundedRegularFile(
             at: url,
             maximumByteCount: CourseProjectFileWorker.markdownMaximumByteCount
-        ), let text = String(data: data, encoding: .utf8) else {
+        ), let text = Self.decodeTextMaterial(data) else {
             markdownSnapshotText = nil
             markdownSnapshotFailed = true
             return
         }
         markdownSnapshotText = text
         markdownSnapshotFailed = false
+    }
+
+    /// R6: 中文讲义常见 GBK/GB18030 编码；UTF-8 解不开时用 GB18030 再试一次，
+    /// 两种都失败才按读不出来处理。
+    static let gb18030TextEncoding = String.Encoding(
+        rawValue: CFStringConvertEncodingToNSStringEncoding(
+            CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+        )
+    )
+
+    static func decodeTextMaterial(_ data: Data) -> String? {
+        if let text = String(data: data, encoding: .utf8) { return text }
+        return String(data: data, encoding: ReaderView.gb18030TextEncoding)
     }
 
     private func markdownReader(markdown: String, markdownBaseURL: URL?) -> some View {
@@ -1313,6 +1337,25 @@ enum WebReaderContentRailEventReason: String {
 struct WebReaderContentRailActiveChange {
     var id: String?
     var reason: WebReaderContentRailEventReason
+}
+
+/// R2: 跳页请求（引用跳原文、继续上次、目录跳页）的落地计划。
+/// 浏览模式保持用户当前选择；滚动模式用 rail 目标（`PDFView.go(to:)`）跳页，
+/// 翻页模式只改页码。
+struct PDFPageJumpPlan: Equatable {
+    var browseMode: PDFBrowseMode
+    var pageIndex: Int
+    var railTargetPageIndex: Int?
+
+    static func resolve(targetPageIndex: Int, pageCount: Int, browseMode: PDFBrowseMode) -> PDFPageJumpPlan {
+        let resolved = min(max(targetPageIndex, 0), max(pageCount - 1, 0))
+        switch browseMode {
+        case .scroll:
+            return PDFPageJumpPlan(browseMode: .scroll, pageIndex: resolved, railTargetPageIndex: resolved)
+        case .page:
+            return PDFPageJumpPlan(browseMode: .page, pageIndex: resolved, railTargetPageIndex: nil)
+        }
+    }
 }
 
 enum PDFBrowseMode: String, CaseIterable, Identifiable {
@@ -1406,6 +1449,10 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
+    /// X8: fired on a plain tap/click inside the document (ask-underline hits excluded).
+    var onDocumentTap: () -> Void = {}
+    /// R6: false when PDFKit cannot parse or unlock the file — the host swaps in a failure page.
+    var onDocumentReadabilityChange: (Bool) -> Void = { _ in }
     var onSelectionChange: (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -1464,6 +1511,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             guard let view, let coordinator else { return false }
             return coordinator.handleSelectionMarkClick(at: point, in: view)
         }
+        view.handleTapInDocument = { [weak coordinator = context.coordinator] in
+            coordinator?.onDocumentTap()
+        }
         return view
     }
 
@@ -1491,6 +1541,8 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.onSearchResults = onSearchResults
         context.coordinator.onAskUnderlineActivate = onAskUnderlineActivate
         context.coordinator.onRemarkMarkActivate = onRemarkMarkActivate
+        context.coordinator.onDocumentTap = onDocumentTap
+        context.coordinator.onDocumentReadabilityChange = onDocumentReadabilityChange
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
 
@@ -1597,6 +1649,8 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var askUnderlineHits: [(threadID: String, pageIndex: Int, hitBounds: CGRect)] = []
         private var hoveredAskThreadID: String?
         var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+        var onDocumentTap: () -> Void = {}
+        var onDocumentReadabilityChange: (Bool) -> Void = { _ in }
         var remarkHits: [PDFRemarkMarkHit] = []
         var hoveredRemarkRecordID: String?
         var activeRemarkRecordID: String?
@@ -1653,10 +1707,16 @@ struct PDFReaderRepresentable: ReaderRepresentable {
 
             DispatchQueue.global(qos: .userInitiated).async {
                 let document = PDFDocument(url: url)
-                let firstPageHasText = document.flatMap { $0.page(at: 0) }
-                    .map(PDFReaderOpenSafety.pageHasNativeText) ?? false
+                // R6: nil = unparsable file; isLocked = needs a password PDFKit
+                // doesn't have. Either way the reader shows a failure page.
+                let isReadable = document.map { !$0.isLocked } ?? false
+                let firstPageHasText = isReadable
+                    ? (document.flatMap { $0.page(at: 0) }
+                        .map(PDFReaderOpenSafety.pageHasNativeText) ?? false)
+                    : false
                 DispatchQueue.main.async { [weak self, weak view] in
                     guard let self, let view, self.loadGeneration == generation, self.loadedURL == url else { return }
+                    self.onDocumentReadabilityChange(isReadable)
                     #if !targetEnvironment(macCatalyst)
                     PDFReaderOpenSafety.disableAccessibilityTree(on: view)
 #endif
@@ -1867,6 +1927,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 if phase == .ended || phase == .cancelled { self.selectionReportGate.endTracking() }
                 self.reportCurrentSelection(in: view)
             }
+            (view as? ReaderPDFView)?.onScrollNavigation = { [weak self] in
+                self?.markUserNavigationIntent()
+            }
 #else
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel, .keyDown]) { [weak self, weak view] event in
                 guard let self, let view, event.window === view.window else { return event }
@@ -1932,6 +1995,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             }
 #if targetEnvironment(macCatalyst)
             (observedView as? ReaderPDFView)?.onPointerEvent = nil
+            (observedView as? ReaderPDFView)?.onScrollNavigation = nil
 #else
             if let eventMonitor {
                 NSEvent.removeMonitor(eventMonitor)
@@ -2266,6 +2330,9 @@ final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
     var handleAskUnderlineHover: ((CGPoint) -> Void)?
     var handleAskUnderlineClick: ((CGPoint) -> Bool)?
+    /// X8: plain click inside the document (not on an ask-underline) — clears the
+    /// source-reference jump highlight, mirroring the Catalyst tap path.
+    var handleTapInDocument: (() -> Void)?
     private var adaptsDocumentColors = true
     private var documentAppearanceMode: WeiBeiAppearanceMode = .paper
     private var trackingArea: NSTrackingArea?
@@ -2328,6 +2395,7 @@ final class ReaderPDFView: PDFView {
         if handleAskUnderlineClick?(point) == true {
             return
         }
+        handleTapInDocument?()
         super.mouseDown(with: event)
         reportCurrentSelection?()
     }
@@ -2797,6 +2865,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
     var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var selectionRemarkMarks: String = "[]"
     var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+    /// X8: plain click in the HTML/Office document, not on an ask or remark mark.
+    var onDocumentTap: () -> Void = {}
 
     var onResourceIssuesChange: ([String]) -> Void = { _ in }
 
@@ -2870,6 +2940,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
         onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
+        onDocumentTap: @escaping () -> Void = {},
         onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.html = nil
@@ -2892,6 +2963,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.onContentRailActiveChange = onContentRailActiveChange
         self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionRemarkMark = onSelectionRemarkMark
+        self.onDocumentTap = onDocumentTap
         self.onSelectionChange = onSelectionChange
     }
 
@@ -3006,6 +3078,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         context.coordinator.onContentRailActiveChange = onContentRailActiveChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
         context.coordinator.onSelectionRemarkMark = onSelectionRemarkMark
+        context.coordinator.onDocumentTap = onDocumentTap
         context.coordinator.contentRailTarget = contentRailTarget
         context.coordinator.selectionAskMarks = selectionAskMarks
         context.coordinator.selectionRemarkMarks = selectionRemarkMarks
@@ -3115,11 +3188,13 @@ struct WebReaderRepresentable: ReaderRepresentable {
       }
 
       document.addEventListener("selectionchange", reportSelection);
-      document.addEventListener("pointerdown", () => {
+      document.addEventListener("pointerdown", (event) => {
         if (window.weiBeiSuppressSelectionReport) return;
         window.clearTimeout(selectionReportTimer);
         window.clearTimeout(selectionEndTimer);
-        lastPayload = { text: "", x: null, y: null };
+        const target = event.target;
+        const onMark = target instanceof Element && target.closest(".weibei-selection-ask-mark, .weibei-remark-mark");
+        lastPayload = { text: "", x: null, y: null, clearSourceHighlight: !onMark };
         window.webkit.messageHandlers.selection.postMessage(lastPayload);
       }, true);
       document.addEventListener("pointerup", reportFinishedSelection);
@@ -3497,6 +3572,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+        var onDocumentTap: () -> Void = {}
         var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void
         var onContentRailChange: ([WebReaderContentRailSection]) -> Void
         var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
@@ -3746,6 +3822,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
                let bodyText = body["text"] as? String {
                 text = bodyText
                 anchor = Self.anchor(from: body, in: webView)
+                if body["clearSourceHighlight"] as? Bool == true {
+                    Task { @MainActor in self.onDocumentTap() }
+                }
             } else if let bodyText = message.body as? String {
                 text = bodyText
                 anchor = nil
@@ -3910,12 +3989,22 @@ private struct MarkdownReadFailureView: View {
 private struct MaterialReadFailureView: View {
     @EnvironmentObject private var store: WorkspaceStore
     var fileName: String
+    /// R6: set when the original file exists on disk but the reader cannot parse
+    /// it (e.g. damaged or password-locked PDF) — offer a way to locate the file.
+    var revealURL: URL?
 
     var body: some View {
         ReaderStateMessage(
             title: store.ui("无法读取资料", "Could not read material"),
             detail: fileName,
-            systemImage: "exclamationmark.triangle"
+            systemImage: "exclamationmark.triangle",
+            action: revealURL.map { url in
+                ReaderStateMessageAction(
+                    title: store.ui("在访达中显示", "Reveal in Finder")
+                ) {
+                    store.revealMaterialFileInFinder(url)
+                }
+            }
         )
     }
 }
@@ -3938,10 +4027,16 @@ private struct NotebookSelectedReaderView: View {
     }
 }
 
+private struct ReaderStateMessageAction {
+    var title: String
+    var handler: () -> Void
+}
+
 private struct ReaderStateMessage: View {
     var title: String
     var detail: String
     var systemImage: String
+    var action: ReaderStateMessageAction?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -3956,6 +4051,15 @@ private struct ReaderStateMessage: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
+            if let action {
+                Button(action.title) {
+                    action.handler()
+                }
+                .weiBeiText(12, weight: .medium)
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
         }
         .frame(maxWidth: 320)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -4000,6 +4104,9 @@ private struct PlainTextReaderView: View {
     var searchSessionID = 0
     var searchReturnRequest = 0
     var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
+    /// X8: asked-selection underlines for THIS material only, filtered by the caller.
+    var underlineSnippets: [String] = []
+    var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
 
     var body: some View {
@@ -4013,7 +4120,8 @@ private struct PlainTextReaderView: View {
             onSearchResults: onSearchResults,
             appearanceMode: appearanceMode,
             hidesHostedDocument: store.materialPickerPresented,
-            underlineSnippets: store.selectionAskThreads.map(\.selectionText),
+            underlineSnippets: underlineSnippets,
+            onDocumentTap: onDocumentTap,
             onSelectionChange: onSelectionChange
         )
 #if !targetEnvironment(macCatalyst)
@@ -4034,6 +4142,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
     var hidesHostedDocument = false
     var underlineSnippets: [String]
+    var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -4055,6 +4164,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         applyTheme(to: textView)
         applyAttributedText(to: textView, coordinator: context.coordinator)
         textView.delegate = context.coordinator
+        textView.onDocumentTap = onDocumentTap
         textView.textContainerInset = NSSize(width: 18, height: 18)
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
@@ -4065,7 +4175,8 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         scrollView.isHidden = hidesHostedDocument
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+        guard let textView = scrollView.documentView as? ReaderSelectableTextView else { return }
+        textView.onDocumentTap = onDocumentTap
         context.coordinator.onSearchResults = onSearchResults
         context.coordinator.navigationRequest = searchNavigationRequest
         context.coordinator.requestedIndex = searchRequestedIndex
@@ -4240,12 +4351,15 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 }
 
 private class ReaderSelectableTextView: NSTextView {
+    var onDocumentTap: () -> Void = {}
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        onDocumentTap()
         super.mouseDown(with: event)
     }
 }
