@@ -4721,6 +4721,14 @@ final class WorkspaceStore: ObservableObject {
             }
             showLibrary = true
         }
+        if pane == .reader, !showReader {
+            revealDocumentPane(.reader)
+            return
+        }
+        if pane == .notes, !showNotes {
+            revealDocumentPane(.notes)
+            return
+        }
         if pane == .agent {
             if layout == .immersiveReading || layout == .immersiveWriting {
                 // Primary chat is immersive conversation, not a deleted overlay surface.
@@ -4729,6 +4737,9 @@ final class WorkspaceStore: ObservableObject {
                 if agentSurface != .selectionFloat {
                     agentSurface = .hidden
                 }
+            } else if !showAgent {
+                revealDocumentPane(.agent)
+                return
             }
         }
         collapseSelectionFloatIntoConversationIfVisible()
@@ -4806,13 +4817,20 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// ⌘J：按窗格角色在「只看文稿」和「三栏都打开」之间切换，不看左右位置。
+    /// 沉浸对话没有文稿栏，这个动作不适用。
     func toggleRightPane() {
-        guard layout.hasCollapsibleRightPane else { return }
-        recordNavigationPoint()
-        showRightPane.toggle()
-        clearUnpinnedFloatingSelection()
-        focus(showRightPane ? rightPaneRevealFocus : fallbackDocumentPaneFocus())
-        save()
+        guard layout != .immersiveConversation else { return }
+        let showingThree = layout.isDocumentThreePane && showReader && showAgent && showNotes
+        if showingThree {
+            recordNavigationPoint()
+            clearUnpinnedFloatingSelection()
+            paneState.setDocumentPanes(reader: true, agent: false, notes: false)
+            focus(.reader)
+            save()
+        } else {
+            setLayout(.documentAgentNotes)
+        }
     }
 
     func revealRightPane(focusing pane: PaneFocus = .notes) {
@@ -5348,6 +5366,9 @@ final class WorkspaceStore: ObservableObject {
         self.layout = layout
         if let order = presetOrder {
             threePaneOrder = order
+        }
+        if layout.isDocumentThreePane {
+            paneState.setDocumentPanes(reader: true, agent: true, notes: true)
         }
         let nextFocus: PaneFocus = switch layout {
         case .immersiveConversation:

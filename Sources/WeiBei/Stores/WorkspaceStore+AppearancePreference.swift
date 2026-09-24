@@ -154,6 +154,12 @@ extension WorkspaceStore {
 #endif
     }
 
+    /// Same action as the toolbar moon button: flip the light/dark preference
+    /// inside the current style pair. Does not cycle the eight themes.
+    func toggleLightDarkAppearance() {
+        appearancePreference = appearanceMode.isDark ? .light : .dark
+    }
+
     /// 系统深浅切换（或切到“跟随系统”）时换到同对伙伴；静态浅色/深色不动。
     /// 选中风格卡不触发即时翻转——显式选择优先，下次系统变化才重新配对。
     func refreshAppearanceForSystemChange() {

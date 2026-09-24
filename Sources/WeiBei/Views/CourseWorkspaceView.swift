@@ -89,7 +89,11 @@ struct CourseWorkspaceView: View {
                 EscapeKeyBridge(
                     isEnabled: !showsNewNotePrompt
                 ) {
-                    store.dismissCourseWorkspace()
+                    if !search.isEmpty {
+                        search = ""
+                    } else {
+                        store.dismissCourseWorkspace()
+                    }
                 }
             }
         }
