@@ -1,7 +1,10 @@
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
-#if canImport(AppKit)
+#if targetEnvironment(macCatalyst)
+import QuickLookThumbnailing
+import UIKit
+#elseif canImport(AppKit)
 import AppKit
 #endif
 
@@ -159,14 +162,8 @@ public enum MarkdownAttachmentStore {
 
     /// Rasterises SVG artwork to PNG — no script-capable vector ever reaches disk.
     static func rasterizedSVG(data: Data) throws -> StoredImage {
-        #if canImport(AppKit)
         let undecodable = attachmentError(code: 4, message: "SVG 图片无法解码")
-        guard let image = NSImage(data: data),
-              image.size.width > 0, image.size.height > 0 else { throw undecodable }
-        var proposedRect = NSRect(origin: .zero, size: image.size)
-        guard let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
-            throw undecodable
-        }
+        guard let cgImage = cgImageByRasterizingSVG(data) else { throw undecodable }
         let longEdge = max(cgImage.width, cgImage.height)
         if longEdge > downscaledImageLongEdge {
             guard let fitted = downscaledThumbnail(CGImageSourceCreateWithData(
@@ -178,9 +175,86 @@ public enum MarkdownAttachmentStore {
         }
         guard let png = encodedImage(cgImage, typeIdentifier: UTType.png.identifier) else { throw undecodable }
         return StoredImage(data: png, fileExtension: "png")
+    }
+
+    static func cgImageByRasterizingSVG(_ data: Data) -> CGImage? {
+        #if targetEnvironment(macCatalyst)
+        guard let pointSize = svgPointSize(data) else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("svg")
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            return nil
+        }
+        defer { try? FileManager.default.removeItem(at: url) }
+        let scale = max(UIScreen.main.scale, 1)
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url,
+            size: pointSize,
+            scale: scale,
+            representationTypes: .thumbnail
+        )
+        final class Slot { var image: CGImage? }
+        let slot = Slot()
+        let semaphore = DispatchSemaphore(value: 0)
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
+            slot.image = representation?.cgImage
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + 10) == .success else { return nil }
+        return slot.image
+        #elseif canImport(AppKit)
+        guard let image = NSImage(data: data),
+              image.size.width > 0, image.size.height > 0 else { return nil }
+        var proposedRect = NSRect(origin: .zero, size: image.size)
+        return image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
         #else
-        throw attachmentError(code: 4, message: "此平台无法保存 SVG 图片")
+        _ = data
+        return nil
         #endif
+    }
+
+    /// Point size NSImage would use: explicit lengths, otherwise the viewBox,
+    /// with percentages resolved against that viewBox.
+    static func svgPointSize(_ data: Data) -> CGSize? {
+        let text = String(decoding: data.prefix(16_384), as: UTF8.self)
+        guard let start = text.range(of: "<svg", options: .caseInsensitive) else { return nil }
+        let rest = text[start.lowerBound...]
+        guard let end = rest.range(of: ">") else { return nil }
+        let tag = String(rest[..<end.lowerBound])
+        let viewBox = svgAttribute("viewBox", in: tag)?
+            .split(whereSeparator: { $0.isWhitespace || $0 == "," })
+            .compactMap { Double($0) }
+        let viewWidth = viewBox?.count == 4 ? viewBox?[2] : nil
+        let viewHeight = viewBox?.count == 4 ? viewBox?[3] : nil
+        func length(_ name: String, relativeTo view: Double?) -> Double? {
+            guard let raw = svgAttribute(name, in: tag)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { return view }
+            if raw.hasSuffix("%"), let view, let percent = Double(raw.dropLast()) {
+                return view * percent / 100
+            }
+            let numeric = raw.drop(while: { $0.isNumber || $0 == "." || $0 == "-" })
+            let digits = raw.dropLast(numeric.count)
+            guard let value = Double(digits), value > 0 else { return nil }
+            return value
+        }
+        guard let width = length("width", relativeTo: viewWidth),
+              let height = length("height", relativeTo: viewHeight),
+              width > 0, height > 0 else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    static func svgAttribute(_ name: String, in tag: String) -> String? {
+        let pattern = "(?i)\\b\(NSRegularExpression.escapedPattern(for: name))\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')"
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) else {
+            return nil
+        }
+        let range = match.range(at: 1).location != NSNotFound ? match.range(at: 1) : match.range(at: 2)
+        guard let swiftRange = Range(range, in: tag) else { return nil }
+        return String(tag[swiftRange])
     }
 
     /// Largest single-frame pixel count; unreadable frame metadata is treated as

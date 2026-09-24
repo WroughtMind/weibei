@@ -21,7 +21,7 @@ public enum CourseLibraryLayout {
         // ~/Documents 常被 iCloud「桌面与文稿」同步接管，占位符与同步冲突
         // 会直接干扰课程文件。仅影响从未配置过资料库的新安装；已配置的
         // 用户靠 workspace.json 里的 courseLibraryRootPath 原样重连。
-        return FileManager.default.homeDirectoryForCurrentUser
+        return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent(defaultFolderName, isDirectory: true)
     }
 }
