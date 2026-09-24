@@ -43,6 +43,7 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
     public static func payload(for request: NativeLLMRequest, groundingSearch: Bool = false) -> [String: Any] {
         var contents: [[String: Any]] = []
         var system: String?
+        var callNames: [String: String] = [:]
         for message in request.messages {
             switch message.role {
             case .system:
@@ -54,20 +55,34 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
                 if !message.content.isEmpty { parts.append(["text": message.content]) }
                 if let calls = message.toolCalls {
                     for call in calls {
+                        if !call.id.isEmpty { callNames[call.id] = call.name }
                         let args = (try? JSONSerialization.jsonObject(with: Data(call.arguments.utf8))) ?? [:]
-                        parts.append(["functionCall": ["name": call.name, "args": args]])
+                        var functionCall: [String: Any] = ["name": call.name, "args": args]
+                        if !call.id.isEmpty { functionCall["id"] = call.id }
+                        parts.append(["functionCall": functionCall])
                     }
                 }
                 contents.append(["role": "model", "parts": parts])
             case .tool:
-                var parts: [[String: Any]] = [[
-                    "functionResponse": [
-                        "name": message.toolCallID ?? "tool",
-                        "response": ["output": message.content],
-                    ],
-                ]]
+                let callID = message.toolCallID ?? ""
+                let name = callNames[callID] ?? (callID.isEmpty ? "tool" : callID)
+                var functionResponse: [String: Any] = [
+                    "name": name,
+                    "response": ["output": message.content],
+                ]
+                if !callID.isEmpty { functionResponse["id"] = callID }
+                var parts: [[String: Any]] = [["functionResponse": functionResponse]]
                 parts.append(contentsOf: Self.inlineImageParts(message.images))
-                contents.append(["role": "user", "parts": parts])
+                if var last = contents.last,
+                   last["role"] as? String == "user",
+                   var lastParts = last["parts"] as? [[String: Any]],
+                   lastParts.contains(where: { $0["functionResponse"] != nil }) {
+                    lastParts.append(contentsOf: parts)
+                    last["parts"] = lastParts
+                    contents[contents.count - 1] = last
+                } else {
+                    contents.append(["role": "user", "parts": parts])
+                }
             }
         }
         var payload: [String: Any] = ["contents": contents]
@@ -184,7 +199,10 @@ public struct GoogleGenerativeAIProvider: NativeLLMAdapter {
                 let name = call["name"] as? String ?? ""
                 let args = call["args"] ?? [:]
                 let json = (try? JSONSerialization.data(withJSONObject: args)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-                chunks.append(.toolCallDelta(index: index, id: name, name: name, argumentsDelta: json))
+                let provided = (call["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let responseID = (object["responseId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let id = !provided.isEmpty ? provided : (!responseID.isEmpty ? "\(responseID)#\(index)" : "\(name)#\(index)#\(UUID().uuidString)")
+                chunks.append(.toolCallDelta(index: index, id: id, name: name, argumentsDelta: json))
             }
         }
         if let finish = candidate["finishReason"] as? String, finish != "FINISH_REASON_UNSPECIFIED" {

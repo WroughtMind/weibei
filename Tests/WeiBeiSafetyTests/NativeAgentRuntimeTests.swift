@@ -2072,6 +2072,42 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(chatParts.first?["type"] as? String, "image_url")
     }
 
+    func testGeminiSameToolCallsKeepDistinctIDs() throws {
+        let raw = """
+        {"responseId":"resp-1","candidates":[{"content":{"parts":[
+          {"functionCall":{"name":"weibei_course_read","args":{"page":31}}},
+          {"functionCall":{"name":"weibei_course_read","args":{"page":32}}}
+        ]},"finishReason":"STOP"}]}
+        """
+        let chunks = try GoogleGenerativeAIProvider.translate(raw)
+        let ids = chunks.compactMap { chunk -> String? in
+            if case let .toolCallDelta(_, id, _, _) = chunk { return id }
+            return nil
+        }
+        XCTAssertEqual(ids, ["resp-1#0", "resp-1#1"])
+
+        let request = NativeLLMRequest(model: "gemini-2.5-flash", messages: [
+            NativeModelMessage(
+                role: .assistant,
+                content: "",
+                toolCalls: [
+                    NativeToolCall(id: "resp-1#0", name: "weibei_course_read", arguments: "{\"page\":31}"),
+                    NativeToolCall(id: "resp-1#1", name: "weibei_course_read", arguments: "{\"page\":32}"),
+                ]
+            ),
+            NativeModelMessage(role: .tool, content: "第31页", toolCallID: "resp-1#0"),
+            NativeModelMessage(role: .tool, content: "第32页", toolCallID: "resp-1#1"),
+        ])
+        let contents = GoogleGenerativeAIProvider.payload(for: request)["contents"] as? [[String: Any]] ?? []
+        let calls = (contents[0]["parts"] as? [[String: Any]] ?? []).compactMap { $0["functionCall"] as? [String: Any] }
+        let responses = (contents[1]["parts"] as? [[String: Any]] ?? []).compactMap { $0["functionResponse"] as? [String: Any] }
+        XCTAssertEqual(calls.compactMap { $0["id"] as? String }, ["resp-1#0", "resp-1#1"])
+        XCTAssertEqual(calls.compactMap { $0["name"] as? String }, ["weibei_course_read", "weibei_course_read"])
+        XCTAssertEqual(responses.compactMap { $0["id"] as? String }, ["resp-1#0", "resp-1#1"])
+        XCTAssertEqual(responses.compactMap { $0["name"] as? String }, ["weibei_course_read", "weibei_course_read"])
+        XCTAssertEqual(contents[1]["role"] as? String, "user")
+    }
+
     func testResponsesToolFollowUpKeepsCallNextToItsOutput() {
         let input = OpenAIResponsesProvider.assembleInput([
             NativeModelMessage(role: .user, content: "解释一下"),
