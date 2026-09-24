@@ -152,7 +152,7 @@ struct CommandPaletteView: View {
                     detail: store.ui("对话", "Chat") + " · " + hit.courseTitle,
                     snippet: hit.result.matchedText,
                     resultID: hit.id,
-                    action: { store.openGlobalSearchHit(hit) }
+                    action: { store.openGlobalSearchHit(hit, query: query) }
                 )
             }
             return searched + chats.filter { $0.title.localizedCaseInsensitiveContains(query) }
@@ -171,7 +171,7 @@ struct CommandPaletteView: View {
                 detail: "\(kind) · \(hit.courseTitle)",
                 snippet: hit.result.matchedText,
                 resultID: hit.id,
-                action: { store.openGlobalSearchHit(hit) }
+                action: { store.openGlobalSearchHit(hit, query: query) }
             )
         }
         return content + commands.filter { $0.title.localizedCaseInsensitiveContains(query) }

@@ -763,10 +763,15 @@ struct CourseProjectEntrySheet: View {
 
     private func createCourse() {
         perform(
-            failureMessage: store.ui(
-                "课程没有创建完成，魏碑未确认登记；已有课程记录不受影响。请确认资料库可写后重试。",
-                "The course was not created or registered. Existing course records are unaffected. Make sure the library is writable and try again."
-            ),
+            failureMessageFor: { error in
+                if let root = error as? CourseProjectRootError {
+                    return root.userFacingDescription(language: store.interfaceLanguage)
+                }
+                return store.ui(
+                    "课程没有创建完成。原因：\(error.localizedDescription)",
+                    "The course was not created. Reason: \(error.localizedDescription)"
+                )
+            },
             operation: "create_course",
             path: store.courseLibraryRootURL
         ) {

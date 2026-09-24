@@ -1240,10 +1240,7 @@ struct ReaderView: View {
     private func reportSearchResults(_ query: String, _ results: [ReaderSearchResult], _ index: Int, for materialID: String) {
         guard store.selectedMaterialItem?.id == materialID,
               ReaderSearch.cleaned(store.readerSearch) == query else { return }
-        paneState.readerSearchResults = results
-        paneState.readerSearchResultIndex = index
-        paneState.readerSearchResultQuery = query
-        paneState.readerSearchResultMaterialID = materialID
+        paneState.adoptReaderSearchResults(results, reportedIndex: index, query: query, materialID: materialID)
     }
 
     private func loadMarkdownSnapshot() {

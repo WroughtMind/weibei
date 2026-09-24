@@ -24,6 +24,20 @@ public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable
     /// Same as `label` — kept for call sites that used the old "中文界面" wording.
     public var settingsLabel: String { label }
 
+    /// First launch only. A saved `interfaceLanguageRaw` always wins over this.
+    public static func matchingPreferredLanguages(_ languages: [String]) -> WeiBeiInterfaceLanguage {
+        for language in languages {
+            let code = language.lowercased()
+            if code.hasPrefix("zh") { return .chinese }
+            if code.hasPrefix("en") { return .english }
+        }
+        return .english
+    }
+
+    public static var preferred: WeiBeiInterfaceLanguage {
+        matchingPreferredLanguages(Locale.preferredLanguages)
+    }
+
     public func text(_ chinese: String, _ english: String) -> String {
         switch self {
         case .chinese:

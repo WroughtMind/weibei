@@ -7,6 +7,9 @@ struct CheckBuildInfo {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
         let local = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: info.buildDate!)
+        precondition(info.displayLine == "0.0.1 (20260909.1530.27)")
+        precondition(!info.displayLine.contains("12345678"))
+        precondition(info.diagnosticLine.contains("12345678"))
         precondition(local.year == 2026 && local.month == 9 && local.day == 9)
         precondition(local.hour == 23 && local.minute == 30 && local.second == 27)
         var invalid = info

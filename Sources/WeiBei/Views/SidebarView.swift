@@ -335,6 +335,7 @@ struct CourseSidebarList: View {
                     Button { open(item, opensNotebook: opensNotebook) } label: {
                         LibraryRow(
                             item: item,
+                            subtitle: store.displaySubtitle(for: item),
                             resolvedTitle: row.resolvedTitle,
                             tags: row.tags,
                             selected: selected,
@@ -438,10 +439,13 @@ struct CourseSidebarList: View {
         if item.isSample {
             store.select(itemID: item.id)
             store.showLibrary = false
-        } else if opensNotebook {
-            store.openCourseNote(item.id)
-        } else {
-            store.openCourseMaterial(item.id)
+            return
+        }
+        let opened = opensNotebook
+            ? store.openCourseNote(item.id)
+            : store.openCourseMaterial(item.id)
+        if !opened {
+            store.revealCourseFolder(containing: item.id)
         }
     }
 
@@ -804,6 +808,7 @@ private struct NotebookRenameRow: View {
 
 private struct LibraryRow: View {
     let item: StudyItem
+    let subtitle: String
     /// 解析后的显示名（自定义名 / 正文抬头）；nil 时显示文件名。
     let resolvedTitle: String?
     let tags: [String]
@@ -824,7 +829,7 @@ private struct LibraryRow: View {
                     .weiBeiText(compact ? 12.5 : 13, weight: compact ? .medium : .regular)
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.ink)
-                Text(item.subtitle)
+                Text(subtitle)
                     .font(compact ? .system(size: 10.5) : .caption)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)

@@ -409,7 +409,7 @@ struct CatalystWeiBeiApp: App {
 }
 
 enum WeiBeiHelpLinks {
-    static let feedback = URL(string: "https://github.com/WroughtMind/weibei/issues/new")!
+    static let feedback = WeiBeiFeedbackLink.newIssue
     static let website = URL(string: "https://wroughtmind.github.io/weibei/")!
     static let privacy = URL(string: "https://github.com/WroughtMind/weibei/blob/main/PRIVACY.md")!
 }
