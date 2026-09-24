@@ -1,6 +1,11 @@
 import Foundation
 import WeiBeiCore
 
+enum PendingDeletionUndo {
+    case selectionAsk(thread: SelectionAskThread, session: StudySession?)
+    case excerpt(record: SelectionRemarkRecord, index: Int)
+}
+
 private let inspirationAsWatermarkDefaultsKey = "weibei.dailyInspiration.watermark"
 
 /// Transient/important feedback and small settings setters, kept separate
@@ -36,6 +41,45 @@ extension WorkspaceStore {
     func setInspirationAsWatermark(_ enabled: Bool) {
         guard inspirationAsWatermark != enabled else { return }
         inspirationAsWatermark = enabled
+    }
+
+    func undoPendingDeletion() {
+        guard let pending = pendingDeletionUndo else { return }
+        pendingDeletionUndo = nil
+        transientNoteStatusTask?.cancel()
+        transientNoteStatus = nil
+        transientNoteStatusRevealURL = nil
+        switch pending {
+        case let .selectionAsk(thread, session):
+            if !selectionAskThreads.contains(where: { $0.id == thread.id }) {
+                selectionAskThreads.insert(thread, at: 0)
+            }
+            if let session, !studySessions.contains(where: { $0.id == session.id }) {
+                studySessions.append(session)
+                sessionMessagePersistence.markLoaded(session.id)
+            }
+        case let .excerpt(record, index):
+            guard !selectionRemarkRecords.contains(where: { $0.id == record.id }) else { break }
+            selectionRemarkRecords.insert(record, at: min(index, selectionRemarkRecords.count))
+        }
+        save()
+    }
+
+    func armDeletionUndo(_ undo: PendingDeletionUndo) {
+        pendingDeletionUndo = undo
+        transientNoteStatusGeneration += 1
+        let generation = transientNoteStatusGeneration
+        transientNoteStatusTask?.cancel()
+        transientNoteStatus = ui("已删除", "Deleted")
+        transientNoteStatusRevealURL = nil
+        transientNoteStatusTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            guard self.transientNoteStatusGeneration == generation else { return }
+            self.transientNoteStatus = nil
+            self.transientNoteStatusRevealURL = nil
+            self.pendingDeletionUndo = nil
+        }
     }
 
     func showTransientNoteStatus(_ message: String, revealURL: URL? = nil) {

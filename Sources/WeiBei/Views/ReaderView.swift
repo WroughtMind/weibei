@@ -493,7 +493,7 @@ struct ReaderView: View {
     }
 
     private func selectionAskMarksJSON(for itemID: String) -> String {
-        let marks = store.selectionAskThreads(forItemID: itemID)
+        let marks = store.markedSelectionAskThreads(forItemID: itemID)
             .map { thread -> [String: Any] in
                 var mark: [String: Any] = [
                     "id": thread.id.uuidString,
@@ -809,7 +809,7 @@ struct ReaderView: View {
     /// Top-chrome entry for past selection-ask threads (replaces the mid-document legend overlay).
     @ViewBuilder
     private var selectionAskThreadsMenu: some View {
-        let threads = store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id)
+        let threads = store.markedSelectionAskThreads(forItemID: store.selectedMaterialItem?.id)
         if !threads.isEmpty {
             Menu {
                 ForEach(threads) { thread in
@@ -824,6 +824,11 @@ struct ReaderView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    }
+                    Button(role: .destructive) {
+                        store.deleteSelectionAskThread(thread.id)
+                    } label: {
+                        Text(store.ui("删除", "Delete"))
                     }
                 }
             } label: {
@@ -1114,8 +1119,8 @@ struct ReaderView: View {
                         pageIndex: $pdfPageIndex,
                         pageCount: $pdfPageCount,
                         railTargetPageIndex: $pdfRailTargetPageIndex,
-                        underlineSnippets: store.selectionAskThreads(forItemID: item.id).map(\.selectionText),
-                        askUnderlineMarks: store.selectionAskThreads(forItemID: item.id).map {
+                        underlineSnippets: store.markedSelectionAskThreads(forItemID: item.id).map(\.selectionText),
+                        askUnderlineMarks: store.markedSelectionAskThreads(forItemID: item.id).map {
                             (id: $0.id.uuidString, text: $0.selectionText, anchor: $0.documentAnchor)
                         },
                         onAskUnderlineActivate: { threadID, anchor in
@@ -1217,7 +1222,7 @@ struct ReaderView: View {
                         searchSessionID: paneState.readerSearchSessionID,
                         searchReturnRequest: paneState.readerSearchReturnRequest,
                         onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
-                        underlineSnippets: store.selectionAskThreads(forItemID: item.id).map(\.selectionText),
+                        underlineSnippets: store.markedSelectionAskThreads(forItemID: item.id).map(\.selectionText),
                         onDocumentTap: { store.clearReaderSourceHighlight() }) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }

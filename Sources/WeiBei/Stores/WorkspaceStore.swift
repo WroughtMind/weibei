@@ -660,6 +660,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var transientNoteStatus: String?
     /// 备份落点。有值时这条提示留着，直到用户打开访达或被下一条提示换掉。
     @Published var transientNoteStatusRevealURL: URL?
+    var pendingDeletionUndo: PendingDeletionUndo?
     @Published private var noteSelectionTransitionState = NoteSelectionTransitionState.idle
     /// 卡死逃生:切换等待若长时间停在 .saving(如编辑器命令未回执、快照循环不收敛),
     /// 降级为失败态,让底部状态条的重试入口与新的切换恢复可用。只改状态,不动数据。
@@ -6441,6 +6442,7 @@ final class WorkspaceStore: ObservableObject {
 
         invalidateAgentContext()
         let nextSelection = composerSelection
+        interaction.rebaseSelectionNoteDraft(from: selectionContext, to: nextSelection)
         // Continuous fields update immediately so the capsule tracks like a native selection tool.
         // Only agentSurface show/hide keeps a one-shot panel spring.
         selectionContext = nextSelection
@@ -9182,6 +9184,28 @@ final class WorkspaceStore: ObservableObject {
         return selectionAskThreads.filter { $0.itemID == itemID }
     }
 
+    /// Underlines and the「已问」menu count only threads that have actually sent a message.
+    /// Opening「问」creates an empty thread; that in-use empty thread stays off the marks.
+    func markedSelectionAskThreads(forItemID itemID: String?) -> [SelectionAskThread] {
+        selectionAskThreads(forItemID: itemID).filter { !$0.messageIDs.isEmpty }
+    }
+
+    /// Removes the selection-ask mark and its own chat. The parent conversation is left in place.
+    func deleteSelectionAskThread(_ id: UUID) {
+        guard let thread = selectionAskThreads.first(where: { $0.id == id }) else { return }
+        let ownsDedicatedChat = thread.parentSessionID != id
+            && studySessions.contains(where: { $0.id == id })
+        let session = ownsDedicatedChat ? studySessions.first(where: { $0.id == id }) : nil
+        if ownsDedicatedChat {
+            deleteStudySession(id)
+        } else {
+            selectionAskThreads.removeAll { $0.id == id }
+            if activeSelectionAskThreadID == id { dismissFloatingSelectionAgent() }
+            save()
+        }
+        armDeletionUndo(.selectionAsk(thread: thread, session: session))
+    }
+
     func selectionAskThread(matchingText text: String) -> SelectionAskThread? {
         let normalized = SelectionAttachmentMerge.normalized(text)
         guard !normalized.isEmpty else { return nil }
@@ -11109,6 +11133,7 @@ final class WorkspaceStore: ObservableObject {
                 invalidateAgentContext()
             }
 
+            interaction.rebaseSelectionNoteDraft(from: selectionContext, to: nil)
             selectionContext = nil
             selectionAnchor = nil
             let clearedPrompt = ui("当前选区", "Current selection")
