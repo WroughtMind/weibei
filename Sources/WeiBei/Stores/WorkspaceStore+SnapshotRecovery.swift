@@ -112,14 +112,14 @@ extension WorkspaceStore {
         switch recovery.notice {
         case .restoredFromBackup:
             showImportantOperationError(.snapshotRecovered, message: ui(
-                "工作区总账本曾损坏，已自动恢复到最近的好备份；原文件已留存为坏档备查。",
+                "工作台记录曾损坏，已自动恢复到最近的备份；原文件已留存备查。",
                 "The workspace ledger was damaged; it has been restored from the latest good backup, and the damaged copy was kept."
             ))
             // Task 推迟一拍：等 load() 把备份状态应用完再重建主快照。
             Task { @MainActor [weak self] in self?.save() }
         case .unrecoverable:
             showImportantOperationError(.snapshotDamagedNoBackup, message: ui(
-                "工作区总账本损坏且无可用备份，原文件已留存为坏档；课程文件夹未受影响，请重新创建或挂载课程空间。",
+                "工作台记录损坏，而且没有可用备份；原文件已留存。课程文件夹未受影响，请重新打开课程。",
                 "The workspace ledger is damaged with no usable backup; course folders are untouched — please re-create or re-link the course space."
             ))
         case nil:

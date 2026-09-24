@@ -95,7 +95,7 @@ extension WorkspaceStore {
                 let fileName = item(withID: snapshot.documentID)?
                     .url?.lastPathComponent ?? ui("这份笔记", "this note")
                 let message = ui(
-                    "“\(fileName)”的恢复点尚未安全保存。内容仍在本次会话中，请不要关闭并重试。",
+                    "“\(fileName)”的恢复点尚未安全保存。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "The recovery point for \(fileName) is not safely stored yet. The content remains in this session; do not close it, and retry."
                 )
                 setNoteFileError(message, for: snapshot.documentID)
@@ -363,7 +363,7 @@ extension WorkspaceStore {
                         "Could not use the disk version of \(fileName). Unsaved content is stored in WeiBei; please retry."
                     )
                     : ui(
-                        "暂时无法采用“\(fileName)”的磁盘版本。未写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                        "暂时无法采用“\(fileName)”的磁盘版本。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                         "Could not use the disk version of \(fileName). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
                     ))
                 return
@@ -456,7 +456,7 @@ extension WorkspaceStore {
                         "Could not restore WeiBei content to \(fileName). The unsaved content and conflict are stored in WeiBei; please retry."
                     )
                     : ui(
-                        "暂时无法恢复“\(fileName)”中的魏碑内容。待写内容仍在当前编辑中，但尚未安全保存；请不要关闭并重试。",
+                        "暂时无法恢复“\(fileName)”中的魏碑内容。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                         "Could not restore WeiBei content to \(fileName). The unsaved content remains in the current editor but is not safely stored yet; do not close it, and retry."
                     ))
                 return

@@ -137,7 +137,7 @@ extension WorkspaceStore {
     func executeDiscussionTool(_ request: StudyAgentHostToolRequest, target: AgentConversationTarget,
                                focusItemIDs: Set<String>) throws -> StudyAgentHostToolResult {
         guard studySessions.contains(where: { $0.id == target.sessionID }) else {
-            throw AgentConversationTargetError(message: ui("原会话已删除。", "The original conversation was deleted."))
+            throw AgentConversationTargetError(message: ui("原对话已删除。", "The original conversation was deleted."))
         }
         switch request {
         case let .discussionSearch(query, itemID, allChats):

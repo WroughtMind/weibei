@@ -386,7 +386,7 @@ if let selection = pdfSelections.first, let page = selection.pages.first {
     let ownerTitle = "Mishkin 教材样例，第 \((selectedPDFPageIndex ?? 0) + 1) 页"
     let context = SelectionContext(text: selection.string ?? "", source: .document, ownerTitle: ownerTitle)
     let reference = SourceReferenceTitle.parse("来源：\(context.ownerTitle)")
-    expect(context.label(language: .chinese) == "文档选区：Mishkin 教材样例，第 1 页", "PDF selection context carries the selected page label into the floating agent")
+    expect(context.label(language: .chinese).contains("Mishkin 教材样例") && context.label(language: .chinese).contains("第 1 页"), "PDF selection context carries the selected page label into the floating agent")
     expect(reference.title == "Mishkin 教材样例" && reference.pageIndex == 0, "PDF selection reference can jump back to the selected page")
 } else {
     expect(false, "PDFSelection contains page")

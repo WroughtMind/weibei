@@ -102,7 +102,7 @@ struct AgentReplyMemoryUpdateTag: View {
                     }
 
                     if let courseID {
-                        Button(store.ui("查看课程记忆", "View Course Memory")) {
+                        Button(store.ui("查看学习记忆", "View study memory")) {
                             store.presentCourseWorkspace(.memory, courseID: courseID)
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())

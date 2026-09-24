@@ -12,7 +12,7 @@ const serialize = (e: Node) => new XMLSerializer().serializeToString(e);
 const post = (name: string, payload: unknown) => (window as any).webkit?.messageHandlers?.[name]?.postMessage(payload);
 const parse = (xml: string) => {
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
-  if (doc.querySelector('parsererror')) throw new Error('文档内容损坏，无法读取');
+  if (doc.querySelector('parsererror')) throw new Error(t('文稿内容损坏，无法读取', 'This document is damaged and cannot be read'));
   return doc;
 };
 const math = (xml: string) => renderOmml(parse(xml).documentElement);
@@ -31,6 +31,8 @@ let pptSearchHits: ReturnType<PptxViewer['searchText']> = [];
 let pptNoteSearchHits: { slideIndex: number; location: string; text: string; start: number; end: number }[] = [];
 let pptSearchOrder: { note: boolean; index: number }[] = [];
 const clean = (text?: string | null) => (text ?? '').replace(/\s+/g, ' ').trim();
+let english = false;
+const t = (zh: string, en: string) => (english ? en : zh);
 
 function fail(error: unknown) {
   loadError = error instanceof Error ? error.message : String(error);
@@ -38,23 +40,23 @@ function fail(error: unknown) {
   const message = document.createElement('p');
   message.setAttribute('role', 'alert');
   message.style.cssText = 'font:15px/1.8 -apple-system;padding:24px;white-space:pre-wrap';
-  message.textContent = `这份文档暂时无法完整显示。\n${loadError}\n原文件已保留。`;
+  message.textContent = t(`这份文稿暂时无法完整显示。\n${loadError}\n原文件已保留。`, `This document cannot be shown in full.\n${loadError}\nThe original file is unchanged.`);
   root.replaceChildren(message);
   post('officeReady', { error: loadError });
 }
 
 // Only the in-memory display package is adapted. Original file bytes are never written back.
 async function prepare(bytes: ArrayBuffer, format: string) {
-  if (bytes.byteLength > RECOMMENDED_ZIP_LIMITS.maxTotalUncompressedBytes) throw new Error('文档大小超过阅读组件容量');
+  if (bytes.byteLength > RECOMMENDED_ZIP_LIMITS.maxTotalUncompressedBytes) throw new Error(t('文稿大小超过阅读组件容量', 'This document is larger than the reader can open'));
   const zip = await JSZip.loadAsync(bytes);
   const entries = Object.values(zip.files).filter(f => !f.dir);
   const limits = RECOMMENDED_ZIP_LIMITS;
-  if (entries.length > limits.maxEntries) throw new Error('文档包含的内容超过阅读组件容量');
+  if (entries.length > limits.maxEntries) throw new Error(t('文稿包含的内容超过阅读组件容量', 'This document contains more than the reader can open'));
   let total = 0;
   for (const file of entries) {
     const size = (file as any)._data?.uncompressedSize ?? 0;
     total += size;
-    if (size > limits.maxEntryUncompressedBytes || total > limits.maxTotalUncompressedBytes) throw new Error('文档解压后的内容超过阅读组件容量');
+    if (size > limits.maxEntryUncompressedBytes || total > limits.maxTotalUncompressedBytes) throw new Error(t('文稿解压后的内容超过阅读组件容量', 'The unpacked document is larger than the reader can open'));
   }
   const renamed = new Map<string, string>();
   for (const file of entries.filter(f => /\.(wmf|emf)$/i.test(f.name))) {
@@ -92,7 +94,7 @@ async function prepare(bytes: ArrayBuffer, format: string) {
       const variants = Array.from(alternate.children);
       const chosen = variants.find(c => c.localName === 'Choice' && c.getElementsByTagNameNS(mathNS, 'oMath').length > 0)
         ?? variants.find(c => c.localName === 'Fallback');
-      if (!chosen) throw new Error('文档包含尚未支持的绘图对象');
+      if (!chosen) throw new Error(t('文稿包含尚未支持的绘图对象', 'This document contains a drawing the reader cannot show'));
       alternate.replaceWith(...Array.from(chosen.childNodes));
     }
     const ns = format === 'docx' ? 'http://schemas.openxmlformats.org/wordprocessingml/2006/main' : drawingNS;
@@ -106,7 +108,7 @@ async function prepare(bytes: ArrayBuffer, format: string) {
     if (format === 'pptx') {
       for (const wrapper of Array.from(doc.getElementsByTagNameNS('http://schemas.microsoft.com/office/drawing/2010/main', 'm'))) {
         const formula = Array.from(wrapper.children).find(c => c.namespaceURI === mathNS);
-        if (!formula) throw new Error('幻灯片公式缺少数学内容');
+        if (!formula) throw new Error(t('幻灯片公式缺少数学内容', 'A slide formula has no math content'));
         const run = doc.createElementNS(drawingNS, 'a:r');
         run.setAttribute('data-weibei-math', serialize(formula));
         const text = doc.createElementNS(drawingNS, 'a:t');
@@ -130,7 +132,7 @@ function verifyEquations(element: Element, part: string) {
   const expected = equations.get(part) ?? [];
   const rendered = new Set(Array.from(element.querySelectorAll('math[data-weibei-equation]')).map(e => e.getAttribute('data-weibei-equation')));
   const found = expected.filter(id => rendered.has(id)).length;
-  if (found !== expected.length) throw new Error(`原文公式未能完整显示：应有 ${expected.length} 个，已显示 ${found} 个`);
+  if (found !== expected.length) throw new Error(t(`原文公式未能完整显示：应有 ${expected.length} 个，已显示 ${found} 个`, `Formulas are incomplete: expected ${expected.length}, showed ${found}`));
 }
 // R6: single broken images/equations downgrade to the resource-issue dot
 // (htmlResourceIssues) instead of failing the whole document.
@@ -158,7 +160,7 @@ function sourceOrder(node: Node) {
   return [index * 2 + Number(noteParts.get(slides[index].slidePath) === part), Number(location.match(/#p(\d+)$/)?.[1] ?? 0)];
 }
 function sections() {
-  if (viewer) return viewer.presentationData!.slides.map((s, i) => ({ id: s.slidePath, title: `第 ${i + 1} 页`, excerpt: '', level: 1, position: i / Math.max(1, viewer!.slideCount - 1), metadata: `${i + 1} / ${viewer!.slideCount} · PPT` }));
+  if (viewer) return viewer.presentationData!.slides.map((s, i) => ({ id: s.slidePath, title: t(`第 ${i + 1} 页`, `Page ${i + 1}`), excerpt: '', level: 1, position: i / Math.max(1, viewer!.slideCount - 1), metadata: `${i + 1} / ${viewer!.slideCount} · PPT` }));
   const blocks = Array.from(root.querySelectorAll<HTMLElement>('p[data-weibei-location]')).filter(p => clean(p.textContent));
   const headings = blocks.filter(p => /heading|标题/i.test(p.className) || p.getAttribute('role') === 'heading');
   return (headings.length ? headings : blocks.filter((_, i) => i % 15 === 0)).map((p, i, all) => ({ id: p.dataset.weibeiLocation!, title: clean(p.textContent).slice(0, 60), excerpt: '', level: 1, position: i / Math.max(1, all.length - 1), metadata: 'Word' }));
@@ -232,7 +234,7 @@ function searchResults(query: string) {
     return {
       preview: prefix + hit.text.slice(hit.matchStart, hit.matchEnd) + hit.text.slice(hit.matchEnd, end).replace(/\s+/g, ' ') + (end < hit.text.length ? '…' : ''),
       matchStart: prefix.length, matchLength: hit.matchEnd - hit.matchStart,
-      location: `第 ${hit.slideIndex + 1} 页`, pageIndex: hit.slideIndex
+      location: t(`第 ${hit.slideIndex + 1} 页`, `Page ${hit.slideIndex + 1}`), pageIndex: hit.slideIndex
     };
   });
   const noteRows = pptNoteSearchHits.map(hit => {
@@ -240,7 +242,7 @@ function searchResults(query: string) {
     const prefix = (start ? '…' : '') + hit.text.slice(start, hit.start);
     return { preview: prefix + hit.text.slice(hit.start, end) + (end < hit.text.length ? '…' : ''),
       matchStart: prefix.length, matchLength: hit.end - hit.start,
-      location: `第 ${hit.slideIndex + 1} 页备注`, pageIndex: hit.slideIndex };
+      location: t(`第 ${hit.slideIndex + 1} 页备注`, `Notes for page ${hit.slideIndex + 1}`), pageIndex: hit.slideIndex };
   });
   const ordered = [
     ...slideRows.map((row, index) => ({ row, note: false, index })),
@@ -311,15 +313,15 @@ function attachNote(index: number, wrapper: HTMLElement | null) {
   wrapper.style.position = 'relative';
   const note = document.createElement('aside'); note.dataset.notePart = path;
   note.id = `office-note-${index}`; note.className = 'office-note'; note.popover = 'auto';
-  note.setAttribute('aria-label', `第 ${index + 1} 页备注`);
+  note.setAttribute('aria-label', t(`第 ${index + 1} 页备注`, `Notes for page ${index + 1}`));
   const button = document.createElement('button'); button.type = 'button'; button.className = 'office-note-trigger';
-  button.setAttribute('popovertarget', note.id); button.title = `查看第 ${index + 1} 页备注`;
+  button.setAttribute('popovertarget', note.id); button.title = t(`查看第 ${index + 1} 页备注`, `View notes for page ${index + 1}`);
   button.setAttribute('aria-label', button.title); button.dataset.weibeiAnnotationUi = 'true';
   button.style.top = `calc(${(wrapper.firstElementChild as HTMLElement).style.height} - 34px)`;
   button.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 3H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Zm0 0v5h5M6 11h8M6 14h5"/></svg>';
   const header = document.createElement('header'); header.dataset.weibeiAnnotationUi = 'true';
-  const title = document.createElement('strong'); title.textContent = `第 ${index + 1} 页备注`;
-  const close = document.createElement('button'); close.type = 'button'; close.setAttribute('aria-label', '关闭备注');
+  const title = document.createElement('strong'); title.textContent = t(`第 ${index + 1} 页备注`, `Notes for page ${index + 1}`);
+  const close = document.createElement('button'); close.type = 'button'; close.setAttribute('aria-label', t('关闭备注', 'Close notes'));
   close.setAttribute('popovertarget', note.id); close.setAttribute('popovertargetaction', 'hide');
   close.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>';
   header.append(title, close); note.append(header);
@@ -338,7 +340,8 @@ function attachNote(index: number, wrapper: HTMLElement | null) {
   wrapper.append(button, note);
 }
 
-async function open(url: string | ArrayBuffer, format: string) {
+async function open(url: string | ArrayBuffer, format: string, language?: string) {
+  english = language === 'english';
   root = document.getElementById('office-document')!;
   document.documentElement.style.setProperty('-webkit-text-size-adjust', '100%');
   kind = format; loadError = ''; resourceIssues = []; notes.clear(); noteParts.clear(); equations.clear(); mainPart = '';
@@ -393,7 +396,7 @@ async function open(url: string | ArrayBuffer, format: string) {
     await document.fonts.ready;
     const broken = await Promise.all(Array.from(root.querySelectorAll('img, svg image')).map(async element => { const img = new Image(); img.src = element instanceof HTMLImageElement ? element.src : (element as SVGImageElement).href.baseVal; try { await img.decode(); return false; } catch { return true; } }));
     const brokenCount = broken.filter(Boolean).length;
-    if (brokenCount > 0) reportResourceIssue(`文档中有 ${brokenCount} 张图片未能显示，正文已导入`);
+    if (brokenCount > 0) reportResourceIssue(t(`文稿中有 ${brokenCount} 张图片未能显示，正文已导入`, `${brokenCount} images could not be shown; the text was imported`));
     post('contentRailSections', sections());
     post('officeReady', { loaded: true });
   } catch (error) { fail(error); }

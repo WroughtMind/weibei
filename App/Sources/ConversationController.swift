@@ -4,6 +4,13 @@ import Litext
 import MarkdownView
 import QuartzCore
 
+enum CatalystInterfaceCopy {
+    static var language: WeiBeiInterfaceLanguage = .chinese
+    static func text(_ chinese: String, _ english: String) -> String {
+        language.text(chinese, english)
+    }
+}
+
 final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate, UITextViewDelegate {
     let fixtureMode: Bool
     var usesWorkspaceChrome = false
@@ -12,7 +19,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     var auxiliaryView: ((LabMessage) -> UIView)?
     var messageLink: ((URL, AgentMessage) -> Void)?
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese {
-        didSet { latest.accessibilityLabel = interfaceLanguage == .chinese ? "回到最新消息" : "Jump to latest" }
+        didSet {
+            CatalystInterfaceCopy.language = interfaceLanguage
+            latest.accessibilityLabel = interfaceLanguage.text("回到最新消息", "Jump to latest")
+        }
     }
     private var loadingSession = false
     private var lastReadingMessageID: UUID?

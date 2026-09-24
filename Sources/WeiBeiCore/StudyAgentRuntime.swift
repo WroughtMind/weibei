@@ -945,7 +945,7 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
                 "Sign in again in Settings, or save the API key again."
             )
         case .rateLimited:
-            return language.text("请稍后再试，或更换模型/提供商。", "Wait a moment, or switch model/provider.")
+            return language.text("请稍后再试，或更换模型或服务商。", "Wait a moment, or switch model or service.")
         case .insufficientQuota:
             return language.text("请点「去设置」查看额度或更换服务商。", "Choose Go to Settings to check the quota or switch provider.")
         case .modelUnavailable:

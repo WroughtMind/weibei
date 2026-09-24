@@ -20,7 +20,7 @@ final class DiagramView: UIView, WKNavigationDelegate {
         web.isOpaque = false
         web.backgroundColor = .clear
         web.scrollView.isScrollEnabled = true
-        web.accessibilityLabel = "可横向阅读的关系图"
+        web.accessibilityLabel = CatalystInterfaceCopy.text("可横向阅读的关系图", "Relationship diagram, scroll sideways")
         addSubview(web)
         guard let url = Bundle.main.url(forResource: "diagram", withExtension: "html", subdirectory: "Editor") else {
             preconditionFailure("Bundled diagram runtime is missing")
@@ -45,7 +45,7 @@ final class DiagramView: UIView, WKNavigationDelegate {
             do {
                 _ = try await web.callAsyncJavaScript("await renderDiagram(source, generation)", arguments: ["source": source, "generation": generation],
                                                      in: nil, contentWorld: .page)
-            } catch { web.accessibilityLabel = "关系图渲染失败：" + error.localizedDescription }
+            } catch { web.accessibilityLabel = CatalystInterfaceCopy.text("关系图渲染失败：", "Could not render the diagram: ") + error.localizedDescription }
         }
     }
     fileprivate func receive(_ body: Any) {

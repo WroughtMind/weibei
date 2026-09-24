@@ -1184,7 +1184,8 @@ struct ReaderView: View {
                         onSelectionRemarkMark: { recordID, anchor in
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
-                        onDocumentTap: { store.clearReaderSourceHighlight() }
+                        onDocumentTap: { store.clearReaderSourceHighlight() },
+                        interfaceLanguage: store.interfaceLanguage
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
@@ -2871,6 +2872,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
     var onDocumentTap: () -> Void = {}
 
     var onResourceIssuesChange: ([String]) -> Void = { _ in }
+    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
 
     private static let scriptMessageNames = [
         "htmlResourceIssues",
@@ -2900,6 +2902,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
         onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
+        interfaceLanguage: WeiBeiInterfaceLanguage = .chinese,
         onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.html = html
@@ -2919,6 +2922,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.onContentRailActiveChange = onContentRailActiveChange
         self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionRemarkMark = onSelectionRemarkMark
+        self.interfaceLanguage = interfaceLanguage
         self.onSelectionChange = onSelectionChange
     }
 
@@ -2943,6 +2947,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
         onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
         onDocumentTap: @escaping () -> Void = {},
+        interfaceLanguage: WeiBeiInterfaceLanguage = .chinese,
         onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.html = nil
@@ -2966,6 +2971,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionRemarkMark = onSelectionRemarkMark
         self.onDocumentTap = onDocumentTap
+        self.interfaceLanguage = interfaceLanguage
         self.onSelectionChange = onSelectionChange
     }
 
@@ -3096,7 +3102,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             if context.coordinator.loadedSignature != signature {
                 context.coordinator.loadedSignature = signature
                 context.coordinator.lastAppliedSelectionAskMarks = ""
-                if office { context.coordinator.loadOffice(at: url, revision: contentRevision, into: view) }
+                if office { context.coordinator.loadOffice(at: url, revision: contentRevision, language: interfaceLanguage, into: view) }
                 else { context.coordinator.loadUTF8HTML(at: url, signature: signature, into: view) }
             } else {
                 context.coordinator.scheduleSearchAndMarksApply(in: view)
@@ -3638,12 +3644,12 @@ struct WebReaderRepresentable: ReaderRepresentable {
         }()
 
         @MainActor
-        func loadOffice(at url: URL, revision: UInt64, into view: WKWebView) {
+        func loadOffice(at url: URL, revision: UInt64, language: WeiBeiInterfaceLanguage, into view: WKWebView) {
             isOfficeDocument = true
             view.stopLoading()
             cancelHTMLLoad()
             guard let baseURL = htmlResourceSchemeHandler.activate(rootDirectory: url.deletingLastPathComponent()) else {
-                view.loadHTMLString("<p>无法访问这份文档，请确认文件仍在课程目录中。</p>", baseURL: nil)
+                view.loadHTMLString("<p>\(language.text("无法访问这份文稿，请确认文件仍在课程文件夹中。", "Cannot open this document. Check that the file is still in the course folder."))</p>", baseURL: nil)
                 return
             }
             let fileURL = baseURL.appendingPathComponent(url.lastPathComponent)
@@ -3652,9 +3658,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
             <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-\(nonce)' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src weibeihtml:; base-uri 'none'; frame-src 'none'">
             <style>html,body{margin:0;padding:0}body{font:15px/1.7 -apple-system}#office-document{padding:16px;box-sizing:border-box;min-height:100vh}#office-document[data-weibei-adapts-colors]::after{content:"";position:fixed;inset:0;background:var(--weibei-document-mask);mix-blend-mode:multiply;pointer-events:none;z-index:2147483647}.docx-wrapper{padding:0!important;background:transparent!important}.docx-wrapper>section.docx{margin-bottom:16px;box-shadow:none!important}.office-note-trigger,.office-note header button{width:26px;height:26px;box-sizing:border-box;display:grid;place-items:center;padding:4px;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:7px;color:var(--weibei-note-muted);background:rgb(from var(--weibei-note-fill) r g b / .94);cursor:pointer}.office-note-trigger{position:absolute;right:8px;box-shadow:0 1px 4px #0002}.office-note-trigger:hover,.office-note header button:hover{color:var(--weibei-note-ink)}.office-note-trigger:focus-visible,.office-note header button:focus-visible{outline:2px solid var(--weibei-note-accent);outline-offset:2px}.office-note-trigger svg,.office-note header svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.office-note{position:fixed;inset:auto;margin:0;padding:0;width:min(22rem,calc(100vw - 24px));box-sizing:border-box;overflow:hidden;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:9px;background:rgb(from var(--weibei-note-fill) r g b / .97);color:var(--weibei-note-ink);box-shadow:0 8px 28px #0003;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);font:14px/1.65 -apple-system}.office-note:popover-open{display:flex;flex-direction:column}.office-note header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px 8px 16px;flex-shrink:0}.office-note header strong{font-size:13px;font-weight:600}.office-note header button{border:0;background:transparent}.office-note-body{min-height:0;padding:0 16px 14px;overflow:auto;overflow-wrap:anywhere;overscroll-behavior:contain}.office-note-body>p{margin:0 0 10px}.office-note-body>p:last-child{margin-bottom:0}math{font-family:"Cambria Math","STIX Two Math",serif}a{color:#91261b}</style>
-            </head><body data-weibei-revision="\(revision)"><main id="office-document"><p role="status">正在读取文档…</p></main>
+            </head><body data-weibei-revision="\(revision)"><main id="office-document"><p role="status">\(language.text("正在读取文稿…", "Reading the document…"))</p></main>
             <script nonce="\(nonce)">\(Self.officeRuntime)</script>
-            <script nonce="\(nonce)">window.WeiBeiOffice.open(\(Self.json(fileURL.absoluteString)),\(Self.json(url.pathExtension.lowercased())));</script>
+            <script nonce="\(nonce)">window.WeiBeiOffice.open(\(Self.json(fileURL.absoluteString)),\(Self.json(url.pathExtension.lowercased())),\(Self.json(language == .english ? "english" : "chinese")));</script>
             </body></html>
             """
             view.loadHTMLString(html, baseURL: baseURL)

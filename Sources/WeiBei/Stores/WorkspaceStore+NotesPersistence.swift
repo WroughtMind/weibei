@@ -188,7 +188,7 @@ extension WorkspaceStore {
                         "Could not safely back up \(oldURL.lastPathComponent), so WeiBei did not rename or rewrite it. The latest text is stored in WeiBei; please retry."
                     )
                     : ui(
-                        "无法安全备份“\(oldURL.lastPathComponent)”，魏碑没有重命名或改写文件。最新正文仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                        "无法安全备份“\(oldURL.lastPathComponent)”，魏碑没有重命名或改写文件。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                         "Could not safely back up \(oldURL.lastPathComponent), so WeiBei did not rename or rewrite it. The latest text remains in this session but is not safely stored yet; do not close it, and retry."
                     ))
                 return
@@ -473,11 +473,11 @@ extension WorkspaceStore {
         } ?? false
         return filePresent
             ? ui(
-                "笔记文件内容与本机记录不一致（可能被外部修改），正文展示已降级为模板；已暂停自动写回以保护磁盘内容。",
+                "笔记文件和魏碑里的记录不一致（可能在外部改过），所以这里只显示空白模板；已暂停写回，以免盖掉磁盘上的内容。",
                 "The note file's content does not match this device's record (it may have been modified externally), so a template is shown instead of the note body. Automatic write-back is paused to protect the on-disk content."
             )
             : ui(
-                "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。",
+                "找不到笔记文件，所以这里只显示空白模板；已暂停写回，以免盖掉磁盘上的内容。",
                 "The note file could not be located, so a template is shown instead of the note body. Automatic write-back is paused to protect the on-disk content."
             )
     }
@@ -642,7 +642,7 @@ extension WorkspaceStore {
                         "Could not safely back up the external version of \(url.lastPathComponent), so WeiBei stopped overwriting it. Unsaved content is stored in WeiBei; please retry."
                     )
                     : ui(
-                        "无法安全备份“\(url.lastPathComponent)”的外部版本，魏碑已停止覆盖。待写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                        "无法安全备份“\(url.lastPathComponent)”的外部版本，魏碑已停止覆盖。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                         "Could not safely back up the external version of \(url.lastPathComponent), so WeiBei stopped overwriting it. Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
                     ))
                 return false
@@ -683,7 +683,7 @@ extension WorkspaceStore {
                     "Could not write \(url.lastPathComponent). Unsaved content is kept in WeiBei; please retry."
                 )
                 : ui(
-                    "无法写入“\(url.lastPathComponent)”。待写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                    "无法写入“\(url.lastPathComponent)”。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "Could not write \(url.lastPathComponent). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
                 ))
             return false
@@ -785,7 +785,7 @@ extension WorkspaceStore {
                     "Could not reread \(url.lastPathComponent). Unsaved content is kept in WeiBei; please retry."
                 )
                 : ui(
-                    "无法重读“\(url.lastPathComponent)”。待写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                    "无法重读“\(url.lastPathComponent)”。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "Could not reread \(url.lastPathComponent). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
                 )
             setNoteFileError(message, for: itemID)
@@ -909,7 +909,7 @@ extension WorkspaceStore {
                 "Could not verify the disk content of \(fileName), so writing was paused. Unsaved content is stored in WeiBei; please retry."
             )
                 : ui(
-                    "无法确认“\(fileName)”的磁盘内容，已暂停写入。待写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                    "无法确认“\(fileName)”的磁盘内容，已暂停写入。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "Could not verify the disk content of \(fileName), so writing was paused. Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
                 )
         setNoteFileError(message, for: itemID)

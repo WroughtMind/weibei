@@ -62,7 +62,7 @@ extension WorkspaceStore {
         _ = reportWorkspaceSaveFailure(
             .sessionMessageExternalizationFailed,
             ui(
-                "聊天记录外置没有完成，已用原来的工作区继续。本次修改仍在当前会话中。",
+                "对话记录没有移出完成，已继续使用原来的工作台。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                 "Chat history was not moved into per-session files; WeiBei kept the original workspace. This change remains in the current session."
             ),
             reason: error?.localizedDescription

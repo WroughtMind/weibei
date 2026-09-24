@@ -223,7 +223,7 @@ enum CourseOwnedFileError: LocalizedError {
         case .replacementTargetIsShared:
             "这份共享原件正被其他课程使用，不能替换；可以取消或改名保留两份。"
         case .backupFailed:
-            "无法安全备份现有笔记，魏碑没有覆盖文件。待写内容仍在当前会话中，请重试。"
+            "无法安全备份现有笔记，魏碑没有覆盖文件。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。"
         case .itemBusy:
             "这份文件正在进行另一项操作，请稍后重试。"
         case .verificationFailed:
@@ -1801,7 +1801,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var activeStudySessionTitle: String {
-        activeStudySession?.title ?? ui("新学习会话", "New Study Session")
+        activeStudySession?.title ?? ui("新对话", "New chat")
     }
 
     var activeStudySessionScopeTitle: String {
@@ -2014,7 +2014,7 @@ final class WorkspaceStore: ObservableObject {
             restoreAgentReplyState(from: session)
             return
         }
-        let session = StudySession(title: ui("新学习会话", "New Study Session"))
+        let session = StudySession(title: ui("新对话", "New chat"))
         studySessions.append(session)
         sessionMessagePersistence.markLoaded(session.id)
         activeStudySessionID = session.id
@@ -2295,7 +2295,7 @@ final class WorkspaceStore: ObservableObject {
             }
         }) != nil else { return .rejected("会话已不存在，内容未写入。") }
         guard await flushPendingWorkspaceSaveAsync() else {
-            return NativeStorePersistReceipt(status: .failed, message: "建议尚未安全保存，内容仍在当前会话中。", action: action)
+            return NativeStorePersistReceipt(status: .failed, message: "这条建议还没写入磁盘。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。", action: action)
         }
         if !userRequested || missingCourse {
             return NativeStorePersistReceipt(status: .pending,
@@ -3187,7 +3187,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var selectedMaterialTitle: String {
-        selectedMaterialItem.map(displayTitle) ?? ui("未选择材料", "No material selected")
+        selectedMaterialItem.map(displayTitle) ?? ui("未选择文稿", "No document selected")
     }
 
     var agentMessageSourceTitle: String? {
@@ -3363,7 +3363,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentPromptScope: String {
-        hasSelectedMaterial ? ui("当前材料和当前笔记", "the current material and current note") : ui("当前笔记", "the current note")
+        hasSelectedMaterial ? ui("当前文稿和当前笔记", "the current document and current note") : ui("当前笔记", "the current note")
     }
 
     var agentInputPrompt: String {
@@ -3561,7 +3561,7 @@ final class WorkspaceStore: ObservableObject {
             )
         case .persistenceFailed:
             ui(
-                "当前笔记尚未安全保存，魏碑没有切换。请重试。",
+                "魏碑没有切换笔记。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                 "The current note was not safely saved, so WeiBei did not switch. Please retry."
             )
         }
@@ -4131,7 +4131,7 @@ final class WorkspaceStore: ObservableObject {
                         path: sourceURL
                     )
                     showImportantOperationError(ui(
-                        "“\(sourceURL.lastPathComponent)”未完成课程登记；原文件没有被移动或覆盖，但课程目录可能留有已写入副本。请检查课程目录后再重试。",
+                        "“\(sourceURL.lastPathComponent)”还没记到这门课里；原文件没有被移动或覆盖，但课程文件夹里可能已有写入的副本。请检查课程文件夹后再试。",
                         "“\(sourceURL.lastPathComponent)” was not fully registered in the course. The original file was not moved or overwritten, but a written copy may remain in the course folder. Check the course folder before trying again."
                     ))
                 }
@@ -6335,7 +6335,7 @@ final class WorkspaceStore: ObservableObject {
             save()
             let status = sourceItem == nil
                 ? ui("已新建空白笔记：\(url.lastPathComponent)", "Created blank note: \(url.lastPathComponent)")
-                : ui("已为当前资料新建笔记：\(url.lastPathComponent)", "Created note from current material: \(url.lastPathComponent)")
+                : ui("已为当前文稿新建笔记：\(url.lastPathComponent)", "Created a note for this document: \(url.lastPathComponent)")
             requestNoteSelectionTransition(to: item.id) { [weak self] in
                 guard let self else { return }
                 activeNotebookItemID = item.id
@@ -8702,7 +8702,7 @@ final class WorkspaceStore: ObservableObject {
         profile.updatedAt = now
         courseKnowledgeProfiles[profileIndex] = profile
         dirtyPortableCourseIDs.insert(courseID)
-        return NativeStorePersistReceipt(status: .saved, message: "已写入课程知识档案", profileUpdate: applied)
+        return NativeStorePersistReceipt(status: .saved, message: "已写入课程档案", profileUpdate: applied)
     }
 
     private enum OptionalRecordID {
@@ -8846,7 +8846,7 @@ final class WorkspaceStore: ObservableObject {
         if rollbackPersisted {
             return NativeStorePersistReceipt(status: .failed, message: "魏碑没有写入这次学习记忆，已恢复更新前的内容，同时发生的修改不受影响。请重试。")
         }
-        return NativeStorePersistReceipt(status: .failed, message: "魏碑无法确认这次学习记忆的最终磁盘状态。当前会话仍保留更新前的内容，请不要关闭并重试。")
+        return NativeStorePersistReceipt(status: .failed, message: "魏碑无法确认这次学习记忆是否已经写入磁盘。魏碑里仍是更新前的内容；请先不要退出，然后重试。")
     }
 
     func persistNativeCourseProfileUpdate(
@@ -8873,7 +8873,7 @@ final class WorkspaceStore: ObservableObject {
         if persisted && coursePersisted {
             return NativeStorePersistReceipt(
                 status: .saved,
-                message: "已写入课程知识档案",
+                message: "已写入课程档案",
                 profileUpdate: applied
             )
         }
@@ -8936,7 +8936,7 @@ final class WorkspaceStore: ObservableObject {
         if rollbackPersisted {
             return NativeStorePersistReceipt(status: .failed, message: "魏碑没有写入这次课程档案，已恢复更新前的内容，同时发生的修改不受影响。请重试。")
         }
-        return NativeStorePersistReceipt(status: .failed, message: "魏碑无法确认这次课程档案的最终磁盘状态。当前会话仍保留更新前的内容，请不要关闭并重试。")
+        return NativeStorePersistReceipt(status: .failed, message: "魏碑无法确认这次课程档案是否已经写入磁盘。魏碑里仍是更新前的内容；请先不要退出，然后重试。")
     }
 
     func isLearningMemoryResolved(_ memoryID: String, in scope: LearningMemoryScope) -> Bool {
@@ -9768,7 +9768,7 @@ final class WorkspaceStore: ObservableObject {
         let sentMaterialTitle = replayContext?.materialTitle ?? sentSelections.first(where: { $0.source == .document })?.ownerTitle
             ?? (sentMaterialItem?.id == selectedMaterialItem?.id && sentMaterialItem != nil
                 ? currentSourceReferenceTitle : sentMaterialItem.map(displayTitle))
-            ?? ui("未选择材料", "No material selected")
+            ?? ui("未选择文稿", "No document selected")
         let sentMaterialItemID = sentMaterialItem?.id
         let sentNoteTitle = replayContext?.noteTitle ?? sentSelections.first(where: { $0.source == .note })?.ownerTitle
             ?? sentNoteItem.map(displayTitle) ?? ui("当前笔记", "Current Note")
@@ -9819,7 +9819,7 @@ final class WorkspaceStore: ObservableObject {
             agentStreamingDisplayPump.stopAndReset()
             agentVisualizationIDsUpdatingHistory = []
             agentStreaming.reset()
-            agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
+            agentStreaming.activityText = ui("正在准备这门课", "Preparing this course")
             defer {
                 if activeAgentRequestID == requestID {
                     activeAgentRequestID = nil
@@ -10410,7 +10410,7 @@ final class WorkspaceStore: ObservableObject {
             case "weibei_update_learning_memory":
                 base = ui("正在整理学习进展", "Updating study progress")
             case "weibei_course_profile_update":
-                base = ui("正在更新课程知识档案", "Updating course profile")
+                base = ui("正在更新课程档案", "Updating course profile")
             case "weibei_note_proposal":
                 base = ui("正在整理写入建议", "Preparing a note proposal")
             default:
@@ -11388,7 +11388,7 @@ final class WorkspaceStore: ObservableObject {
                 // P0 降级标记：读盘失败且无草稿，展示的是模板而非正文。
                 setNoteFileError(
                     ui(
-                        "无法读取笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。",
+                        "读不出笔记文件，所以这里只显示空白模板；已暂停写回，以免盖掉磁盘上的内容。",
                         "The note file could not be read, so a template is shown instead of the note body. Automatic write-back is paused to protect the on-disk content."
                     ),
                     for: item.id
@@ -12186,7 +12186,7 @@ final class WorkspaceStore: ObservableObject {
                 extra: "outcome=failed generation=\(generation)"
             )
             noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.coursePortableStateUnsaved, ui(
-                "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                "这门课的记录没有成功保存。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                 "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
             ), reason: error.localizedDescription))
             return false
@@ -12326,17 +12326,17 @@ final class WorkspaceStore: ObservableObject {
             switch failure {
             case .portableState(let detail):
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.coursePortableStateUnsaved, ui(
-                    "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                    "这门课的记录没有成功保存。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
                 ), reason: detail))
             case .workspace(let detail):
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.workspaceChangesUnwritten, ui(
-                    "课程更改尚未写入磁盘。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                    "这门课的更改还没写入磁盘。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "Course changes were not saved to disk. This change remains in the current session but is not safely stored yet; do not close it, and retry."
                 ), reason: detail))
             case .rollbackConflict:
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.courseStateConcurrentConflict, ui(
-                    "课程状态提交时检测到并发变更，魏碑已停止覆盖。本次修改仍在当前会话中；请先处理冲突，再重试。",
+                    "保存时发现另一处也在修改，魏碑已停止覆盖。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "A concurrent change was detected while committing course state, so WeiBei stopped overwriting. This change remains in the current session; resolve the conflict, then retry."
                 )))
             case .stale:
@@ -12353,12 +12353,12 @@ final class WorkspaceStore: ObservableObject {
         sessionMessagePersistence.noteSuccessfulPersist(writes: prepared.request.sessionMessageWrites, deletions: prepared.request.sessionMessageDeletions)
         if !oversizedPortableCourseIDs.isEmpty {
             reportWorkspaceSaveFailure(.coursePortableStateOversized, ui(
-                "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
+                "工作台内容已保存，但这门课的记录超过 32 MB；课程文件夹里的原记录保持不变。请精简对话或未写入的草稿后再试。",
                 "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
             ))
         } else if !blockedPortableCourseIDs.isEmpty {
             reportWorkspaceSaveFailure(.coursePortableStateBlocked, ui(
-                "工作区内容已保存，但课程文件夹中的课程状态无法安全更新；原状态已保留。请处理冲突或损坏后重试。",
+                "工作台内容已保存，但课程文件夹里的课程记录无法安全更新；原记录已保留。请处理冲突或损坏后再试。",
                 "The workspace was saved, but the course state in the course folder could not be updated safely. The original state was preserved. Resolve the conflict or damage, then retry."
             ))
         } else {

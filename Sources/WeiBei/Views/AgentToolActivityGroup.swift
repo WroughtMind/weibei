@@ -216,7 +216,7 @@ struct AgentToolActivityGroup: View {
         case "weibei_course_profile_update": store.ui("更新课程档案", "Update course profile")
         case "weibei_note_proposal": store.ui("准备笔记建议", "Prepare note proposal")
         case "load_skill": store.ui("读取技能指引", "Read skill instructions")
-        case "create_document": store.ui("创建文档", "Create document")
+        case "create_document": store.ui("创建文稿", "Create document")
         case "delegate": store.ui("委派子任务", "Delegate task")
         case "weibei_visual_asset": store.ui("查找视觉素材", "Find visual assets")
         case "weibei_find_discussions": store.ui("查找讨论", "Find discussions")
