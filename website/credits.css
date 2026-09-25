@@ -1,0 +1,73 @@
+/* Credits 彩蛋 —— 导航触发 + 弹出卡片，依赖 style.css 设计令牌 */
+
+.credits-trigger {
+  display: flex; align-items: center; height: 28px;
+  padding: 0; border: 0; cursor: pointer;
+  background: transparent; color: inherit;
+  font-family: "WeiBei Stele", serif; font-weight: 400;
+  font-size: inherit; letter-spacing: .08em; line-height: 1;
+}
+.credits-trigger:hover, .credits-trigger:focus-visible { color: var(--vermilion); }
+.credits-trigger:active { opacity: .65; }
+.credits-trigger:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 2px; }
+
+.credits-pop {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  background: rgba(37, 34, 31, .32);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+}
+.credits-pop[hidden] { display: none; }
+
+.credits-card {
+  width: min(380px, 92vw);
+  padding: 18px 20px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper-light);
+  box-shadow: var(--depth-calm);
+}
+
+.credits-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.credits-head h2 { margin: 0; font-family: "WeiBei Stele", serif; font-weight: 400; font-size: 16px; letter-spacing: .1em; }
+.credits-close {
+  width: 28px; height: 28px; display: grid; place-items: center;
+  border: 0; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--ink-soft);
+  font: 18px/1 ui-sans-serif, system-ui, sans-serif;
+  transition: color .15s ease, background .15s ease;
+}
+.credits-close:hover { color: var(--ink); background: rgba(54, 47, 40, .08); }
+
+.credit-row { position: relative; padding: 6px 6px 8px; border-radius: 8px; }
+.credit-row:hover { background: rgba(255, 255, 255, .55); }
+
+.credit-line { display: flex; align-items: center; gap: 8px; }
+.credit-logo { width: 15px; height: 15px; flex: 0 0 auto; }
+.credit-dot { width: 9px; height: 9px; margin: 3px; flex: 0 0 auto; border: 1.5px dashed var(--ink-soft); border-radius: 50%; }
+.credit-name { font-size: 13px; font-weight: 500; }
+.credit-pct { margin-left: auto; color: var(--ink-soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: .03em; }
+
+.credit-track { height: 6px; margin-top: 5px; background: rgba(54, 47, 40, .08); border-radius: 99px; }
+.credit-track i { display: block; height: 100%; min-width: 4px; border-radius: 99px; background: var(--c, var(--ink)); }
+.credit-row.unknown .credit-track i {
+  min-width: 7px;
+  background: repeating-linear-gradient(45deg, #b3a78f 0 4px, #d8cdb5 4px 8px);
+}
+
+.credit-row::after {
+  content: attr(data-tip);
+  position: absolute; top: -30px; right: 6px;
+  padding: 5px 10px; border-radius: 7px;
+  background: var(--ink); color: var(--paper-light);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px; letter-spacing: .04em; white-space: nowrap;
+  opacity: 0; transform: translateY(3px);
+  transition: opacity .15s ease, transform .15s ease;
+  pointer-events: none;
+}
+.credit-row:hover::after { opacity: 1; transform: translateY(0); }
+.credit-row:first-of-type::after { top: auto; bottom: calc(100% + 4px); }
+
+.credits-total { margin: 10px 6px 0; color: var(--ink-soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; letter-spacing: .05em; }
