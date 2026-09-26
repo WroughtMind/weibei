@@ -80,7 +80,7 @@ final class Page: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
   func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) { loaded = true }
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
     if let body = message.body as? [String: Any], body["reason"] as? String == "jump", let id = body["id"] as? String { activeJumps.append(id) }
-    if message.name == "htmlResourceIssues", let issues = message.body as? [String] { resourceIssues.append(contentsOf: issues) }
+    if message.name == "htmlResourceIssues", let body = message.body as? [String: Any], let issues = body["missing"] as? [String] { resourceIssues.append(contentsOf: issues) }
   }
   func js(_ source: String, _ args: [String: Any]) -> Any? {
     var done = false; var result: Any?

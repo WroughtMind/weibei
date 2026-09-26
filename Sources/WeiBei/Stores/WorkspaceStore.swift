@@ -3225,7 +3225,7 @@ final class WorkspaceStore: ObservableObject {
             guard let locationTitle = readerLocationTitle,
                   locationTitle != itemTitle else { return itemTitle }
             if let locationID = readerLocationID,
-               locationID.hasPrefix("html-section-") {
+               locationID.hasPrefix("html-section-") || locationID.hasPrefix("html-block-") {
                 return ui(
                     "\(itemTitle)，章节标识：\(locationID)，章节：\(locationTitle)",
                     "\(itemTitle), section id: \(locationID), section: \(locationTitle)"
@@ -3242,7 +3242,13 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             return ui("\(itemTitle)，章节：\(locationTitle)", "\(itemTitle), section: \(locationTitle)")
-        case .markdown, .text:
+        case .markdown:
+            guard let locationID = readerLocationID else { return itemTitle }
+            return ui(
+                "\(itemTitle)，章节标识：\(locationID)，章节：\(readerLocationTitle ?? itemTitle)",
+                "\(itemTitle), section id: \(locationID), section: \(readerLocationTitle ?? itemTitle)"
+            )
+        case .text:
             return itemTitle
         }
     }
@@ -4433,7 +4439,8 @@ final class WorkspaceStore: ObservableObject {
                 readerLocationTitle = location.locationTitle ?? location.itemTitle
                 if selectedMaterialItem?.kind == .pdf {
                     requestReaderPDFPage(location.pageIndex)
-                } else if selectedMaterialItem?.kind.isWebDocument == true {
+                } else if let kind = selectedMaterialItem?.kind,
+                          kind.isWebDocument || kind == .markdown {
                     requestReaderHTMLLocation(
                         id: location.locationID,
                         title: location.locationTitle
@@ -5026,7 +5033,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateReaderHTMLLocation(id: String?, title: String?, reason: String) {
-        guard selectedMaterialItem?.kind.isWebDocument == true else { return }
+        guard let kind = selectedMaterialItem?.kind,
+              kind.isWebDocument || kind == .markdown else { return }
         let cleanedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextID = cleanedID.isEmpty ? nil : String(cleanedID.prefix(500))
@@ -5063,6 +5071,10 @@ final class WorkspaceStore: ObservableObject {
         guard readerTargetLocationID != nil || readerTargetLocationTitle != nil else { return }
         readerTargetLocationID = nil
         readerTargetLocationTitle = nil
+    }
+
+    func cancelReaderHTMLLocationTarget() {
+        clearReaderHTMLLocationTarget()
     }
 
     private func requestReaderPDFPage(_ pageIndex: Int?) {
@@ -5103,7 +5115,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let previous = studyLocation(for: item.id, in: activeCourseID)
         let itemTitle = sourceReferenceBaseTitle(for: item)
-        let locationID = item.kind.isWebDocument ? readerLocationID : nil
+        let locationID = item.kind.isWebDocument || item.kind == .markdown ? readerLocationID : nil
         let pageIndex = item.kind == .pdf ? readerPageIndex : nil
         let locationChanged = incrementVisit
             || previous?.itemTitle != itemTitle
@@ -5163,12 +5175,12 @@ final class WorkspaceStore: ObservableObject {
             clearReaderHTMLLocationTarget()
             return
         }
-        readerLocationID = item.kind.isWebDocument ? location.locationID : nil
+        readerLocationID = item.kind.isWebDocument || item.kind == .markdown ? location.locationID : nil
         readerLocationTitle = location.locationTitle ?? displayTitle(for: item)
         if item.kind == .pdf {
             readerPageIndex = max(location.pageIndex ?? 0, 0)
             requestReaderPDFPage(location.pageIndex)
-        } else if item.kind.isWebDocument {
+        } else if item.kind.isWebDocument || item.kind == .markdown {
             requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         }
     }
@@ -5215,13 +5227,14 @@ final class WorkspaceStore: ObservableObject {
         }
         showReader = true
         requestReaderPDFPage(item.kind == .pdf ? reference.pageIndex : nil)
-        let htmlTargetID = item.kind.isWebDocument
+        let supportsSectionLocation = item.kind.isWebDocument || item.kind == .markdown
+        let htmlTargetID = supportsSectionLocation
             ? reference.sectionLocationID
                 ?? (item.kind == .html ? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind.isWebDocument ? reference.sectionTitle : nil
+            title: supportsSectionLocation ? reference.sectionTitle : nil
         )
         focus(.reader)
         return true
@@ -5290,13 +5303,14 @@ final class WorkspaceStore: ObservableObject {
         }
 
         requestReaderPDFPage(item.kind == .pdf ? source.pageIndex : nil)
-        let htmlTargetID = item.kind.isWebDocument
+        let supportsSectionLocation = item.kind.isWebDocument || item.kind == .markdown
+        let htmlTargetID = supportsSectionLocation
             ? source.sectionLocationID
                 ?? (item.kind == .html ? source.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind.isWebDocument ? source.sectionTitle : nil
+            title: supportsSectionLocation ? source.sectionTitle : nil
         )
         readerSourceHighlight = source.highlightQuery
         readerSourceHighlightPageIndex = item.kind == .pdf ? source.pageIndex : nil
@@ -5641,9 +5655,12 @@ final class WorkspaceStore: ObservableObject {
         requestReaderPDFPage(
             selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
         )
+        let supportsSectionLocation = selectedMaterialItem.map {
+            $0.kind.isWebDocument || $0.kind == .markdown
+        } ?? false
         requestReaderHTMLLocation(
-            id: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationID : nil,
-            title: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationTitle : nil
+            id: supportsSectionLocation ? snapshot.readerLocationID : nil,
+            title: supportsSectionLocation ? snapshot.readerLocationTitle : nil
         )
         latestAgentLearningUpdate = nil
         syncActiveStudySession()

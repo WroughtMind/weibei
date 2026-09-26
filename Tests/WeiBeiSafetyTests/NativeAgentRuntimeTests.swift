@@ -2,6 +2,74 @@ import XCTest
 @testable import WeiBeiCore
 
 final class NativeAgentRuntimeTests: XCTestCase {
+    func testHeadinglessMarkdownUsesReadableBlocksForExactCourseRead() {
+        let markdown = """
+        第一段解释风险溢价和无风险收益之间的关系。
+
+        第二段讨论投资组合分散化为什么不能消除系统风险。
+
+        - 第三个块是一个独立列表
+        - 它仍应作为同一阅读位置读取
+        """
+
+        let passages = CourseDocumentSearchIndex.markdownPassages(markdown)
+        XCTAssertEqual(passages.map(\.location), ["markdown-block-0", "markdown-block-1", "markdown-block-2"])
+        XCTAssertTrue(passages[1].title?.contains("第二段讨论") == true)
+
+        let result = CourseDocumentSearchIndex.readMarkdown(markdown, location: "markdown-block-1")
+        XCTAssertEqual(result.passages.map(\.location), ["markdown-block-1"])
+        XCTAssertTrue(result.text?.contains("第二段讨论") == true)
+        XCTAssertFalse(result.text?.contains("第一段解释") == true)
+
+        let complex = """
+        ---
+        course: 投资学
+        ---
+
+        公式前的普通段落。
+
+        $$
+        ## 公式里的井号不是标题
+
+        x + y = z
+        $$
+
+        - 列表第一项
+        - 列表第二项
+
+        > 引用块正文
+
+        ```text
+        $$ 代码围栏里的符号不是公式块
+        ```
+
+        $$a+b$$
+
+        公式后的普通段落。
+        """
+        let complexPassages = CourseDocumentSearchIndex.markdownPassages(complex)
+        XCTAssertEqual(complexPassages.map(\.location), (0..<7).map { "markdown-block-\($0)" })
+        XCTAssertTrue(complexPassages[1].text.contains("公式里的井号不是标题"))
+        XCTAssertTrue(complexPassages[4].text.contains("代码围栏里的符号"))
+        XCTAssertEqual(complexPassages[5].text, "$$a+b$$")
+        XCTAssertTrue(complexPassages[6].text.contains("公式后的普通段落"))
+    }
+
+    func testHeadinglessHTMLBlockLocationMapsToOnlyThatBody() {
+        let html = """
+        <html><body><main>
+        <p>第一段正文足够长，用来验证网页阅读位置和后端正文索引保持一致。</p>
+        <p>第二段正文也足够长，助手应只读取当前段而不是整篇网页。</p>
+        </main></body></html>
+        """
+
+        let passages = CourseDocumentSearchIndex.htmlPassages(html)
+        XCTAssertEqual(passages.count, 2)
+        XCTAssertTrue(passages.allSatisfy { $0.location.hasPrefix("html-block-") })
+        XCTAssertTrue(passages[1].text.contains("第二段正文"))
+        XCTAssertFalse(passages[1].text.contains("第一段正文"))
+    }
+
     func testCourseReadUsesExplicitPageWithRedundantLocation() async throws {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
@@ -100,8 +168,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
 
     func testReadAllowanceAndOnlyCitedLocationsSurvivePersistence() async throws {
         let headings = CourseDocumentSearchIndex.markdownPassages("---\n# 文件头\n---\n\n```\n# 代码\n```\n\n$$\n# 公式\n$$\n\n#\n\n章节\n====\n\n## **末节**\n正文").filter { !$0.location.isEmpty }
-        XCTAssertEqual(headings.map { $0.title ?? "" }, ["", "章节", "末节"])
-        XCTAssertEqual(headings.map(\.location), ["markdown-heading-0", "markdown-heading-1", "markdown-heading-2"])
+        XCTAssertTrue(headings[0].text.contains("# 代码"))
+        XCTAssertTrue(headings[0].text.contains("# 公式"))
+        XCTAssertEqual(Array(headings.dropFirst()).map { $0.title ?? "" }, ["", "章节", "末节"])
+        XCTAssertEqual(headings.map(\.location), ["markdown-preamble", "markdown-heading-0", "markdown-heading-1", "markdown-heading-2"])
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
         let recorder = WorkspaceSearchRecorder()
