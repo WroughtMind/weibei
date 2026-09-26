@@ -6,24 +6,69 @@ import XCTest
 /// 保护 Agent 工作区检索：当前课能命中、默认不跨课、空结果不编造。
 @MainActor
 final class WorkspaceSearchSafetyTests: XCTestCase {
+    private var storeFixture: (store: WorkspaceStore, root: URL)?
+    private var reopenVerification: (workspace: URL, chatID: UUID, itemID: String)?
+
     override class func setUp() {
         super.setUp()
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
     }
 
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        precondition(Thread.isMainThread)
+        storeFixture = try MainActor.assumeIsolated {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("workspace-search-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let library = root.appendingPathComponent("资料库", isDirectory: true)
+            try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+            return (
+                WorkspaceStore(
+                    workspaceDirectory: root.appendingPathComponent("workspace", isDirectory: true),
+                    notebookMarkdownWriter: {
+                        try WorkspaceStore.writeNotebookMarkdown($0, to: $1)
+                    },
+                    startsAtBlankEntries: true,
+                    startsCourseFileMaintenance: false
+                ),
+                root
+            )
+        }
+    }
+
+    override func tearDownWithError() throws {
+        if let verification = reopenVerification {
+            try MainActor.assumeIsolated {
+                let reopened = WorkspaceStore(
+                    workspaceDirectory: verification.workspace,
+                    startsAtBlankEntries: true,
+                    startsCourseFileMaintenance: false
+                )
+                let citation = try XCTUnwrap(
+                    reopened.studySessions.first {
+                        $0.id == verification.chatID
+                    }?.messages.last?.sources.first
+                )
+                XCTAssertTrue(reopened.openAgentReplySource(citation))
+                XCTAssertEqual(reopened.noteEditorCommand?.markdown, "91")
+                XCTAssertEqual(reopened.noteEditorCommand?.value, verification.itemID)
+            }
+        }
+        reopenVerification = nil
+        let root = storeFixture?.root
+        storeFixture = nil
+        if let root {
+            try? FileManager.default.removeItem(at: root)
+        }
+        try super.tearDownWithError()
+    }
+
     func testWorkspaceSearchHitsCurrentCourseIsolatesUnlessCrossLibraryAndStaysEmptyOnMiss() async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("workspace-search-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let fixture = try XCTUnwrap(storeFixture)
+        let root = fixture.root
         let library = root.appendingPathComponent("资料库", isDirectory: true)
-        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        let store = WorkspaceStore(
-            workspaceDirectory: root.appendingPathComponent("workspace", isDirectory: true),
-            notebookMarkdownWriter: { try WorkspaceStore.writeNotebookMarkdown($0, to: $1) },
-            startsAtBlankEntries: true,
-            startsCourseFileMaintenance: false
-        )
+        let store = fixture.store
         try await store.configureCourseLibraryAsync(at: library)
         let currentCourseID = try await store.createCourseInLibraryAsync(title: "当前课")
         let otherCourseID = try await store.createCourseInLibraryAsync(title: "另一课")
@@ -132,11 +177,7 @@ final class WorkspaceSearchSafetyTests: XCTestCase {
         XCTAssertEqual(store.noteEditorCommand?.value, otherNote.id)
         let saved = await store.persistWorkspaceNow()
         XCTAssertTrue(saved)
-        let reopened = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("workspace"), startsAtBlankEntries: true, startsCourseFileMaintenance: false)
-        let reopenedCitation = try XCTUnwrap(reopened.studySessions.first { $0.id == chat.id }?.messages.last?.sources.first)
-        XCTAssertTrue(reopened.openAgentReplySource(reopenedCitation))
-        XCTAssertEqual(reopened.noteEditorCommand?.markdown, "91")
-        XCTAssertEqual(reopened.noteEditorCommand?.value, otherNote.id)
+        reopenVerification = (store.workspaceDirectory, chat.id, otherNote.id)
 
         // 同一个工具会话应读到外部修改；有未保存编辑时使用当前草稿。
         let diskText = "# 外部修改\nFreshDiskSourceToken"

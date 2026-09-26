@@ -5,6 +5,39 @@ import XCTest
 @testable import WeiBei
 
 final class NativeChatMarkdownTests: XCTestCase {
+    private var storeFixture: (store: WorkspaceStore, root: URL)?
+
+    override class func setUp() {
+        super.setUp()
+        setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+    }
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        precondition(Thread.isMainThread)
+        storeFixture = MainActor.assumeIsolated {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+            return (
+                WorkspaceStore(
+                    workspaceDirectory: root,
+                    startsAtBlankEntries: true,
+                    startsCourseFileMaintenance: false
+                ),
+                root
+            )
+        }
+    }
+
+    override func tearDownWithError() throws {
+        let root = storeFixture?.root
+        storeFixture = nil
+        if let root {
+            try? FileManager.default.removeItem(at: root)
+        }
+        try super.tearDownWithError()
+    }
+
     func testStreamingMarkdownStylesOnlyTheUnfinishedTail() {
         let cases: [(String, String)] = [
             ("官方确认其**", "官方确认其"), ("**粗体 *", "**粗体** "),
@@ -272,10 +305,7 @@ final class NativeChatMarkdownTests: XCTestCase {
     // SwiftUI sizing probes must not resize the text to infinity or add an empty completion footer.
     @MainActor func testCompletionKeepsActualMessageHeightWithoutNoteActions() async throws {
         _ = NSApplication.shared
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let store = try XCTUnwrap(storeFixture?.store)
         let source = String(repeating: "生成结束时，正文和阅读位置应保持不变。", count: 12)
         var message = AgentMessage(role: .assistant, text: source, source: nil, completionState: .generating)
         store.messages = [message]
@@ -336,10 +366,7 @@ final class NativeChatMarkdownTests: XCTestCase {
     // Scrolling a conversation to its bottom must reveal all of the last answer before its footer.
     @MainActor func testConversationBottomDoesNotClipLastAnswer() async throws {
         _ = NSApplication.shared
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let store = try XCTUnwrap(storeFixture?.store)
         let paragraph = "运行中的组件需要保存状态，也需要在变化后继续工作。" + String(repeating: "这段正文应当完整显示，继续向下滚动可以读到末尾。", count: 6)
         let ending = "回答结束。"
         let sources = [8, 5].map { count in
