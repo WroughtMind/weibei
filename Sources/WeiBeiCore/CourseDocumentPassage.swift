@@ -37,7 +37,7 @@ public struct CourseDocumentPassage: Sendable, Equatable {
     func matches(page: Int?, location requested: String?) -> Bool {
         if let page { return pageIndex == page - 1 }
         guard let requested, !requested.isEmpty else { return true }
-        return location == requested
+        return location == requested || (!requested.contains("#") && location.hasPrefix("\(requested)#p"))
     }
 
     public func excerpt(matching query: String, maximumCharacters: Int = 2_000) -> CourseDocumentPassage? {
@@ -62,12 +62,16 @@ enum CourseMarkdownSections {
     static func parse(_ source: String) -> [Section] {
         let lines = source.components(separatedBy: "\n")
         var parsingLines = lines
+        var contentStartLine = 0
         // 编辑器将文件头独立显示；保留行数供解析范围回指原文。
         if lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") {
             for index in 0...end { parsingLines[index] = "" }
+            contentStartLine = end + 1
         }
         // 与编辑器已有的块公式一致：公式内容不产生 Markdown 标题。
         var mathFence = false
+        var mathStartLine: Int?
+        var mathRanges: [Range<Int>] = []
         var codeFence: (Character, Int)?
         for index in parsingLines.indices {
             let line = parsingLines[index].trimmingCharacters(in: .whitespaces)
@@ -80,9 +84,20 @@ enum CourseMarkdownSections {
             guard codeFence == nil else { continue }
             if line.hasPrefix("$$") {
                 parsingLines[index] = ""
-                if mathFence { mathFence = false }
-                else if !line.dropFirst(2).contains("$$") { mathFence = true }
+                if mathFence {
+                    mathRanges.append((mathStartLine ?? index)..<(index + 1))
+                    mathStartLine = nil
+                    mathFence = false
+                } else if line.dropFirst(2).contains("$$") {
+                    mathRanges.append(index..<(index + 1))
+                } else {
+                    mathStartLine = index
+                    mathFence = true
+                }
             } else if mathFence { parsingLines[index] = "" }
+        }
+        if let mathStartLine {
+            mathRanges.append(mathStartLine..<lines.count)
         }
         let document = Document(parsing: parsingLines.joined(separator: "\n"))
         var headings: [(line: Int, title: String)] = []
@@ -94,10 +109,42 @@ enum CourseMarkdownSections {
         }
         visit(document)
         var result: [Section] = []
-        if let first = headings.first, first.line > 0 {
-            result.append(Section(location: "", title: nil, text: lines[..<first.line].joined(separator: "\n") + "\n"))
+        if let first = headings.first, first.line > contentStartLine {
+            let preamble = lines[contentStartLine..<first.line].joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !preamble.isEmpty {
+                result.append(Section(location: "markdown-preamble", title: String(preamble.prefix(80)), text: preamble))
+            }
         } else if headings.isEmpty {
-            return [Section(location: "", title: nil, text: source)]
+            // swift-markdown does not load Milkdown's math extension. Ordinary
+            // blocks therefore come from the formula-masked AST; every recorded
+            // $$ range is merged back as exactly one top-level reading block.
+            var locatedBlocks: [(start: Int, section: Section)] = document.children.compactMap { node in
+                guard let range = node.range else { return nil }
+                let start = max(range.lowerBound.line - 1, 0)
+                let end = min(max(range.upperBound.line, start + 1), lines.count)
+                guard start < end else { return nil }
+                let text = lines[start..<end].joined(separator: "\n")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                let title = text
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    .prefix(80)
+                return (start, Section(location: "", title: String(title), text: text))
+            }
+            locatedBlocks.append(contentsOf: mathRanges.compactMap { range in
+                guard !range.isEmpty, range.lowerBound < lines.count else { return nil }
+                let end = min(range.upperBound, lines.count)
+                let text = lines[range.lowerBound..<end].joined(separator: "\n")
+                let title = text
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    .prefix(80)
+                return (range.lowerBound, Section(location: "", title: String(title), text: text))
+            })
+            let blocks = locatedBlocks.sorted { $0.start < $1.start }.map(\.section)
+            return blocks.enumerated().map { index, block in
+                Section(location: "markdown-block-\(index)", title: block.title, text: block.text)
+            }
         }
         for (index, heading) in headings.enumerated() {
             let end = index + 1 < headings.count ? headings[index + 1].line : lines.count

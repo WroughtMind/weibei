@@ -9,7 +9,12 @@ const mathNS = 'http://schemas.openxmlformats.org/officeDocument/2006/math';
 const drawingNS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 const pptNS = 'http://schemas.openxmlformats.org/presentationml/2006/main';
 const serialize = (e: Node) => new XMLSerializer().serializeToString(e);
-const post = (name: string, payload: unknown) => (window as any).webkit?.messageHandlers?.[name]?.postMessage(payload);
+const post = (name: string, payload: unknown) => {
+  const tagged = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? { ...(payload as Record<string, unknown>), loadToken: document.body?.dataset.weibeiReaderLoadToken || '' }
+    : payload;
+  (window as any).webkit?.messageHandlers?.[name]?.postMessage(tagged);
+};
 const parse = (xml: string) => {
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.querySelector('parsererror')) throw new Error(t('文稿内容损坏，无法读取', 'This document is damaged and cannot be read'));
@@ -139,7 +144,7 @@ function verifyEquations(element: Element, part: string) {
 let resourceIssues: string[] = [];
 const reportResourceIssue = (message: string) => {
   if (!resourceIssues.includes(message)) resourceIssues.push(message);
-  post('htmlResourceIssues', resourceIssues.slice(0, 100));
+  post('htmlResourceIssues', { missing: resourceIssues.slice(0, 100) });
 };
 const verifyEquationsQuietly = (element: Element, part: string) => {
   try { verifyEquations(element, part); }
@@ -165,14 +170,18 @@ function sections() {
   const headings = blocks.filter(p => /heading|标题/i.test(p.className) || p.getAttribute('role') === 'heading');
   return (headings.length ? headings : blocks.filter((_, i) => i % 15 === 0)).map((p, i, all) => ({ id: p.dataset.weibeiLocation!, title: clean(p.textContent).slice(0, 60), excerpt: '', level: 1, position: i / Math.max(1, all.length - 1), metadata: 'Word' }));
 }
+const postSections = () => post('contentRailSections', { sections: sections() });
+let officeNavigationInProgress = false;
+let presentationHasReportedPosition = false;
 async function goTo(location: string) {
+  officeNavigationInProgress = true;
   let activeID = location;
   if (viewer) {
     const index = viewer.presentationData!.slides.findIndex(s => s.slidePath === location.split('#')[0]);
     // Notes have the source location of their own part, but belong to one slide.
     const noteIndex = viewer.presentationData!.slides.findIndex(s => noteParts.get(s.slidePath) === location.split('#')[0]);
     const target = index >= 0 ? index : noteIndex;
-    if (target < 0) return false;
+    if (target < 0) { officeNavigationInProgress = false; return false; }
     activeID = viewer.presentationData!.slides[target].slidePath;
     await viewer.goToSlide(target, { behavior: 'instant', block: 'start' });
   }
@@ -183,9 +192,15 @@ async function goTo(location: string) {
     note.showPopover();
     element!.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   } else if (element && (!viewer || location.includes('#'))) element.scrollIntoView({ block: 'center', behavior: 'instant' });
-  else if (!viewer) return false;
-  post('contentRailActive', { id: activeID, reason: 'jump' });
+  else if (!viewer) { officeNavigationInProgress = false; return false; }
+  post('contentRailActive', { id: activeID, title: sections().find(section => section.id === activeID)?.title, reason: 'jump' });
+  window.setTimeout(() => { officeNavigationInProgress = false; }, 0);
   return true;
+}
+function canGoTo(location: string) {
+  if (!viewer) return Boolean(sourceElement(location));
+  const part = location.split('#')[0];
+  return viewer.presentationData!.slides.some(slide => slide.slidePath === part || noteParts.get(slide.slidePath) === part);
 }
 async function find(query: string) {
   if (!viewer) return (window as any).find(query, false, false, true, false, true, false);
@@ -345,6 +360,7 @@ async function open(url: string | ArrayBuffer, format: string, language?: string
   root = document.getElementById('office-document')!;
   document.documentElement.style.setProperty('-webkit-text-size-adjust', '100%');
   kind = format; loadError = ''; resourceIssues = []; notes.clear(); noteParts.clear(); equations.clear(); mainPart = '';
+  officeNavigationInProgress = false; presentationHasReportedPosition = false;
   try {
     const bytes = typeof url === 'string' ? await (await fetch(url)).arrayBuffer() : url;
     const zip = await prepare(bytes, format);
@@ -362,7 +378,13 @@ async function open(url: string | ArrayBuffer, format: string, language?: string
         zipLimits: RECOMMENDED_ZIP_LIMITS, lazySlides: true, lazyMedia: true, pdfjs: false,
         onNodeError: (_id, error) => { loadError = String(error); queueMicrotask(() => fail(error)); },
         onSlideError: (_index, error) => { loadError = String(error); queueMicrotask(() => fail(error)); },
-        onSlideChange: index => post('contentRailActive', { id: viewer?.presentationData?.slides[index].slidePath, reason: 'scroll' }),
+        onSlideChange: index => post('contentRailActive', {
+          id: viewer?.presentationData?.slides[index].slidePath,
+          title: t(`第 ${index + 1} 页`, `Page ${index + 1}`),
+          reason: officeNavigationInProgress
+            ? 'programmatic'
+            : (presentationHasReportedPosition ? 'scroll' : (presentationHasReportedPosition = true, 'initial')),
+        }),
         onSlideRendered: (index, element) => {
           const slide = viewer?.presentationData?.slides[index];
           if (slide) {
@@ -397,7 +419,8 @@ async function open(url: string | ArrayBuffer, format: string, language?: string
     const broken = await Promise.all(Array.from(root.querySelectorAll('img, svg image')).map(async element => { const img = new Image(); img.src = element instanceof HTMLImageElement ? element.src : (element as SVGImageElement).href.baseVal; try { await img.decode(); return false; } catch { return true; } }));
     const brokenCount = broken.filter(Boolean).length;
     if (brokenCount > 0) reportResourceIssue(t(`文稿中有 ${brokenCount} 张图片未能显示，正文已导入`, `${brokenCount} images could not be shown; the text was imported`));
-    post('contentRailSections', sections());
+    postSections();
+    if (format === 'docx') reportWordActive('initial');
     post('officeReady', { loaded: true });
   } catch (error) { fail(error); }
 }
@@ -417,13 +440,24 @@ async function applyMarks(asks: unknown[], remarks: any[]) {
   (window as any).WeiBeiRemarkMarks?.apply(remarks);
 }
 
-window.addEventListener('scroll', () => {
+const reportWordActive = (reason: 'initial' | 'scroll' | 'programmatic') => {
   if (kind !== 'docx' || !root) return;
   const line = window.innerHeight * .3;
   const candidates = Array.from(root.querySelectorAll<HTMLElement>('p[data-weibei-location]'));
   const active = candidates.find(p => { const r = p.getBoundingClientRect(); return r.bottom >= line; });
-  if (active) post('contentRailActive', { id: active.dataset.weibeiLocation, reason: 'scroll' });
+  if (active) post('contentRailActive', { id: active.dataset.weibeiLocation, reason });
+};
+window.addEventListener('scroll', () => {
+  reportWordActive(officeNavigationInProgress ? 'programmatic' : 'scroll');
 }, { passive: true });
 
 (window as any).WeiBeiOffice = { open, math, drawWMFText, renderGraphic, graphicRelations, has3DChart, render3DChart, goTo, find, searchResults, activateSearchResult, sections, sourceOrder, applyMarks, attachNote, get isPresentation() { return Boolean(viewer); }, get error() { return loadError; } };
-(window as any).WeiBeiContentRail = { installed: true, scrollTo: (id: string) => { void goTo(id); }, scan: () => post('contentRailSections', sections()) };
+(window as any).WeiBeiContentRail = {
+  installed: true,
+  scrollTo: (id: string) => {
+    if (!canGoTo(id)) return false;
+    void goTo(id);
+    return true;
+  },
+  scan: postSections
+};

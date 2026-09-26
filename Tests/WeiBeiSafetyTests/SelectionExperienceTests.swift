@@ -7,6 +7,29 @@ import WeiBeiCore
 
 final class SelectionExperienceTests: XCTestCase {
     @MainActor
+    func testMarkdownReadingLocationReachesQuestionAndRestoresAfterReselect() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let markdown = StudyItem(id: "markdown-location", title: "无标题文稿", subtitle: "", kind: .markdown, urlPath: nil, isSample: false)
+        let next = StudyItem(id: "next-markdown", title: "下一份文稿", subtitle: "", kind: .markdown, urlPath: nil, isSample: false)
+        store.importedItems = [markdown, next]
+        store.select(itemID: markdown.id)
+
+        store.updateReaderHTMLLocation(id: "markdown-block-7", title: "第八段的短摘录", reason: "scroll")
+        let source = SourceReferenceTitle.parse(store.currentSourceReferenceTitle)
+        XCTAssertEqual(source.sectionLocationID, "markdown-block-7")
+        XCTAssertEqual(source.sectionTitle, "第八段的短摘录")
+        XCTAssertEqual(store.studyLocation(for: markdown.id)?.locationID, "markdown-block-7")
+
+        store.select(itemID: next.id)
+        store.select(itemID: markdown.id)
+        XCTAssertEqual(store.readerLocationID, "markdown-block-7")
+        XCTAssertEqual(store.readerTargetLocationID, "markdown-block-7")
+        XCTAssertNotNil(store.readerTargetLocationRequestID)
+    }
+
+    @MainActor
     func testQuestionUsesVisiblePDFPageBeforeSwitchCommitsResumePoint() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
