@@ -968,18 +968,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     static func userFacingAgentFailureDetail(for error: Error) -> String? {
-        let message: String
-        if let targetError = error as? AgentConversationTargetError {
-            message = targetError.message
-        } else if let failure = error as? NativeLLMFailure {
-            if failure.message.hasPrefix("HTTP ") || failure.message.contains("{") {
-                return nil
-            }
-            message = failure.message
-        } else {
-            return nil
-        }
-        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let targetError = error as? AgentConversationTargetError else { return nil }
+        let trimmed = targetError.message.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
