@@ -3961,6 +3961,7 @@ final class WorkspaceStore: ObservableObject {
             restoreCurrentStudyLocation()
         } else if let item = selectedMaterialItem,
                   courseMembershipIndex.courseIDs(for: item.id).count > 1 {
+            commitCurrentReaderLocation()
             restoreCurrentStudyLocation()
         } else if readerLocationTitle == nil {
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
