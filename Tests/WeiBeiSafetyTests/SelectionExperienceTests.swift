@@ -51,6 +51,32 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
+    func testReselectingSharedPDFKeepsAndCommitsVisiblePage() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let courseA = Course(id: UUID(), title: "课程 A")
+        let courseB = Course(id: UUID(), title: "课程 B")
+        let material = StudyItem(id: "shared-pdf", title: "共用材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        store.importedItems = [material]
+        store.courses = [courseA, courseB]
+        store.courseItemMemberships = [
+            CourseItemMembership(courseID: courseA.id, itemID: material.id),
+            CourseItemMembership(courseID: courseB.id, itemID: material.id),
+        ]
+        store.activeCourseID = courseA.id
+        store.select(itemID: material.id)
+        store.updateReaderPageIndex(64)
+        store.commitCurrentReaderLocation()
+        store.updateReaderPageIndex(89)
+
+        store.select(itemID: material.id)
+
+        XCTAssertEqual(store.readerPageIndex, 89)
+        XCTAssertEqual(store.studyLocation(for: material.id, in: courseA.id)?.pageIndex, 89)
+    }
+
+    @MainActor
     func testExitCommitPersistsVisiblePDFPage() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
