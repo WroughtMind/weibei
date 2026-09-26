@@ -7,6 +7,67 @@ import WeiBeiCore
 
 final class SelectionExperienceTests: XCTestCase {
     @MainActor
+    func testQuestionUsesVisiblePDFPageBeforeSwitchCommitsResumePoint() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let material = StudyItem(id: "pdf-location", title: "阅读材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        let nextMaterial = StudyItem(id: "next-pdf", title: "下一份材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        store.importedItems = [material, nextMaterial]
+        store.select(itemID: material.id)
+        store.updateReaderPageIndex(64)
+        store.commitCurrentReaderLocation()
+
+        store.updateReaderPageIndex(89)
+        XCTAssertEqual(SourceReferenceTitle.parse(store.currentSourceReferenceTitle).pageIndex, 89)
+        XCTAssertEqual(store.studyLocation(for: material.id)?.pageIndex, 64)
+
+        store.select(itemID: nextMaterial.id)
+        XCTAssertEqual(store.studyLocation(for: material.id)?.pageIndex, 89)
+    }
+
+    @MainActor
+    func testCourseSwitchCommitsPDFPageOnlyToTheCourseBeingLeft() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let courseA = Course(id: UUID(), title: "课程 A")
+        let courseB = Course(id: UUID(), title: "课程 B")
+        let material = StudyItem(id: "shared-pdf", title: "共用材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        store.importedItems = [material]
+        store.courses = [courseA, courseB]
+        store.courseItemMemberships = [
+            CourseItemMembership(courseID: courseA.id, itemID: material.id),
+            CourseItemMembership(courseID: courseB.id, itemID: material.id),
+        ]
+        store.activeCourseID = courseA.id
+        store.select(itemID: material.id)
+
+        store.updateReaderPageIndex(41)
+        store.activateCourse(courseB.id)
+
+        XCTAssertEqual(store.studyLocation(for: material.id, in: courseA.id)?.pageIndex, 41)
+        XCTAssertNil(store.studyLocation(for: material.id, in: courseB.id))
+    }
+
+    @MainActor
+    func testExitCommitPersistsVisiblePDFPage() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let material = StudyItem(id: "exit-pdf", title: "退出时材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.importedItems = [material]
+        store.select(itemID: material.id)
+        store.updateReaderPageIndex(27)
+
+        store.commitCurrentReaderLocation()
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: false, startsCourseFileMaintenance: false)
+        XCTAssertEqual(reopened.studyLocation(for: material.id)?.pageIndex, 27)
+    }
+
+    @MainActor
     func testClearingReaderSelectionRemovesCapsuleAndAutomaticAttachment() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

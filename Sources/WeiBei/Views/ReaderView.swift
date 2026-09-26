@@ -248,7 +248,6 @@ struct ReaderView: View {
     @State private var pdfControlsLeaveCollapseToken: UUID?
     @State private var pendingPDFPageIndex: Int?
     @State private var pendingPDFPageRequestID: UUID?
-    @State private var pendingPDFPageRecordsLocation = false
     @State private var pdfHasSelectableText: Bool?
     @State private var pdfContentRailItems: [ContentRailItem] = []
     @State private var pdfRailTargetPageIndex: Int?
@@ -262,7 +261,6 @@ struct ReaderView: View {
     @State private var htmlContentRailTarget: WebReaderContentRailTarget?
     @State private var pendingHTMLLocationCommit: Task<Void, Never>?
     @State private var pendingHTMLContentRailActiveCommit: Task<Void, Never>?
-    @State private var pendingPDFLocationCommit: Task<Void, Never>?
     @State private var markdownSnapshotItemID: String?
     @State private var markdownSnapshotText: String?
     @State private var markdownSnapshotFailed = false
@@ -433,8 +431,6 @@ struct ReaderView: View {
             pendingHTMLLocationCommit = nil
             pendingHTMLContentRailActiveCommit?.cancel()
             pendingHTMLContentRailActiveCommit = nil
-            pendingPDFLocationCommit?.cancel()
-            pendingPDFLocationCommit = nil
             pdfPageIndex = 0
             pdfPageCount = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? 1 : 0
             pdfHasSelectableText = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? true : nil
@@ -453,9 +449,6 @@ struct ReaderView: View {
         }
         .onChange(of: store.showReader) { _, visible in
             if visible { loadMarkdownSnapshot() }
-        }
-        .onChange(of: pdfPageIndex) { _, _ in
-            syncReaderLocationTitle()
         }
         .onChange(of: pdfPageCount) { _, _ in
             syncReaderLocationTitle()
@@ -591,7 +584,6 @@ struct ReaderView: View {
         case .pdf:
             if let pageIndex = Self.pdfPageIndex(fromContentRailID: item.id) {
                 pdfRailTargetPageIndex = pageIndex
-                schedulePDFLocationCommit(pageIndex)
             }
         case .html, .docx, .pptx:
             htmlContentRailTarget = WebReaderContentRailTarget(id: item.id)
@@ -719,19 +711,6 @@ struct ReaderView: View {
                   htmlContentRailActiveID == id else { return }
             pendingHTMLLocationCommit = nil
             store.updateReaderHTMLLocation(id: id, title: title, reason: reason.rawValue)
-        }
-    }
-
-    private func schedulePDFLocationCommit(_ pageIndex: Int) {
-        pendingPDFLocationCommit?.cancel()
-        let itemID = store.selectedMaterialItem?.id
-        pendingPDFLocationCommit = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled,
-                  store.selectedMaterialItem?.id == itemID,
-                  pdfPageIndex == pageIndex else { return }
-            pendingPDFLocationCommit = nil
-            store.updateReaderPageIndex(pageIndex)
         }
     }
 
@@ -869,6 +848,27 @@ struct ReaderView: View {
         return store.ui("让导入文稿跟随魏碑阅读环境", "Adapt Document to WeiBei Reading")
     }
 
+    private var visiblePDFPageBinding: Binding<Int> {
+        Binding(
+            get: { pdfPageIndex },
+            set: { pageIndex in
+                pdfPageIndex = pageIndex
+                // PDFKit first reports page 0 while a saved page is still pending.
+                // Keep that transient load state from replacing the restored target.
+                guard pendingPDFPageIndex == nil else { return }
+                setVisiblePDFPage(pageIndex)
+            }
+        )
+    }
+
+    private func setVisiblePDFPage(_ pageIndex: Int) {
+        pdfPageIndex = pageIndex
+        guard pdfPageCount > 0,
+              store.selectedMaterialItem?.kind == .pdf else { return }
+        store.updateReaderPageIndex(pageIndex)
+        syncReaderLocationTitle()
+    }
+
     private func applyPendingPDFPageIfReady() {
         guard let target = pendingPDFPageIndex,
               let requestID = pendingPDFPageRequestID,
@@ -878,12 +878,9 @@ struct ReaderView: View {
         let plan = PDFPageJumpPlan.resolve(targetPageIndex: target, pageCount: pdfPageCount, browseMode: pdfBrowseMode)
         pdfRailTargetPageIndex = plan.railTargetPageIndex
         pdfPageIndex = plan.pageIndex
-        if pendingPDFPageRecordsLocation {
-            schedulePDFLocationCommit(plan.pageIndex)
-        }
+        store.updateReaderPageIndex(plan.pageIndex)
         pendingPDFPageIndex = nil
         pendingPDFPageRequestID = nil
-        pendingPDFPageRecordsLocation = false
         store.consumeReaderPDFPageRequest(requestID)
         syncReaderLocationTitle()
     }
@@ -891,7 +888,6 @@ struct ReaderView: View {
     private func capturePendingPDFPageRequest() {
         pendingPDFPageIndex = store.readerTargetPageIndex
         pendingPDFPageRequestID = store.readerTargetPageRequestID
-        pendingPDFPageRecordsLocation = store.readerTargetPageRecordsLocation
     }
 
     private var pdfFloatingControls: some View {
@@ -974,8 +970,7 @@ struct ReaderView: View {
                     let next = PageNavigator.previous(pdfPageIndex)
                     guard next != pdfPageIndex else { return }
                     store.recordReaderPageNavigationPoint()
-                    pdfPageIndex = next
-                    schedulePDFLocationCommit(next)
+                    setVisiblePDFPage(next)
                 } label: {
                     Image(systemName: "chevron.left")
                 }
@@ -994,8 +989,7 @@ struct ReaderView: View {
                     let next = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount)
                     guard next != pdfPageIndex else { return }
                     store.recordReaderPageNavigationPoint()
-                    pdfPageIndex = next
-                    schedulePDFLocationCommit(next)
+                    setVisiblePDFPage(next)
                 } label: {
                     Image(systemName: "chevron.right")
                 }
@@ -1116,7 +1110,7 @@ struct ReaderView: View {
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         hidesHostedDocument: store.materialPickerPresented,
-                        pageIndex: $pdfPageIndex,
+                        pageIndex: visiblePDFPageBinding,
                         pageCount: $pdfPageCount,
                         railTargetPageIndex: $pdfRailTargetPageIndex,
                         underlineSnippets: store.markedSelectionAskThreads(forItemID: item.id).map(\.selectionText),
@@ -1136,7 +1130,6 @@ struct ReaderView: View {
                         onRemarkMarkActivate: { recordID, anchor in
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
-                        onUserPageChange: schedulePDFLocationCommit,
                         onSelectableTextChange: { available in pdfHasSelectableText = available },
                         onDocumentTap: { store.clearReaderSourceHighlight() },
                         onDocumentReadabilityChange: { readable in pdfDocumentUnreadable = !readable }
@@ -1450,7 +1443,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var activeRemarkID: String?
     var excerptRevealRequest: ExcerptRevealRequest?
     var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
-    var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
     /// X8: fired on a plain tap/click inside the document (ask-underline hits excluded).
     var onDocumentTap: () -> Void = {}
@@ -1462,7 +1454,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         Coordinator(
             pageIndex: $pageIndex,
             pageCount: $pageCount,
-            onUserPageChange: onUserPageChange,
             onSelectableTextChange: onSelectableTextChange,
             onSelectionChange: onSelectionChange,
             onAskUnderlineActivate: onAskUnderlineActivate,
@@ -1538,7 +1529,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.pageIndex = $pageIndex
         context.coordinator.pageCount = $pageCount
         context.coordinator.appearanceMode = appearanceMode
-        context.coordinator.onUserPageChange = onUserPageChange
         context.coordinator.onSelectableTextChange = onSelectableTextChange
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onSearchResults = onSearchResults
@@ -1613,7 +1603,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     final class Coordinator: NSObject {
         var pageIndex: Binding<Int>
         var pageCount: Binding<Int>
-        var onUserPageChange: (Int) -> Void
         var onSelectableTextChange: (Bool?) -> Void
         var onSelectionChange: (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void
         var onAskUnderlineActivate: (String, SelectionPopoverAnchor?) -> Void
@@ -1646,7 +1635,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var searchPublication = 0
         private var lastSearchTargetPageIndex: Int?
         private var loadGeneration = 0
-        private var userNavigationDeadline = Date.distantPast
         private(set) var loadedURL: URL?
         private var lastAppliedAskUnderlineMarks: [(id: String, text: String, anchor: SelectionDocumentAnchor?)] = []
         private var askUnderlineHits: [(threadID: String, pageIndex: Int, hitBounds: CGRect)] = []
@@ -1667,7 +1655,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         init(
             pageIndex: Binding<Int>,
             pageCount: Binding<Int>,
-            onUserPageChange: @escaping (Int) -> Void,
             onSelectableTextChange: @escaping (Bool?) -> Void,
             onSelectionChange: @escaping (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void,
             onAskUnderlineActivate: @escaping (String, SelectionPopoverAnchor?) -> Void,
@@ -1675,7 +1662,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         ) {
             self.pageIndex = pageIndex
             self.pageCount = pageCount
-            self.onUserPageChange = onUserPageChange
             self.onSelectableTextChange = onSelectableTextChange
             self.onSelectionChange = onSelectionChange
             self.onAskUnderlineActivate = onAskUnderlineActivate
@@ -1910,9 +1896,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                     self.pageCount.wrappedValue = document.pageCount
                     let index = document.index(for: page)
                     self.pageIndex.wrappedValue = index
-                    if Date() <= self.userNavigationDeadline {
-                        self.onUserPageChange(index)
-                    }
                     self.updateSelectableTextState(in: view)
                     self.ensureOCRForCurrentPage(in: view)
                 }
@@ -1920,7 +1903,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
 #if targetEnvironment(macCatalyst)
             (view as? ReaderPDFView)?.onPointerEvent = { [weak self, weak view] point, phase in
                 guard let self, let view else { return }
-                self.markUserNavigationIntent()
                 if let point { self.lastPointerInView = point }
                 if phase == .began {
                     self.selectionWork?.cancel()
@@ -1930,18 +1912,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 if phase == .ended || phase == .cancelled { self.selectionReportGate.endTracking() }
                 self.reportCurrentSelection(in: view)
             }
-            (view as? ReaderPDFView)?.onScrollNavigation = { [weak self] in
-                self?.markUserNavigationIntent()
-            }
 #else
-            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel, .keyDown]) { [weak self, weak view] event in
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self, weak view] event in
                 guard let self, let view, event.window === view.window else { return event }
-                if event.type == .keyDown {
-                    if self.isFirstResponderInside(view) {
-                        self.markUserNavigationIntent()
-                    }
-                    return event
-                }
                 let location = view.convert(event.locationInWindow, from: nil)
                 if event.type == .leftMouseUp, self.selectionReportGate.isTracking {
                     self.selectionReportGate.endTracking()
@@ -1955,10 +1928,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                     return event
                 }
                 guard view.bounds.contains(location) else { return event }
-                if event.type == .scrollWheel {
-                    self.markUserNavigationIntent()
-                    return event
-                }
                 if event.type == .leftMouseDown {
                     view.window?.makeFirstResponder(view)
                     self.selectionReportGate.beginTracking()
@@ -1975,18 +1944,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
 #endif
         }
 
-        private func markUserNavigationIntent() {
-            userNavigationDeadline = Date().addingTimeInterval(0.9)
-        }
-
-#if !targetEnvironment(macCatalyst)
-        private func isFirstResponderInside(_ view: NSView) -> Bool {
-            guard let responder = view.window?.firstResponder as? NSView else { return false }
-            return responder === view || responder.isDescendant(of: view)
-        }
-
-#endif
-
         private func removeObservers() {
             if let observer {
                 NotificationCenter.default.removeObserver(observer)
@@ -1998,7 +1955,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             }
 #if targetEnvironment(macCatalyst)
             (observedView as? ReaderPDFView)?.onPointerEvent = nil
-            (observedView as? ReaderPDFView)?.onScrollNavigation = nil
 #else
             if let eventMonitor {
                 NSEvent.removeMonitor(eventMonitor)

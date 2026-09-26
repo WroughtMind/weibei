@@ -13,9 +13,6 @@ final class ReaderPDFView: PDFView {
     /// source-reference jump highlight, mirroring the AppKit mouseDown path.
     var handleTapInDocument: (() -> Void)?
     var onPointerEvent: ((CGPoint?, UIGestureRecognizer.State) -> Void)?
-    /// R1: trackpad / scroll-wheel only. Kept off the touch pan so text selection
-    /// does not share a recognizer with scrolling.
-    var onScrollNavigation: (() -> Void)?
     private var adaptsDocumentColors = true
     private var documentAppearanceMode: WeiBeiAppearanceMode = .paper
     override init(frame: CGRect) {
@@ -23,12 +20,6 @@ final class ReaderPDFView: PDFView {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(pointer(_:)))
         pan.cancelsTouchesInView = false; pan.delegate = self
         addGestureRecognizer(pan)
-        let scroll = UIPanGestureRecognizer(target: self, action: #selector(scrollNavigation(_:)))
-        scroll.allowedScrollTypesMask = .all
-        scroll.allowedTouchTypes = []
-        scroll.cancelsTouchesInView = false
-        scroll.delegate = self
-        addGestureRecognizer(scroll)
         let tap = UITapGestureRecognizer(target: self, action: #selector(tap(_:)))
         tap.cancelsTouchesInView = false; tap.delegate = self
         addGestureRecognizer(tap)
@@ -43,14 +34,6 @@ final class ReaderPDFView: PDFView {
     @objc private func pointer(_ gesture: UIGestureRecognizer) {
         onPointerEvent?(gesture.location(in: self), gesture.state)
         reportCurrentSelection?()
-    }
-    @objc private func scrollNavigation(_ gesture: UIPanGestureRecognizer) {
-        switch gesture.state {
-        case .began, .changed, .ended:
-            onScrollNavigation?()
-        default:
-            break
-        }
     }
     @objc private func tap(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: self)

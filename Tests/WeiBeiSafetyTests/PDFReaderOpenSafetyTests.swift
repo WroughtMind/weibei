@@ -18,7 +18,7 @@ final class PDFReaderOpenSafetyTests: XCTestCase {
         XCTAssertEqual(Set(anchor.rectsByPage.keys), [0, 1])
         var activatedAsk: String?
         let coordinator = PDFReaderRepresentable.Coordinator(
-            pageIndex: .constant(0), pageCount: .constant(2), onUserPageChange: { _ in },
+            pageIndex: .constant(0), pageCount: .constant(2),
             onSelectableTextChange: { _ in }, onSelectionChange: { _, _, _, _ in }, onAskUnderlineActivate: { id, _ in activatedAsk = id }
         )
         let view = PDFView(frame: CGRect(x: 0, y: 0, width: 600, height: 800))
