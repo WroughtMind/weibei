@@ -3,6 +3,9 @@ import WeiBeiCore
 
 /// Normalizes formula delimiters and common model output for Markdown renderers.
 enum AgentChatKaTeXMarkdown {
+    private static let inlineMath = try? NSRegularExpression(
+        pattern: #"(?<![\\\d$])\$(?=\S)([^\r\n$]+?)(?<=\S)(?<!\\)\$(?!\d)"#
+    )
     private static let singleLineDisplayMath = try? NSRegularExpression(
         pattern: #"^[ \t]*\$\$([^$\n]+)\$\$[ \t]*$"#,
         options: [.anchorsMatchLines]
@@ -26,6 +29,32 @@ enum AgentChatKaTeXMarkdown {
             text = replaceMatches(in: text, regex: unsupportedUnderbrace) { _ in #"\underline"# }
         }
         return text
+    }
+
+    /// Protect single-dollar formulas before CommonMark can split their contents.
+    /// Code, links, images, display formulas, and escaped dollars remain literal.
+    static func protectInlineMath(_ text: String) -> String {
+        guard text.contains("$"), let inlineMath else { return text }
+        let nsText = text as NSString
+        let matches = inlineMath.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+        guard !matches.isEmpty else { return text }
+        let literalRanges = MarkdownLiteralRanges.ranges(in: text)
+
+        var output = ""
+        var cursor = 0
+        for match in matches {
+            guard !literalRanges.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else {
+                continue
+            }
+            output += nsText.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            output += "\\("
+            output += nsText.substring(with: match.range(at: 1))
+            output += "\\)"
+            cursor = NSMaxRange(match.range)
+        }
+        guard cursor > 0 else { return text }
+        output += nsText.substring(from: cursor)
+        return output
     }
 
     /// `$$x$$` on one line parses as INLINE math (micromark math flow needs the

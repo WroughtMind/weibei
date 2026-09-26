@@ -300,6 +300,7 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
         let parsed = MarkdownParser().parse(markdown)
         let content = MarkdownContent(parserResult: parsed, theme: theme)
         view.setContentImmediately(content, theme: theme)
+        view.invalidateIntrinsicContentSize()
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context) -> CGSize? {
         let width = max(1, proposal.width ?? uiView.bounds.width)
@@ -309,5 +310,44 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
         var markdown: String?
         var fontSize: CGFloat = 0
         var appearance: WeiBeiAppearanceMode?
+    }
+}
+
+struct CatalystRichAnswer: View {
+    let markdown: String
+    let fontSize: CGFloat
+    let appearanceMode: WeiBeiAppearanceMode
+    let messageID: UUID?
+    let contentBlocks: [AgentMessageContentBlock]
+    let openLink: (URL) -> Void
+
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(AgentAnswerMarkdownSegments.split(markdown).enumerated()), id: \.offset) { _, part in
+                switch part {
+                case .text(let text):
+                    CatalystMessageMarkdown(
+                        markdown: text,
+                        fontSize: fontSize,
+                        appearanceMode: appearanceMode,
+                        openLink: openLink
+                    )
+                case .attachment(let identifier):
+                    if let messageID {
+                        AgentNativeContentAttachment(
+                            messageID: messageID,
+                            identifier: identifier,
+                            initialBlocks: contentBlocks,
+                            onHeight: { _ in }
+                        )
+                        .environmentObject(store)
+                        .environment(\.weiBeiTextScale, textScale)
+                    }
+                }
+            }
+        }
     }
 }
