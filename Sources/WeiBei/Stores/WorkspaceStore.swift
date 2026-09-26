@@ -4868,7 +4868,11 @@ final class WorkspaceStore: ObservableObject {
             // Only assign when changed — pane visibility lives on paneState; avoid store thrash.
             applyLayoutMatchingThreePaneOrderIfNeeded()
         }
-        focus(isPaneVisible(role) ? role.focus : fallbackDocumentPaneFocus())
+        if isPaneVisible(role) {
+            focus(role.focus)
+        } else if let nextFocus = visibleDocumentPaneOrder.first?.focus {
+            focus(nextFocus)
+        }
         save()
     }
 
@@ -4967,10 +4971,6 @@ final class WorkspaceStore: ObservableObject {
             showNotes = visible
             if !visible && searchesNotes { showDocumentSearch = false; noteSearch = "" }
         }
-    }
-
-    private func fallbackDocumentPaneFocus() -> PaneFocus {
-        visibleDocumentPaneOrder.first?.focus ?? .reader
     }
 
     func revealDocumentSearch() {

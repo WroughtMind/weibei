@@ -75,20 +75,35 @@ final class ConversationWebClippingView: NSView {
         }
         guard scrollWheelMonitor == nil else { return }
         scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self,
-                  event.window === window,
-                  abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
-                  let contentView = window?.contentView,
-                  let hitView = contentView.hitTest(
-                      contentView.convert(event.locationInWindow, from: nil)
-                  ),
-                  hitView === self || hitView.isDescendant(of: self),
-                  let outer = nearestConversationScrollView() else {
+            guard let self, self.forwardScrollWheel(
+                event,
+                in: event.window,
+                at: event.locationInWindow
+            ) else {
                 return event
             }
-            outer.scrollWheel(with: event)
             return nil
         }
+    }
+
+    @discardableResult
+    func forwardScrollWheel(
+        _ event: NSEvent,
+        in eventWindow: NSWindow?,
+        at locationInWindow: NSPoint
+    ) -> Bool {
+        guard eventWindow === window,
+              abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
+              let contentView = window?.contentView,
+              let hitView = contentView.hitTest(
+                  contentView.convert(locationInWindow, from: nil)
+              ),
+              hitView === self || hitView.isDescendant(of: self),
+              let outer = nearestConversationScrollView() else {
+            return false
+        }
+        outer.scrollWheel(with: event)
+        return true
     }
 
     private func removeScrollWheelMonitor() {

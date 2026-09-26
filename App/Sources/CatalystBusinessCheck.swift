@@ -39,7 +39,7 @@ enum CatalystBusinessCheck {
                 try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: path, options: .atomic)
                 exit(0)
             }
-            let courseID = try store.createCourseInLibrary(title: "退出保存检查")
+            let courseID = try await store.createCourseInLibraryAsync(title: "退出保存检查")
             guard let chat = store.createStudySession(courseID: courseID),
                   let noteID = await store.createCourseNotebookNote(courseID: courseID, title: "退出保存笔记",
                     markdown: "原始正文", revealInWorkspace: false),

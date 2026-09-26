@@ -6,9 +6,28 @@ import XCTest
 import WeiBeiCore
 
 final class SidebarPerformanceTests: XCTestCase {
+    private var asyncStoreFixture: (store: WorkspaceStore, root: URL)?
+
     override class func setUp() {
         super.setUp()
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+    }
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        precondition(Thread.isMainThread)
+        asyncStoreFixture = MainActor.assumeIsolated {
+            makeStore(itemCount: 0)
+        }
+    }
+
+    override func tearDownWithError() throws {
+        let root = asyncStoreFixture?.root
+        asyncStoreFixture = nil
+        if let root {
+            try? FileManager.default.removeItem(at: root)
+        }
+        try super.tearDownWithError()
     }
 
     @MainActor
@@ -181,8 +200,7 @@ final class SidebarPerformanceTests: XCTestCase {
 
     @MainActor
     func testFourthActiveNoteTagRemainsSearchableAfterRealLoad() async throws {
-        let fixture = makeStore(itemCount: 0)
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let fixture = try XCTUnwrap(asyncStoreFixture)
         let note = StudyItem(
             id: "sidebar-four-tag-note",
             title: "四标签笔记",
@@ -213,8 +231,7 @@ final class SidebarPerformanceTests: XCTestCase {
 
     @MainActor
     func testLegacyExternalNoteWithoutStoredIdentityStillLoadsTags() async throws {
-        let fixture = makeStore(itemCount: 0)
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let fixture = try XCTUnwrap(asyncStoreFixture)
         let noteURL = fixture.root.appendingPathComponent("legacy-note.md")
         try Data("#legacy-tag".utf8).write(to: noteURL)
         let note = StudyItem(
@@ -244,8 +261,7 @@ final class SidebarPerformanceTests: XCTestCase {
 
     @MainActor
     func testNoteBodyEditsDoNotRebuildSidebarUntilTitleLineChanges() async throws {
-        let fixture = makeStore(itemCount: 0)
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let fixture = try XCTUnwrap(asyncStoreFixture)
         let note = StudyItem(
             id: "sidebar-title-signature-note",
             title: "草稿.md",
