@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>魏碑 WeiBei · 读、问、记，在同一个窗口</title>
+  <meta name="description" content="魏碑是原生 macOS 阅读与笔记工作台。资料留在本机，AI 只在你需要时接入。">
+  <meta name="theme-color" content="#0d0d0c">
+  <meta name="color-scheme" content="dark">
+  <meta property="og:title" content="魏碑 WeiBei">
+  <meta property="og:description" content="读、问、记，在同一个窗口。原生 macOS 阅读与笔记工作台。">
+  <meta property="og:image" content="assets/social-preview.png">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="preload" href="assets/fonts/WeiBeiStele.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="preload" href="assets/shots/workspace.webp" as="image" type="image/webp">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="main.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main" data-en="Skip to content">跳到正文</a>
+  <div class="top-sentinel" aria-hidden="true"></div>
+
+  <header class="nav" data-nav>
+    <a class="nav__brand" href="#top" aria-label="魏碑 WeiBei" data-en-aria-label="WeiBei home">
+      <svg class="nav__mark" viewBox="120 140 1010 970" aria-hidden="true"><use href="#w-mark"/></svg>
+      <span class="nav__word">WEIBEI</span>
+    </a>
+    <nav class="nav__links" aria-label="主导航" data-en-aria-label="Primary">
+      <a href="#verbs" data-en="Features">功能</a>
+      <a href="#demo" data-en="Try it">试用</a>
+      <a href="#themes" data-en="Themes">主题</a>
+      <a href="#local" data-en="Privacy">隐私</a>
+    </nav>
+    <div class="nav__actions">
+      <button class="nav__lang" type="button" data-lang-toggle aria-label="Switch to English" data-en-aria-label="切换到中文">
+        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#translate"/></svg>
+        <span data-en="中文">EN</span>
+      </button>
+      <a class="nav__icon" href="https://github.com/WroughtMind/weibei" aria-label="GitHub">
+        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#github"/></svg>
+      </a>
+      <a class="btn btn--seal btn--sm" href="#start" data-en="Get started">开始使用</a>
+    </div>
+  </header>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <g id="w-mark">
+        <path d="M220 170H432V708H158V260Z"/>
+        <path d="M511 170H749V708H511Z"/>
+        <path d="M825 170H1010L1098 258V708H825Z"/>
+        <path d="M158 708H432L474 816L511 708H749L789 816L825 708H1098V940L1014 1025L982 1083H915L814 967L720 1083H585L482 967L391 1083H270L158 960Z"/>
+        <path fill="#c23a2e" d="M1042 1020H1108V1086H1042Z"/>
+      </g>
+    </defs>
+  </svg>
+
+  <main id="main">
+    <!-- Hero -->
+    <section class="hero" id="top">
+      <div class="hero__copy">
+        <h1 class="hero__title">
+          <span class="line"><span data-en="Read, ask, write.">读、问、记，</span></span>
+          <span class="line"><span data-en="One window.">在同一个窗口。</span></span>
+        </h1>
+        <p class="hero__sub" data-en="A native macOS workbench for reading and notes. Your files stay on your Mac. AI joins only when you call it.">魏碑是原生 macOS 阅读与笔记工作台。资料留在本机，AI 只在你需要时接入。</p>
+        <div class="hero__ctas">
+          <a class="btn btn--seal" href="#start">
+            <span data-en="Get started">开始使用</span>
+            <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#arrow-right"/></svg>
+          </a>
+          <a class="btn btn--ghost" href="#demo" data-en="Try it on this page">在这页试一试</a>
+        </div>
+      </div>
+      <div class="hero__stone" aria-hidden="true">
+        <svg class="hero__carve" viewBox="120 140 1010 970" preserveAspectRatio="xMidYMid meet"><use href="#w-mark"/></svg>
+        <canvas class="hero__rub" data-rubbing></canvas>
+      </div>
+    </section>
+
+    <!-- Product reveal -->
+    <section class="reveal" aria-label="魏碑界面" data-en-aria-label="The WeiBei workspace">
+      <figure class="reveal__frame">
+        <img src="assets/shots/workspace.webp" width="2940" height="1686" fetchpriority="high"
+          alt="魏碑三栏界面：左侧阅读小说，中间与 AI 对话，右侧编辑诗歌笔记"
+          data-en-alt="WeiBei in three panes: a novel on the left, an AI conversation in the middle, a poem being annotated on the right">
+      </figure>
+      <p class="reveal__caption" data-en="Reading, conversation, and notes sit side by side. Each can also fill the whole window.">阅读、对话、笔记并排摆开，也能各自铺满整个窗口。</p>
+    </section>
+
+    <!-- Three verbs, sticky story -->
+    <section class="verbs" id="verbs">
+      <div class="verbs__rail" aria-hidden="true">
+        <div class="verbs__glyphs">
+          <span class="is-active">读</span><span>问</span><span>记</span>
+        </div>
+        <ol class="verbs__ticks"><li class="is-active"></li><li></li><li></li></ol>
+      </div>
+      <div class="verbs__panels">
+        <article class="verb" data-verb="0">
+          <h2 class="verb__title"><span class="verb__glyph" aria-hidden="true">读</span><span data-en="Read deeply">读得进去</span></h2>
+          <p data-en="Import a folder as a course. Open PDF, HTML, Markdown, and plain text, then search the whole course at once.">把一个文件夹导入成一门课。PDF、HTML、Markdown、纯文本都能打开，整门课的资料可以一起全文搜索。</p>
+          <figure class="shot">
+            <img src="assets/shots/theme-night.webp" width="2242" height="1596" loading="lazy" decoding="async"
+              alt="夜璃主题下的沉浸阅读：《赤壁赋》" data-en-alt="Immersive reading in the Night Glass theme: Su Shi's Red Cliff rhapsody">
+          </figure>
+        </article>
+        <article class="verb" data-verb="1">
+          <h2 class="verb__title"><span class="verb__glyph" aria-hidden="true">问</span><span data-en="Ask in place">问在原处</span></h2>
+          <p data-en="Select a passage and ask. Citations in the answer open the source, and the underline in the source reopens that conversation.">选中一段文字直接提问。回答里的引用一点就回到原文，原文里的下划线也能把你带回那次对话。</p>
+          <figure class="shot">
+            <img src="assets/shots/theme-xuan.webp" width="2242" height="1596" loading="lazy" decoding="async"
+              alt="宣纸主题：论文与笔记并排，选中文字后弹出问与记浮窗" data-en-alt="Xuan theme: a paper beside its notes, with the ask and note capsule over a selection">
+          </figure>
+        </article>
+        <article class="verb" data-verb="2">
+          <h2 class="verb__title"><span class="verb__glyph" aria-hidden="true">记</span><span data-en="Write your own">记成自己的</span></h2>
+          <p data-en="Markdown notes with images, math, and code blocks. When AI wants to change a note, it shows you a proposal first. Nothing is written until you accept.">Markdown 笔记，图片、公式、代码块都能插。AI 想改你的笔记，会先摆出一份提案，你确认了才写入。</p>
+          <figure class="shot">
+            <img src="assets/shots/theme-deep.webp" width="2242" height="1596" loading="lazy" decoding="async"
+              alt="玄璃主题下的沉浸写作：带公式与代码块的研究札记" data-en-alt="Immersive writing in the Deep Glass theme: a research note with math and a code block">
+          </figure>
+        </article>
+      </div>
+    </section>
+
+    <!-- Live selection demo -->
+    <section class="demo" id="demo">
+      <div class="demo__head">
+        <h2 class="h2" data-en="Select a line. Try it.">选中一句，试试看。</h2>
+        <p class="lede" data-en="This is how asking works in WeiBei, rebuilt on this page. Select any words below, or let us pick some for you.">这是魏碑里提问的样子，在网页上复刻了一份。选中下面任意几个字，或者让我们替你选。</p>
+        <button class="btn btn--ghost btn--sm" type="button" data-demo-try data-en="Pick a line for me">帮我选一句</button>
+      </div>
+
+      <div class="demo__stage" data-demo>
+        <div class="demo__page">
+          <p class="demo__meta" data-demo-source data-zh-source="苏轼 · 赤壁赋" data-en-source="Thoreau · Walden">苏轼 · 赤壁赋</p>
+          <div class="demo__text" data-demo-text>
+            <p data-en="I went to the woods because I wished to live deliberately, to front only the essential facts of life, and see if I could not learn what it had to teach, and not, when I came to die, discover that I had not lived.">壬戌之秋，七月既望，苏子与客泛舟游于赤壁之下。清风徐来，水波不兴。举酒属客，诵明月之诗，歌窈窕之章。</p>
+            <p data-en="I did not wish to live what was not life, living is so dear; nor did I wish to practise resignation, unless it was quite necessary.">少焉，月出于东山之上，徘徊于斗牛之间。白露横江，水光接天。纵一苇之所如，凌万顷之茫然。</p>
+          </div>
+
+          <div class="capsule" data-capsule hidden>
+            <button type="button" data-capsule-ask data-en="Ask">问</button>
+            <button type="button" data-capsule-note data-en="Note">记</button>
+            <span class="capsule__quote" data-capsule-quote></span>
+          </div>
+        </div>
+
+        <aside class="demo__side" aria-live="polite">
+          <div class="demo__empty" data-demo-empty>
+            <img src="assets/webi/char-08.webp" width="640" height="640" alt="" loading="lazy">
+            <p data-en="Your question and notes will show up here.">你的提问和摘记会出现在这里。</p>
+          </div>
+          <div class="answer" data-demo-answer hidden>
+            <p class="answer__q"><span data-en="You asked about">你问了</span> <q data-answer-quote></q></p>
+            <p class="answer__body">
+              <span data-en="In WeiBei, the model's answer appears here. Every claim that comes from your material carries a citation">在魏碑里，这里是模型的回答。凡是出自资料的说法都带着引用</span>
+              <button type="button" class="cite" data-cite>1</button><span data-en=". Hover it and the source lights up.">，把指针放上去，原文就会亮起来。</span>
+            </p>
+          </div>
+          <ol class="notes" data-demo-notes hidden></ol>
+          <p class="demo__fine" data-en="Page demo only. No model is connected.">网页演示，不连接模型。</p>
+        </aside>
+      </div>
+    </section>
+
+    <!-- Themes -->
+    <section class="themes" id="themes" data-themes>
+      <div class="themes__list">
+        <h2 class="h2" data-en="Eight surfaces. Pick yours.">八种纸面，挑一张顺手的。</h2>
+        <div class="themes__names" role="group" aria-label="主题" data-en-aria-label="Themes">
+          <button type="button" aria-pressed="true" data-src="assets/shots/theme-paper.webp" data-tint="#5a4630" data-alt="纸面主题，暖色背景的沉浸对话" data-alt-en="Paper theme, immersive conversation on a warm ground"><b>纸面</b><i>Paper</i></button>
+          <button type="button" aria-pressed="false" data-src="assets/shots/theme-xuan.webp" data-tint="#5c5140" data-alt="宣纸主题，论文选区浮窗" data-alt-en="Xuan theme, selection capsule over a paper"><b>宣纸</b><i>Xuan</i></button>
+          <button type="button" aria-pressed="false" data-src="assets/shots/theme-inkstone.webp" data-tint="#2a2926" data-alt="墨石主题，深色背景的沉浸对话" data-alt-en="Inkstone theme, immersive conversation in the dark"><b>墨石</b><i>Inkstone</i></button>
+          <button type="button" aria-pressed="false" data-src="assets/shots/theme-stele.webp" data-tint="#3a3a40" data-alt="石碑主题，论文选区浮窗" data-alt-en="Stele theme, selection capsule over a paper"><b>石碑</b><i>Stele</i></button>
+          <button type="button" aria-pressed="false" data-src="assets/shots/theme-clear.webp" data-tint="#3d5a73" data-alt="晴璃主题，浅色毛玻璃背景的沉浸阅读" data-alt-en="Clear Glass theme, immersive reading on light frosted glass"><b>晴璃</b><i>Clear Glass</i></button>
+          <button type="button" aria-pressed="false" data-src="assets/shots/theme-night.webp" data-tint="#2b3950" data-alt="夜璃主题，深色毛玻璃背景的沉浸阅读" data-alt-en="Night Glass theme, immersive reading on dark frosted glass"><b>夜璃</b><i>Night Glass</i></button>
+          <button type="button" aria-pressed="false" data-src="assets/shots/theme-mist.webp" data-tint="#44504f" data-alt="雾璃主题，沉浸写作" data-alt-en="Mist Glass theme, immersive writing"><b>雾璃</b><i>Mist Glass</i></button>
+          <button type="button" aria-pressed="false" data-src="assets/shots/theme-deep.webp" data-tint="#35383e" data-alt="玄璃主题，沉浸写作" data-alt-en="Deep Glass theme, immersive writing"><b>玄璃</b><i>Deep Glass</i></button>
+        </div>
+        <p class="themes__hint"><span data-en="Resize all text with">全局字号用</span> <kbd>⌘</kbd> <kbd>+</kbd> / <kbd>−</kbd> <span data-en="anytime.">随时调。</span></p>
+      </div>
+      <figure class="themes__stage">
+        <div class="themes__glow" aria-hidden="true"></div>
+        <div class="themes__frame" data-theme-frame>
+          <img class="is-current" src="assets/shots/theme-paper.webp" width="2242" height="1596" loading="lazy" decoding="async" alt="纸面主题，暖色背景的沉浸对话" data-en-alt="Paper theme, immersive conversation on a warm ground">
+        </div>
+        <figcaption data-en="Real screenshots. The material shown is for demonstration and is not bundled with the app.">真实截图。画面中的资料仅作展示，应用不内置这些内容。</figcaption>
+      </figure>
+    </section>
+
+    <!-- Local first bento -->
+    <section class="local" id="local">
+      <h2 class="h2 local__title" data-en="Your material stays yours.">资料在你手里。</h2>
+      <div class="bento">
+        <article class="tile tile--hero">
+          <img src="assets/webi/ill-13.webp" width="640" height="640" loading="lazy" decoding="async" alt="Webi 拿着放大镜趴在一本打开的书上" data-en-alt="Webi leaning over an open book with a magnifier">
+          <div class="tile__body">
+            <h3 data-en="Stored on your Mac">存在本机</h3>
+            <p data-en="Courses, notes, the full-text index, and study memory are saved locally. Reading and writing need no model at all.">课程、笔记、全文索引和学习记忆都保存在本机。读资料、写笔记，用不着任何模型。</p>
+          </div>
+        </article>
+        <article class="tile tile--seal">
+          <h3 data-en="Proposals before edits">先提案，后写入</h3>
+          <p data-en="Every change AI wants to make to your notes or sources is shown to you first. It lands only after you confirm.">AI 想改笔记和出处，都得先把改动摆到你面前，你确认后才落笔。</p>
+          <div class="proposal" aria-hidden="true">
+            <span class="proposal__del" data-en="attention is similarity">注意力就是相似度</span>
+            <span class="proposal__add" data-en="attention turns similarity into weights">注意力把相似度变成取舍权重</span>
+          </div>
+        </article>
+        <article class="tile tile--stone">
+          <h3 data-en="Tools with limits">工具有边界</h3>
+          <p data-en="AI reads through a small set of WeiBei tools. No terminal, and no free roam of your files.">AI 只能用魏碑提供的限定工具读资料，没有终端，也碰不到任意文件。</p>
+        </article>
+        <article class="tile tile--wire">
+          <div class="tile__body">
+            <h3 data-en="Network, in plain sight">联网看得见</h3>
+            <p data-en="Online models get only the excerpts a request needs.">在线模型只收到完成请求所需的摘录。</p>
+            <a class="link" href="https://github.com/WroughtMind/weibei/blob/main/PRIVACY.md">
+              <span data-en="Read the privacy notes">读隐私说明</span>
+              <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#arrow-up-right"/></svg>
+            </a>
+          </div>
+          <img src="assets/webi/ill-19.webp" width="640" height="640" loading="lazy" decoding="async" alt="Webi 牵着一根蓝线，把两份文档连在一起" data-en-alt="Webi holding a blue thread that links two documents">
+        </article>
+      </div>
+    </section>
+
+    <!-- Models marquee -->
+    <section class="models" aria-labelledby="models-title">
+      <div class="models__head">
+        <h2 class="h3" id="models-title" data-en="Bring the model you like.">模型由你选。</h2>
+        <p data-en="Presets for common providers, plus subscription sign-in, local llama.cpp, and any OpenAI-compatible endpoint.">内置常用预设，也支持订阅登录、本地 llama.cpp 和自定义 OpenAI 兼容接口。</p>
+      </div>
+      <div class="marquee" aria-hidden="true">
+        <div class="marquee__track">
+          <span>OpenAI</span><i></i><span>Anthropic</span><i></i><span>Google</span><i></i><span>DeepSeek</span><i></i><span>Kimi</span><i></i><span>OpenRouter</span><i></i><span>llama.cpp</span><i></i><span>OpenAI-compatible</span><i></i>
+          <span>OpenAI</span><i></i><span>Anthropic</span><i></i><span>Google</span><i></i><span>DeepSeek</span><i></i><span>Kimi</span><i></i><span>OpenRouter</span><i></i><span>llama.cpp</span><i></i><span>OpenAI-compatible</span><i></i>
+        </div>
+      </div>
+    </section>
+
+    <!-- Webi -->
+    <section class="webi" id="webi">
+      <div class="webi__head">
+        <h2 class="h2" data-en="Meet Webi.">认识 Webi。</h2>
+        <p class="lede" data-en="WeiBei's little W-shaped companion. Three feet, two eyes, and a red square named Xiaozhu at its side.">魏碑里那个 W 形的小伙伴。三只脚，两只眼睛，身边的红色小方块叫小朱。</p>
+        <div class="webi__nav">
+          <button type="button" class="round" data-webi-prev aria-label="上一张" data-en-aria-label="Previous"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#caret-left"/></svg></button>
+          <button type="button" class="round" data-webi-next aria-label="下一张" data-en-aria-label="Next"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#caret-right"/></svg></button>
+        </div>
+      </div>
+      <ul class="webi__rail" data-webi-rail>
+        <li><img src="assets/webi/ill-03.webp" width="640" height="640" loading="lazy" decoding="async" alt="Webi 站在卷起的书页上，指着一行被标亮的字" data-en-alt="Webi riding a curling page, pointing at a highlighted line"></li>
+        <li><img src="assets/webi/ill-05.webp" width="640" height="640" loading="lazy" decoding="async" alt="夜里，Webi 牵着线把几张纸片连起来" data-en-alt="At night, Webi strings scraps of paper together"></li>
+        <li><img src="assets/webi/ill-09.webp" width="640" height="640" loading="lazy" decoding="async" alt="Webi 从一阵纸片风暴里走出来" data-en-alt="Webi walking out of a storm of paper"></li>
+        <li><img src="assets/webi/ill-02.webp" width="640" height="640" loading="lazy" decoding="async" alt="Webi 在夜色里一盏小灯下读书" data-en-alt="Webi reading under a small lamp at night"></li>
+        <li><img src="assets/webi/ill-24.webp" width="640" height="640" loading="lazy" decoding="async" alt="Webi 张开双臂，身边飘着纸屑" data-en-alt="Webi with arms wide open among floating confetti"></li>
+        <li><img src="assets/webi/ill-25.webp" width="640" height="640" loading="lazy" decoding="async" alt="Webi 从纸面的破洞里探出头" data-en-alt="Webi peeking out of a hole torn in the paper"></li>
+        <li><img src="assets/webi/ill-26.webp" width="640" height="640" loading="lazy" decoding="async" alt="一只手伸向书页，Webi 在旁边看着" data-en-alt="A hand reaching for a page while Webi watches"></li>
+        <li><img src="assets/webi/ill-08.webp" width="640" height="640" loading="lazy" decoding="async" alt="Webi 推开一扇门，门外是一条蓝色的小路" data-en-alt="Webi opening a door onto a blue path"></li>
+      </ul>
+    </section>
+
+    <!-- Manifesto -->
+    <section class="manifesto">
+      <blockquote>
+        <p data-en="Reading for a long while, copying passages out, writing notes by hand. Even with no AI at all, that is worth doing.">长时间阅读、摘抄、亲手记笔记，就算完全离开 AI，本身就是有意义的事。</p>
+      </blockquote>
+    </section>
+
+    <!-- Start -->
+    <section class="start" id="start">
+      <div class="start__copy">
+        <h2 class="h2" data-en="Get started">开始使用</h2>
+        <div class="start__download" data-download aria-live="polite">
+          <p class="start__status" data-download-status>正在查询最新版本…</p>
+          <div class="start__buttons" data-download-buttons hidden></div>
+        </div>
+        <dl class="reqs">
+          <div><dt data-en="System">系统</dt><dd data-en="macOS 14 or later, Apple silicon or Intel">macOS 14 及以上，Apple 芯片或 Intel</dd></div>
+          <div><dt data-en="From source">源码构建</dt><dd data-en="Full Xcode 26 and Node.js 22 or later">完整 Xcode 26，Node.js 22 及以上</dd></div>
+        </dl>
+      </div>
+      <div class="terminal">
+        <div class="terminal__bar">
+          <span class="terminal__title">zsh</span>
+          <button type="button" class="terminal__copy" data-copy aria-label="复制命令" data-en-aria-label="Copy commands">
+            <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#copy"/></svg>
+            <span data-copy-label data-en="Copy">复制</span>
+          </button>
+        </div>
+<pre data-copy-source><code><span class="p">$</span> git clone https://github.com/WroughtMind/weibei.git
+<span class="p">$</span> cd weibei
+<span class="p">$</span> npm ci
+<span class="p">$</span> ./script/build_and_run.sh</code></pre>
+        <p class="terminal__note">
+          <span data-en="Mirror on">镜像仓库在</span>
+          <a class="link" href="https://codeberg.org/WroughtMind/weibei">Codeberg</a>
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p class="foot__word" aria-hidden="true">WEIBEI</p>
+    <div class="foot__row">
+      <p data-en="Born at OpenAI Build Week 2026, education track. Code under the MIT License.">魏碑诞生于 OpenAI Build Week 2026 教育赛道。代码采用 MIT 许可。</p>
+      <nav aria-label="页脚" data-en-aria-label="Footer">
+        <a href="https://github.com/WroughtMind/weibei">GitHub</a>
+        <a href="https://codeberg.org/WroughtMind/weibei">Codeberg</a>
+        <a href="https://github.com/WroughtMind/weibei/blob/main/PRIVACY.md" data-en="Privacy">隐私说明</a>
+        <a href="https://github.com/WroughtMind/weibei/blob/main/LICENSING.md" data-en="Licensing">许可</a>
+        <a href="https://github.com/WroughtMind/weibei/issues" data-en="Feedback">反馈问题</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
