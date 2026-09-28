@@ -134,10 +134,11 @@ extension WorkspaceStore {
         confirmedFileImportStopRequested = true
     }
 
-    func continuePendingConfirmedFileImport() {
+    func continuePendingConfirmedFileImport(abandoningFailures: Bool = false) {
         guard let batch = confirmedFileImport,
               batch.stage == .finished,
-              !batch.pendingSourceURLs.isEmpty else { return }
+              !batch.pendingSourceURLs.isEmpty,
+              batch.failures.isEmpty || abandoningFailures else { return }
         prepareConfirmedFileImport(batch.pendingSourceURLs)
     }
 
@@ -363,27 +364,26 @@ extension WorkspaceStore {
         })
         var candidates: [ConfirmedFileImportCandidate] = []
         var reservedTargetNames = Set<String>()
-        var reservedSourcesByTargetName: [String: URL] = [:]
+        var reservedSourcesByOriginalName: [String: [URL]] = [:]
         for url in expanded {
-            let initialTargetName: String
             do {
                 switch try ImportFileCopy.collision(from: url, into: destination) {
-                case .available:
-                    initialTargetName = url.lastPathComponent
+                case .available, .conflict:
+                    break
                 case .duplicate:
                     candidates.append(ConfirmedFileImportCandidate(sourceURL: url, disposition: .duplicate))
                     continue
-                case .conflict(let suggested):
-                    initialTargetName = suggested
                 }
-            } catch {
-                initialTargetName = url.lastPathComponent
-            }
-            if let reservedSource = reservedSourcesByTargetName[initialTargetName],
-               (try? ImportFileCopy.sourcesHaveIdenticalImportedContents(
-                    reservedSource,
-                    url
-               )) == true {
+            } catch {}
+            let originalName = url.lastPathComponent
+            let duplicatesReservedSource = reservedSourcesByOriginalName[originalName, default: []]
+                .contains { reservedSource in
+                    (try? ImportFileCopy.sourcesHaveIdenticalImportedContents(
+                        reservedSource,
+                        url
+                    )) == true
+                }
+            if duplicatesReservedSource {
                 candidates.append(ConfirmedFileImportCandidate(sourceURL: url, disposition: .duplicate))
                 continue
             }
@@ -396,7 +396,7 @@ extension WorkspaceStore {
                 ? .ready
                 : .conflict(suggestedFileName: targetName)
             reservedTargetNames.insert(targetName)
-            reservedSourcesByTargetName[targetName] = url
+            reservedSourcesByOriginalName[originalName, default: []].append(url)
             candidates.append(ConfirmedFileImportCandidate(sourceURL: url, disposition: disposition))
         }
         if markdownOnly {
@@ -785,10 +785,16 @@ struct ConfirmedFileImportView: View {
             HStack(spacing: 8) {
                 if !batch.pendingSourceURLs.isEmpty {
                     Button(store.ui(
-                        "处理待导入文件（\(batch.pendingSourceURLs.count)）",
-                        "Review Waiting Files (\(batch.pendingSourceURLs.count))"
+                        batch.failures.isEmpty
+                            ? "处理待导入文件（\(batch.pendingSourceURLs.count)）"
+                            : "放弃失败项并处理待导入文件（\(batch.pendingSourceURLs.count)）",
+                        batch.failures.isEmpty
+                            ? "Review Waiting Files (\(batch.pendingSourceURLs.count))"
+                            : "Leave Failures and Review Waiting Files (\(batch.pendingSourceURLs.count))"
                     )) {
-                        store.continuePendingConfirmedFileImport()
+                        store.continuePendingConfirmedFileImport(
+                            abandoningFailures: !batch.failures.isEmpty
+                        )
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                 }
