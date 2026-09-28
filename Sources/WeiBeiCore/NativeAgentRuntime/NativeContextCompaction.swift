@@ -92,6 +92,7 @@ enum NativeContextCompaction {
         }
         var candidate = request
         candidate.messages = request.messages.filter { $0.role == .system }
+            + (projection.environmentMessage.map { [$0] } ?? [])
             + [summaryMessage(summary)]
             + projection.keptMessages(from: firstKeptSeq)
         return NativeContextCompactionCandidate(
