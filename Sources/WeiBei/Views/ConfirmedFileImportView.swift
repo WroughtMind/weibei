@@ -514,6 +514,9 @@ struct ConfirmedFileImportView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var courseSearch = ""
     @State private var creatingCourse = false
+    @State private var bodyContentHeight: CGFloat = 40
+
+    private static let maximumBodyHeight: CGFloat = 350
 
     private var batch: ConfirmedFileImportBatch? { store.confirmedFileImport }
     private var matchingCourses: [Course] {
@@ -531,17 +534,32 @@ struct ConfirmedFileImportView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 15)
                 Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
-                ViewThatFits(in: .vertical) {
+                ScrollView {
                     stageContent(batch)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ScrollView {
-                        stageContent(batch)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background {
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: ConfirmedImportBodyHeightKey.self,
+                                    value: geometry.size.height
+                                )
+                            }
+                        }
+                }
+                .scrollDisabled(bodyContentHeight <= Self.maximumBodyHeight)
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(
+                    height: min(bodyContentHeight, Self.maximumBodyHeight),
+                    alignment: .top
+                )
+                .onPreferenceChange(ConfirmedImportBodyHeightKey.self) { height in
+                    let measured = max(1, ceil(height))
+                    if abs(bodyContentHeight - measured) > 0.5 {
+                        bodyContentHeight = measured
                     }
-                    .scrollBounceBehavior(.basedOnSize)
                 }
                 .padding(.horizontal, 22)
                 .padding(.vertical, 16)
-                .frame(maxHeight: 350, alignment: .top)
                 Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
                 footer(batch)
                     .padding(.horizontal, 22)
@@ -556,6 +574,7 @@ struct ConfirmedFileImportView: View {
         .background(WeiBeiThemeBackdrop(mode: store.appearanceMode))
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
+        .modifier(ConfirmedImportFittedPresentation())
         .interactiveDismissDisabled(batch?.stage == .importing)
         .sheet(isPresented: $creatingCourse) {
             CourseProjectEntrySheet(
@@ -977,6 +996,24 @@ struct ConfirmedFileImportView: View {
         case .ready: WeiBeiTheme.secondaryInk
         case .duplicate: WeiBeiTheme.tertiaryInk
         case .conflict: WeiBeiTheme.cinnabar
+        }
+    }
+}
+
+private struct ConfirmedImportBodyHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct ConfirmedImportFittedPresentation: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, macOS 15.0, *) {
+            content.presentationSizing(.fitted)
+        } else {
+            content
         }
     }
 }
