@@ -57,7 +57,7 @@ final class FileModelPhase0BaselineTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "外删课")
         let source = base.appendingPathComponent("诗歌.md")
         try "原始正文".write(to: source, atomically: true, encoding: .utf8)
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note)
         let item = imported.item
 
         let unsavedInput = "用户正在输入、尚未落盘的新内容"
@@ -89,7 +89,7 @@ final class FileModelPhase0BaselineTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "冲突课")
         let source = base.appendingPathComponent("笔记.md")
         try "磁盘版本".write(to: source, atomically: true, encoding: .utf8)
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note)
         let item = imported.item
         let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
 
@@ -171,7 +171,7 @@ final class FileModelPhase0BaselineTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "移除课")
         let source = base.appendingPathComponent("草稿.md")
         try "原稿".write(to: source, atomically: true, encoding: .utf8)
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note)
         let item = imported.item
         let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
 

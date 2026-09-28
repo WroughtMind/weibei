@@ -62,8 +62,8 @@ enum CourseProjectRootSelfCheck {
         try step("新建课程原子落盘") {
             try newCourseCreatesAtomicProjectAndManifest()
         }
-        try step("Markdown 单文件同时作为文稿与笔记") {
-            try markdownMaterialUsesOneItemInBothSurfaces()
+        try step("Markdown 资料保持文稿角色") {
+            try markdownMaterialStaysMaterialThroughImportRace()
         }
         try step("书签失效后仍按本机资料库相对路径打开文稿") {
             try brokenBookmarkStillOpensInLibraryCourseFile()
@@ -174,8 +174,8 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
-    private static func markdownMaterialUsesOneItemInBothSurfaces() throws {
-        let fixture = try Fixture(name: "markdown-dual-surface")
+    private static func markdownMaterialStaysMaterialThroughImportRace() throws {
+        let fixture = try Fixture(name: "markdown-material-role")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
         let source = fixture.root.appendingPathComponent("第一讲.md")
@@ -221,30 +221,21 @@ enum CourseProjectRootSelfCheck {
             "Markdown 导入失败"
         )
         try check(
-            item.isCourseMaterial && item.isNotebookNote
+            item.isCourseMaterial && !item.isNotebookNote
                 && store?.courseMaterials(in: courseID).map(\.id) == [item.id]
-                && store?.courseNotes(in: courseID).map(\.id) == [item.id]
+                && store?.courseNotes(in: courseID).isEmpty == true
                 && store?.importedItems.filter({ $0.id == item.id }).count == 1,
-            "Markdown 没有以同一条目同时出现在文稿和笔记，或扫描竞态产生了重复条目"
+            "Markdown 资料被错误转成笔记，或扫描竞态产生了重复条目"
         )
         try check(store?.openCourseMaterial(item.id, in: courseID) == true, "文稿入口无法打开")
-        store?.openCourseNote(item.id, in: courseID)
-        try store?.waitForCourseNoteLoadsForSelfCheck()
-        try check(store?.noteText.contains("原始内容") == true, "笔记入口首轮读盘后正文为空")
-        store?.updateNote("# 第一讲\n\n已同步更新")
-        store?.flushPendingNotePersistence()
-        try check(
-            try String(contentsOf: require(item.url, "Markdown 路径丢失"), encoding: .utf8)
-                .contains("已同步更新"),
-            "笔记编辑没有写回文稿对应的同一个文件"
-        )
         try check(store?.flushPendingWorkspaceSave() == true, "工作区保存失败")
         store = makeStore(fixture: fixture)
         try check(
             store?.courseMaterials(in: courseID).map(\.id) == [item.id]
-                && store?.courseNotes(in: courseID).map(\.id) == [item.id]
+                && store?.courseNotes(in: courseID).isEmpty == true
+                && store?.importedItems.first(where: { $0.id == item.id })?.isNotebookNote == false
                 && store?.importedItems.filter({ $0.id == item.id }).count == 1,
-            "重开后 Markdown 双入口或单文件身份丢失"
+            "重开后 Markdown 资料角色或单文件身份丢失"
         )
     }
 

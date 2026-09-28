@@ -70,7 +70,7 @@ final class WriteGateSafetyTests: XCTestCase {
         let source = base.appendingPathComponent("\(fileName ?? "笔记-\(UUID().uuidString)").md")
         try content.write(to: source, atomically: true, encoding: .utf8)
         let imported = try await store.importFileIntoCourse(
-            source, courseID: courseID, role: .material
+            source, courseID: courseID, role: .note
         )
         let url = try XCTUnwrap(store.resolvedLibraryURL(for: imported.item))
         return (imported.item, url)
@@ -86,7 +86,7 @@ final class WriteGateSafetyTests: XCTestCase {
         let source = base.appendingPathComponent("\(fileName ?? "笔记-\(UUID().uuidString)").md")
         try content.write(to: source, atomically: true, encoding: .utf8)
         let imported = try store.importFileIntoCourseForSelfCheck(
-            source, courseID: courseID, role: .material
+            source, courseID: courseID, role: .note
         )
         let url = try XCTUnwrap(store.resolvedLibraryURL(for: imported.item))
         return (imported.item, url)
@@ -292,7 +292,7 @@ final class WriteGateSafetyTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "闸门课")
         let source = base.appendingPathComponent("笔记.md")
         try "第一版".write(to: source, atomically: true, encoding: .utf8)
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note)
         let item = imported.item
         let url = try XCTUnwrap(store.resolvedLibraryURL(for: item))
         store.noteEditingSession.replaceDocument(with: item.id)

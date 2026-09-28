@@ -116,6 +116,41 @@ final class ConfirmedFileImportTests: XCTestCase {
         ).isEmpty)
     }
 
+    func testCommonMarkdownStaysMaterialAfterConfirmationOpenAndMaintenance() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let source = fixture.outside.appendingPathComponent("阅读材料.md")
+        try Data("# 阅读材料\n\n正文".utf8).write(to: source)
+
+        fixture.store.prepareConfirmedFileImport([source])
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
+        waitForStage(.finished, in: fixture.store)
+
+        let imported = try XCTUnwrap(fixture.store.confirmedFileImport?.importedItems.first)
+        XCTAssertEqual(imported.kind, .markdown)
+        XCTAssertFalse(imported.isNotebookNote)
+        XCTAssertTrue(imported.isCourseMaterial)
+        XCTAssertEqual(
+            imported.storage,
+            .common(relativePath: "通用资料/阅读材料.md")
+        )
+
+        fixture.store.openSingleConfirmedImport()
+        XCTAssertEqual(fixture.store.selectedMaterialItem?.id, imported.id)
+        XCTAssertNotEqual(fixture.store.activeNoteItemID, imported.id)
+
+        try fixture.store.waitForCourseFileOperation {
+            await fixture.store.reconcileCourseFilesNow()
+        }
+        let maintained = try XCTUnwrap(
+            fixture.store.importedItems.first { $0.id == imported.id }
+        )
+        XCTAssertFalse(maintained.isNotebookNote)
+        XCTAssertTrue(maintained.isCourseMaterial)
+        XCTAssertEqual(fixture.store.selectedMaterialItem?.id, imported.id)
+    }
+
     func testDockFileOpenedDuringImportWaitsForNextBatch() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
