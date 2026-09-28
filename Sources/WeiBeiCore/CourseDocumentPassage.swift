@@ -119,31 +119,34 @@ enum CourseMarkdownSections {
             // swift-markdown does not load Milkdown's math extension. Ordinary
             // blocks therefore come from the formula-masked AST; every recorded
             // $$ range is merged back as exactly one top-level reading block.
-            var locatedBlocks: [(start: Int, section: Section)] = document.children.compactMap { node in
+            var locatedBlocks: [(start: Int, title: String)] = document.children.compactMap { node in
                 guard let range = node.range else { return nil }
                 let start = max(range.lowerBound.line - 1, 0)
                 let end = min(max(range.upperBound.line, start + 1), lines.count)
                 guard start < end else { return nil }
-                let text = lines[start..<end].joined(separator: "\n")
+                let titleText = lines[start..<end].joined(separator: "\n")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { return nil }
-                let title = text
+                guard !titleText.isEmpty else { return nil }
+                let title = titleText
                     .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                     .prefix(80)
-                return (start, Section(location: "", title: String(title), text: text))
+                return (start, String(title))
             }
             locatedBlocks.append(contentsOf: mathRanges.compactMap { range in
                 guard !range.isEmpty, range.lowerBound < lines.count else { return nil }
                 let end = min(range.upperBound, lines.count)
-                let text = lines[range.lowerBound..<end].joined(separator: "\n")
-                let title = text
+                let title = lines[range.lowerBound..<end].joined(separator: "\n")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                     .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                     .prefix(80)
-                return (range.lowerBound, Section(location: "", title: String(title), text: text))
+                return (range.lowerBound, String(title))
             })
-            let blocks = locatedBlocks.sorted { $0.start < $1.start }.map(\.section)
+            let blocks = locatedBlocks.sorted { $0.start < $1.start }
             return blocks.enumerated().map { index, block in
-                Section(location: "markdown-block-\(index)", title: block.title, text: block.text)
+                let end = index + 1 < blocks.count ? blocks[index + 1].start : lines.count
+                let text = lines[block.start..<end].joined(separator: "\n")
+                    + (end < lines.count ? "\n" : "")
+                return Section(location: "markdown-block-\(index)", title: block.title, text: text)
             }
         }
         for (index, heading) in headings.enumerated() {

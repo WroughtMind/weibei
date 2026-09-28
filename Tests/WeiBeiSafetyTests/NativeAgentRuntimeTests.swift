@@ -51,7 +51,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(complexPassages.map(\.location), (0..<7).map { "markdown-block-\($0)" })
         XCTAssertTrue(complexPassages[1].text.contains("公式里的井号不是标题"))
         XCTAssertTrue(complexPassages[4].text.contains("代码围栏里的符号"))
-        XCTAssertEqual(complexPassages[5].text, "$$a+b$$")
+        XCTAssertEqual(complexPassages[5].text, "$$a+b$$\n\n")
         XCTAssertTrue(complexPassages[6].text.contains("公式后的普通段落"))
     }
 
