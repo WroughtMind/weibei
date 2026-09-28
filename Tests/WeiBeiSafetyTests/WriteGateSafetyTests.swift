@@ -108,6 +108,8 @@ final class WriteGateSafetyTests: XCTestCase {
         let store = try makeStore(base: base, library: library, backupRoot: backupRoot)
         let courseID = try store.createCourseInLibrary(title: "闸门课")
         let (item, url) = try importNote(store, base: base, courseID: courseID, content: "原始内容")
+        // 真实笔记导入会建立可信基线；本场景专门验证“没有基线且无法重读”。
+        store.noteBackingContentDigestsByItemID[item.id] = nil
 
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path) }
