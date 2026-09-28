@@ -524,26 +524,31 @@ struct ConfirmedFileImportView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
             if let batch {
                 heading(batch)
-                switch batch.stage {
-                case .preparing:
-                    Text(store.ui("正在核对文件与目标…", "Checking files and destination…"))
-                        .weiBeiText(13)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
-                case .reviewing:
-                    review(batch)
-                case .importing:
-                    progress(batch)
-                case .finished:
-                    result(batch)
+                    .padding(.horizontal, 22)
+                    .padding(.top, 20)
+                    .padding(.bottom, 15)
+                Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
+                ViewThatFits(in: .vertical) {
+                    stageContent(batch)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ScrollView {
+                        stageContent(batch)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
                 }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
+                .frame(maxHeight: 350, alignment: .top)
+                Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
+                footer(batch)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 13)
             }
         }
-        .padding(24)
-        .frame(width: 540, height: 600, alignment: .topLeading)
+        .frame(width: 500, alignment: .topLeading)
 #if targetEnvironment(macCatalyst)
         .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
 #endif
@@ -565,16 +570,83 @@ struct ConfirmedFileImportView: View {
         }
     }
 
+    @ViewBuilder
+    private func stageContent(_ batch: ConfirmedFileImportBatch) -> some View {
+        switch batch.stage {
+        case .preparing:
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text(store.ui("正在核对文件与目标…", "Checking files and destination…"))
+                    .weiBeiText(13)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case .reviewing:
+            review(batch)
+        case .importing:
+            progress(batch)
+        case .finished:
+            result(batch)
+        }
+    }
+
+    @ViewBuilder
+    private func footer(_ batch: ConfirmedFileImportBatch) -> some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            switch batch.stage {
+            case .preparing:
+                Button(store.ui("取消", "Cancel")) { store.dismissConfirmedFileImport() }
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+                    .keyboardShortcut(.cancelAction)
+            case .reviewing:
+                Button(store.ui("取消", "Cancel")) { store.dismissConfirmedFileImport() }
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+                    .keyboardShortcut(.cancelAction)
+                Button(store.ui("导入", "Import")) { store.confirmFileImport() }
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(batch.confirmableCount == 0 || batch.destinationError != nil)
+            case .importing:
+                Button(store.ui("停止剩余导入", "Stop Remaining")) {
+                    store.stopConfirmedFileImport()
+                }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+            case .finished:
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { resultButtons(batch) }
+                    VStack(alignment: .trailing, spacing: 8) { resultButtons(batch) }
+                }
+            }
+        }
+    }
+
     private func heading(_ batch: ConfirmedFileImportBatch) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(store.ui("确认导入", "Confirm Import"))
+            Text(headingTitle(batch))
                 .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
-            Text(store.ui(
-                "导入副本，原文件保留。确认前不会复制文件。",
-                "A copy will be imported and the original kept. Nothing is copied before confirmation."
-            ))
-            .weiBeiText(12)
-            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            Text(headingDetail(batch))
+                .weiBeiText(12)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+        }
+    }
+
+    private func headingTitle(_ batch: ConfirmedFileImportBatch) -> String {
+        switch batch.stage {
+        case .preparing, .reviewing: store.ui("确认导入", "Confirm Import")
+        case .importing: store.ui("正在导入", "Importing")
+        case .finished: store.ui("导入结果", "Import Results")
+        }
+    }
+
+    private func headingDetail(_ batch: ConfirmedFileImportBatch) -> String {
+        switch batch.stage {
+        case .preparing, .reviewing:
+            store.ui("导入副本，保留原文件。", "Import a copy and keep the original.")
+        case .importing:
+            destinationDescription(batch)
+        case .finished:
+            store.ui("已完成的导入已经保留。", "Completed imports have been kept.")
         }
     }
 
@@ -586,17 +658,7 @@ struct ConfirmedFileImportView: View {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.cinnabar)
-            }
-            Spacer(minLength: 0)
-            HStack {
-                Button(store.ui("取消", "Cancel")) { store.dismissConfirmedFileImport() }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button(confirmTitle(batch)) { store.confirmFileImport() }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(batch.confirmableCount == 0 || batch.destinationError != nil)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -617,41 +679,18 @@ struct ConfirmedFileImportView: View {
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 .lineLimit(2)
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(batch.candidates) { candidate in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: StudyItemKind.detect(from: candidate.sourceURL).systemImage)
-                                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            Text(candidate.sourceURL.lastPathComponent)
-                                .weiBeiText(12)
-                                .lineLimit(1)
-                            Spacer(minLength: 8)
-                            Text(StudyItemKind.detect(from: candidate.sourceURL).label(language: store.interfaceLanguage))
-                                .weiBeiText(10.5)
-                                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            Text(candidateLabel(candidate))
-                                .weiBeiText(10.5, weight: .medium)
-                                .foregroundStyle(candidateColor(candidate))
-                        }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(batch.candidates.enumerated()), id: \.element.id) { index, candidate in
+                    if index > 0 { Divider().overlay(WeiBeiTheme.hairline.opacity(0.30)) }
+                    candidateRow(candidate)
+                }
+                ForEach(Array(batch.unsupportedNames.enumerated()), id: \.offset) { index, name in
+                    if !batch.candidates.isEmpty || index > 0 {
+                        Divider().overlay(WeiBeiTheme.hairline.opacity(0.30))
                     }
-                    ForEach(batch.unsupportedNames, id: \.self) { name in
-                        HStack(spacing: 8) {
-                            Image(systemName: "nosign")
-                            Text(name).lineLimit(1)
-                            Spacer()
-                            Text(
-                                batch.importsMarkdownAsNotes
-                                    ? store.ui("仅支持 Markdown", "Markdown only")
-                                    : store.ui("不支持", "Unsupported")
-                            )
-                        }
-                        .weiBeiText(11)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                    }
+                    unsupportedRow(name, asNotes: batch.importsMarkdownAsNotes)
                 }
             }
-            .frame(maxHeight: 150)
             if !batch.sourceFolderNames.isEmpty {
                 Text(store.ui(
                     "文件夹内仅导入 PDF、Word、PPT、HTML、文本和 Markdown；隐藏文件与应用包会跳过。",
@@ -661,45 +700,100 @@ struct ConfirmedFileImportView: View {
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
         }
-        .padding(12)
-        .weibeiEtchedBackground(
-            fill: WeiBeiTheme.paperRaised.opacity(0.30),
-            stroke: WeiBeiTheme.hairline.opacity(0.28),
-            cornerRadius: 12
-        )
+    }
+
+    private func candidateRow(_ candidate: ConfirmedFileImportCandidate) -> some View {
+        let kind = StudyItemKind.detect(from: candidate.sourceURL)
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: kind.systemImage)
+                .weiBeiText(12)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .frame(width: 16)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(candidate.sourceURL.lastPathComponent)
+                        .weiBeiText(12)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 6)
+                    Text(kind.label(language: store.interfaceLanguage))
+                        .weiBeiText(10.5)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .fixedSize()
+                }
+                if candidate.disposition != .ready {
+                    Text(candidateLabel(candidate))
+                        .weiBeiText(10.5, weight: .medium)
+                        .foregroundStyle(candidateColor(candidate))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .help(candidate.sourceURL.lastPathComponent)
+    }
+
+    private func unsupportedRow(_ name: String, asNotes: Bool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "nosign")
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                Text(
+                    asNotes
+                        ? store.ui("仅支持 Markdown，已跳过", "Markdown only; skipped")
+                        : store.ui("不支持，已跳过", "Unsupported; skipped")
+                )
+                .weiBeiText(10.5, weight: .medium)
+            }
+        }
+        .weiBeiText(11)
+        .foregroundStyle(WeiBeiTheme.cinnabar)
+        .padding(.vertical, 6)
+        .help(name)
     }
 
     private func destinationPicker(_ batch: ConfirmedFileImportBatch) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(store.ui("归属", "Destination"))
+            Text(store.ui("导入到", "Import to"))
                 .weiBeiText(12, weight: .semibold)
-            WeiBeiSearchField(
-                text: $courseSearch,
-                prompt: store.ui("搜索课程", "Search courses"),
-                isFocused: .constant(false),
-                fontSize: 12,
-                focusesOnAppear: false,
-                chromeHeight: 30
-            )
-            ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
+            if !store.courses.isEmpty {
+                WeiBeiSearchField(
+                    text: $courseSearch,
+                    prompt: store.ui("搜索课程", "Search courses"),
+                    isFocused: .constant(false),
+                    fontSize: 12,
+                    focusesOnAppear: false,
+                    chromeHeight: 30
+                )
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                destinationButton(
+                    title: batch.importsMarkdownAsNotes
+                        ? store.ui("通用笔记", "Common Notes")
+                        : store.ui("通用资料", "Common Materials"),
+                    courseID: nil,
+                    selected: batch.courseID == nil
+                )
+                ForEach(matchingCourses) { course in
                     destinationButton(
-                        title: batch.importsMarkdownAsNotes
-                            ? store.ui("通用笔记", "Common Notes")
-                            : store.ui("通用资料", "Common Materials"),
-                        courseID: nil,
-                        selected: batch.courseID == nil
+                        title: course.title,
+                        courseID: course.id,
+                        selected: batch.courseID == course.id
                     )
-                    ForEach(matchingCourses) { course in
-                        destinationButton(
-                            title: course.title,
-                            courseID: course.id,
-                            selected: batch.courseID == course.id
-                        )
-                    }
+                }
+                if !courseSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   matchingCourses.isEmpty {
+                    Text(store.ui("没有匹配的课程", "No matching courses"))
+                        .weiBeiText(11)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .padding(.vertical, 5)
+                        .padding(.horizontal, 8)
                 }
             }
-            .frame(maxHeight: 120)
             Button(store.ui("新建课程…", "Create Course…")) { creatingCourse = true }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
         }
@@ -707,21 +801,33 @@ struct ConfirmedFileImportView: View {
 
     private func destinationButton(title: String, courseID: UUID?, selected: Bool) -> some View {
         Button { store.setConfirmedFileImportDestination(courseID: courseID) } label: {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 Image(systemName: courseID == nil ? "tray" : "folder")
-                Text(title).lineLimit(1)
-                Spacer()
+                    .frame(width: 15)
+                    .padding(.top, 2)
+                Text(title)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
                 if selected { Image(systemName: "checkmark") }
             }
+            .weiBeiText(12, weight: selected ? .semibold : .regular)
+            .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.ink)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                selected ? WeiBeiTheme.cinnabarSoft : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .contentShape(Rectangle())
         }
-        .buttonStyle(WeiBeiTextActionButtonStyle(active: selected, fontSize: 12, height: 30))
+        .buttonStyle(.plain)
+        .help(title)
     }
 
     private func progress(_ batch: ConfirmedFileImportBatch) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(destinationDescription(batch))
-                .weiBeiText(13, weight: .semibold)
+        VStack(alignment: .leading, spacing: 12) {
             if let current = batch.currentFileName {
                 Text(current).weiBeiText(12).lineLimit(2)
             }
@@ -737,14 +843,7 @@ struct ConfirmedFileImportView: View {
                 ))
                 .weiBeiText(11)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            Spacer()
-            HStack {
-                Spacer()
-                Button(store.ui("停止剩余导入", "Stop Remaining")) {
-                    store.stopConfirmedFileImport()
-                }
-                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -760,6 +859,7 @@ struct ConfirmedFileImportView: View {
                 Text(store.ui("已停止剩余任务；已完成的导入仍然保留。", "Remaining work stopped; completed imports were kept."))
                     .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if !batch.pendingSourceURLs.isEmpty {
                 Text(store.ui(
@@ -768,63 +868,85 @@ struct ConfirmedFileImportView: View {
                 ))
                 .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
             }
             if !batch.failures.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(batch.failures) { failure in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(failure.sourceURL.lastPathComponent).weiBeiText(12, weight: .semibold)
-                                Text(failure.message).weiBeiText(11).foregroundStyle(WeiBeiTheme.secondaryInk)
-                            }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(store.ui("未导入", "Not imported"))
+                        .weiBeiText(12, weight: .semibold)
+                    ForEach(batch.failures) { failure in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(failure.sourceURL.lastPathComponent)
+                                .weiBeiText(12, weight: .semibold)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                            Text(failure.message)
+                                .weiBeiText(11)
+                                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
-                .frame(maxHeight: 220)
             }
-            Spacer()
-            HStack(spacing: 8) {
-                if !batch.pendingSourceURLs.isEmpty {
-                    Button(store.ui(
-                        batch.failures.isEmpty
-                            ? "处理待导入文件（\(batch.pendingSourceURLs.count)）"
-                            : "放弃失败项并处理待导入文件（\(batch.pendingSourceURLs.count)）",
-                        batch.failures.isEmpty
-                            ? "Review Waiting Files (\(batch.pendingSourceURLs.count))"
-                            : "Leave Failures and Review Waiting Files (\(batch.pendingSourceURLs.count))"
-                    )) {
-                        store.continuePendingConfirmedFileImport(
-                            abandoningFailures: !batch.failures.isEmpty
-                        )
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+        }
+    }
+
+    @ViewBuilder
+    private func resultButtons(_ batch: ConfirmedFileImportBatch) -> some View {
+        if !batch.pendingSourceURLs.isEmpty {
+            Button(store.ui("结束本次导入", "End This Import")) { store.dismissConfirmedFileImport() }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+            if batch.failures.isEmpty {
+                Button(store.ui(
+                    "处理待导入文件（\(batch.pendingSourceURLs.count)）",
+                    "Review Waiting Files (\(batch.pendingSourceURLs.count))"
+                )) {
+                    store.continuePendingConfirmedFileImport()
                 }
-                if !batch.failures.isEmpty {
-                    Button(store.ui("只重试失败项", "Retry Failed Only")) {
-                        store.retryFailedConfirmedFileImport()
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+                .keyboardShortcut(.defaultAction)
+            } else {
+                Button(store.ui(
+                    "放弃失败项并继续（\(batch.pendingSourceURLs.count)）",
+                    "Leave Failures and Continue (\(batch.pendingSourceURLs.count))"
+                )) {
+                    store.continuePendingConfirmedFileImport(abandoningFailures: true)
                 }
-                Spacer()
-                if batch.pendingSourceURLs.isEmpty, batch.importedItems.count == 1 {
-                    Button(store.ui("打开文稿", "Open Document")) {
-                        store.openSingleConfirmedImport()
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                } else if batch.pendingSourceURLs.isEmpty, batch.importedItems.count > 1 {
-                    Button(store.ui("查看已导入资料", "View Imported Items")) {
-                        store.showConfirmedImportBatch()
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+                Button(store.ui("只重试失败项", "Retry Failed Only")) {
+                    store.retryFailedConfirmedFileImport()
                 }
-                Button(
-                    batch.pendingSourceURLs.isEmpty
-                        ? store.ui("完成", "Done")
-                        : store.ui("暂不处理待导入文件", "Leave Waiting Files")
-                ) { store.dismissConfirmedFileImport() }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                    .keyboardShortcut(.defaultAction)
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+                .keyboardShortcut(.defaultAction)
             }
+        } else if !batch.failures.isEmpty {
+            Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+            Button(store.ui("只重试失败项", "Retry Failed Only")) {
+                store.retryFailedConfirmedFileImport()
+            }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+            .keyboardShortcut(.defaultAction)
+        } else if batch.importedItems.count == 1 {
+            Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+            Button(store.ui("打开文稿", "Open Document")) {
+                store.openSingleConfirmedImport()
+            }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+            .keyboardShortcut(.defaultAction)
+        } else if batch.importedItems.count > 1 {
+            Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+            Button(store.ui("查看已导入资料", "View Imported Items")) {
+                store.showConfirmedImportBatch()
+            }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+            .keyboardShortcut(.defaultAction)
+        } else {
+            Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+                .keyboardShortcut(.defaultAction)
         }
     }
 
