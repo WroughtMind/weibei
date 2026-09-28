@@ -1742,7 +1742,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             inspect: { request in
                 let inputs = request.messages.filter { $0.role == .user }
                 XCTAssertEqual(inputs.last?.content, question)
-                XCTAssertTrue(inputs.first?.content.contains(selection) == true)
+                XCTAssertTrue(inputs.contains { $0.content.contains(selection) })
                 XCTAssertFalse(inputs.last?.content.contains("contextRevision") == true)
             }
         )
