@@ -43,7 +43,13 @@ final class WorkspaceInteractionState: ObservableObject {
     /// "记"模式的独立草稿;与问的 agentDraft 互不覆盖,提交后清空。
     /// 按选区锚点分开存放。换到另一段时只显示那段自己的草稿。
     @Published var selectionNoteDraft = ""
-    private var selectionNoteDraftsByAnchor: [String: String] = [:]
+    private struct SelectionNoteDraftKey: Hashable {
+        let source: SelectionSource
+        let itemID: String?
+        let normalizedText: String
+        let documentAnchor: SelectionDocumentAnchor?
+    }
+    private var selectionNoteDraftsByAnchor: [SelectionNoteDraftKey: String] = [:]
 
     func rebaseSelectionNoteDraft(from previous: SelectionContext?, to next: SelectionContext?) {
         let previousKey = previous.map(Self.selectionNoteDraftKey)
@@ -59,18 +65,15 @@ final class WorkspaceInteractionState: ObservableObject {
         selectionNoteDraft = nextKey.flatMap { selectionNoteDraftsByAnchor[$0] } ?? ""
     }
 
-    static func selectionNoteDraftKey(for context: SelectionContext) -> String {
-        var parts = [
-            "\(context.source)",
-            context.itemID ?? "",
-            SelectionAttachmentMerge.normalized(context.text),
-        ]
-        if let anchor = context.documentAnchor,
-           let data = try? JSONEncoder().encode(anchor),
-           let encoded = String(data: data, encoding: .utf8) {
-            parts.append(encoded)
-        }
-        return parts.joined(separator: "\u{1f}")
+    private static func selectionNoteDraftKey(
+        for context: SelectionContext
+    ) -> SelectionNoteDraftKey {
+        SelectionNoteDraftKey(
+            source: context.source,
+            itemID: context.itemID,
+            normalizedText: SelectionAttachmentMerge.normalized(context.text),
+            documentAnchor: context.documentAnchor
+        )
     }
 
     /// Selection capsule position. Anchor-only drag/scroll updates can suppress
