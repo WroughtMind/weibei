@@ -298,7 +298,6 @@ final class AgentAccountService: ObservableObject {
         } ?? NativeProviderRouting.route(provider).baseURL
         let records = (try? NativeAgentCredentialStore.defaultStore().load()) ?? [:]
         let record = endpoint.flatMap { records[$0.credentialProviderID] }
-        let apiKey = record?.apiKey ?? record?.accessToken ?? ""
         let strategy = NativeProviderRouting.modelListStrategy(
             provider: provider,
             baseURL: resolved,
@@ -331,6 +330,15 @@ final class AgentAccountService: ObservableObject {
             return
         }
         do {
+            let storedAPIKey: String?
+            if let endpoint {
+                storedAPIKey = try record?.apiKey(for: provider, endpoint: endpoint)
+            } else {
+                storedAPIKey = nil
+            }
+            let apiKey = storedAPIKey
+                ?? record?.accessToken
+                ?? ""
             let ids: [String]
             var reasoningLevels: [String: [String]] = [:]
             if provider == .openaiCodex {
