@@ -369,7 +369,11 @@ struct CourseSidebarList: View {
             bottom: 1,
             trailing: 2
         ))
-        .listRowBackground(Color.clear)
+        .listRowBackground(
+            store.recentlyImportedItemIDs.contains(item.id)
+                ? WeiBeiTheme.cinnabarSoft.opacity(0.24)
+                : Color.clear
+        )
         .listRowSeparator(.hidden)
         // 显示名与标签共用同一条异步正文管线：compact 行（课程分组内）不展示标签，
         // 但展示解析后的笔记名，所以笔记行无论 compact 与否都要加载。

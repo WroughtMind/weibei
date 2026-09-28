@@ -16,6 +16,7 @@ struct ContentView: View {
     @FocusState private var topSearchFocused: Bool
     @State private var floatingAgentExpanded = false
     @State private var windowIsFullScreen = false
+    @State private var isFileDropTargeted = false
     /// Size of the document area under the top bar. The float uses it for placement
     /// and must not measure that area with a GeometryReader laid over the reader.
     @State private var documentCanvas = CGSize.zero
@@ -99,9 +100,14 @@ struct ContentView: View {
                         }
                     }
                 }
-                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                .onDrop(of: [.fileURL], isTargeted: $isFileDropTargeted) { providers in
                     WeiBeiDroppedFileURLs.load(providers) { urls in
-                        store.importFiles(urls)
+                        store.prepareConfirmedFileImport(urls)
+                    }
+                }
+                .overlay {
+                    if isFileDropTargeted {
+                        WeiBeiFileDropPrompt()
                     }
                 }
                 .allowsHitTesting(!store.courseWorkspacePresented)
@@ -175,6 +181,12 @@ struct ContentView: View {
             ExcerptBookView(courseID: store.excerptBookCourseID)
                 .environmentObject(store)
         }
+        .sheet(isPresented: Binding(
+            get: { store.confirmedFileImport != nil },
+            set: { if !$0 { store.dismissConfirmedFileImport() } }
+        )) {
+            ConfirmedFileImportView().environmentObject(store)
+        }
         .background(WindowFullScreenReader(isFullScreen: $windowIsFullScreen))
         .background {
             // Focus / reader-search sync observes paneState so ContentView does not.
@@ -198,6 +210,24 @@ struct ContentView: View {
 
     private var isImmersiveLayout: Bool {
         [.immersiveReading, .immersiveConversation, .immersiveWriting].contains(store.layout)
+    }
+}
+
+private struct WeiBeiFileDropPrompt: View {
+    @EnvironmentObject private var store: WorkspaceStore
+
+    var body: some View {
+        Label(store.ui("松开以导入资料", "Drop to import"), systemImage: "tray.and.arrow.down")
+            .weiBeiText(14, weight: .semibold)
+            .foregroundStyle(WeiBeiTheme.cinnabar)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .weibeiEtchedCapsuleBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.94),
+                stroke: WeiBeiTheme.cinnabar.opacity(0.32),
+                contactShadow: true
+            )
+            .allowsHitTesting(false)
     }
 }
 

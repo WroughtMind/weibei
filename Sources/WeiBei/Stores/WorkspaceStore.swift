@@ -704,6 +704,12 @@ final class WorkspaceStore: ObservableObject {
     /// 展示兼容:界面与对话框仍按字符串消费保存失败文案。
     var workspaceSaveError: String? { workspaceSaveFailure?.message }
     @Published private(set) var courseFileOperationProgress: CourseFileOperationProgress?
+    @Published var confirmedFileImport: ConfirmedFileImportBatch?
+    @Published var recentlyImportedItemIDs: Set<String> = []
+    var confirmedFileImportTask: Task<Void, Never>?
+    var confirmedFileImportStopRequested = false
+    var confirmedFileImportSecurityScopes: [URL] = []
+    var recentlyImportedClearTask: Task<Void, Never>?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
     var notebookRenameInFlight = false
@@ -5899,7 +5905,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func importFilesFromPanel() {
-        presentImportPanel(linkToActiveNote: false)
+        presentImportPanel()
     }
 
     @discardableResult
@@ -5924,9 +5930,6 @@ final class WorkspaceStore: ObservableObject {
 
     func importCourseMaterialsFromPanel(courseID: UUID?) {
         presentImportPanel(
-            linkToActiveNote: false,
-            selectsFirstImportedItem: false,
-            reclassifiesExistingMarkdown: true,
             assigningToCourseID: courseID,
             panelTitle: ui("选择课程资料或文件夹", "Choose course materials or a folder")
         )
@@ -5938,28 +5941,20 @@ final class WorkspaceStore: ObservableObject {
 
     func importCourseNotesFromPanel(courseID: UUID?) {
         presentImportPanel(
-            linkToActiveNote: false,
-            selectsFirstImportedItem: false,
             markdownAsNotes: true,
-            markdownOnly: true,
-            reclassifiesExistingMarkdown: true,
             assigningToCourseID: courseID,
             panelTitle: ui("选择 Markdown 笔记或文件夹", "Choose Markdown notes or a folder")
         )
     }
 
     private func presentImportPanel(
-        linkToActiveNote: Bool,
-        selectsFirstImportedItem: Bool = true,
         markdownAsNotes: Bool = false,
-        markdownOnly: Bool = false,
-        reclassifiesExistingMarkdown: Bool = false,
         assigningToCourseID: UUID? = nil,
         panelTitle: String? = nil
     ) {
 #if targetEnvironment(macCatalyst)
         Task { @MainActor in
-            let types: [UTType] = markdownOnly
+            let types: [UTType] = markdownAsNotes
                 ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
                 : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
             let urls = await WorkspaceFileDialog.pick(
@@ -5968,22 +5963,12 @@ final class WorkspaceStore: ObservableObject {
             )
             guard !urls.isEmpty else { return }
             let scoped = urls.filter { $0.startAccessingSecurityScopedResource() }
-            let releaseScopes = { scoped.forEach { $0.stopAccessingSecurityScopedResource() } }
-            if let assigningToCourseID {
-                importCourseFilesFromURLs(urls, asNotes: markdownAsNotes, courseID: assigningToCourseID) { _ in releaseScopes() }
-                return
-            }
-            let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
-            importFiles(urls, selectsFirstImportedItem: selectsFirstImportedItem,
-                        markdownAsNotes: markdownAsNotes, markdownOnly: markdownOnly,
-                        reclassifiesExistingMarkdown: reclassifiesExistingMarkdown) { selectedItems in
-                defer { releaseScopes() }
-                if let targetNoteID, self.activeNotebookItemID == targetNoteID {
-                    self.setLinkedSourceIDsForActiveNote(
-                        Set(self.linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
-                    )
-                }
-            }
+            prepareConfirmedFileImport(
+                urls,
+                courseID: assigningToCourseID,
+                asNotes: markdownAsNotes,
+                securityScopedURLs: scoped
+            )
         }
 #else
         let panel = NSOpenPanel()
@@ -5991,33 +5976,16 @@ final class WorkspaceStore: ObservableObject {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.canChooseFiles = true
-        panel.allowedContentTypes = markdownOnly
+        panel.allowedContentTypes = markdownAsNotes
             ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
             : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
 
         guard panel.runModal() == .OK else { return }
-        if let assigningToCourseID {
-            importCourseFilesFromURLs(
-                panel.urls,
-                asNotes: markdownAsNotes,
-                courseID: assigningToCourseID
-            )
-            return
-        }
-        let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
-        importFiles(
+        prepareConfirmedFileImport(
             panel.urls,
-            selectsFirstImportedItem: selectsFirstImportedItem,
-            markdownAsNotes: markdownAsNotes,
-            markdownOnly: markdownOnly,
-            reclassifiesExistingMarkdown: reclassifiesExistingMarkdown
-        ) { selectedItems in
-            if let targetNoteID, self.activeNotebookItemID == targetNoteID {
-                self.setLinkedSourceIDsForActiveNote(
-                    Set(self.linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
-                )
-            }
-        }
+            courseID: assigningToCourseID,
+            asNotes: markdownAsNotes
+        )
 #endif
     }
 
