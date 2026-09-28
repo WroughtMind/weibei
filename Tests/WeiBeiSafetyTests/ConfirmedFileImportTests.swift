@@ -116,6 +116,53 @@ final class ConfirmedFileImportTests: XCTestCase {
         ).isEmpty)
     }
 
+    func testDockFileOpenedDuringImportWaitsForNextBatch() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let current = fixture.outside.appendingPathComponent("当前.txt")
+        let waiting = fixture.outside.appendingPathComponent("稍后.txt")
+        try Data("current".utf8).write(to: current)
+        try Data("waiting".utf8).write(to: waiting)
+
+        fixture.store.prepareConfirmedFileImport([current])
+        waitForStage(.reviewing, in: fixture.store)
+        var batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        batch.stage = .importing
+        fixture.store.confirmedFileImport = batch
+
+        fixture.store.receiveExternalFileForConfirmedImport(waiting)
+
+        batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        XCTAssertEqual(batch.sourceURLs, [current])
+        XCTAssertEqual(batch.pendingSourceURLs, [waiting])
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.library.appendingPathComponent("通用资料/稍后.txt").path
+        ))
+
+        batch.stage = .finished
+        fixture.store.confirmedFileImport = batch
+        fixture.store.continuePendingConfirmedFileImport()
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.sourceURLs, [waiting])
+    }
+
+    func testInitialCourseFilesWaitForUnifiedConfirmation() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let source = fixture.outside.appendingPathComponent("课程讲义.pdf")
+        try Data("pdf".utf8).write(to: source)
+        let courseID = try fixture.store.createCourseInLibrary(title: "确认课")
+        let courseRoot = try XCTUnwrap(fixture.store.courseRootURL(for: courseID))
+
+        fixture.store.prepareInitialCourseImportAfterEntryDismissal([source], courseID: courseID)
+        waitForStage(.reviewing, in: fixture.store)
+
+        XCTAssertEqual(fixture.store.confirmedFileImport?.courseID, courseID)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: courseRoot.appendingPathComponent("文稿/课程讲义.pdf").path
+        ))
+    }
+
     func testCollisionPlanUsesCopyKernelWithoutWriting() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("weibei-confirmed-collision-\(UUID().uuidString)", isDirectory: true)
@@ -163,6 +210,62 @@ final class ConfirmedFileImportTests: XCTestCase {
         XCTAssertEqual(plan.candidates[0].disposition, .ready)
         XCTAssertEqual(plan.candidates[1].disposition, .conflict(suggestedFileName: "同名 2.txt"))
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
+    }
+
+    func testSameNameAndContentInsideBatchSkipsSecondCopy() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let firstDirectory = fixture.outside.appendingPathComponent("a", isDirectory: true)
+        let secondDirectory = fixture.outside.appendingPathComponent("b", isDirectory: true)
+        try FileManager.default.createDirectory(at: firstDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondDirectory, withIntermediateDirectories: true)
+        let first = firstDirectory.appendingPathComponent("同名.txt")
+        let second = secondDirectory.appendingPathComponent("同名.txt")
+        try Data("same".utf8).write(to: first)
+        try Data("same".utf8).write(to: second)
+
+        fixture.store.prepareConfirmedFileImport([first, second])
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(
+            fixture.store.confirmedFileImport?.candidates.map(\.disposition),
+            [.ready, .duplicate]
+        )
+
+        fixture.store.confirmFileImport()
+        waitForStage(.finished, in: fixture.store)
+        let batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        XCTAssertEqual(batch.importedItems.count, 1)
+        XCTAssertEqual(batch.skippedCount, 1)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(
+                atPath: fixture.library.appendingPathComponent("通用资料").path
+            ),
+            ["同名.txt"]
+        )
+    }
+
+    func testMixedFolderListsRecursiveUnsupportedFilesWithoutFollowingSymlinks() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let folder = fixture.outside.appendingPathComponent("资料包", isDirectory: true)
+        let nested = folder.appendingPathComponent("附件", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data("pdf".utf8).write(to: folder.appendingPathComponent("讲义.pdf"))
+        try Data("zip".utf8).write(to: nested.appendingPathComponent("原件.zip"))
+        let outsideSecret = fixture.root.appendingPathComponent("边界外.zip")
+        try Data("secret".utf8).write(to: outsideSecret)
+        try FileManager.default.createSymbolicLink(
+            at: nested.appendingPathComponent("边界外.zip"),
+            withDestinationURL: outsideSecret
+        )
+
+        fixture.store.prepareConfirmedFileImport([folder])
+        waitForStage(.reviewing, in: fixture.store)
+
+        let batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        XCTAssertEqual(batch.candidates.map { $0.sourceURL.lastPathComponent }, ["讲义.pdf"])
+        XCTAssertEqual(batch.unsupportedNames, ["资料包/附件/原件.zip"])
+        XCTAssertEqual(batch.skippedCount, 1)
     }
 
     private func waitForStage(

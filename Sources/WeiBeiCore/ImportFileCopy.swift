@@ -52,6 +52,22 @@ public enum ImportFileCopy {
         )
     }
 
+    public static func sourcesHaveIdenticalImportedContents(
+        _ lhs: URL,
+        _ rhs: URL
+    ) throws -> Bool {
+        let lhsHTML = try HTMLResourceImport.dataIfHTML(at: lhs)
+        let rhsHTML = try HTMLResourceImport.dataIfHTML(at: rhs)
+        switch (lhsHTML, rhsHTML) {
+        case let (.some(lhsData), .some(rhsData)):
+            return lhsData == rhsData
+        case (.none, .none):
+            return try filesHaveIdenticalContents(lhs, rhs)
+        default:
+            return false
+        }
+    }
+
     private static func collision(
         from sourceURL: URL,
         into directory: URL,

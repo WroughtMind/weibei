@@ -781,15 +781,13 @@ struct CourseProjectEntrySheet: View {
             let courseID = try await store.createCourseInLibraryAsync(
                 title: cleanedTitle
             )
-            if selectedImportURLs.isEmpty {
-                openCourse(courseID)
-            } else {
-                store.importCourseFilesFromURLs(
-                    selectedImportURLs,
+            let initialImportURLs = selectedImportURLs
+            openCourse(courseID)
+            if !initialImportURLs.isEmpty {
+                store.prepareInitialCourseImportAfterEntryDismissal(
+                    initialImportURLs,
                     courseID: courseID
-                ) { _ in
-                    openCourse(courseID)
-                }
+                )
             }
         }
     }
