@@ -153,15 +153,15 @@ final class ConfirmedFileImportTests: XCTestCase {
         try Data("first".utf8).write(to: first)
         try Data("second".utf8).write(to: second)
 
-        let candidates = try WorkspaceStore.makeConfirmedFileImportPlan(
+        let plan = WorkspaceStore.makeConfirmedFileImportPlan(
             urls: [first, second],
             destination: destination,
             markdownOnly: false
         )
 
-        XCTAssertEqual(candidates.count, 2)
-        XCTAssertEqual(candidates[0].disposition, .ready)
-        XCTAssertEqual(candidates[1].disposition, .conflict(suggestedFileName: "同名 2.txt"))
+        XCTAssertEqual(plan.candidates.count, 2)
+        XCTAssertEqual(plan.candidates[0].disposition, .ready)
+        XCTAssertEqual(plan.candidates[1].disposition, .conflict(suggestedFileName: "同名 2.txt"))
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
     }
 
