@@ -6309,16 +6309,12 @@ final class WorkspaceStore: ObservableObject {
             }
             invalidateAgentContext()
             save()
-            let status = sourceItem == nil
-                ? ui("已新建空白笔记：\(url.lastPathComponent)", "Created blank note: \(url.lastPathComponent)")
-                : ui("已为当前文稿新建笔记：\(url.lastPathComponent)", "Created a note for this document: \(url.lastPathComponent)")
             requestNoteSelectionTransition(to: item.id) { [weak self] in
                 guard let self else { return }
                 activeNotebookItemID = item.id
                 noteText = markdown
                 revealRichWritingSurface()
                 focus(.notes)
-                showTransientNoteStatus(status)
             }
             return item
         } catch {
