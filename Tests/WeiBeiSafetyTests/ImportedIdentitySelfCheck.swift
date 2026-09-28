@@ -775,6 +775,7 @@ enum ImportedIdentitySelfCheck {
                 }
                 try data.write(to: url, options: [.atomic])
             }
+            courseQuestionStore.modelName = "test-model"
             courseQuestionStore.activateCourse(courseA.id)
             courseQuestionStore.openCourseNote(note.id)
             try check(
