@@ -514,7 +514,6 @@ struct ConfirmedFileImportView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var courseSearch = ""
     @State private var creatingCourse = false
-    @State private var bodyContentHeight: CGFloat = 40
 
     private static let maximumBodyHeight: CGFloat = 350
 
@@ -537,27 +536,10 @@ struct ConfirmedFileImportView: View {
                 ScrollView {
                     stageContent(batch)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background {
-                            GeometryReader { geometry in
-                                Color.clear.preference(
-                                    key: ConfirmedImportBodyHeightKey.self,
-                                    value: geometry.size.height
-                                )
-                            }
-                        }
                 }
-                .scrollDisabled(bodyContentHeight <= Self.maximumBodyHeight)
                 .scrollBounceBehavior(.basedOnSize)
-                .frame(
-                    height: min(bodyContentHeight, Self.maximumBodyHeight),
-                    alignment: .top
-                )
-                .onPreferenceChange(ConfirmedImportBodyHeightKey.self) { height in
-                    let measured = max(1, ceil(height))
-                    if abs(bodyContentHeight - measured) > 0.5 {
-                        bodyContentHeight = measured
-                    }
-                }
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxHeight: Self.maximumBodyHeight, alignment: .top)
                 .padding(.horizontal, 22)
                 .padding(.vertical, 16)
                 Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
@@ -567,6 +549,7 @@ struct ConfirmedFileImportView: View {
             }
         }
         .frame(width: 500, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
 #if targetEnvironment(macCatalyst)
         .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
 #endif
@@ -997,13 +980,6 @@ struct ConfirmedFileImportView: View {
         case .duplicate: WeiBeiTheme.tertiaryInk
         case .conflict: WeiBeiTheme.cinnabar
         }
-    }
-}
-
-private struct ConfirmedImportBodyHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }
 
