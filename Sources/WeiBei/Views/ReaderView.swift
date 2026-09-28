@@ -248,6 +248,8 @@ struct ReaderView: View {
     @State private var pdfControlsLeaveCollapseToken: UUID?
     @State private var pendingPDFPageIndex: Int?
     @State private var pendingPDFPageRequestID: UUID?
+    @State private var pendingPDFMaterialID: String?
+    @State private var pendingPDFDocumentURL: URL?
     @State private var pdfHasSelectableText: Bool?
     @State private var pdfContentRailItems: [ContentRailItem] = []
     @State private var pdfRailTargetPageIndex: Int?
@@ -423,6 +425,9 @@ struct ReaderView: View {
             applyPendingPDFPageIfReady()
             applyPendingHTMLLocationIfReady()
             rebuildPDFContentRail()
+        }
+        .onChange(of: store.selectedMaterialItem?.url?.standardizedFileURL) { _, _ in
+            discardPendingPDFRestorationIfDocumentChanged()
         }
         .onChange(of: store.selectedItemID) { _, _ in
             loadMarkdownSnapshot()
@@ -875,7 +880,7 @@ struct ReaderView: View {
                 pdfPageIndex = pageIndex
                 // PDFKit first reports page 0 while a saved page is still pending.
                 // Keep that transient load state from replacing the restored target.
-                guard pendingPDFPageIndex == nil else { return }
+                guard pendingPDFRestorationRequest == nil else { return }
                 setVisiblePDFPage(pageIndex)
             }
         )
@@ -891,7 +896,7 @@ struct ReaderView: View {
 
     private func applyPendingPDFPageIfReady() {
         guard let target = pendingPDFPageIndex,
-              pendingPDFPageRequestID != nil,
+              pendingPDFRestorationRequest != nil,
               store.selectedMaterialItem?.kind == .pdf,
               pdfPageCount > 0 else { return }
         // 先同步页码控件；真正消费请求必须等 PDFView 确认 currentPage。
@@ -902,23 +907,69 @@ struct ReaderView: View {
 
     private var pendingPDFRestorationRequest: PDFPageRestorationRequest? {
         guard let pageIndex = pendingPDFPageIndex,
-              let requestID = pendingPDFPageRequestID else { return nil }
-        return PDFPageRestorationRequest(pageIndex: pageIndex, requestID: requestID)
+              let requestID = pendingPDFPageRequestID,
+              let materialID = pendingPDFMaterialID,
+              let documentURL = pendingPDFDocumentURL,
+              materialID == store.selectedMaterialItem?.id,
+              documentURL == store.selectedMaterialItem?.url?.standardizedFileURL else { return nil }
+        return PDFPageRestorationRequest(
+            pageIndex: pageIndex,
+            requestID: requestID,
+            materialID: materialID,
+            documentURL: documentURL
+        )
     }
 
-    private func confirmPDFRestoration(_ request: PDFPageRestorationRequest) {
-        guard pendingPDFPageRequestID == request.requestID else { return }
-        pdfPageIndex = request.pageIndex
-        store.updateReaderPageIndex(request.pageIndex)
+    private func finishPDFRestoration(
+        _ request: PDFPageRestorationRequest,
+        visiblePageIndex: Int?,
+        resolution: PDFPageRestorationFinishResolution
+    ) {
+        guard let pendingPDFPageRequestID,
+              request.matches(
+                materialID: pendingPDFMaterialID,
+                documentURL: pendingPDFDocumentURL,
+                requestID: pendingPDFPageRequestID
+              ),
+              request.matches(
+                materialID: store.selectedMaterialItem?.id,
+                documentURL: store.selectedMaterialItem?.url,
+                requestID: store.readerTargetPageRequestID
+              ),
+              request.matches(
+                materialID: store.readerTargetPageMaterialID,
+                documentURL: store.readerTargetPageDocumentURL,
+                requestID: store.readerTargetPageRequestID
+              ),
+              resolution != .confirmed || visiblePageIndex == request.pageIndex else { return }
         pendingPDFPageIndex = nil
         pendingPDFPageRequestID = nil
+        pendingPDFMaterialID = nil
+        pendingPDFDocumentURL = nil
         store.consumeReaderPDFPageRequest(request.requestID)
+        if let visiblePageIndex {
+            pdfPageIndex = visiblePageIndex
+            store.updateReaderPageIndex(visiblePageIndex)
+        }
         syncReaderLocationTitle()
     }
 
     private func capturePendingPDFPageRequest() {
         pendingPDFPageIndex = store.readerTargetPageIndex
         pendingPDFPageRequestID = store.readerTargetPageRequestID
+        pendingPDFMaterialID = store.readerTargetPageMaterialID
+        pendingPDFDocumentURL = store.readerTargetPageDocumentURL
+    }
+
+    private func discardPendingPDFRestorationIfDocumentChanged() {
+        guard let requestID = pendingPDFPageRequestID,
+              pendingPDFMaterialID == store.selectedMaterialItem?.id,
+              pendingPDFDocumentURL != store.selectedMaterialItem?.url?.standardizedFileURL else { return }
+        pendingPDFPageIndex = nil
+        pendingPDFPageRequestID = nil
+        pendingPDFMaterialID = nil
+        pendingPDFDocumentURL = nil
+        store.consumeReaderPDFPageRequest(requestID)
     }
 
     private var pdfFloatingControls: some View {
@@ -1130,7 +1181,7 @@ struct ReaderView: View {
                         url: url,
                         browseMode: pdfBrowseMode,
                         restorationRequest: pendingPDFRestorationRequest,
-                        onRestorationConfirmed: confirmPDFRestoration,
+                        onRestorationFinished: finishPDFRestoration,
                         searchQuery: store.effectiveReaderSearch,
                         searchTargetPageIndex: store.readerSourceHighlightPageIndex,
                         searchNavigationRequest: paneState.readerSearchNavigationRequest,
@@ -1396,12 +1447,87 @@ struct PDFPageJumpPlan: Equatable {
 struct PDFPageRestorationRequest: Equatable {
     var pageIndex: Int
     var requestID: UUID
+    var materialID: String
+    var documentURL: URL
+
+    init(pageIndex: Int, requestID: UUID, materialID: String, documentURL: URL) {
+        self.pageIndex = pageIndex
+        self.requestID = requestID
+        self.materialID = materialID
+        self.documentURL = documentURL.standardizedFileURL
+    }
 
     func resolved(pageCount: Int) -> PDFPageRestorationRequest {
         PDFPageRestorationRequest(
             pageIndex: min(max(pageIndex, 0), max(pageCount - 1, 0)),
-            requestID: requestID
+            requestID: requestID,
+            materialID: materialID,
+            documentURL: documentURL
         )
+    }
+
+    func matches(materialID: String?, documentURL: URL?, requestID: UUID) -> Bool {
+        self.requestID == requestID
+            && self.materialID == materialID
+            && self.documentURL == documentURL?.standardizedFileURL
+    }
+
+    func hasSameIdentity(as other: PDFPageRestorationRequest) -> Bool {
+        matches(materialID: other.materialID, documentURL: other.documentURL, requestID: other.requestID)
+    }
+}
+
+struct PDFDocumentLoadIdentity: Equatable {
+    var documentIdentifier: ObjectIdentifier
+    var generation: Int
+    var documentURL: URL
+
+    init(documentIdentifier: ObjectIdentifier, generation: Int, documentURL: URL) {
+        self.documentIdentifier = documentIdentifier
+        self.generation = generation
+        self.documentURL = documentURL.standardizedFileURL
+    }
+}
+
+enum PDFPageRestorationAttemptResolution: Equatable {
+    case jump
+    case confirm
+    case abandon
+}
+
+enum PDFPageRestorationFinishResolution: Equatable {
+    case confirmed
+    case abandoned
+}
+
+struct PDFPageRestorationAttemptState: Equatable {
+    private(set) var requestID: UUID?
+    private(set) var loadIdentity: PDFDocumentLoadIdentity?
+    private(set) var attemptCount = 0
+
+    mutating func resolve(
+        requestID: UUID,
+        loadIdentity: PDFDocumentLoadIdentity,
+        currentPageIndex: Int,
+        targetPageIndex: Int,
+        userInitiated: Bool
+    ) -> PDFPageRestorationAttemptResolution {
+        if self.requestID != requestID || self.loadIdentity != loadIdentity {
+            self.requestID = requestID
+            self.loadIdentity = loadIdentity
+            attemptCount = 0
+        }
+        if userInitiated { return .abandon }
+        if currentPageIndex == targetPageIndex { return .confirm }
+        guard attemptCount < 2 else { return .abandon }
+        attemptCount += 1
+        return .jump
+    }
+
+    mutating func reset() {
+        requestID = nil
+        loadIdentity = nil
+        attemptCount = 0
     }
 }
 
@@ -1421,7 +1547,7 @@ enum PDFPageRestorationEventResolution: Equatable {
             return activeRequest == nil ? .publish : .ignore
         }
         guard let activeRequest,
-              activeRequest.requestID == requestAtEvent.requestID else {
+              activeRequest.hasSameIdentity(as: requestAtEvent) else {
             return .ignore
         }
         let target = activeRequest.resolved(pageCount: pageCount).pageIndex
@@ -1496,7 +1622,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var url: URL
     var browseMode: PDFBrowseMode
     var restorationRequest: PDFPageRestorationRequest?
-    var onRestorationConfirmed: (PDFPageRestorationRequest) -> Void
+    var onRestorationFinished: (PDFPageRestorationRequest, Int?, PDFPageRestorationFinishResolution) -> Void
     var searchQuery: String
     var searchTargetPageIndex: Int?
     var searchNavigationRequest: Int
@@ -1585,6 +1711,10 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         view.handleTapInDocument = { [weak coordinator = context.coordinator] in
             coordinator?.onDocumentTap()
         }
+        view.onUserScroll = { [weak coordinator = context.coordinator, weak view] in
+            guard let view else { return }
+            coordinator?.cancelRestorationForUserScroll(in: view)
+        }
         return view
     }
 
@@ -1613,15 +1743,16 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.onRemarkMarkActivate = onRemarkMarkActivate
         context.coordinator.onDocumentTap = onDocumentTap
         context.coordinator.onDocumentReadabilityChange = onDocumentReadabilityChange
-        context.coordinator.onRestorationConfirmed = onRestorationConfirmed
+        context.coordinator.onRestorationFinished = onRestorationFinished
         context.coordinator.updateRestorationRequest(restorationRequest)
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
 
-        if context.coordinator.loadedURL != url {
+        let normalizedURL = url.standardizedFileURL
+        if context.coordinator.loadedURL != normalizedURL {
             pageCount = 0
             pageIndex = 0
-            context.coordinator.load(url, in: view)
+            context.coordinator.load(normalizedURL, in: view)
         }
 
         let mode: PDFDisplayMode = browseMode == .scroll ? .singlePageContinuous : .singlePage
@@ -1679,6 +1810,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     private static func dismantleReaderView(_ view: ReaderPDFView, coordinator: Coordinator) {
         coordinator.suspend()
         view.reportCurrentSelection = nil
+        view.onUserScroll = nil
     }
 
     final class Coordinator: NSObject {
@@ -1723,7 +1855,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
         var onDocumentTap: () -> Void = {}
         var onDocumentReadabilityChange: (Bool) -> Void = { _ in }
-        var onRestorationConfirmed: (PDFPageRestorationRequest) -> Void = { _ in }
+        var onRestorationFinished: (PDFPageRestorationRequest, Int?, PDFPageRestorationFinishResolution) -> Void = { _, _, _ in }
         var remarkHits: [PDFRemarkMarkHit] = []
         var hoveredRemarkRecordID: String?
         var activeRemarkRecordID: String?
@@ -1733,7 +1865,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var lastPointerInView: CGPoint?
         private var restorationRequest: PDFPageRestorationRequest?
         private var restorationConfirmationWork: DispatchWorkItem?
-        private var restorationAttemptCount = 0
+        private var restorationAttemptState = PDFPageRestorationAttemptState()
         private let askUnderlineMarker = "weibei-selection-ask"
         private let askUnderlineHoverMarker = "weibei-selection-ask-hover"
 
@@ -1765,54 +1897,124 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             restorationConfirmationWork?.cancel()
             restorationConfirmationWork = nil
             restorationRequest = request
-            restorationAttemptCount = 0
+            restorationAttemptState.reset()
         }
 
         func applyRestorationIfNeeded(in view: PDFView) {
             guard let document = view.document,
                   document.pageCount > 0,
                   let request = restorationRequest?.resolved(pageCount: document.pageCount),
+                  request.documentURL == loadedURL,
+                  let loadIdentity = currentLoadIdentity(for: document),
+                  let currentPage = view.currentPage,
                   let targetPage = document.page(at: request.pageIndex) else { return }
-            let currentPageIndex = view.currentPage.map { document.index(for: $0) }
-            if currentPageIndex != request.pageIndex {
-                // 首次跳页后只允许 PDFKit 生命周期再重试一次，避免异常文稿在
-                // 每次视图更新时都把用户反复拉回目标页。
-                guard restorationAttemptCount < 2 else { return }
-                restorationAttemptCount += 1
+            let currentPageIndex = document.index(for: currentPage)
+            switch restorationAttemptState.resolve(
+                requestID: request.requestID,
+                loadIdentity: loadIdentity,
+                currentPageIndex: currentPageIndex,
+                targetPageIndex: request.pageIndex,
+                userInitiated: false
+            ) {
+            case .jump:
                 view.go(to: targetPage)
+                scheduleRestorationConfirmation(request, document: document, loadIdentity: loadIdentity, in: view)
+            case .confirm:
+                scheduleRestorationConfirmation(request, document: document, loadIdentity: loadIdentity, in: view)
+            case .abandon:
+                finishRestoration(request, visiblePageIndex: currentPageIndex, resolution: .abandoned)
             }
-            scheduleRestorationConfirmation(request, in: view)
         }
 
         private func scheduleRestorationConfirmation(
             _ request: PDFPageRestorationRequest,
+            document: PDFDocument,
+            loadIdentity: PDFDocumentLoadIdentity,
             in view: PDFView
         ) {
             guard restorationConfirmationWork == nil else { return }
             let work = DispatchWorkItem { [weak self, weak view] in
                 guard let self,
-                      self.restorationRequest?.requestID == request.requestID else { return }
+                      let activeRequest = self.restorationRequest,
+                      activeRequest.hasSameIdentity(as: request),
+                      self.currentLoadIdentity(for: document) == loadIdentity else { return }
                 self.restorationConfirmationWork = nil
                 guard let view,
-                      let document = view.document,
+                      view.document === document,
                       document.pageCount > 0,
-                      let activeRequest = self.restorationRequest?.resolved(pageCount: document.pageCount),
-                      activeRequest.requestID == request.requestID else { return }
-                guard let currentPage = view.currentPage,
-                      document.index(for: currentPage) == activeRequest.pageIndex else {
+                      let currentPage = view.currentPage else { return }
+                let resolvedRequest = activeRequest.resolved(pageCount: document.pageCount)
+                guard document.index(for: currentPage) == resolvedRequest.pageIndex else {
+                    self.applyRestorationIfNeeded(in: view)
                     return
                 }
-                self.restorationRequest = nil
-                self.onRestorationConfirmed(activeRequest)
+                self.finishRestoration(
+                    resolvedRequest,
+                    visiblePageIndex: resolvedRequest.pageIndex,
+                    resolution: .confirmed
+                )
             }
             restorationConfirmationWork = work
             DispatchQueue.main.async(execute: work)
         }
 
+        func cancelRestorationForUserScroll(in view: PDFView) {
+            guard let document = view.document,
+                  document.pageCount > 0,
+                  let request = restorationRequest?.resolved(pageCount: document.pageCount),
+                  request.documentURL == loadedURL,
+                  let loadIdentity = currentLoadIdentity(for: document),
+                  let currentPage = view.currentPage else { return }
+            let currentPageIndex = document.index(for: currentPage)
+            guard restorationAttemptState.resolve(
+                requestID: request.requestID,
+                loadIdentity: loadIdentity,
+                currentPageIndex: currentPageIndex,
+                targetPageIndex: request.pageIndex,
+                userInitiated: true
+            ) == .abandon else { return }
+            finishRestoration(request, visiblePageIndex: nil, resolution: .abandoned)
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self,
+                      let view,
+                      view.document === document,
+                      self.currentLoadIdentity(for: document) == loadIdentity,
+                      let stablePage = view.currentPage else { return }
+                self.pageCount.wrappedValue = document.pageCount
+                self.pageIndex.wrappedValue = document.index(for: stablePage)
+            }
+        }
+
+        private func finishRestoration(
+            _ request: PDFPageRestorationRequest,
+            visiblePageIndex: Int?,
+            resolution: PDFPageRestorationFinishResolution
+        ) {
+            guard restorationRequest?.hasSameIdentity(as: request) == true else { return }
+            restorationConfirmationWork?.cancel()
+            restorationConfirmationWork = nil
+            restorationRequest = nil
+            restorationAttemptState.reset()
+            onRestorationFinished(request, visiblePageIndex, resolution)
+        }
+
+        private func currentLoadIdentity(for document: PDFDocument) -> PDFDocumentLoadIdentity? {
+            guard let loadedURL else { return nil }
+            return PDFDocumentLoadIdentity(
+                documentIdentifier: ObjectIdentifier(document),
+                generation: loadGeneration,
+                documentURL: loadedURL
+            )
+        }
+
         func load(_ url: URL, in view: PDFView) {
+            restorationConfirmationWork?.cancel()
+            restorationConfirmationWork = nil
+            restorationAttemptState.reset()
             loadGeneration += 1
             let generation = loadGeneration
-            loadedURL = url
+            let normalizedURL = url.standardizedFileURL
+            loadedURL = normalizedURL
             view.document = nil
             nativeTextPageIndexes = []
             clearOCROverlays(in: view)
@@ -1831,7 +2033,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             onSelectableTextChange(nil)
 
             DispatchQueue.global(qos: .userInitiated).async {
-                let document = PDFDocument(url: url)
+                let document = PDFDocument(url: normalizedURL)
                 // R6: nil = unparsable file; isLocked = needs a password PDFKit
                 // doesn't have. Either way the reader shows a failure page.
                 let isReadable = document.map { !$0.isLocked } ?? false
@@ -1840,7 +2042,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                         .map(PDFReaderOpenSafety.pageHasNativeText) ?? false)
                     : false
                 DispatchQueue.main.async { [weak self, weak view] in
-                    guard let self, let view, self.loadGeneration == generation, self.loadedURL == url else { return }
+                    guard let self, let view, self.loadGeneration == generation, self.loadedURL == normalizedURL else { return }
                     self.onDocumentReadabilityChange(isReadable)
                     #if !targetEnvironment(macCatalyst)
                     PDFReaderOpenSafety.disableAccessibilityTree(on: view)
@@ -2035,10 +2237,14 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 let reportedPageCount = document.pageCount
                 let reportedPageIndex = document.index(for: page)
                 let requestAtEvent = self.restorationRequest?.resolved(pageCount: reportedPageCount)
+                guard let eventLoadIdentity = self.currentLoadIdentity(for: document) else { return }
                 // PDFKit can notify synchronously inside updateUIView/go(to:).
                 // Publish after that update, otherwise SwiftUI drops the page binding write.
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, let view = self.observedView else { return }
+                    guard let self,
+                          let view = self.observedView,
+                          view.document === document,
+                          self.currentLoadIdentity(for: document) == eventLoadIdentity else { return }
                     switch PDFPageRestorationEventResolution.resolve(
                         activeRequest: self.restorationRequest,
                         requestAtEvent: requestAtEvent,
@@ -2052,7 +2258,12 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                         self.applyRestorationIfNeeded(in: view)
                     case .confirm:
                         if let requestAtEvent {
-                            self.scheduleRestorationConfirmation(requestAtEvent, in: view)
+                            self.scheduleRestorationConfirmation(
+                                requestAtEvent,
+                                document: document,
+                                loadIdentity: eventLoadIdentity,
+                                in: view
+                            )
                         }
                     case .ignore:
                         break
@@ -2122,6 +2333,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 self.eventMonitor = nil
             }
 #endif
+            (observedView as? ReaderPDFView)?.onUserScroll = nil
         }
 
         func reportCurrentSelection(in view: PDFView) {
@@ -2448,6 +2660,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
 #if !targetEnvironment(macCatalyst)
 final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
+    var onUserScroll: (() -> Void)?
     var handleAskUnderlineHover: ((CGPoint) -> Void)?
     var handleAskUnderlineClick: ((CGPoint) -> Bool)?
     /// X8: plain click inside the document (not on an ask-underline) — clears the
@@ -2507,6 +2720,13 @@ final class ReaderPDFView: PDFView {
         super.mouseMoved(with: event)
         let point = convert(event.locationInWindow, from: nil)
         handleAskUnderlineHover?(point)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+            onUserScroll?()
+        }
+        super.scrollWheel(with: event)
     }
 
     override func mouseDown(with event: NSEvent) {

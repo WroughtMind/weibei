@@ -19,7 +19,12 @@ final class ReaderExperienceSafetyTests: XCTestCase {
     }
 
     func testPDFRestorationConfirmsOnlyMatchingRequestAtTargetPage() {
-        let request = PDFPageRestorationRequest(pageIndex: 89, requestID: UUID())
+        let request = PDFPageRestorationRequest(
+            pageIndex: 89,
+            requestID: UUID(),
+            materialID: "material-a",
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf")
+        )
 
         XCTAssertEqual(
             PDFPageRestorationEventResolution.resolve(
@@ -42,8 +47,18 @@ final class ReaderExperienceSafetyTests: XCTestCase {
     }
 
     func testPDFRestorationIgnoresDelayedOrReplacedRequestEvents() {
-        let completed = PDFPageRestorationRequest(pageIndex: 89, requestID: UUID())
-        let replacement = PDFPageRestorationRequest(pageIndex: 12, requestID: UUID())
+        let completed = PDFPageRestorationRequest(
+            pageIndex: 89,
+            requestID: UUID(),
+            materialID: "material-a",
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf")
+        )
+        let replacement = PDFPageRestorationRequest(
+            pageIndex: 12,
+            requestID: UUID(),
+            materialID: "material-b",
+            documentURL: URL(fileURLWithPath: "/tmp/b.pdf")
+        )
 
         XCTAssertEqual(
             PDFPageRestorationEventResolution.resolve(
@@ -77,6 +92,155 @@ final class ReaderExperienceSafetyTests: XCTestCase {
             ),
             .publish
         )
+    }
+
+    func testPDFRestorationAbandonsAfterTwoFailedJumpsAndResetsForNewLoad() {
+        let requestID = UUID()
+        let document = NSObject()
+        let firstLoad = PDFDocumentLoadIdentity(
+            documentIdentifier: ObjectIdentifier(document),
+            generation: 1,
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf")
+        )
+        var state = PDFPageRestorationAttemptState()
+
+        XCTAssertEqual(state.resolve(
+            requestID: requestID,
+            loadIdentity: firstLoad,
+            currentPageIndex: 0,
+            targetPageIndex: 89,
+            userInitiated: false
+        ), .jump)
+        XCTAssertEqual(state.resolve(
+            requestID: requestID,
+            loadIdentity: firstLoad,
+            currentPageIndex: 0,
+            targetPageIndex: 89,
+            userInitiated: false
+        ), .jump)
+        XCTAssertEqual(state.resolve(
+            requestID: requestID,
+            loadIdentity: firstLoad,
+            currentPageIndex: 0,
+            targetPageIndex: 89,
+            userInitiated: false
+        ), .abandon)
+        XCTAssertEqual(state.attemptCount, 2)
+        XCTAssertEqual(PDFPageRestorationEventResolution.resolve(
+            activeRequest: nil,
+            requestAtEvent: nil,
+            reportedPageIndex: 7,
+            pageCount: 90
+        ), .publish, "失败收口后真实页必须恢复正常发布")
+
+        let reloaded = PDFDocumentLoadIdentity(
+            documentIdentifier: ObjectIdentifier(document),
+            generation: 2,
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf")
+        )
+        XCTAssertEqual(state.resolve(
+            requestID: requestID,
+            loadIdentity: reloaded,
+            currentPageIndex: 0,
+            targetPageIndex: 89,
+            userInitiated: false
+        ), .jump)
+        XCTAssertEqual(state.attemptCount, 1)
+        XCTAssertEqual(state.resolve(
+            requestID: requestID,
+            loadIdentity: reloaded,
+            currentPageIndex: 89,
+            targetPageIndex: 89,
+            userInitiated: false
+        ), .confirm)
+    }
+
+    func testPDFRestorationCancelsOnlyForExplicitUserInput() {
+        let document = NSObject()
+        let load = PDFDocumentLoadIdentity(
+            documentIdentifier: ObjectIdentifier(document),
+            generation: 1,
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf")
+        )
+        var state = PDFPageRestorationAttemptState()
+        let requestID = UUID()
+
+        XCTAssertEqual(state.resolve(
+            requestID: requestID,
+            loadIdentity: load,
+            currentPageIndex: 0,
+            targetPageIndex: 89,
+            userInitiated: false
+        ), .jump, "程序跳页产生的页变不能伪装成用户取消")
+        XCTAssertEqual(state.resolve(
+            requestID: requestID,
+            loadIdentity: load,
+            currentPageIndex: 0,
+            targetPageIndex: 89,
+            userInitiated: true
+        ), .abandon)
+    }
+
+    func testPDFRestorationRequestRequiresCurrentMaterialURLAndRequestID() {
+        let requestID = UUID()
+        let request = PDFPageRestorationRequest(
+            pageIndex: 89,
+            requestID: requestID,
+            materialID: "material-a",
+            documentURL: URL(fileURLWithPath: "/tmp/folder/../a.pdf")
+        )
+
+        XCTAssertTrue(request.matches(
+            materialID: "material-a",
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf"),
+            requestID: requestID
+        ))
+        XCTAssertFalse(request.matches(
+            materialID: "material-b",
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf"),
+            requestID: requestID
+        ))
+        XCTAssertFalse(request.matches(
+            materialID: "material-a",
+            documentURL: URL(fileURLWithPath: "/tmp/b.pdf"),
+            requestID: requestID
+        ), "同一资料编号换了文件也不能确认旧请求")
+        XCTAssertFalse(request.matches(
+            materialID: "material-a",
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf"),
+            requestID: UUID()
+        ))
+    }
+
+    func testPDFPageEventLoadIdentityRejectsOldDocumentOrGeneration() {
+        let documentA = NSObject()
+        let documentB = NSObject()
+        let event = PDFDocumentLoadIdentity(
+            documentIdentifier: ObjectIdentifier(documentA),
+            generation: 4,
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf")
+        )
+
+        XCTAssertEqual(event, PDFDocumentLoadIdentity(
+            documentIdentifier: ObjectIdentifier(documentA),
+            generation: 4,
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf")
+        ))
+        XCTAssertNotEqual(event, PDFDocumentLoadIdentity(
+            documentIdentifier: ObjectIdentifier(documentB),
+            generation: 4,
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf")
+        ))
+        XCTAssertNotEqual(event, PDFDocumentLoadIdentity(
+            documentIdentifier: ObjectIdentifier(documentA),
+            generation: 5,
+            documentURL: URL(fileURLWithPath: "/tmp/a.pdf")
+        ))
+        XCTAssertNotEqual(event, PDFDocumentLoadIdentity(
+            documentIdentifier: ObjectIdentifier(documentA),
+            generation: 4,
+            documentURL: URL(fileURLWithPath: "/tmp/b.pdf")
+        ))
     }
 
     func testTextMaterialFallsBackToGB18030() {
