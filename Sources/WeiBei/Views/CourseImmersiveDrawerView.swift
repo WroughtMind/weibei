@@ -23,6 +23,13 @@ struct CourseImmersiveDrawerView: View {
                         .frame(width: 1)
                 }
             }
-            .accessibilityAction(.escape, dismiss)
+            .background {
+                EscapeKeyBridge(onEscape: handleEscape)
+            }
+            .accessibilityAction(.escape, handleEscape)
+    }
+
+    private func handleEscape() {
+        model.handleEscape(dismiss: dismiss)
     }
 }
