@@ -109,7 +109,7 @@ final class TransientToleranceSafetyTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "断链课")
         let source = base.appendingPathComponent("笔记.md")
         try "原始正文".write(to: source, atomically: true, encoding: .utf8)
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note)
         let item = imported.item
         let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
 
@@ -181,7 +181,7 @@ final class TransientToleranceSafetyTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "横幅课")
         let source = base.appendingPathComponent("笔记.md")
         try "正文".write(to: source, atomically: true, encoding: .utf8)
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note)
         let item = imported.item
         let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
         store.select(itemID: item.id)

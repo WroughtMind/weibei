@@ -420,7 +420,6 @@ extension WorkspaceStore {
                     relativePath:
                         "\(directoryName)/\(observation.relativePath)"
                 )
-                nextItem.isNotebookNote = isNote || nextItem.kind == .markdown
                 nextItem.appearsInMaterials = nextItem.appearsInMaterials ?? !isNote
                 nextItem.contentRevision = revision
                 nextItem.contentDigest = digest
@@ -452,7 +451,7 @@ extension WorkspaceStore {
                     urlPath: observation.url.path,
                     importedFileIdentity: observation.identity,
                     isSample: false,
-                    isNotebookNote: isNote || StudyItemKind.detect(from: observation.url) == .markdown,
+                    isNotebookNote: isNote,
                     appearsInMaterials: !isNote,
                     storage: .common(
                         relativePath:
@@ -758,7 +757,6 @@ extension WorkspaceStore {
             nextItem.kind = StudyItemKind.detect(from: observation.url)
             nextItem.urlPath = observation.url.path
             nextItem.importedFileIdentity = observation.identity
-            nextItem.isNotebookNote = observation.isNote || nextItem.kind == .markdown
             nextItem.appearsInMaterials = nextItem.appearsInMaterials ?? !observation.isNote
             nextItem.contentRevision = nextRevision
             nextItem.contentDigest = nextDigest
@@ -801,7 +799,7 @@ extension WorkspaceStore {
                 urlPath: observation.url.path,
                 importedFileIdentity: observation.identity,
                 isSample: false,
-                isNotebookNote: observation.isNote || StudyItemKind.detect(from: observation.url) == .markdown,
+                isNotebookNote: observation.isNote,
                 appearsInMaterials: !observation.isNote,
                 storage: .courseOwned(
                     ownerCourseID: courseID,

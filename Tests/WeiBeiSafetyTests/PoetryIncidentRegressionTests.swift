@@ -62,7 +62,7 @@ final class PoetryIncidentRegressionTests: XCTestCase {
     ) throws -> (item: StudyItem, url: URL) {
         let source = base.appendingPathComponent("诗歌.md")
         try "# 诗歌\n\n真实正文：山川异域，风月同天。".write(to: source, atomically: true, encoding: .utf8)
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note)
         let url = try XCTUnwrap(store.resolvedLibraryURL(for: imported.item))
         return (imported.item, url)
     }
