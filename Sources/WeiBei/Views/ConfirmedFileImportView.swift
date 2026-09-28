@@ -399,9 +399,6 @@ extension WorkspaceStore {
             reservedSourcesByOriginalName[originalName, default: []].append(url)
             candidates.append(ConfirmedFileImportCandidate(sourceURL: url, disposition: disposition))
         }
-        if markdownOnly {
-            unsupported = unsupported.map { "\($0)（仅支持 Markdown）" }
-        }
         return (candidates, unsupported.sorted())
     }
 
@@ -643,7 +640,11 @@ struct ConfirmedFileImportView: View {
                             Image(systemName: "nosign")
                             Text(name).lineLimit(1)
                             Spacer()
-                            Text(store.ui("不支持", "Unsupported"))
+                            Text(
+                                batch.importsMarkdownAsNotes
+                                    ? store.ui("仅支持 Markdown", "Markdown only")
+                                    : store.ui("不支持", "Unsupported")
+                            )
                         }
                         .weiBeiText(11)
                         .foregroundStyle(WeiBeiTheme.cinnabar)

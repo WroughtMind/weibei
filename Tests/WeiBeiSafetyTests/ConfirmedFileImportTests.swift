@@ -238,6 +238,22 @@ final class ConfirmedFileImportTests: XCTestCase {
         XCTAssertEqual(try ImportFileCopy.collision(from: source, into: destination), .duplicate)
     }
 
+    func testMarkdownOnlyPlanKeepsUnsupportedFilenameUnlocalized() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let unsupported = fixture.outside.appendingPathComponent("讲义.pdf")
+        try Data("pdf".utf8).write(to: unsupported)
+
+        let plan = WorkspaceStore.makeConfirmedFileImportPlan(
+            urls: [unsupported],
+            destination: fixture.library.appendingPathComponent("通用笔记", isDirectory: true),
+            markdownOnly: true
+        )
+
+        XCTAssertTrue(plan.candidates.isEmpty)
+        XCTAssertEqual(plan.unsupportedNames, ["讲义.pdf"])
+    }
+
     func testSameNameInsideBatchIsShownAsConflictBeforeConfirmation() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("weibei-confirmed-batch-collision-\(UUID().uuidString)", isDirectory: true)
