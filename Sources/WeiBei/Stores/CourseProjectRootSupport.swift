@@ -3147,16 +3147,33 @@ actor CourseProjectFileWorker {
         from urls: [URL],
         markdownOnly: Bool
     ) -> [URL] {
+        expandedImportSelection(from: urls, markdownOnly: markdownOnly).supported
+    }
+
+    nonisolated static func expandedImportSelection(
+        from urls: [URL],
+        markdownOnly: Bool
+    ) -> (supported: [URL], unsupportedNames: [String]) {
         let fileManager = FileManager.default
-        var seen = Set<String>()
-        var result: [URL] = []
+        var seenSupported = Set<String>()
+        var seenUnsupported = Set<String>()
+        var supported: [URL] = []
+        var unsupportedNames: [String] = []
         for rawURL in urls {
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: rawURL.path, isDirectory: &isDirectory) else {
                 continue
             }
             if !isDirectory.boolValue {
-                appendSupported(rawURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
+                appendImportSelection(
+                    rawURL,
+                    displayName: rawURL.lastPathComponent,
+                    markdownOnly: markdownOnly,
+                    seenSupported: &seenSupported,
+                    seenUnsupported: &seenUnsupported,
+                    supported: &supported,
+                    unsupportedNames: &unsupportedNames
+                )
                 continue
             }
             guard !Self.ignoresImportDirectory(rawURL) else { continue }
@@ -3178,10 +3195,26 @@ actor CourseProjectFileWorker {
                     enumerator.skipDescendants()
                     continue
                 }
-                appendSupported(fileURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
+                let rootPath = rawURL.standardizedFileURL.path
+                let filePath = fileURL.standardizedFileURL.path
+                let relativePath = filePath.hasPrefix(rootPath + "/")
+                    ? String(filePath.dropFirst(rootPath.count + 1))
+                    : fileURL.lastPathComponent
+                appendImportSelection(
+                    fileURL,
+                    displayName: "\(rawURL.lastPathComponent)/\(relativePath)",
+                    markdownOnly: markdownOnly,
+                    seenSupported: &seenSupported,
+                    seenUnsupported: &seenUnsupported,
+                    supported: &supported,
+                    unsupportedNames: &unsupportedNames
+                )
             }
         }
-        return result.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        return (
+            supported.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending },
+            unsupportedNames.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        )
     }
 
     private func copyVisibleCourseTree(
@@ -3593,16 +3626,16 @@ actor CourseProjectFileWorker {
         }
     }
 
-    nonisolated private static func appendSupported(
+    nonisolated private static func appendImportSelection(
         _ rawURL: URL,
+        displayName: String,
         markdownOnly: Bool,
-        seen: inout Set<String>,
-        result: inout [URL]
+        seenSupported: inout Set<String>,
+        seenUnsupported: inout Set<String>,
+        supported: inout [URL],
+        unsupportedNames: inout [String]
     ) {
-        let pathExtension = rawURL.pathExtension.lowercased()
-        guard Self.supportedExtensions.contains(pathExtension),
-              !markdownOnly || ["md", "markdown"].contains(pathExtension),
-              let values = try? rawURL.resourceValues(forKeys: [
+        guard let values = try? rawURL.resourceValues(forKeys: [
                 .isRegularFileKey,
                 .isSymbolicLinkKey,
                 .isAliasFileKey,
@@ -3613,8 +3646,14 @@ actor CourseProjectFileWorker {
             return
         }
         let url = rawURL.standardizedFileURL
-        guard seen.insert(url.path).inserted else { return }
-        result.append(url)
+        let pathExtension = rawURL.pathExtension.lowercased()
+        if Self.supportedExtensions.contains(pathExtension),
+           !markdownOnly || ["md", "markdown"].contains(pathExtension) {
+            guard seenSupported.insert(url.path).inserted else { return }
+            supported.append(url)
+        } else if seenUnsupported.insert(url.path).inserted {
+            unsupportedNames.append(displayName)
+        }
     }
 
     nonisolated static func identity(at url: URL) -> ImportedFileIdentity? {

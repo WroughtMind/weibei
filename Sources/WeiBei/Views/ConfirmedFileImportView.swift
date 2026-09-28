@@ -44,6 +44,7 @@ struct ConfirmedFileImportBatch: Identifiable, Equatable, Sendable {
     var currentFileName: String?
     var stopped = false
     var destinationError: String?
+    var pendingSourceURLs: [URL] = []
 
     var confirmableCount: Int {
         candidates.count
@@ -81,7 +82,16 @@ extension WorkspaceStore {
     }
 
     func receiveExternalFileForConfirmedImport(_ url: URL) {
-        if confirmedFileImport?.stage == .importing { return }
+        if var batch = confirmedFileImport, batch.stage == .importing {
+            let knownURLs = batch.sourceURLs + batch.pendingSourceURLs
+            if !knownURLs.contains(where: {
+                $0.standardizedFileURL == url.standardizedFileURL
+            }) {
+                batch.pendingSourceURLs.append(url)
+                confirmedFileImport = batch
+            }
+            return
+        }
         if var batch = confirmedFileImport,
            batch.courseID == nil,
            !batch.importsMarkdownAsNotes,
@@ -124,6 +134,24 @@ extension WorkspaceStore {
         confirmedFileImportStopRequested = true
     }
 
+    func continuePendingConfirmedFileImport() {
+        guard let batch = confirmedFileImport,
+              batch.stage == .finished,
+              !batch.pendingSourceURLs.isEmpty else { return }
+        prepareConfirmedFileImport(batch.pendingSourceURLs)
+    }
+
+    func prepareInitialCourseImportAfterEntryDismissal(
+        _ urls: [URL],
+        courseID: UUID
+    ) {
+        guard !urls.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.prepareConfirmedFileImport(urls, courseID: courseID)
+        }
+    }
+
     func retryFailedConfirmedFileImport() {
         guard let batch = confirmedFileImport,
               batch.stage == .finished,
@@ -136,7 +164,8 @@ extension WorkspaceStore {
             courseID: batch.courseID,
             importsMarkdownAsNotes: batch.importsMarkdownAsNotes,
             importedItems: batch.importedItems,
-            previousSkippedCount: batch.skippedCount
+            previousSkippedCount: batch.skippedCount,
+            pendingSourceURLs: batch.pendingSourceURLs
         )
         refreshConfirmedFileImportPlan()
     }
@@ -169,22 +198,26 @@ extension WorkspaceStore {
                 }
                 batch.currentFileName = candidate.sourceURL.lastPathComponent
                 batch.completed = completed
-                confirmedFileImport = batch
+                publishConfirmedFileImportProgress(batch)
                 defer {
                     completed += 1
                     batch.completed = completed
-                    confirmedFileImport = batch
+                    publishConfirmedFileImportProgress(batch)
                 }
                 if candidate.disposition == .duplicate { continue }
                 do {
                     let item = try await importConfirmedFile(candidate, batch: batch)
-                    imported.append(item)
+                    if !imported.contains(where: { $0.id == item.id }) {
+                        imported.append(item)
+                    }
                 } catch {
                     if let recovered = await recoverConfirmedCourseImport(
                         candidate,
                         batch: batch
                     ) {
-                        imported.append(recovered)
+                        if !imported.contains(where: { $0.id == recovered.id }) {
+                            imported.append(recovered)
+                        }
                         continue
                     }
                     WeiBeiLog.workspace.error(
@@ -204,8 +237,20 @@ extension WorkspaceStore {
             batch.stopped = batch.stopped || confirmedFileImportStopRequested
             confirmedFileImportStopRequested = false
             confirmedFileImportTask = nil
-            confirmedFileImport = batch
+            publishConfirmedFileImportProgress(batch)
         }
+    }
+
+    private func publishConfirmedFileImportProgress(_ batch: ConfirmedFileImportBatch) {
+        var next = batch
+        if let current = confirmedFileImport, current.id == batch.id {
+            for url in current.pendingSourceURLs where !next.pendingSourceURLs.contains(where: {
+                $0.standardizedFileURL == url.standardizedFileURL
+            }) {
+                next.pendingSourceURLs.append(url)
+            }
+        }
+        confirmedFileImport = next
     }
 
     func openSingleConfirmedImport() {
@@ -299,45 +344,59 @@ extension WorkspaceStore {
     nonisolated static func makeConfirmedFileImportPlan(
         urls: [URL], destination: URL, markdownOnly: Bool
     ) -> (candidates: [ConfirmedFileImportCandidate], unsupportedNames: [String]) {
-        let expanded = CourseProjectFileWorker.expandedSupportedFiles(
+        let expansion = CourseProjectFileWorker.expandedImportSelection(
             from: urls,
             markdownOnly: markdownOnly
         )
-        let expandedPaths = Set(expanded.map { $0.standardizedFileURL.path })
-        var unsupported = urls.compactMap { url -> String? in
+        let expanded = expansion.supported
+        var unsupported = expansion.unsupportedNames
+        unsupported.append(contentsOf: urls.compactMap { url -> String? in
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
-            if values?.isDirectory == true {
-                return CourseProjectFileWorker.expandedSupportedFiles(
+            guard values?.isDirectory == true else { return nil }
+            let nested = CourseProjectFileWorker.expandedImportSelection(
                     from: [url],
                     markdownOnly: markdownOnly
-                ).isEmpty ? url.lastPathComponent : nil
-            }
-            return expandedPaths.contains(url.standardizedFileURL.path) ? nil : url.lastPathComponent
-        }
+            )
+            return nested.supported.isEmpty && nested.unsupportedNames.isEmpty
+                ? url.lastPathComponent
+                : nil
+        })
         var candidates: [ConfirmedFileImportCandidate] = []
         var reservedTargetNames = Set<String>()
+        var reservedSourcesByTargetName: [String: URL] = [:]
         for url in expanded {
-            var disposition: ConfirmedFileImportDisposition
+            let initialTargetName: String
             do {
                 switch try ImportFileCopy.collision(from: url, into: destination) {
-                case .available: disposition = .ready
-                case .duplicate: disposition = .duplicate
-                case .conflict(let suggested): disposition = .conflict(suggestedFileName: suggested)
+                case .available:
+                    initialTargetName = url.lastPathComponent
+                case .duplicate:
+                    candidates.append(ConfirmedFileImportCandidate(sourceURL: url, disposition: .duplicate))
+                    continue
+                case .conflict(let suggested):
+                    initialTargetName = suggested
                 }
             } catch {
-                disposition = .ready
+                initialTargetName = url.lastPathComponent
             }
-            if disposition != .duplicate {
-                let targetName = nextConfirmedImportTargetName(
-                    for: url,
-                    in: destination,
-                    reserved: reservedTargetNames
-                )
-                if targetName != url.lastPathComponent {
-                    disposition = .conflict(suggestedFileName: targetName)
-                }
-                reservedTargetNames.insert(targetName)
+            if let reservedSource = reservedSourcesByTargetName[initialTargetName],
+               (try? ImportFileCopy.sourcesHaveIdenticalImportedContents(
+                    reservedSource,
+                    url
+               )) == true {
+                candidates.append(ConfirmedFileImportCandidate(sourceURL: url, disposition: .duplicate))
+                continue
             }
+            let targetName = nextConfirmedImportTargetName(
+                for: url,
+                in: destination,
+                reserved: reservedTargetNames
+            )
+            let disposition: ConfirmedFileImportDisposition = targetName == url.lastPathComponent
+                ? .ready
+                : .conflict(suggestedFileName: targetName)
+            reservedTargetNames.insert(targetName)
+            reservedSourcesByTargetName[targetName] = url
             candidates.append(ConfirmedFileImportCandidate(sourceURL: url, disposition: disposition))
         }
         if markdownOnly {
@@ -670,6 +729,14 @@ struct ConfirmedFileImportView: View {
             Text("\(batch.completed) / \(batch.total)")
                 .weiBeiText(11, design: .monospaced)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
+            if !batch.pendingSourceURLs.isEmpty {
+                Text(store.ui(
+                    "另有 \(batch.pendingSourceURLs.count) 个从 Dock 打开的文件等待本批完成。",
+                    "\(batch.pendingSourceURLs.count) file(s) opened from the Dock are waiting for this batch."
+                ))
+                .weiBeiText(11)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
             Spacer()
             HStack {
                 Spacer()
@@ -693,6 +760,14 @@ struct ConfirmedFileImportView: View {
                     .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
+            if !batch.pendingSourceURLs.isEmpty {
+                Text(store.ui(
+                    "另有 \(batch.pendingSourceURLs.count) 个文件尚未处理，原文件仍保留。",
+                    "\(batch.pendingSourceURLs.count) file(s) are still waiting; their originals are unchanged."
+                ))
+                .weiBeiText(12)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
             if !batch.failures.isEmpty {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
@@ -708,6 +783,15 @@ struct ConfirmedFileImportView: View {
             }
             Spacer()
             HStack(spacing: 8) {
+                if !batch.pendingSourceURLs.isEmpty {
+                    Button(store.ui(
+                        "处理待导入文件（\(batch.pendingSourceURLs.count)）",
+                        "Review Waiting Files (\(batch.pendingSourceURLs.count))"
+                    )) {
+                        store.continuePendingConfirmedFileImport()
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                }
                 if !batch.failures.isEmpty {
                     Button(store.ui("只重试失败项", "Retry Failed Only")) {
                         store.retryFailedConfirmedFileImport()
@@ -715,18 +799,22 @@ struct ConfirmedFileImportView: View {
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                 }
                 Spacer()
-                if batch.importedItems.count == 1 {
+                if batch.pendingSourceURLs.isEmpty, batch.importedItems.count == 1 {
                     Button(store.ui("打开文稿", "Open Document")) {
                         store.openSingleConfirmedImport()
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
-                } else if batch.importedItems.count > 1 {
+                } else if batch.pendingSourceURLs.isEmpty, batch.importedItems.count > 1 {
                     Button(store.ui("查看已导入资料", "View Imported Items")) {
                         store.showConfirmedImportBatch()
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
-                Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
+                Button(
+                    batch.pendingSourceURLs.isEmpty
+                        ? store.ui("完成", "Done")
+                        : store.ui("暂不处理待导入文件", "Leave Waiting Files")
+                ) { store.dismissConfirmedFileImport() }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
                     .keyboardShortcut(.defaultAction)
             }
