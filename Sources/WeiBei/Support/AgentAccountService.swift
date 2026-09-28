@@ -28,6 +28,11 @@ final class AgentAccountService: ObservableObject {
         var credentials: [CredentialInfo] = []
     }
 
+    struct SuccessfulModelListState: Equatable, Sendable {
+        var message: LocalizedMessage?
+        var canRetry: Bool
+    }
+
     @Published private(set) var catalog: CatalogInfo?
     @Published private(set) var isLoggingIn = false
     @Published private(set) var statusMessage: LocalizedMessage?
@@ -80,6 +85,19 @@ final class AgentAccountService: ObservableObject {
         return ids
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    static func successfulModelListState(_ modelIDs: [String]) -> SuccessfulModelListState {
+        guard modelIDs.isEmpty else {
+            return SuccessfulModelListState(message: nil, canRetry: false)
+        }
+        return SuccessfulModelListState(
+            message: LocalizedMessage(
+                chinese: "服务返回的模型名单为空，当前选择没有改变。请刷新重试，或手动输入模型 ID。",
+                english: "The service returned an empty model list. Your selection is unchanged. Refresh to try again, or enter a model ID manually."
+            ),
+            canRetry: true
+        )
     }
 
     func hasLoadedModels(provider: AgentProviderID) -> Bool {
@@ -360,17 +378,15 @@ final class AgentAccountService: ObservableObject {
                 ids = try await modelService.fetchModels(strategy: strategy, apiKey: key)
             }
             let modelIDs = Self.catalogEntries(ids, loadedFor: provider, provider: provider)
-            guard !modelIDs.isEmpty else {
-                throw ModelListError.decoding("empty model list")
-            }
+            let state = Self.successfulModelListState(modelIDs)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 liveReasoningLevels = reasoningLevels
                 liveModelIDs = modelIDs
                 liveModelsProvider = provider
                 isRefreshingModels = false
-                modelListMessage = nil
-                modelListCanRetry = false
+                modelListMessage = state.message
+                modelListCanRetry = state.canRetry
             }
         } catch {
             guard !Task.isCancelled else { return }
