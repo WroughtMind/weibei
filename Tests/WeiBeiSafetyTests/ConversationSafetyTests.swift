@@ -326,6 +326,38 @@ final class ConversationSafetyTests: XCTestCase {
         XCTAssertEqual(messages.last?.failureKind, .emptyReply)
     }
 
+    /// A6: 首次空回复不重复错误原因；重新生成保留旧回答时必须另行显示原因。
+    @MainActor
+    func testEmptyReplyNoticeMatchesVisibleReplyBodyInBothLanguages() {
+        for language in WeiBeiInterfaceLanguage.allCases {
+            let emptyReplyTitle = AgentFailureKind.emptyReply.title(language: language)
+            let firstReply = AgentMessage(
+                role: .assistant,
+                text: emptyReplyTitle,
+                completionState: .interrupted,
+                failureKind: .emptyReply,
+                retryQuestion: "原始问题"
+            )
+            XCTAssertNil(
+                AgentBubble.interruptedNoticeTitle(for: firstReply, language: language),
+                "首次空回复的正文已经显示原因，不应在脚注重复"
+            )
+
+            let regeneratedReply = AgentMessage(
+                role: .assistant,
+                text: "重新生成前的原回答。",
+                completionState: .interrupted,
+                failureKind: .emptyReply,
+                retryQuestion: "原始问题"
+            )
+            XCTAssertEqual(
+                AgentBubble.interruptedNoticeTitle(for: regeneratedReply, language: language),
+                AgentFailureKind.emptyReply.partialFailureNotice(language: language, receivedText: true),
+                "重新生成保留原回答时仍应显示空回复原因"
+            )
+        }
+    }
+
     @MainActor
     private func waitUntil(
         timeout: TimeInterval = 60,
