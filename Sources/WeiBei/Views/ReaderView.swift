@@ -925,11 +925,11 @@ struct ReaderView: View {
         visiblePageIndex: Int?,
         resolution: PDFPageRestorationFinishResolution
     ) {
-        guard let pendingPDFPageRequestID,
+        guard let capturedRequestID = pendingPDFPageRequestID,
               request.matches(
                 materialID: pendingPDFMaterialID,
                 documentURL: pendingPDFDocumentURL,
-                requestID: pendingPDFPageRequestID
+                requestID: capturedRequestID
               ),
               request.matches(
                 materialID: store.selectedMaterialItem?.id,
