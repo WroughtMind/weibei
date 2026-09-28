@@ -52,6 +52,7 @@ final class ConversationSafetyTests: XCTestCase {
             startsAtBlankEntries: true,
             startsCourseFileMaintenance: false
         )
+        store.modelName = "test-model"
         let session = try XCTUnwrap(store.createStudySession(courseID: nil))
         return (store, session.id, { try? FileManager.default.removeItem(at: root) })
     }
