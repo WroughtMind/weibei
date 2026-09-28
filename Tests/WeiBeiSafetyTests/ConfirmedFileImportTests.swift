@@ -146,6 +146,59 @@ final class ConfirmedFileImportTests: XCTestCase {
         XCTAssertEqual(fixture.store.confirmedFileImport?.sourceURLs, [waiting])
     }
 
+    func testPendingBatchCannotSilentlyDiscardFailures() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let failed = fixture.outside.appendingPathComponent("失败.txt")
+        let waiting = fixture.outside.appendingPathComponent("稍后.txt")
+        try Data("failed".utf8).write(to: failed)
+        try Data("waiting".utf8).write(to: waiting)
+        let failure = ConfirmedFileImportFailure(sourceURL: failed, message: "失败")
+        fixture.store.confirmedFileImport = ConfirmedFileImportBatch(
+            id: UUID(),
+            sourceURLs: [failed],
+            sourceFolderNames: [],
+            courseID: nil,
+            importsMarkdownAsNotes: false,
+            stage: .finished,
+            failures: [failure],
+            pendingSourceURLs: [waiting]
+        )
+
+        fixture.store.continuePendingConfirmedFileImport()
+        XCTAssertEqual(fixture.store.confirmedFileImport?.failures, [failure])
+        XCTAssertEqual(fixture.store.confirmedFileImport?.pendingSourceURLs, [waiting])
+
+        fixture.store.retryFailedConfirmedFileImport()
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.sourceURLs, [failed])
+        XCTAssertEqual(fixture.store.confirmedFileImport?.pendingSourceURLs, [waiting])
+    }
+
+    func testPendingBatchContinuesAfterExplicitlyAbandoningFailures() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let failed = fixture.outside.appendingPathComponent("失败.txt")
+        let waiting = fixture.outside.appendingPathComponent("稍后.txt")
+        try Data("failed".utf8).write(to: failed)
+        try Data("waiting".utf8).write(to: waiting)
+        fixture.store.confirmedFileImport = ConfirmedFileImportBatch(
+            id: UUID(),
+            sourceURLs: [failed],
+            sourceFolderNames: [],
+            courseID: nil,
+            importsMarkdownAsNotes: false,
+            stage: .finished,
+            failures: [ConfirmedFileImportFailure(sourceURL: failed, message: "失败")],
+            pendingSourceURLs: [waiting]
+        )
+
+        fixture.store.continuePendingConfirmedFileImport(abandoningFailures: true)
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.sourceURLs, [waiting])
+        XCTAssertTrue(fixture.store.confirmedFileImport?.failures.isEmpty == true)
+    }
+
     func testInitialCourseFilesWaitForUnifiedConfirmation() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -244,6 +297,66 @@ final class ConfirmedFileImportTests: XCTestCase {
         )
     }
 
+    func testSameNameCollisionGroupComparesEveryEarlierContent() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let directories = ["a", "b", "c"].map {
+            fixture.outside.appendingPathComponent($0, isDirectory: true)
+        }
+        for directory in directories {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let files = directories.map { $0.appendingPathComponent("同名.txt") }
+        try Data("A".utf8).write(to: files[0])
+        try Data("B".utf8).write(to: files[1])
+        try Data("B".utf8).write(to: files[2])
+
+        fixture.store.prepareConfirmedFileImport(files)
+        waitForStage(.reviewing, in: fixture.store)
+
+        XCTAssertEqual(
+            fixture.store.confirmedFileImport?.candidates.map(\.disposition),
+            [.ready, .conflict(suggestedFileName: "同名 2.txt"), .duplicate]
+        )
+        fixture.store.confirmFileImport()
+        waitForStage(.finished, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.importedItems.count, 2)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.skippedCount, 1)
+        XCTAssertEqual(
+            try Set(FileManager.default.contentsOfDirectory(
+                atPath: fixture.library.appendingPathComponent("通用资料").path
+            )),
+            Set(["同名.txt", "同名 2.txt"])
+        )
+    }
+
+    func testSameNameHTMLUsesNormalizedImportedContentsForDuplicates() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let directories = ["a", "b"].map {
+            fixture.outside.appendingPathComponent($0, isDirectory: true)
+        }
+        for directory in directories {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let first = directories[0].appendingPathComponent("同名.html")
+        let second = directories[1].appendingPathComponent("同名.html")
+        try Data("<html><body><img src=\"甲.png\"></body></html>".utf8).write(to: first)
+        try Data("<html><body><img src=\"乙.png\"></body></html>".utf8).write(to: second)
+        let image = Data([0x89, 0x50, 0x4e, 0x47])
+        try image.write(to: directories[0].appendingPathComponent("甲.png"))
+        try image.write(to: directories[1].appendingPathComponent("乙.png"))
+        XCTAssertNotEqual(try Data(contentsOf: first), try Data(contentsOf: second))
+
+        let plan = WorkspaceStore.makeConfirmedFileImportPlan(
+            urls: [first, second],
+            destination: fixture.library.appendingPathComponent("通用资料", isDirectory: true),
+            markdownOnly: false
+        )
+
+        XCTAssertEqual(plan.candidates.map(\.disposition), [.ready, .duplicate])
+    }
+
     func testMixedFolderListsRecursiveUnsupportedFilesWithoutFollowingSymlinks() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -266,6 +379,51 @@ final class ConfirmedFileImportTests: XCTestCase {
         XCTAssertEqual(batch.candidates.map { $0.sourceURL.lastPathComponent }, ["讲义.pdf"])
         XCTAssertEqual(batch.unsupportedNames, ["资料包/附件/原件.zip"])
         XCTAssertEqual(batch.skippedCount, 1)
+    }
+
+    func testSelectedRootDirectorySymlinkIsNotTraversed() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let outsideDirectory = fixture.root.appendingPathComponent("边界外目录", isDirectory: true)
+        try FileManager.default.createDirectory(at: outsideDirectory, withIntermediateDirectories: true)
+        try Data("outside".utf8).write(to: outsideDirectory.appendingPathComponent("边界外.pdf"))
+        let linkedRoot = fixture.outside.appendingPathComponent("链接资料包", isDirectory: true)
+        try FileManager.default.createSymbolicLink(
+            at: linkedRoot,
+            withDestinationURL: outsideDirectory
+        )
+
+        let expansion = CourseProjectFileWorker.expandedImportSelection(
+            from: [linkedRoot],
+            markdownOnly: false
+        )
+
+        XCTAssertTrue(expansion.supported.isEmpty)
+        XCTAssertTrue(expansion.unsupportedNames.isEmpty)
+    }
+
+    func testNestedDirectorySymlinkIsNotTraversed() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let selectedRoot = fixture.outside.appendingPathComponent("资料包", isDirectory: true)
+        let outsideDirectory = fixture.root.appendingPathComponent("边界外目录", isDirectory: true)
+        try FileManager.default.createDirectory(at: selectedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outsideDirectory, withIntermediateDirectories: true)
+        let safe = selectedRoot.appendingPathComponent("安全.pdf")
+        try Data("safe".utf8).write(to: safe)
+        try Data("outside".utf8).write(to: outsideDirectory.appendingPathComponent("边界外.pdf"))
+        try FileManager.default.createSymbolicLink(
+            at: selectedRoot.appendingPathComponent("链接目录", isDirectory: true),
+            withDestinationURL: outsideDirectory
+        )
+
+        let expansion = CourseProjectFileWorker.expandedImportSelection(
+            from: [selectedRoot],
+            markdownOnly: false
+        )
+
+        XCTAssertEqual(expansion.supported, [safe.standardizedFileURL])
+        XCTAssertTrue(expansion.unsupportedNames.isEmpty)
     }
 
     private func waitForStage(

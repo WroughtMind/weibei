@@ -3160,11 +3160,16 @@ actor CourseProjectFileWorker {
         var supported: [URL] = []
         var unsupportedNames: [String] = []
         for rawURL in urls {
-            var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: rawURL.path, isDirectory: &isDirectory) else {
+            guard let rootValues = try? rawURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .isAliasFileKey,
+            ]),
+            rootValues.isSymbolicLink != true,
+            rootValues.isAliasFile != true else {
                 continue
             }
-            if !isDirectory.boolValue {
+            if rootValues.isDirectory != true {
                 appendImportSelection(
                     rawURL,
                     displayName: rawURL.lastPathComponent,
@@ -3180,6 +3185,7 @@ actor CourseProjectFileWorker {
             guard let enumerator = fileManager.enumerator(
                 at: rawURL,
                 includingPropertiesForKeys: [
+                    .isDirectoryKey,
                     .isRegularFileKey,
                     .isSymbolicLinkKey,
                     .isAliasFileKey,
@@ -3190,8 +3196,20 @@ actor CourseProjectFileWorker {
                 continue
             }
             for case let fileURL as URL in enumerator {
+                guard let values = try? fileURL.resourceValues(forKeys: [
+                    .isDirectoryKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ]) else {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                if values.isSymbolicLink == true || values.isAliasFile == true {
+                    enumerator.skipDescendants()
+                    continue
+                }
                 if Self.ignoresImportDirectory(fileURL),
-                   (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                   values.isDirectory == true {
                     enumerator.skipDescendants()
                     continue
                 }
