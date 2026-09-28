@@ -747,6 +747,8 @@ enum CatalystBusinessCheck {
                         && $0.accessibilityHint == expected.1
                         && $0.accessibilityCustomActions?.first?.name == expected.2
                 }
+                    && controller.collection.accessibilityLabel
+                        == language.text("会话消息列表", "Conversation messages")
             }
         }
     }

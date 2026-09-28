@@ -3321,6 +3321,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         Coordinator(
             appearanceMode: appearanceMode,
             adaptsDocumentColors: adaptsDocumentColors,
+            interfaceLanguage: interfaceLanguage,
             contentRailTarget: contentRailTarget,
             onContentRailChange: onContentRailChange,
             onContentRailActiveChange: onContentRailActiveChange,
@@ -3360,7 +3361,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             forMainFrameOnly: true
         ))
         controller.addUserScript(WKUserScript(
-            source: Self.contentRailScript,
+            source: Self.contentRailScript(language: interfaceLanguage),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         ))
@@ -3436,6 +3437,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         context.coordinator.contentRailTarget = contentRailTarget
         context.coordinator.selectionAskMarks = selectionAskMarks
         context.coordinator.selectionRemarkMarks = selectionRemarkMarks
+        context.coordinator.updateInterfaceLanguage(interfaceLanguage, in: view)
         if context.coordinator.appearanceMode != appearanceMode
             || context.coordinator.adaptsDocumentColors != adaptsDocumentColors {
             context.coordinator.appearanceMode = appearanceMode
@@ -3588,7 +3590,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
     })();
     """
 
-    static let contentRailScript = """
+    static func contentRailScript(language: WeiBeiInterfaceLanguage) -> String {
+        """
     (() => {
       if (window.WeiBeiContentRail?.installed) {
         window.WeiBeiContentRail.scan();
@@ -3596,6 +3599,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
       }
 
       const state = {
+        english: \(language == .english ? "true" : "false"),
         items: [],
         activeItems: [],
         activeID: "",
@@ -3621,7 +3625,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
       );
       const normalizedPosition = (element) => Math.max(0, Math.min(1, absoluteTop(element) / maximumScroll()));
       const metadata = (index, count, fallback) => fallback
-        ? `HTML · 内容段 ${index + 1} / ${count}`
+        ? `HTML · ${state.english ? "Content section" : "内容段"} ${index + 1} / ${count}`
         : `HTML · ${index + 1} / ${count}`;
 
       const excerptAfterHeading = (heading) => {
@@ -3842,6 +3846,10 @@ struct WebReaderRepresentable: ReaderRepresentable {
       window.WeiBeiContentRail = {
         installed: true,
         scan: () => scan("initial"),
+        setLanguage: (language) => {
+          state.english = language === "english";
+          postSections();
+        },
         scrollTo
       };
       window.addEventListener("wheel", markUserScrollIntent, { passive: true });
@@ -3861,6 +3869,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
       window.requestAnimationFrame(() => scan("initial"));
     })();
     """
+    }
 
     static func readerStyleScript(for mode: WeiBeiAppearanceMode, adaptsDocumentColors: Bool = true) -> String {
         let tokens = WeiBeiNativePalette.cssHex(for: mode)
@@ -3986,6 +3995,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         private var searchResultIndex = -1
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
+        var interfaceLanguage: WeiBeiInterfaceLanguage
         var selectionAskMarks = "[]"
         var selectionRemarkMarks = "[]"
         var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
@@ -4004,6 +4014,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         init(
             appearanceMode: WeiBeiAppearanceMode,
             adaptsDocumentColors: Bool,
+            interfaceLanguage: WeiBeiInterfaceLanguage,
             contentRailTarget: WebReaderContentRailTarget?,
             onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void,
             onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void,
@@ -4013,12 +4024,30 @@ struct WebReaderRepresentable: ReaderRepresentable {
         ) {
             self.appearanceMode = appearanceMode
             self.adaptsDocumentColors = adaptsDocumentColors
+            self.interfaceLanguage = interfaceLanguage
             self.contentRailTarget = contentRailTarget
             self.onContentRailChange = onContentRailChange
             self.onContentRailActiveChange = onContentRailActiveChange
             self.onContentRailTargetUnavailable = onContentRailTargetUnavailable
             self.onSelectionChange = onSelectionChange
             self.onSelectionAskMark = onSelectionAskMark
+        }
+
+        func updateInterfaceLanguage(_ language: WeiBeiInterfaceLanguage, in view: WKWebView) {
+            guard interfaceLanguage != language else { return }
+            interfaceLanguage = language
+            applyInterfaceLanguage(in: view)
+        }
+
+        private func applyInterfaceLanguage(in view: WKWebView) {
+            let language = interfaceLanguage == .english ? "english" : "chinese"
+            view.evaluateJavaScript("""
+            (() => {
+              const language = \(Self.json(language));
+              if (window.WeiBeiOffice?.setLanguage) window.WeiBeiOffice.setLanguage(language);
+              else window.WeiBeiContentRail?.setLanguage?.(language);
+            })();
+            """)
         }
 
         private static let officeRuntime: String = {
@@ -4296,6 +4325,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             lastAppliedSelectionAskMarks = ""
             lastAppliedSelectionRemarkMarks = ""
             webView.evaluateJavaScript(WebReaderRepresentable.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors))
+            applyInterfaceLanguage(in: webView)
             applySearch(in: webView)
             applyContentRailTarget(in: webView)
             applySelectionMarksIfNeeded()
