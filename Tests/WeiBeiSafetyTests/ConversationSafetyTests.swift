@@ -335,6 +335,7 @@ final class ConversationSafetyTests: XCTestCase {
             let firstReply = AgentMessage(
                 role: .assistant,
                 text: emptyReplyTitle,
+                source: nil,
                 completionState: .interrupted,
                 failureKind: .emptyReply,
                 retryQuestion: "原始问题"
@@ -347,6 +348,7 @@ final class ConversationSafetyTests: XCTestCase {
             let regeneratedReply = AgentMessage(
                 role: .assistant,
                 text: "重新生成前的原回答。",
+                source: nil,
                 completionState: .interrupted,
                 failureKind: .emptyReply,
                 retryQuestion: "原始问题"
