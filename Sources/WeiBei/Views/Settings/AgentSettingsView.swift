@@ -68,8 +68,23 @@ extension SettingsView {
 
             // 模型 — dropdown backed by the live catalog.
             settingsRow(title: store.ui("模型", "Model"), detail: "") {
-                agentModelPicker()
+                HStack(spacing: 8) {
+                    agentModelPicker()
+                    Button {
+                        oauthService.refreshModels(
+                            provider: store.agentProviderID,
+                            baseURL: store.agentBaseURL
+                        )
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+                    .disabled(oauthService.isRefreshingModels)
+                    .help(store.ui("刷新模型名单", "Refresh model list"))
+                    .accessibilityLabel(store.ui("刷新模型名单", "Refresh model list"))
+                }
             }
+            modelCatalogStatus
 
             if !store.agentReasoningLevels.isEmpty {
                 ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
@@ -218,16 +233,48 @@ extension SettingsView {
     private func applyProvider(_ provider: AgentProviderID) {
         apiKeyDraft = ""
         store.setAgentProviderID(provider)
-        oauthService.refreshModels(provider: provider, baseURL: store.agentBaseURL)
-        if let firstModel = oauthService.models(provider: provider).first {
-            store.updateModelName(firstModel)
-        }
         let authTypes = authTypes(for: provider)
         store.setAgentAuthMethod(
             authTypes.contains(.oauth) && (provider.kind == .subscription || !oauthService.isConfigured(providerID: provider.credentialProviderID, type: .apiKey))
                 ? .subscription
                 : .apiKey
         )
+    }
+
+    @ViewBuilder
+    private var modelCatalogStatus: some View {
+        if oauthService.isRefreshingModels {
+            settingsNote(
+                store.ui("正在获取模型名单…", "Loading model list…"),
+                icon: "arrow.triangle.2.circlepath"
+            )
+        } else if let message = oauthService.modelListMessage {
+            HStack(spacing: 8) {
+                settingsNote(store.ui(message.chinese, message.english), icon: "exclamationmark.triangle")
+                if oauthService.modelListCanRetry {
+                    Button(store.ui("重试", "Retry")) {
+                        oauthService.refreshModels(
+                            provider: store.agentProviderID,
+                            baseURL: store.agentBaseURL
+                        )
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                }
+            }
+        } else if selectedModelIsMissing {
+            settingsNote(
+                store.ui("请选择一个模型，或手动输入模型 ID。", "Choose a model, or enter a model ID manually."),
+                icon: "exclamationmark.triangle"
+            )
+        } else if selectedModelIsUnavailable {
+            settingsNote(
+                store.ui(
+                    "已保存的模型不在当前名单中。魏碑不会替你切换，发送时仍使用这个模型。",
+                    "The saved model is not in the current list. WeiBei will not switch it and will still use it when sending."
+                ),
+                icon: "exclamationmark.triangle"
+            )
+        }
     }
 
     // MARK: ② Auth

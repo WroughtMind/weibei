@@ -359,8 +359,7 @@ final class WorkspaceStore: ObservableObject {
         mode.effort(saved: agentReasoningMappings[agentReasoningMappingKey(mode)], levels: agentReasoningLevels)
     }
     var agentReasoningModelName: String {
-        let selected = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return selected.isEmpty ? NativeProviderRouting.route(agentProviderID).defaultModel : selected
+        modelName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     var agentReasoningModelKey: String { activeAgentProfileID.uuidString + ":" + agentReasoningModelName }
     var agentReasoningLevels: [String] {
