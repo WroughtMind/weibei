@@ -551,6 +551,8 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published var readerTargetPageIndex: Int?
     @Published private(set) var readerTargetPageRequestID = UUID()
+    @Published private(set) var readerTargetPageMaterialID: String?
+    @Published private(set) var readerTargetPageDocumentURL: URL?
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
     @Published private(set) var readerTargetLocationRequestID = UUID()
@@ -5073,12 +5075,25 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func requestReaderPDFPage(_ pageIndex: Int?) {
-        readerTargetPageIndex = pageIndex.map { max($0, 0) }
+        let targetPageIndex = pageIndex.map { max($0, 0) }
+        if targetPageIndex != nil,
+           let item = selectedMaterialItem,
+           item.kind == .pdf,
+           let url = item.url {
+            readerTargetPageMaterialID = item.id
+            readerTargetPageDocumentURL = url.standardizedFileURL
+        } else {
+            readerTargetPageMaterialID = nil
+            readerTargetPageDocumentURL = nil
+        }
         readerTargetPageRequestID = UUID()
+        readerTargetPageIndex = targetPageIndex
     }
 
     func consumeReaderPDFPageRequest(_ requestID: UUID) {
         guard readerTargetPageRequestID == requestID else { return }
+        readerTargetPageMaterialID = nil
+        readerTargetPageDocumentURL = nil
         readerTargetPageIndex = nil
     }
 

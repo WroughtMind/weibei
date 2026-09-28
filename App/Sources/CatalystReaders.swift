@@ -7,6 +7,7 @@ extension PDFView { var isFlipped: Bool { true } }
 
 final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
+    var onUserScroll: (() -> Void)?
     var handleAskUnderlineHover: ((CGPoint) -> Void)?
     var handleAskUnderlineClick: ((CGPoint) -> Bool)?
     /// X8: plain tap inside the document (not on an ask-underline) — clears the
@@ -32,6 +33,13 @@ final class ReaderPDFView: PDFView {
     }
     override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
     @objc private func pointer(_ gesture: UIGestureRecognizer) {
+        if (gesture.state == .began || gesture.state == .changed),
+           let pan = gesture as? UIPanGestureRecognizer {
+            let translation = pan.translation(in: self)
+            if translation.x != 0 || translation.y != 0 {
+                onUserScroll?()
+            }
+        }
         onPointerEvent?(gesture.location(in: self), gesture.state)
         reportCurrentSelection?()
     }
