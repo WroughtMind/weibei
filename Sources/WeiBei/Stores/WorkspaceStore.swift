@@ -10102,18 +10102,18 @@ final class WorkspaceStore: ObservableObject {
                 _ = await flushPendingWorkspaceSaveAsync()
             } catch is CancellationError {
                 guard activeAgentRequestID == requestID else { return }
+                let userStopped = agentRuns[target.sessionID]?.isStoppingAgent == true
                 if let replyMessageID {
                     interruptAgentReply(
                         requestID: requestID,
                         messageID: replyMessageID,
                         chatID: target.sessionID,
                         kind: .cancelled,
-                        restoreDraft: questionOverride == nil
+                        restoreDraft: questionOverride == nil && !userStopped
                     )
                 }
                 // A2: 用户主动停止（stopAgent 已置 isStoppingAgent）不回填旧问题；
                 // 其他取消仅在输入框为空时回填。
-                let userStopped = agentRuns[target.sessionID]?.isStoppingAgent == true
                 if questionOverride == nil, !userStopped {
                     restoreComposerDraftIfEmpty(question, for: target.sessionID)
                 }
@@ -10134,6 +10134,7 @@ final class WorkspaceStore: ObservableObject {
                 }
                 // A2: the failed question comes back only when the composer is empty.
                 let kind = AgentFailureKind.classify(error)
+                let userStopped = agentRuns[target.sessionID]?.isStoppingAgent == true
                 if didStartModelRequest {
                     agentAuthenticationStatus.recordFailure(
                         kind,
@@ -10141,8 +10142,8 @@ final class WorkspaceStore: ObservableObject {
                         authMethod: requestAuthMethod
                     )
                 }
-                if questionOverride == nil {
-                    // A2: 失败时仅在输入框为空时回填上一问。
+                if questionOverride == nil, !userStopped {
+                    // A2: 失败时仅在输入框为空时回填上一问；网络层取消同样保留主动停止的空草稿。
                     restoreComposerDraftIfEmpty(question, for: target.sessionID)
                 }
                 if activeStudySessionID == target.sessionID {
@@ -10162,7 +10163,7 @@ final class WorkspaceStore: ObservableObject {
                         chatID: target.sessionID,
                         kind: kind,
                         fallbackText: failureText,
-                        restoreDraft: questionOverride == nil
+                        restoreDraft: questionOverride == nil && !userStopped
                     )
                 } else if let previousReply {
                     // A3: 重新生成在消息创建前就失败时，原回答保持原样，只标中断、失败原因和重试。
