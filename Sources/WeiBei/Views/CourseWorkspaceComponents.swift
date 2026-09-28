@@ -300,6 +300,7 @@ struct CourseProjectEntrySheet: View {
     @EnvironmentObject private var store: WorkspaceStore
     let cancel: () -> Void
     let openCourse: (UUID) -> Void
+    let allowsInitialImport: Bool
 
     @State private var intent: CourseProjectEntryIntent
     @State private var title = ""
@@ -314,11 +315,13 @@ struct CourseProjectEntrySheet: View {
     init(
         initialIntent: CourseProjectEntryIntent = .create,
         cancel: @escaping () -> Void,
-        openCourse: @escaping (UUID) -> Void
+        openCourse: @escaping (UUID) -> Void,
+        allowsInitialImport: Bool = true
     ) {
         _intent = State(initialValue: initialIntent)
         self.cancel = cancel
         self.openCourse = openCourse
+        self.allowsInitialImport = allowsInitialImport
     }
 
     private var needsLibrary: Bool {
@@ -356,7 +359,7 @@ struct CourseProjectEntrySheet: View {
                         path: libraryPath
                     )
                 }
-                if intent == .create {
+                if intent == .create && allowsInitialImport {
                     importPicker
                 }
             }

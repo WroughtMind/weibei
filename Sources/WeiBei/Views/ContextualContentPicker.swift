@@ -6,8 +6,6 @@ struct ContextualContentPicker: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     let kind: ContextualContentKind
     @State private var courseEntry: CourseProjectEntryPresentation?
-    @State private var choosingImportTarget = false
-    @State private var pendingImport: (() -> Void)?
     @State private var search = ""
     @State private var searchFocused = false
 
@@ -83,58 +81,11 @@ struct ContextualContentPicker: View {
                 openCourse: { _ in courseEntry = nil }
             ).environmentObject(store)
         }
-        .sheet(isPresented: $choosingImportTarget, onDismiss: {
-            let action = pendingImport
-            pendingImport = nil
-            action?()
-        }) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(store.ui("导入到哪里？", "Import into…")).weiBeiText(17, weight: .semibold)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        importTargetButton(commonTitle, symbol: "tray", courseID: nil)
-                        ForEach(store.courses) { course in
-                            importTargetButton(course.title, symbol: "folder", courseID: course.id)
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(maxHeight: 300)
-                HStack {
-                    Spacer()
-                    Button(store.ui("取消", "Cancel")) { choosingImportTarget = false }
-                        .buttonStyle(WeiBeiDialogButtonStyle())
-                        .keyboardShortcut(.cancelAction)
-                }
-            }
-            .padding(24)
-            .frame(minWidth: 320, idealWidth: 400, maxWidth: .infinity)
-#if targetEnvironment(macCatalyst)
-            .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
-#endif
-            .background(WeiBeiGlassForegroundSheet(mode: store.appearanceMode))
-            .background(WeiBeiThemeBackdrop(mode: store.appearanceMode))
-            .foregroundStyle(WeiBeiTheme.ink)
-            .preferredColorScheme(store.appearanceMode.colorScheme)
-        }
         .accessibilityIdentifier(kind == .note ? "contextual-note-picker" : "contextual-material-picker")
     }
 
     private var commonTitle: String {
         kind == .note ? store.ui("通用笔记", "Common Notes") : store.ui("通用资料", "Common Materials")
-    }
-
-    private func importTargetButton(_ title: String, symbol: String, courseID: UUID?) -> some View {
-        Button { importFiles(into: courseID) } label: {
-            HStack(spacing: 10) {
-                Label(title, systemImage: symbol)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right").weiBeiText(10)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 13, height: 36))
-        .help(title)
     }
 
     private func courseBlock(_ group: Group) -> some View {
@@ -206,11 +157,7 @@ struct ContextualContentPicker: View {
             }
             .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
             Button(kind == .note ? store.ui("导入笔记…", "Import Notes…") : store.ui("导入资料…", "Import Materials…")) {
-                if store.courses.isEmpty {
-                    importFiles(into: nil)
-                } else {
-                    choosingImportTarget = true
-                }
+                importFiles(into: nil)
             }
             .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
         }
@@ -219,16 +166,8 @@ struct ContextualContentPicker: View {
     }
 
     private func importFiles(into courseID: UUID?) {
-        let action = { [store, kind] in
-            if kind == .note { store.importCourseNotesFromPanel(courseID: courseID) }
-            else { store.importCourseMaterialsFromPanel(courseID: courseID) }
-        }
-        if choosingImportTarget {
-            pendingImport = action
-            choosingImportTarget = false
-        } else {
-            action()
-        }
+        if kind == .note { store.importCourseNotesFromPanel(courseID: courseID) }
+        else { store.importCourseMaterialsFromPanel(courseID: courseID) }
     }
 }
 
