@@ -157,7 +157,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         request.projectScope = StudyAgentProjectScope(kind: .global, chatID: childID.uuidString.lowercased())
         let reply = try await runtime.respond(to: request)
         let firstMessages = try XCTUnwrap(capture.requests.first).messages
-        XCTAssertEqual(Array(firstMessages.dropFirst().prefix(4)).map(\.content), ["主问题1", "主回答1", "主问题2", "主回答2"])
+        XCTAssertEqual(Array(firstMessages.dropFirst(2).prefix(4)).map(\.content), ["主问题1", "主回答1", "主问题2", "主回答2"])
         XCTAssertFalse(firstMessages.contains(where: { $0.content.contains("尚未完成的问题") }))
         XCTAssertTrue(capture.requests.last?.messages.contains(where: { $0.content.contains("此前公式的实际解释") }) == true)
         XCTAssertEqual(reply.sources.first?.discussionID, discussionID)
@@ -293,7 +293,9 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let reloaded = try NativeAgentLedger(fileURL: url)
         let events = await reloaded.allEvents()
         let messages = await reloaded.deriveMessages()
-        XCTAssertTrue(events.filter { $0.seq > previousSeq }.allSatisfy { $0.turn == 2 })
+        XCTAssertTrue(events.filter { $0.seq > previousSeq }.allSatisfy {
+            $0.type == .environmentContext || $0.turn == 2
+        })
         XCTAssertEqual(messages, [
             NativeModelMessage(role: .user, content: "第一问"),
             NativeModelMessage(role: .assistant, content: "第一答"),
@@ -301,6 +303,73 @@ final class NativeAgentRuntimeTests: XCTestCase {
             NativeModelMessage(role: .assistant, content: "第二答"),
         ])
         XCTAssertTrue(result.contentBlocks.isEmpty)
+    }
+
+    func testSessionEnvironmentUpdatesOnlyWhenDateOrTimeZoneChangesAndSurvivesReload() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("native-environment-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let capture = RequestCapture()
+        let adapter = MockLLMAdapter(
+            chunks: [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)],
+            inspect: { capture.requests.append($0) }
+        )
+        let shanghai = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        var utcCalendar = Calendar(identifier: .gregorian)
+        utcCalendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let firstDate = try XCTUnwrap(utcCalendar.date(from: DateComponents(
+            year: 2026, month: 9, day: 29, hour: 12
+        )))
+        let nextDate = try XCTUnwrap(utcCalendar.date(from: DateComponents(
+            year: 2026, month: 9, day: 30, hour: 12
+        )))
+        let first = NativeSessionEnvironment(now: firstDate, timeZone: shanghai)
+        let nextDay = NativeSessionEnvironment(now: nextDate, timeZone: shanghai)
+        let changedTimeZone = NativeSessionEnvironment(now: nextDate, timeZone: losAngeles)
+        XCTAssertEqual(first.text, "当前日期：2026-09-29；本地时区：Asia/Shanghai（UTC+08:00）。")
+
+        func run(_ question: String, environment: NativeSessionEnvironment, ledger: NativeAgentLedger) async throws {
+            var request = testRequest()
+            request.id = UUID()
+            request.question = question
+            _ = try await NativeAgentLoop().run(
+                request: request,
+                ledger: ledger,
+                registry: NativeToolRegistry(),
+                adapter: adapter,
+                model: "mock",
+                hostToolHandler: nil,
+                systemPrompt: "固定系统提示",
+                environment: environment,
+                progress: nil
+            )
+        }
+
+        let ledger = try NativeAgentLedger(fileURL: url)
+        try await run("新会话", environment: first, ledger: ledger)
+        try await run("同日继续", environment: first, ledger: ledger)
+        let sameDayEvents = await ledger.allEvents()
+        XCTAssertEqual(sameDayEvents.filter { $0.type == .environmentContext }.count, 1)
+
+        try await run("跨天继续", environment: nextDay, ledger: ledger)
+        try await run("切换时区", environment: changedTimeZone, ledger: ledger)
+        let changedEvents = await ledger.allEvents()
+        XCTAssertEqual(changedEvents.filter { $0.type == .environmentContext }.count, 3)
+
+        let reopened = try NativeAgentLedger(fileURL: url)
+        try await run("恢复会话", environment: changedTimeZone, ledger: reopened)
+        let reopenedEvents = await reopened.allEvents()
+        XCTAssertEqual(reopenedEvents.filter { $0.type == .environmentContext }.count, 3)
+        XCTAssertEqual(capture.requests.count, 5)
+        XCTAssertTrue(capture.requests.allSatisfy { $0.messages.first?.content == "固定系统提示" })
+        let expected = [first, first, nextDay, changedTimeZone, changedTimeZone].map {
+            $0.modelMessage.content
+        }
+        XCTAssertEqual(capture.requests.map { $0.messages[1].content }, expected)
+        for (request, environmentText) in zip(capture.requests, expected) {
+            XCTAssertEqual(request.messages.filter { $0.content == environmentText }.count, 1)
+        }
     }
 
     // 连续追问、笔记确认和工具续跑只追加上下文，保留已经发给模型的完整前缀。
@@ -442,7 +511,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(last.messages.last?.content, request.question)
         let ledger = try NativeAgentLedger(fileURL: root.appendingPathComponent("cache-chat/ledger.jsonl"))
         let persisted = await ledger.deriveMessages()
-        XCTAssertEqual(Array(persisted.prefix(last.messages.count - 1)), Array(last.messages.dropFirst()))
+        XCTAssertEqual(Array(persisted.prefix(last.messages.count - 2)), Array(last.messages.dropFirst(2)))
         request.reasoningEffort = "low"
         request.projectScope = StudyAgentProjectScope(kind: .global, chatID: "another-chat")
         _ = try await runtime.respond(to: request)
@@ -1236,6 +1305,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
             try await ledger.closeTurn(turn: turn, reason: .completed)
         }
         let adapter = CompactionLoopAdapter()
+        let environment = NativeSessionEnvironment(
+            now: Date(timeIntervalSince1970: 1_798_560_000),
+            timeZone: try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        )
         let firstResult = try await NativeAgentLoop().run(
             request: StudyAgentRequest(
                 purpose: .conversation,
@@ -1252,6 +1325,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             model: "mock",
             hostToolHandler: nil,
             systemPrompt: "test",
+            environment: environment,
             progress: nil
         )
         do {
@@ -1271,6 +1345,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
                 model: "mock",
                 hostToolHandler: nil,
                 systemPrompt: "test",
+                environment: environment,
                 progress: nil
             )
             XCTFail("没有完成标记的回答必须失败")
@@ -1295,11 +1370,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(summaryRequest?.tools.count, 0)
         XCTAssertEqual(summaryRequest?.maxTokens, NativeContextCompaction.maximumSummaryTokens)
         XCTAssertEqual(summaryRequest?.reasoningEffort, "low")
+        XCTAssertFalse(summaryRequest?.messages.contains { $0.content == environment.modelMessage.content } == true)
         XCTAssertEqual(checkpoints.count, 2)
         XCTAssertEqual(checkpoints.last?.summary, "保留用户纠正、材料位置和未完成问题。")
         XCTAssertNotNil(checkpoints.last?.firstKeptSeq)
         XCTAssertTrue(answerRequest?.messages.contains { $0.content.contains("保留用户纠正") } == true)
         XCTAssertTrue(answerRequest?.messages.contains { $0.content.contains("继续追问") } == true)
+        XCTAssertEqual(answerRequest?.messages.filter { $0.content == environment.modelMessage.content }.count, 1)
         XCTAssertTrue(
             proactiveCheckpointIndex != nil && firstStepIndex != nil
                 && proactiveCheckpointIndex! < firstStepIndex!
