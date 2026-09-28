@@ -18,6 +18,67 @@ final class ReaderExperienceSafetyTests: XCTestCase {
         XCTAssertEqual(clamped.pageIndex, 0)
     }
 
+    func testPDFRestorationConfirmsOnlyMatchingRequestAtTargetPage() {
+        let request = PDFPageRestorationRequest(pageIndex: 89, requestID: UUID())
+
+        XCTAssertEqual(
+            PDFPageRestorationEventResolution.resolve(
+                activeRequest: request,
+                requestAtEvent: request,
+                reportedPageIndex: 0,
+                pageCount: 90
+            ),
+            .retry
+        )
+        XCTAssertEqual(
+            PDFPageRestorationEventResolution.resolve(
+                activeRequest: request,
+                requestAtEvent: request,
+                reportedPageIndex: 89,
+                pageCount: 90
+            ),
+            .confirm
+        )
+    }
+
+    func testPDFRestorationIgnoresDelayedOrReplacedRequestEvents() {
+        let completed = PDFPageRestorationRequest(pageIndex: 89, requestID: UUID())
+        let replacement = PDFPageRestorationRequest(pageIndex: 12, requestID: UUID())
+
+        XCTAssertEqual(
+            PDFPageRestorationEventResolution.resolve(
+                activeRequest: nil,
+                requestAtEvent: completed,
+                reportedPageIndex: 0,
+                pageCount: 90
+            ),
+            .ignore,
+            "确认后才送达的第 1 页回报不能覆盖已恢复页"
+        )
+        XCTAssertEqual(
+            PDFPageRestorationEventResolution.resolve(
+                activeRequest: replacement,
+                requestAtEvent: completed,
+                reportedPageIndex: 89,
+                pageCount: 90
+            ),
+            .ignore,
+            "旧请求回报不能确认或覆盖新请求"
+        )
+    }
+
+    func testPDFPageChangePublishesRealScrollAfterRestorationCompletes() {
+        XCTAssertEqual(
+            PDFPageRestorationEventResolution.resolve(
+                activeRequest: nil,
+                requestAtEvent: nil,
+                reportedPageIndex: 35,
+                pageCount: 90
+            ),
+            .publish
+        )
+    }
+
     func testTextMaterialFallsBackToGB18030() {
         let lecture = "利率讲义：复利"
         let gb18030 = lecture.data(using: ReaderView.gb18030TextEncoding)
