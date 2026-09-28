@@ -703,6 +703,7 @@ const applySlashReplacement = (view: any, context: any, replacement: any) => {
 
 /** Records a native picker request without changing the slash paragraph. */
 const requestSlashImage = (view: any, context: any) => {
+  if (!WEIBEI_EDITOR_RUNTIME) return;
   const id = `image-picker-${Date.now()}-${attachmentRequestID += 1}`;
   pendingImagePickers.set(id, { mode: 'insert', view, context, documentID: currentDocumentID, documentGeneration: currentDocumentGeneration });
   slashRuntime.dismissedContext = context.key;

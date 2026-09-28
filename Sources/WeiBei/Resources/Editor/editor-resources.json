@@ -171,8 +171,8 @@
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 539604,
-      "sha256": "4b679ada78cacb19fa3581c16d30c15018e345cc177c1b316f2466cf01741561"
+      "bytes": 539404,
+      "sha256": "7cb775e8759f1c70cbdcc7d41411ee33a80d01811d6e9d56dca22ee404506abb"
     }
   ]
 }
