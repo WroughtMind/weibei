@@ -5948,7 +5948,7 @@ final class WorkspaceStore: ObservableObject {
         Task { @MainActor in
             let types: [UTType] = markdownAsNotes
                 ? [WorkspaceFileDialog.markdownType, .folder]
-                : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, WorkspaceFileDialog.markdownType, .folder]
+                : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, .folder]
             let urls = await WorkspaceFileDialog.pick(
                 title: panelTitle ?? ui("选择学习资料或课程文件夹", "Choose study materials or a course folder"),
                 types: types, multiple: true
@@ -5970,7 +5970,7 @@ final class WorkspaceStore: ObservableObject {
         panel.canChooseFiles = true
         panel.allowedContentTypes = markdownAsNotes
             ? [WorkspaceFileDialog.markdownType]
-            : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, WorkspaceFileDialog.markdownType]
+            : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText]
 
         guard panel.runModal() == .OK else { return }
         prepareConfirmedFileImport(
