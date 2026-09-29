@@ -853,7 +853,8 @@ struct ConfirmedFileImportView: View {
     }
 
     private func result(_ batch: ConfirmedFileImportBatch) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let commonFailureMessage = sharedFailureMessage(batch)
+        return VStack(alignment: .leading, spacing: 14) {
             Text(resultSummary(batch))
                 .weiBeiText(13, weight: .semibold)
             if batch.stopped, !batch.pendingSourceURLs.isEmpty {
@@ -883,9 +884,7 @@ struct ConfirmedFileImportView: View {
             }
             if !batch.failures.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(store.ui("未导入", "Not imported"))
-                        .weiBeiText(12, weight: .semibold)
-                    if let message = sharedFailureMessage(batch) {
+                    if let message = commonFailureMessage {
                         Text(message)
                             .weiBeiText(12)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -897,7 +896,7 @@ struct ConfirmedFileImportView: View {
                                 .weiBeiText(13, weight: .semibold)
                                 .lineLimit(2)
                                 .truncationMode(.middle)
-                            if sharedFailureMessage(batch) == nil {
+                            if commonFailureMessage == nil {
                                 Text(failure.message)
                                     .weiBeiText(12)
                                     .foregroundStyle(WeiBeiTheme.secondaryInk)
