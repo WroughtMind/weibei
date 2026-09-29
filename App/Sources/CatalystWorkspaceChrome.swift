@@ -594,7 +594,6 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
     func updateUIView(_ view: Probe, context: Context) {
         view.color = color
         view.followsContentSize = followsContentSize
-        view.contentSizeRevision = contentSizeRevision
         view.configure()
         if followsContentSize {
             DispatchQueue.main.async { [weak view] in view?.configure() }
@@ -604,7 +603,6 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
     final class Probe: UIView {
         var color = UIColor.clear
         var followsContentSize = false
-        var contentSizeRevision = ""
         private var lastGeometryRequestSignature: String?
 
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
@@ -660,6 +658,11 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             preferred: CGSize,
             signature: String
         ) {
+            guard let currentPreferred = window.rootViewController?.preferredContentSize,
+                  Self.sameSize(currentPreferred, preferred) else {
+                clearGeometryRequest(signature)
+                return
+            }
             let sourceFrame = scene.effectiveGeometry.systemFrame
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
             guard !Self.sameSize(window.bounds.size, preferred),
@@ -691,7 +694,9 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             let effectiveFrame = scene.effectiveGeometry.systemFrame
             let coordinateSpaceBounds = Self.coordinateSpaceBounds(for: scene)
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
-            guard window.windowScene === scene,
+            guard let currentPreferred = window.rootViewController?.preferredContentSize,
+                  Self.sameSize(currentPreferred, preferred),
+                  window.windowScene === scene,
                   rootedWindows.count == 1,
                   rootedWindows[0] === window,
                   Self.sameSize(effectiveFrame.size, preferred),
