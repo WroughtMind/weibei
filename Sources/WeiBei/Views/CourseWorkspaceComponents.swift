@@ -188,7 +188,9 @@ struct CourseManagementSheet: View {
             }
         }
         .padding(22)
-        .frame(width: 460)
+        .frame(width: 440)
+        .fixedSize(horizontal: false, vertical: true)
+        .modifier(WeiBeiFittedSheetPresentation())
 #if targetEnvironment(macCatalyst)
         .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
 #endif
@@ -339,21 +341,23 @@ struct CourseProjectEntrySheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(heading)
-                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
-                Text(detail)
-                    .weiBeiText(12)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
+                if let detail {
+                    Text(detail)
+                        .weiBeiText(12)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if needsLibrary {
                 libraryPicker
             } else {
                 courseTitleField
-                if let libraryPath = store.courseLibraryRootURL?.path {
+                if intent == .adopt, let libraryPath = store.courseLibraryRootURL?.path {
                     pathLine(
                         label: store.ui("魏碑资料库", "WeiBei Library"),
                         path: libraryPath
@@ -410,7 +414,7 @@ struct CourseProjectEntrySheet: View {
         }
     }
 
-    private var detail: String {
+    private var detail: String? {
         if rebindProposal != nil {
             return store.ui(
                 "魏碑认出了同一门课程，原文件夹当前无法访问。确认后会重新连接所选文件夹，读取其中的课程状态并扫描实际资料；本机未落盘草稿会保留。",
@@ -431,10 +435,7 @@ struct CourseProjectEntrySheet: View {
         }
         switch intent {
         case .create:
-            return store.ui(
-                "魏碑会为这门课创建文稿、笔记和课程记录。对话始终是全局的，进入这门课只会把它设为当前课程。",
-                "WeiBei will create documents, notes, and a course record. Chats stay global; entering this course only makes it the current course."
-            )
+            return nil
         case .adopt:
             return store.ui(
                 "原地登记一个已有文件夹为课程；不会复制、移动或重排其中的可见内容。",
@@ -597,7 +598,7 @@ struct CourseProjectEntrySheet: View {
                     selectedFolder = nil
                     errorMessage = nil
                 }
-                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
                 .disabled(isWorking)
             }
 
@@ -610,7 +611,7 @@ struct CourseProjectEntrySheet: View {
             }
 
             Button(store.ui("取消", "Cancel"), action: cancel)
-                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
                 .keyboardShortcut(.cancelAction)
                 .disabled(isWorking)
 
@@ -622,9 +623,7 @@ struct CourseProjectEntrySheet: View {
                     ),
                     action: confirmRebind
                 )
-                .buttonStyle(
-                    WeiBeiTextActionButtonStyle(active: true)
-                )
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 .keyboardShortcut(.defaultAction)
                 .disabled(isWorking)
             } else if !needsLibrary {
@@ -634,7 +633,7 @@ struct CourseProjectEntrySheet: View {
                         : store.ui("创建并导入", "Create and Import"),
                     action: createCourse
                 )
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                     .keyboardShortcut(.defaultAction)
                     .disabled(cleanedTitle.isEmpty || isWorking)
             }
