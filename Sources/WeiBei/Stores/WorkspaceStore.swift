@@ -11259,6 +11259,9 @@ final class WorkspaceStore: ObservableObject {
             defer {
                 if courseNoteLoadGenerationByItemID[itemID] == generation {
                     courseNoteLoadTasksByItemID[itemID] = nil
+                    // @Published 在字典改动前发出通知；读盘结束后再发布一次，
+                    // 让笔记栏按已经清空的任务状态退出载入分支并重新挂载编辑器。
+                    objectWillChange.send()
                 }
             }
             do {
