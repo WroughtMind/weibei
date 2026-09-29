@@ -641,7 +641,13 @@ struct ConfirmedFileImportView: View {
     private func fileSummary(_ batch: ConfirmedFileImportBatch) -> some View {
         let fileCount = batch.candidates.count + batch.unsupportedNames.count
         return VStack(alignment: .leading, spacing: 8) {
-            if fileCount > 1 {
+            if !batch.sourceFolderNames.isEmpty {
+                Text(store.ui(
+                    "可导入文稿 · \(batch.candidates.count)个",
+                    "Importable documents · \(batch.candidates.count)"
+                ))
+                .weiBeiText(12, weight: .semibold)
+            } else if fileCount > 1 {
                 Text(store.ui("\(fileCount)个文件", "\(fileCount) files"))
                 .weiBeiText(12, weight: .semibold)
             }
@@ -887,7 +893,11 @@ struct ConfirmedFileImportView: View {
         } else if batch.importedItems.count == 1 {
             Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
-            Button(store.ui("打开文稿", "Open Document")) {
+            Button(
+                batch.importsMarkdownAsNotes
+                    ? store.ui("打开笔记", "Open Note")
+                    : store.ui("打开文稿", "Open Document")
+            ) {
                 store.openSingleConfirmedImport()
             }
             .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
@@ -895,7 +905,11 @@ struct ConfirmedFileImportView: View {
         } else if batch.importedItems.count > 1 {
             Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
-            Button(store.ui("查看已导入资料", "View Imported Items")) {
+            Button(
+                batch.importsMarkdownAsNotes
+                    ? store.ui("查看已导入笔记", "View Imported Notes")
+                    : store.ui("查看已导入资料", "View Imported Items")
+            ) {
                 store.showConfirmedImportBatch()
             }
             .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
