@@ -192,7 +192,7 @@ struct CourseManagementSheet: View {
         .fixedSize(horizontal: false, vertical: true)
         .modifier(WeiBeiFittedSheetPresentation())
 #if targetEnvironment(macCatalyst)
-        .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
+        .background(CatalystIndependentSheetSizingProbe(color: WeiBeiNativePalette.paper()))
 #endif
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -340,6 +340,22 @@ struct CourseProjectEntrySheet: View {
         title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var contentSizeRevision: String {
+        [
+            String(describing: intent),
+            title,
+            selectedFolder?.path ?? "",
+            selectedImportURLs.map(\.path).joined(separator: "|"),
+            String(configuredLibraryThisTime),
+            String(isWorking),
+            errorMessage ?? "",
+            String(reflecting: rebindProposal),
+            String(needsLibrary),
+            store.courseLibraryRootPath ?? "",
+            String(describing: store.interfaceLanguage)
+        ].joined(separator: "§")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
@@ -383,8 +399,14 @@ struct CourseProjectEntrySheet: View {
         }
         .padding(22)
         .frame(width: 460)
+        .fixedSize(horizontal: false, vertical: true)
+        .modifier(WeiBeiFittedSheetPresentation())
 #if targetEnvironment(macCatalyst)
-        .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
+        .background(CatalystIndependentSheetSizingProbe(
+            color: WeiBeiNativePalette.paper(),
+            followsContentSize: true,
+            contentSizeRevision: contentSizeRevision
+        ))
 #endif
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
