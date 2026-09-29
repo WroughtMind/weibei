@@ -605,9 +605,6 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
         view.color = color
         view.followsContentSize = followsContentSize
         view.configure()
-        if followsContentSize {
-            DispatchQueue.main.async { [weak view] in view?.configure() }
-        }
     }
 
     final class Probe: UIView {
@@ -633,17 +630,17 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
         }
 
         private func resizeSheetIfNeeded(window: UIWindow) {
-            guard let preferred = window.rootViewController?.preferredContentSize,
-                  preferred.width.isFinite, preferred.height.isFinite,
-                  preferred.width > 0, preferred.height > 0,
-                  !Self.sameSize(window.bounds.size, preferred),
+            let targetSize = bounds.size
+            guard targetSize.width.isFinite, targetSize.height.isFinite,
+                  targetSize.width > 0, targetSize.height > 0,
+                  !Self.sameSize(window.bounds.size, targetSize),
                   let scene = window.windowScene else { return }
             let sourceFrame = scene.effectiveGeometry.systemFrame
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
             guard Self.sameSize(sourceFrame.size, window.bounds.size),
                   rootedWindows.count == 1,
                   rootedWindows[0] === window else { return }
-            let targetFrame = Self.centeredFrame(size: preferred, in: sourceFrame)
+            let targetFrame = Self.centeredFrame(size: targetSize, in: sourceFrame)
             let signature = "\(sourceFrame)|\(targetFrame)"
             guard signature != lastGeometryRequestSignature else { return }
             lastGeometryRequestSignature = signature
@@ -656,7 +653,7 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                 self.requestGeometryUpdate(
                     window: window,
                     scene: scene,
-                    preferred: preferred,
+                    targetSize: targetSize,
                     signature: signature
                 )
             }
@@ -665,24 +662,24 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
         private func requestGeometryUpdate(
             window: UIWindow,
             scene: UIWindowScene,
-            preferred: CGSize,
+            targetSize: CGSize,
             signature: String
         ) {
-            guard let currentPreferred = window.rootViewController?.preferredContentSize,
-                  Self.sameSize(currentPreferred, preferred) else {
+            guard self.window === window,
+                  Self.sameSize(bounds.size, targetSize) else {
                 clearGeometryRequest(signature)
                 return
             }
             let sourceFrame = scene.effectiveGeometry.systemFrame
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
-            guard !Self.sameSize(window.bounds.size, preferred),
+            guard !Self.sameSize(window.bounds.size, targetSize),
                   Self.sameSize(sourceFrame.size, window.bounds.size),
                   rootedWindows.count == 1,
                   rootedWindows[0] === window else {
                 clearGeometryRequest(signature)
                 return
             }
-            let targetFrame = Self.centeredFrame(size: preferred, in: sourceFrame)
+            let targetFrame = Self.centeredFrame(size: targetSize, in: sourceFrame)
             scene.requestGeometryUpdate(.Mac(systemFrame: targetFrame)) { [weak self] _ in
                 self?.clearGeometryRequest(signature)
             }
@@ -691,7 +688,7 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                 self.synchronizeWindowWithSceneIfNeeded(
                     window: window,
                     scene: scene,
-                    preferred: preferred
+                    targetSize: targetSize
                 )
             }
         }
@@ -699,22 +696,22 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
         private func synchronizeWindowWithSceneIfNeeded(
             window: UIWindow,
             scene: UIWindowScene,
-            preferred: CGSize
+            targetSize: CGSize
         ) {
             let effectiveFrame = scene.effectiveGeometry.systemFrame
             let coordinateSpaceBounds = Self.coordinateSpaceBounds(for: scene)
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
-            guard window.windowScene === scene,
+            guard self.window === window,
+                  window.windowScene === scene,
                   rootedWindows.count == 1,
                   rootedWindows[0] === window,
-                  Self.sameSize(effectiveFrame.size, preferred) else { return }
-            if !Self.sameSize(window.bounds.size, preferred) {
-                window.frame = Self.sameSize(coordinateSpaceBounds.size, preferred)
+                  Self.sameSize(effectiveFrame.size, targetSize) else { return }
+            if !Self.sameSize(window.bounds.size, targetSize) {
+                window.frame = Self.sameSize(coordinateSpaceBounds.size, targetSize)
                     ? coordinateSpaceBounds
-                    : CGRect(origin: coordinateSpaceBounds.origin, size: preferred)
+                    : CGRect(origin: coordinateSpaceBounds.origin, size: targetSize)
             }
-            guard let currentPreferred = window.rootViewController?.preferredContentSize,
-                  !Self.sameSize(currentPreferred, preferred) else { return }
+            guard !Self.sameSize(bounds.size, targetSize) else { return }
             DispatchQueue.main.async { [weak self, weak window] in
                 guard let self, let window, self.window === window else { return }
                 self.configure()
