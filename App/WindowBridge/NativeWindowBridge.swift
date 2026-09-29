@@ -25,19 +25,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: nil, queue: .main) { [weak self] note in
             guard let self, let window = note.object as? NSWindow else { return }
             self.updateToolbarBackground(in: window)
-            if Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.qa.cursorcloseout20260926",
-               window.isVisible, abs(window.frame.width - 440) < 1 {
-                let line = "uptime=\(ProcessInfo.processInfo.systemUptime) native=\(window.windowNumber) frame=\(window.frame) content=\(String(describing: window.contentView?.bounds)) parent=\(window.parent?.windowNumber ?? -1)\n"
-                let url = URL(fileURLWithPath: "/private/tmp/weibei-native-window-0929.log")
-                if !FileManager.default.fileExists(atPath: url.path) {
-                    _ = FileManager.default.createFile(atPath: url.path, contents: nil)
-                }
-                if let handle = try? FileHandle(forWritingTo: url) {
-                    handle.seekToEndOfFile()
-                    handle.write(Data(line.utf8))
-                    try? handle.close()
-                }
-            }
             guard !window.acceptsMouseMovedEvents
                 || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
             self.apply(to: window)
