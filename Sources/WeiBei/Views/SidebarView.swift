@@ -158,46 +158,58 @@ struct CourseSidebarList: View {
     let onManageCourse: (UUID) -> Void
 
     var body: some View {
-        List {
-            Section {
-                if model.courses.isEmpty {
-                    if store.courses.isEmpty {
-                        SidebarEmptyRow(
-                            title: ui("还没有课程", "No courses yet")
-                        )
+        ScrollViewReader { scrollProxy in
+            List {
+                Section {
+                    if model.courses.isEmpty {
+                        if store.courses.isEmpty {
+                            SidebarEmptyRow(
+                                title: ui("还没有课程", "No courses yet")
+                            )
+                        } else {
+                            SidebarEmptyRow(title: ui("还没有匹配课程", "No matching courses"))
+                        }
                     } else {
-                        SidebarEmptyRow(title: ui("还没有匹配课程", "No matching courses"))
+                        ForEach(model.courses) { row in
+                            courseRow(row)
+                        }
                     }
-                } else {
-                    ForEach(model.courses) { row in
-                        courseRow(row)
+                }
+
+                if !model.unassignedMaterials.isEmpty {
+                    Section {
+                        ForEach(model.unassignedMaterials) { row in
+                            itemRow(row, compact: false, accent: nil, opensNotebook: false)
+                        }
+                    } header: {
+                        SidebarSectionHeader(title: ui("通用资料", "General materials"))
+                    }
+                }
+
+                if !model.unassignedNotes.isEmpty {
+                    Section {
+                        ForEach(model.unassignedNotes) { row in
+                            itemRow(row, compact: false, accent: nil, opensNotebook: true)
+                        }
+                    } header: {
+                        SidebarSectionHeader(title: ui("独立笔记", "Unassigned Notes"))
                     }
                 }
             }
-
-            if !model.unassignedMaterials.isEmpty {
-                Section {
-                    ForEach(model.unassignedMaterials) { row in
-                        itemRow(row, compact: false, accent: nil, opensNotebook: false)
-                    }
-                } header: {
-                    SidebarSectionHeader(title: ui("通用资料", "General materials"))
-                }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(WeiBeiTheme.paper)
+            .onAppear {
+                scrollToRecentlyImported(using: scrollProxy)
             }
-
-            if !model.unassignedNotes.isEmpty {
-                Section {
-                    ForEach(model.unassignedNotes) { row in
-                        itemRow(row, compact: false, accent: nil, opensNotebook: true)
-                    }
-                } header: {
-                    SidebarSectionHeader(title: ui("独立笔记", "Unassigned Notes"))
-                }
+            .onChange(of: model.recentlyImportedItemIDs) { _, _ in
+                scrollToRecentlyImported(using: scrollProxy)
+            }
+            .onChange(of: recentlyImportedScrollTarget) { _, target in
+                guard let target else { return }
+                scrollProxy.scrollTo(target, anchor: .center)
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(WeiBeiTheme.paper)
         .task(id: model.searchTagTaskID) { [weak store = store, weak model = model] in
             guard let requests = model?.missingTagRequestsForSearch(),
                   !requests.isEmpty else { return }
@@ -216,6 +228,15 @@ struct CourseSidebarList: View {
             guard !Task.isCancelled else { return }
             if !results.isEmpty { model?.acceptLoadedNoteMeta(results) }
         }
+    }
+
+    private var recentlyImportedScrollTarget: String? {
+        model.firstVisibleItemID(in: model.recentlyImportedItemIDs)
+    }
+
+    private func scrollToRecentlyImported(using proxy: ScrollViewProxy) {
+        guard let target = recentlyImportedScrollTarget else { return }
+        proxy.scrollTo(target, anchor: .center)
     }
 
     @ViewBuilder
@@ -375,6 +396,7 @@ struct CourseSidebarList: View {
                 : Color.clear
         )
         .listRowSeparator(.hidden)
+        .id(item.id)
         // 显示名与标签共用同一条异步正文管线：compact 行（课程分组内）不展示标签，
         // 但展示解析后的笔记名，所以笔记行无论 compact 与否都要加载。
         .task(id: row.tagRequest) { [weak store = store, weak model = model] in
