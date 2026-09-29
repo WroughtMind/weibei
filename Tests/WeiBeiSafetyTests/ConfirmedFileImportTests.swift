@@ -47,7 +47,7 @@ final class ConfirmedFileImportTests: XCTestCase {
         fixture.store.confirmFileImport()
         waitForStage(.finished, in: fixture.store)
 
-        var batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        let batch = try XCTUnwrap(fixture.store.confirmedFileImport)
         XCTAssertEqual(batch.importedItems.map(\.subtitle), ["一.txt"])
         XCTAssertEqual(batch.failures.map(\.sourceURL.lastPathComponent), ["二.txt"])
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
@@ -60,11 +60,14 @@ final class ConfirmedFileImportTests: XCTestCase {
         waitForStage(.reviewing, in: fixture.store)
         XCTAssertEqual(fixture.store.confirmedFileImport?.sourceURLs, [second])
         fixture.store.confirmFileImport()
-        waitForStage(.finished, in: fixture.store)
+        waitForImportIdle(in: fixture.store)
 
-        batch = try XCTUnwrap(fixture.store.confirmedFileImport)
-        XCTAssertEqual(Set(batch.importedItems.map(\.subtitle)), Set(["一.txt", "二.txt"]))
-        XCTAssertTrue(batch.failures.isEmpty)
+        XCTAssertNil(fixture.store.confirmedFileImport)
+        XCTAssertEqual(
+            Set(fixture.store.importedItems.map(\.subtitle)),
+            Set(["一.txt", "二.txt"])
+        )
+        XCTAssertEqual(fixture.store.recentlyImportedItemIDs.count, 2)
         XCTAssertEqual(
             try String(contentsOf: fixture.library.appendingPathComponent("通用资料/一.txt")),
             "one"
@@ -76,18 +79,32 @@ final class ConfirmedFileImportTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let first = fixture.outside.appendingPathComponent("一.txt")
         let second = fixture.outside.appendingPathComponent("二.txt")
+        let baseline = fixture.outside.appendingPathComponent("当前阅读.txt")
         try Data("one".utf8).write(to: first)
         try Data("two".utf8).write(to: second)
+        try Data("baseline".utf8).write(to: baseline)
+
+        fixture.store.prepareConfirmedFileImport([baseline])
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+        let selectedID = try XCTUnwrap(fixture.store.selectedMaterialItem?.id)
+        fixture.store.readerPageIndex = 9
+        fixture.store.readerLocationID = "停止前位置"
 
         fixture.store.prepareConfirmedFileImport([first, second])
         waitForStage(.reviewing, in: fixture.store)
         fixture.store.confirmFileImport()
         fixture.store.stopConfirmedFileImport()
-        waitForStage(.finished, in: fixture.store)
+        waitForImportIdle(in: fixture.store)
 
-        let batch = try XCTUnwrap(fixture.store.confirmedFileImport)
-        XCTAssertTrue(batch.stopped)
-        XCTAssertTrue(batch.importedItems.isEmpty)
+        XCTAssertNil(fixture.store.confirmedFileImport)
+        XCTAssertEqual(fixture.store.importedItems.map(\.subtitle), ["当前阅读.txt"])
+        XCTAssertEqual(fixture.store.selectedMaterialItem?.id, selectedID)
+        XCTAssertEqual(fixture.store.readerPageIndex, 9)
+        XCTAssertEqual(fixture.store.readerLocationID, "停止前位置")
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("导入已停止") == true)
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("2 份未导入") == true)
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
         XCTAssertFalse(FileManager.default.fileExists(
@@ -125,9 +142,11 @@ final class ConfirmedFileImportTests: XCTestCase {
         fixture.store.prepareConfirmedFileImport([source])
         waitForStage(.reviewing, in: fixture.store)
         fixture.store.confirmFileImport()
-        waitForStage(.finished, in: fixture.store)
+        waitForImportIdle(in: fixture.store)
 
-        let imported = try XCTUnwrap(fixture.store.confirmedFileImport?.importedItems.first)
+        let imported = try XCTUnwrap(
+            fixture.store.importedItems.first { $0.subtitle == "阅读材料.md" }
+        )
         XCTAssertEqual(imported.kind, .markdown)
         XCTAssertFalse(imported.isNotebookNote)
         XCTAssertTrue(imported.isCourseMaterial)
@@ -136,7 +155,6 @@ final class ConfirmedFileImportTests: XCTestCase {
             .common(relativePath: "通用资料/阅读材料.md")
         )
 
-        fixture.store.openSingleConfirmedImport()
         XCTAssertEqual(fixture.store.selectedMaterialItem?.id, imported.id)
         XCTAssertNotEqual(fixture.store.activeNoteItemID, imported.id)
 
@@ -149,6 +167,270 @@ final class ConfirmedFileImportTests: XCTestCase {
         XCTAssertFalse(maintained.isNotebookNote)
         XCTAssertTrue(maintained.isCourseMaterial)
         XCTAssertEqual(fixture.store.selectedMaterialItem?.id, imported.id)
+    }
+
+    func testSingleNoteSuccessOpensNoteWithoutResultModal() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let source = fixture.outside.appendingPathComponent("课堂笔记.md")
+        try Data("# 课堂笔记\n\n正文".utf8).write(to: source)
+
+        fixture.store.prepareConfirmedFileImport([source], asNotes: true)
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        let imported = try XCTUnwrap(
+            fixture.store.importedItems.first { $0.subtitle == "课堂笔记.md" }
+        )
+        XCTAssertNil(fixture.store.confirmedFileImport)
+        XCTAssertTrue(imported.isNotebookNote)
+        XCTAssertFalse(imported.isCourseMaterial)
+        XCTAssertEqual(imported.storage, .common(relativePath: "通用笔记/课堂笔记.md"))
+        XCTAssertEqual(fixture.store.activeNoteItemID, imported.id)
+        XCTAssertNil(fixture.store.transientNoteStatus)
+    }
+
+    func testAllDuplicateImportPreservesReadingSelectionAndExplainsNoChange() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let existingSource = fixture.outside.appendingPathComponent("已存在资料.txt")
+        let currentSource = fixture.outside.appendingPathComponent("当前阅读资料.txt")
+        try Data("same".utf8).write(to: existingSource)
+        try Data("current".utf8).write(to: currentSource)
+
+        fixture.store.prepareConfirmedFileImport([existingSource])
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        fixture.store.prepareConfirmedFileImport([currentSource])
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+        let selectedID = try XCTUnwrap(fixture.store.selectedMaterialItem?.id)
+        fixture.store.readerPageIndex = 7
+        fixture.store.readerLocationID = "保持这里"
+
+        fixture.store.prepareConfirmedFileImport([existingSource])
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.candidates.map(\.disposition), [.duplicate])
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        XCTAssertEqual(fixture.store.selectedMaterialItem?.id, selectedID)
+        XCTAssertEqual(fixture.store.selectedMaterialItem?.subtitle, "当前阅读资料.txt")
+        XCTAssertEqual(fixture.store.readerPageIndex, 7)
+        XCTAssertEqual(fixture.store.readerLocationID, "保持这里")
+        XCTAssertEqual(fixture.store.importedItems.filter { $0.subtitle == "已存在资料.txt" }.count, 1)
+        XCTAssertEqual(
+            Set(try FileManager.default.contentsOfDirectory(
+                atPath: fixture.library.appendingPathComponent("通用资料").path
+            )),
+            Set(["已存在资料.txt", "当前阅读资料.txt"])
+        )
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("已存在") == true)
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("未重复导入") == true)
+    }
+
+    func testMixedSuccessAndUnsupportedAutoOpensAndExplainsUnsupportedFile() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let supported = fixture.outside.appendingPathComponent("可读.txt")
+        let unsupported = fixture.outside.appendingPathComponent("原件.zip")
+        try Data("text".utf8).write(to: supported)
+        try Data("zip".utf8).write(to: unsupported)
+
+        fixture.store.prepareConfirmedFileImport([supported, unsupported])
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        let imported = try XCTUnwrap(
+            fixture.store.importedItems.first { $0.subtitle == "可读.txt" }
+        )
+        XCTAssertEqual(fixture.store.selectedMaterialItem?.id, imported.id)
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("1 个格式不支持") == true)
+        XCTAssertFalse(fixture.store.transientNoteStatus?.contains("已导入") == true)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.library.appendingPathComponent("通用资料/原件.zip").path
+        ))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unsupported.path))
+    }
+
+    func testUnsupportedOnlySelectionClosesWithoutWritingOrChangingReadingSelection() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let baseline = fixture.outside.appendingPathComponent("当前资料.txt")
+        let unsupported = fixture.outside.appendingPathComponent("原件.zip")
+        try Data("baseline".utf8).write(to: baseline)
+        try Data("zip".utf8).write(to: unsupported)
+
+        fixture.store.prepareConfirmedFileImport([baseline])
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+        let selectedID = try XCTUnwrap(fixture.store.selectedMaterialItem?.id)
+
+        fixture.store.prepareConfirmedFileImport([unsupported])
+        waitForImportIdle(in: fixture.store)
+
+        XCTAssertEqual(fixture.store.selectedMaterialItem?.id, selectedID)
+        XCTAssertEqual(fixture.store.importedItems.count, 1)
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("没有可导入的文件") == true)
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("1 个格式不支持") == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unsupported.path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.library.appendingPathComponent("通用资料/原件.zip").path
+        ))
+    }
+
+    func testEmptyFolderClosesWithLightFeedbackAndNoWrite() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let emptyFolder = fixture.outside.appendingPathComponent("空资料夹", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyFolder, withIntermediateDirectories: true)
+
+        fixture.store.prepareConfirmedFileImport([emptyFolder])
+        waitForImportIdle(in: fixture.store)
+
+        XCTAssertTrue(fixture.store.importedItems.isEmpty)
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("没有可导入的文件") == true)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(
+            atPath: fixture.library.appendingPathComponent("通用资料").path
+        ).isEmpty)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: emptyFolder.path).isEmpty)
+    }
+
+    func testUnavailableDestinationKeepsReviewErrorEvenWithNoCandidates() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let source = fixture.outside.appendingPathComponent("无法导入.txt")
+        try Data("source".utf8).write(to: source)
+        fixture.store.courseLibraryRootURL = nil
+
+        fixture.store.prepareConfirmedFileImport([source])
+
+        let batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        XCTAssertEqual(batch.stage, .reviewing)
+        XCTAssertNotNil(batch.destinationError)
+        XCTAssertTrue(batch.candidates.isEmpty)
+        XCTAssertNil(fixture.store.transientNoteStatus)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.library.appendingPathComponent("通用资料/无法导入.txt").path
+        ))
+    }
+
+    func testMissingSourceStaysVisibleAsRetryableFailure() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let missing = fixture.outside.appendingPathComponent("已移走.txt")
+
+        fixture.store.prepareConfirmedFileImport([missing])
+        waitForStage(.finished, in: fixture.store)
+
+        var batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        XCTAssertTrue(batch.candidates.isEmpty)
+        XCTAssertEqual(batch.failures.map(\.sourceURL), [missing])
+        XCTAssertTrue(batch.failures.first?.message.contains("无法访问") == true)
+        XCTAssertNil(fixture.store.transientNoteStatus)
+
+        fixture.store.retryFailedConfirmedFileImport()
+        waitForStage(.finished, in: fixture.store)
+
+        batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        XCTAssertEqual(batch.failures.map(\.sourceURL), [missing])
+        XCTAssertNil(fixture.store.transientNoteStatus)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.library.appendingPathComponent("通用资料/已移走.txt").path
+        ))
+    }
+
+    func testUnreadableFileIsOnlyAVisibleFailureAndNeverACandidate() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let unreadable = fixture.outside.appendingPathComponent("暂不可读.txt")
+        try Data("source".utf8).write(to: unreadable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0],
+            ofItemAtPath: unreadable.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: unreadable.path
+            )
+        }
+
+        let plan = WorkspaceStore.makeConfirmedFileImportPlan(
+            urls: [unreadable],
+            destination: fixture.library.appendingPathComponent("通用资料", isDirectory: true),
+            markdownOnly: false
+        )
+
+        XCTAssertTrue(plan.candidates.isEmpty)
+        XCTAssertEqual(plan.unavailableSourceURLs, [unreadable.standardizedFileURL])
+        XCTAssertTrue(plan.unsupportedNames.isEmpty)
+    }
+
+    func testNestedEnumerationFailureRetriesOnlyFailedSubtreeWithoutDuplicatePollution() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let folder = fixture.outside.appendingPathComponent("混合资料", isDirectory: true)
+        let locked = folder.appendingPathComponent("暂不可读", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        let readable = folder.appendingPathComponent("可读.txt")
+        try Data("readable".utf8).write(to: readable)
+        try Data("locked".utf8).write(to: locked.appendingPathComponent("内部.txt"))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0],
+            ofItemAtPath: locked.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: locked.path
+            )
+        }
+
+        fixture.store.prepareConfirmedFileImport([folder])
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(
+            fixture.store.confirmedFileImport?.candidates.map(\.sourceURL),
+            [readable.standardizedFileURL]
+        )
+        XCTAssertEqual(
+            fixture.store.confirmedFileImport?.failures.map(\.sourceURL),
+            [locked.standardizedFileURL]
+        )
+        fixture.store.confirmFileImport()
+        waitForStage(.finished, in: fixture.store)
+
+        var batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        XCTAssertEqual(batch.importedItems.map(\.subtitle), ["可读.txt"])
+        XCTAssertEqual(batch.failures.map(\.sourceURL), [locked.standardizedFileURL])
+        XCTAssertEqual(batch.duplicateCount, 0)
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: locked.path
+        )
+        fixture.store.retryFailedConfirmedFileImport()
+        waitForStage(.reviewing, in: fixture.store)
+        batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        XCTAssertEqual(batch.candidates.map(\.sourceURL), [
+            locked.appendingPathComponent("内部.txt").standardizedFileURL,
+        ])
+        XCTAssertEqual(batch.duplicateCount, 0)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        XCTAssertEqual(
+            Set(fixture.store.importedItems.map(\.subtitle)),
+            Set(["可读.txt", "内部.txt"])
+        )
+        XCTAssertNil(fixture.store.transientNoteStatus)
     }
 
     func testDockFileOpenedDuringImportWaitsForNextBatch() throws {
@@ -336,10 +618,10 @@ final class ConfirmedFileImportTests: XCTestCase {
         )
 
         fixture.store.confirmFileImport()
-        waitForStage(.finished, in: fixture.store)
-        let batch = try XCTUnwrap(fixture.store.confirmedFileImport)
-        XCTAssertEqual(batch.importedItems.count, 1)
-        XCTAssertEqual(batch.skippedCount, 1)
+        waitForImportIdle(in: fixture.store)
+        XCTAssertNil(fixture.store.confirmedFileImport)
+        XCTAssertEqual(fixture.store.importedItems.filter { $0.subtitle == "同名.txt" }.count, 1)
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("1 个已存在") == true)
         XCTAssertEqual(
             try FileManager.default.contentsOfDirectory(
                 atPath: fixture.library.appendingPathComponent("通用资料").path
@@ -370,9 +652,10 @@ final class ConfirmedFileImportTests: XCTestCase {
             [.ready, .conflict(suggestedFileName: "同名 2.txt"), .duplicate]
         )
         fixture.store.confirmFileImport()
-        waitForStage(.finished, in: fixture.store)
-        XCTAssertEqual(fixture.store.confirmedFileImport?.importedItems.count, 2)
-        XCTAssertEqual(fixture.store.confirmedFileImport?.skippedCount, 1)
+        waitForImportIdle(in: fixture.store)
+        XCTAssertNil(fixture.store.confirmedFileImport)
+        XCTAssertEqual(fixture.store.recentlyImportedItemIDs.count, 2)
+        XCTAssertTrue(fixture.store.transientNoteStatus?.contains("1 个已存在") == true)
         XCTAssertEqual(
             try Set(FileManager.default.contentsOfDirectory(
                 atPath: fixture.library.appendingPathComponent("通用资料").path
@@ -451,6 +734,7 @@ final class ConfirmedFileImportTests: XCTestCase {
 
         XCTAssertTrue(expansion.supported.isEmpty)
         XCTAssertTrue(expansion.unsupportedNames.isEmpty)
+        XCTAssertTrue(expansion.unavailableSourceURLs.isEmpty)
     }
 
     func testNestedDirectorySymlinkIsNotTraversed() throws {
@@ -475,6 +759,7 @@ final class ConfirmedFileImportTests: XCTestCase {
 
         XCTAssertEqual(expansion.supported, [safe.standardizedFileURL])
         XCTAssertTrue(expansion.unsupportedNames.isEmpty)
+        XCTAssertTrue(expansion.unavailableSourceURLs.isEmpty)
     }
 
     private func waitForStage(
@@ -488,6 +773,20 @@ final class ConfirmedFileImportTests: XCTestCase {
             RunLoop.main.run(until: Date().addingTimeInterval(0.02))
         }
         XCTAssertEqual(store.confirmedFileImport?.stage, stage, file: file, line: line)
+    }
+
+    private func waitForImportIdle(
+        in store: WorkspaceStore,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let deadline = Date().addingTimeInterval(10)
+        while (store.confirmedFileImport != nil || store.confirmedFileImportTask != nil),
+              Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        XCTAssertNil(store.confirmedFileImport, file: file, line: line)
+        XCTAssertNil(store.confirmedFileImportTask, file: file, line: line)
     }
 
     private func makeFixture() throws -> (

@@ -3153,23 +3153,42 @@ actor CourseProjectFileWorker {
     nonisolated static func expandedImportSelection(
         from urls: [URL],
         markdownOnly: Bool
-    ) -> (supported: [URL], unsupportedNames: [String]) {
+    ) -> (
+        supported: [URL],
+        unsupportedNames: [String],
+        unavailableSourceURLs: [URL]
+    ) {
         let fileManager = FileManager.default
         var seenSupported = Set<String>()
         var seenUnsupported = Set<String>()
+        var seenUnavailable = Set<String>()
         var supported: [URL] = []
         var unsupportedNames: [String] = []
+        var unavailableSourceURLs: [URL] = []
+        func recordUnavailable(_ url: URL) {
+            let standardized = url.standardizedFileURL
+            if seenUnavailable.insert(standardized.path).inserted {
+                unavailableSourceURLs.append(standardized)
+            }
+        }
         for rawURL in urls {
             guard let rootValues = try? rawURL.resourceValues(forKeys: [
                 .isDirectoryKey,
                 .isSymbolicLinkKey,
                 .isAliasFileKey,
-            ]),
-            rootValues.isSymbolicLink != true,
+            ]) else {
+                recordUnavailable(rawURL)
+                continue
+            }
+            guard rootValues.isSymbolicLink != true,
             rootValues.isAliasFile != true else {
                 continue
             }
             if rootValues.isDirectory != true {
+                guard fileManager.isReadableFile(atPath: rawURL.path) else {
+                    recordUnavailable(rawURL)
+                    continue
+                }
                 appendImportSelection(
                     rawURL,
                     displayName: rawURL.lastPathComponent,
@@ -3191,8 +3210,12 @@ actor CourseProjectFileWorker {
                     .isAliasFileKey,
                 ],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants],
-                errorHandler: { _, _ in false }
+                errorHandler: { failedURL, _ in
+                    recordUnavailable(failedURL)
+                    return true
+                }
             ) else {
+                recordUnavailable(rawURL)
                 continue
             }
             for case let fileURL as URL in enumerator {
@@ -3201,6 +3224,7 @@ actor CourseProjectFileWorker {
                     .isSymbolicLinkKey,
                     .isAliasFileKey,
                 ]) else {
+                    recordUnavailable(fileURL)
                     enumerator.skipDescendants()
                     continue
                 }
@@ -3211,6 +3235,11 @@ actor CourseProjectFileWorker {
                 if Self.ignoresImportDirectory(fileURL),
                    values.isDirectory == true {
                     enumerator.skipDescendants()
+                    continue
+                }
+                if values.isDirectory != true,
+                   !fileManager.isReadableFile(atPath: fileURL.path) {
+                    recordUnavailable(fileURL)
                     continue
                 }
                 let rootPath = rawURL.standardizedFileURL.path
@@ -3231,7 +3260,10 @@ actor CourseProjectFileWorker {
         }
         return (
             supported.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending },
-            unsupportedNames.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            unsupportedNames.sorted { $0.localizedStandardCompare($1) == .orderedAscending },
+            unavailableSourceURLs.sorted {
+                $0.path.localizedStandardCompare($1.path) == .orderedAscending
+            }
         )
     }
 
