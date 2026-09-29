@@ -550,10 +550,7 @@ struct ConfirmedFileImportView: View {
         .frame(width: 440, alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
 #if targetEnvironment(macCatalyst)
-        .background(CatalystIndependentSheetSizingProbe(
-            color: WeiBeiNativePalette.paper(),
-            followsContentSize: true
-        ))
+        .modifier(CatalystIndependentSheetFitting(color: WeiBeiNativePalette.paper()))
 #endif
         .background(WeiBeiGlassForegroundSheet(mode: store.appearanceMode))
         .background(WeiBeiThemeBackdrop(mode: store.appearanceMode))
