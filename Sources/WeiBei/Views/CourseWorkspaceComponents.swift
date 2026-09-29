@@ -188,9 +188,7 @@ struct CourseManagementSheet: View {
             }
         }
         .padding(22)
-        .frame(width: 440)
-        .fixedSize(horizontal: false, vertical: true)
-        .modifier(WeiBeiFittedSheetPresentation())
+        .frame(width: 460)
 #if targetEnvironment(macCatalyst)
         .background(CatalystIndependentSheetSizingProbe(color: WeiBeiNativePalette.paper()))
 #endif
@@ -340,6 +338,10 @@ struct CourseProjectEntrySheet: View {
         title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var selectedImportIncludesMarkdown: Bool {
+        selectedImportURLs.contains { StudyItemKind.detect(from: $0) == .markdown }
+    }
+
     private var contentSizeRevision: String {
         [
             String(describing: intent),
@@ -398,7 +400,7 @@ struct CourseProjectEntrySheet: View {
             actionBar
         }
         .padding(22)
-        .frame(width: 460)
+        .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
         .modifier(WeiBeiFittedSheetPresentation())
 #if targetEnvironment(macCatalyst)
@@ -446,8 +448,8 @@ struct CourseProjectEntrySheet: View {
         if needsLibrary {
             if libraryNeedsReauthorization {
                 return store.ui(
-                    "魏碑记得原资料库，但当前无法访问。重新选择后魏碑会改用所选文件夹，课程文件不会被移动；要找回原课程，请选回原来的资料库。",
-                    "WeiBei remembers the library but cannot access it. Re-selecting switches WeiBei to the chosen folder without moving any course files; to find your original courses, pick the original library."
+                    "原资料库无法访问。选回原文件夹可恢复课程；选择其他文件夹会切换资料库，不移动文件。",
+                    "The original library is unavailable. Choose it again to restore courses, or choose another folder to switch libraries without moving files."
                 )
             }
             return store.ui(
@@ -475,23 +477,6 @@ struct CourseProjectEntrySheet: View {
                         path: path
                     )
                 }
-                Label(
-                    store.ui(
-                        "原资料库当前无法访问，课程记录仍保留。选择别的文件夹会改用那个文件夹，课程文件不会被移动。",
-                        "The original library is currently unavailable, but course records are preserved. Choosing another folder switches to that folder; course files are not moved."
-                    ),
-                    systemImage: "exclamationmark.triangle"
-                )
-                .weiBeiText(12)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Label(
-                    store.ui("建议选择或新建一个名为“魏碑”的总文件夹。", "Choose or create a top-level WeiBei folder."),
-                    systemImage: "folder"
-                )
-                .weiBeiText(12)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
             Button(
@@ -563,7 +548,7 @@ struct CourseProjectEntrySheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Button(
                 selectedImportURLs.isEmpty
-                    ? store.ui("同时选择现有文稿或文件夹…", "Choose Existing Files or Folder…")
+                    ? store.ui("添加初始资料…", "Add Initial Materials…")
                     : store.ui("重新选择导入内容…", "Choose Different Content…"),
                 action: chooseImportContent
             )
@@ -571,10 +556,15 @@ struct CourseProjectEntrySheet: View {
             .disabled(isWorking)
 
             if !selectedImportURLs.isEmpty {
-                Text(store.ui(
-                    "已选择 \(selectedImportURLs.count) 项；课程创建后会直接导入。Markdown 会同时出现在文稿与笔记中。",
-                    "Selected \(selectedImportURLs.count) item(s). Markdown will appear in both Materials and Notes."
-                ))
+                Text(selectedImportIncludesMarkdown
+                    ? store.ui(
+                        "已选 \(selectedImportURLs.count) 项；Markdown 同时加入文稿和笔记。",
+                        "\(selectedImportURLs.count) selected; Markdown will be added to Materials and Notes."
+                    )
+                    : store.ui(
+                        "已选 \(selectedImportURLs.count) 项",
+                        "\(selectedImportURLs.count) selected"
+                    ))
                 .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
@@ -592,7 +582,7 @@ struct CourseProjectEntrySheet: View {
     private func pathLine(label: String, path: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .weiBeiText(10.5, weight: .semibold)
+                .weiBeiText(12, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
             Text(path)
                 .weiBeiText(12)

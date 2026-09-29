@@ -642,10 +642,12 @@ struct ConfirmedFileImportView: View {
     private func heading(_ batch: ConfirmedFileImportBatch) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(headingTitle(batch))
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
-            Text(headingDetail(batch))
-                .weiBeiText(12)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
+            if let detail = headingDetail(batch) {
+                Text(detail)
+                    .weiBeiText(12)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
         }
     }
 
@@ -657,14 +659,14 @@ struct ConfirmedFileImportView: View {
         }
     }
 
-    private func headingDetail(_ batch: ConfirmedFileImportBatch) -> String {
+    private func headingDetail(_ batch: ConfirmedFileImportBatch) -> String? {
         switch batch.stage {
         case .preparing, .reviewing:
             store.ui("导入副本，保留原文件。", "Import a copy and keep the original.")
         case .importing:
             destinationDescription(batch)
         case .finished:
-            store.ui("已完成的导入已经保留。", "Completed imports have been kept.")
+            nil
         }
     }
 
@@ -688,12 +690,12 @@ struct ConfirmedFileImportView: View {
                 "This batch · \(batch.candidates.count + batch.unsupportedNames.count) items"
             ))
                 .weiBeiText(12, weight: .semibold)
-            if !batch.sourceFolderNames.isEmpty {
+            if batch.sourceFolderNames.count > 1 {
                 Text(store.ui(
                     "来源文件夹：\(batch.sourceFolderNames.joined(separator: "、"))",
                     "Source folders: \(batch.sourceFolderNames.joined(separator: ", "))"
                 ))
-                .weiBeiText(10.5)
+                .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 .lineLimit(2)
             }
@@ -711,10 +713,10 @@ struct ConfirmedFileImportView: View {
             }
             if !batch.sourceFolderNames.isEmpty {
                 Text(store.ui(
-                    "文件夹内仅导入 PDF、Word、PPT、HTML、文本和 Markdown；隐藏文件与应用包会跳过。",
-                    "Folders include PDF, Word, PPT, HTML, text, and Markdown only; hidden files and app bundles are skipped."
+                    "文件夹内只导入支持的文稿；隐藏文件和应用会跳过。",
+                    "Only supported documents are imported from folders; hidden files and apps are skipped."
                 ))
-                .weiBeiText(10.5)
+                .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
         }
@@ -729,20 +731,13 @@ struct ConfirmedFileImportView: View {
                 .frame(width: 16)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(candidate.sourceURL.lastPathComponent)
-                        .weiBeiText(12)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 6)
-                    Text(kind.label(language: store.interfaceLanguage))
-                        .weiBeiText(10.5)
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .fixedSize()
-                }
+                Text(candidate.sourceURL.lastPathComponent)
+                    .weiBeiText(13)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
                 if candidate.disposition != .ready {
                     Text(candidateLabel(candidate))
-                        .weiBeiText(10.5, weight: .medium)
+                        .weiBeiText(12, weight: .medium)
                         .foregroundStyle(candidateColor(candidate))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -758,6 +753,7 @@ struct ConfirmedFileImportView: View {
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 3) {
                 Text(name)
+                    .weiBeiText(13)
                     .lineLimit(2)
                     .truncationMode(.middle)
                 Text(
@@ -765,10 +761,9 @@ struct ConfirmedFileImportView: View {
                         ? store.ui("仅支持 Markdown，已跳过", "Markdown only; skipped")
                         : store.ui("不支持，已跳过", "Unsupported; skipped")
                 )
-                .weiBeiText(10.5, weight: .medium)
+                .weiBeiText(12, weight: .medium)
             }
         }
-        .weiBeiText(11)
         .foregroundStyle(WeiBeiTheme.cinnabar)
         .padding(.vertical, 6)
         .help(name)
@@ -806,7 +801,7 @@ struct ConfirmedFileImportView: View {
                 if !courseSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    matchingCourses.isEmpty {
                     Text(store.ui("没有匹配的课程", "No matching courses"))
-                        .weiBeiText(11)
+                        .weiBeiText(12)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                         .padding(.vertical, 5)
                         .padding(.horizontal, 8)
@@ -847,39 +842,37 @@ struct ConfirmedFileImportView: View {
     private func progress(_ batch: ConfirmedFileImportBatch) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             if let current = batch.currentFileName {
-                Text(current).weiBeiText(12).lineLimit(2)
+                Text(current).weiBeiText(13).lineLimit(2)
             }
             ProgressView(value: Double(batch.completed), total: Double(max(1, batch.total)))
                 .tint(WeiBeiTheme.cinnabar)
             Text("\(batch.completed) / \(batch.total)")
-                .weiBeiText(11, design: .monospaced)
+                .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
-            if !batch.pendingSourceURLs.isEmpty {
-                Text(store.ui(
-                    "另有 \(batch.pendingSourceURLs.count) 个从 Dock 打开的文件等待本批完成。",
-                    "\(batch.pendingSourceURLs.count) file(s) opened from the Dock are waiting for this batch."
-                ))
-                .weiBeiText(11)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 
     private func result(_ batch: ConfirmedFileImportBatch) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(store.ui(
-                "成功 \(batch.importedItems.count) 个 · 跳过 \(batch.skippedCount) 个 · 失败 \(batch.failures.count) 个",
-                "\(batch.importedItems.count) succeeded · \(batch.skippedCount) skipped · \(batch.failures.count) failed"
-            ))
-            .weiBeiText(15, weight: .semibold)
-            if batch.stopped {
-                Text(store.ui("已停止剩余任务；已完成的导入仍然保留。", "Remaining work stopped; completed imports were kept."))
+            Text(resultSummary(batch))
+                .weiBeiText(13, weight: .semibold)
+            if batch.stopped, !batch.pendingSourceURLs.isEmpty {
+                Text(store.ui(
+                    "已停止；\(batch.pendingSourceURLs.count) 个文件未处理。已完成的导入已保留，原文件未变。",
+                    "Stopped with \(batch.pendingSourceURLs.count) file(s) unprocessed. Completed imports were kept and originals are unchanged."
+                ))
                     .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-            if !batch.pendingSourceURLs.isEmpty {
+            } else if batch.stopped {
+                Text(store.ui(
+                    "已停止；已完成的导入仍然保留。",
+                    "Stopped. Completed imports were kept."
+                ))
+                .weiBeiText(12)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+            } else if !batch.pendingSourceURLs.isEmpty {
                 Text(store.ui(
                     "另有 \(batch.pendingSourceURLs.count) 个文件尚未处理，原文件仍保留。",
                     "\(batch.pendingSourceURLs.count) file(s) are still waiting; their originals are unchanged."
@@ -892,16 +885,24 @@ struct ConfirmedFileImportView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(store.ui("未导入", "Not imported"))
                         .weiBeiText(12, weight: .semibold)
+                    if let message = sharedFailureMessage(batch) {
+                        Text(message)
+                            .weiBeiText(12)
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     ForEach(batch.failures) { failure in
                         VStack(alignment: .leading, spacing: 3) {
                             Text(failure.sourceURL.lastPathComponent)
-                                .weiBeiText(12, weight: .semibold)
+                                .weiBeiText(13, weight: .semibold)
                                 .lineLimit(2)
                                 .truncationMode(.middle)
-                            Text(failure.message)
-                                .weiBeiText(11)
-                                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                                .fixedSize(horizontal: false, vertical: true)
+                            if sharedFailureMessage(batch) == nil {
+                                Text(failure.message)
+                                    .weiBeiText(12)
+                                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                 }
@@ -912,12 +913,12 @@ struct ConfirmedFileImportView: View {
     @ViewBuilder
     private func resultButtons(_ batch: ConfirmedFileImportBatch) -> some View {
         if !batch.pendingSourceURLs.isEmpty {
-            Button(store.ui("结束本次导入", "End This Import")) { store.dismissConfirmedFileImport() }
+            Button(store.ui("结束", "End")) { store.dismissConfirmedFileImport() }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
             if batch.failures.isEmpty {
                 Button(store.ui(
-                    "处理待导入文件（\(batch.pendingSourceURLs.count)）",
-                    "Review Waiting Files (\(batch.pendingSourceURLs.count))"
+                    "继续处理（\(batch.pendingSourceURLs.count)）",
+                    "Continue (\(batch.pendingSourceURLs.count))"
                 )) {
                     store.continuePendingConfirmedFileImport()
                 }
@@ -925,13 +926,13 @@ struct ConfirmedFileImportView: View {
                 .keyboardShortcut(.defaultAction)
             } else {
                 Button(store.ui(
-                    "放弃失败项并继续（\(batch.pendingSourceURLs.count)）",
-                    "Leave Failures and Continue (\(batch.pendingSourceURLs.count))"
+                    "放弃失败项，继续（\(batch.pendingSourceURLs.count)）",
+                    "Leave Failures, Continue (\(batch.pendingSourceURLs.count))"
                 )) {
                     store.continuePendingConfirmedFileImport(abandoningFailures: true)
                 }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
-                Button(store.ui("只重试失败项", "Retry Failed Only")) {
+                Button(store.ui("重试失败项", "Retry Failed")) {
                     store.retryFailedConfirmedFileImport()
                 }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
@@ -940,7 +941,7 @@ struct ConfirmedFileImportView: View {
         } else if !batch.failures.isEmpty {
             Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
-            Button(store.ui("只重试失败项", "Retry Failed Only")) {
+            Button(store.ui("重试失败项", "Retry Failed")) {
                 store.retryFailedConfirmedFileImport()
             }
             .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
@@ -966,6 +967,33 @@ struct ConfirmedFileImportView: View {
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 .keyboardShortcut(.defaultAction)
         }
+    }
+
+    private func resultSummary(_ batch: ConfirmedFileImportBatch) -> String {
+        var chinese: [String] = []
+        var english: [String] = []
+        if !batch.importedItems.isEmpty {
+            chinese.append("\(batch.importedItems.count)个已导入")
+            english.append("\(batch.importedItems.count) imported")
+        }
+        if batch.skippedCount > 0 {
+            chinese.append("\(batch.skippedCount)个已跳过")
+            english.append("\(batch.skippedCount) skipped")
+        }
+        if !batch.failures.isEmpty {
+            chinese.append("\(batch.failures.count)个失败")
+            english.append("\(batch.failures.count) failed")
+        }
+        if chinese.isEmpty {
+            return store.ui("没有导入文件", "No files imported")
+        }
+        return store.ui(chinese.joined(separator: " · "), english.joined(separator: " · "))
+    }
+
+    private func sharedFailureMessage(_ batch: ConfirmedFileImportBatch) -> String? {
+        guard let message = batch.failures.first?.message,
+              batch.failures.allSatisfy({ $0.message == message }) else { return nil }
+        return message
     }
 
     private func confirmTitle(_ batch: ConfirmedFileImportBatch) -> String {
