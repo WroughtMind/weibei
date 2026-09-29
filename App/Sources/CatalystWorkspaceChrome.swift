@@ -729,32 +729,30 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                 targetSize: targetSize
             )
             let effectiveFrame = scene.effectiveGeometry.systemFrame
-            let coordinateSpaceBounds = Self.coordinateSpaceBounds(for: scene)
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
             guard self.window === window,
                   window.windowScene === scene,
                   rootedWindows.count == 1,
                   rootedWindows[0] === window,
-                  Self.sameSize(effectiveFrame.size, targetSize) else { return }
-            if !Self.sameSize(window.bounds.size, targetSize) {
-                window.frame = Self.sameSize(coordinateSpaceBounds.size, targetSize)
-                    ? coordinateSpaceBounds
-                    : CGRect(origin: coordinateSpaceBounds.origin, size: targetSize)
-            }
+                  Self.sameSize(effectiveFrame.size, targetSize),
+                  let rootViewController = window.rootViewController,
+                  let presentationController = rootViewController.presentationController,
+                  presentationController.presentedViewController === rootViewController,
+                  let containerView = presentationController.containerView else { return }
+            rootViewController.preferredContentSize = targetSize
             logGeometry(
-                event: "sync-after-frame",
+                event: "notification-before",
                 window: window,
                 scene: scene,
                 targetSize: targetSize
             )
-            let acceptedSize = effectiveFrame.size
-            if !Self.sameSize(window.bounds.size, acceptedSize) {
-                window.bounds = CGRect(origin: window.bounds.origin, size: acceptedSize)
-            }
-            window.setNeedsLayout()
-            window.layoutIfNeeded()
+            presentationController.preferredContentSizeDidChange(
+                forChildContentContainer: rootViewController
+            )
+            containerView.setNeedsLayout()
+            containerView.layoutIfNeeded()
             logGeometry(
-                event: "sync-after-bounds",
+                event: "notification-after",
                 window: window,
                 scene: scene,
                 targetSize: targetSize
@@ -764,7 +762,7 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                       self.window === window,
                       window.windowScene === scene else { return }
                 self.logGeometry(
-                    event: "sync-next-runloop",
+                    event: "notification-next-runloop",
                     window: window,
                     scene: scene,
                     targetSize: targetSize
@@ -787,8 +785,18 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             let rootedWindows = scene?.windows.filter { $0.rootViewController != nil } ?? []
             let effectiveFrame = scene?.effectiveGeometry.systemFrame
             let rootViewController = window.rootViewController
+            let presentationController = rootViewController?.presentationController
+            let presentationClassName = presentationController.map {
+                String(reflecting: type(of: $0))
+            }
             let windowSceneMatches = scene != nil && window.windowScene === scene
             let singleRootedWindowMatches = rootedWindows.count == 1 && rootedWindows[0] === window
+            let presentedRootMatches: Bool
+            if let rootViewController, let presentationController {
+                presentedRootMatches = presentationController.presentedViewController === rootViewController
+            } else {
+                presentedRootMatches = false
+            }
             let effectiveMatchesTarget: Bool
             if let effectiveFrame, let targetSize {
                 effectiveMatchesTarget = Self.sameSize(effectiveFrame.size, targetSize)
@@ -816,6 +824,9 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                 "windowBounds": Self.jsonRect(window.bounds),
                 "rootViewBounds": Self.jsonRect(rootViewController?.view.bounds),
                 "rootPreferredSize": Self.jsonSize(rootViewController?.preferredContentSize),
+                "presentationClass": (presentationClassName as Any?) ?? NSNull(),
+                "presentedRootMatches": presentedRootMatches,
+                "presentationContainerBounds": Self.jsonRect(presentationController?.containerView?.bounds),
                 "effectiveFrame": Self.jsonRect(effectiveFrame),
                 "lastSignature": (lastGeometryRequestSignature as Any?) ?? NSNull(),
                 "probeWindowMatches": self.window === window,
@@ -872,11 +883,5 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             )
         }
 
-        private static func coordinateSpaceBounds(for scene: UIWindowScene) -> CGRect {
-            if #available(iOS 26.0, *) {
-                return scene.effectiveGeometry.coordinateSpace.bounds
-            }
-            return scene.coordinateSpace.bounds
-        }
     }
 }
