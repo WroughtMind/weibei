@@ -536,8 +536,7 @@ struct ConfirmedFileImportView: View {
                 Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
                 ConfirmedImportCappedBodyLayout(
                     width: Self.bodyWidth,
-                    maximumHeight: Self.maximumBodyHeight,
-                    stage: batch.stage
+                    maximumHeight: Self.maximumBodyHeight
                 ) {
                     stageContent(batch)
                         .frame(width: Self.bodyWidth, alignment: .leading)
@@ -998,69 +997,26 @@ struct ConfirmedFileImportView: View {
 private struct ConfirmedImportCappedBodyLayout: Layout {
     let width: CGFloat
     let maximumHeight: CGFloat
-    let stage: ConfirmedFileImportStage
 
-    struct Cache {
-        var lastLoggedContentHeight: CGFloat?
-        var lastLoggedSize: CGSize?
-    }
-
-    func makeCache(subviews: Subviews) -> Cache { Cache() }
-
-    func sizeThatFits(
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout Cache
-    ) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard let measurement = subviews.first else { return .zero }
-        let contentSize = measurement.sizeThatFits(
+        let contentHeight = measurement.sizeThatFits(
             ProposedViewSize(width: width, height: nil)
-        )
-        let result = CGSize(
-            width: width,
-            height: min(maximumHeight, max(1, ceil(contentSize.height)))
-        )
-        logMeasurementIfNeeded(contentHeight: contentSize.height, result: result, cache: &cache)
-        return result
+        ).height
+        return CGSize(width: width, height: min(maximumHeight, max(1, ceil(contentHeight))))
     }
 
-    func placeSubviews(
-        in bounds: CGRect,
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout Cache
-    ) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         guard subviews.count == 2 else { return }
-        let contentSize = subviews[0].sizeThatFits(
-            ProposedViewSize(width: width, height: nil)
-        )
         subviews[0].place(
             at: bounds.origin,
             anchor: .topLeading,
-            proposal: ProposedViewSize(width: width, height: contentSize.height)
+            proposal: ProposedViewSize(width: width, height: nil)
         )
         subviews[1].place(
             at: bounds.origin,
             anchor: .topLeading,
             proposal: ProposedViewSize(width: width, height: bounds.height)
-        )
-    }
-
-    private func logMeasurementIfNeeded(
-        contentHeight: CGFloat,
-        result: CGSize,
-        cache: inout Cache
-    ) {
-        let roundedContentHeight = ceil(contentHeight)
-        guard Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.qa.cursorcloseout20260926",
-              cache.lastLoggedContentHeight != roundedContentHeight
-                || cache.lastLoggedSize != result else { return }
-        cache.lastLoggedContentHeight = roundedContentHeight
-        cache.lastLoggedSize = result
-        print(
-            "[ConfirmedImportLayout] stage=\(stage) "
-                + "contentHeight=\(roundedContentHeight) "
-                + "viewport=\(result.width)x\(result.height)"
         )
     }
 }
