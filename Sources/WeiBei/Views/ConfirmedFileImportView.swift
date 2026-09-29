@@ -536,7 +536,8 @@ struct ConfirmedFileImportView: View {
                 Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
                 ConfirmedImportCappedBodyLayout(
                     width: Self.bodyWidth,
-                    maximumHeight: Self.maximumBodyHeight
+                    maximumHeight: Self.maximumBodyHeight,
+                    stage: batch.stage
                 ) {
                     stageContent(batch)
                         .frame(width: Self.bodyWidth, alignment: .leading)
@@ -561,8 +562,19 @@ struct ConfirmedFileImportView: View {
         }
         .frame(width: 500, alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { logRootSize(geometry.size) }
+                    .onChange(of: geometry.size) { _, size in logRootSize(size) }
+                    .onChange(of: batch?.stage) { _, _ in logRootSize(geometry.size) }
+            }
+        }
 #if targetEnvironment(macCatalyst)
-        .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
+        .background(CatalystSheetBackground(
+            color: WeiBeiNativePalette.paper(),
+            diagnosticContext: "confirmed-file-import"
+        ))
 #endif
         .background(WeiBeiGlassForegroundSheet(mode: store.appearanceMode))
         .background(WeiBeiThemeBackdrop(mode: store.appearanceMode))
@@ -992,21 +1004,61 @@ struct ConfirmedFileImportView: View {
         case .conflict: WeiBeiTheme.cinnabar
         }
     }
+
+    private func logRootSize(_ size: CGSize) {
+        ConfirmedImportLayoutDiagnostics.append(
+            event: "root-view",
+            values: [
+                "stage": String(describing: batch?.stage),
+                "width": size.width,
+                "height": size.height
+            ]
+        )
+    }
 }
 
 private struct ConfirmedImportCappedBodyLayout: Layout {
     let width: CGFloat
     let maximumHeight: CGFloat
+    let stage: ConfirmedFileImportStage
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    struct Cache {
+        var lastStage: ConfirmedFileImportStage?
+        var lastContentHeight: CGFloat?
+        var lastResult: CGSize?
+    }
+
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         guard let measurement = subviews.first else { return .zero }
         let contentHeight = measurement.sizeThatFits(
             ProposedViewSize(width: width, height: nil)
         ).height
-        return CGSize(width: width, height: min(maximumHeight, max(1, ceil(contentHeight))))
+        let result = CGSize(width: width, height: min(maximumHeight, max(1, ceil(contentHeight))))
+        let roundedContentHeight = ceil(contentHeight)
+        if cache.lastStage != stage
+            || cache.lastContentHeight != roundedContentHeight
+            || cache.lastResult != result {
+            cache.lastStage = stage
+            cache.lastContentHeight = roundedContentHeight
+            cache.lastResult = result
+            ConfirmedImportLayoutDiagnostics.append(
+                event: "body-layout",
+                values: [
+                    "stage": String(describing: stage),
+                    "contentHeight": roundedContentHeight,
+                    "resultWidth": result.width,
+                    "resultHeight": result.height,
+                    "proposalWidth": proposal.width.map { $0 as Any } ?? NSNull(),
+                    "proposalHeight": proposal.height.map { $0 as Any } ?? NSNull()
+                ]
+            )
+        }
+        return result
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
         guard subviews.count == 2 else { return }
         subviews[0].place(
             at: bounds.origin,
@@ -1018,6 +1070,32 @@ private struct ConfirmedImportCappedBodyLayout: Layout {
             anchor: .topLeading,
             proposal: ProposedViewSize(width: width, height: bounds.height)
         )
+    }
+}
+
+enum ConfirmedImportLayoutDiagnostics {
+    private static let qaBundleIdentifier = "com.changfenhuang.weibei.qa.cursorcloseout20260926"
+    private static let outputURL = URL(fileURLWithPath: "/tmp/weibei-import-layout-diagnostics.jsonl")
+
+    static func append(event: String, values: [String: Any]) {
+        guard Bundle.main.bundleIdentifier == qaBundleIdentifier else { return }
+        var record = values
+        record["event"] = event
+        record["timestamp"] = Date().timeIntervalSince1970
+        guard let data = try? JSONSerialization.data(withJSONObject: record),
+              let lineBreak = "\n".data(using: .utf8) else { return }
+        if !FileManager.default.fileExists(atPath: outputURL.path) {
+            FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: outputURL) else { return }
+        defer { try? handle.close() }
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+            try handle.write(contentsOf: lineBreak)
+        } catch {
+            return
+        }
     }
 }
 
