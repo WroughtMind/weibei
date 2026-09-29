@@ -533,7 +533,6 @@ struct ConfirmedFileImportView: View {
                     .padding(.horizontal, 22)
                     .padding(.top, 20)
                     .padding(.bottom, 15)
-                Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
                 ConfirmedImportCappedBodyLayout(
                     width: Self.bodyWidth,
                     maximumHeight: Self.maximumBodyHeight,
@@ -554,7 +553,6 @@ struct ConfirmedFileImportView: View {
                 .clipped()
                 .padding(.horizontal, 22)
                 .padding(.vertical, 16)
-                Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
                 footer(batch)
                     .padding(.horizontal, 22)
                     .padding(.vertical, 13)
