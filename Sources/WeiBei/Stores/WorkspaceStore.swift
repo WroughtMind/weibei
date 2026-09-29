@@ -5947,8 +5947,8 @@ final class WorkspaceStore: ObservableObject {
 #if targetEnvironment(macCatalyst)
         Task { @MainActor in
             let types: [UTType] = markdownAsNotes
-                ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
-                : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
+                ? [WorkspaceFileDialog.markdownType, .folder]
+                : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, WorkspaceFileDialog.markdownType, .folder]
             let urls = await WorkspaceFileDialog.pick(
                 title: panelTitle ?? ui("选择学习资料或课程文件夹", "Choose study materials or a course folder"),
                 types: types, multiple: true
@@ -5969,8 +5969,8 @@ final class WorkspaceStore: ObservableObject {
         panel.canChooseDirectories = true
         panel.canChooseFiles = true
         panel.allowedContentTypes = markdownAsNotes
-            ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
-            : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
+            ? [WorkspaceFileDialog.markdownType]
+            : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, WorkspaceFileDialog.markdownType]
 
         guard panel.runModal() == .OK else { return }
         prepareConfirmedFileImport(

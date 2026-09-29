@@ -720,7 +720,7 @@ struct CourseProjectEntrySheet: View {
 
     private func chooseImportContentWithPicker() async {
 #if targetEnvironment(macCatalyst)
-        let urls = await WorkspaceFileDialog.pick(title: store.ui("选择课程内容", "Choose Course Content"), types: [.folder, .pdf, .html, .plainText, UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation")], multiple: true)
+        let urls = await WorkspaceFileDialog.pick(title: store.ui("选择课程内容", "Choose Course Content"), types: [.folder, .pdf, .html, .plainText, WorkspaceFileDialog.markdownType, UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation")], multiple: true)
 #else
         let panel = NSOpenPanel()
         panel.title = store.ui("选择课程内容", "Choose Course Content")
@@ -738,8 +738,7 @@ struct CourseProjectEntrySheet: View {
             .pdf,
             .html,
             .plainText,
-            UTType(filenameExtension: "md") ?? .plainText,
-            UTType(filenameExtension: "markdown") ?? .plainText,
+            WorkspaceFileDialog.markdownType,
         ]
         guard panel.runModal() == .OK else { return }
         let urls = panel.urls
