@@ -646,6 +646,37 @@ struct CatalystSheetBackground: UIViewRepresentable {
             let sheetPresentation = root?.sheetPresentationController
             let prefersPageSizingBefore = sheetPresentation?.prefersPageSizing
             sheetPresentation?.prefersPageSizing = false
+            let prefersPageSizingAfter = sheetPresentation?.prefersPageSizing
+            let rootControllerType: String
+            let presentationControllerType: String
+            let sheetPresentationControllerType: String
+            if let root {
+                rootControllerType = String(reflecting: type(of: root))
+            } else {
+                rootControllerType = ""
+            }
+            if let presentation {
+                presentationControllerType = String(reflecting: type(of: presentation))
+            } else {
+                presentationControllerType = ""
+            }
+            if let sheetPresentation {
+                sheetPresentationControllerType = String(reflecting: type(of: sheetPresentation))
+            } else {
+                sheetPresentationControllerType = ""
+            }
+            let prefersPageSizingBeforeValue: Any
+            let prefersPageSizingAfterValue: Any
+            if let prefersPageSizingBefore {
+                prefersPageSizingBeforeValue = prefersPageSizingBefore
+            } else {
+                prefersPageSizingBeforeValue = NSNull()
+            }
+            if let prefersPageSizingAfter {
+                prefersPageSizingAfterValue = prefersPageSizingAfter
+            } else {
+                prefersPageSizingAfterValue = NSNull()
+            }
             let signature = [
                 "\(window.bounds)",
                 "\(rootBounds)",
@@ -662,16 +693,12 @@ struct CatalystSheetBackground: UIViewRepresentable {
                     "windowBounds": Self.record(for: window.bounds),
                     "rootViewBounds": Self.record(for: rootBounds),
                     "rootPreferredContentSize": Self.record(for: rootPreferred),
-                    "rootControllerType": root.map { String(reflecting: type(of: $0)) } ?? "",
+                    "rootControllerType": rootControllerType,
                     "responderControllers": controllerRecords,
-                    "presentationControllerType": presentation.map {
-                        String(reflecting: type(of: $0))
-                    } ?? "",
-                    "sheetPresentationControllerType": sheetPresentation.map {
-                        String(reflecting: type(of: $0))
-                    } ?? "",
-                    "prefersPageSizingBefore": prefersPageSizingBefore.map { $0 as Any } ?? NSNull(),
-                    "prefersPageSizingAfter": sheetPresentation?.prefersPageSizing.map { $0 as Any } ?? NSNull()
+                    "presentationControllerType": presentationControllerType,
+                    "sheetPresentationControllerType": sheetPresentationControllerType,
+                    "prefersPageSizingBefore": prefersPageSizingBeforeValue,
+                    "prefersPageSizingAfter": prefersPageSizingAfterValue
                 ]
             )
         }
