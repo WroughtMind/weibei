@@ -607,7 +607,7 @@ struct CatalystSheetBackground: UIViewRepresentable {
         var color = UIColor.clear
         var diagnosticContext: String?
         private var lastDiagnosticSignature: String?
-        private var lastResizeDiagnosticSignature: String?
+        private var lastGeometryRequestSignature: String?
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         override func layoutSubviews() { super.layoutSubviews(); configure() }
         func configure() {
@@ -628,42 +628,80 @@ struct CatalystSheetBackground: UIViewRepresentable {
             guard diagnosticContext == "confirmed-file-import",
                   let preferred = window.rootViewController?.preferredContentSize,
                   preferred.width.isFinite, preferred.height.isFinite,
-                  preferred.width > 0, preferred.height > 0 else { return }
-            let result = CatalystDesktopWindow.shared.resizeWorkspaceSheetContent(
-                width: preferred.width,
-                height: preferred.height
-            )
-            let scene = window.windowScene
-            var sceneWindowRecords: [[String: Any]] = []
-            if let scene {
-                for sceneWindow in scene.windows {
-                    let rootType: String
-                    if let root = sceneWindow.rootViewController {
-                        rootType = String(reflecting: type(of: root))
-                    } else {
-                        rootType = ""
-                    }
-                    sceneWindowRecords.append([
-                        "isSourceWindow": sceneWindow === window,
-                        "bounds": Self.record(for: sceneWindow.bounds),
-                        "rootControllerType": rootType
-                    ])
-                }
-            }
-            let signature = "\(preferred)|\(window.bounds)|\(result)"
-            guard signature != lastResizeDiagnosticSignature else { return }
-            lastResizeDiagnosticSignature = signature
+                  preferred.width > 0, preferred.height > 0,
+                  !Self.sameSize(window.bounds.size, preferred),
+                  let scene = window.windowScene else { return }
+            let sourceFrame = scene.effectiveGeometry.systemFrame
+            let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
+            guard Self.sameSize(sourceFrame.size, window.bounds.size),
+                  rootedWindows.count == 1,
+                  rootedWindows[0] === window else { return }
+            let targetFrame = Self.centeredFrame(size: preferred, in: sourceFrame)
+            let signature = "\(sourceFrame)|\(targetFrame)"
+            guard signature != lastGeometryRequestSignature else { return }
+            lastGeometryRequestSignature = signature
             ConfirmedImportLayoutDiagnostics.append(
-                event: "native-sheet-resize",
+                event: "scene-geometry-update-scheduled",
                 values: [
-                    "result": result,
-                    "preferredContentSize": Self.record(for: preferred),
-                    "actualWindowBounds": Self.record(for: window.bounds),
-                    "sceneIdentifier": scene?.session.persistentIdentifier ?? "",
-                    "sceneEffectiveFrame": Self.record(for: scene?.effectiveGeometry.systemFrame ?? .zero),
-                    "sceneWindows": sceneWindowRecords
+                    "sceneIdentifier": scene.session.persistentIdentifier,
+                    "sourceFrame": Self.record(for: sourceFrame),
+                    "targetFrame": Self.record(for: targetFrame),
+                    "sourceWindowBounds": Self.record(for: window.bounds)
                 ]
             )
+            DispatchQueue.main.async { [weak self, weak window, weak scene] in
+                guard let self, let window, let scene,
+                      window.windowScene === scene else { return }
+                self.requestImportSheetGeometryUpdate(
+                    window: window,
+                    scene: scene,
+                    preferred: preferred
+                )
+            }
+        }
+
+        private func requestImportSheetGeometryUpdate(
+            window: UIWindow,
+            scene: UIWindowScene,
+            preferred: CGSize
+        ) {
+            let sourceFrame = scene.effectiveGeometry.systemFrame
+            let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
+            guard !Self.sameSize(window.bounds.size, preferred),
+                  Self.sameSize(sourceFrame.size, window.bounds.size),
+                  rootedWindows.count == 1,
+                  rootedWindows[0] === window else { return }
+            let targetFrame = Self.centeredFrame(size: preferred, in: sourceFrame)
+            ConfirmedImportLayoutDiagnostics.append(
+                event: "scene-geometry-update-requested",
+                values: [
+                    "sceneIdentifier": scene.session.persistentIdentifier,
+                    "sourceFrame": Self.record(for: sourceFrame),
+                    "targetFrame": Self.record(for: targetFrame)
+                ]
+            )
+            scene.requestGeometryUpdate(.Mac(systemFrame: targetFrame)) { error in
+                ConfirmedImportLayoutDiagnostics.append(
+                    event: "scene-geometry-update-error",
+                    values: [
+                        "sceneIdentifier": scene.session.persistentIdentifier,
+                        "message": String(describing: error)
+                    ]
+                )
+            }
+            DispatchQueue.main.async { [weak window, weak scene] in
+                guard let window, let scene else { return }
+                ConfirmedImportLayoutDiagnostics.append(
+                    event: "scene-geometry-update-result",
+                    values: [
+                        "sceneIdentifier": scene.session.persistentIdentifier,
+                        "effectiveFrame": Self.record(for: scene.effectiveGeometry.systemFrame),
+                        "sourceWindowBounds": Self.record(for: window.bounds),
+                        "preferredContentSize": Self.record(for: preferred),
+                        "matchesPreferred": Self.sameSize(window.bounds.size, preferred)
+                    ]
+                )
+            }
         }
 
         private func recordDiagnostics(window: UIWindow) {
@@ -762,6 +800,19 @@ struct CatalystSheetBackground: UIViewRepresentable {
 
         private static func record(for size: CGSize) -> [String: Any] {
             ["width": size.width, "height": size.height]
+        }
+
+        private static func sameSize(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
+            abs(lhs.width - rhs.width) < 1 && abs(lhs.height - rhs.height) < 1
+        }
+
+        private static func centeredFrame(size: CGSize, in frame: CGRect) -> CGRect {
+            CGRect(
+                x: frame.midX - size.width / 2,
+                y: frame.midY - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
         }
     }
 }
