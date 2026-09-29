@@ -837,7 +837,8 @@ extension WorkspaceStore {
 
     /// 全仓唯一笔记写盘闸门（计划 §5 阶段1）：所有写路径必须经此函数。
     /// 文件在场时写前重读磁盘 digest：重读失败或无基线 ⇒ 拒写并保留待写内容；
-    /// 摘要不符 ⇒ 待写内容先入备份环再抛采用磁盘；一致才落盘并刷新双 digest。
+    /// 待写内容已与磁盘一致 ⇒ 幂等采用并刷新双 digest；
+    /// 摘要不符 ⇒ 待写内容先入备份环再抛采用磁盘；基线一致才落盘并刷新双 digest。
     /// 禁止绕过本函数直接调用 notebookMarkdownWriter（SelfCheck SAFETY 断言白名单）。
     func writeNotebookMarkdownThroughGate(
         _ markdown: String,
@@ -845,6 +846,7 @@ extension WorkspaceStore {
         url: URL,
         expectedBaseline: String?
     ) throws {
+        let intendedDigest = Self.noteContentDigest(Data(markdown.utf8))
         var operationError: Error?
         var coordinationError: NSError?
         NSFileCoordinator().coordinate(
@@ -861,6 +863,11 @@ extension WorkspaceStore {
                         )
                         throw NoteWriteGateError.writeRefusedKeepContent
                     }
+                    if diskDigest == intendedDigest {
+                        noteBackingContentDigestsByItemID[itemID] = diskDigest
+                        lastSelfWrittenNoteDigestsByItemID[itemID] = diskDigest
+                        return
+                    }
                     if diskDigest != expectedBaseline {
                         WeiBeiLog.noteRepair.error(
                             "code=note_write_external_conflict path=\(coordinatedURL.path, privacy: .private) expected_digest=\(expectedBaseline, privacy: .private) actual_digest=\(diskDigest, privacy: .private)"
@@ -869,7 +876,7 @@ extension WorkspaceStore {
                     }
                 }
                 try notebookMarkdownWriter(markdown, coordinatedURL)
-                let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
+                let writtenDigest = intendedDigest
                 let verifiedDigest = Self.noteContentDigest(at: coordinatedURL)
                 guard verifiedDigest == writtenDigest else {
                     WeiBeiLog.noteRepair.error(
