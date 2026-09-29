@@ -515,6 +515,7 @@ struct ConfirmedFileImportView: View {
     @State private var courseSearch = ""
     @State private var creatingCourse = false
 
+    private static let bodyWidth: CGFloat = 456
     private static let maximumBodyHeight: CGFloat = 350
 
     private var batch: ConfirmedFileImportBatch? { store.confirmedFileImport }
@@ -533,13 +534,24 @@ struct ConfirmedFileImportView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 15)
                 Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
-                ScrollView {
+                ConfirmedImportCappedBodyLayout(
+                    width: Self.bodyWidth,
+                    maximumHeight: Self.maximumBodyHeight,
+                    stage: batch.stage
+                ) {
                     stageContent(batch)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(width: Self.bodyWidth, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .hidden()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    ScrollView {
+                        stageContent(batch)
+                            .frame(width: Self.bodyWidth, alignment: .leading)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxHeight: Self.maximumBodyHeight, alignment: .top)
+                .clipped()
                 .padding(.horizontal, 22)
                 .padding(.vertical, 16)
                 Divider().overlay(WeiBeiTheme.hairline.opacity(0.45))
@@ -980,6 +992,76 @@ struct ConfirmedFileImportView: View {
         case .duplicate: WeiBeiTheme.tertiaryInk
         case .conflict: WeiBeiTheme.cinnabar
         }
+    }
+}
+
+private struct ConfirmedImportCappedBodyLayout: Layout {
+    let width: CGFloat
+    let maximumHeight: CGFloat
+    let stage: ConfirmedFileImportStage
+
+    struct Cache {
+        var lastLoggedContentHeight: CGFloat?
+        var lastLoggedSize: CGSize?
+    }
+
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        guard let measurement = subviews.first else { return .zero }
+        let contentSize = measurement.sizeThatFits(
+            ProposedViewSize(width: width, height: nil)
+        )
+        let result = CGSize(
+            width: width,
+            height: min(maximumHeight, max(1, ceil(contentSize.height)))
+        )
+        logMeasurementIfNeeded(contentHeight: contentSize.height, result: result, cache: &cache)
+        return result
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        guard subviews.count == 2 else { return }
+        let contentSize = subviews[0].sizeThatFits(
+            ProposedViewSize(width: width, height: nil)
+        )
+        subviews[0].place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: width, height: contentSize.height)
+        )
+        subviews[1].place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: width, height: bounds.height)
+        )
+    }
+
+    private func logMeasurementIfNeeded(
+        contentHeight: CGFloat,
+        result: CGSize,
+        cache: inout Cache
+    ) {
+        let roundedContentHeight = ceil(contentHeight)
+        guard Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.qa.cursorcloseout20260926",
+              cache.lastLoggedContentHeight != roundedContentHeight
+                || cache.lastLoggedSize != result else { return }
+        cache.lastLoggedContentHeight = roundedContentHeight
+        cache.lastLoggedSize = result
+        print(
+            "[ConfirmedImportLayout] stage=\(stage) "
+                + "contentHeight=\(roundedContentHeight) "
+                + "viewport=\(result.width)x\(result.height)"
+        )
     }
 }
 
