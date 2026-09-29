@@ -607,7 +607,9 @@ struct CatalystSheetBackground: UIViewRepresentable {
         var color = UIColor.clear
         var diagnosticContext: String?
         private var lastDiagnosticSignature: String?
+        private var lastResizeDiagnosticSignature: String?
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
+        override func layoutSubviews() { super.layoutSubviews(); configure() }
         func configure() {
             guard let window else { return }
             window.backgroundColor = color
@@ -619,6 +621,29 @@ struct CatalystSheetBackground: UIViewRepresentable {
                 responder = current.next
             }
             recordDiagnostics(window: window)
+            resizeImportSheetIfNeeded(window: window)
+        }
+
+        private func resizeImportSheetIfNeeded(window: UIWindow) {
+            guard diagnosticContext == "confirmed-file-import",
+                  let preferred = window.rootViewController?.preferredContentSize,
+                  preferred.width.isFinite, preferred.height.isFinite,
+                  preferred.width > 0, preferred.height > 0 else { return }
+            let result = CatalystDesktopWindow.shared.resizeWorkspaceSheetContent(
+                width: preferred.width,
+                height: preferred.height
+            )
+            let signature = "\(preferred)|\(window.bounds)|\(result)"
+            guard signature != lastResizeDiagnosticSignature else { return }
+            lastResizeDiagnosticSignature = signature
+            ConfirmedImportLayoutDiagnostics.append(
+                event: "native-sheet-resize",
+                values: [
+                    "result": result,
+                    "preferredContentSize": Self.record(for: preferred),
+                    "actualWindowBounds": Self.record(for: window.bounds)
+                ]
+            )
         }
 
         private func recordDiagnostics(window: UIWindow) {
@@ -645,8 +670,6 @@ struct CatalystSheetBackground: UIViewRepresentable {
             let presentation = root?.presentationController
             let sheetPresentation = root?.sheetPresentationController
             let prefersPageSizingBefore = sheetPresentation?.prefersPageSizing
-            sheetPresentation?.prefersPageSizing = false
-            let prefersPageSizingAfter = sheetPresentation?.prefersPageSizing
             let rootControllerType: String
             let presentationControllerType: String
             let sheetPresentationControllerType: String
@@ -666,16 +689,10 @@ struct CatalystSheetBackground: UIViewRepresentable {
                 sheetPresentationControllerType = ""
             }
             let prefersPageSizingBeforeValue: Any
-            let prefersPageSizingAfterValue: Any
             if let prefersPageSizingBefore {
                 prefersPageSizingBeforeValue = prefersPageSizingBefore
             } else {
                 prefersPageSizingBeforeValue = NSNull()
-            }
-            if let prefersPageSizingAfter {
-                prefersPageSizingAfterValue = prefersPageSizingAfter
-            } else {
-                prefersPageSizingAfterValue = NSNull()
             }
             let signature = [
                 "\(window.bounds)",
@@ -697,8 +714,7 @@ struct CatalystSheetBackground: UIViewRepresentable {
                     "responderControllers": controllerRecords,
                     "presentationControllerType": presentationControllerType,
                     "sheetPresentationControllerType": sheetPresentationControllerType,
-                    "prefersPageSizingBefore": prefersPageSizingBeforeValue,
-                    "prefersPageSizingAfter": prefersPageSizingAfterValue
+                    "prefersPageSizingBefore": prefersPageSizingBeforeValue
                 ]
             )
         }

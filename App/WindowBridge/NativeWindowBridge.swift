@@ -115,6 +115,19 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     func open(_ url: URL) -> Bool { NSWorkspace.shared.open(url) }
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func materialWindowCount() -> Int { materials.count }
+    @MainActor func resizeWorkspaceSheetContent(width: Double, height: Double) -> Bool {
+        guard width.isFinite, height.isFinite, width > 0, height > 0,
+              let keyWindow = NSApp.keyWindow else { return false }
+        let sheet = keyWindow.isSheet ? keyWindow : keyWindow.attachedSheet
+        guard let sheet, sheet.isSheet,
+              sheet.sheetParent?.toolbar?.identifier == "weibei.workspace" else { return false }
+        let requested = NSSize(width: width, height: height)
+        let actual = sheet.contentLayoutRect.size
+        if abs(actual.width - requested.width) >= 1 || abs(actual.height - requested.height) >= 1 {
+            sheet.setContentSize(requested)
+        }
+        return true
+    }
     @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void) {
         updateObservation = updateService.$status.combineLatest(updateService.$availableUpdate)
             .sink { status, update in
