@@ -578,7 +578,7 @@ struct ConfirmedFileImportView: View {
         .background(WeiBeiThemeBackdrop(mode: store.appearanceMode))
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
-        .modifier(ConfirmedImportFittedPresentation())
+        .modifier(WeiBeiFittedSheetPresentation())
         .interactiveDismissDisabled(batch?.stage == .importing)
         .sheet(isPresented: $creatingCourse) {
             CourseProjectEntrySheet(
@@ -1093,17 +1093,6 @@ enum ConfirmedImportLayoutDiagnostics {
             try handle.write(contentsOf: lineBreak)
         } catch {
             return
-        }
-    }
-}
-
-private struct ConfirmedImportFittedPresentation: ViewModifier {
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, macOS 15.0, *) {
-            content.presentationSizing(.fitted)
-        } else {
-            content
         }
     }
 }
