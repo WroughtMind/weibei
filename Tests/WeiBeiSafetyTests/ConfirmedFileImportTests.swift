@@ -533,6 +533,31 @@ final class ConfirmedFileImportTests: XCTestCase {
         ))
     }
 
+    func testCourseBatchRevealsItsExpandedSidebarGroup() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let first = fixture.outside.appendingPathComponent("第一讲.txt")
+        let second = fixture.outside.appendingPathComponent("第二讲.txt")
+        try Data("one".utf8).write(to: first)
+        try Data("two".utf8).write(to: second)
+        let courseID = try fixture.store.createCourseInLibrary(title: "批量课")
+        fixture.store.activateCourse(nil)
+        fixture.store.librarySearch = "旧搜索"
+        fixture.store.showLibrary = false
+        fixture.store.courseWorkspacePresented = true
+
+        fixture.store.prepareConfirmedFileImport([first, second], courseID: courseID)
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        XCTAssertEqual(fixture.store.activeCourseID, courseID)
+        XCTAssertEqual(fixture.store.librarySearch, "")
+        XCTAssertTrue(fixture.store.showLibrary)
+        XCTAssertFalse(fixture.store.courseWorkspacePresented)
+        XCTAssertEqual(fixture.store.recentlyImportedItemIDs.count, 2)
+    }
+
     func testCollisionPlanUsesCopyKernelWithoutWriting() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("weibei-confirmed-collision-\(UUID().uuidString)", isDirectory: true)
@@ -644,6 +669,8 @@ final class ConfirmedFileImportTests: XCTestCase {
         try Data("B".utf8).write(to: files[1])
         try Data("B".utf8).write(to: files[2])
 
+        fixture.store.librarySearch = "旧搜索"
+        fixture.store.showLibrary = false
         fixture.store.prepareConfirmedFileImport(files)
         waitForStage(.reviewing, in: fixture.store)
 
@@ -655,6 +682,8 @@ final class ConfirmedFileImportTests: XCTestCase {
         waitForImportIdle(in: fixture.store)
         XCTAssertNil(fixture.store.confirmedFileImport)
         XCTAssertEqual(fixture.store.recentlyImportedItemIDs.count, 2)
+        XCTAssertEqual(fixture.store.librarySearch, "")
+        XCTAssertTrue(fixture.store.showLibrary)
         XCTAssertTrue(fixture.store.transientNoteStatus?.contains("1 个已存在") == true)
         XCTAssertEqual(
             try Set(FileManager.default.contentsOfDirectory(

@@ -372,6 +372,10 @@ extension WorkspaceStore {
 
     func showConfirmedImportBatch() {
         guard let batch = confirmedFileImport, !batch.importedItems.isEmpty else { return }
+        librarySearch = ""
+        if let courseID = batch.courseID {
+            activateCourse(courseID)
+        }
         recentlyImportedItemIDs = Set(batch.importedItems.map(\.id))
         recentlyImportedClearTask?.cancel()
         recentlyImportedClearTask = Task { @MainActor [weak self] in
@@ -379,12 +383,8 @@ extension WorkspaceStore {
             guard !Task.isCancelled else { return }
             self?.recentlyImportedItemIDs = []
         }
-        if let courseID = batch.courseID {
-            presentCourseWorkspace(batch.importsMarkdownAsNotes ? .notes : .materials, courseID: courseID)
-        } else {
-            if courseWorkspacePresented { dismissCourseWorkspace() }
-            showLibrary = true
-        }
+        if courseWorkspacePresented { dismissCourseWorkspace(restoringFocus: false) }
+        revealLibrary()
         dismissConfirmedFileImport()
     }
 

@@ -94,6 +94,9 @@ final class CourseSidebarModel: ObservableObject {
     var unassignedMaterials: [CourseSidebarItemRow] { projection.unassignedMaterials }
     var unassignedNotes: [CourseSidebarItemRow] { projection.unassignedNotes }
     var searchTagTaskID: String { "\(tagInputGeneration):\(query)" }
+    var recentlyImportedItemIDs: Set<String> {
+        store?.recentlyImportedItemIDs ?? []
+    }
 
     init(store: WorkspaceStore) {
         interfaceLanguage = store.interfaceLanguage
@@ -154,6 +157,15 @@ final class CourseSidebarModel: ObservableObject {
         }.store(in: &subscriptions)
         store.$notebookRenameDraft.dropFirst().sink { [weak self] draft in
             self?.notebookRenameDraft = draft
+        }.store(in: &subscriptions)
+        store.$recentlyImportedItemIDs.dropFirst().sink { [weak self] itemIDs in
+            guard let self else { return }
+            if !itemIDs.isEmpty,
+               !self.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.updateQuery("")
+            } else {
+                self.objectWillChange.send()
+            }
         }.store(in: &subscriptions)
         store.$interfaceLanguage.dropFirst().sink { [weak self] language in
             self?.interfaceLanguage = language
@@ -263,6 +275,23 @@ final class CourseSidebarModel: ObservableObject {
         query = value
         store.librarySearch = value
         scheduleRebuild()
+    }
+
+    func firstVisibleItemID(in itemIDs: Set<String>) -> String? {
+        guard !itemIDs.isEmpty else { return nil }
+        if let activeCourseID,
+           let activeCourse = projection.courses.first(where: { $0.id == activeCourseID }) {
+            if let material = activeCourse.materials.first(where: { itemIDs.contains($0.id) }) {
+                return material.id
+            }
+            if let note = activeCourse.notes.first(where: { itemIDs.contains($0.id) }) {
+                return note.id
+            }
+        }
+        if let material = projection.unassignedMaterials.first(where: { itemIDs.contains($0.id) }) {
+            return material.id
+        }
+        return projection.unassignedNotes.first(where: { itemIDs.contains($0.id) })?.id
     }
 
     private func itemMatches(
