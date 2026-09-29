@@ -640,12 +640,16 @@ struct CatalystSheetBackground: UIViewRepresentable {
                 ]
             )
             DispatchQueue.main.async { [weak self, weak window, weak scene] in
-                guard let self, let window, let scene,
-                      window.windowScene === scene else { return }
+                guard let self else { return }
+                guard let window, let scene, window.windowScene === scene else {
+                    self.clearGeometryRequest(signature)
+                    return
+                }
                 self.requestImportSheetGeometryUpdate(
                     window: window,
                     scene: scene,
-                    preferred: preferred
+                    preferred: preferred,
+                    signature: signature
                 )
             }
         }
@@ -653,14 +657,18 @@ struct CatalystSheetBackground: UIViewRepresentable {
         private func requestImportSheetGeometryUpdate(
             window: UIWindow,
             scene: UIWindowScene,
-            preferred: CGSize
+            preferred: CGSize,
+            signature: String
         ) {
             let sourceFrame = scene.effectiveGeometry.systemFrame
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
             guard !Self.sameSize(window.bounds.size, preferred),
                   Self.sameSize(sourceFrame.size, window.bounds.size),
                   rootedWindows.count == 1,
-                  rootedWindows[0] === window else { return }
+                  rootedWindows[0] === window else {
+                clearGeometryRequest(signature)
+                return
+            }
             let targetFrame = Self.centeredFrame(size: preferred, in: sourceFrame)
             ConfirmedImportLayoutDiagnostics.append(
                 event: "scene-geometry-update-requested",
@@ -670,7 +678,8 @@ struct CatalystSheetBackground: UIViewRepresentable {
                     "targetFrame": Self.record(for: targetFrame)
                 ]
             )
-            scene.requestGeometryUpdate(.Mac(systemFrame: targetFrame)) { error in
+            scene.requestGeometryUpdate(.Mac(systemFrame: targetFrame)) { [weak self] error in
+                self?.clearGeometryRequest(signature)
                 ConfirmedImportLayoutDiagnostics.append(
                     event: "scene-geometry-update-error",
                     values: [
@@ -679,18 +688,90 @@ struct CatalystSheetBackground: UIViewRepresentable {
                     ]
                 )
             }
-            DispatchQueue.main.async { [weak window, weak scene] in
-                guard let window, let scene else { return }
+            DispatchQueue.main.async { [weak self, weak window, weak scene] in
+                guard let self, let window, let scene else { return }
+                let coordinateSpaceBounds = Self.coordinateSpaceBounds(for: scene)
                 ConfirmedImportLayoutDiagnostics.append(
                     event: "scene-geometry-update-result",
                     values: [
                         "sceneIdentifier": scene.session.persistentIdentifier,
                         "effectiveFrame": Self.record(for: scene.effectiveGeometry.systemFrame),
+                        "coordinateSpaceBounds": Self.record(for: coordinateSpaceBounds),
                         "sourceWindowBounds": Self.record(for: window.bounds),
+                        "sourceWindowFrame": Self.record(for: window.frame),
+                        "sourceWindowAutoresizingMask": Int(window.autoresizingMask.rawValue),
                         "preferredContentSize": Self.record(for: preferred),
                         "matchesPreferred": Self.sameSize(window.bounds.size, preferred)
                     ]
                 )
+                self.synchronizeWindowWithSceneIfNeeded(
+                    window: window,
+                    scene: scene,
+                    preferred: preferred
+                )
+            }
+        }
+
+        private func synchronizeWindowWithSceneIfNeeded(
+            window: UIWindow,
+            scene: UIWindowScene,
+            preferred: CGSize
+        ) {
+            let effectiveFrame = scene.effectiveGeometry.systemFrame
+            let coordinateSpaceBounds = Self.coordinateSpaceBounds(for: scene)
+            let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
+            guard window.windowScene === scene,
+                  rootedWindows.count == 1,
+                  rootedWindows[0] === window,
+                  Self.sameSize(effectiveFrame.size, preferred),
+                  !Self.sameSize(window.bounds.size, preferred) else { return }
+            let targetWindowFrame = Self.sameSize(coordinateSpaceBounds.size, preferred)
+                ? coordinateSpaceBounds
+                : CGRect(origin: coordinateSpaceBounds.origin, size: preferred)
+            ConfirmedImportLayoutDiagnostics.append(
+                event: "uiwindow-scene-sync-before",
+                values: [
+                    "effectiveFrame": Self.record(for: effectiveFrame),
+                    "coordinateSpaceBounds": Self.record(for: coordinateSpaceBounds),
+                    "coordinateSpaceMatchesPreferred": Self.sameSize(
+                        coordinateSpaceBounds.size,
+                        preferred
+                    ),
+                    "targetWindowFrame": Self.record(for: targetWindowFrame),
+                    "windowFrame": Self.record(for: window.frame),
+                    "windowBounds": Self.record(for: window.bounds),
+                    "autoresizingMask": Int(window.autoresizingMask.rawValue)
+                ]
+            )
+            window.frame = targetWindowFrame
+            ConfirmedImportLayoutDiagnostics.append(
+                event: "uiwindow-scene-sync-after-immediate",
+                values: [
+                    "windowFrame": Self.record(for: window.frame),
+                    "windowBounds": Self.record(for: window.bounds),
+                    "rootViewBounds": Self.record(for: window.rootViewController?.view.bounds ?? .zero),
+                    "autoresizingMask": Int(window.autoresizingMask.rawValue)
+                ]
+            )
+            DispatchQueue.main.async { [weak window, weak scene] in
+                guard let window, let scene else { return }
+                ConfirmedImportLayoutDiagnostics.append(
+                    event: "uiwindow-scene-sync-after-next-runloop",
+                    values: [
+                        "effectiveFrame": Self.record(for: scene.effectiveGeometry.systemFrame),
+                        "coordinateSpaceBounds": Self.record(for: Self.coordinateSpaceBounds(for: scene)),
+                        "windowFrame": Self.record(for: window.frame),
+                        "windowBounds": Self.record(for: window.bounds),
+                        "rootViewBounds": Self.record(for: window.rootViewController?.view.bounds ?? .zero),
+                        "autoresizingMask": Int(window.autoresizingMask.rawValue)
+                    ]
+                )
+            }
+        }
+
+        private func clearGeometryRequest(_ signature: String) {
+            if lastGeometryRequestSignature == signature {
+                lastGeometryRequestSignature = nil
             }
         }
 
@@ -803,6 +884,13 @@ struct CatalystSheetBackground: UIViewRepresentable {
                 width: size.width,
                 height: size.height
             )
+        }
+
+        private static func coordinateSpaceBounds(for scene: UIWindowScene) -> CGRect {
+            if #available(iOS 26.0, *) {
+                return scene.effectiveGeometry.coordinateSpace.bounds
+            }
+            return scene.coordinateSpace.bounds
         }
     }
 }
