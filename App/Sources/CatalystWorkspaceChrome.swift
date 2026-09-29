@@ -612,7 +612,7 @@ struct CatalystSheetBackground: UIViewRepresentable {
         }
 
         private func recordDiagnostics(window: UIWindow) {
-            guard diagnosticContext != nil else { return }
+            guard diagnosticContext == "confirmed-file-import" else { return }
             var controllerRecords: [[String: Any]] = []
             var controllerSignatures: [String] = []
             var controllerIDs = Set<ObjectIdentifier>()
@@ -632,10 +632,15 @@ struct CatalystSheetBackground: UIViewRepresentable {
             }
             let rootBounds = root?.view.bounds ?? .zero
             let rootPreferred = root?.preferredContentSize ?? .zero
+            let presentation = root?.presentationController
+            let sheetPresentation = root?.sheetPresentationController
+            let prefersPageSizingBefore = sheetPresentation?.prefersPageSizing
+            sheetPresentation?.prefersPageSizing = false
             let signature = [
                 "\(window.bounds)",
                 "\(rootBounds)",
                 "\(rootPreferred)",
+                String(describing: prefersPageSizingBefore),
                 controllerSignatures.joined(separator: ";")
             ].joined(separator: "|")
             guard signature != lastDiagnosticSignature else { return }
@@ -648,7 +653,15 @@ struct CatalystSheetBackground: UIViewRepresentable {
                     "rootViewBounds": Self.record(for: rootBounds),
                     "rootPreferredContentSize": Self.record(for: rootPreferred),
                     "rootControllerType": root.map { String(reflecting: type(of: $0)) } ?? "",
-                    "responderControllers": controllerRecords
+                    "responderControllers": controllerRecords,
+                    "presentationControllerType": presentation.map {
+                        String(reflecting: type(of: $0))
+                    } ?? "",
+                    "sheetPresentationControllerType": sheetPresentation.map {
+                        String(reflecting: type(of: $0))
+                    } ?? "",
+                    "prefersPageSizingBefore": prefersPageSizingBefore.map { $0 as Any } ?? NSNull(),
+                    "prefersPageSizingAfter": sheetPresentation?.prefersPageSizing.map { $0 as Any } ?? NSNull()
                 ]
             )
         }
