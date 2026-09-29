@@ -38,7 +38,8 @@ struct ConfirmedFileImportBatch: Identifiable, Equatable, Sendable {
     var unsupportedNames: [String] = []
     var importedItems: [StudyItem] = []
     var failures: [ConfirmedFileImportFailure] = []
-    var previousSkippedCount = 0
+    var previousDuplicateCount = 0
+    var previousUnsupportedCount = 0
     var completed = 0
     var total = 0
     var currentFileName: String?
@@ -51,9 +52,16 @@ struct ConfirmedFileImportBatch: Identifiable, Equatable, Sendable {
     }
 
     var skippedCount: Int {
-        previousSkippedCount
-            + unsupportedNames.count
+        duplicateCount + unsupportedCount
+    }
+
+    var duplicateCount: Int {
+        previousDuplicateCount
             + candidates.filter { $0.disposition == .duplicate }.count
+    }
+
+    var unsupportedCount: Int {
+        previousUnsupportedCount + unsupportedNames.count
     }
 }
 
@@ -165,7 +173,8 @@ extension WorkspaceStore {
             courseID: batch.courseID,
             importsMarkdownAsNotes: batch.importsMarkdownAsNotes,
             importedItems: batch.importedItems,
-            previousSkippedCount: batch.skippedCount,
+            previousDuplicateCount: batch.duplicateCount,
+            previousUnsupportedCount: batch.unsupportedCount,
             pendingSourceURLs: batch.pendingSourceURLs
         )
         refreshConfirmedFileImportPlan()
@@ -177,6 +186,7 @@ extension WorkspaceStore {
               batch.confirmableCount > 0,
               batch.destinationError == nil else { return }
         batch.stage = .importing
+        let preflightFailures = batch.failures
         batch.failures = []
         batch.completed = 0
         batch.total = batch.candidates.count + batch.unsupportedNames.count
@@ -190,7 +200,7 @@ extension WorkspaceStore {
             guard let self else { return }
             var batch = initialBatch
             var imported = batch.importedItems
-            var failures: [ConfirmedFileImportFailure] = []
+            var failures = preflightFailures
             var completed = batch.unsupportedNames.count
             for candidate in batch.candidates {
                 if confirmedFileImportStopRequested {
@@ -238,7 +248,7 @@ extension WorkspaceStore {
             batch.stopped = batch.stopped || confirmedFileImportStopRequested
             confirmedFileImportStopRequested = false
             confirmedFileImportTask = nil
-            publishConfirmedFileImportProgress(batch)
+            settleConfirmedFileImport(batch)
         }
     }
 
@@ -252,6 +262,96 @@ extension WorkspaceStore {
             }
         }
         confirmedFileImport = next
+    }
+
+    private func settleConfirmedFileImport(_ batch: ConfirmedFileImportBatch) {
+        guard confirmedFileImport?.id == batch.id else { return }
+        publishConfirmedFileImportProgress(batch)
+        guard let settled = confirmedFileImport, settled.id == batch.id else { return }
+        if settled.stopped,
+           settled.failures.isEmpty,
+           settled.pendingSourceURLs.isEmpty {
+            let remaining = max(0, settled.total - settled.completed)
+            dismissConfirmedFileImport()
+            showTransientNoteStatus(
+                remaining > 0
+                    ? ui(
+                        "导入已停止；\(remaining) 份未导入。",
+                        "Import stopped; \(remaining) item(s) were not imported."
+                    )
+                    : ui(
+                        "导入已停止；已完成的导入仍然保留。",
+                        "Import stopped. Completed imports were kept."
+                    )
+            )
+            return
+        }
+        guard settled.failures.isEmpty,
+              !settled.stopped,
+              settled.pendingSourceURLs.isEmpty else { return }
+
+        let feedback = confirmedImportCompletionFeedback(settled)
+        if settled.importedItems.count == 1 {
+            openSingleConfirmedImport()
+        } else if !settled.importedItems.isEmpty {
+            showConfirmedImportBatch()
+        } else {
+            dismissConfirmedFileImport()
+        }
+        if let feedback {
+            showTransientNoteStatus(feedback)
+        }
+    }
+
+    private func confirmedImportCompletionFeedback(_ batch: ConfirmedFileImportBatch) -> String? {
+        let imported = batch.importedItems.count
+        let duplicates = batch.duplicateCount
+        let unsupported = batch.unsupportedCount
+        let chineseRole = batch.importsMarkdownAsNotes ? "笔记" : "资料"
+        let englishRole = batch.importsMarkdownAsNotes ? "notes" : "materials"
+        if imported == 0 {
+            if duplicates > 0, unsupported > 0 {
+                return ui(
+                    "没有新增内容；\(duplicates) 个已存在，\(unsupported) 个格式不支持。",
+                    "Nothing new was imported. \(duplicates) already existed and \(unsupported) had unsupported formats."
+                )
+            }
+            if duplicates > 0 {
+                return ui(
+                    "这 \(duplicates) 份\(chineseRole)已存在，未重复导入。",
+                    "These \(duplicates) \(englishRole) already exist and were not imported again."
+                )
+            }
+            if unsupported > 0 {
+                return ui(
+                    "没有可导入的文件；\(unsupported) 个格式不支持。",
+                    "No files could be imported; \(unsupported) had unsupported formats."
+                )
+            }
+            return ui(
+                "所选内容没有可导入的文件。",
+                "The selected content has no importable files."
+            )
+        }
+        if duplicates > 0, unsupported > 0 {
+            return ui(
+                "\(duplicates) 个已存在未重复导入，\(unsupported) 个格式不支持。",
+                "\(duplicates) already existed and were not imported again; \(unsupported) had unsupported formats."
+            )
+        }
+        if duplicates > 0 {
+            return ui(
+                "\(duplicates) 个已存在，未重复导入。",
+                "\(duplicates) already existed and were not imported again."
+            )
+        }
+        if unsupported > 0 {
+            return ui(
+                "\(unsupported) 个格式不支持，未导入。",
+                "\(unsupported) had unsupported formats and were not imported."
+            )
+        }
+        return nil
     }
 
     func openSingleConfirmedImport() {
@@ -337,31 +437,45 @@ extension WorkspaceStore {
             current.stage = .reviewing
             current.candidates = plan.candidates
             current.unsupportedNames = plan.unsupportedNames
+            current.failures = plan.unavailableSourceURLs.map {
+                ConfirmedFileImportFailure(
+                    sourceURL: $0,
+                    message: self.ui(
+                        "文件已移动、删除或暂时无法访问。请恢复文件后重试。",
+                        "The file was moved, deleted, or is temporarily unavailable. Restore it, then retry."
+                    )
+                )
+            }
             confirmedFileImportTask = nil
-            confirmedFileImport = current
+            if current.candidates.isEmpty {
+                confirmedFileImport = current
+                if current.failures.isEmpty {
+                    let feedback = confirmedImportCompletionFeedback(current)
+                    dismissConfirmedFileImport()
+                    if let feedback { showTransientNoteStatus(feedback) }
+                } else {
+                    current.stage = .finished
+                    confirmedFileImport = current
+                }
+            } else {
+                confirmedFileImport = current
+            }
         }
     }
 
     nonisolated static func makeConfirmedFileImportPlan(
         urls: [URL], destination: URL, markdownOnly: Bool
-    ) -> (candidates: [ConfirmedFileImportCandidate], unsupportedNames: [String]) {
+    ) -> (
+        candidates: [ConfirmedFileImportCandidate],
+        unsupportedNames: [String],
+        unavailableSourceURLs: [URL]
+    ) {
         let expansion = CourseProjectFileWorker.expandedImportSelection(
             from: urls,
             markdownOnly: markdownOnly
         )
         let expanded = expansion.supported
-        var unsupported = expansion.unsupportedNames
-        unsupported.append(contentsOf: urls.compactMap { url -> String? in
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
-            guard values?.isDirectory == true else { return nil }
-            let nested = CourseProjectFileWorker.expandedImportSelection(
-                    from: [url],
-                    markdownOnly: markdownOnly
-            )
-            return nested.supported.isEmpty && nested.unsupportedNames.isEmpty
-                ? url.lastPathComponent
-                : nil
-        })
+        let unsupported = expansion.unsupportedNames
         var candidates: [ConfirmedFileImportCandidate] = []
         var reservedTargetNames = Set<String>()
         var reservedSourcesByOriginalName: [String: [URL]] = [:]
@@ -399,7 +513,7 @@ extension WorkspaceStore {
             reservedSourcesByOriginalName[originalName, default: []].append(url)
             candidates.append(ConfirmedFileImportCandidate(sourceURL: url, disposition: disposition))
         }
-        return (candidates, unsupported.sorted())
+        return (candidates, unsupported.sorted(), expansion.unavailableSourceURLs)
     }
 
     nonisolated private static func nextConfirmedImportTargetName(
@@ -636,7 +750,7 @@ struct ConfirmedFileImportView: View {
     }
 
     private func fileSummary(_ batch: ConfirmedFileImportBatch) -> some View {
-        let fileCount = batch.candidates.count + batch.unsupportedNames.count
+        let fileCount = batch.candidates.count + batch.unsupportedNames.count + batch.failures.count
         return VStack(alignment: .leading, spacing: 8) {
             if !batch.sourceFolderNames.isEmpty {
                 Text(store.ui(
@@ -658,6 +772,12 @@ struct ConfirmedFileImportView: View {
                         Divider().overlay(WeiBeiTheme.hairline.opacity(0.30))
                     }
                     unsupportedRow(name, asNotes: batch.importsMarkdownAsNotes)
+                }
+                ForEach(Array(batch.failures.enumerated()), id: \.element.id) { index, failure in
+                    if !batch.candidates.isEmpty || !batch.unsupportedNames.isEmpty || index > 0 {
+                        Divider().overlay(WeiBeiTheme.hairline.opacity(0.30))
+                    }
+                    unavailableSourceRow(failure)
                 }
             }
         }
@@ -699,8 +819,8 @@ struct ConfirmedFileImportView: View {
                     .truncationMode(.middle)
                 Text(
                     asNotes
-                        ? store.ui("仅支持 Markdown，已跳过", "Markdown only; skipped")
-                        : store.ui("不支持，已跳过", "Unsupported; skipped")
+                        ? store.ui("仅支持 Markdown", "Markdown only")
+                        : store.ui("格式不支持", "Unsupported format")
                 )
                 .weiBeiText(12, weight: .medium)
             }
@@ -708,6 +828,25 @@ struct ConfirmedFileImportView: View {
         .foregroundStyle(WeiBeiTheme.cinnabar)
         .padding(.vertical, 6)
         .help(name)
+    }
+
+    private func unavailableSourceRow(_ failure: ConfirmedFileImportFailure) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle")
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(failure.sourceURL.lastPathComponent)
+                    .weiBeiText(13)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                Text(failure.message)
+                    .weiBeiText(12, weight: .medium)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .foregroundStyle(WeiBeiTheme.cinnabar)
+        .padding(.vertical, 6)
+        .help(failure.sourceURL.lastPathComponent)
     }
 
     private func destinationPicker(_ batch: ConfirmedFileImportBatch) -> some View {
@@ -777,20 +916,8 @@ struct ConfirmedFileImportView: View {
     private func result(_ batch: ConfirmedFileImportBatch) -> some View {
         let commonFailureMessage = sharedFailureMessage(batch)
         return VStack(alignment: .leading, spacing: 14) {
-            if isSimpleSingleSuccess(batch), let item = batch.importedItems.first {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.subtitle)
-                        .weiBeiText(13, weight: .semibold)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                    Text(store.ui("已导入", "Imported"))
-                        .weiBeiText(12)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                }
-            } else {
-                Text(resultSummary(batch))
-                    .weiBeiText(13, weight: .semibold)
-            }
+            Text(resultSummary(batch))
+                .weiBeiText(13, weight: .semibold)
             if batch.stopped, !batch.pendingSourceURLs.isEmpty {
                 Text(store.ui(
                     "已停止；\(batch.pendingSourceURLs.count) 个文件未处理。已完成的导入已保留，原文件未变。",
@@ -843,14 +970,6 @@ struct ConfirmedFileImportView: View {
         }
     }
 
-    private func isSimpleSingleSuccess(_ batch: ConfirmedFileImportBatch) -> Bool {
-        batch.importedItems.count == 1
-            && batch.skippedCount == 0
-            && batch.failures.isEmpty
-            && !batch.stopped
-            && batch.pendingSourceURLs.isEmpty
-    }
-
     @ViewBuilder
     private func resultButtons(_ batch: ConfirmedFileImportBatch) -> some View {
         if !batch.pendingSourceURLs.isEmpty {
@@ -880,39 +999,15 @@ struct ConfirmedFileImportView: View {
                 .keyboardShortcut(.defaultAction)
             }
         } else if !batch.failures.isEmpty {
-            Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
+            Button(store.ui("关闭", "Close")) { store.dismissConfirmedFileImport() }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
             Button(store.ui("重试失败项", "Retry Failed")) {
                 store.retryFailedConfirmedFileImport()
             }
             .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
             .keyboardShortcut(.defaultAction)
-        } else if batch.importedItems.count == 1 {
-            Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
-                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
-            Button(
-                batch.importsMarkdownAsNotes
-                    ? store.ui("打开笔记", "Open Note")
-                    : store.ui("打开文稿", "Open Document")
-            ) {
-                store.openSingleConfirmedImport()
-            }
-            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
-            .keyboardShortcut(.defaultAction)
-        } else if batch.importedItems.count > 1 {
-            Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
-                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
-            Button(
-                batch.importsMarkdownAsNotes
-                    ? store.ui("查看已导入笔记", "View Imported Notes")
-                    : store.ui("查看已导入资料", "View Imported Items")
-            ) {
-                store.showConfirmedImportBatch()
-            }
-            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
-            .keyboardShortcut(.defaultAction)
         } else {
-            Button(store.ui("完成", "Done")) { store.dismissConfirmedFileImport() }
+            Button(store.ui("关闭", "Close")) { store.dismissConfirmedFileImport() }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 .keyboardShortcut(.defaultAction)
         }
@@ -925,9 +1020,13 @@ struct ConfirmedFileImportView: View {
             chinese.append("\(batch.importedItems.count)个已导入")
             english.append("\(batch.importedItems.count) imported")
         }
-        if batch.skippedCount > 0 {
-            chinese.append("\(batch.skippedCount)个已跳过")
-            english.append("\(batch.skippedCount) skipped")
+        if batch.duplicateCount > 0 {
+            chinese.append("\(batch.duplicateCount)个已存在")
+            english.append("\(batch.duplicateCount) already existed")
+        }
+        if batch.unsupportedCount > 0 {
+            chinese.append("\(batch.unsupportedCount)个格式不支持")
+            english.append("\(batch.unsupportedCount) unsupported")
         }
         if !batch.failures.isEmpty {
             chinese.append("\(batch.failures.count)个失败")
@@ -960,7 +1059,7 @@ struct ConfirmedFileImportView: View {
     private func candidateLabel(_ candidate: ConfirmedFileImportCandidate) -> String {
         switch candidate.disposition {
         case .ready: return store.ui("可导入", "Ready")
-        case .duplicate: return store.ui("重复，跳过", "Duplicate, skip")
+        case .duplicate: return store.ui("已存在", "Already exists")
         case .conflict(let name): return store.ui("同名，另存为 \(name)", "Name conflict, save as \(name)")
         }
     }
