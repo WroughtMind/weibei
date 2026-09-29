@@ -584,21 +584,44 @@ struct CatalystWindowChrome: UIViewRepresentable {
 }
 
 // SwiftUI's Mac Catalyst sheet is hosted in a separate UIKit window.
+struct CatalystIndependentSheetFitting: ViewModifier {
+    let color: UIColor
+    @State private var contentSize = CGSize.zero
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGSize.self) { proxy in
+                proxy.size
+            } action: { size in
+                contentSize = size
+            }
+            .background(CatalystIndependentSheetSizingProbe(
+                color: color,
+                contentSize: contentSize
+            ))
+    }
+}
+
 struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
     let color: UIColor
-    var followsContentSize = false
+    var contentSize: CGSize?
+
+    init(color: UIColor, contentSize: CGSize? = nil) {
+        self.color = color
+        self.contentSize = contentSize
+    }
 
     func makeUIView(context: Context) -> Probe { Probe() }
 
     func updateUIView(_ view: Probe, context: Context) {
         view.color = color
-        view.followsContentSize = followsContentSize
+        view.contentSize = contentSize
         view.configure()
     }
 
     final class Probe: UIView {
         var color = UIColor.clear
-        var followsContentSize = false
+        var contentSize: CGSize?
         private var lastGeometryRequestSignature: String?
 
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
@@ -614,12 +637,11 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                 }
                 responder = current.next
             }
-            guard followsContentSize else { return }
-            resizeSheetIfNeeded(window: window)
+            guard let contentSize else { return }
+            resizeSheetIfNeeded(window: window, targetSize: contentSize)
         }
 
-        private func resizeSheetIfNeeded(window: UIWindow) {
-            let targetSize = bounds.size
+        private func resizeSheetIfNeeded(window: UIWindow, targetSize: CGSize) {
             guard targetSize.width.isFinite, targetSize.height.isFinite,
                   targetSize.width > 0, targetSize.height > 0,
                   !Self.sameSize(window.bounds.size, targetSize),
@@ -655,7 +677,8 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             signature: String
         ) {
             guard self.window === window,
-                  Self.sameSize(bounds.size, targetSize) else {
+                  let contentSize,
+                  Self.sameSize(contentSize, targetSize) else {
                 clearGeometryRequest(signature)
                 return
             }
@@ -700,7 +723,8 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                     ? coordinateSpaceBounds
                     : CGRect(origin: coordinateSpaceBounds.origin, size: targetSize)
             }
-            guard !Self.sameSize(bounds.size, targetSize) else { return }
+            guard let contentSize,
+                  !Self.sameSize(contentSize, targetSize) else { return }
             DispatchQueue.main.async { [weak self, weak window] in
                 guard let self, let window, self.window === window else { return }
                 self.configure()
