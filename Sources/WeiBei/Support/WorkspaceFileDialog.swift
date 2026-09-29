@@ -9,6 +9,11 @@ import AppKit
 /// The same file-operation choices on both hosts. A dismissed dialog cancels.
 @MainActor
 enum WorkspaceFileDialog {
+    static let markdownType = UTType(
+        importedAs: "net.daringfireball.markdown",
+        conformingTo: .plainText
+    )
+
     struct Choice {
         let index: Int
         let text: String?
