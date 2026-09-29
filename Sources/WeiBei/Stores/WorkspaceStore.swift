@@ -744,7 +744,7 @@ final class WorkspaceStore: ObservableObject {
     /// 先登记、不动文件。内存态即可：重启丢基线只少一次自动改名，方向安全。
     var headingSyncedNoteStemByItemID: [String: String] = [:]
     var loadedCourseNoteTextByItemID: [String: String] = [:]
-    var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
+    @Published var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
     var courseNoteWritesInFlight = Set<String>()
     var courseNoteWriteTasksByItemID: [String: Task<Void, Never>] = [:]
@@ -1157,7 +1157,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    deinit {
+    isolated deinit {
         courseReconciliationTask?.cancel()
         courseNoteLoadTasksByItemID.values.forEach { $0.cancel() }
         courseNoteWriteTasksByItemID.values.forEach { $0.cancel() }
