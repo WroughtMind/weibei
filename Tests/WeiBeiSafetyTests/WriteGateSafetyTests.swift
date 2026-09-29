@@ -195,6 +195,38 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertEqual(store.lastSelfWrittenNoteDigestsByItemID[item.id], Self.digest(of: "第二版"))
     }
 
+    func testGateAdoptsIdenticalExternalDiskContentWithoutConflict() throws {
+        let base = makeTempRoot("weibei-gate-identical-external-content")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
+        let store = WorkspaceStore(
+            workspaceDirectory: base.appendingPathComponent("workspace", isDirectory: true),
+            noteBackupRootURL: backupRoot,
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        let original = "# 原文\n\n这是原始正文。\n"
+        let external = original + "\n这句来自应用外部。\n"
+        let itemID = "imported:identical-external-content"
+        let url = base.appendingPathComponent("合成笔记.md")
+
+        try original.write(to: url, atomically: true, encoding: .utf8)
+        try external.write(to: url, atomically: true, encoding: .utf8)
+
+        XCTAssertNoThrow(
+            try store.writeNotebookMarkdownThroughGate(
+                external,
+                itemID: itemID,
+                url: url,
+                expectedBaseline: Self.digest(of: original)
+            ),
+            "干净快照与当前磁盘正文完全一致时，旧基线不应制造外部修改冲突"
+        )
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), external)
+        XCTAssertEqual(store.noteBackingContentDigestsByItemID[itemID], Self.digest(of: external))
+        XCTAssertEqual(store.lastSelfWrittenNoteDigestsByItemID[itemID], Self.digest(of: external))
+    }
+
     func testRenameRewriteRoutesThroughGate() throws {
         let base = makeTempRoot("weibei-gate-rename")
         defer { try? FileManager.default.removeItem(at: base) }
