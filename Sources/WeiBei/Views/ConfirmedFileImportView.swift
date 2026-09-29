@@ -512,30 +512,16 @@ extension WorkspaceStore {
 
 struct ConfirmedFileImportView: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @State private var courseSearch = ""
     @State private var creatingCourse = false
 
-    private static let bodyWidth: CGFloat = 456
-    private static let maximumBodyHeight: CGFloat = 350
+    private static let bodyWidth: CGFloat = 396
+    private static let maximumBodyHeight: CGFloat = 300
 
     private var batch: ConfirmedFileImportBatch? { store.confirmedFileImport }
-    private var contentSizeRevision: String {
-        "\(String(reflecting: batch))|\(courseSearch)|\(creatingCourse)"
-    }
-    private var matchingCourses: [Course] {
-        let query = courseSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.isEmpty ? store.courses : store.courses.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-        }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let batch {
-                heading(batch)
-                    .padding(.horizontal, 22)
-                    .padding(.top, 20)
-                    .padding(.bottom, 15)
                 ConfirmedImportCappedBodyLayout(
                     width: Self.bodyWidth,
                     maximumHeight: Self.maximumBodyHeight
@@ -554,19 +540,19 @@ struct ConfirmedFileImportView: View {
                 }
                 .clipped()
                 .padding(.horizontal, 22)
-                .padding(.vertical, 16)
+                .padding(.top, 22)
                 footer(batch)
                     .padding(.horizontal, 22)
-                    .padding(.vertical, 13)
+                    .padding(.top, 12)
+                    .padding(.bottom, 22)
             }
         }
-        .frame(width: 500, alignment: .topLeading)
+        .frame(width: 440, alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
 #if targetEnvironment(macCatalyst)
         .background(CatalystIndependentSheetSizingProbe(
             color: WeiBeiNativePalette.paper(),
-            followsContentSize: true,
-            contentSizeRevision: contentSizeRevision
+            followsContentSize: true
         ))
 #endif
         .background(WeiBeiGlassForegroundSheet(mode: store.appearanceMode))
@@ -639,37 +625,6 @@ struct ConfirmedFileImportView: View {
         }
     }
 
-    private func heading(_ batch: ConfirmedFileImportBatch) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(headingTitle(batch))
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
-            if let detail = headingDetail(batch) {
-                Text(detail)
-                    .weiBeiText(12)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-        }
-    }
-
-    private func headingTitle(_ batch: ConfirmedFileImportBatch) -> String {
-        switch batch.stage {
-        case .preparing, .reviewing: store.ui("确认导入", "Confirm Import")
-        case .importing: store.ui("正在导入", "Importing")
-        case .finished: store.ui("导入结果", "Import Results")
-        }
-    }
-
-    private func headingDetail(_ batch: ConfirmedFileImportBatch) -> String? {
-        switch batch.stage {
-        case .preparing, .reviewing:
-            store.ui("导入副本，保留原文件。", "Import a copy and keep the original.")
-        case .importing:
-            destinationDescription(batch)
-        case .finished:
-            nil
-        }
-    }
-
     private func review(_ batch: ConfirmedFileImportBatch) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             fileSummary(batch)
@@ -684,20 +639,11 @@ struct ConfirmedFileImportView: View {
     }
 
     private func fileSummary(_ batch: ConfirmedFileImportBatch) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(store.ui(
-                "本批内容 · \(batch.candidates.count + batch.unsupportedNames.count) 个",
-                "This batch · \(batch.candidates.count + batch.unsupportedNames.count) items"
-            ))
+        let fileCount = batch.candidates.count + batch.unsupportedNames.count
+        return VStack(alignment: .leading, spacing: 8) {
+            if fileCount > 1 {
+                Text(store.ui("\(fileCount)个文件", "\(fileCount) files"))
                 .weiBeiText(12, weight: .semibold)
-            if batch.sourceFolderNames.count > 1 {
-                Text(store.ui(
-                    "来源文件夹：\(batch.sourceFolderNames.joined(separator: "、"))",
-                    "Source folders: \(batch.sourceFolderNames.joined(separator: ", "))"
-                ))
-                .weiBeiText(12)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                .lineLimit(2)
             }
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(batch.candidates.enumerated()), id: \.element.id) { index, candidate in
@@ -710,14 +656,6 @@ struct ConfirmedFileImportView: View {
                     }
                     unsupportedRow(name, asNotes: batch.importsMarkdownAsNotes)
                 }
-            }
-            if !batch.sourceFolderNames.isEmpty {
-                Text(store.ui(
-                    "文件夹内只导入支持的文稿；隐藏文件和应用会跳过。",
-                    "Only supported documents are imported from folders; hidden files and apps are skipped."
-                ))
-                .weiBeiText(12)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
         }
     }
@@ -770,73 +708,54 @@ struct ConfirmedFileImportView: View {
     }
 
     private func destinationPicker(_ batch: ConfirmedFileImportBatch) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 12) {
             Text(store.ui("导入到", "Import to"))
                 .weiBeiText(12, weight: .semibold)
-            if !store.courses.isEmpty {
-                WeiBeiSearchField(
-                    text: $courseSearch,
-                    prompt: store.ui("搜索课程", "Search courses"),
-                    isFocused: .constant(false),
-                    fontSize: 12,
-                    focusesOnAppear: false,
-                    chromeHeight: 30
+            Spacer(minLength: 0)
+            Menu {
+                Button {
+                    store.setConfirmedFileImportDestination(courseID: nil)
+                } label: {
+                    if batch.courseID == nil {
+                        Label(commonDestinationTitle(batch), systemImage: "checkmark")
+                    } else {
+                        Text(commonDestinationTitle(batch))
+                    }
+                }
+                ForEach(store.courses) { course in
+                    Button {
+                        store.setConfirmedFileImportDestination(courseID: course.id)
+                    } label: {
+                        if batch.courseID == course.id {
+                            Label(course.title, systemImage: "checkmark")
+                        } else {
+                            Text(course.title)
+                        }
+                    }
+                }
+                Divider()
+                Button(store.ui("新建课程…", "Create Course…")) { creatingCourse = true }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(destinationTitle(batch))
+                        .weiBeiText(13)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.down")
+                        .weiBeiText(12, weight: .semibold)
+                }
+                .foregroundStyle(WeiBeiTheme.ink)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .weibeiEtchedBackground(
+                    fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                    stroke: WeiBeiTheme.hairline.opacity(0.3),
+                    cornerRadius: 8
                 )
             }
-            VStack(alignment: .leading, spacing: 3) {
-                destinationButton(
-                    title: batch.importsMarkdownAsNotes
-                        ? store.ui("通用笔记", "Common Notes")
-                        : store.ui("通用资料", "Common Materials"),
-                    courseID: nil,
-                    selected: batch.courseID == nil
-                )
-                ForEach(matchingCourses) { course in
-                    destinationButton(
-                        title: course.title,
-                        courseID: course.id,
-                        selected: batch.courseID == course.id
-                    )
-                }
-                if !courseSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   matchingCourses.isEmpty {
-                    Text(store.ui("没有匹配的课程", "No matching courses"))
-                        .weiBeiText(12)
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .padding(.vertical, 5)
-                        .padding(.horizontal, 8)
-                }
-            }
-            Button(store.ui("新建课程…", "Create Course…")) { creatingCourse = true }
-                .buttonStyle(WeiBeiTextActionButtonStyle())
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
         }
-    }
-
-    private func destinationButton(title: String, courseID: UUID?, selected: Bool) -> some View {
-        Button { store.setConfirmedFileImportDestination(courseID: courseID) } label: {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: courseID == nil ? "tray" : "folder")
-                    .frame(width: 15)
-                    .padding(.top, 2)
-                Text(title)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                if selected { Image(systemName: "checkmark") }
-            }
-            .weiBeiText(12, weight: selected ? .semibold : .regular)
-            .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.ink)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                selected ? WeiBeiTheme.cinnabarSoft : Color.clear,
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(title)
     }
 
     private func progress(_ batch: ConfirmedFileImportBatch) -> some View {
@@ -855,8 +774,20 @@ struct ConfirmedFileImportView: View {
     private func result(_ batch: ConfirmedFileImportBatch) -> some View {
         let commonFailureMessage = sharedFailureMessage(batch)
         return VStack(alignment: .leading, spacing: 14) {
-            Text(resultSummary(batch))
-                .weiBeiText(13, weight: .semibold)
+            if isSimpleSingleSuccess(batch), let item = batch.importedItems.first {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.subtitle)
+                        .weiBeiText(13, weight: .semibold)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    Text(store.ui("已导入", "Imported"))
+                        .weiBeiText(12)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                }
+            } else {
+                Text(resultSummary(batch))
+                    .weiBeiText(13, weight: .semibold)
+            }
             if batch.stopped, !batch.pendingSourceURLs.isEmpty {
                 Text(store.ui(
                     "已停止；\(batch.pendingSourceURLs.count) 个文件未处理。已完成的导入已保留，原文件未变。",
@@ -907,6 +838,14 @@ struct ConfirmedFileImportView: View {
                 }
             }
         }
+    }
+
+    private func isSimpleSingleSuccess(_ batch: ConfirmedFileImportBatch) -> Bool {
+        batch.importedItems.count == 1
+            && batch.skippedCount == 0
+            && batch.failures.isEmpty
+            && !batch.stopped
+            && batch.pendingSourceURLs.isEmpty
     }
 
     @ViewBuilder
@@ -995,18 +934,16 @@ struct ConfirmedFileImportView: View {
         return message
     }
 
-    private func confirmTitle(_ batch: ConfirmedFileImportBatch) -> String {
-        if let courseID = batch.courseID,
-           let course = store.courses.first(where: { $0.id == courseID }) {
-            return store.ui("加入《\(course.title)》", "Add to \(course.title)")
-        }
-        return batch.importsMarkdownAsNotes
-            ? store.ui("加入通用笔记", "Add to Common Notes")
-            : store.ui("加入通用资料", "Add to Common Materials")
+    private func commonDestinationTitle(_ batch: ConfirmedFileImportBatch) -> String {
+        batch.importsMarkdownAsNotes
+            ? store.ui("通用笔记", "Common Notes")
+            : store.ui("通用资料", "Common Materials")
     }
 
-    private func destinationDescription(_ batch: ConfirmedFileImportBatch) -> String {
-        store.ui("正在\(confirmTitle(batch))", confirmTitle(batch))
+    private func destinationTitle(_ batch: ConfirmedFileImportBatch) -> String {
+        guard let courseID = batch.courseID else { return commonDestinationTitle(batch) }
+        return store.courses.first(where: { $0.id == courseID })?.title
+            ?? store.ui("选择课程", "Choose Course")
     }
 
     private func candidateLabel(_ candidate: ConfirmedFileImportCandidate) -> String {
