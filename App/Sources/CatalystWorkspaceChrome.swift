@@ -694,16 +694,21 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             let effectiveFrame = scene.effectiveGeometry.systemFrame
             let coordinateSpaceBounds = Self.coordinateSpaceBounds(for: scene)
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
-            guard let currentPreferred = window.rootViewController?.preferredContentSize,
-                  Self.sameSize(currentPreferred, preferred),
-                  window.windowScene === scene,
+            guard window.windowScene === scene,
                   rootedWindows.count == 1,
                   rootedWindows[0] === window,
-                  Self.sameSize(effectiveFrame.size, preferred),
-                  !Self.sameSize(window.bounds.size, preferred) else { return }
-            window.frame = Self.sameSize(coordinateSpaceBounds.size, preferred)
-                ? coordinateSpaceBounds
-                : CGRect(origin: coordinateSpaceBounds.origin, size: preferred)
+                  Self.sameSize(effectiveFrame.size, preferred) else { return }
+            if !Self.sameSize(window.bounds.size, preferred) {
+                window.frame = Self.sameSize(coordinateSpaceBounds.size, preferred)
+                    ? coordinateSpaceBounds
+                    : CGRect(origin: coordinateSpaceBounds.origin, size: preferred)
+            }
+            guard let currentPreferred = window.rootViewController?.preferredContentSize,
+                  !Self.sameSize(currentPreferred, preferred) else { return }
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, let window, self.window === window else { return }
+                self.configure()
+            }
         }
 
         private func clearGeometryRequest(_ signature: String) {
