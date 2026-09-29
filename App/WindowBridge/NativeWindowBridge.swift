@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 
 /// Native window services and Sparkle use this bridge; content stays in Catalyst.
 @objc(WeiBeiCatalystWindowBridge)
@@ -8,6 +9,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var intensity = 1.0
     private let materials = NSMapTable<NSWindow, NSVisualEffectView>.weakToStrongObjects()
     private var observers: [NSObjectProtocol] = []
+    private var activeOpenPanel: NSOpenPanel?
     @MainActor private lazy var updateService = WeiBeiUpdateService()
     @MainActor private var updateObservation: AnyCancellable?
 
@@ -115,6 +117,80 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     func open(_ url: URL) -> Bool { NSWorkspace.shared.open(url) }
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func materialWindowCount() -> Int { materials.count }
+    @MainActor func presentOpenPanel(
+        title: String,
+        contentTypeIdentifiers: [String],
+        allowsMultipleSelection: Bool,
+        canChooseDirectories: Bool,
+        canChooseFiles: Bool,
+        presentationToolbar: NSObject?,
+        completion: @MainActor @escaping ([URL], NSError?) -> Void
+    ) {
+        guard activeOpenPanel == nil else {
+            completeOpenPanelFailure(
+                code: 1,
+                completion: completion
+            )
+            return
+        }
+        let owner: NSWindow
+        if let toolbar = presentationToolbar as? NSToolbar {
+            let roots = NSApp.windows.filter { $0.toolbar === toolbar }
+            guard roots.count == 1, let root = roots.first, root.isVisible else {
+                completeOpenPanelFailure(
+                    code: 2,
+                    completion: completion
+                )
+                return
+            }
+            var presentationWindow = root
+            while let sheet = presentationWindow.attachedSheet { presentationWindow = sheet }
+            owner = presentationWindow
+        } else {
+            guard let keyWindow = NSApp.keyWindow,
+                  keyWindow.isVisible,
+                  !keyWindow.isMiniaturized,
+                  keyWindow.attachedSheet == nil else {
+                completeOpenPanelFailure(
+                    code: 3,
+                    completion: completion
+                )
+                return
+            }
+            owner = keyWindow
+        }
+        guard !(owner is NSOpenPanel) else {
+            completeOpenPanelFailure(
+                code: 4,
+                completion: completion
+            )
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = title
+        panel.canChooseDirectories = canChooseDirectories
+        panel.canChooseFiles = canChooseFiles
+        panel.allowsMultipleSelection = allowsMultipleSelection
+        panel.allowedContentTypes = contentTypeIdentifiers.map { UTType($0) ?? UTType(importedAs: $0) }
+        activeOpenPanel = panel
+        panel.beginSheetModal(for: owner) { [weak self] response in
+            let urls = response == .OK ? panel.urls : []
+            self?.activeOpenPanel = nil
+            // Resume Catalyst on the next main-loop turn, after AppKit has detached the sheet.
+            DispatchQueue.main.async { completion(urls, nil) }
+        }
+    }
+    @MainActor private func completeOpenPanelFailure(
+        code: Int,
+        completion: @MainActor ([URL], NSError?) -> Void
+    ) {
+        WeiBeiLog.workspace.error("code=native_open_panel_failed reason=\(code, privacy: .public)")
+        completion([], NSError(
+            domain: "WeiBei.NativeOpenPanel",
+            code: code
+        ))
+    }
     @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void) {
         updateObservation = updateService.$status.combineLatest(updateService.$availableUpdate)
             .sink { status, update in

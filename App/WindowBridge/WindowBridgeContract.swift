@@ -10,6 +10,15 @@ import Foundation
     func open(_ url: URL) -> Bool
     func reveal(_ url: URL)
     func materialWindowCount() -> Int
+    @MainActor func presentOpenPanel(
+        title: String,
+        contentTypeIdentifiers: [String],
+        allowsMultipleSelection: Bool,
+        canChooseDirectories: Bool,
+        canChooseFiles: Bool,
+        presentationToolbar: NSObject?,
+        completion: @MainActor @escaping ([URL], NSError?) -> Void
+    )
     @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void)
     @MainActor func checkForUpdates()
     @MainActor func installAvailableUpdate()
