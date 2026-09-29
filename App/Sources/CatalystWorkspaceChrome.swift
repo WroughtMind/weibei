@@ -741,10 +741,36 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                     ? coordinateSpaceBounds
                     : CGRect(origin: coordinateSpaceBounds.origin, size: targetSize)
             }
-            guard let contentSize,
-                  !Self.sameSize(contentSize, targetSize) else { return }
-            DispatchQueue.main.async { [weak self, weak window] in
-                guard let self, let window, self.window === window else { return }
+            logGeometry(
+                event: "sync-after-frame",
+                window: window,
+                scene: scene,
+                targetSize: targetSize
+            )
+            let acceptedSize = effectiveFrame.size
+            if !Self.sameSize(window.bounds.size, acceptedSize) {
+                window.bounds = CGRect(origin: window.bounds.origin, size: acceptedSize)
+            }
+            window.setNeedsLayout()
+            window.layoutIfNeeded()
+            logGeometry(
+                event: "sync-after-bounds",
+                window: window,
+                scene: scene,
+                targetSize: targetSize
+            )
+            DispatchQueue.main.async { [weak self, weak window, weak scene] in
+                guard let self, let window, let scene,
+                      self.window === window,
+                      window.windowScene === scene else { return }
+                self.logGeometry(
+                    event: "sync-next-runloop",
+                    window: window,
+                    scene: scene,
+                    targetSize: targetSize
+                )
+                guard let contentSize,
+                      !Self.sameSize(contentSize, targetSize) else { return }
                 self.configure()
             }
         }
