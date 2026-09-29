@@ -586,10 +586,17 @@ struct CatalystWindowChrome: UIViewRepresentable {
 // SwiftUI's Mac Catalyst sheet is hosted in a separate UIKit window.
 struct CatalystSheetBackground: UIViewRepresentable {
     let color: UIColor
+    var diagnosticContext: String? = nil
     func makeUIView(context: Context) -> Probe { Probe() }
-    func updateUIView(_ view: Probe, context: Context) { view.color = color; view.configure() }
+    func updateUIView(_ view: Probe, context: Context) {
+        view.color = color
+        view.diagnosticContext = diagnosticContext
+        view.configure()
+    }
     final class Probe: UIView {
         var color = UIColor.clear
+        var diagnosticContext: String?
+        private var lastDiagnosticSignature: String?
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         func configure() {
             guard let window else { return }
@@ -601,6 +608,74 @@ struct CatalystSheetBackground: UIViewRepresentable {
                 }
                 responder = current.next
             }
+            recordDiagnostics(window: window)
+        }
+
+        private func recordDiagnostics(window: UIWindow) {
+            guard diagnosticContext != nil else { return }
+            var controllerRecords: [[String: Any]] = []
+            var controllerSignatures: [String] = []
+            var controllerIDs = Set<ObjectIdentifier>()
+            var responder: UIResponder? = self
+            while let current = responder {
+                if let controller = current as? UIViewController,
+                   controllerIDs.insert(ObjectIdentifier(controller)).inserted {
+                    controllerRecords.append(Self.record(for: controller))
+                    controllerSignatures.append(Self.signature(for: controller))
+                }
+                responder = current.next
+            }
+            let root = window.rootViewController
+            if let root, controllerIDs.insert(ObjectIdentifier(root)).inserted {
+                controllerRecords.append(Self.record(for: root))
+                controllerSignatures.append(Self.signature(for: root))
+            }
+            let rootBounds = root?.view.bounds ?? .zero
+            let rootPreferred = root?.preferredContentSize ?? .zero
+            let signature = [
+                "\(window.bounds)",
+                "\(rootBounds)",
+                "\(rootPreferred)",
+                controllerSignatures.joined(separator: ";")
+            ].joined(separator: "|")
+            guard signature != lastDiagnosticSignature else { return }
+            lastDiagnosticSignature = signature
+            ConfirmedImportLayoutDiagnostics.append(
+                event: "catalyst-sheet",
+                values: [
+                    "context": diagnosticContext ?? "",
+                    "windowBounds": Self.record(for: window.bounds),
+                    "rootViewBounds": Self.record(for: rootBounds),
+                    "rootPreferredContentSize": Self.record(for: rootPreferred),
+                    "rootControllerType": root.map { String(reflecting: type(of: $0)) } ?? "",
+                    "responderControllers": controllerRecords
+                ]
+            )
+        }
+
+        private static func record(for controller: UIViewController) -> [String: Any] {
+            [
+                "type": String(reflecting: type(of: controller)),
+                "viewBounds": record(for: controller.view.bounds),
+                "preferredContentSize": record(for: controller.preferredContentSize)
+            ]
+        }
+
+        private static func signature(for controller: UIViewController) -> String {
+            "\(String(reflecting: type(of: controller)))|\(controller.view.bounds)|\(controller.preferredContentSize)"
+        }
+
+        private static func record(for rect: CGRect) -> [String: Any] {
+            [
+                "x": rect.origin.x,
+                "y": rect.origin.y,
+                "width": rect.size.width,
+                "height": rect.size.height
+            ]
+        }
+
+        private static func record(for size: CGSize) -> [String: Any] {
+            ["width": size.width, "height": size.height]
         }
     }
 }
