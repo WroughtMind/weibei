@@ -597,7 +597,6 @@ struct CatalystWindowChrome: UIViewRepresentable {
 struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
     let color: UIColor
     var followsContentSize = false
-    var contentSizeRevision = ""
 
     func makeUIView(context: Context) -> Probe { Probe() }
 

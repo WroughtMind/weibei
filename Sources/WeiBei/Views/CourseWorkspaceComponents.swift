@@ -342,22 +342,6 @@ struct CourseProjectEntrySheet: View {
         selectedImportURLs.contains { StudyItemKind.detect(from: $0) == .markdown }
     }
 
-    private var contentSizeRevision: String {
-        [
-            String(describing: intent),
-            title,
-            selectedFolder?.path ?? "",
-            selectedImportURLs.map(\.path).joined(separator: "|"),
-            String(configuredLibraryThisTime),
-            String(isWorking),
-            errorMessage ?? "",
-            String(reflecting: rebindProposal),
-            String(needsLibrary),
-            store.courseLibraryRootPath ?? "",
-            String(describing: store.interfaceLanguage)
-        ].joined(separator: "§")
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
@@ -406,8 +390,7 @@ struct CourseProjectEntrySheet: View {
 #if targetEnvironment(macCatalyst)
         .background(CatalystIndependentSheetSizingProbe(
             color: WeiBeiNativePalette.paper(),
-            followsContentSize: true,
-            contentSizeRevision: contentSizeRevision
+            followsContentSize: true
         ))
 #endif
         .background(WeiBeiTheme.paper)
