@@ -633,6 +633,23 @@ struct CatalystSheetBackground: UIViewRepresentable {
                 width: preferred.width,
                 height: preferred.height
             )
+            let scene = window.windowScene
+            var sceneWindowRecords: [[String: Any]] = []
+            if let scene {
+                for sceneWindow in scene.windows {
+                    let rootType: String
+                    if let root = sceneWindow.rootViewController {
+                        rootType = String(reflecting: type(of: root))
+                    } else {
+                        rootType = ""
+                    }
+                    sceneWindowRecords.append([
+                        "isSourceWindow": sceneWindow === window,
+                        "bounds": Self.record(for: sceneWindow.bounds),
+                        "rootControllerType": rootType
+                    ])
+                }
+            }
             let signature = "\(preferred)|\(window.bounds)|\(result)"
             guard signature != lastResizeDiagnosticSignature else { return }
             lastResizeDiagnosticSignature = signature
@@ -641,7 +658,10 @@ struct CatalystSheetBackground: UIViewRepresentable {
                 values: [
                     "result": result,
                     "preferredContentSize": Self.record(for: preferred),
-                    "actualWindowBounds": Self.record(for: window.bounds)
+                    "actualWindowBounds": Self.record(for: window.bounds),
+                    "sceneIdentifier": scene?.session.persistentIdentifier ?? "",
+                    "sceneEffectiveFrame": Self.record(for: scene?.effectiveGeometry.systemFrame ?? .zero),
+                    "sceneWindows": sceneWindowRecords
                 ]
             )
         }

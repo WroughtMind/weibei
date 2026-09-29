@@ -8,6 +8,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var intensity = 1.0
     private let materials = NSMapTable<NSWindow, NSVisualEffectView>.weakToStrongObjects()
     private var observers: [NSObjectProtocol] = []
+    private var lastSheetResizeDiagnosticSignature: String?
     @MainActor private lazy var updateService = WeiBeiUpdateService()
     @MainActor private var updateObservation: AnyCancellable?
 
@@ -123,11 +124,89 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
               sheet.sheetParent?.toolbar?.identifier == "weibei.workspace" else { return false }
         let requested = NSSize(width: width, height: height)
         let actual = sheet.contentLayoutRect.size
+        let diagnosticSignature = "\(sheet.windowNumber)|\(requested)|\(actual)|\(sheet.frame)"
+        let shouldRecord = diagnosticSignature != lastSheetResizeDiagnosticSignature
+        if shouldRecord {
+            lastSheetResizeDiagnosticSignature = diagnosticSignature
+            recordSheetResize(event: "native-appkit-sheet-before", sheet: sheet, requested: requested)
+        }
         if abs(actual.width - requested.width) >= 1 || abs(actual.height - requested.height) >= 1 {
             sheet.setContentSize(requested)
         }
+        if shouldRecord {
+            recordSheetResize(event: "native-appkit-sheet-after-immediate", sheet: sheet, requested: requested)
+            DispatchQueue.main.async { [weak self, weak sheet] in
+                guard let self, let sheet else { return }
+                self.recordSheetResize(
+                    event: "native-appkit-sheet-after-next-runloop",
+                    sheet: sheet,
+                    requested: requested
+                )
+            }
+        }
         return true
     }
+
+    @MainActor private func recordSheetResize(event: String, sheet: NSWindow, requested: NSSize) {
+        guard Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.qa.cursorcloseout20260926" else {
+            return
+        }
+        let outputURL = URL(fileURLWithPath: "/tmp/weibei-import-layout-diagnostics.jsonl")
+        let parent = sheet.sheetParent
+        let record: [String: Any] = [
+            "event": event,
+            "timestamp": Date().timeIntervalSince1970,
+            "requested": Self.diagnosticSize(requested),
+            "windowClass": NSStringFromClass(type(of: sheet)),
+            "isKey": sheet.isKeyWindow,
+            "isVisible": sheet.isVisible,
+            "windowNumber": sheet.windowNumber,
+            "sheetParentWindowNumber": parent?.windowNumber ?? -1,
+            "frame": Self.diagnosticRect(sheet.frame),
+            "contentLayoutRect": Self.diagnosticRect(sheet.contentLayoutRect),
+            "contentViewBounds": Self.diagnosticRect(sheet.contentView?.bounds ?? .zero),
+            "minSize": Self.diagnosticSize(sheet.minSize),
+            "maxSize": Self.diagnosticSize(sheet.maxSize),
+            "contentMinSize": Self.diagnosticSize(sheet.contentMinSize),
+            "contentMaxSize": Self.diagnosticSize(sheet.contentMaxSize)
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: record) else { return }
+        if !FileManager.default.fileExists(atPath: outputURL.path) {
+            FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: outputURL) else { return }
+        defer { try? handle.close() }
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data + Data([0x0A]))
+        } catch {
+            return
+        }
+    }
+
+    private static func diagnosticRect(_ rect: NSRect) -> [String: Any] {
+        [
+            "x": diagnosticNumber(rect.origin.x),
+            "y": diagnosticNumber(rect.origin.y),
+            "width": diagnosticNumber(rect.size.width),
+            "height": diagnosticNumber(rect.size.height)
+        ]
+    }
+
+    private static func diagnosticSize(_ size: NSSize) -> [String: Any] {
+        [
+            "width": diagnosticNumber(size.width),
+            "height": diagnosticNumber(size.height)
+        ]
+    }
+
+    private static func diagnosticNumber(_ value: CGFloat) -> Any {
+        if value.isFinite {
+            return Double(value)
+        }
+        return String(describing: value)
+    }
+
     @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void) {
         updateObservation = updateService.$status.combineLatest(updateService.$availableUpdate)
             .sink { status, update in
