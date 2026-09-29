@@ -639,6 +639,12 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
 
         func configure() {
             guard let window else { return }
+            logGeometry(
+                event: "configure",
+                window: window,
+                scene: window.windowScene,
+                targetSize: contentSize
+            )
             window.backgroundColor = color
             var responder: UIResponder? = self
             while let current = responder {
@@ -686,6 +692,12 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             targetSize: CGSize,
             signature: String
         ) {
+            logGeometry(
+                event: "request-before-guard",
+                window: window,
+                scene: scene,
+                targetSize: targetSize
+            )
             guard self.window === window,
                   let contentSize,
                   Self.sameSize(contentSize, targetSize) else {
@@ -720,6 +732,12 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             scene: UIWindowScene,
             targetSize: CGSize
         ) {
+            logGeometry(
+                event: "sync-before-guard",
+                window: window,
+                scene: scene,
+                targetSize: targetSize
+            )
             let effectiveFrame = scene.effectiveGeometry.systemFrame
             let coordinateSpaceBounds = Self.coordinateSpaceBounds(for: scene)
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
@@ -739,6 +757,84 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                 guard let self, let window, self.window === window else { return }
                 self.configure()
             }
+        }
+
+        private func logGeometry(
+            event: String,
+            window: UIWindow,
+            scene: UIWindowScene?,
+            targetSize: CGSize?
+        ) {
+            guard Bundle.main.bundleIdentifier == "com.changfenhuang.weibei.qa.cursorcloseout20260926" else {
+                return
+            }
+            let rootedWindows = scene?.windows.filter { $0.rootViewController != nil } ?? []
+            let effectiveFrame = scene?.effectiveGeometry.systemFrame
+            let rootViewController = window.rootViewController
+            let windowSceneMatches = scene != nil && window.windowScene === scene
+            let singleRootedWindowMatches = rootedWindows.count == 1 && rootedWindows[0] === window
+            let effectiveMatchesTarget: Bool
+            if let effectiveFrame, let targetSize {
+                effectiveMatchesTarget = Self.sameSize(effectiveFrame.size, targetSize)
+            } else {
+                effectiveMatchesTarget = false
+            }
+            let effectiveMatchesWindow: Bool
+            if let effectiveFrame {
+                effectiveMatchesWindow = Self.sameSize(effectiveFrame.size, window.bounds.size)
+            } else {
+                effectiveMatchesWindow = false
+            }
+            let contentMatchesTarget: Bool
+            if let contentSize, let targetSize {
+                contentMatchesTarget = Self.sameSize(contentSize, targetSize)
+            } else {
+                contentMatchesTarget = false
+            }
+            let record: [String: Any] = [
+                "event": event,
+                "uptime": ProcessInfo.processInfo.systemUptime,
+                "contentSize": Self.jsonSize(contentSize),
+                "targetSize": Self.jsonSize(targetSize),
+                "probeBounds": Self.jsonRect(bounds),
+                "windowBounds": Self.jsonRect(window.bounds),
+                "rootViewBounds": Self.jsonRect(rootViewController?.view.bounds),
+                "rootPreferredSize": Self.jsonSize(rootViewController?.preferredContentSize),
+                "effectiveFrame": Self.jsonRect(effectiveFrame),
+                "lastSignature": (lastGeometryRequestSignature as Any?) ?? NSNull(),
+                "probeWindowMatches": self.window === window,
+                "windowSceneMatches": windowSceneMatches,
+                "rootedWindowCount": rootedWindows.count,
+                "singleRootedWindowMatches": singleRootedWindowMatches,
+                "effectiveMatchesTarget": effectiveMatchesTarget,
+                "effectiveMatchesWindow": effectiveMatchesWindow,
+                "contentMatchesTarget": contentMatchesTarget
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: record) else { return }
+            let url = URL(fileURLWithPath: "/private/tmp/weibei-dialog-geometry-0929.jsonl")
+            if !FileManager.default.fileExists(atPath: url.path) {
+                _ = FileManager.default.createFile(atPath: url.path, contents: nil)
+            }
+            guard let handle = try? FileHandle(forWritingTo: url) else { return }
+            defer { try? handle.close() }
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.write(Data([0x0A]))
+        }
+
+        private static func jsonSize(_ size: CGSize?) -> Any {
+            guard let size else { return NSNull() }
+            return ["width": size.width, "height": size.height]
+        }
+
+        private static func jsonRect(_ rect: CGRect?) -> Any {
+            guard let rect else { return NSNull() }
+            return [
+                "x": rect.origin.x,
+                "y": rect.origin.y,
+                "width": rect.size.width,
+                "height": rect.size.height
+            ]
         }
 
         private func clearGeometryRequest(_ signature: String) {
