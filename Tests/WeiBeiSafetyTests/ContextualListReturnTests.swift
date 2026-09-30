@@ -78,6 +78,8 @@ final class ContextualListReturnTests: XCTestCase {
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
             startsAtBlankEntries: true
         )
+        // These status-message contracts assert Chinese copy regardless of runner locale.
+        store.setInterfaceLanguage(.chinese)
         return (fixture, store, material, noteA, noteB)
     }
 

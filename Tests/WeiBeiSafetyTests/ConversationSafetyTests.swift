@@ -7,9 +7,36 @@ import WeiBeiCore
 /// 重新生成失败保留原回答（A3）、空回复保留中断消息（A6）。
 /// 全部用假 provider（`selfCheckAgentResponder`），不触网。
 final class ConversationSafetyTests: XCTestCase {
+    private var storeFixture: (store: WorkspaceStore, sessionID: UUID, root: URL)?
+
     override class func setUp() {
         super.setUp()
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+    }
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        precondition(Thread.isMainThread)
+        storeFixture = try MainActor.assumeIsolated {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+            let store = WorkspaceStore(
+                workspaceDirectory: root,
+                startsAtBlankEntries: true,
+                startsCourseFileMaintenance: false
+            )
+            let session = try XCTUnwrap(store.createStudySession(courseID: nil))
+            return (store, session.id, root)
+        }
+    }
+
+    override func tearDownWithError() throws {
+        let root = storeFixture?.root
+        storeFixture = nil
+        if let root {
+            try? FileManager.default.removeItem(at: root)
+        }
+        try super.tearDownWithError()
     }
 
     /// 手动放行的闸门：让假回答停在指定位置，测试再决定放行或抛错。
@@ -46,14 +73,8 @@ final class ConversationSafetyTests: XCTestCase {
 
     @MainActor
     private func makeStore() throws -> (store: WorkspaceStore, sessionID: UUID, cleanup: () -> Void) {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let store = WorkspaceStore(
-            workspaceDirectory: root,
-            startsAtBlankEntries: true,
-            startsCourseFileMaintenance: false
-        )
-        let session = try XCTUnwrap(store.createStudySession(courseID: nil))
-        return (store, session.id, { try? FileManager.default.removeItem(at: root) })
+        let fixture = try XCTUnwrap(storeFixture)
+        return (fixture.store, fixture.sessionID, {})
     }
 
     /// A1: 回答生成中再次提交不得取消正在进行的回答。
