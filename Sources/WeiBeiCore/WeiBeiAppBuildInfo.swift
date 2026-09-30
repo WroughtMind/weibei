@@ -1,9 +1,9 @@
 import Foundation
 
 public enum WeiBeiFeedbackLink {
-    public static let newIssue = URL(string: "https://codeberg.org/WroughtMind/weibei/issues/new")!
+    public static let newIssue = URL(string: "https://github.com/WroughtMind/weibei/issues/new")!
 
-    /// Forgejo prefills `title` and `body` on the new-issue form. No label is sent.
+    /// GitHub prefills `title` and `body` on the new-issue form. No label is sent.
     public static func prefilled(title: String, body: String) -> URL? {
         var components = URLComponents(url: newIssue, resolvingAgainstBaseURL: false)
         components?.queryItems = [
