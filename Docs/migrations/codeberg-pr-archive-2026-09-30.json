@@ -1,0 +1,1297 @@
+{
+  "source": "https://codeberg.org/WroughtMind/weibei",
+  "observed_at_utc": "2026-09-30T12:41:34Z",
+  "scope": "50 PR records and 11 public issue comments; zero review records returned; Git objects preserved separately",
+  "pull_requests": [
+    {
+      "number": 50,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/50",
+      "title": "把对话设置改成连接卡片，并校正服务商标识",
+      "body": "## 解决什么\n对话设置从旧表单改成连接卡片：服务商标识、模型名、密钥或登录状态在卡上完成增删改选。测活沿卡片边缘走光，活着收成绿，不行收成红，结果不串到别的卡。DeepSeek 不标成可联网。OpenAI / ChatGPT 用黑色花结，Gemini 用四色星。小对话框在 Mac Catalyst 上贴合内容，不再套一层大白底。\n\n## 怎么验证\n- 在 `codex/connection-cards` 工作区运行 `swift build --target WeiBei`，通过。\n- 连接卡片、标志和测活光效已在本机预览包里看过。那次包来自同一套界面代码所在的工作区，不是这条分支单独打的 Catalyst 包。\n\n## 风险\n- 这条分支还没有单独编过 Mac Catalyst。\n- 联网图标按模型名和各家文档判断，没有逐个模型重新打联网请求。\n- Gemini 是蓝底叠红、黄、绿淡出，不是官方网格渐变的逐像素复刻。\n",
+      "state": "open",
+      "created_at": "2026-09-30T10:11:10+02:00",
+      "updated_at": "2026-09-30T10:11:11+02:00",
+      "closed_at": null,
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/connection-cards",
+        "sha": "14ed00a90912665c72adc1eb322e240a9d9901af",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 49,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49",
+      "title": "WIP: 统一文件导入确认与结果处理",
+      "body": "## 这次解决什么\n\n所有普通资料导入先显示统一确认：文件及范围、目标课程或通用资料、重复和同名冲突、不支持项。确认后才复制，支持停止剩余文件、结果汇总、失败重试与新课程。\n\nMarkdown 默认作为资料；明确从笔记入口导入时才作为笔记。导入中到达的 Dock 文件保留为下一批；本批失败项仍可重试，只有明确选择放弃后才切下一批。\n\n## 已检查\n\n- 首轮10项统一导入行为检查通过，包含批内重复、新课程确认前零复制、待处理批次与混合目录。\n- 独立复审发现的三份同名 A/B/B、根目录链接和失败重试入口问题已修复，新增7项针对性场景，正在组合回归。\n- App 工程已登记新增界面源文件；静态语法及差异检查通过。\n\n## 尚未关闭\n\n本请求先推送供审查。最新组合回归与真实界面批量导入仍在验收；尚未合并、发布或覆盖正式安装版。\n",
+      "state": "open",
+      "created_at": "2026-09-28T20:40:34+02:00",
+      "updated_at": "2026-09-29T14:12:07+02:00",
+      "closed_at": null,
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/confirmed-file-import",
+        "sha": "a71f324595b56934913c30c4b9fd42bc13c4f2b3",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": [
+        {
+          "id": 24082434,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49#issuecomment-24082434",
+          "body": "补充验收状态：当前远端 2a6cc5ea 的导入业务已有针对性检查；组合候选实机确认普通 Markdown 从文稿入口导入后 isNotebookNote=false、appearsInMaterials=true，资料角色正确。\n\n用户明确指出确认导入窗口外观不可接受，此项判为不通过。已在本地调整文件清单、目标选择、主次按钮和正文滚动；实机发现第一版仍有大片空白、第二版出现窗口裁切，因此均没有算通过。最新固有高度修正 e4b556b5（组合 cb883748）已构建及签名验证通过，但电脑重新锁屏，尚不能实际确认单文件、18项长清单滚动和结果页。\n\n最新视觉修改暂未推送，不把构建成功当视觉完成；解锁后继续验收。未合并、未覆盖正式安装、未发布。",
+          "created_at": "2026-09-28T22:04:25+02:00",
+          "updated_at": "2026-09-28T22:04:25+02:00",
+          "author": "taekchef"
+        },
+        {
+          "id": 24175743,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49#issuecomment-24175743",
+          "body": "导入弹窗的视觉修正已经完成实机复验，更新此前“不通过/待解锁”状态：\n\n- 删除“确认导入”“导入副本，保留原文件”“导入结果”等冗余标题和说明；单文件只显示文件、目标、操作，目标使用原生单行菜单。\n- 最终干净组合候选 db7416a5：单文件确认440×151点、成功结果440×118点；新建课程无内部说明/路径，错误时自然增高到185点，修正名称后创建成功并回到原批次，自动选中新课程。\n- 最终包18文件清单可实际滚动到末尾及目标，操作按钮固定且完整；重复18项跳过结果正常缩小。\n- 诊断候选be9e59eb已实测8长文件失败，同一原因只出现一次；恢复自建源目录后重试8成功，结果缩到440×100点，并能查看对应课程。\n- 尺寸修复使用公开的原生内容尺寸通知，已用真实NSWindow与截图核验，移除无效frame/bounds写入及全部临时诊断日志。独立复审0阻塞。导入/写入保护30项通过；最终干净原生包构建与签名通过。\n\n推送状态须区分：组合分支 codex/cursor-closeout-integration 已成功推至 db7416a5c45153031d0778fe8b480b737af0505f，包含本次全部修正；本PR专用分支最终本地 b17b1cf21f1363dd5800d19c76dffef79c717dd7 推送被服务器以“Forgejo: Quota exceeded”拒绝，所以本PR远端头仍为2a6cc5ea。请按组合分支查看最新成果，本PR不能声称已更新。\n\n仅隔离应用与合成资料验收，未覆盖正式应用、未合并、未发布。51项体验仍8项完整通过，完整CI、旧版本升级及其余体验验收仍有未完成项。",
+          "created_at": "2026-09-29T08:46:32+02:00",
+          "updated_at": "2026-09-29T08:46:32+02:00",
+          "author": "taekchef"
+        },
+        {
+          "id": 24176013,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49#issuecomment-24176013",
+          "body": "更正上一条验收结论：用户再次拒绝“18个已跳过 + 完成”的结果模态。窗口比例正确不等于体验合格；撤销普通成功/无新增结果页的体验通过结论。\n\n正在沿共享完成路径修正：成功直接进入文稿/笔记或资料列表；全重复/空目录/没有可导入文件使用现有轻量反馈并明确原因；失败、部分失败、停止、待处理保留必要信息与操作。最终交互复验完成前，此项继续标记未通过。",
+          "created_at": "2026-09-29T08:53:06+02:00",
+          "updated_at": "2026-09-29T08:53:06+02:00",
+          "author": "taekchef"
+        },
+        {
+          "id": 24178449,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49#issuecomment-24178449",
+          "body": "本轮已按用户最新反馈继续改正，不再用“尺寸合适”替代体验验收。\n\n本地导入修正提交 fcef856f、306bf1c4，组合候选 cfdedfa5：确认导入仅显示文件与目标；普通成功直接进入内容或列表，无结果模态；全重复轻提示说明未重复导入；失败仍保留错误与重试。原生实测已通过单文本正文、单通用笔记、重复导入保留阅读、部分失败及恢复后重试。最终组合包还实测通过通用3份/课程3份文本批量：清除旧筛选、打开侧栏、展开目标课程，新项目实物同屏可见。38项定向检查全通过，原生包干净且提交标记一致。\n\n尚未通过：笔记批量原生多选、空工作区单课程笔记首次直接打开正文（已入库，但正文空白，正在查首次挂载；不能用先开文稿来算通过）。停止点击、空目录/仅不支持等本轮仍没有全部实机证据；自动检查不能替代。51项整体仍只8项完整通过。\n\n最新两分支推送都被远端明确拒绝：Forgejo: Quota exceeded。已只读复核：PR49远端仍2a6cc5ea，组合远端仍db7416a5，main仍c9880305。上述新代码目前在本地，不在当前远端差异中。维持未全项通过、未合并、未覆盖正式应用。",
+          "created_at": "2026-09-29T09:46:30+02:00",
+          "updated_at": "2026-09-29T09:46:30+02:00",
+          "author": "taekchef"
+        },
+        {
+          "id": 24180015,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49#issuecomment-24180015",
+          "body": "继续补充上一条验收进度：通用笔记2份批量已实机通过，新项目在侧栏同屏可见，没有成功结果弹窗。\n\n课程笔记首次转圈的根因已定位：正文读完后，加载任务移除没有发出界面更新。现已在本地修正该共享状态发布，保留保存门禁与任务取消，不通过先打开文稿触发刷新来验收。专用提交 d912835a，组合提交 0b0cd427，工作树均干净；新原生包已成功编译、打包、签名。\n\n定向回归：修前1项失败，修后同项通过；40项执行，39通过、1项原有可选视觉检查跳过、0失败。上述当时的终端输出未落盘，不能当作已有归档日志。\n\n新包从空工作区、未先开文稿，经课程内添加笔记入口完成首次笔记导入；确认窗口仅文件、目标和操作。导入后窗口关闭、笔记栏打开，但捕获正文时电脑再次锁屏，因此正文首次显示、未编辑继续切换、课程笔记批量仍未完成实机确认。51项整体仍8项完整通过。\n\n远端此前两次推送明确因 Forgejo: Quota exceeded 被拒绝，最新代码仍在本地；待推送补丁已保存。没有合并，也没有覆盖正式应用。",
+          "created_at": "2026-09-29T10:17:59+02:00",
+          "updated_at": "2026-09-29T10:17:59+02:00",
+          "author": "taekchef"
+        },
+        {
+          "id": 24180939,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49#issuecomment-24180939",
+          "body": "补充交付状态：已按用户要求纠正DSH两个仓库归属，魏碑所在组织的容量限制已解除。\n\n重新推送已成功，并只读核对远端：PR49分支为d912835a8d6541e9262b022074dae9b2faa04b25，组合验收分支为0b0cd427ff1fc74300e17ba010c54176ef6442ae；主线仍c98803055954d239f93644899122fae579659db7，没有合并或覆盖正式应用。\n\n最新组合40项定向检查39通过、1项既有视觉检查跳过、0失败；笔记正文首次显示和后续切换的实机确认仍待完成。整套51项仍8项完整通过，推送成功不等于全项验收完成。",
+          "created_at": "2026-09-29T10:38:19+02:00",
+          "updated_at": "2026-09-29T10:38:19+02:00",
+          "author": "taekchef"
+        },
+        {
+          "id": 24187458,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49#issuecomment-24187458",
+          "body": "补充实际验收与修正进度：\n\n课程笔记读盘结束后补发布最终状态，修复快速切换后编辑器空白。PR49已推到215bdcf843727beb0aad95d2708ccdae5e9e837c，组合验收分支已推到4bfdc204c77122638a5748e13de930dd26e2738b；只读远端核对一致，主线仍c98803055954d239f93644899122fae579659db7。\n\n相关53项检查52通过、1项既有可选视觉跳过、0失败；狭义代码独立审查0阻塞。干净原生候选中已实测：首次新笔记导入后正文自动显示；对另一份未编辑的合成笔记做外部原子改写，切到01再返回时新正文立即出现，正常退出重开后保留且无冲突提示。原生选择器灰色按钮已确认是隔离候选未登记文件类型，补登记后同一文件可正常打开，没有修改产品格式过滤。\n\n第25项应用失焦/回焦仍待单独验证，因此只记局部复验通过。整套51项现在8项完整通过、4项部分实机证据、39项完整场景待验。完整CI及旧版本升级尚未完成，未合并或覆盖正式应用。",
+          "created_at": "2026-09-29T12:50:03+02:00",
+          "updated_at": "2026-09-29T12:50:03+02:00",
+          "author": "taekchef"
+        },
+        {
+          "id": 24187719,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49#issuecomment-24187719",
+          "body": "追加真实失败，保留前面通过的边界：4bfd候选的正文空白确已修复，快速切换和冷启动能保留磁盘新正文；但后续在未编辑笔记时，打开“添加笔记”的原生选择器并取消，返回后仍出现外部修改冲突提示。\n\n因此第25项仍失败待修，当前仅能确认空白修复，不能宣布外部修改流程闭环。已经按原生面板呈现/取消与笔记恢复点时序继续定位。整套51项保持8完整通过、3部分实机、1失败待修、39待验。新修正已推送，但未合并或正式安装。",
+          "created_at": "2026-09-29T12:55:29+02:00",
+          "updated_at": "2026-09-29T12:55:29+02:00",
+          "author": "taekchef"
+        },
+        {
+          "id": 24188475,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/49#issuecomment-24188475",
+          "body": "接续修复已完成并推送：PR49专用分支41fea83f、组合分支6e3b8c49。共同笔记写入门禁现在识别待写正文已经等于磁盘的情况，不重复写盘、也不制造外部修改冲突；真正不同的正文仍保留原有冲突保护。\n\n独立审查0阻塞；组合检查54项中53通过、1既有视觉检查跳过、0失败。干净原生候选编译和签名成功。实机全新合成笔记：首次导入立即显示正文；应用外原子改写后切到另一笔记再返回，新正文立即出现；随后打开并取消原生选择器，不再出现之前的冲突误报；正常退出再冷启动继续上次，新正文保持且无冲突提示。未编辑界面正文，未删除旧失败记录来制造通过。\n\n第25项已关闭本轮复现的空白和取消选择器误报，但真实应用失焦/回焦仍未验证，所以仍只计部分实机通过。整套51项当前8完整通过、4部分实机、39待完整场景。目录选择仍有原生打开按钮禁用的未完成缺口，不能用下游自动检查代替。完整双架构持续集成与旧版本升级验收未完成；未合并、未正式安装或发布。",
+          "created_at": "2026-09-29T13:13:05+02:00",
+          "updated_at": "2026-09-29T13:13:05+02:00",
+          "author": "taekchef"
+        }
+      ]
+    },
+    {
+      "number": 48,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/48",
+      "title": "WIP: 使用真实模型名单并要求明确选择模型",
+      "body": "## 这次解决什么\n\n模型选择只展示服务商实际返回的名单。失败、空名单和失效选择均有提示，不自动替换；支持重新获取及手动填写。设置打开、服务/地址/密钥变化及主动刷新时更新，发送消息不刷新。\n\n共同提交入口提前拒绝空模型，保留草稿且不写入失败会话。Azure 切换服务地址后，列表查询、就绪判断和实际请求统一核对密钥绑定地址，旧密钥不会发到新地址。\n\n## 验证\n\n- 独立审查发现的 Azure 地址绑定与空模型问题已修复并复核。\n- 组合分支45项定向检查通过，含模型目录、空模型、Azure绑定、导入和保存相关检查。\n- 原有假回答测试夹具现明确指定测试模型，没有恢复产品默认模型兜底。\n\n## 交付边界\n\n本请求按用户要求先推送供审查。新组合包的真实模型选择界面、失败/空名单重试仍在验收。尚未合并、发布或替换正式安装版。",
+      "state": "open",
+      "created_at": "2026-09-28T20:25:57+02:00",
+      "updated_at": "2026-09-28T21:00:55+02:00",
+      "closed_at": null,
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/dynamic-model-selection",
+        "sha": "420007ab33a745dee01dad81addace7bbc435230",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 47,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/47",
+      "title": "WIP: 为对话补充动态日期与本地时区",
+      "body": "## 这次解决什么\n\n为每轮对话提供当前日期、本地时区和UTC偏移。系统提示保持稳定，同一天同一时区不重复写入环境事件；跨天、时区改变、恢复和上下文压缩后使用最新环境。\n\n## 验证\n\n- 组合验收分支的运行时与模型相关57项测试全部通过。\n- 独立审查覆盖新会话、跨天、改时区、恢复、压缩、最新环境投影与聊天显示隔离。\n- 原选区测试已适配新增环境消息，保留完整选区和完整问题断言。\n\n## 交付边界\n\n按用户要求推送独立变更请求。尚未合并、发布或替换正式安装版；新组合包真实界面验收仍在进行。",
+      "state": "open",
+      "created_at": "2026-09-28T20:23:01+02:00",
+      "updated_at": "2026-09-28T20:23:02+02:00",
+      "closed_at": null,
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/session-date-context",
+        "sha": "3c88ebd6b4d6369d1e0570e20fe6ac27285de3c9",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 46,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/46",
+      "title": "WIP: 修复栏位关闭回弹、错误详情泄露并补齐安全验收",
+      "body": "## 改动\n\n本轮对 Cursor 未收尾任务做完整验收时，发现并修复两处已经进入 main 的真实回归：\n\n- 关闭最后一个栏位后，焦点逻辑重新打开文稿栏。现在仅向仍然可见的栏位转移焦点，保留显式聚焦时打开栏位的语义。\n- 底层 Agent 错误原文进入用户失败气泡，显示内部路径、脚本和协议动作。现在只接受明确面向用户的会话状态错误，认证、限流、离线等继续使用已有结构化分类与操作指引。\n\n同时修复验收自身的阻断：\n\n- 使用有效原生滚轮事件检查原有滚轮路由与裁剪边界；产品路由条件未改变。系统事件交付仍需真实界面验证。\n- 将异步测试中的同步状态构造移到 XCTest 同步准备阶段，保留完整初始化、课程恢复和权限校验。补充真实资料库重开合同检查。未缩短超时、未跳过失败测试。\n- 依据已合入 #27 的交互契约，更新两个仍假设存在别针的选区测试，保留未发送关闭、手动附件和回答运行中上下文断言。\n- 退出保存验收直接等待已有异步建课入口。\n\n## 验证\n\n在与 #44、#45 组合后的干净提交 `a1634daf85c44894707c57af7ac09ef6f387b459` 上：\n\n- 完整 WeiBeiSafetyTests：403 项，401 通过、2 项原有视觉 opt-in 检查跳过、0 失败，54.193 秒，退出码 0。\n- 原栏位切换及内部错误文案断言保持不变，均通过。\n- 资料与数据自检通过；原生助手离线评测自检通过。\n- Node、编辑器、工具、官网共 7 条检查通过；编辑器与 GenUI 打包资源无差异。\n- 独立子智能体审查通过，git diff --check 通过。\n\n## 剩余门槛\n\n本请求保持 WIP，不合并。测试包正在构建；画中画入口不可用，51 项真实界面、Catalyst 自动窗口检查、旧版升级、真实 Gemini/DeepSeek 调用尚未完成。组合测试结果不等于本独立分支或远端 CI 单独通过，更不等于安装或发布完成。\n\n\n## 2026-09-26 最终组合验证记录\n\n组合分支 `codex/cursor-closeout-integration`，干净提交 `a1634daf85c44894707c57af7ac09ef6f387b459`：\n\n- 完整安全套件退出码 0：403 项中 401 通过、2 项原有视觉 opt-in 跳过、0 失败，54.193 秒。\n- 应用资料与数据自检、原生助手离线评测自检通过；7 条 Node/工具/编辑器/官网检查通过；生成资源无差异。\n- Mac Catalyst arm64 编译、打包成功。构建号 `20260926.0752.29`，源码未修改标记 `false`，独立测试身份。\n- 交付 ZIP 实际解压后严格签名检查通过；SHA-256 `a2da3561edb21d59c0cc5ed41d2fbaa0877f0ccbf498a6a5c5e38b78c54f5f57`。本地测试产物未上传为正式发布。\n- 保持 WIP：尚无画中画/隔离桌面入口，未运行 51 项真实操作、Catalyst 自动窗口检查、旧版升级与真实供应商冒烟；未合并、未替换安装版、未发布。\n\n该证据针对 #44、#45、#46 的组合提交，不代表三个独立分支各自完整测试或远端 CI 通过。\n\n## 2026-09-26 解锁后补验\n\n以下证据来自组合提交 `a1634daf85c44894707c57af7ac09ef6f387b459`，不代表三个独立分支分别全量检查。\n\n- 两项原先按环境跳过的隐藏组件快照已单独运行，2/2通过；7张截图逐张查看。此前全套401通过，本次补两项，没有改写成同一次403全跑。\n- Office屏幕外真实WebKit检查通过：Word图表、三维旋转、公式、EMF、阅读位置；PPT导航、搜索、摘抄返回、备注和眼镜遮罩。\n- 完整隐藏WebKit编辑器检查、笔记交互、公式交互三条检查均退出码0，包含中文合成输入、选区标记、公式保存重载及最终回答宽度/高度测量。\n- DeepSeek当前生产路由、deepseek-flash真实问答、课程搜索工具调用和取消通过，使用合成资料，退出码0。未覆盖真实连续双工具链或技能加载效果。\n- Gemini没有已保存凭据，尚未发出请求。\n- 用户已同意普通电脑控制，画中画不再是前置条件。随后启动测试包的电脑控制请求返回Mac已锁定，未取得成功启动证据；进程检查未见测试App，独立资料目录未生成。51项主窗口操作、Catalyst自动窗口验收及旧版升级未完成。未安装、未发布，本请求继续保持WIP。\n",
+      "state": "open",
+      "created_at": "2026-09-26T09:53:14+02:00",
+      "updated_at": "2026-09-28T21:51:23+02:00",
+      "closed_at": null,
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/cursor-acceptance-closeout",
+        "sha": "d68569ee7af9bbc87976ba1e0d942cfd70501734",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": [
+        {
+          "id": 24070242,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/46#issuecomment-24070242",
+          "body": "补充本轮真实验收发现的修复，现已推送 da1f3a2c：\n\n- 主动停止：已复现网络取消错误会把旧问题回填输入框，修共同取消路径；9项对话测试通过，覆盖 URLError.cancelled。\n- 新建笔记：删除成功横幅，错误提示保留；组合写入安全测试通过。\n- 阅读器资源：图片请求仅在编辑运行时调用；重新生成阅读资源并通过资源检查，编辑器资源字节数未变。\n\n上述修复已通过针对性检查。新组合候选的实际停止和新建笔记界面还在复验，本评论不代表整包验收、合并或发布。",
+          "created_at": "2026-09-28T20:32:32+02:00",
+          "updated_at": "2026-09-28T20:32:32+02:00",
+          "author": "taekchef"
+        },
+        {
+          "id": 24081888,
+          "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/46#issuecomment-24081888",
+          "body": "本轮追加修复已推送 d68569ee，组合候选 0cde07b9 完成以下真实操作复验：\n\n- 搜索侧栏：第一次 Esc 清空搜索并保留侧栏，第二次 Esc 收起。\n- 重新生成返回空内容：保留旧回答，显示“模型没有返回内容 · 已保留收到的内容”和重试。\n- 两条分隔条的标签、帮助、均分动作随中英文即时切换；会话列表名称同步切换。\n- HTML 无标题导航使用 Content section，PPT 页码使用 Page N。\n- 先前主动停止、失败时草稿保留、零输出停止保留旧回答均已有实机证据。\n\n组合自动测试 442 项：440 通过、2 项既有跳过、0 失败。这里只报告已验场景：51 项清单目前 8 项完整通过，其他场景保留待验；VoiceOver实际朗读、全场景英文、旧版本升级和完整CI门禁尚未完成。英文无障碍仍有“当前位置”等残留，不能写成全英文验收通过。没有合并、安装覆盖或发布。",
+          "created_at": "2026-09-28T21:51:23+02:00",
+          "updated_at": "2026-09-28T21:51:23+02:00",
+          "author": "taekchef"
+        }
+      ]
+    },
+    {
+      "number": 45,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/45",
+      "title": "WIP: 收尾浮窗图示、行内公式与 11pt 字号",
+      "body": "## 解决什么\n从 Cursor 旧脏目录迁移经过审查的最小修复：浮窗内部图示/工具状态标记挂接已有内容组件；单美元公式在 Markdown 解析前保护；紧凑浮窗提问和回答正文改为 11pt。保留代码和链接中的字面示例；无附件/有效公式时不增加整篇字面区解析。\n\n没有采用旧补丁的高度阈值或流式整篇强制排版。最新主线已经具有流文本清空后保留最终正文的逻辑。\n\n## 怎么验证\n- 基于 main c9880305；独立代码审查完成。\n- 组合代码中 ChatMarkdownAuditTests 8/8、AgentStreamingDisplayPumpTests 13/13 通过。\n- 公式回归进入实际原生解析器并断言 math 节点，另核对锁定的 Catalyst MarkdownView 支持同一分隔符。\n- 代码/围栏代码/外层链接里的专用协议示例保留测试通过；git diff --check 通过。\n\n## 尚未完成\n这是待验收请求。完整回归尚未通过，既有测试夹具和异步初始化调用问题正在单独修正。Mac Catalyst 构建、真实浮窗高度、生成结束、滚动重开及公式视觉验收仍待完成。当前工具没有隔离桌面入口，没有操作用户桌面，也未发布版本。\n\n\n## 2026-09-26 最终组合验证记录\n\n组合分支 `codex/cursor-closeout-integration`，干净提交 `a1634daf85c44894707c57af7ac09ef6f387b459`：\n\n- 完整安全套件退出码 0：403 项中 401 通过、2 项原有视觉 opt-in 跳过、0 失败，54.193 秒。\n- 应用资料与数据自检、原生助手离线评测自检通过；7 条 Node/工具/编辑器/官网检查通过；生成资源无差异。\n- Mac Catalyst arm64 编译、打包成功。构建号 `20260926.0752.29`，源码未修改标记 `false`，独立测试身份。\n- 交付 ZIP 实际解压后严格签名检查通过；SHA-256 `a2da3561edb21d59c0cc5ed41d2fbaa0877f0ccbf498a6a5c5e38b78c54f5f57`。本地测试产物未上传为正式发布。\n- 保持 WIP：尚无画中画/隔离桌面入口，未运行 51 项真实操作、Catalyst 自动窗口检查、旧版升级与真实供应商冒烟；未合并、未替换安装版、未发布。\n\n该证据针对 #44、#45、#46 的组合提交，不代表三个独立分支各自完整测试或远端 CI 通过。\n\n## 2026-09-26 解锁后补验\n\n以下证据来自组合提交 `a1634daf85c44894707c57af7ac09ef6f387b459`，不代表三个独立分支分别全量检查。\n\n- 两项原先按环境跳过的隐藏组件快照已单独运行，2/2通过；7张截图逐张查看。此前全套401通过，本次补两项，没有改写成同一次403全跑。\n- Office屏幕外真实WebKit检查通过：Word图表、三维旋转、公式、EMF、阅读位置；PPT导航、搜索、摘抄返回、备注和眼镜遮罩。\n- 完整隐藏WebKit编辑器检查、笔记交互、公式交互三条检查均退出码0，包含中文合成输入、选区标记、公式保存重载及最终回答宽度/高度测量。\n- DeepSeek当前生产路由、deepseek-flash真实问答、课程搜索工具调用和取消通过，使用合成资料，退出码0。未覆盖真实连续双工具链或技能加载效果。\n- Gemini没有已保存凭据，尚未发出请求。\n- 用户已同意普通电脑控制，画中画不再是前置条件。随后启动测试包的电脑控制请求返回Mac已锁定，未取得成功启动证据；进程检查未见测试App，独立资料目录未生成。51项主窗口操作、Catalyst自动窗口验收及旧版升级未完成。未安装、未发布，本请求继续保持WIP。\n",
+      "state": "open",
+      "created_at": "2026-09-26T09:31:00+02:00",
+      "updated_at": "2026-09-26T13:01:42+02:00",
+      "closed_at": null,
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/cursor-floating-closeout",
+        "sha": "9d8a1f5848e7327da00bab6050477028fcd5c70d",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 44,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/44",
+      "title": "WIP: 补齐 PDF、Word、PPT、Markdown、HTML 当前阅读位置与恢复",
+      "body": "## 解决什么\n收尾 Cursor 的当前页定位讨论：PDF 翻页实时更新发问所用的已有状态，学习记录在切换资料、课程及退出时提交。删除旧 0.9 秒输入意图门槛和 0.35 秒记录延迟；防止恢复文档时临时第 1 页覆盖目标。重选跨课程共享资料也保留当前页。选区来源和重新生成沿用既有快照。\n\n## 怎么验证\n- 基于最新 main c9880305；独立代码审查完成。\n- 针对测试 4/4 通过；组合回归中新加的同资料重选测试也通过。\n- 覆盖发送第 90 页、切换资料保存、跨课程隔离、退出落盘重开、跨页选区锚点和同资料重选。\n- git diff --check 通过。\n\n## 尚未完成\n这是待验收请求，不代表可以合并或发布。完整回归发现既有测试夹具/异步初始化调用问题，正在单独修正；当前完整套件未通过。Mac Catalyst 构建和真实 PDF 操作验收仍在推进。当前工具没有隔离桌面入口，真实窗口验收未执行。\n\n\n## 2026-09-26 最终组合验证记录\n\n组合分支 `codex/cursor-closeout-integration`，干净提交 `a1634daf85c44894707c57af7ac09ef6f387b459`：\n\n- 完整安全套件退出码 0：403 项中 401 通过、2 项原有视觉 opt-in 跳过、0 失败，54.193 秒。\n- 应用资料与数据自检、原生助手离线评测自检通过；7 条 Node/工具/编辑器/官网检查通过；生成资源无差异。\n- Mac Catalyst arm64 编译、打包成功。构建号 `20260926.0752.29`，源码未修改标记 `false`，独立测试身份。\n- 交付 ZIP 实际解压后严格签名检查通过；SHA-256 `a2da3561edb21d59c0cc5ed41d2fbaa0877f0ccbf498a6a5c5e38b78c54f5f57`。本地测试产物未上传为正式发布。\n- 保持 WIP：尚无画中画/隔离桌面入口，未运行 51 项真实操作、Catalyst 自动窗口检查、旧版升级与真实供应商冒烟；未合并、未替换安装版、未发布。\n\n该证据针对 #44、#45、#46 的组合提交，不代表三个独立分支各自完整测试或远端 CI 通过。\n\n## 2026-09-26 解锁后补验\n\n以下证据来自组合提交 `a1634daf85c44894707c57af7ac09ef6f387b459`，不代表三个独立分支分别全量检查。\n\n- 两项原先按环境跳过的隐藏组件快照已单独运行，2/2通过；7张截图逐张查看。此前全套401通过，本次补两项，没有改写成同一次403全跑。\n- Office屏幕外真实WebKit检查通过：Word图表、三维旋转、公式、EMF、阅读位置；PPT导航、搜索、摘抄返回、备注和眼镜遮罩。\n- 完整隐藏WebKit编辑器检查、笔记交互、公式交互三条检查均退出码0，包含中文合成输入、选区标记、公式保存重载及最终回答宽度/高度测量。\n- DeepSeek当前生产路由、deepseek-flash真实问答、课程搜索工具调用和取消通过，使用合成资料，退出码0。未覆盖真实连续双工具链或技能加载效果。\n- Gemini没有已保存凭据，尚未发出请求。\n- 用户已同意普通电脑控制，画中画不再是前置条件。随后启动测试包的电脑控制请求返回Mac已锁定，未取得成功启动证据；进程检查未见测试App，独立资料目录未生成。51项主窗口操作、Catalyst自动窗口验收及旧版升级未完成。未安装、未发布，本请求继续保持WIP。\n\n## 范围补齐：PDF、Word、PPT、Markdown、HTML 的当前阅读位置\n\n用户确认本项覆盖所有支持格式。PDF显示实际页码，PPT显示幻灯片，Word使用可读段落位置，Markdown/HTML使用章节或正文块，不为连续文稿虚构页码。\n\n- 发问捕获当时位置；选区和重试继续使用原问题的来源。\n- PPT整页读取包含当前页全部段落，精确段落引用仍只读该段，不跨页。\n- Markdown补齐标题前言、无标题正文块、公式块以及保存恢复；事件带文稿身份，避免旧文稿污染新文稿。\n- HTML补齐无标题、短段、嵌套、重复段和超过24个侧栏标记的长文位置；普通搜索不重复索引段落别名。\n- Word/HTML首次打开就记录实际位置；恢复期间不被初始事件覆盖；失效目标退出后使用真实当前位置。文稿切换的异步消息校验本次加载身份。\n\n### 本轮验证\n\n- Swift定向78/78通过，包含真实HTML DOM位置到正文读取、重复段、长文定位、失效目标返回，以及PPT整页读取/游标续读。\n- 编辑器类型检查通过，编辑器脚本30/30通过。\n- Office屏幕外检查通过，包含Word图形/公式/重排、PPT导航/搜索/摘抄定位/备注。\n- 独立只读复核完成，未发现仍阻塞定位/读取/恢复的问题；差异格式检查通过。\n\n### 尚未完成\n\n- 主窗口真实导入、滚动、发问、切换、退出重开及旧版升级未验收。电脑锁屏，未把组件检查当作整包通过。\n- 本请求仍未合并，未替换正式安装版，未发布。\n- 原组合a1634daf和旧包不包含本次扩展，不能冒用其验证结论。\n- 网页资源一致性检查仍命中基线已有viewer-editor-code：旧版和新版阅读资源都含imagePickerRequested；资源已重新生成，保留该检查问题，不删断言掩盖。\n\n补修提交：`cf3c8663`；组合验证提交：`fb44a649`（同时包含#45/#46）。隐藏编辑器完整检查首次在检查器书写建议准备断言失败，原代码不变重试已通过；两次日志均保留。新独立包已构建，源码干净；版本20260926.1341.03，arm64，包及实际ZIP解压后的严格签名检查均通过，尚未启动。ZIP SHA256：e0bb794dcb09eec5c92ed901e5bc8c07c1589b17f9feb96a131046cb4c2c592e。\n",
+      "state": "open",
+      "created_at": "2026-09-26T09:30:58+02:00",
+      "updated_at": "2026-09-28T20:47:52+02:00",
+      "closed_at": null,
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/cursor-reader-closeout",
+        "sha": "9de7568b9d179c4f50dd632bd5d66355992af130",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 43,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/43",
+      "title": "官网新增 Credits：导航触发各模型贡献小面板",
+      "body": "- 导航栏 Q&A · Labs · Webi · 反馈 后新增 Credits 入口\n- 点击弹出紧凑贡献榜：厂商 logo、品牌色比例条、hover 明细\n- 数据考自 git 历史与本机 agent 会话日志（2026-07-03 至 09-25）\n- check_website.sh 12 页全过",
+      "state": "closed",
+      "created_at": "2026-09-25T19:38:52+02:00",
+      "updated_at": "2026-09-25T19:39:04+02:00",
+      "closed_at": "2026-09-25T19:39:03+02:00",
+      "merged": true,
+      "merged_at": "2026-09-25T19:39:03+02:00",
+      "merge_commit_sha": "c98803055954d239f93644899122fae579659db7",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/credits-widget",
+        "sha": "2dcc1d43d35e8852af81d3f57ccf03ab1609d57a",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 42,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/42",
+      "title": "避免隐藏的放大文字快捷键重复插入同一条菜单命令",
+      "body": "## 解决什么\n启动时 `buildMenu` 把 `performWorkspaceCommand:`、propertyList `zoom-in` 插了两次，两条都叫「放大文字」（⌘+ 与隐藏的 ⌘=），UIKit 抛 `NSInvalidArgumentException` 后进程 SIGABRT。\n\n隐藏的 ⌘= 仍放大文字，但使用单独的 propertyList `zoom-in-equals`，不再作为第二条相同 propertyList 的菜单命令插入。\n\n## 怎么验证\n在 `codex/ux-menu-zoom-once` 上用独立 derived data 编过 Mac Catalyst 的 WeiBei scheme：`xcodebuild ... build`，结果 ** BUILD SUCCEEDED **。\n\n## 风险\n菜单里仍只有一条可见的「放大文字」。⌘= 是否在真实 App 里放大文字，合入后用新包启动确认不崩溃；快捷键手感未在本步逐键验收。",
+      "state": "closed",
+      "created_at": "2026-09-24T14:09:11+02:00",
+      "updated_at": "2026-09-24T14:09:30+02:00",
+      "closed_at": "2026-09-24T14:09:28+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T14:09:28+02:00",
+      "merge_commit_sha": "338d3856df9854c7f73a633bfcb1da3884d9c4ed",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-menu-zoom-once",
+        "sha": "b21c6a63cf0ff8ea300cb202aab8c98ed37d30d3",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 41,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/41",
+      "title": "让候选包编过分栏文案和检查更新菜单",
+      "body": "## 解决什么\n\n候选包在 #40 上编不过，补两处编译问题，并把漏掉的「打开资料」改成「打开文稿」。\n\n- 分栏条为了随界面语言刷新无障碍文案，多写了一个 `layoutSubviews`。并回原来的那一个。\n- 「检查更新…」用 `insertChild` 放进应用菜单时传的是 `UICommand`，这个接口要的是 `UIMenu`。包进一个内联菜单。这条从 PR-8 起就在，打候选包时才暴露。\n- 菜单和命令面板里的「打开资料」改为「打开文稿」。\n\n不改 `accessibilityIdentifier`。\n\n## 怎么验证\n\n提交 `31825538f5becc3e9ae28d89e94d7e3afd9b5d26`。#40 的 `WEIBEI_DIST_DIR=/tmp/weibei-ux-rc ./script/build_and_run.sh package` 停在上述两处编译错误。这处修正合入后，用同一条命令从最新 `codeberg/main` 再打候选包。\n\n## 风险\n\n检查更新在应用菜单里会作为内联项出现，不另起一个子菜单标题。\n\n## 待真机\n\n- 应用菜单里能看到「检查更新…」。\n- 中英文界面里，分栏条的无障碍说明跟着界面语言走。\n",
+      "state": "closed",
+      "created_at": "2026-09-24T12:05:01+02:00",
+      "updated_at": "2026-09-24T12:05:21+02:00",
+      "closed_at": "2026-09-24T12:05:20+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T12:05:20+02:00",
+      "merge_commit_sha": "fb36b267bf8cb67cba9ad6ef865e8fd47a282896",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-copy-unify",
+        "sha": "31825538f5becc3e9ae28d89e94d7e3afd9b5d26",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 40,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/40",
+      "title": "把界面上的叫法收成同一套，英文界面不再夹着中文",
+      "body": "## 解决什么\n\nPR-10：把界面上的叫法收成同一套。只改用户能看见的字符串，不改 `accessibilityIdentifier`。\n\n- 术语：文稿、课程栏、课程文件夹、对话、助手、学习记忆、课程档案、在文稿中查找 / 在笔记中查找、发送问题、工作台、服务商、通用资料。资料库这个根目录名保留。回答下的「摘录」改为「放入笔记」。默认对话标题改为「新对话」。\n- C2：总账本、坏档、可携带状态、课程登记、聊天记录外置、并发变更、清单校验、尚未接入原生运行时、降级为模板、本地运行记录、课程现场、「Chat 始终是全局的」、「0 次修订」改成用户能听懂的说法。\n- C3：「本次会话中」改为「内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。」\n- C5：英文界面里原先写死的中文改走界面语言；中文界面里的「配置 Default」、推理强度原始值和 `agent chat pane` 改为对应的中文或现成标签。\n- C8：中文句子里的半角标点改为全角。「记下这段」和「保存到摘抄本」都用「留空只存原文」。\n\n引用标记 `[材料：…]` 仍用「材料」。这是回答里的引用协议，安全测试按这个标记断言，不是界面叫法。\n\n## 怎么验证\n\n分支 `codex/ux-copy-unify`，提交 `fe0173c67cadb05aef53afa144da343578691f45`。\n\n上一轮已通过：`swift build`、`swift run WeiBeiSelfCheck`、`swift run WeiBeiWebEditorCheck`、`npm run typecheck:editor`、`npm run build:editor`。\n\n`swift test --filter WeiBeiSafetyTests`：393 项，2 项跳过，7 项失败。对照 #39 合入后的同套测试（393 项、6 项失败），多出来的是 `testEveryRegisteredToolHasDetailsAndHonestOutcome`。搜索活动文案从「本次返回 0 条命中」改成「本次返回 N 条」，英文是 “Returned N matches”。断言已改成核对返回条数和措辞，不再锁死「命中」。这条已单独重跑并通过。\n\n其余 6 项失败在 #39 的主线上已经存在，这次没有改它们：\n\n- `testGenUIWheelInsideWebContentReachesConversationScroller`\n- `testPinnedQuestionKeepsItsPassageAndPositionUntilUnpinned`\n- `testSelectionClearPreservesManualAttachmentsAndOpenedQuestion`\n- `testImportedFileIdentitySafety`：现在停在「文稿入口第 2 次点击没有切换栏位」。#39 的同一次测试已经是这句，不是这次文案改出来的。更早的主线上，同一条测试停在「Agent 内部路径或协议细节进入了用户失败气泡」。\n\nCodeberg 没有自动 CI。`./App/script/check-ci.sh` 会弹出窗口，这次没有隔离桌面，没有跑。\n\n## 风险\n\n改动面是界面字符串。Catalyst 业务检查依赖的 accessibilityIdentifier 没有改。\n\n## 待真机\n\n这些还没有在真实窗口里验收，不能写成已通过：\n\n- 中文界面和英文界面各过一遍主要窗格。截图只截界面，不带私人资料。\n",
+      "state": "closed",
+      "created_at": "2026-09-24T11:52:15+02:00",
+      "updated_at": "2026-09-24T12:05:08+02:00",
+      "closed_at": "2026-09-24T11:52:42+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T11:52:42+02:00",
+      "merge_commit_sha": "316a3d0e84fe6242ab656dea268edb4bc5af3fe4",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-copy-unify",
+        "sha": "31825538f5becc3e9ae28d89e94d7e3afd9b5d26",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 39,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/39",
+      "title": "让第一次打开和课程入口能直接用，并把反馈改到 Codeberg",
+      "body": "## 解决什么\n\nPR-9：第一次打开和课程入口可以直接用，反馈从已封的 GitHub 改到 Codeberg。\n\n- L4：首次打开不再把「就用这里」做成硬门槛，点任何一个入口即视为确认；文案改为资料库已安放在当前位置。\n- L5：首次启动按系统首选语言选择中文或英文；用户改过的界面语言保持不变。\n- L6：选区「问」浮层在未配置模型时显示未配置提示，回车不再没有反应。\n- L7：没有课程时直接导入到「通用资料」；「新建课程」「导入资料…」改成主按钮。\n- X1：空状态页和工作台接受拖入的文件，并声明 PDF/HTML/Markdown/TXT/DOCX/PPTX 的文档类型，角色为 Viewer，处理等级为 Alternate。\n- R7：课程文件不可用时，侧栏能看出「暂不可用」；打开失败时显示课程文件夹。\n- R8：全局搜索打开结果后定位到第一个命中；可用性只统计当前课程，已登记为不可用的条目不再把整次搜索说成没有找到。\n- R9：新建课程失败时显示真实原因，中英文都保留。\n- C6：公开版本行只显示版本号和构建号；commit 只出现在诊断信息里。\n- C10：实际搜索全部课程的入口，文案改为「搜索全部课程」。\n- C11：空状态不再指向课程概览里不存在的提问入口。\n- C12：反馈改为打开 `https://codeberg.org/WroughtMind/weibei/issues/new`，预填标题和正文，不自动打标签，也不再自动关闭。\n- K8：官网和隐私链接仍用 `wroughtmind.github.io`，这次不改地址。\n\n## 怎么验证\n\n分支 `codex/ux-onboarding-course`，提交 `5df05d687b4d2286334c23c4fd29435da785747b`。工作区没有未提交改动。\n\n计划里记录的本地检查：`OnboardingCourseTests` 7 项和 `WeiBeiSelfCheck` 通过。这 7 项覆盖：\n\n- 首选语言按第一个中文或英文偏好决定\n- 已保存的界面语言不被系统偏好覆盖\n- 公开版本行不含 commit，诊断信息保留\n- 反馈链接预填标题和正文，且没有标签参数\n- 新建课程的真实错误在中英文里都保留\n- 全局搜索的可用性忽略其他课程和已知缺失条目\n- 打开阅读器搜索时只把第一个命中选中一次\n\nCodeberg 没有自动 CI，以上是本地结果。\n\n## 风险\n\n声明文档类型后，魏碑会出现在访达的「打开方式」里。角色是 Viewer，处理等级是 Alternate，不抢系统默认打开方式。\n\n## 待真机\n\n这些还没有在真实窗口里验收，不能写成已通过：\n\n- 从访达把 PDF 拖到主窗口和 Dock 图标\n- 英文系统上的首次启动\n",
+      "state": "closed",
+      "created_at": "2026-09-24T10:50:30+02:00",
+      "updated_at": "2026-09-24T11:52:20+02:00",
+      "closed_at": "2026-09-24T10:53:14+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T10:53:14+02:00",
+      "merge_commit_sha": "68e1c3476a76f28898b646ff265ff7d9e77334e5",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-onboarding-course",
+        "sha": "5df05d687b4d2286334c23c4fd29435da785747b",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 38,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/38",
+      "title": "让 Mac Catalyst 编过默认资料库路径和 SVG 转 PNG",
+      "body": "## 解决什么\nMac Catalyst 编不过 WeiBeiCore 的两处：默认资料库用了 Catalyst 没有的 `homeDirectoryForCurrentUser`，SVG 转 PNG 用了 Catalyst 上不可用的 `NSImage`。\n\n## 怎么改\n- 未配置资料库时，默认路径仍是主目录下的「魏碑资料库」，改为 `NSHomeDirectory()`。已写入的资料库路径不动。\n- macOS 包仍用原来的 `NSImage` 栅格化。Catalyst 按同样的点尺寸和屏幕倍率取出位图，超长边缩放和 PNG 编码仍走原来的 ImageIO 路径。\n\n## 怎么验证\n- `swift build` 通过。\n- `swift test --filter testAttachmentStoreRasterizesSVGToPNG` 通过；默认资料库路径测试通过。\n- 未启动 App：\n  `xcodebuild -project App/WeiBei.xcodeproj -scheme WeiBei -destination 'platform=macOS,variant=Mac Catalyst' -derivedDataPath .build/catalyst-arm64-typecheck -clonedSourcePackagesDirPath .build/catalyst-packages CODE_SIGNING_ALLOWED=NO build`\n  **BUILD SUCCEEDED**。`MarkdownAttachmentStore.swift` 已在 WeiBeiCore 的 Catalyst 目标里编过。\n\n## 风险\n没有启动 App，也没有改已配置的资料库。\n",
+      "state": "closed",
+      "created_at": "2026-09-24T09:30:59+02:00",
+      "updated_at": "2026-09-24T10:48:57+02:00",
+      "closed_at": "2026-09-24T10:48:56+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T10:48:56+02:00",
+      "merge_commit_sha": "ffbe2c1eb0aaf2149b4b4a2b16a171e351364667",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-catalyst-build",
+        "sha": "2a0bc7c41679906b13f2879602ca659769bafb62",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 37,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/37",
+      "title": "快捷键和菜单不再抢键，窗口尺寸和课程抽屉按角色工作",
+      "body": "## 解决什么\n\n快捷键、菜单和窗口在发版前还在互相抢键、点了没反应，或把状态藏在关不掉的界面后面。本 PR 只做 K2、K3、K4-⌘K、K5、K6、K7、K8、K9、K10、R10、L8、X2、X3、X4。\n\n- 深浅色和工具栏月亮按钮走同一个 `appearancePreference`，默认键从 ⌥⌘T 改为 **⌃⌘T**（目录里没有占用）。不再包一层 `withAnimation`。\n- 去掉系统「文字大小」菜单，补了隐藏的 ⌘= 放大。\n- 笔记编辑器是第一响应者时，⌘K 交给编辑器；否则打开命令面板。\n- ⌘A/B/C/N/O/Q/V/W/X/Z 不能被自定义占用。录键必须带 ⌘、⌃ 或 ⌥。已保存的自定义键不动，只改默认值。\n- ⌥⌘1 打开三栏时三栏都显示；聚焦隐藏窗格会先把它打开。⌘J 改为「只看文稿 / 恢复三栏」，按文稿/对话/笔记角色切换，沉浸对话下不可用。\n- 帮助菜单改为「反馈问题…」「魏碑官网」「隐私说明」。应用菜单加「检查更新…」。官网仍是 https://wroughtmind.github.io/weibei/ ，隐私说明沿用官网现有的 PRIVACY.md 链接。反馈仍打开当前的 GitHub 新建 issue 页（改地址属于 PR-9）。\n- 不适用的菜单项置灰。「写入回答到笔记」「复制当前引用」放到编辑菜单。工作区子项改为平铺分组。\n- 文件菜单和命令面板都有「新建对话」，默认 **⇧⌘N**（目录里没有占用）。\n- 工作台快捷键执行前先关掉课程空间。课程搜索框有内容时，第一次 Esc 只清空搜索。\n- 设置窗口用固定 value `settings` 打开；已有设置场景则只激活。文件面板优先挂到 `isKeyWindow`。\n- 主窗口最小高度 560；设置窗口场景最小 700×600。分栏比例改存 AppStorage。点课程抽屉遮罩会关闭抽屉。\n\n没有跳过的条目。\n\n## 怎么验证\n\n- `swift test --filter 'ShortcutsMenuTests|AppearancePreferenceTests'`：10 项通过。覆盖保留键、无 ⌘/⌃/⌥ 的录键被拒、⌃⌘T 与 ⇧⌘N 默认值且互不冲突、已自定义的深浅色键保持原样、三栏布局后三栏可见、聚焦隐藏笔记会打开它、深浅色切换前后 `appearancePreference` 与主题深浅一致。\n- `swift build`：通过。\n- `swift run WeiBeiSelfCheck`：`WeiBei self-check passed`。\n- `git diff --check`：通过。\n- `swiftc -parse`（Mac Catalyst SDK）检查了 `AppDelegate.swift` 和 `CatalystWorkspaceChrome.swift`：通过。\n- 没有跑 `check-ci.sh`，没有启动 App，没有碰 `/Applications/魏碑.app`。\n- 单独的 Catalyst `xcodebuild` 在编到 `WeiBeiCore` 时失败，失败点是主线上已有的代码，不是这次改动：`MarkdownAttachmentStore.swift` 在 Catalyst 上调用了不可用的 `NSImage`；`CourseLibraryModels.swift` 的 `homeDirectoryForCurrentUser` 在 Catalyst 上不可用。因此 App 目标这次没有完整编过。\n\n## 风险\n\n- 改了默认键。已经自定义过的快捷键保持原组合。\n- 去掉的是系统「文字大小」子菜单，格式菜单里的其他项还在。\n- 帮助里的反馈仍指向 GitHub issue 页，和设置里现在的退路一致。PR-9 再改地址。\n\n## 待真机验收\n\n- 菜单实际渲染：帮助菜单、检查更新、编辑菜单里的两项、文字大小和隐藏的 ⌘=。\n- ⌘+、⌘=、⌘K、⌘↩ 在笔记、公式块、对话输入框里谁先响应。\n- ⌃⌘T 是否和系统快捷键冲突；⇧⌘N 是否和系统「新建」冲突。\n- 设置窗口重复打开、主窗口关掉后 ⌘, 是否还能打开设置。\n- 课程抽屉点遮罩关闭；课程搜索框第一次 Esc 只清空。\n- 主窗口缩到高度约 560、设置窗口缩到 700×600 是否还可用。\n- 关掉主窗口再打开，分栏比例是否还在。\n",
+      "state": "closed",
+      "created_at": "2026-09-24T09:11:47+02:00",
+      "updated_at": "2026-09-24T09:15:12+02:00",
+      "closed_at": "2026-09-24T09:15:10+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T09:15:10+02:00",
+      "merge_commit_sha": "307659ee03c24ee5c3601463c9073a9558ae212e",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-shortcuts-menus",
+        "sha": "4b4b433511b9e3faa72dac40308ada4c59a7c0db",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 36,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/36",
+      "title": "笔记状态默认沉默：保存延迟显示、去掉成功横幅、命名笔记不随标题改名",
+      "body": "## 解决什么\n发版前体验打磨 PR-4（N5、N6、N9、N10、N11、X7-备份）。基于已含 PR-3 的 `codeberg/main`。\n\n- **N5**：`.saving` 不再立刻占标题栏；持续约 2 秒才显示「保存中」；失败/冲突仍立即显示\n- **N6**：外部改动无冲突采用后不再标「外部修改」，会话回到 clean\n- **N9**：面板里起过名的新笔记登记 `customDisplayTitle`，且不写入标题改名基线，首次保存不被 `# 标题` 改掉文件名\n- **N10**：删掉 5 处成功类横幅（已重命名 / 已打开双链 / 已创建双链 / 已在课程笔记目录新建 / 已把 N 个文件移入）；失败类保留\n- **N11**：重命名身份异常中止只保留一条错误\n- **X7-备份**：「未写内容已保存在魏碑备份中」附「在访达中显示」\n\n跳过：无（上述条目在复核时均仍存在）\n\n## 怎么验证\n```bash\ncd ~/Documents/魏碑/worktrees/ux-note-status\nswift build\nswift run WeiBeiSelfCheck   # WeiBei self-check passed\nswift test --filter 'WriteGateSafetyTests|PoetryIncidentRegressionTests|NoteEditingSessionTests'\n# Selected tests: 30 executed, 0 failures\n# 含新增：testCleanExternalEditAdoptsDiskWithoutExternalModificationLabel\n#         testUserNamedNoteKeepsFileNameAfterHeadingSave\n#         testSavingLabelAppearsOnlyAfterTheStatusPersists\ngit diff --check  # 通过\n```\n未跑 `check-ci.sh`，未启动会抢桌面的 App。\n\n## 风险\n- 「保存中」延迟 2 秒后才可见；真正卡住的保存也要满 2 秒才显示，失败仍立即显示（计划接受）\n- 带备份访达入口的提示不再自动消失，需点关闭或换下一条提示\n- 全量 `swift test --filter WeiBeiSafetyTests` 另有与本 PR 无关的失败（GenUI 滚轮事件、SelectionExperience、ImportedIdentity 等），未计入本 PR 验收\n\n## 待真机\n- 打字时标题栏不再闪「保存中」；卡住超过约 2 秒才出现\n- Finder 外部改笔记后无冲突采用，红色「外部修改」不挂着\n- 面板起名新建笔记，第一次写入 `# 标题` 后文件名仍是用户起的名字\n- 成功路径不再弹成功横幅；重命名身份异常只弹一条\n- 冲突选「采用磁盘」后，备份提示可「在访达中显示」\n",
+      "state": "closed",
+      "created_at": "2026-09-24T08:37:34+02:00",
+      "updated_at": "2026-09-24T08:48:43+02:00",
+      "closed_at": "2026-09-24T08:48:42+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T08:48:42+02:00",
+      "merge_commit_sha": "4d104cf175ec4559e43f0a5753fc6cfde967cb08",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-note-status",
+        "sha": "b7ea4c7ecd6af5d88e1e1d4a4ae648b81b5928ef",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 35,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/35",
+      "title": "对话出错时说人话，并区分额度用尽和限速",
+      "body": "## 解决什么\n\n对话出错时说人话，不再把额度用尽、模型不存在或工具失败说成含糊的服务不可用，也不再把原始 JSON 露给用户。\n\n- A4：402，以及错误体里的 `insufficient_quota` / `billing_error` / 余额类说法，归成「额度不足」，文案带「去设置」，不提供重试。429 只有在错误体不是额度时才算限速。404 归成「请求被拒 · 检查所选模型」。OpenAI、Anthropic、Gemini 和聊天补全走同一套分类。\n- A5：用户停止显示「已停止」。其他中断按失败类型说明；收到过正文才写「已保留收到的内容」。认证失效和额度不足给「去设置」。\n- A7：工具成功优先用回执里的 summary（例如「已记住 2 条」）。失败统一「未能完成」，原始内容只写日志。未知名工具的进行中文案改为「正在处理」。\n- A8：引用来源打不开时，用窗口顶部状态条提示「这份文稿已不在课程里」（对话窗格上方可见）。\n- A9：单击自己的提问不再整条复制，只留悬停复制按钮。\n- A10：右键「复制整条回答」先剥掉 `[材料：…]` 这类标记，和底部复制按钮一致。\n- A11：对话菜单始终有「查看全部对话…」，打开命令面板并只搜对话。\n- X9：流式请求改为连接超时 30 秒（等到响应头）+ 空闲超时 90 秒（响应开始后没有新字节）。首字若在响应头之后才出现，计入这 90 秒。推理模型常见首字在数十秒内，因此没有按各家再放宽。\n\n## 怎么验证\n\n- `swift build`：通过\n- `swift run WeiBeiSelfCheck`：WeiBei self-check passed\n- `swift test --filter 'AgentFailureMappingTests|NativeProviderSearchFailureTests|testFailedToolSummaryOmitsRawJSON|testEveryRegisteredToolHasDetailsAndHonestOutcome'`：7 项通过（含 402、429+insufficient_quota、404、401，以及失败 `resultSummary` 不含 `{`）\n- `git diff --check`：通过\n- 未跑 `check-ci.sh`，未启动会抢桌面的 App\n\n## 风险\n\n有的服务商用 429 同时表示限速和额度用尽。分类看错误体里的 code/type/status 和余额类说法，不单看状态码。连接超时只覆盖响应头；响应头之后长时间思考、却一个字都不发，会在 90 秒空闲后结束。\n\n## 待真机验收\n\n- 悬停自己的提问出现复制按钮，单击提问本身不复制\n- 右键「复制整条回答」不含 `[材料：…]`\n- 没有当前课程时，对话菜单的「查看全部对话…」打开命令面板并只列出对话\n- 点一条已经不在课程里的引用来源，对话窗格上方能看到「这份文稿已不在课程里」\n- 网络卡住时，连不上约 30 秒结束，连上后没有新字约 90 秒结束，而不是干等 5 分钟\n",
+      "state": "closed",
+      "created_at": "2026-09-24T07:43:48+02:00",
+      "updated_at": "2026-09-24T08:53:40+02:00",
+      "closed_at": "2026-09-24T08:53:34+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T08:53:34+02:00",
+      "merge_commit_sha": "fc5228829f7c7c7fd8fdade0d5f6973ddea74020",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-agent-errors",
+        "sha": "1f82741cda790606b2f115830d62b763e1f1a387",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 34,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/34",
+      "title": "选区提问留下划线前必须先发出，摘抄可以删除或放进笔记",
+      "body": "## 解决什么\n\nPR-6（R4、R5、X7-摘抄）。基线是已含 PR-5（#31）和 PR-3（#32）的 `codeberg/main`（`4c0965d7`）。\n\n- **R4**：下划线和「已问 · N」只统计已经发出过消息的选区线程。只点「问」、还没发送的空线程不再留下划线。「已问」菜单和摘抄本「…」都可以删除。删除选区线程时只删这条选区对话本身，不删它挂靠的父对话。\n- **R5**：「记」的草稿按选区锚点分开。换到另一段时显示那段自己的草稿；回到原段还能接着写。查看已保存的摘抄不会清掉还没提交的草稿。\n- **X7-摘抄**：摘抄本「…」增加「插入到当前笔记」，走 `insertMarkdown`。主线上的 `insertMarkdownInternal` 会先把选区折叠到末尾再插入（PR-3 / #32）。\n\n删除不弹确认框。删除后约 4 秒显示「已删除」，旁边有「撤销」。\n\n## 怎么验证\n\n在 worktree `~/Documents/魏碑/worktrees/ux-selection-marks`：\n\n- `swift build`：Build complete\n- `swift run WeiBeiSelfCheck`：WeiBei self-check passed\n- `swift test --filter 'testEmptyAskThreadIsUnmarkedAndDeletingItPersistsWithoutRemovingTheParentChat|testRemarkDraftFollowsSelectionAnchorAndExcerptInsertsWithoutReplacing'`：两条都 passed\n\n`SelectionExperienceTests` 里另有两条在合入前的 `codeberg/main` 上同样失败，不是这次改动引入的：`testPinnedQuestionKeepsItsPassageAndPositionUntilUnpinned`、`testSelectionClearPreservesManualAttachmentsAndOpenedQuestion`。\n\n没有跑 `check-ci.sh`，没有启动会抢桌面的 App。\n\n## 风险\n\n- 删除选区线程会删掉这条选区自己的对话记录。父对话保留。撤销只在这几秒内有效，过期后不能从横幅找回。\n- 没发过消息的旧划线会在这次过滤后消失。已经发过消息的划线还在。\n\n## 待真机验收\n\n- 只点「问」不发送：原文没有新划线，「已问」数量不变。发出一条后再出现划线和「已问」。\n- 「已问」里删除：划线和这条选区对话消失，几秒内点「撤销」能回来。不出现确认框。\n- 摘抄本删除同样有短时撤销。\n- A 段写一半「记」，换到 B 段再点「记」：草稿是空的；回到 A 段还能看到刚才那半句。\n- 笔记里有选中文字时，把摘抄「插入到当前笔记」：选中的文字还在，摘抄加在末尾。\n",
+      "state": "closed",
+      "created_at": "2026-09-24T07:42:42+02:00",
+      "updated_at": "2026-09-24T08:53:03+02:00",
+      "closed_at": "2026-09-24T08:53:01+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T08:53:01+02:00",
+      "merge_commit_sha": "80f408235ad3603d959cb5b98a00b402394e056d",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-selection-marks",
+        "sha": "f2232e80948931c895153bd7eb68e327c96d2ab9",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 33,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/33",
+      "title": "回答进行中不再误停止，失败和空回复不再丢掉原回答",
+      "body": "## 解决什么\n\n发版前体验审查里对话会丢内容或误停止的五项（A1、K4-⌘↩、A2、A3、A6）。当前 `codeberg/main`（496e048e）上这五项都还在，没有已修可跳过的条目。\n\n- **A1**：回答生成中，回车和 ⌘↩ 只尝试发送；正在回答或正在停止时直接返回，不再取消。停止只留给停止按钮和命令面板「停止回答」。\n- **K4-⌘↩**：菜单项「发送对话」只在第一响应者是对话输入框（主对话或选区「问」浮层）时启用。焦点在笔记、公式块或摘抄框时该项禁用，按键留给那里。摘抄框与对话输入框共用文本视图，摘抄框标记为不接管这条快捷键。\n- **A2**：失败或非用户取消时，只在输入框为空时回填上一问。用户点停止不回填。重试和重新生成不再把旧问题写回输入框。准备期间若用户已经写下新草稿，发送路径不再清掉它。「引用所选文字」追加到草稿末尾（前面空一行）。\n- **A3**：重新生成在收到第一个新字之前保留原回答（含画面上的流式层）。失败或停止且一个字都没收到时恢复原回答，底部标出失败原因和「重试」。\n- **A6**：模型返回空内容时保留一条中断消息「模型没有返回内容」，可重试。若这次是重新生成，则恢复原回答。\n\n## 怎么验证\n\n在 worktree `~/Documents/魏碑/worktrees/ux-conversation-safety`，基线 `codeberg/main` @ `496e048e`。\n\n- `swift build`：通过（Build complete，约 187s）。\n- `swift run WeiBeiSelfCheck`：第一次失败，原因是 PDF 索引自检还停在 indexing、OCR 未完成（`failedPageReasons` 为空），与本次对话改动无关。立刻重跑通过：`WeiBei self-check passed`。\n- `swift test --filter ConversationSafetyTests`：8 项全部通过（运行中再提交不取消、失败不覆盖非空草稿、空草稿才回填、重新生成失败/零输出停止保留原回答、空回复保留中断消息、重新生成的空回复恢复原回答、用户停止不回填）。\n- `swift test --filter ComposerDraftIsolationTests`：4 项通过。\n- `swift test --filter DailyWorkflowTests`：2 项通过。\n- `git diff --check`：通过。\n- `SelectionExperienceTests` 里 `testPinnedQuestionKeepsItsPassageAndPositionUntilUnpinned` 与 `testSelectionClearPreservesManualAttachmentsAndOpenedQuestion` 失败。把本次改动暂存后在干净的 `496e048e` 上重跑，同样失败，不是本 PR 引入的。\n\n未跑 `./script/build_and_run.sh package` 和 `./App/script/check-ci.sh`：这两步会弹出独立窗口约两分钟，当前无法把窗口隔到用户桌面之外，因此没有启动 App，也不把真机行为写成已通过。\n\n## 风险\n\n- 回答过程中回车和 ⌘↩ 不再停止。停止入口是输入框上的停止按钮，以及命令面板里的「停止回答」（该项不再显示 ⌘↩）。代码里运行中 `showsControl` 包含正在回答，停止按钮应保持可见；真窗口未核对。\n- ⌘↩ 是否真的交给公式块 / 笔记 / 摘抄框，取决于系统在菜单项禁用后是否把按键送给第一响应者。逻辑按这个前提写，未在真窗口确认，也未确认会不会和输入框按钮上的 ⌘↩ 双触发。\n- 重新生成时，第一个新字到达前界面继续显示原回答；第一个字到达后换成新内容。\n\n## 待真机验收\n\n- 回答生成中按回车：回答继续，不停止。\n- 中文输入法组字时按回车：不把组字中的回车当成发送或停止。\n- 焦点在笔记公式块、笔记正文、摘抄框时按 ⌘↩：不发送、不停止，公式块能退出编辑。\n- 焦点在对话输入框时 ⌘↩ 只发送；回答进行中 ⌘↩ 不做任何事。\n- 运行中停止按钮一直可见，点它才停止，且不把上一问写回输入框。\n- 失败时若输入框已有新字，草稿保持不变；输入框为空才回填上一问。\n- 重新生成失败或一个字都没收到就停止：原回答还在，底部有失败原因和「重试」。\n- 模型返回空内容：留下「模型没有返回内容」和重试；若是重新生成则恢复原回答。\n\n不在本 PR 合入 main。\n",
+      "state": "closed",
+      "created_at": "2026-09-24T07:23:08+02:00",
+      "updated_at": "2026-09-24T07:25:56+02:00",
+      "closed_at": "2026-09-24T07:25:55+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T07:25:55+02:00",
+      "merge_commit_sha": "4c0965d7d6e25810617b88e53b523a48287f9f52",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-conversation-safety",
+        "sha": "b47faf77361e71f2b8dc620c7546fc965a4a7e3f",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 32,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/32",
+      "title": "收窄笔记斜杠菜单误触，过大图片缩放后存入",
+      "body": "## 解决什么\n\n笔记编辑器输入在发版前会误伤正常打字，也会把过大的图片整页打崩。\n\n- **N1 / N8**：句中仍可呼出斜杠菜单（汉字、标点、空白后，以及段首的 `/` 和拼音打出的「、」）。紧贴在 ASCII 字母、数字或另一个 `/` 后面时不再自动弹出，所以 `1/2`、`km/h`、`and/or`、网址不会卡住方向键和回车。匹配改为前缀，`/2` 不再命中二级标题。没有匹配时菜单收起，不再拦截 ↑↓ 和回车。Esc 关掉后，同一次输入里的这个 `/` 不再弹出。选中命令时会一并删掉段首的「、」。\n- **N2**：图片保存失败只在编辑器里轻提示，不再把整块编辑器换成「初始化失败」。普通位图超过 20MB 或 4000 万像素时，自动缩到长边 4096 并重新编码后存入，不拒绝。动图只按单帧尺寸判断，文件超过 50MB 才提示。SVG 转成 PNG 再存入，避免把可执行脚本写进笔记。只有损坏、无法解码的文件才提示失败。解码走 ImageIO 缩略图，避免超大图整张进内存。\n- **N3**：重新载入笔记不进入撤销历史。刚打开的笔记第一下 ⌘Z 是无操作，也不会因此标脏。\n- **N4**：摘录、写入回答等外部插入先把残留选区折叠到末尾，不再替换笔记里没清掉的选区。\n- **N7**：提示块标题和代码语言框在输入法组字时，回车只确认候选，不提交。\n- **X5**：网页选区里夹着表格时，只有行列规整才按表格粘贴；不规整则交给默认 HTML 粘贴，段落还在。\n- **X6**：剪贴板里同时有文字或 HTML 时，不把 Office 附带的截图当成要插入的图片。\n- **C7**：提示块类型 `bug` 改为「缺陷」，`question` 仍是「问题」。\n- **C13**：删掉编辑器里的临时 `streamDebug` 探针。\n- **C5**：图片控件、结构输入框、「插入内容」、斜杠命令的界面文案走编辑器现有的界面语言。\n\n## 怎么验证\n\n在 worktree `~/Documents/魏碑/worktrees/ux-editor-input`、分支 `codex/ux-editor-input` 上：\n\n| 命令 | 结果 |\n|---|---|\n| `npm ci && npm run typecheck:editor && npm run test:editor && npm run build:editor` | 通过。编辑器单测 30 项通过。`Resources/Editor/*` 已随提交更新 |\n| `python3` 字体 venv + `script/convert_editor_fonts.py --check` | 通过 |\n| `npm run typecheck:genui && npm run build:genui` | 通过 |\n| `git diff --check` | 通过 |\n| `swift test --filter MarkdownResourceSafetyTests` | 通过，10 项，0 失败。含 8064×6048 图缩到长边 4096、长 GIF 原样保存、SVG 存成 PNG、损坏文件拒绝 |\n| `swift build` | 通过 |\n| `swift run WeiBeiSelfCheck` | `WeiBei self-check passed` |\n| `swift run WeiBeiWebEditorCheck` | `WeiBei web editor check passed`（含斜杠误触、重载撤销、外部插入、组字回车、不规整 HTML 粘贴、界面语言） |\n\n没有启动会抢桌面的 App，也没有碰 `/Applications/魏碑.app`。\n\n## 风险\n\n- 英文单词或数字后面紧贴 `/` 不再自动弹出斜杠菜单，需要先打一个空格。中文句中不受影响。\n- **图片缩放会改变存入的像素，原图不保留。** 超过读取上限的静止图片会缩到长边 4096 后重新编码（照片为 JPEG，其余优先 PNG）。笔记里留下的是缩小后的文件，不是相机原图。\n- SVG 存成 PNG，矢量信息和脚本都不会留下。\n- 动图单帧仍然超过 4000 万像素，或动图文件超过 50MB，仍会提示失败。缩小后仍超过 20MB 的静止图片也会提示失败。\n- 原生输入法检查有一次在「组字结束后仍处于组字」上报错，紧接着的完整 `WeiBeiWebEditorCheck` 已通过。\n\n## 待真机验收\n\n- 中文输入法实际打字：句中汉字后输入 `/` 能出菜单；`1/2`、`km/h` 不出，方向键和回车正常。\n- 拼音输入法在段首打出「、」能出菜单，选中命令后「、」被删掉。\n- 提示块标题、代码语言框在组字时按回车，只上屏，不提交。\n- 从 Excel、PPT 或 Keynote 粘贴文字，得到文字而不是一张截图。\n- 拖入一张 iPhone 高像素原图，笔记能收下，画面是缩小后的版本。\n",
+      "state": "closed",
+      "created_at": "2026-09-24T07:17:37+02:00",
+      "updated_at": "2026-09-24T07:24:11+02:00",
+      "closed_at": "2026-09-24T07:24:09+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T07:24:09+02:00",
+      "merge_commit_sha": "569d93af7064d6ac04f20e139d81204e72913abc",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-editor-input",
+        "sha": "0cf70353a3f5eab016edb71498a10f001e8c63ad",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 31,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/31",
+      "title": "让 PDF 滚动记住阅读位置，读不出来的文档给出出路",
+      "body": "## 解决什么\n\n阅读位置、打不开的文档，以及引用跳转后清不掉的高亮。\n\n- **R1** 触控板/滚轮翻 PDF 不记位置：另加一条只接收滚动、不接收触摸的 pan，刷新阅读位置截止时间。原来的触摸 pan 仍只服务文字选择。\n- **R2** 重开或跳页不再把浏览方式改成单页。滚动模式用 `go(to:)` 跳页。\n- **R6** PDF 解析失败或加密时显示失败页（文件名 +「在访达中显示」）。Office 单张图片或公式失败改为资源提示，整篇仍可读。txt/md 在 UTF-8 失败后用 GB18030 再试一次。\n- **R11** HTML/Office 的眼镜按钮改用和 PDF 相同的全局设置。\n- **X8** Esc，或在 PDF / 网页 / 纯文本里点空白，清除引用跳转高亮。.txt「已问」下划线按当前文稿过滤。\n- **C9** ⌘⇧C 不再带出内部章节标识，章节名仍保留。\n- **R3-余项** 笔记和阅读器的查找打开后，⌘G / ⇧⌘G 跳下一个 / 上一个。#23 已有结果列表和方向键，这两项快捷键原先没有。\n\n没有跳过的条目。\n\n## 怎么验证\n\n在 `codex/ux-pdf-reader` @ a9be8691（相对 `codeberg/main` 496e048e）：\n\n- `swift build` 通过\n- `swift run WeiBeiSelfCheck` 通过（WeiBei self-check passed）\n- `swift test --filter ReaderExperienceSafetyTests` 通过（跳页不改浏览模式、GB18030、复制标题去掉章节标识，3 项）\n- `npm ci && npm run build:editor`，`office-entry.js.deflate` 与 `editor-resources.json` 已随提交更新\n- `node script/check_office_graphics.mjs` 通过（缺图、缺公式不再整篇失败，并出现资源提示）\n- `swift run WeiBeiDev nslog-scan` 通过\n- `swift run WeiBeiWebEditorCheck`：第一次在无关的引号输入用例上失败（`Native quote input changed`），立刻重跑通过（WeiBei web editor check passed）\n- `git diff --check` 通过\n- `WEIBEI_SIGNING_IDENTITY=- ./script/build_and_run.sh package` 通过，产物在本 worktree 的 `dist/魏碑.app`，没有启动 App，也没有动 `/Applications/魏碑.app`\n- 未跑 `./App/script/check-ci.sh`：这一步会弹出独立窗口\n\n## 风险\n\n- 只识别滚动的 pan 仍可能和 PDFView 自带滚动抢手势。离线无法模拟触控板滚动，这项不能当成已通过。\n- GB18030 回退可能把不是 GB18030 的字节解成乱码，而不是失败页。\n- Office 缺一张图或一个公式时，正文继续显示，问题只出现在右上角小点。\n\n## 待真机验收\n\n| 用户怎么操作 | 应该看到什么 | 是否通过 | 问题备注 |\n|---|---|---|---|\n| 滚动模式用触控板或滚轮读 PDF，退出再打开 | 回到原来的页，浏览方式仍是滚动 | 未验 | 滚动事件无法离线模拟 |\n| 滚动时拖选文字 | 选择和滚动都能用 | 未验 | 已把滚动和触摸分成两个 recognizer |\n| 打开损坏或加密的 PDF | 失败页有文件名和「在访达中显示」 | 未验 | 逻辑有，窗口未开 |\n| HTML/Office 打开眼镜后换一份文档 | 眼镜状态还在 | 未验 | |\n| 点引用跳原文后按 Esc，或点正文空白 | 高亮消失 | 未验 | |\n| 查找打开后按 ⌘G / ⇧⌘G（笔记和阅读器，焦点在网页里时也试） | 跳到下一条 / 上一条 | 未验 | |\n",
+      "state": "closed",
+      "created_at": "2026-09-24T07:13:07+02:00",
+      "updated_at": "2026-09-24T07:24:40+02:00",
+      "closed_at": "2026-09-24T07:24:40+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T07:24:40+02:00",
+      "merge_commit_sha": "e74e5777ea8c5371eeadafe21169db074d10f900",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-pdf-reader",
+        "sha": "a9be8691e3386d0e14fc172ff592169fa8e4ac25",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 30,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/30",
+      "title": "资料库不被静默改绑，默认库改到主目录",
+      "body": "## 解决什么\n\n资料库在原位置暂时连不上时，不再被静默改绑到默认库；选资料库位置不再几乎必失败；改绑文案与真实行为一致；新用户的默认库不再放进 iCloud 同步的「文稿」。\n\n- **L1**：`bootstrapDefaultLibraryIfNeeded` 只在 path、identity、bookmark、URL 都为空（从未配置）时建默认库。原库不可用时保持不可用，导入入口同样不改绑。恢复后走现有重连。\n- **L2**：所选文件夹非空、又不是资料库时，目标改为「所选文件夹/魏碑资料库」，原有内容不移动。判空忽略 `.` 开头的隐藏文件。失败显示 `CourseProjectRootError.errorDescription`。设置里「请在对话中打开它」已删。\n- **L3**：重新选择资料库的文案改为「选别的文件夹会改用那个文件夹，课程文件不会被移动」。波动横幅按钮改为「更换资料库…」。\n- **L9**：默认库建不起来时，提示指向「系统设置 › 隐私与安全性 › 文件与文件夹」，横幅带「重试」。\n- **L10**：`CourseLibraryLayout.defaultRootURL()` 改为 `~/魏碑资料库`（Catalyst 与非 Catalyst 一致）。`WEIBEI_WORKSPACE_DIR` 覆盖不变。只影响从未配置过资料库的新安装。\n- **R7-按钮**：课程文件夹不可用时，资料库本身可用则按钮为「在访达中显示」；不可用则「重新选择资料库…」打开资料库选择面板，不再打开新建课程表单。\n\n没有跳过的条目。\n\n## 怎么验证\n\n基线：`codeberg/main` @ `496e048e`。工作目录：`~/Documents/魏碑/worktrees/ux-library-root`。\n\n| 命令 | 结果 |\n|---|---|\n| `swift build` | 通过 |\n| `swift run WeiBeiSelfCheck` | `WeiBei self-check passed` |\n| `swift test --filter 'LibraryBootstrapSafetyTests\\|LibraryMigrationSafetyTests\\|WorkspaceDirectoryIsolationTests'` | 13 项通过 |\n| `stdbuf -oL -eL swift test --filter WeiBeiSafetyTests` | 358 项，6 项失败。同一 6 项在未改动的 `496e048e` 上复现，不是本 PR 引入 |\n| `WEIBEI_NATIVE_EVAL_EFFORT=high swift run WeiBeiNativeCheck --native-eval-self-check` | `native-eval-self-check passed`（offline，effort=high） |\n| `git diff --check` | 通过 |\n\n资料库数据安全用例（`LibraryBootstrapSafetyTests` / `LibraryMigrationSafetyTests`）覆盖：\n\n- 已配置的原库路径不存在时启动：不新建默认库，path / identity / bookmark 不变，状态为不可用\n- 原库恢复后重连成功\n- 选非空文件夹：在其下建出 `魏碑资料库`，原有内容不被移动\n- 只含 `.DS_Store` 的文件夹视为空\n- 全新安装仍然自动建库，且默认路径在主目录、不在 `~/Documents` 下\n\n`WeiBeiSafetyTests` 里与本 PR 无关、干净主线上同样失败的 6 项：\n\n- `AgentVisualizationSizingTests.testGenUIWheelInsideWebContentReachesConversationScroller`（`Unrecognized event type 0`）\n- `SelectionExperienceTests.testPinnedQuestionKeepsItsPassageAndPositionUntilUnpinned`\n- `SelectionExperienceTests.testSelectionClearPreservesManualAttachmentsAndOpenedQuestion`\n- `WorkspaceSafetyTests.testImportedFileIdentitySafety`（Agent 失败气泡带出内部路径）\n\n未跑 `./App/script/check-ci.sh`，没有启动 App，没有碰 `/Applications/魏碑.app`。\n\n## 风险\n\n- 首次启动判定收紧后，全新安装仍会自动建库；已配置用户的 `courseLibraryRootPath` 不动。\n- 在设置里「迁移」仍会把资料库整棵搬到新位置。非空目标会搬进「所选文件夹/魏碑资料库」，所选文件夹里原有的文件留在原地。若该子目录里已有可见内容，迁移被拒绝，原库保持不变。\n- 课程空间里「重新选择资料库」是改用所选文件夹，不搬文件。文案按这个行为写。\n- 默认库改到主目录后，若系统不给主目录写入权限，建库失败会停在带「重试」的提示上，不会改去「文稿」。\n\n## 待真机验收\n\n- 拔掉外置盘或改名原库目录后启动：应看到资料库不可用，不会静默出现新的默认库；原库回来后能重连。\n- 全新安装：默认资料库在 `~/魏碑资料库`，不在 `~/Documents/魏碑资料库`。\n- 选一个非空文件夹（例如「下载」）作为新位置：其下出现「魏碑资料库」，文件夹里原有文件还在。\n- 拒绝文件访问后：提示指向「系统设置 › 隐私与安全性 › 文件与文件夹」，点「重试」能再试。\n- 课程文件夹不可用、资料库本身还在：按钮是「在访达中显示」。资料库也不可用：按钮是「重新选择资料库…」，打开的是选文件夹，不是新建课程。\n",
+      "state": "closed",
+      "created_at": "2026-09-24T07:01:04+02:00",
+      "updated_at": "2026-09-24T07:23:39+02:00",
+      "closed_at": "2026-09-24T07:23:38+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T07:23:38+02:00",
+      "merge_commit_sha": "b37c78a033dcc13df81ee325fb60e22804bbaa56",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/ux-library-root",
+        "sha": "ece76e5f740b197973cbf500f6cead5527d88053",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 29,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/29",
+      "title": "修复会话里 GenUI 显示一次后被卸掉",
+      "body": "正文重新排版时，SwiftUI 的消失回调会卸下还在屏幕上的 GenUI 网页视图，装回去时不会再挂上。前面几轮也因此变空。\n\n离屏整行仍由列表回收时释放网页视图。\n\n验证：改动只去掉卸载开关；安装包构建在合并后进行。",
+      "state": "closed",
+      "created_at": "2026-09-24T04:59:00+02:00",
+      "updated_at": "2026-09-24T04:59:14+02:00",
+      "closed_at": "2026-09-24T04:59:14+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T04:59:14+02:00",
+      "merge_commit_sha": "496e048efdacf3d14c195c16a1269be45d6b58b5",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "refs/pull/29/head",
+        "sha": "6f56997c032eaf5e4ea66a53771b94a4ae207064",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 28,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/28",
+      "title": "Gemini 同一次调用同一个工具时按各自编号配对结果",
+      "body": "## 解决什么\nGemini 把函数名当成调用编号。同一次回复里两次调用同一个工具时，两条结果编号相同，对不回去。\n\n## 怎么验证\n- `swift test --filter testGeminiSameToolCallsKeepDistinctIDs` 通过。\n- 同名的两次调用使用各自编号，函数名仍放在名字里，两条结果跟在同一次用户消息里按编号配对。\n\n## 风险\n思考签名没有改。默认的 Gemini 2.5 Flash 不要求带回签名。\n",
+      "state": "closed",
+      "created_at": "2026-09-24T04:32:20+02:00",
+      "updated_at": "2026-09-24T04:32:27+02:00",
+      "closed_at": "2026-09-24T04:32:26+02:00",
+      "merged": true,
+      "merged_at": "2026-09-24T04:32:26+02:00",
+      "merge_commit_sha": "73a896a9fefdaa7bff980b031b877d9fafef9178",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "refs/pull/28/head",
+        "sha": "b2113f11176cd5443ccabb6dbe7bd353bd44a1c3",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 27,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/27",
+      "title": "选区浮窗打开后停在原位并随回答长高",
+      "body": "## 解决什么\n点「问」或红色下划线后的选区浮窗会在拖动、拉伸和回答变长时重新选边，窗口跟着闪到选区另一侧。打开时还预留一块空白回答区，回答过程中窗口不跟着长，别针也不再需要。点红色下划线会带动整篇文稿重画。\n\n模型先说一句再去翻页时，已说的话被插在「我要读」和读回的正文中间，DeepSeek 拒绝这次续接，浮窗只显示服务端异常。\n\n## 怎么验证\n- 调试版里：打开位置固定，顶栏可拖，拉伸只动被拖的边，回答从「正在思考」开始并随正文长高，到上限后在窗内滚动。别针已去掉。点红色下划线只打开浮窗。\n- 会翻页的那条选区，再问一次可以继续回答。用户已在当前调试版确认这两部分。\n- 同一批改动已接到 Codeberg 最新 main，Mac Catalyst Debug 编译通过。\n\n## 风险\nGitHub 检查这次跑不了。接到最新主线后的组合没有再在运行中的 App 里点过一遍，编译是通过的。\n",
+      "state": "closed",
+      "created_at": "2026-09-23T16:23:35+02:00",
+      "updated_at": "2026-09-26T09:53:16+02:00",
+      "closed_at": "2026-09-23T16:23:46+02:00",
+      "merged": true,
+      "merged_at": "2026-09-23T16:23:46+02:00",
+      "merge_commit_sha": "25a2fc533a5e2591e8910170eabb3635c6f8e660",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "refs/pull/27/head",
+        "sha": "f3cc02c6a1ddf3beaf686244e79fede972708441",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 26,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/26",
+      "title": "让资料查找和各处搜索框跟着主题走",
+      "body": "## 解决什么\n资料查找、列表筛选、课程搜索和命令面板还在用系统灰底输入框，聚焦时又会出现一圈红边。结果列表、页码和回到查找前也没有跟八套主题放在同一块面板里。\n\n## 怎么验证\n- `swift test --filter AppearanceThemeTests` 通过。\n- 本分支打出的 App 已打开。查找面板用当前主题的纸色或玻璃色，没有系统灰框和聚焦红边。选中结果是圆角浅底，命中的字用朱砂。\n\n## 风险\nCatalyst 上的搜索框改成了自己绘制的输入框。macOS 原生路径仍走 SwiftUI 文本框，这次没有在非 Catalyst 构建里打开过。\n",
+      "state": "closed",
+      "created_at": "2026-09-23T13:44:42+02:00",
+      "updated_at": "2026-09-23T13:47:58+02:00",
+      "closed_at": "2026-09-23T13:47:57+02:00",
+      "merged": true,
+      "merged_at": "2026-09-23T13:47:57+02:00",
+      "merge_commit_sha": "3ecc4ea0a0e15247d81d9a215eb6903d83d2b54f",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "refs/pull/26/head",
+        "sha": "2b1960c0ee48a310c1218a6b0463fca2af84f832",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 25,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/25",
+      "title": "修复玻璃主题下列表透出文稿和笔记",
+      "body": "## 解决什么\n玻璃主题下，文稿或笔记点顶部浮动标签打开列表时，原文仍透在列表底下。\n\n## 怎么验证\n- `swift test --filter ContextualListReturnTests --filter AppearanceThemeTests` 通过。\n- 已用本分支打出的 App 打开，玻璃主题下列表不再和正文叠在一起，返回后仍回到原来的文稿或笔记。\n\n## 风险\n列表打开时藏起的是当前窗格里的 PDF、网页、纯文本和笔记编辑器。对话里的预览没有传这个开关，保持原样。\n",
+      "state": "closed",
+      "created_at": "2026-09-23T13:01:01+02:00",
+      "updated_at": "2026-09-23T13:01:27+02:00",
+      "closed_at": "2026-09-23T13:01:26+02:00",
+      "merged": true,
+      "merged_at": "2026-09-23T13:01:26+02:00",
+      "merge_commit_sha": "3de57b616a082f8fe19b3fef0b85a98fe2554dc2",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "refs/pull/25/head",
+        "sha": "2d626931e35317d41eef1f287a4b18cf7b3f30a9",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 24,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/24",
+      "title": "修复选区浮窗回答中的公式源码显示",
+      "body": "## 问题与修正\n\n选区浮窗中的真实回答使用 `\\underbrace` 标注公式。当前 SwiftMath 报 `Invalid command \\underbrace`，会话渲染器因此把整段 LaTeX 源码显示出来。显示预处理改用库支持的 `\\underline`，保留两个中文标注和原始回答；代码块中的字面文本不变。\n\n## 验证\n\n- 真实公式回归测试先失败、修复后通过；原主线组合的 `ChatMarkdownAuditTests` 为 3/3 通过。\n- 接入 Codeberg 当前 `main` 后，arm64 Mac Catalyst 应用编译通过。\n- 将同一提交的源码复制到隔离临时目录后，当前 Codeberg 主线组合的 `ChatMarkdownAuditTests` 3/3 通过；原工作目录曾受 `input file ... was modified during the build` 环境问题影响。\n\n## 待验收\n\n尚未安装或操作修复版真实浮窗。下划线替代花括号的外观需要在候选应用中确认。\n\n## 合并记录\n\nCodeberg 合并接口已将修复提交 [`ed6a9b14`](https://codeberg.org/WroughtMind/weibei/commit/ed6a9b1447c31586bfa9a7144c6a95b83ef60a3f) 写入 `main`，但接口超时导致请求状态未同步。随后将这条已存在的主线提交登记为本请求的合并结果；没有再次改动主分支。\n",
+      "state": "closed",
+      "created_at": "2026-09-23T10:48:31+02:00",
+      "updated_at": "2026-09-23T11:43:45+02:00",
+      "closed_at": "2026-09-23T11:42:59+02:00",
+      "merged": true,
+      "merged_at": "2026-09-23T11:42:59+02:00",
+      "merge_commit_sha": "ed6a9b1447c31586bfa9a7144c6a95b83ef60a3f",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/selection-chat-math",
+        "sha": "e681160d51e719fe28337b37be96fcf62daaeaef",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 23,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/23",
+      "title": "完善文稿搜索与阅读交互",
+      "body": "文稿查找现在以结果列表显示数量、位置和带命中高亮的摘要。输入关键词只更新列表与正文高亮，保留当前阅读位置；点击结果、按回车或上下方向键后才定位，并可使用“回到查找前”返回原位置。点击结果或回车后，方向键继续切换同一个选中项，不会出现两个高亮结果。\n\nPDF、HTML、DOCX、PPTX、Markdown 和纯文本的结果共用这套交互。PDF 可搜索文字层里单独成行的点号仅从摘要中滤除，不改文稿内容或匹配位置。本分支同时修复 PDF 拖选或刷新后跳回旧页、工具栏两侧点击区域，以及查找浮层占位与结果层级。\n\n验证：\n- Catalyst arm64 Release 组合代码构建通过；搜索相关 3 项行为测试通过。\n- 隔离版使用已有《平台经济学》PDF 实测：输入“推荐”出现 24 处；点击第 3 条后方向键切换为 4→5→4；回车定位后下键继续切换。改搜“真实”后，点击第 1 条、下键到第 2 条，回车到第 3 条、下键到第 4 条；列表始终只有当前一条高亮。\n- 现有 PDF 与 HTML 的结果计数、摘要和点击定位曾做交互检查。DOCX、PPTX、Markdown 与纯文本尚未逐一做真实文稿交互验收；三指拖拽和偶发首次悬停不高亮也未复现，不能把它们计为实测通过。\n",
+      "state": "closed",
+      "created_at": "2026-09-22T15:28:15+02:00",
+      "updated_at": "2026-09-23T11:54:50+02:00",
+      "closed_at": "2026-09-23T11:54:48+02:00",
+      "merged": true,
+      "merged_at": "2026-09-23T11:54:48+02:00",
+      "merge_commit_sha": "5d0fa4f79dbeb7eb83b6a733e703a7e806789d07",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "refs/pull/23/head",
+        "sha": "ce0f668df227862d4e3f40fb46f14ff498d191d9",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 22,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/22",
+      "title": "统一会话顶部渐淡与工具栏按钮背景",
+      "body": "会话、文稿和笔记使用同一套顶部渐淡：内容向上滚动时进入工具栏背后，滚回顶部时首条文字完整停在工具栏下方。中央三个切换按钮移除常驻浅色胶囊和描边，保留朱砂色选中图标及轻微悬停反馈。\n\n真实诊断确认：会话内部的 `.clipped()` 在窗口 y=40pt 开始裁剪，把公共遮罩的 0–40pt 区域提前切掉。移除 Catalyst 内部重复裁剪后，沿用外层窗格裁剪和公共遮罩；取消会话专用系统边缘效果。顶部留白仍属于可滚动内容，并修正历史跳转坐标。现有验收同时检查中间祖先裁剪链、首条内容、问题置顶和跳转位置。\n\n验证：\n- Release / arm64 编译、打包及签名检查通过。\n- 同一真实滚动图案对照通过：20pt 处三栏可见度约 0.344，30pt 处约 0.677；修复前会话两处均为 0。\n- 14 项会话检查通过；按钮调整后的最终包 21 项业务检查通过，含正常退出再重开的笔记和会话校验。\n- 画中画内核对首行、普通窗口/全屏渐淡；三个中央按钮逐个关闭、打开共 6 次，状态与窗格一致。\n\n运行证据来自 `320f2538` 加已提交于 `e7179428` 的本次改动，包内 `source_dirty=true`，不是提交后重新生成的纯净版本。完整结果、产物指纹和未验证边界见 [验证记录](https://codeberg.org/WroughtMind/weibei/src/branch/codex/topbar-conversation-fade/Docs/audit/2026-09-20-topbar-fade/%E9%AA%8C%E8%AF%81%E8%AE%B0%E5%BD%95.md)。\n\n尚未验证 Intel 架构或与最新主线整合后的组合；未安装正式 App、合并或发布。本轮业务首次分包运行因截图目录前置条件缺失中止，该次未计为通过；补齐前置条件后使用新身份完整重跑通过。\n",
+      "state": "closed",
+      "created_at": "2026-09-19T22:12:53+02:00",
+      "updated_at": "2026-09-22T14:16:59+02:00",
+      "closed_at": "2026-09-22T14:16:58+02:00",
+      "merged": true,
+      "merged_at": "2026-09-22T14:16:58+02:00",
+      "merge_commit_sha": "f9c65f3ac6bee673472d50d4806036fc335db91f",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/topbar-conversation-fade",
+        "sha": "e7179428f8604bbcc90e6fc2ce07f877f731a825",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 21,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/21",
+      "title": "修复窗口模式顶部栏点击失效",
+      "body": "## 解决什么\n\n#505 合入后，窗口模式下顶部栏图标完全无响应（连悬停高亮都没有），全屏正常。根因：macOS 27 beta 上 `titlebarAppearsTransparent=true` 吞掉窗口模式的工具栏点击；#505 无条件设置该属性，且全屏进出后残留。#505 当时的验收为自动化项，真实点击从未被覆盖，9/19 用户首次真人运行即复现。\n\n## 改动\n\n不再设置该属性（净 2 行）；全屏透明由原有 hideBackground 单独负责，观感不变。\n\n## 验证\n\n真机四轮二分（E0 禁整个函数→能点但全屏白条；E1 仅全屏设→启动能点但全屏进出后失效，分离出真凶；E3 永不设置→全路径通过）：启动/全屏进/全屏退/反复进出点击均正常，全屏样式与渐淡不变。swift build + WeiBeiSelfCheck + 111 用例回归全绿。\n\n## 已知限制\n\n窗口模式标题栏背景由系统绘制在私有层（运行时层级 dump 证实 contentView 仅为 UINSSceneContainerView），视图 API 不可达——该属性是窗口模式标题栏透明的唯一开关，故「窗口模式透明标题栏」与「可点击」在 macOS 27 beta 上不可兼得（#505 的透明观感在窗口模式回归为原生标题栏）。等 beta 修复后可恢复。",
+      "state": "closed",
+      "created_at": "2026-09-19T14:26:06+02:00",
+      "updated_at": "2026-09-19T22:12:56+02:00",
+      "closed_at": "2026-09-19T14:26:11+02:00",
+      "merged": true,
+      "merged_at": "2026-09-19T14:26:11+02:00",
+      "merge_commit_sha": "3425b346758214a811e80aeb0606797c89ec4f49",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/topbar-click",
+        "sha": "6a7bae95d9db5cd153e23064567ed7a753975962",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 20,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/20",
+      "title": "统一标题栏与笔记列表的显示名管道",
+      "body": "## 解决什么\n\n编辑笔记正文并保存后，标题栏不跟随（笔记列表却更新了）——两条显示名数据管道不一致：agentNoteTitle 读 noteText(for:)（持久层旧内容），列表走 noteListDisplayTitle→noteText 属性（编辑缓冲）。\n\n## 改动\n\nagentNoteTitle 复用 noteListDisplayTitle，统一口径；补回归测试（编辑/保存/重开/自定义名覆盖四场景）。\n\n## 来历\n\n9/16 已在 codex/note-title-refresh 完成并验证（分支测试 0 失败），9/18 账号封禁打断 PR 流程；本次按当前 main 重套。bug 在重套前的 main 上实测存在（同一测试 4 断言失败）。\n\n## 验证\n\nContextualListReturnTests 11 用例 0 失败（含新回归测试）；swift build；WeiBeiSelfCheck 通过。",
+      "state": "closed",
+      "created_at": "2026-09-19T13:09:48+02:00",
+      "updated_at": "2026-09-19T13:09:57+02:00",
+      "closed_at": "2026-09-19T13:09:57+02:00",
+      "merged": true,
+      "merged_at": "2026-09-19T13:09:57+02:00",
+      "merge_commit_sha": "740230835d467c7cbc941f11be917306b82c8c8c",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/note-title-fix",
+        "sha": "e84b4e5e8253009805726dbfc8eda53eb8f109a9",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 19,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/19",
+      "title": "统一资料与笔记选择页布局和操作层级",
+      "body": "> 从 GitHub 迁移的 PR（原 PR 因账号封禁在 GitHub 已不可见，分支与提交完整保留）。\n\n提交清单：\n- `040b1570 保留文稿阅读现场并增加返回当前文稿入口`\n- `a24c1c43 恢复选择页原有轻量样式，仅统一内容起始位置`\n- `a75dd20c 统一资料与笔记选择页布局和操作层级`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:23:10+02:00",
+      "updated_at": "2026-09-18T17:25:51+02:00",
+      "closed_at": "2026-09-18T17:25:51+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/unified-content-picker",
+        "sha": "040b1570aed224c32ed815f93b3335b6a7a858da",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 18,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/18",
+      "title": "柔化顶部栏与正文的滚动过渡",
+      "body": "> 从 GitHub 迁移的 PR（原 PR 因账号封禁在 GitHub 已不可见，分支与提交完整保留）。\n\n提交清单：\n- `b19ebb5b Limit toolbar edge configuration to the owning pane viewports`\n- `edfdfe0d Update documented conversation check count`\n- `5c01e6a0 Persist pane scroll edge suppression through WebKit state changes`\n- `7b36b6a3 test: include empty conversation regression in CI total`\n- `05c980d1 fix: initialize empty conversation history before layout`\n- `70b4eda3 为启动崩溃栈加载符号并保留崩溃时的线程栈`\n- `76a9d6d1 在隔离构建机捕获启动崩溃调用栈`\n- `e02946cb 将启动诊断输出留在构建目录`\n- `c07d490a 保留启动检查中的标准错误与系统终止原因`\n- `62817285 在启动验证失败时保留应用日志与崩溃报告`\n- `948b749e 在原顶部栏内统一滚动渐淡并修复全屏白底`\n- `a21e4873 由原生按钮管理点击状态并保留系统标题栏`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:23:08+02:00",
+      "updated_at": "2026-09-18T17:25:48+02:00",
+      "closed_at": "2026-09-18T17:25:48+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/topbar-soft-edge",
+        "sha": "c39e5b46b8c0e42bd0dfcd0ede4ebd1deadbcc0b",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 17,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/17",
+      "title": "修复聊天已打开时选区提问仍弹出浮窗",
+      "body": "> 从 GitHub 迁移的 PR（原 PR 因账号封禁在 GitHub 已不可见，分支与提交完整保留）。\n\n提交清单：\n- `5cc595a4 修复聊天已打开时选区提问仍弹出浮窗`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:23:02+02:00",
+      "updated_at": "2026-09-18T17:25:45+02:00",
+      "closed_at": "2026-09-18T17:25:45+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/selection-ask-existing-chat",
+        "sha": "5cc595a419ee310c66c708a06285158604cadac1",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 16,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/16",
+      "title": "逐页白板课堂、统一朗读与 Webi 课堂伙伴（原 GitHub PR#505）",
+      "body": "> 从 GitHub 迁移的 PR（原 PR 因账号封禁在 GitHub 已不可见，分支与提交完整保留）。\n\n提交清单：\n- `97aab1f3 docs: 记录 Webi 浮层候选的原生验收与剩余缺项`\n- `417b6235 fix: 让 Webi 浮在板面角落并修正课堂恢复交互`\n- `6a4c6d5c fix: 保留课堂准备状态并稳定编辑器检查初始化`\n- `2a4ef611 fix: 打通白板纠错缩放手写并整理朗读交互`\n- `1538c23c fix: 完善白板课堂容错与同步并压缩离线资源`\n- `4c20ebca fix: 保留手绘关系图的可见节点文字`\n- `f3a8262b fix: 保持声音与伙伴资源平铺并验证暂停时钟`\n- `b83f94e4 feat: 加入逐页白板课堂、统一朗读与 Webi 课堂伙伴`",
+      "state": "open",
+      "created_at": "2026-09-18T17:22:41+02:00",
+      "updated_at": "2026-09-18T17:22:42+02:00",
+      "closed_at": null,
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/whiteboard-classroom",
+        "sha": "3f12c8663c7a90ba093fda92f86da34dbc728891",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 15,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/15",
+      "title": "Grok/Kimi/OpenRouter 账号登录与授权结果页优化",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `3da4b692 fix(auth): compress Webi artwork within the app size budget`\n- `86672385 feat(auth): add Grok Kimi and OpenRouter account sign-in with Webi results`\n- `61ac54b0 优化 ChatGPT 授权结果页并跟随应用语言`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:29+02:00",
+      "updated_at": "2026-09-18T17:25:42+02:00",
+      "closed_at": "2026-09-18T17:25:42+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/oauth-result-page",
+        "sha": "78e601207e200670d52948f47e8cd5297448d544",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 14,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/14",
+      "title": "修复笔记标题栏与课程列表不跟随正文",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `f3db2b0b 收窄为编辑期间标题延迟，补齐加载完成后的对照验证`\n- `959064d4 修复笔记标题栏与课程列表不跟随正文`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:26+02:00",
+      "updated_at": "2026-09-18T17:25:39+02:00",
+      "closed_at": "2026-09-18T17:25:39+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/note-title-refresh",
+        "sha": "f3db2b0bbe62804ec98698ef8e0b05e4654e9d4d",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 13,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/13",
+      "title": "Markdown 渲染审计：保留聊天格式与字面代码",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `2e17fe10 build: strip unused executable symbols while retaining dynamic references`\n- `bff0afb4 refactor: avoid intermediate collections when mapping Markdown ranges`\n- `96f1d5f2 fix: preserve chat formatting and literal code across rendering`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:24+02:00",
+      "updated_at": "2026-09-18T17:25:35+02:00",
+      "closed_at": "2026-09-18T17:25:35+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/markdown-audit",
+        "sha": "2e17fe1050670f83661c8a96eb24e911ef85523f",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 12,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/12",
+      "title": "GenUI 指引拆分为分层技能",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `633c36eb Teach diagrams to follow host theme`\n- `babcbd0d Teach GenUI timelines and advanced tables`\n- `6b995ec2 Split GenUI guidance into layered skills`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:21+02:00",
+      "updated_at": "2026-09-18T17:25:32+02:00",
+      "closed_at": "2026-09-18T17:25:32+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/genui-layered-prompts",
+        "sha": "593a1f99f4f3f68e8ce2461cb17a5cdb688ab94c",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 11,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/11",
+      "title": "让原生对话真正连续呈现并修复完成时跳字",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `3d93db12 Preserve native Markdown spacing after main integration`\n- `a2229d1e Keep conversation presentation merge independent of prompt changes`\n- `02038dd1 Remove shortest-answer directive while retaining context`\n- `edb6a3e4 Preserve existing contextual answer instructions`\n- `df7029d4 Show live search context and preserve current answer intent`\n- `0faf1797 Keep incoming emphasis markers pending until text arrives`\n- `e041befb Keep appended text fading across rendered paragraph terminators`\n- `f3df9640 Distinguish web reads from searches in tool activity`\n- `cfb3e1e0 Polish tool activity choreography and streaming Markdown display`\n- `58406568 fix: preserve emphasis before Chinese closing punctuation`\n- `38ef30b5 fix: share Chinese emphasis rules with Catalyst conversation rendering`\n- `73843c60 fix: keep activity titles stable and omit unsolicited execution plans`\n- `18e2e2d3 fix: size inline activities to content and retain streaming footer state`\n- `64c5728f fix: retain animated feedback throughout tool execution`\n- `b3b15ede fix: inline tool activity groups in conversation flow`\n- `e13f891e feat: complete local tool activity details and outcomes`\n- `dfe1bd24 fix: show searchable detail in compact tool activity`\n- `d91e86f4 fix: surface provider search activity in conversation`\n- `7139cd71 让原生对话真正连续呈现并修复完成时跳字`\n- `c221c6a4 完善原生对话入场与工具活动记录`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:17+02:00",
+      "updated_at": "2026-09-18T17:25:29+02:00",
+      "closed_at": "2026-09-18T17:25:29+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/conversation-flow",
+        "sha": "3d93db1295af01fb8eea348542f02b663834f4e8",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 10,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/10",
+      "title": "主输入框提供 Flash/Think 强度选项并扁平化",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `853fd7f9 让输入框发送控件随多行增长保持右下对齐`\n- `fe863ddf 为无标题弹出窗口开启鼠标移动事件并增加真实桥接回归检查`\n- `f72e651c 改用菜单整行连续指针事件驱动悬停反馈`\n- `786a2dd7 将强度按钮悬停状态归属到视图并区分选中反馈`\n- `e166076d 统一强度菜单选项轮廓与悬停阴影`\n- `5408ffad 为强度选项添加悬停阴影与按下回落反馈`\n- `ff27e7a7 稳定模式选择宽度并改为轻量浮层反馈`\n- `8bd9ed69 主输入框提供 Flash 和 Think，并可按模型配置对应强度`\n- `4815fae6 收紧主输入框比例并移除浮雕阴影`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:14+02:00",
+      "updated_at": "2026-09-18T17:25:25+02:00",
+      "closed_at": "2026-09-18T17:25:25+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/composer-flat",
+        "sha": "a5c575ba33ad93d7bc05ffa54907257b468ca10d",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 9,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/9",
+      "title": "修复会话公式缺字和内部上下文误答",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `04fa9a44 fix: reject unsupported GenUI components and pack the 3D engine`\n- `e9b7032f fix: retry unsent questions without replacing missing history`\n- `226c2195 fix: align agent inputs, history and execution receipts`\n- `225fd7f1 修复会话公式缺字与内部上下文误答`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:11+02:00",
+      "updated_at": "2026-09-18T17:25:22+02:00",
+      "closed_at": "2026-09-18T17:25:22+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/chat-formula-context",
+        "sha": "cac52052d5fa480ebc4d63f6ce76409b0ba47cef",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 8,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/8",
+      "title": "让客户端管理学习状态版本与稳定短别名",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `4a3ae40f 持久化同轮状态别名并收窄历史投影`\n- `cf0461d9 消除学习状态修订号与真实编号回传`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:08+02:00",
+      "updated_at": "2026-09-18T17:25:18+02:00",
+      "closed_at": "2026-09-18T17:25:18+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/agent-state-aliases",
+        "sha": "f4c13ea77b16ccf53655d90679998f73cc3a67f8",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 7,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/7",
+      "title": "修复自动发现课程后 Agent 读取当前文稿失败",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `8fab087a 移除缺少文件身份缓存时的读取拦截`\n- `117c8741 修复自动发现课程后 Agent 读取当前文稿失败`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:05+02:00",
+      "updated_at": "2026-09-18T17:25:14+02:00",
+      "closed_at": "2026-09-18T17:25:14+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/agent-source-read",
+        "sha": "8fab087aa1a749ad51bb0b8de9ade21d2a3dd8ff",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 6,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/6",
+      "title": "按任务范围与工具能力重整协作规则",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `685c4321 docs: 按任务范围与工具能力重整协作规则`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:18:02+02:00",
+      "updated_at": "2026-09-18T17:25:10+02:00",
+      "closed_at": "2026-09-18T17:25:10+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/agent-rules-by-capability",
+        "sha": "685c4321c85cfa168d5881930915eee7488f802b",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 5,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/5",
+      "title": "补齐 Agent 原生续接状态并修正多轮评测入口",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR/分支工作因账号封禁在 GitHub 不可见，提交完整保留）。\n\n提交清单：\n- `72df525a 补齐流式完成项采集并记录真实续接复测`\n- `11d4f03d 记录续接修复草稿 PR 与复测授权状态`\n- `9a5272c3 修复 Agent 原生续接状态与多轮评测入口`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:17:59+02:00",
+      "updated_at": "2026-09-18T17:25:06+02:00",
+      "closed_at": "2026-09-18T17:25:06+02:00",
+      "merged": false,
+      "merged_at": null,
+      "merge_commit_sha": null,
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/agent-replay-state",
+        "sha": "72df525a338e7a693a04d09a61cdd69c9b1aaf4b",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 4,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/4",
+      "title": "搜索请求失败时保留错误，移除静默降级",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR 因账号封禁在 GitHub 已不可见，分支与提交完整保留）。\n\n提交清单：\n- `b2267b2c 搜索不支持时明确降级并继续会话`\n- `3d0a0e2c 区分请求被拒绝与临时服务故障`\n- `0b7cf529 移除搜索请求失败后的静默降级`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:13:25+02:00",
+      "updated_at": "2026-09-18T20:41:08+02:00",
+      "closed_at": "2026-09-18T20:41:07+02:00",
+      "merged": true,
+      "merged_at": "2026-09-18T20:41:07+02:00",
+      "merge_commit_sha": "e19c0bc855d2685e6b3005488e033df30159aa35",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/search-error-reporting",
+        "sha": "26bf0a9180694defd172811341dc66711469f7b9",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 3,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/3",
+      "title": "webi 九类任务技能与渐进式参考加载",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR 因账号封禁在 GitHub 已不可见，分支与提交完整保留）。\n\n提交清单：\n- `0a345e8f 技能拆分中剔除与首答事实核实候选规则重复的段落`\n- `e4552deb 新增 webi 九类任务技能与渐进式参考加载`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:13:23+02:00",
+      "updated_at": "2026-09-18T20:41:36+02:00",
+      "closed_at": "2026-09-18T20:41:36+02:00",
+      "merged": true,
+      "merged_at": "2026-09-18T20:41:36+02:00",
+      "merge_commit_sha": "8077d1205d140f2bfa600e43985b291c1e3e12cc",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/webi-task-skills",
+        "sha": "0a345e8f6f7c121caf08fe5e212f9f83c8bd724f",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 2,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/2",
+      "title": "首答事实核实：网页搜索节新增来源核对与收窄结论规则",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR 因账号封禁在 GitHub 已不可见，分支与提交完整保留）。\n\n提交清单：\n- `7cbd7b60 首答事实核实：网页搜索节新增来源核对与收窄结论规则`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:13:20+02:00",
+      "updated_at": "2026-09-18T20:41:30+02:00",
+      "closed_at": "2026-09-18T20:41:29+02:00",
+      "merged": true,
+      "merged_at": "2026-09-18T20:41:29+02:00",
+      "merge_commit_sha": "f4b99f471dad4b6029f7c09a1e77309ef987f942",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/first-answer-source-check",
+        "sha": "7cbd7b605ee6aebd76fada78b65930844fe76504",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    },
+    {
+      "number": 1,
+      "html_url": "https://codeberg.org/WroughtMind/weibei/pulls/1",
+      "title": "修正 DeepSeek 默认模型名与路由说明",
+      "body": "> 从 GitHub 迁移的进行中工作（原 PR 因账号封禁在 GitHub 已不可见，分支与提交完整保留）。\n\n提交清单：\n- `73f535b1 修正 DeepSeek 默认模型名与路由说明`",
+      "state": "closed",
+      "created_at": "2026-09-18T17:13:17+02:00",
+      "updated_at": "2026-09-18T20:41:16+02:00",
+      "closed_at": "2026-09-18T20:41:16+02:00",
+      "merged": true,
+      "merged_at": "2026-09-18T20:41:16+02:00",
+      "merge_commit_sha": "948f092a24aa261806f511bffe0902ed269c792c",
+      "author": "taekchef",
+      "base": {
+        "ref": "main",
+        "sha": "c98803055954d239f93644899122fae579659db7"
+      },
+      "head": {
+        "ref": "codex/deepseek-default-model",
+        "sha": "d45799f141670ff253542f3104ae31209a1f28cf",
+        "repository": "WroughtMind/weibei"
+      },
+      "comments": []
+    }
+  ]
+}

@@ -21,7 +21,7 @@ final class OnboardingCourseTests: XCTestCase {
     func testFeedbackLinkPrefillsTitleAndBodyWithoutALabel() throws {
         let url = try XCTUnwrap(WeiBeiFeedbackLink.prefilled(title: "打不开", body: "步骤\n第二行"))
         let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
-        XCTAssertEqual(components.host, "codeberg.org")
+        XCTAssertEqual(components.host, "github.com")
         XCTAssertEqual(components.path, "/WroughtMind/weibei/issues/new")
         let items = components.queryItems ?? []
         XCTAssertEqual(items.map(\.name), ["title", "body"])
