@@ -438,5 +438,6 @@ private struct LearningMemoryEditSheet: View {
         .frame(width: 460)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(WeiBeiTheme.paper)
+        .weiBeiFittedSheet()
     }
 }
