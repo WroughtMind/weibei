@@ -77,12 +77,6 @@ extension WorkspaceStore {
         return ui("复制笔记引用", "Copy note reference")
     }
 
-    var sendAgentActionTitle: String {
-        isAgentRunningInActiveChat
-            ? ui("停止回答", "Stop response")
-            : ui("发送问题", "Send question")
-    }
-
     var isAgentRunningInActiveChat: Bool {
         agentRequestTask != nil && agentRun.chatID == activeStudySessionID
     }
@@ -101,7 +95,9 @@ extension WorkspaceStore {
               message.completionState == .generating else {
             return message.text
         }
-        return run.latestAgentStreamingText
+        // A3: before the first new character, keep the persisted reply.
+        let streamed = run.latestAgentStreamingText
+        return streamed.isEmpty ? message.text : streamed
     }
 
     func agentReplyDisplayedStreamingText(_ message: AgentMessage) -> Bool {
@@ -239,7 +235,7 @@ extension WorkspaceStore {
             },
             persistLearningUpdate: { [weak self] update in
                 guard let self else {
-                    return NativeStorePersistReceipt.rejected("工作区已关闭")
+                    return NativeStorePersistReceipt.rejected("工作台已关闭")
                 }
                 let receipt = await self.persistNativeLearningUpdate(
                     update,
@@ -255,7 +251,7 @@ extension WorkspaceStore {
             },
             persistCourseProfileUpdate: { [weak self] update in
                 guard let self else {
-                    return NativeStorePersistReceipt.rejected("工作区已关闭")
+                    return NativeStorePersistReceipt.rejected("工作台已关闭")
                 }
                 let receipt = await self.persistNativeCourseProfileUpdate(
                     update,
@@ -268,7 +264,7 @@ extension WorkspaceStore {
                 return receipt
             },
             performNoteProposal: { [weak self] proposal in
-                guard let self else { return .rejected("工作区已关闭") }
+                guard let self else { return .rejected("工作台已关闭") }
                 return await self.performNativeAgentAction(
                     AgentReplyAction(kind: .writeNote, targetItemID: request.noteItemID,
                         sourceItemID: request.focus?.materialItemID, proposedMarkdown: proposal.markdown,
@@ -277,14 +273,14 @@ extension WorkspaceStore {
                     userRequested: proposal.userRequested, request: request, target: target, messageID: replyMessageID)
             },
             performRelationProposal: { [weak self] proposal in
-                guard let self else { return .rejected("工作区已关闭") }
+                guard let self else { return .rejected("工作台已关闭") }
                 return await self.performNativeAgentAction(
                     AgentReplyAction(kind: .createRelation, targetItemID: proposal.noteItemID,
                         sourceItemID: proposal.sourceItemID, contextRevision: proposal.contextRevision),
                     userRequested: proposal.userRequested, request: request, target: target, messageID: replyMessageID)
             },
             displayVisualization: { [weak self] visualization, blocks in
-                guard let self else { return NativeToolExecutionResult(text: "工作区已关闭，互动内容未显示。", isError: true) }
+                guard let self else { return NativeToolExecutionResult(text: "工作台已关闭，互动内容未显示。", isError: true) }
                 return await self.displayNativeVisualization(visualization, blocks: blocks,
                     requestID: request.id, messageID: replyMessageID, chatID: target.sessionID)
             },

@@ -300,7 +300,7 @@ private func checkWebSearchPayloadInjection() throws {
         schema: NativeJSONSchema(["type": "object"]),
         execute: { _, _ in NativeToolExecutionResult(text: "") }
     )
-    let request = NativeLLMRequest(model: "test", messages: [], tools: [courseMap])
+    let request = NativeLLMRequest(model: "test", messages: [], tools: [courseMap], enableNativeWebSearch: true)
 
     let responsesOn = OpenAIResponsesProvider.payload(for: request, webSearchSupported: true)
     try nativeRequire(
@@ -375,8 +375,8 @@ private func checkWebSearchPayloadInjection() throws {
 }
 
 private func checkProviderRouting() throws {
-    try nativeRequire(NativeProviderRouting.route(.deepseek).family == .openaiResponses, "deepseek moved to Responses for web search")
-    try nativeRequire(NativeProviderRouting.route(.deepseek).webSearch == .responsesTool, "deepseek carries server web search")
+    try nativeRequire(NativeProviderRouting.route(.deepseek).family == .openaiResponses, "deepseek stays on Responses")
+    try nativeRequire(NativeProviderRouting.route(.deepseek).webSearch == .none, "deepseek has no server web search (silently ignores the tool, verified 2026-09-18)")
     try nativeRequire(NativeProviderRouting.route(.xai).webSearch == .responsesTool, "xai carries server web search")
     try nativeRequire(NativeProviderRouting.route(.anthropic).webSearch == .anthropicTool, "anthropic carries server web search")
     try nativeRequire(NativeProviderRouting.route(.google).webSearch == .googleGrounding, "google carries grounding search")
@@ -684,6 +684,8 @@ private func checkContextRevisionEcho() throws {
 private func checkFailureMapping() throws {
     try nativeRequire(NativeLLMFailure(code: "unauthorized", status: 401, message: "no").asAgentFailureKind == .unauthorized, "401 maps unauthorized")
     try nativeRequire(NativeLLMFailure(code: "rate_limited", status: 429, message: "slow").asAgentFailureKind == .rateLimited, "429 maps rateLimited")
+    try nativeRequire(NativeLLMFailure(code: "insufficient_quota", status: 429, message: "quota").asAgentFailureKind == .insufficientQuota, "429 insufficient_quota is quota")
+    try nativeRequire(!AgentFailureKind.insufficientQuota.isRetryable, "quota is not retryable")
     try nativeRequire(NativeLLMFailure(code: "timeout", message: "idle").asAgentFailureKind == .timedOut, "timeout maps timedOut")
     try nativeRequire(NativeLLMFailure(code: "cancelled", message: "stop").asAgentFailureKind == .cancelled, "cancel maps cancelled")
     let mapped = NSError(

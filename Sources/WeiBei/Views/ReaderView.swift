@@ -236,6 +236,9 @@ struct ReaderView: View {
     @State private var pdfBrowseMode: PDFBrowseMode = .scroll
     @State private var pdfPageIndex = 0
     @State private var pdfPageCount = 0
+    /// R6: true when the selected PDF exists on disk but PDFKit cannot parse or
+    /// unlock it — the reader then shows the failure page instead of blank paper.
+    @State private var pdfDocumentUnreadable = false
     @State private var pdfControlsHovering = false
     @State private var pdfControlsExpanded = false
     /// Two independent timers, two independent tokens: text auto-collapse and
@@ -254,7 +257,6 @@ struct ReaderView: View {
     @State private var pdfRailHoveredPageIndex: Int?
     @State private var htmlResourceIssues: [String] = []
     @State private var htmlIssueDetailsPresented = false
-    @State private var adaptsWebDocumentColors = false
     @State private var htmlContentRailItems: [ContentRailItem] = []
     @State private var htmlContentRailActiveID: String?
     @State private var htmlContentRailTarget: WebReaderContentRailTarget?
@@ -367,6 +369,10 @@ struct ReaderView: View {
                 .padding(6)
             }
         }
+        // SwiftUI chrome (page controls, title, rail) follows opacity. The
+        // hosted PDF / web / text views are hidden separately: glass paper is
+        // clear, and those views keep drawing through a transparent list.
+        .opacity(store.materialPickerPresented ? 0 : 1)
         .allowsHitTesting(!store.materialPickerPresented)
         .accessibilityHidden(store.materialPickerPresented)
         .overlay {
@@ -389,7 +395,6 @@ struct ReaderView: View {
         .onChange(of: store.selectedMaterialItem?.id) { _, _ in
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
-            adaptsWebDocumentColors = false
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         // Width/height probe as background sibling — never parent of WKWebView/PDFView.
@@ -412,7 +417,6 @@ struct ReaderView: View {
         .background(Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
         .foregroundStyle(Color(weiBeiNativeColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
-        .animation(WeiBeiMotion.panel, value: paneState.showDocumentSearch)
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
         .onAppear {
             loadMarkdownSnapshot()
@@ -434,6 +438,7 @@ struct ReaderView: View {
             pdfPageIndex = 0
             pdfPageCount = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? 1 : 0
             pdfHasSelectableText = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? true : nil
+            pdfDocumentUnreadable = false
             pdfContentRailItems = []
             pdfRailTargetPageIndex = nil
             pdfRailHoveredPageIndex = nil
@@ -488,7 +493,7 @@ struct ReaderView: View {
     }
 
     private func selectionAskMarksJSON(for itemID: String) -> String {
-        let marks = store.selectionAskThreads(forItemID: itemID)
+        let marks = store.markedSelectionAskThreads(forItemID: itemID)
             .map { thread -> [String: Any] in
                 var mark: [String: Any] = [
                     "id": thread.id.uuidString,
@@ -788,11 +793,9 @@ struct ReaderView: View {
         if supportsImportedDocumentColorAdaptation {
             Button {
                 withAnimation(WeiBeiMotion.appearance) {
-                    if store.selectedMaterialItem?.kind.isWebDocument == true {
-                        adaptsWebDocumentColors.toggle()
-                    } else {
-                        store.toggleImportedDocumentColorAdaptation()
-                    }
+                    // R11: HTML/Office shares the PDF's persisted global preference
+                    // instead of a per-document local that resets on every switch.
+                    store.toggleImportedDocumentColorAdaptation()
                 }
             } label: {
                 Image(systemName: "eyeglasses")
@@ -806,7 +809,7 @@ struct ReaderView: View {
     /// Top-chrome entry for past selection-ask threads (replaces the mid-document legend overlay).
     @ViewBuilder
     private var selectionAskThreadsMenu: some View {
-        let threads = store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id)
+        let threads = store.markedSelectionAskThreads(forItemID: store.selectedMaterialItem?.id)
         if !threads.isEmpty {
             Menu {
                 ForEach(threads) { thread in
@@ -821,6 +824,11 @@ struct ReaderView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    }
+                    Button(role: .destructive) {
+                        store.deleteSelectionAskThread(thread.id)
+                    } label: {
+                        Text(store.ui("删除", "Delete"))
                     }
                 }
             } label: {
@@ -851,7 +859,7 @@ struct ReaderView: View {
     }
 
     private var adaptsSelectedDocumentColors: Bool {
-        store.selectedMaterialItem?.kind.isWebDocument == true ? adaptsWebDocumentColors : store.adaptImportedDocumentColors
+        store.adaptImportedDocumentColors
     }
 
     private var importedDocumentAdaptationLabel: String {
@@ -866,11 +874,12 @@ struct ReaderView: View {
               let requestID = pendingPDFPageRequestID,
               store.selectedMaterialItem?.kind == .pdf,
               pdfPageCount > 0 else { return }
-        pdfBrowseMode = .page
-        let resolvedPageIndex = min(max(target, 0), max(pdfPageCount - 1, 0))
-        pdfPageIndex = resolvedPageIndex
+        // R2: 跳页不改变浏览模式；滚动模式通过 rail 目标（PDFView.go(to:)）跳页。
+        let plan = PDFPageJumpPlan.resolve(targetPageIndex: target, pageCount: pdfPageCount, browseMode: pdfBrowseMode)
+        pdfRailTargetPageIndex = plan.railTargetPageIndex
+        pdfPageIndex = plan.pageIndex
         if pendingPDFPageRecordsLocation {
-            schedulePDFLocationCommit(resolvedPageIndex)
+            schedulePDFLocationCommit(plan.pageIndex)
         }
         pendingPDFPageIndex = nil
         pendingPDFPageRequestID = nil
@@ -1088,18 +1097,30 @@ struct ReaderView: View {
             switch item.kind {
             case .pdf:
                 if let url = item.url {
+                    if pdfDocumentUnreadable {
+                        // R6: damaged or password-locked PDF — say so instead of blank paper.
+                        MaterialReadFailureView(fileName: store.displayTitle(for: item), revealURL: url)
+                    } else {
                     PDFReaderRepresentable(
                         url: url,
                         browseMode: pdfBrowseMode,
                         searchQuery: store.effectiveReaderSearch,
                         searchTargetPageIndex: store.readerSourceHighlightPageIndex,
+                        searchNavigationRequest: paneState.readerSearchNavigationRequest,
+                        searchRequestedIndex: paneState.readerSearchRequestedIndex,
+                        searchSessionID: paneState.readerSearchSessionID,
+                        searchReturnRequest: paneState.readerSearchReturnRequest,
+                        onSearchResults: { query, results, index in
+                            reportSearchResults(query, results, index, for: item.id)
+                        },
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
+                        hidesHostedDocument: store.materialPickerPresented,
                         pageIndex: $pdfPageIndex,
                         pageCount: $pdfPageCount,
                         railTargetPageIndex: $pdfRailTargetPageIndex,
-                        underlineSnippets: store.selectionAskThreads(forItemID: item.id).map(\.selectionText),
-                        askUnderlineMarks: store.selectionAskThreads(forItemID: item.id).map {
+                        underlineSnippets: store.markedSelectionAskThreads(forItemID: item.id).map(\.selectionText),
+                        askUnderlineMarks: store.markedSelectionAskThreads(forItemID: item.id).map {
                             (id: $0.id.uuidString, text: $0.selectionText, anchor: $0.documentAnchor)
                         },
                         onAskUnderlineActivate: { threadID, anchor in
@@ -1116,7 +1137,9 @@ struct ReaderView: View {
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
                         onUserPageChange: schedulePDFLocationCommit,
-                        onSelectableTextChange: { available in pdfHasSelectableText = available }
+                        onSelectableTextChange: { available in pdfHasSelectableText = available },
+                        onDocumentTap: { store.clearReaderSourceHighlight() },
+                        onDocumentReadabilityChange: { readable in pdfDocumentUnreadable = !readable }
                     ) { text, anchor, selectionPageIndex, documentAnchor in
                         let title = store.displayTitle(for: item)
                         let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
@@ -1129,6 +1152,7 @@ struct ReaderView: View {
                             documentAnchor: documentAnchor.map { SelectionDocumentAnchor(pdf: $0) }
                         )
                     }
+                    }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
                 }
@@ -1138,8 +1162,14 @@ struct ReaderView: View {
                         url: url,
                         contentRevision: item.contentRevision,
                         searchQuery: store.effectiveReaderSearch,
+                        searchNavigationRequest: paneState.readerSearchNavigationRequest,
+                        searchRequestedIndex: paneState.readerSearchRequestedIndex,
+                        searchSessionID: paneState.readerSearchSessionID,
+                        searchReturnRequest: paneState.readerSearchReturnRequest,
+                        onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
                         appearanceMode: store.appearanceMode,
-                        adaptsDocumentColors: adaptsWebDocumentColors,
+                        adaptsDocumentColors: store.adaptImportedDocumentColors,
+                        hidesHostedDocument: store.materialPickerPresented,
                         onResourceIssuesChange: { htmlResourceIssues = $0 },
                         contentRailTarget: htmlContentRailTarget,
                         selectionAskMarks: selectionAskMarksJSON(for: item.id),
@@ -1153,7 +1183,9 @@ struct ReaderView: View {
                         },
                         onSelectionRemarkMark: { recordID, anchor in
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
-                        }
+                        },
+                        onDocumentTap: { store.clearReaderSourceHighlight() },
+                        interfaceLanguage: store.interfaceLanguage
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
@@ -1184,8 +1216,15 @@ struct ReaderView: View {
                         maximumByteCount: CourseProjectFileWorker
                             .markdownMaximumByteCount
                     ),
-                   let text = String(data: data, encoding: .utf8) {
-                    PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode) { text, anchor in
+                   let text = Self.decodeTextMaterial(data) {
+                    PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode,
+                        searchNavigationRequest: paneState.readerSearchNavigationRequest,
+                        searchRequestedIndex: paneState.readerSearchRequestedIndex,
+                        searchSessionID: paneState.readerSearchSessionID,
+                        searchReturnRequest: paneState.readerSearchReturnRequest,
+                        onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
+                        underlineSnippets: store.markedSelectionAskThreads(forItemID: item.id).map(\.selectionText),
+                        onDocumentTap: { store.clearReaderSourceHighlight() }) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
                 } else {
@@ -1197,6 +1236,12 @@ struct ReaderView: View {
         } else {
             EmptyReaderView()
         }
+    }
+
+    private func reportSearchResults(_ query: String, _ results: [ReaderSearchResult], _ index: Int, for materialID: String) {
+        guard store.selectedMaterialItem?.id == materialID,
+              ReaderSearch.cleaned(store.readerSearch) == query else { return }
+        paneState.adoptReaderSearchResults(results, reportedIndex: index, query: query, materialID: materialID)
     }
 
     private func loadMarkdownSnapshot() {
@@ -1212,7 +1257,7 @@ struct ReaderView: View {
         guard let data = try? CourseProjectFileWorker.readBoundedRegularFile(
             at: url,
             maximumByteCount: CourseProjectFileWorker.markdownMaximumByteCount
-        ), let text = String(data: data, encoding: .utf8) else {
+        ), let text = Self.decodeTextMaterial(data) else {
             markdownSnapshotText = nil
             markdownSnapshotFailed = true
             return
@@ -1221,11 +1266,32 @@ struct ReaderView: View {
         markdownSnapshotFailed = false
     }
 
+    /// R6: 中文讲义常见 GBK/GB18030 编码；UTF-8 解不开时用 GB18030 再试一次，
+    /// 两种都失败才按读不出来处理。
+    static let gb18030TextEncoding = String.Encoding(
+        rawValue: CFStringConvertEncodingToNSStringEncoding(
+            CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+        )
+    )
+
+    static func decodeTextMaterial(_ data: Data) -> String? {
+        if let text = String(data: data, encoding: .utf8) { return text }
+        return String(data: data, encoding: ReaderView.gb18030TextEncoding)
+    }
+
     private func markdownReader(markdown: String, markdownBaseURL: URL?) -> some View {
         MarkdownDocumentReaderView(
             markdown: markdown,
             markdownBaseURL: markdownBaseURL,
             searchQuery: store.effectiveReaderSearch,
+            searchNavigationRequest: paneState.readerSearchNavigationRequest,
+            searchRequestedIndex: paneState.readerSearchRequestedIndex,
+            searchSessionID: paneState.readerSearchSessionID,
+            searchReturnRequest: paneState.readerSearchReturnRequest,
+            onSearchResults: { query, results, index in
+                guard let id = store.selectedMaterialItem?.id else { return }
+                reportSearchResults(query, results, index, for: id)
+            },
             appearanceMode: store.appearanceMode,
             interfaceLanguage: store.interfaceLanguage,
             selectionAskMarks: selectionAskMarksJSON(for: store.selectedMaterialItem?.id ?? ""),
@@ -1274,6 +1340,25 @@ enum WebReaderContentRailEventReason: String {
 struct WebReaderContentRailActiveChange {
     var id: String?
     var reason: WebReaderContentRailEventReason
+}
+
+/// R2: 跳页请求（引用跳原文、继续上次、目录跳页）的落地计划。
+/// 浏览模式保持用户当前选择；滚动模式用 rail 目标（`PDFView.go(to:)`）跳页，
+/// 翻页模式只改页码。
+struct PDFPageJumpPlan: Equatable {
+    var browseMode: PDFBrowseMode
+    var pageIndex: Int
+    var railTargetPageIndex: Int?
+
+    static func resolve(targetPageIndex: Int, pageCount: Int, browseMode: PDFBrowseMode) -> PDFPageJumpPlan {
+        let resolved = min(max(targetPageIndex, 0), max(pageCount - 1, 0))
+        switch browseMode {
+        case .scroll:
+            return PDFPageJumpPlan(browseMode: .scroll, pageIndex: resolved, railTargetPageIndex: resolved)
+        case .page:
+            return PDFPageJumpPlan(browseMode: .page, pageIndex: resolved, railTargetPageIndex: nil)
+        }
+    }
 }
 
 enum PDFBrowseMode: String, CaseIterable, Identifiable {
@@ -1344,8 +1429,15 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var browseMode: PDFBrowseMode
     var searchQuery: String
     var searchTargetPageIndex: Int?
+    var searchNavigationRequest: Int
+    var searchRequestedIndex: Int
+    var searchSessionID: Int
+    var searchReturnRequest: Int
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
+    /// Glass paper is clear, and PDFView ignores ancestor opacity.
+    var hidesHostedDocument = false
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
     @Binding var railTargetPageIndex: Int?
@@ -1360,6 +1452,10 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
+    /// X8: fired on a plain tap/click inside the document (ask-underline hits excluded).
+    var onDocumentTap: () -> Void = {}
+    /// R6: false when PDFKit cannot parse or unlock the file — the host swaps in a failure page.
+    var onDocumentReadabilityChange: (Bool) -> Void = { _ in }
     var onSelectionChange: (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -1418,6 +1514,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             guard let view, let coordinator else { return false }
             return coordinator.handleSelectionMarkClick(at: point, in: view)
         }
+        view.handleTapInDocument = { [weak coordinator = context.coordinator] in
+            coordinator?.onDocumentTap()
+        }
         return view
     }
 
@@ -1435,14 +1534,18 @@ struct PDFReaderRepresentable: ReaderRepresentable {
 #endif
 
     private func updateReaderView(_ view: ReaderPDFView, context: Context) {
+        view.isHidden = hidesHostedDocument
         context.coordinator.pageIndex = $pageIndex
         context.coordinator.pageCount = $pageCount
         context.coordinator.appearanceMode = appearanceMode
         context.coordinator.onUserPageChange = onUserPageChange
         context.coordinator.onSelectableTextChange = onSelectableTextChange
         context.coordinator.onSelectionChange = onSelectionChange
+        context.coordinator.onSearchResults = onSearchResults
         context.coordinator.onAskUnderlineActivate = onAskUnderlineActivate
         context.coordinator.onRemarkMarkActivate = onRemarkMarkActivate
+        context.coordinator.onDocumentTap = onDocumentTap
+        context.coordinator.onDocumentReadabilityChange = onDocumentReadabilityChange
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
 
@@ -1478,7 +1581,11 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.applySearch(
             searchQuery,
             targetPageIndex: searchTargetPageIndex,
-            in: view
+            in: view,
+            navigationRequest: searchNavigationRequest,
+            requestedIndex: searchRequestedIndex,
+            sessionID: searchSessionID,
+            returnRequest: searchReturnRequest
         )
         context.coordinator.applyAskUnderlines(askUnderlineMarks.isEmpty
             ? underlineSnippets.map { (id: "", text: $0, anchor: nil) }
@@ -1521,6 +1628,22 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var pendingOCRPageIndexes: Set<Int> = []
         private var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]
         private var lastSearchQuery = ""
+        var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
+        private struct SearchHit {
+            let selection: PDFSelection?
+            let pageIndex: Int
+            let ocrLineIndex: Int?
+            let bounds: CGRect
+            let preview: String
+            let matchRange: NSRange
+        }
+        private var searchHits: [SearchHit] = []
+        private var searchResultIndex = -1
+        private var lastSearchNavigationRequest = 0
+        private var lastSearchSessionID = 0
+        private var lastSearchReturnRequest = 0
+        private var searchOrigin: PDFDestination?
+        private var searchPublication = 0
         private var lastSearchTargetPageIndex: Int?
         private var loadGeneration = 0
         private var userNavigationDeadline = Date.distantPast
@@ -1529,6 +1652,8 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var askUnderlineHits: [(threadID: String, pageIndex: Int, hitBounds: CGRect)] = []
         private var hoveredAskThreadID: String?
         var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+        var onDocumentTap: () -> Void = {}
+        var onDocumentReadabilityChange: (Bool) -> Void = { _ in }
         var remarkHits: [PDFRemarkMarkHit] = []
         var hoveredRemarkRecordID: String?
         var activeRemarkRecordID: String?
@@ -1569,6 +1694,10 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             view.document = nil
             nativeTextPageIndexes = []
             clearOCROverlays(in: view)
+            searchPublication &+= 1
+            searchHits = []
+            searchResultIndex = -1
+            searchOrigin = nil
             lastSearchQuery = ""
             lastSearchTargetPageIndex = nil
             lastAppliedAskUnderlineMarks = []
@@ -1581,10 +1710,16 @@ struct PDFReaderRepresentable: ReaderRepresentable {
 
             DispatchQueue.global(qos: .userInitiated).async {
                 let document = PDFDocument(url: url)
-                let firstPageHasText = document.flatMap { $0.page(at: 0) }
-                    .map(PDFReaderOpenSafety.pageHasNativeText) ?? false
+                // R6: nil = unparsable file; isLocked = needs a password PDFKit
+                // doesn't have. Either way the reader shows a failure page.
+                let isReadable = document.map { !$0.isLocked } ?? false
+                let firstPageHasText = isReadable
+                    ? (document.flatMap { $0.page(at: 0) }
+                        .map(PDFReaderOpenSafety.pageHasNativeText) ?? false)
+                    : false
                 DispatchQueue.main.async { [weak self, weak view] in
                     guard let self, let view, self.loadGeneration == generation, self.loadedURL == url else { return }
+                    self.onDocumentReadabilityChange(isReadable)
                     #if !targetEnvironment(macCatalyst)
                     PDFReaderOpenSafety.disableAccessibilityTree(on: view)
 #endif
@@ -1768,15 +1903,19 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 object: view,
                 queue: .main
             ) { [weak self] _ in
-                guard let self, let view = self.observedView, let document = view.document, let page = view.currentPage else { return }
-                self.pageCount.wrappedValue = document.pageCount
-                let index = document.index(for: page)
-                self.pageIndex.wrappedValue = index
-                if Date() <= self.userNavigationDeadline {
-                    self.onUserPageChange(index)
+                // PDFKit can notify synchronously inside updateUIView/go(to:).
+                // Publish after that update, otherwise SwiftUI drops the page binding write.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, let view = self.observedView, let document = view.document, let page = view.currentPage else { return }
+                    self.pageCount.wrappedValue = document.pageCount
+                    let index = document.index(for: page)
+                    self.pageIndex.wrappedValue = index
+                    if Date() <= self.userNavigationDeadline {
+                        self.onUserPageChange(index)
+                    }
+                    self.updateSelectableTextState(in: view)
+                    self.ensureOCRForCurrentPage(in: view)
                 }
-                self.updateSelectableTextState(in: view)
-                self.ensureOCRForCurrentPage(in: view)
             }
 #if targetEnvironment(macCatalyst)
             (view as? ReaderPDFView)?.onPointerEvent = { [weak self, weak view] point, phase in
@@ -1790,6 +1929,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 }
                 if phase == .ended || phase == .cancelled { self.selectionReportGate.endTracking() }
                 self.reportCurrentSelection(in: view)
+            }
+            (view as? ReaderPDFView)?.onScrollNavigation = { [weak self] in
+                self?.markUserNavigationIntent()
             }
 #else
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel, .keyDown]) { [weak self, weak view] event in
@@ -1856,6 +1998,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             }
 #if targetEnvironment(macCatalyst)
             (observedView as? ReaderPDFView)?.onPointerEvent = nil
+            (observedView as? ReaderPDFView)?.onScrollNavigation = nil
 #else
             if let eventMonitor {
                 NSEvent.removeMonitor(eventMonitor)
@@ -1924,46 +2067,103 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             _ query: String,
             targetPageIndex: Int?,
             in view: PDFView,
-            force: Bool = false
+            force: Bool = false,
+            navigationRequest: Int? = nil,
+            requestedIndex: Int? = nil,
+            sessionID: Int? = nil,
+            returnRequest: Int? = nil
         ) {
             let query = ReaderSearch.cleaned(query)
-            guard force
-                    || query != lastSearchQuery
-                    || targetPageIndex != lastSearchTargetPageIndex else {
-                return
+            let queryChanged = query != lastSearchQuery || targetPageIndex != lastSearchTargetPageIndex
+            let navigated = navigationRequest.map { $0 != lastSearchNavigationRequest } ?? false
+            let returned = returnRequest.map { $0 != lastSearchReturnRequest } ?? false
+            guard force || queryChanged || navigated || returned else { return }
+            if let sessionID, sessionID != lastSearchSessionID {
+                lastSearchSessionID = sessionID
+                searchOrigin = nil
             }
+            if let returnRequest { lastSearchReturnRequest = returnRequest }
+            if let navigationRequest { lastSearchNavigationRequest = navigationRequest }
             lastSearchQuery = query
             lastSearchTargetPageIndex = targetPageIndex
+            if queryChanged || returned { searchResultIndex = -1 }
 
-            guard !query.isEmpty else {
-                view.highlightedSelections = nil
-                view.clearSelection()
-                setOCRHighlightedLines([:], in: view)
-                return
-            }
-
-            let allMatches = view.document?.findString(
-                query,
-                withOptions: [.caseInsensitive, .diacriticInsensitive]
-            ) ?? []
-            let matches = targetPageIndex.map { targetPageIndex in
-                allMatches.filter { selection in
-                    selection.pages.contains { page in
-                        guard let document = view.document else { return false }
-                        return document.index(for: page) == targetPageIndex
+            if force || queryChanged {
+                searchHits = []
+                if !query.isEmpty, let document = view.document {
+                    for selection in document.findString(query, withOptions: [.caseInsensitive, .diacriticInsensitive]) {
+                        guard let page = selection.pages.first else { continue }
+                        let pageIndex = document.index(for: page)
+                        guard targetPageIndex == nil || pageIndex == targetPageIndex else { continue }
+                        let range = selection.range(at: 0, on: page)
+                        let snippet = ReaderSearch.snippet(in: page.string ?? "", around: range)
+                        searchHits.append(SearchHit(selection: selection, pageIndex: pageIndex, ocrLineIndex: nil,
+                            bounds: selection.bounds(for: page), preview: snippet.text, matchRange: snippet.matchRange))
+                    }
+                    for ocrPage in ocrPagesByPageIndex.values {
+                        guard targetPageIndex == nil || ocrPage.pageIndex == targetPageIndex,
+                              let page = document.page(at: ocrPage.pageIndex) else { continue }
+                        let bounds = page.bounds(for: .mediaBox)
+                        for (lineIndex, line) in ocrPage.lines.enumerated() {
+                            for match in ReaderSearch.matches(in: line.text, query: query) {
+                                let snippet = ReaderSearch.snippet(in: line.text, around: match)
+                                let rect = line.boundingBox
+                                searchHits.append(SearchHit(selection: nil, pageIndex: ocrPage.pageIndex, ocrLineIndex: lineIndex,
+                                    bounds: CGRect(x: bounds.minX + rect.minX * bounds.width, y: bounds.minY + rect.minY * bounds.height,
+                                        width: rect.width * bounds.width, height: rect.height * bounds.height),
+                                    preview: snippet.text, matchRange: snippet.matchRange))
+                            }
+                        }
+                    }
+                    searchHits.sort {
+                        if $0.pageIndex != $1.pageIndex { return $0.pageIndex < $1.pageIndex }
+                        if $0.bounds.midY != $1.bounds.midY { return $0.bounds.midY > $1.bounds.midY }
+                        return $0.bounds.minX < $1.bounds.minX
                     }
                 }
-            } ?? allMatches
-            view.highlightedSelections = matches
-            if let first = matches.first {
-                setOCRHighlightedLines([:], in: view)
-                view.go(to: first)
-            } else {
-                applyOCRSearch(
-                    query,
-                    targetPageIndex: targetPageIndex,
-                    in: view
-                )
+            }
+            if navigated, let requestedIndex {
+                searchResultIndex = min(max(0, requestedIndex), max(0, searchHits.count - 1))
+            }
+            var selections: [PDFSelection] = []
+            var ocrLines: [Int: Set<Int>] = [:]
+            for (index, hit) in searchHits.enumerated() {
+                if let selection = hit.selection {
+                    selection.color = WeiBeiNativePalette.selectionFill(for: appearanceMode)
+                        .withAlphaComponent(index == searchResultIndex ? 0.65 : 0.22)
+                    selections.append(selection)
+                } else if let lineIndex = hit.ocrLineIndex { ocrLines[hit.pageIndex, default: []].insert(lineIndex) }
+            }
+            view.highlightedSelections = selections.isEmpty ? nil : selections
+            setOCRHighlightedLines(ocrLines, in: view)
+            if query.isEmpty { view.clearSelection() }
+            if navigated, searchHits.indices.contains(searchResultIndex) {
+                if searchOrigin == nil { searchOrigin = view.currentDestination }
+                let hit = searchHits[searchResultIndex]
+                if let selection = hit.selection { view.go(to: selection) }
+                else if let page = view.document?.page(at: hit.pageIndex) { view.go(to: hit.bounds, on: page) }
+            }
+            if returned {
+                if let searchOrigin {
+                    view.go(to: searchOrigin)
+                    if let page = searchOrigin.page, let document = view.document {
+                        let index = document.index(for: page)
+                        if index != NSNotFound { pageIndex.wrappedValue = index }
+                    }
+                }
+                searchOrigin = nil
+            }
+            let results = searchHits.enumerated().map { entry -> ReaderSearchResult in
+                let page = entry.element.pageIndex
+                return ReaderSearchResult(id: entry.offset, pageIndex: page, preview: entry.element.preview,
+                    location: "第 \(page + 1) 页", matchRange: entry.element.matchRange)
+            }
+            let index = searchResultIndex
+            searchPublication &+= 1
+            let publication = searchPublication
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.searchPublication == publication else { return }
+                self.onSearchResults(query, results, index)
             }
         }
 
@@ -2114,35 +2314,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             }
         }
 
-        private func applyOCRSearch(
-            _ query: String,
-            targetPageIndex: Int?,
-            in view: PDFView
-        ) {
-            var highlightedLines: [Int: Set<Int>] = [:]
-            var firstPageIndex: Int?
-
-            for page in ocrPagesByPageIndex.values
-                .filter({ targetPageIndex == nil || $0.pageIndex == targetPageIndex })
-                .sorted(by: { $0.pageIndex < $1.pageIndex }) {
-                for (lineIndex, line) in page.lines.enumerated() {
-                    guard line.text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil else { continue }
-                    highlightedLines[page.pageIndex, default: []].insert(lineIndex)
-                    if firstPageIndex == nil {
-                        firstPageIndex = page.pageIndex
-                    }
-                }
-            }
-
-            view.clearSelection()
-            setOCRHighlightedLines(highlightedLines, in: view)
-
-            if let firstPageIndex,
-               let page = view.document?.page(at: firstPageIndex) {
-                view.go(to: page)
-            }
-        }
-
         private func setOCRHighlightedLines(_ highlightedLines: [Int: Set<Int>], in view: PDFView) {
             guard ocrHighlightedLinesByPageIndex != highlightedLines else { return }
             ocrHighlightedLinesByPageIndex = highlightedLines
@@ -2162,6 +2333,9 @@ final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
     var handleAskUnderlineHover: ((CGPoint) -> Void)?
     var handleAskUnderlineClick: ((CGPoint) -> Bool)?
+    /// X8: plain click inside the document (not on an ask-underline) — clears the
+    /// source-reference jump highlight, mirroring the Catalyst tap path.
+    var handleTapInDocument: (() -> Void)?
     private var adaptsDocumentColors = true
     private var documentAppearanceMode: WeiBeiAppearanceMode = .paper
     private var trackingArea: NSTrackingArea?
@@ -2224,6 +2398,7 @@ final class ReaderPDFView: PDFView {
         if handleAskUnderlineClick?(point) == true {
             return
         }
+        handleTapInDocument?()
         super.mouseDown(with: event)
         reportCurrentSelection?()
     }
@@ -2550,13 +2725,140 @@ final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler {
     )
 }
 
+enum ReaderWebSearch {
+    static func restoreOrigin() -> String {
+        """
+        (() => {
+          const origin = window.weiBeiSearchOrigin;
+          window.weiBeiSearchOrigin = null;
+          if (!origin) return;
+          for (const item of origin.scrollers) {
+            item.element.scrollTo({left:item.left, top:item.top, behavior:'instant'});
+          }
+          window.scrollTo({left:origin.x, top:origin.y, behavior:'instant'});
+        })();
+        """
+    }
+
+    static func json(_ value: String) -> String {
+        let data = (try? JSONEncoder().encode(value)) ?? Data("\"\"".utf8)
+        return String(data: data, encoding: .utf8) ?? "\"\""
+    }
+
+    static func results(from value: Any?) -> [ReaderSearchResult] {
+        guard let rows = value as? [[String: Any]] else { return [] }
+        return rows.enumerated().compactMap { index, row in
+            guard let preview = row["preview"] as? String,
+                  let location = row["location"] as? String,
+                  let matchStart = row["matchStart"] as? Int,
+                  let matchLength = row["matchLength"] as? Int else { return nil }
+            return ReaderSearchResult(id: index, pageIndex: row["pageIndex"] as? Int ?? 0,
+                preview: preview, location: location,
+                matchRange: NSRange(location: matchStart, length: matchLength))
+        }
+    }
+
+    static func script(query: String, root: String) -> String {
+        #"""
+        (() => {
+          const query = \#(json(query));
+          const officeResults = window.WeiBeiOffice?.searchResults?.(query);
+          if (officeResults) return officeResults;
+          const root = document.querySelector(\#(json(root))) || document.body;
+          CSS.highlights.delete('weibei-search');
+          CSS.highlights.delete('weibei-search-current');
+          document.getElementById('weibei-search-style')?.remove();
+          const style = document.createElement('style');
+          style.id = 'weibei-search-style';
+          style.textContent = '::highlight(weibei-search){background:rgba(166,54,43,.24)}::highlight(weibei-search-current){background:rgba(166,54,43,.55)}';
+          document.head.append(style);
+          const hits = [], rows = [];
+          if (!query) { window.weiBeiSearchHits = hits; return rows; }
+          const selector = 'p,li,h1,h2,h3,h4,h5,h6,td,th,blockquote,pre,div,section,article';
+          const nodes = Array.from(root.querySelectorAll(selector));
+          if (!nodes.length) nodes.push(root);
+          let blockIndex = 0;
+          let heading = '';
+          for (const block of nodes) {
+            if (block.closest('script,style,nav,button,[hidden],[aria-hidden="true"],[data-weibei-annotation-ui]')) continue;
+            if (block.querySelector(selector) || !block.getClientRects().length) continue;
+            const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+            const parts = []; let text = '', node;
+            while (node = walker.nextNode()) {
+              if (!node.textContent || node.parentElement?.closest('script,style,button,[hidden],[aria-hidden="true"]')) continue;
+              parts.push({node, start: text.length, end: text.length + node.textContent.length});
+              text += node.textContent;
+            }
+            if (!text.trim()) continue;
+            blockIndex++;
+            if (/^H[1-6]$/.test(block.tagName) || /heading|标题/i.test(block.className)) {
+              heading = text.trim().split(/[：:]/)[0].slice(0, 8);
+            }
+            const location = heading || '段 ' + blockIndex;
+            const lower = text.toLocaleLowerCase(), needle = query.toLocaleLowerCase();
+            let from = 0, at;
+            while ((at = lower.indexOf(needle, from)) !== -1) {
+              const first = parts.find(part => part.end > at);
+              const last = parts.find(part => part.end >= at + needle.length);
+              if (!first || !last) break;
+              const range = document.createRange();
+              range.setStart(first.node, at - first.start);
+              range.setEnd(last.node, at + needle.length - last.start);
+              hits.push(range);
+              const start = Math.max(0, at - 8), end = Math.min(text.length, at + needle.length + 32);
+              const before = text.slice(start, at).replace(/\s+/g, ' ').trimStart();
+              const match = text.slice(at, at + needle.length);
+              const after = text.slice(at + needle.length, end).replace(/\s+/g, ' ');
+              const prefix = (start ? '…' : '') + before;
+              rows.push({preview: prefix + match + after + (end < text.length ? '…' : ''),
+                matchStart: prefix.length, matchLength: match.length,
+                location,
+                pageIndex: 0});
+              from = at + needle.length;
+            }
+          }
+          window.weiBeiSearchHits = hits;
+          if (hits.length) CSS.highlights.set('weibei-search', new Highlight(...hits));
+          return rows;
+        })();
+        """#
+    }
+
+    static func activate(_ index: Int, captureOrigin: Bool = false) -> String {
+        """
+        (() => {
+          if (\(captureOrigin ? "true" : "false")) {
+            window.weiBeiSearchOrigin = {
+              x: window.scrollX, y: window.scrollY,
+              scrollers: Array.from(document.querySelectorAll('*'))
+                .filter(el => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)
+                .map(el => ({element: el, left: el.scrollLeft, top: el.scrollTop}))
+            };
+          }
+          if (window.WeiBeiOffice?.isPresentation) { window.WeiBeiOffice.activateSearchResult(\(index)); return; }
+          const range = window.weiBeiSearchHits?.[\(index)];
+          CSS.highlights.delete('weibei-search-current');
+          if (range) { CSS.highlights.set('weibei-search-current', new Highlight(range));
+            range.startContainer.parentElement?.scrollIntoView({block:'center',behavior:'instant'}); }
+        })();
+        """
+    }
+}
+
 struct WebReaderRepresentable: ReaderRepresentable {
     var html: String?
     var url: URL?
     var contentRevision: UInt64 = 0
     var searchQuery: String
+    var searchNavigationRequest = 0
+    var searchRequestedIndex = 0
+    var searchSessionID = 0
+    var searchReturnRequest = 0
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
+    /// Glass paper is clear, and WKWebView ignores ancestor opacity.
+    var hidesHostedDocument = false
     var contentRailTarget: WebReaderContentRailTarget?
     /// JSON array of `{id,text}` for selection-ask underline marks.
     var selectionAskMarks: String = "[]"
@@ -2566,8 +2868,11 @@ struct WebReaderRepresentable: ReaderRepresentable {
     var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var selectionRemarkMarks: String = "[]"
     var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+    /// X8: plain click in the HTML/Office document, not on an ask or remark mark.
+    var onDocumentTap: () -> Void = {}
 
     var onResourceIssuesChange: ([String]) -> Void = { _ in }
+    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
 
     private static let scriptMessageNames = [
         "htmlResourceIssues",
@@ -2583,6 +2888,11 @@ struct WebReaderRepresentable: ReaderRepresentable {
     init(
         html: String,
         searchQuery: String = "",
+        searchNavigationRequest: Int = 0,
+        searchRequestedIndex: Int = 0,
+        searchSessionID: Int = 0,
+        searchReturnRequest: Int = 0,
+        onSearchResults: @escaping (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in },
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = true,
         contentRailTarget: WebReaderContentRailTarget? = nil,
@@ -2592,11 +2902,17 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
         onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
+        interfaceLanguage: WeiBeiInterfaceLanguage = .chinese,
         onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.html = html
         self.url = nil
         self.searchQuery = searchQuery
+        self.searchNavigationRequest = searchNavigationRequest
+        self.searchRequestedIndex = searchRequestedIndex
+        self.searchSessionID = searchSessionID
+        self.searchReturnRequest = searchReturnRequest
+        self.onSearchResults = onSearchResults
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
         self.contentRailTarget = contentRailTarget
@@ -2606,6 +2922,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.onContentRailActiveChange = onContentRailActiveChange
         self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionRemarkMark = onSelectionRemarkMark
+        self.interfaceLanguage = interfaceLanguage
         self.onSelectionChange = onSelectionChange
     }
 
@@ -2613,8 +2930,14 @@ struct WebReaderRepresentable: ReaderRepresentable {
         url: URL,
         contentRevision: UInt64 = 0,
         searchQuery: String = "",
+        searchNavigationRequest: Int = 0,
+        searchRequestedIndex: Int = 0,
+        searchSessionID: Int = 0,
+        searchReturnRequest: Int = 0,
+        onSearchResults: @escaping (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in },
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = false,
+        hidesHostedDocument: Bool = false,
         onResourceIssuesChange: @escaping ([String]) -> Void = { _ in },
         contentRailTarget: WebReaderContentRailTarget? = nil,
         selectionAskMarks: String = "[]",
@@ -2623,6 +2946,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
         onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
+        onDocumentTap: @escaping () -> Void = {},
+        interfaceLanguage: WeiBeiInterfaceLanguage = .chinese,
         onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.html = nil
@@ -2630,8 +2955,14 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.url = url
         self.contentRevision = contentRevision
         self.searchQuery = searchQuery
+        self.searchNavigationRequest = searchNavigationRequest
+        self.searchRequestedIndex = searchRequestedIndex
+        self.searchSessionID = searchSessionID
+        self.searchReturnRequest = searchReturnRequest
+        self.onSearchResults = onSearchResults
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
+        self.hidesHostedDocument = hidesHostedDocument
         self.contentRailTarget = contentRailTarget
         self.selectionAskMarks = selectionAskMarks
         self.selectionRemarkMarks = selectionRemarkMarks
@@ -2639,6 +2970,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.onContentRailActiveChange = onContentRailActiveChange
         self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionRemarkMark = onSelectionRemarkMark
+        self.onDocumentTap = onDocumentTap
+        self.interfaceLanguage = interfaceLanguage
         self.onSelectionChange = onSelectionChange
     }
 
@@ -2735,7 +3068,13 @@ struct WebReaderRepresentable: ReaderRepresentable {
 #endif
 
     private func updateReaderView(_ view: WKWebView, context: Context) {
+        view.isHidden = hidesHostedDocument
         context.coordinator.searchQuery = searchQuery
+        context.coordinator.searchNavigationRequest = searchNavigationRequest
+        context.coordinator.searchRequestedIndex = searchRequestedIndex
+        context.coordinator.searchSessionID = searchSessionID
+        context.coordinator.searchReturnRequest = searchReturnRequest
+        context.coordinator.onSearchResults = onSearchResults
         context.coordinator.onResourceIssuesChange = onResourceIssuesChange
 #if targetEnvironment(macCatalyst)
         view.isOpaque = !adaptsDocumentColors
@@ -2747,6 +3086,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         context.coordinator.onContentRailActiveChange = onContentRailActiveChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
         context.coordinator.onSelectionRemarkMark = onSelectionRemarkMark
+        context.coordinator.onDocumentTap = onDocumentTap
         context.coordinator.contentRailTarget = contentRailTarget
         context.coordinator.selectionAskMarks = selectionAskMarks
         context.coordinator.selectionRemarkMarks = selectionRemarkMarks
@@ -2762,7 +3102,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             if context.coordinator.loadedSignature != signature {
                 context.coordinator.loadedSignature = signature
                 context.coordinator.lastAppliedSelectionAskMarks = ""
-                if office { context.coordinator.loadOffice(at: url, revision: contentRevision, into: view) }
+                if office { context.coordinator.loadOffice(at: url, revision: contentRevision, language: interfaceLanguage, into: view) }
                 else { context.coordinator.loadUTF8HTML(at: url, signature: signature, into: view) }
             } else {
                 context.coordinator.scheduleSearchAndMarksApply(in: view)
@@ -2856,11 +3196,13 @@ struct WebReaderRepresentable: ReaderRepresentable {
       }
 
       document.addEventListener("selectionchange", reportSelection);
-      document.addEventListener("pointerdown", () => {
+      document.addEventListener("pointerdown", (event) => {
         if (window.weiBeiSuppressSelectionReport) return;
         window.clearTimeout(selectionReportTimer);
         window.clearTimeout(selectionEndTimer);
-        lastPayload = { text: "", x: null, y: null };
+        const target = event.target;
+        const onMark = target instanceof Element && target.closest(".weibei-selection-ask-mark, .weibei-remark-mark");
+        lastPayload = { text: "", x: null, y: null, clearSourceHighlight: !onMark };
         window.webkit.messageHandlers.selection.postMessage(lastPayload);
       }, true);
       document.addEventListener("pointerup", reportFinishedSelection);
@@ -3238,12 +3580,24 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+        var onDocumentTap: () -> Void = {}
         var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void
         var onContentRailChange: ([WebReaderContentRailSection]) -> Void
         var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
         var contentRailTarget: WebReaderContentRailTarget?
         var loadedSignature: String?
         var searchQuery = ""
+        var searchNavigationRequest = 0
+        var searchRequestedIndex = 0
+        var searchSessionID = 0
+        var searchReturnRequest = 0
+        var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
+        private var lastSearchNavigationRequest = 0
+        private var lastSearchSessionID = 0
+        private var lastSearchReturnRequest = 0
+        private var hasSearchOrigin = false
+        private var searchResults: [ReaderSearchResult] = []
+        private var searchResultIndex = -1
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
         var selectionAskMarks = "[]"
@@ -3290,12 +3644,12 @@ struct WebReaderRepresentable: ReaderRepresentable {
         }()
 
         @MainActor
-        func loadOffice(at url: URL, revision: UInt64, into view: WKWebView) {
+        func loadOffice(at url: URL, revision: UInt64, language: WeiBeiInterfaceLanguage, into view: WKWebView) {
             isOfficeDocument = true
             view.stopLoading()
             cancelHTMLLoad()
             guard let baseURL = htmlResourceSchemeHandler.activate(rootDirectory: url.deletingLastPathComponent()) else {
-                view.loadHTMLString("<p>无法访问这份文档，请确认文件仍在课程目录中。</p>", baseURL: nil)
+                view.loadHTMLString("<p>\(language.text("无法访问这份文稿，请确认文件仍在课程文件夹中。", "Cannot open this document. Check that the file is still in the course folder."))</p>", baseURL: nil)
                 return
             }
             let fileURL = baseURL.appendingPathComponent(url.lastPathComponent)
@@ -3304,9 +3658,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
             <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-\(nonce)' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src weibeihtml:; base-uri 'none'; frame-src 'none'">
             <style>html,body{margin:0;padding:0}body{font:15px/1.7 -apple-system}#office-document{padding:16px;box-sizing:border-box;min-height:100vh}#office-document[data-weibei-adapts-colors]::after{content:"";position:fixed;inset:0;background:var(--weibei-document-mask);mix-blend-mode:multiply;pointer-events:none;z-index:2147483647}.docx-wrapper{padding:0!important;background:transparent!important}.docx-wrapper>section.docx{margin-bottom:16px;box-shadow:none!important}.office-note-trigger,.office-note header button{width:26px;height:26px;box-sizing:border-box;display:grid;place-items:center;padding:4px;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:7px;color:var(--weibei-note-muted);background:rgb(from var(--weibei-note-fill) r g b / .94);cursor:pointer}.office-note-trigger{position:absolute;right:8px;box-shadow:0 1px 4px #0002}.office-note-trigger:hover,.office-note header button:hover{color:var(--weibei-note-ink)}.office-note-trigger:focus-visible,.office-note header button:focus-visible{outline:2px solid var(--weibei-note-accent);outline-offset:2px}.office-note-trigger svg,.office-note header svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.office-note{position:fixed;inset:auto;margin:0;padding:0;width:min(22rem,calc(100vw - 24px));box-sizing:border-box;overflow:hidden;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:9px;background:rgb(from var(--weibei-note-fill) r g b / .97);color:var(--weibei-note-ink);box-shadow:0 8px 28px #0003;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);font:14px/1.65 -apple-system}.office-note:popover-open{display:flex;flex-direction:column}.office-note header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px 8px 16px;flex-shrink:0}.office-note header strong{font-size:13px;font-weight:600}.office-note header button{border:0;background:transparent}.office-note-body{min-height:0;padding:0 16px 14px;overflow:auto;overflow-wrap:anywhere;overscroll-behavior:contain}.office-note-body>p{margin:0 0 10px}.office-note-body>p:last-child{margin-bottom:0}math{font-family:"Cambria Math","STIX Two Math",serif}a{color:#91261b}</style>
-            </head><body data-weibei-revision="\(revision)"><main id="office-document"><p role="status">正在读取文档…</p></main>
+            </head><body data-weibei-revision="\(revision)"><main id="office-document"><p role="status">\(language.text("正在读取文稿…", "Reading the document…"))</p></main>
             <script nonce="\(nonce)">\(Self.officeRuntime)</script>
-            <script nonce="\(nonce)">window.WeiBeiOffice.open(\(Self.json(fileURL.absoluteString)),\(Self.json(url.pathExtension.lowercased())));</script>
+            <script nonce="\(nonce)">window.WeiBeiOffice.open(\(Self.json(fileURL.absoluteString)),\(Self.json(url.pathExtension.lowercased())),\(Self.json(language == .english ? "english" : "chinese")));</script>
             </body></html>
             """
             view.loadHTMLString(html, baseURL: baseURL)
@@ -3476,6 +3830,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
                let bodyText = body["text"] as? String {
                 text = bodyText
                 anchor = Self.anchor(from: body, in: webView)
+                if body["clearSourceHighlight"] as? Bool == true {
+                    Task { @MainActor in self.onDocumentTap() }
+                }
             } else if let bodyText = message.body as? String {
                 text = bodyText
                 anchor = nil
@@ -3519,26 +3876,46 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
         func applySearch(in view: WKWebView) {
             let query = ReaderSearch.cleaned(searchQuery)
-            guard query != lastAppliedSearchQuery else { return }
+            let navigated = searchNavigationRequest != lastSearchNavigationRequest
+            let returned = searchReturnRequest != lastSearchReturnRequest
+            guard query != lastAppliedSearchQuery || navigated || returned else { return }
+            if searchSessionID != lastSearchSessionID {
+                lastSearchSessionID = searchSessionID
+                hasSearchOrigin = false
+            }
+            lastSearchReturnRequest = searchReturnRequest
+            lastSearchNavigationRequest = searchNavigationRequest
+            if returned {
+                lastAppliedSearchQuery = query
+                searchResultIndex = -1
+                let shouldRestore = hasSearchOrigin
+                let navigationRequest = searchNavigationRequest
+                hasSearchOrigin = false
+                view.evaluateJavaScript(ReaderWebSearch.script(query: query, root: isOfficeDocument ? "#office-document" : "body")) { [weak self, weak view] value, _ in
+                    guard let self, let view else { return }
+                    if shouldRestore, self.searchNavigationRequest == navigationRequest {
+                        view.evaluateJavaScript(ReaderWebSearch.restoreOrigin())
+                    }
+                    guard self.searchQuery == query else { return }
+                    self.searchResults = ReaderWebSearch.results(from: value)
+                    self.onSearchResults(query, self.searchResults, -1)
+                }
+                return
+            }
+            if query == lastAppliedSearchQuery {
+                searchResultIndex = min(searchRequestedIndex, max(0, searchResults.count - 1))
+                view.evaluateJavaScript(ReaderWebSearch.activate(searchResultIndex, captureOrigin: !hasSearchOrigin))
+                hasSearchOrigin = true
+                onSearchResults(query, searchResults, searchResultIndex)
+                return
+            }
             lastAppliedSearchQuery = query
-            let script = """
-            (() => {
-              const query = \(Self.json(query));
-              const selection = window.getSelection();
-              selection?.removeAllRanges();
-              window.webkit?.messageHandlers?.selection?.postMessage({
-                text: "",
-                x: null,
-                y: null
-              });
-              if (!query) { window.WeiBeiOffice?.find(""); return false; }
-              window.weiBeiSuppressSelectionReport = true;
-              const found = window.WeiBeiOffice ? window.WeiBeiOffice.find(query) : window.find(query, false, false, true, false, true, false);
-              window.setTimeout(() => { window.weiBeiSuppressSelectionReport = false; }, 80);
-              return found;
-            })();
-            """
-            view.evaluateJavaScript(script)
+            searchResultIndex = -1
+            view.evaluateJavaScript(ReaderWebSearch.script(query: query, root: isOfficeDocument ? "#office-document" : "body")) { [weak self] value, _ in
+                guard let self, self.searchQuery == query else { return }
+                self.searchResults = ReaderWebSearch.results(from: value)
+                self.onSearchResults(query, self.searchResults, self.searchResultIndex)
+            }
         }
 
         func applyContentRailTarget(in view: WKWebView) {
@@ -3560,6 +3937,11 @@ private struct MarkdownDocumentReaderView: View {
     var markdown: String
     var markdownBaseURL: URL?
     var searchQuery: String
+    var searchNavigationRequest = 0
+    var searchRequestedIndex = 0
+    var searchSessionID = 0
+    var searchReturnRequest = 0
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var selectionAskMarks: String = "[]"
@@ -3578,8 +3960,14 @@ private struct MarkdownDocumentReaderView: View {
             isEditable: false,
             markdownBaseURL: markdownBaseURL,
             searchQuery: searchQuery,
+            readerSearchNavigationRequest: searchNavigationRequest,
+            readerSearchRequestedIndex: searchRequestedIndex,
+            readerSearchSessionID: searchSessionID,
+            readerSearchReturnRequest: searchReturnRequest,
+            onReaderSearchResults: onSearchResults,
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
+            hidesHostedDocument: store.materialPickerPresented,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onWikiLink: onWikiLink,
@@ -3609,12 +3997,22 @@ private struct MarkdownReadFailureView: View {
 private struct MaterialReadFailureView: View {
     @EnvironmentObject private var store: WorkspaceStore
     var fileName: String
+    /// R6: set when the original file exists on disk but the reader cannot parse
+    /// it (e.g. damaged or password-locked PDF) — offer a way to locate the file.
+    var revealURL: URL?
 
     var body: some View {
         ReaderStateMessage(
             title: store.ui("无法读取资料", "Could not read material"),
             detail: fileName,
-            systemImage: "exclamationmark.triangle"
+            systemImage: "exclamationmark.triangle",
+            action: revealURL.map { url in
+                ReaderStateMessageAction(
+                    title: store.ui("在访达中显示", "Reveal in Finder")
+                ) {
+                    store.revealMaterialFileInFinder(url)
+                }
+            }
         )
     }
 }
@@ -3637,10 +4035,16 @@ private struct NotebookSelectedReaderView: View {
     }
 }
 
+private struct ReaderStateMessageAction {
+    var title: String
+    var handler: () -> Void
+}
+
 private struct ReaderStateMessage: View {
     var title: String
     var detail: String
     var systemImage: String
+    var action: ReaderStateMessageAction?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -3655,6 +4059,15 @@ private struct ReaderStateMessage: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
+            if let action {
+                Button(action.title) {
+                    action.handler()
+                }
+                .weiBeiText(12, weight: .medium)
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
         }
         .frame(maxWidth: 320)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -3694,14 +4107,29 @@ private struct PlainTextReaderView: View {
     var text: String
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
+    var searchNavigationRequest = 0
+    var searchRequestedIndex = 0
+    var searchSessionID = 0
+    var searchReturnRequest = 0
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
+    /// X8: asked-selection underlines for THIS material only, filtered by the caller.
+    var underlineSnippets: [String] = []
+    var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
 
     var body: some View {
         SelectablePlainTextReader(
             text: text,
             searchQuery: searchQuery,
+            searchNavigationRequest: searchNavigationRequest,
+            searchRequestedIndex: searchRequestedIndex,
+            searchSessionID: searchSessionID,
+            searchReturnRequest: searchReturnRequest,
+            onSearchResults: onSearchResults,
             appearanceMode: appearanceMode,
-            underlineSnippets: store.selectionAskThreads.map(\.selectionText),
+            hidesHostedDocument: store.materialPickerPresented,
+            underlineSnippets: underlineSnippets,
+            onDocumentTap: onDocumentTap,
             onSelectionChange: onSelectionChange
         )
 #if !targetEnvironment(macCatalyst)
@@ -3714,8 +4142,15 @@ private struct PlainTextReaderView: View {
 private struct SelectablePlainTextReader: NSViewRepresentable {
     var text: String
     var searchQuery: String
+    var searchNavigationRequest = 0
+    var searchRequestedIndex = 0
+    var searchSessionID = 0
+    var searchReturnRequest = 0
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode
+    var hidesHostedDocument = false
     var underlineSnippets: [String]
+    var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -3737,6 +4172,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         applyTheme(to: textView)
         applyAttributedText(to: textView, coordinator: context.coordinator)
         textView.delegate = context.coordinator
+        textView.onDocumentTap = onDocumentTap
         textView.textContainerInset = NSSize(width: 18, height: 18)
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
@@ -3746,7 +4182,14 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+        scrollView.isHidden = hidesHostedDocument
+        guard let textView = scrollView.documentView as? ReaderSelectableTextView else { return }
+        textView.onDocumentTap = onDocumentTap
+        context.coordinator.onSearchResults = onSearchResults
+        context.coordinator.navigationRequest = searchNavigationRequest
+        context.coordinator.requestedIndex = searchRequestedIndex
+        context.coordinator.sessionID = searchSessionID
+        context.coordinator.returnRequest = searchReturnRequest
         applyTheme(to: textView)
         applyAttributedText(to: textView, coordinator: context.coordinator)
         context.coordinator.applySearch(searchQuery, in: textView)
@@ -3784,13 +4227,23 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
                 search = NSRange(location: next, length: max(0, attributed.length - next))
             }
         }
+        for range in ReaderSearch.matches(in: text, query: searchQuery) {
+            attributed.addAttribute(.backgroundColor, value: weiBeiColor(red: 0.67, green: 0.24, blue: 0.16, alpha: 0.24), range: range)
+        }
         guard !textView.attributedString().isEqual(to: attributed) else { return }
+        let scrollView = textView.enclosingScrollView
+        let readingOrigin = scrollView?.contentView.bounds.origin
+        let preservesReadingPosition = textView.string == text
         coordinator.withoutSelectionReports {
             let selectedRange = textView.selectedRange()
             textView.textStorage?.setAttributedString(attributed)
             if NSMaxRange(selectedRange) <= attributed.length {
                 textView.setSelectedRange(selectedRange)
             }
+        }
+        if preservesReadingPosition, let scrollView, let readingOrigin {
+            scrollView.contentView.scroll(to: readingOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
     }
 
@@ -3805,7 +4258,19 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+        var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
+        var navigationRequest = 0
+        var requestedIndex = 0
+        var sessionID = 0
+        var returnRequest = 0
+        private var lastNavigationRequest = 0
+        private var lastSessionID = 0
+        private var lastReturnRequest = 0
+        private var searchOrigin: (point: CGPoint, range: NSRange)?
+        private var matches: [NSRange] = []
+        private var resultIndex = -1
         private var lastSearchQuery = ""
+        private var lastSearchText = ""
         private var suppressSelectionReport = false
 
         init(onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void) {
@@ -3839,14 +4304,52 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 
         func applySearch(_ query: String, in textView: NSTextView) {
             let query = ReaderSearch.cleaned(query)
-            guard query != lastSearchQuery else { return }
-            lastSearchQuery = query
+            let changed = query != lastSearchQuery || textView.string != lastSearchText
+            let navigated = navigationRequest != lastNavigationRequest
+            let returned = returnRequest != lastReturnRequest
+            guard changed || navigated || returned else { return }
+            if sessionID != lastSessionID {
+                lastSessionID = sessionID
+                searchOrigin = nil
+            }
+            lastReturnRequest = returnRequest
+            lastNavigationRequest = navigationRequest
+            if changed {
+                lastSearchQuery = query
+                lastSearchText = textView.string
+                matches = ReaderSearch.matches(in: textView.string, query: query)
+                resultIndex = -1
+            }
+            if returned { resultIndex = -1 }
+            else if navigated { resultIndex = min(requestedIndex, max(0, matches.count - 1)) }
+            let source = textView.string as NSString
+            let results = matches.enumerated().map { entry -> ReaderSearchResult in
+                let range = entry.element
+                let line = source.substring(to: range.location).reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+                let snippet = ReaderSearch.snippet(in: textView.string, around: range)
+                return ReaderSearchResult(id: entry.offset, pageIndex: 0, preview: snippet.text,
+                    location: "第 \(line) 行", matchRange: snippet.matchRange)
+            }
+            onSearchResults(query, results, resultIndex)
+            if returned {
+                if let searchOrigin, let scrollView = textView.enclosingScrollView {
+                    withoutSelectionReports { textView.setSelectedRange(searchOrigin.range) }
+                    scrollView.contentView.scroll(to: searchOrigin.point)
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                }
+                searchOrigin = nil
+                return
+            }
             guard !query.isEmpty else {
                 textView.setSelectedRange(NSRange(location: 0, length: 0))
                 return
             }
             onSelectionChange("", nil)
-            guard let range = ReaderSearch.firstMatch(in: textView.string, query: query) else { return }
+            guard navigated, matches.indices.contains(resultIndex) else { return }
+            if searchOrigin == nil, let clipView = textView.enclosingScrollView?.contentView {
+                searchOrigin = (clipView.bounds.origin, textView.selectedRange())
+            }
+            let range = matches[resultIndex]
             suppressSelectionReport = true
             textView.setSelectedRange(range)
             suppressSelectionReport = false
@@ -3856,12 +4359,15 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 }
 
 private class ReaderSelectableTextView: NSTextView {
+    var onDocumentTap: () -> Void = {}
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        onDocumentTap()
         super.mouseDown(with: event)
     }
 }

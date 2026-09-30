@@ -363,7 +363,9 @@ struct CourseHubView: View {
                     if available {
                         if reading.location == nil
                             || !store.resumeCourseReading(courseID) {
-                            _ = store.openCourseMaterial(reading.item.id, in: courseID)
+                            if !store.openCourseMaterial(reading.item.id, in: courseID) {
+                                store.revealCourseFolder(containing: reading.item.id, in: courseID)
+                            }
                         }
                     } else {
                         store.revealCourseFolder(
@@ -665,10 +667,17 @@ struct CourseHubView: View {
 
             Spacer(minLength: 8)
 
-            Button(store.ui("重新选择资料库…", "Re-select Library…")) {
-                courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
+            if store.courseLibraryRootURL != nil {
+                Button(store.ui("在访达中显示", "Reveal in Finder")) {
+                    store.revealCourseLibraryRootInFinder()
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+            } else {
+                Button(store.ui("重新选择资料库…", "Re-select Library…")) {
+                    store.presentCourseLibraryMigrationPicker()
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
             }
-            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
         }
         .padding(14)
         .background(
@@ -721,10 +730,14 @@ struct CourseHubView: View {
         switch entry.kind {
         case .material(let item):
             selectedMaterialID = item.id
-            _ = store.openCourseMaterial(item.id, in: courseID)
+            if !store.openCourseMaterial(item.id, in: courseID) {
+                store.revealCourseFolder(containing: item.id, in: courseID)
+            }
         case .note(let item):
             selectedNoteID = item.id
-            store.openCourseNote(item.id, in: courseID)
+            if !store.openCourseNote(item.id, in: courseID) {
+                store.revealCourseFolder(containing: item.id, in: courseID)
+            }
         case .chat(let session):
             selectedSessionID = session.id
             store.continueCourseSession(
@@ -739,7 +752,7 @@ struct CourseHubView: View {
         selectedMaterialID = hit.result.kind == .material ? hit.result.itemID : selectedMaterialID
         selectedNoteID = hit.result.kind == .note ? hit.result.itemID : selectedNoteID
         selectedSessionID = hit.result.kind == .chat ? hit.result.sessionID : selectedSessionID
-        store.openGlobalSearchHit(hit)
+        store.openGlobalSearchHit(hit, query: cleanedSearch)
     }
 
     private func handleDrop(_ providers: [NSItemProvider], asNotes: Bool) -> Bool {

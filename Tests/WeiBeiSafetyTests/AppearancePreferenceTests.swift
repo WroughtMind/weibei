@@ -91,6 +91,18 @@ final class AppearancePreferenceTests: XCTestCase {
         XCTAssertEqual(store.appearanceMode, .glassMist)
     }
 
+    func testLightDarkToggleKeepsPreferenceAlignedWithMode() throws {
+        let store = try makeStore()
+        store.appearancePreference = .light
+        XCTAssertFalse(store.appearanceMode.isDark)
+        store.toggleLightDarkAppearance()
+        XCTAssertEqual(store.appearancePreference, .dark)
+        XCTAssertTrue(store.appearanceMode.isDark)
+        store.toggleLightDarkAppearance()
+        XCTAssertEqual(store.appearancePreference, .light)
+        XCTAssertFalse(store.appearanceMode.isDark)
+    }
+
     func testGlassIntensityClampsAndPersists() throws {
         let store = try makeStore()
         store.glassIntensity = 1.7

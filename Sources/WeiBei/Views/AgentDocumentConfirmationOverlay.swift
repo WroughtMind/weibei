@@ -53,8 +53,8 @@ struct AgentDocumentConfirmationOverlay: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             Text(store.ui(
-                "确认后才会写入工作区；取消则不创建，并告知 Agent 未创建。",
-                "Nothing is written until you approve. Canceling tells the Agent it was not created."
+                "确认后才会写入工作台；取消则不创建，并告知助手未创建。",
+                "Nothing is written until you approve. Canceling tells the assistant it was not created."
             ))
             .weiBeiText(9.5)
             .foregroundStyle(WeiBeiTheme.tertiaryInk)

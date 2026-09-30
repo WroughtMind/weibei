@@ -43,4 +43,6 @@ enum ImportantOperationNotice: Equatable {
     case snapshotDamagedNoBackup
     /// 笔记写入/备份/重读/确认受阻:魏碑已停止覆盖,未写内容保留在魏碑中,可重试。
     case noteWriteSafetyHold(fileName: String)
+    /// 全新安装的默认资料库未能建立;没有移动或覆盖任何内容,可重试。
+    case defaultLibraryBootstrapFailed
 }

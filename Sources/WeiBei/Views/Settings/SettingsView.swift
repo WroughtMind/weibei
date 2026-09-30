@@ -368,7 +368,7 @@ struct SettingsView: View {
                     settingsRow(
                         title: store.ui("以底纹呈现", "As paper watermark"),
                         detail: store.ui(
-                            "开:句子化作纸面淡墨,点击换句;关:句子成块展示,悬停看出处。",
+                            "开：句子化作纸面淡墨，点击换句；关：句子成块展示，悬停看出处。",
                             "On: the line becomes faint ink in the paper. Off: shown as a block with credit on hover."
                         ),
                         showsBottomDivider: false
@@ -504,8 +504,8 @@ struct SettingsView: View {
                 )
             } catch CourseProjectRootError.destinationIsLibrary {
                 migrationErrorText = store.ui(
-                    "所选位置已经是一个魏碑资料库，请在对话中打开它或选择其他空文件夹。",
-                    "That location is already a WeiBei library. Open it instead, or choose an empty folder."
+                    "所选位置已经是一个魏碑资料库，请选择其他位置。",
+                    "That location is already a WeiBei library. Choose a different location."
                 )
             } catch {
                 store.recordCourseLibraryUIFailure(
@@ -513,13 +513,21 @@ struct SettingsView: View {
                     operation: "settings_library_migration",
                     path: destination
                 )
-                migrationErrorText = store.ui(
-                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用目标位置。请先确认原位置内容完整、目标文件夹可写，再重试。",
-                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the destination. Check the original contents and make sure the destination is writable before trying again."
-                )
+                migrationErrorText = Self.libraryMigrationFailureText(store: store, error: error)
             }
             isMigratingLibrary = false
         }
+    }
+
+    /// 迁移失败统一出口：不再把所有失败折叠成「请确认目标文件夹可写」，
+    /// 而是带上 `CourseProjectRootError.errorDescription` 的真实原因。
+    static func libraryMigrationFailureText(store: WorkspaceStore, error: Error) -> String {
+        let reason = (error as? CourseProjectRootError)?.errorDescription
+            ?? error.localizedDescription
+        return store.ui(
+            "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用目标位置。原因：\(reason)",
+            "The move was not confirmed. WeiBei still keeps the original library record and has not activated the destination. Reason: \(error.localizedDescription)"
+        )
     }
 
     static func isCloudSyncPath(_ url: URL) -> Bool {
@@ -737,10 +745,10 @@ struct SettingsView: View {
 
     private func applyRecordedShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
         defer { stopShortcutRecording() }
-        guard !AppShortcutCatalog.isReservedTextEditingChord(chord) else {
+        guard AppShortcutCatalog.acceptsRecording(chord) else {
             shortcutStatusMessage = store.ui(
-                "⌘B 和 ⌘F 保留给文本编辑，请使用其他组合。",
-                "⌘B and ⌘F are reserved for text editing. Choose another shortcut."
+                "系统编辑键不能占用，并且组合里要有 ⌘、⌃ 或 ⌥。",
+                "System editing keys stay reserved, and the shortcut needs ⌘, ⌃, or ⌥."
             )
             return
         }
@@ -955,34 +963,14 @@ struct SettingsView: View {
         guard !title.isEmpty, !body.isEmpty else { return }
 
         feedbackBusy = true
-        feedbackStatus = store.ui("正在提交…", "Submitting…")
+        feedbackStatus = store.ui("正在打开反馈页…", "Opening the feedback page…")
         let fullBody = feedbackIssueBody(userBody: body)
-
-        // Prefer `gh` when the machine is already authenticated — truly hands-off.
-#if !targetEnvironment(macCatalyst)
-        if let url = await createIssueWithGitHubCLI(title: title, body: fullBody) {
-            feedbackBusy = false
-            feedbackStatus = store.ui("已提交。", "Submitted.")
-            showFeedbackSheet = false
-#if targetEnvironment(macCatalyst)
-            UIApplication.shared.open(url, options: [:], completionHandler: nil)
-#else
-            NSWorkspace.shared.open(url)
-#endif
-            return
-        }
-
-#endif
-        // Open a prefilled GitHub new-issue page (one confirm click if logged in).
-        openPrefilledGitHubIssue(title: title, body: fullBody)
+        openPrefilledFeedbackIssue(title: title, body: fullBody)
         feedbackBusy = false
         feedbackStatus = store.ui(
-            "已打开提交页，确认后即可发送。",
-            "Opened the submit page — confirm there to send."
+            "已打开 Codeberg 反馈页，标题和说明已填好，确认后即可发送。",
+            "Opened the Codeberg feedback page with the title and report filled in. Confirm there to send."
         )
-        // Keep sheet briefly so the status is readable, then close.
-        try? await Task.sleep(nanoseconds: 900_000_000)
-        showFeedbackSheet = false
     }
 
     private func feedbackIssueBody(userBody: String) -> String {
@@ -993,61 +981,18 @@ struct SettingsView: View {
         \(userBody)
 
         ### 环境 / Environment
-        - 魏碑 \(buildInfo.version) (\(buildInfo.build))
+        - 魏碑 \(buildInfo.diagnosticLine)
         - \(osLine)
         """
     }
 
-#if !targetEnvironment(macCatalyst)
-    private func createIssueWithGitHubCLI(title: String, body: String) async -> URL? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = [
-                    "gh", "issue", "create",
-                    "--repo", "WroughtMind/weibei",
-                    "--title", title,
-                    "--body", body,
-                    "--label", "bug",
-                ]
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = Pipe()
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    guard process.terminationStatus == 0 else {
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let text = String(data: data, encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    continuation.resume(returning: URL(string: text))
-                } catch {
-                    continuation.resume(returning: nil)
-                }
-            }
-        }
-    }
-
-#endif
-
-    private func openPrefilledGitHubIssue(title: String, body: String) {
-        var components = URLComponents(string: "https://github.com/WroughtMind/weibei/issues/new")!
-        components.queryItems = [
-            URLQueryItem(name: "title", value: title),
-            URLQueryItem(name: "body", value: body),
-            URLQueryItem(name: "labels", value: "bug"),
-        ]
-        if let url = components.url {
+    private func openPrefilledFeedbackIssue(title: String, body: String) {
+        guard let url = WeiBeiFeedbackLink.prefilled(title: title, body: body) else { return }
 #if targetEnvironment(macCatalyst)
-            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
 #else
-            NSWorkspace.shared.open(url)
+        NSWorkspace.shared.open(url)
 #endif
-        }
     }
 
     private func runUpdateAction() {

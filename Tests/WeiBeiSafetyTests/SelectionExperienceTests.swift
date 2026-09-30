@@ -25,7 +25,7 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectionClearPreservesManualAttachmentsAndOpenedQuestion() throws {
+    func testSelectionClearPreservesManualAttachmentsAndClosesUnsentQuestion() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
@@ -38,12 +38,16 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertEqual(store.selectionAttachments.count, 2, "Another reader's empty event must not remove the active passage")
         store.askSelection()
         let threadID = try XCTUnwrap(store.activeSelectionAskThreadID)
+        XCTAssertTrue(store.markedSelectionAskThreads(forItemID: nil).isEmpty)
         store.updateSelection("", source: .document)
         XCTAssertNil(store.automaticSelection)
         XCTAssertEqual(store.selectionAttachments.map(\.text), [manual.text])
         XCTAssertEqual(store.activeSelectionAskThreadID, threadID)
-        XCTAssertEqual(store.selectionContext?.text, "准备提问的原文")
-        XCTAssertEqual(store.agentSurface, .selectionFloat)
+        XCTAssertNil(store.selectionContext)
+        XCTAssertNil(store.selectionAnchor)
+        XCTAssertEqual(store.agentSurface, .hidden)
+        XCTAssertFalse(store.keepFloatingSelectionForAnswer)
+        XCTAssertTrue(store.markedSelectionAskThreads(forItemID: nil).isEmpty)
     }
 
     override class func setUp() {
@@ -250,7 +254,12 @@ final class SelectionExperienceTests: XCTestCase {
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
         store.updateSelection("直接开始提问", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
         store.askSelection()
-        let host = NSHostingView(rootView: FloatingSelectionAgentView(expanded: .constant(true))
+        let host = NSHostingView(rootView: FloatingSelectionAgentView(
+            expanded: .constant(true),
+            placedOrigin: .constant(nil),
+            canvasSize: CGSize(width: 800, height: 600),
+            topInset: 0
+        )
             .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 180),
                               styleMask: .borderless, backing: .buffered, defer: false)
@@ -300,7 +309,11 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertTrue(store.isAgentRunningInActiveChat)
         var expanded = false
         let host = NSHostingView(rootView: FloatingSelectionAgentView(
-            expanded: Binding(get: { expanded }, set: { expanded = $0 }))
+            expanded: Binding(get: { expanded }, set: { expanded = $0 }),
+            placedOrigin: .constant(nil),
+            canvasSize: CGSize(width: 800, height: 600),
+            topInset: 0
+        )
             .environmentObject(store).environmentObject(store.paneState).environmentObject(store.interaction))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
                               styleMask: .borderless, backing: .buffered, defer: false)
@@ -328,22 +341,42 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testPinnedQuestionKeepsItsPassageAndPositionUntilUnpinned() {
+    func testRunningQuestionKeepsItsPassageAndPositionUntilAnswerEnds() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
         let anchor = SelectionPopoverAnchor(x: 320, y: 210)
-        store.updateSelection("固定的原文", source: .document, anchor: anchor)
+        store.updateSelection("正在回答的原文", source: .document, anchor: anchor)
         store.askSelection()
-        store.pinnedFloatingAgent = true
+        let threadID = try XCTUnwrap(store.activeSelectionAskThreadID)
+        let threadIndex = try XCTUnwrap(store.selectionAskThreads.firstIndex(where: { $0.id == threadID }))
+        store.selectionAskThreads[threadIndex].messageIDs = [UUID()]
+        XCTAssertEqual(store.markedSelectionAskThreads(forItemID: nil).map(\.id), [threadID])
+
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+        let requestTask = Task { for await _ in stream {} }
+        defer { continuation.finish(); requestTask.cancel() }
+        let run = AgentConversationRun(chatID: threadID)
+        run.agentRequestTask = requestTask
+        store.agentRuns[threadID] = run
+
         let selection = store.selectionContext
-        store.updateSelection("另外一处原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 440))
         store.updateSelection("", source: .document)
+        XCTAssertTrue(store.isFloatingChatRunning)
         XCTAssertEqual(store.selectionContext, selection)
         XCTAssertEqual(store.selectionAnchor, anchor)
-        store.pinnedFloatingAgent = false
-        store.updateSelection("另外一处原文", source: .document, anchor: SelectionPopoverAnchor(x: 600, y: 440))
-        XCTAssertEqual(store.selectionContext?.text, "另外一处原文")
+        XCTAssertEqual(store.agentSurface, .selectionFloat)
+        XCTAssertTrue(store.keepFloatingSelectionForAnswer)
+
+        continuation.finish()
+        requestTask.cancel()
+        run.agentRequestTask = nil
+        store.updateSelection("", source: .document)
+        XCTAssertFalse(store.isFloatingChatRunning)
+        XCTAssertNil(store.selectionContext)
+        XCTAssertNil(store.selectionAnchor)
+        XCTAssertEqual(store.agentSurface, .hidden)
+        XCTAssertFalse(store.keepFloatingSelectionForAnswer)
     }
 
     func testExcerptsFollowDocumentPositionsInsteadOfCaptureTime() {
@@ -447,6 +480,96 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertTrue(store.excerptBookPresented)
         XCTAssertEqual(store.excerptBookTargetRecordID, record.id)
         XCTAssertFalse(store.keepFloatingSelectionForAnswer)
+    }
+
+    @MainActor
+    func testEmptyAskThreadIsUnmarkedAndDeletingItPersistsWithoutRemovingTheParentChat() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let parent = try XCTUnwrap(store.createStudySession(courseID: nil))
+        store.appendAgentMessage(AgentMessage(role: .user, text: "父对话里的问题", source: nil))
+        let selection = SelectionContext(
+            text: "只点了问",
+            source: .document,
+            ownerTitle: "文稿",
+            itemID: "doc",
+            documentAnchor: SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 0, endOffset: 4))
+        )
+        let thread = try store.beginOrReuseSelectionAskThread(for: selection)
+        let threadIndex = try XCTUnwrap(store.selectionAskThreads.firstIndex(where: { $0.id == thread.id }))
+        store.selectionAskThreads[threadIndex].parentSessionID = parent.id
+        XCTAssertTrue(store.markedSelectionAskThreads(forItemID: "doc").isEmpty)
+        store.selectionAskThreads[threadIndex].messageIDs = [UUID()]
+        XCTAssertEqual(store.markedSelectionAskThreads(forItemID: "doc").map(\.id), [thread.id])
+
+        store.deleteSelectionAskThread(thread.id)
+        XCTAssertFalse(store.selectionAskThreads.contains(where: { $0.id == thread.id }))
+        XCTAssertFalse(store.studySessions.contains(where: { $0.id == thread.id }))
+        XCTAssertTrue(store.studySessions.contains(where: { $0.id == parent.id }))
+        XCTAssertNotNil(store.pendingDeletionUndo)
+        XCTAssertEqual(store.transientNoteStatus, store.ui("已删除", "Deleted"))
+
+        store.undoPendingDeletion()
+        XCTAssertTrue(store.selectionAskThreads.contains(where: { $0.id == thread.id }))
+        XCTAssertNil(store.pendingDeletionUndo)
+
+        store.deleteSelectionAskThread(thread.id)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        XCTAssertFalse(reopened.selectionAskThreads.contains(where: { $0.id == thread.id }))
+        XCTAssertTrue(reopened.studySessions.contains(where: { $0.id == parent.id }))
+    }
+
+    @MainActor
+    func testRemarkDraftFollowsSelectionAnchorAndExcerptInsertsWithoutReplacing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let firstAnchor = SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 0, endOffset: 2))
+        let secondAnchor = SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 8, endOffset: 10))
+        store.updateSelection(
+            "甲段",
+            source: .document,
+            anchor: SelectionPopoverAnchor(x: 10, y: 10),
+            documentAnchor: firstAnchor
+        )
+        store.interaction.selectionNoteDraft = "草稿甲"
+        store.updateSelection(
+            "乙段",
+            source: .document,
+            anchor: SelectionPopoverAnchor(x: 20, y: 20),
+            documentAnchor: secondAnchor
+        )
+        XCTAssertEqual(store.interaction.selectionNoteDraft, "")
+        store.updateSelection(
+            "甲段",
+            source: .document,
+            anchor: SelectionPopoverAnchor(x: 10, y: 12),
+            documentAnchor: firstAnchor
+        )
+        XCTAssertEqual(store.interaction.selectionNoteDraft, "草稿甲")
+
+        let record = SelectionRemarkRecord(
+            selectionText: "摘抄原文",
+            remarkText: "批注一句",
+            source: .document,
+            ownerTitle: "文稿"
+        )
+        store.selectionRemarkRecords = [record]
+        store.insertExcerptIntoCurrentNote(record)
+        let command = try XCTUnwrap(store.noteEditorCommand)
+        XCTAssertEqual(command.kind, .insertMarkdown)
+        XCTAssertTrue(command.markdown.contains("摘抄原文"))
+        XCTAssertTrue(command.markdown.contains("批注一句"))
+
+        store.deleteExcerpt(record.id)
+        XCTAssertTrue(store.selectionRemarkRecords.isEmpty)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        XCTAssertTrue(reopened.selectionRemarkRecords.isEmpty)
+        store.undoPendingDeletion()
+        XCTAssertEqual(store.selectionRemarkRecords.map(\.id), [record.id])
     }
 }
 

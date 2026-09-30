@@ -28,6 +28,21 @@ final class AppearanceThemeTests: XCTestCase {
                 0,
                 accuracy: 0.001
             )
+            XCTAssertEqual(
+                WeiBeiNativePalette.searchPanelFill(for: mode).alphaComponent,
+                1,
+                accuracy: 0.001
+            )
+            XCTAssertTrue(
+                WeiBeiNativePalette.searchPanelFill(for: mode)
+                    .isEqual(WeiBeiNativePalette.glassTint(for: mode))
+            )
+            XCTAssertGreaterThan(WeiBeiNativePalette.searchFieldFill(for: mode).alphaComponent, 0.15)
+            XCTAssertGreaterThan(WeiBeiNativePalette.searchFieldStroke(for: mode).alphaComponent, 0.4)
+            XCTAssertTrue(
+                WeiBeiNativePalette.searchFieldStroke(for: mode, active: true)
+                    .isEqual(WeiBeiNativePalette.searchFieldStroke(for: mode))
+            )
         }
 
         for mode in [
@@ -45,6 +60,15 @@ final class AppearanceThemeTests: XCTestCase {
             XCTAssertTrue(
                 WeiBeiNativePalette.drawerSurface(for: mode)
                     .isEqual(WeiBeiNativePalette.paper(for: mode))
+            )
+            XCTAssertTrue(
+                WeiBeiNativePalette.searchPanelFill(for: mode)
+                    .isEqual(WeiBeiNativePalette.paperRaised(for: mode))
+            )
+            XCTAssertEqual(
+                WeiBeiNativePalette.searchFieldFill(for: mode).alphaComponent,
+                1,
+                accuracy: 0.001
             )
         }
     }

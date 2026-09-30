@@ -130,8 +130,16 @@ public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Senda
     }
 
     public var asAgentFailureKind: AgentFailureKind {
+        let normalized = code.lowercased()
+        if normalized == "insufficient_quota" || status == 402 {
+            return .insufficientQuota
+        }
+        if normalized == "model_not_found" || status == 404 {
+            return .modelUnavailable
+        }
         if let status {
             switch status {
+            case 400: return .requestRejected
             case 401, 403: return .unauthorized
             case 429: return .rateLimited
             case 408, 504: return .timedOut
@@ -140,6 +148,7 @@ public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Senda
             }
         }
         switch code {
+        case "invalid_request": return .requestRejected
         case "unauthorized": return .unauthorized
         case "rate_limited": return .rateLimited
         case "timeout": return .timedOut

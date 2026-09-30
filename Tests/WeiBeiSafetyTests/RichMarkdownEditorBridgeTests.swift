@@ -6,6 +6,39 @@ import XCTest
 import WeiBeiCore
 
 final class RichMarkdownEditorBridgeTests: XCTestCase {
+    private var storeFixture: (store: WorkspaceStore, root: URL)?
+
+    override class func setUp() {
+        super.setUp()
+        setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+    }
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        precondition(Thread.isMainThread)
+        storeFixture = MainActor.assumeIsolated {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("WeiBeiEditorCommand-\(UUID().uuidString)")
+            return (
+                WorkspaceStore(
+                    workspaceDirectory: root,
+                    startsAtBlankEntries: true,
+                    startsCourseFileMaintenance: false
+                ),
+                root
+            )
+        }
+    }
+
+    override func tearDownWithError() throws {
+        let root = storeFixture?.root
+        storeFixture = nil
+        if let root {
+            try? FileManager.default.removeItem(at: root)
+        }
+        try super.tearDownWithError()
+    }
+
     @MainActor
     func testOpeningNoteBeforeWindowAttachmentKeepsItsFocusRequest() {
         let editor = RichMarkdownEditorView(
@@ -77,14 +110,8 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
     }
 
     @MainActor
-    func testDestroyedCoordinatorReturnsContentToExistingRetryQueue() async {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("WeiBeiEditorCommand-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = WorkspaceStore(
-            workspaceDirectory: root,
-            startsAtBlankEntries: true
-        )
+    func testDestroyedCoordinatorReturnsContentToExistingRetryQueue() async throws {
+        let store = try XCTUnwrap(storeFixture?.store)
         store.importedItems = [StudyItem(
             id: "note-a",
             title: "A",

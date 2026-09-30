@@ -24,6 +24,43 @@ final class NoteEditingSessionTests: XCTestCase {
     func testSuccessfulSaveStatusesStaySilent() {
         XCTAssertFalse(NoteSaveStatus.writtenToFile.showsStatusLabel)
         XCTAssertFalse(NoteSaveStatus.savedInWeiBei.showsStatusLabel)
+        XCTAssertFalse(NoteSaveStatus.saving.showsStatusLabel)
+        XCTAssertTrue(NoteSaveStatus.failed.showsStatusLabel)
+        XCTAssertTrue(NoteSaveStatus.externallyModified.showsStatusLabel)
+    }
+
+    @MainActor
+    func testSavingLabelAppearsOnlyAfterTheStatusPersists() async throws {
+        let session = NoteEditingSession(
+            documentID: "note-a",
+            savingLabelDelay: .milliseconds(40)
+        )
+        XCTAssertTrue(session.receive(dirtyEvent(for: session, revision: 1)))
+        XCTAssertEqual(session.saveStatus, .saving)
+        XCTAssertFalse(session.showsProlongedSavingLabel)
+
+        let deadline = Date().addingTimeInterval(1)
+        while !session.showsProlongedSavingLabel, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(session.showsProlongedSavingLabel)
+
+        XCTAssertTrue(session.markSaved(revision: 1, as: .writtenToFile))
+        XCTAssertEqual(session.saveStatus, .writtenToFile)
+        XCTAssertFalse(session.showsProlongedSavingLabel)
+    }
+
+    @MainActor
+    func testSaveFailureShowsWithoutWaitingForSavingLabel() {
+        let session = NoteEditingSession(
+            documentID: "note-a",
+            savingLabelDelay: .seconds(2)
+        )
+        XCTAssertTrue(session.receive(dirtyEvent(for: session, revision: 1)))
+        session.markSaveFailed(documentID: "note-a")
+        XCTAssertEqual(session.saveStatus, .failed)
+        XCTAssertTrue(session.saveStatus.showsStatusLabel)
+        XCTAssertFalse(session.showsProlongedSavingLabel)
     }
 
     @MainActor

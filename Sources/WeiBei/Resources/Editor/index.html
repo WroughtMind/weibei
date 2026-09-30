@@ -1323,6 +1323,8 @@
     .weibei-slash-command.is-active > .weibei-slash-command-button { color: var(--floating-accent); background: var(--floating-accent-soft); }
     .weibei-slash-empty { padding: 13px 10px; color: var(--floating-faint); font-size: 12px; }
     .weibei-slash-error { margin: 3px 4px 5px; padding: 6px 7px; color: var(--floating-accent); background: var(--floating-accent-soft); border-radius: 5px; font-size: 11px; }
+    .weibei-editor-notice { position: fixed; z-index: 130; top: 14px; left: 50%; transform: translateX(-50%); max-width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 8px 12px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 8px; box-shadow: var(--floating-menu-shadow); font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Songti SC", serif; }
+    :root[data-weibei-glass] .weibei-editor-notice { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
     .weibei-slash-table-panel { position: fixed; z-index: 121; width: 164px; box-sizing: border-box; padding: 8px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: var(--floating-menu-shadow); }
     :root[data-weibei-glass] .weibei-table-toolbar,
     :root[data-weibei-glass] .weibei-slash-table-panel { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }

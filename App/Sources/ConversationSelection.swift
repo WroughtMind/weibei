@@ -112,14 +112,14 @@ final class ConversationSelection: NSObject, TextLabelViewDelegate, UIContextMen
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self, weak controller] _ in
             var actions: [UIAction] = []
             if self?.hasSelection == true {
-                actions.append(UIAction(title: "复制所选文字", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.string = self?.text() })
-                actions.append(UIAction(title: "引用所选文字", image: UIImage(systemName: "text.quote")) { _ in controller?.quote(self?.text() ?? "") })
+                actions.append(UIAction(title: CatalystInterfaceCopy.text("复制所选文字", "Copy selected text"), image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.string = self?.text() })
+                actions.append(UIAction(title: CatalystInterfaceCopy.text("引用所选文字", "Quote selected text"), image: UIImage(systemName: "text.quote")) { _ in controller?.quote(self?.text() ?? "") })
             }
-            actions.append(UIAction(title: "复制整条回答") { _ in UIPasteboard.general.string = message.copyableMarkdown })
+            actions.append(UIAction(title: CatalystInterfaceCopy.text("复制整条回答", "Copy the whole answer")) { _ in UIPasteboard.general.string = message.copyableMarkdown })
             if let sources = message.original?.sources, !sources.isEmpty {
                 actions += sources.map { source in UIAction(title: source.label, image: UIImage(systemName: "book")) { _ in controller?.openSource?(source) } }
             } else if message.original == nil {
-                actions.append(UIAction(title: "查看来源材料") { _ in controller?.openWorkspace?(0) })
+                actions.append(UIAction(title: CatalystInterfaceCopy.text("查看来源文稿", "View source document")) { _ in controller?.openWorkspace?(0) })
             }
             return UIMenu(children: actions)
         }

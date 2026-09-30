@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import WeiBei
+import WeiBeiCore
 
 /// Targeted guards for the interaction/motion rework: expansion-request acks,
 /// visible status isolation, and the latest-first PDF render queue.
@@ -80,13 +81,74 @@ final class MotionInteractionSafetyTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testReaderSearchReturnKeepsFirstNavigationOriginUntilExplicitReturn() {
+        let paneState = WorkspacePaneState()
+        paneState.readerSearchResultMaterialID = "material"
+        paneState.readerSearchResults = [ReaderSearchResult(
+            id: 0, pageIndex: 0, preview: "推荐", location: "第 1 页",
+            matchRange: NSRange(location: 0, length: 2)
+        )]
+
+        paneState.resetReaderSearchSession()
+        paneState.selectReaderSearchResult(0)
+        let session = paneState.readerSearchSessionID
+        XCTAssertEqual(paneState.searchFocusRequest, 0)
+        paneState.selectReaderSearchResult(0)
+        paneState.readerSearchResultQuery = "新关键词"
+        XCTAssertEqual(paneState.readerSearchSessionID, session)
+        XCTAssertEqual(paneState.searchFocusRequest, 0)
+        XCTAssertTrue(paneState.canReturnToReaderSearchOrigin(for: "material"))
+        XCTAssertFalse(paneState.canReturnToReaderSearchOrigin(for: "other"))
+
+        paneState.returnToReaderSearchOrigin()
+        XCTAssertEqual(paneState.readerSearchReturnRequest, 1)
+        XCTAssertEqual(paneState.readerSearchResultIndex, -1)
+        XCTAssertFalse(paneState.readerSearchCanReturn)
+        XCTAssertEqual(paneState.searchFocusRequest, 1)
+        paneState.selectReaderSearchResult(0)
+        XCTAssertEqual(paneState.readerSearchSessionID, session + 1)
+    }
+
+    func testReaderSearchLocationUsesInterfaceLanguageWithoutChangingDocumentHeadings() {
+        func label(_ location: String, language: WeiBeiInterfaceLanguage = .english) -> String {
+            readerSearchLocationLabel(ReaderSearchResult(id: 0, pageIndex: 2, preview: "", location: location), language: language)
+        }
+
+        XCTAssertEqual(label("第 72 页"), "Page 72")
+        XCTAssertEqual(label("第 72 页备注"), "Page 72 notes")
+        XCTAssertEqual(label("第 12 行"), "Line 12")
+        XCTAssertEqual(label("段 3"), "Paragraph 3")
+        XCTAssertEqual(label("", language: .english), "Page 3")
+        XCTAssertEqual(label("第 72 页", language: .chinese), "72页")
+        XCTAssertEqual(label("第二节"), "第二节")
+    }
+
+    @MainActor
+    func testReaderSearchKeyboardFocusAdvancesBeforeReaderReportsNavigation() {
+        let paneState = WorkspacePaneState()
+        paneState.readerSearchResultMaterialID = "material"
+        paneState.readerSearchResults = (0..<3).map {
+            ReaderSearchResult(id: $0, pageIndex: $0, preview: "匹配", location: "第 \($0 + 1) 页")
+        }
+
+        paneState.selectReaderSearchResult(0)
+        paneState.selectReaderSearchResult(ReaderSearch.matchIndex(
+            current: paneState.readerSearchResultIndex, step: 1, count: 3))
+        paneState.selectReaderSearchResult(ReaderSearch.matchIndex(
+            current: paneState.readerSearchResultIndex, step: 1, count: 3))
+
+        XCTAssertEqual(paneState.readerSearchResultIndex, 2)
+        XCTAssertEqual(paneState.readerSearchNavigationRequest, 3)
+    }
+
     /// Recovery retracts the banner: when a note's file error clears and the
     /// banner still shows that exact message (with no other item failing on the
     /// same message), the banner is dismissed instead of lingering as a false alarm.
     @MainActor
     func testNoteFileErrorRecoveryRetractsMatchingBanner() {
         let store = makeStore()
-        let message = "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。"
+        let message = "找不到笔记文件，所以这里只显示空白模板；已暂停写回，以免盖掉磁盘上的内容。"
         store.setNoteFileError(message, for: "note-a")
         store.showImportantOperationError(message)
 
@@ -100,7 +162,7 @@ final class MotionInteractionSafetyTests: XCTestCase {
     @MainActor
     func testNoteFileErrorRecoveryKeepsUnrelatedOrSharedBanner() {
         let store = makeStore()
-        let message = "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。"
+        let message = "找不到笔记文件，所以这里只显示空白模板；已暂停写回，以免盖掉磁盘上的内容。"
 
         store.setNoteFileError(message, for: "note-a")
         store.showImportantOperationError("另一条重要错误")

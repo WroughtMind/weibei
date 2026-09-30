@@ -79,13 +79,15 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private func updateToolbarBackground(in window: NSWindow) {
         let owner = window.toolbar?.identifier == "weibei.workspace" ? window : window.parent
         guard let owner, owner.toolbar?.identifier == "weibei.workspace" else { return }
-        if !owner.titlebarAppearsTransparent { owner.titlebarAppearsTransparent = true }
-        guard let host = owner.toolbar?.items.compactMap({ $0.view?.window }).first,
-              host !== owner, let content = host.contentView else { return }
-        // AppKit moves the native toolbar into another window in full screen.
-        // That host ignores titlebarAppearsTransparent and repaints its backing
-        // view. AppKit also resets isHidden during layout, so clear only the
-        // fill's opacity; keep its layout and the native controls intact.
+        // 不设 titlebarAppearsTransparent：macOS 27 beta 上它会吞掉窗口模式的工具栏点击（#21）。
+        // 直接清标题栏背景视图的不透明度即可透明，命中链不变（2026-09-20 层级 dump 核实）。
+        // 窗口模式背景在本窗口的 NSThemeFrame 下；全屏时 AppKit 把工具栏搬进独立宿主窗口。
+        var roots: [NSView] = []
+        if let frame = owner.contentView?.superview { roots.append(frame) }
+        if let host = owner.toolbar?.items.compactMap({ $0.view?.window }).first, host !== owner,
+           let content = host.contentView { roots.append(content) }
+        // AppKit resets the fill's alpha during its own layout, so clear only the
+        // opacity; keep its layout and the native controls intact.
         func hideBackground(_ view: NSView) {
             if NSStringFromClass(type(of: view)) == "NSTitlebarBackgroundView" {
                 if view.alphaValue != 0 { view.alphaValue = 0 }
@@ -93,7 +95,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             }
             view.subviews.forEach(hideBackground)
         }
-        hideBackground(content)
+        roots.forEach(hideBackground)
     }
     func pushCursor(_ name: String) {
         switch name {

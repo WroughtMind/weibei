@@ -13,7 +13,11 @@ extension WorkspaceStore {
     func saveComposerDraft(_ draft: String, for sessionID: UUID?) {
         guard let sessionID else { return }
         agentDraftsBySessionID[sessionID] = draft
-        if sessionID == activeStudySessionID { pendingComposerDraft = draft }
+        if sessionID == activeStudySessionID {
+            pendingComposerDraft = draft
+            // 输入框订阅的是 agentDraft。只改 pending 时，失败回填会把空的 agentDraft 当成「输入框是空的」。
+            if agentDraft != draft { agentDraft = draft }
+        }
         save()
     }
 
@@ -24,6 +28,15 @@ extension WorkspaceStore {
         }
         if sessionID == activeStudySessionID { agentDraft = draft }
         if sessionID == activeSelectionAskThreadID { floatingAgentDraft = draft }
+    }
+
+    /// A2: 失败或取消后只在输入框为空时回填上一问，绝不覆盖用户正在写的新草稿。
+    func restoreComposerDraftIfEmpty(_ question: String, for sessionID: UUID) {
+        let cleaned = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty,
+              composerDraft(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        replaceComposerDraft(cleaned, for: sessionID)
     }
 
     func conversationMessages(in sessionID: UUID?) -> [AgentMessage] {
@@ -124,7 +137,7 @@ extension WorkspaceStore {
     func executeDiscussionTool(_ request: StudyAgentHostToolRequest, target: AgentConversationTarget,
                                focusItemIDs: Set<String>) throws -> StudyAgentHostToolResult {
         guard studySessions.contains(where: { $0.id == target.sessionID }) else {
-            throw AgentConversationTargetError(message: ui("原会话已删除。", "The original conversation was deleted."))
+            throw AgentConversationTargetError(message: ui("原对话已删除。", "The original conversation was deleted."))
         }
         switch request {
         case let .discussionSearch(query, itemID, allChats):

@@ -57,10 +57,10 @@ final class BlockView: UIView, UITextViewDelegate {
         draft.font = .systemFont(ofSize: 16)
         draft.backgroundColor = .secondarySystemBackground
         draft.delegate = self
-        draft.accessibilityLabel = "摘记卡草稿"
+        draft.accessibilityLabel = CatalystInterfaceCopy.text("摘抄草稿", "Excerpt draft")
         fold.accessibilityIdentifier = "toggle-card"
         fold.addTarget(self, action: #selector(toggleCard), for: .touchUpInside)
-        save.setTitle("收录到实验笔记", for: .normal)
+        save.setTitle(CatalystInterfaceCopy.text("放入笔记", "Add to note"), for: .normal)
         save.addTarget(self, action: #selector(saveCard), for: .touchUpInside)
     }
 
@@ -113,7 +113,7 @@ final class BlockView: UIView, UITextViewDelegate {
             installCardControls()
             for child in [cardTitle, draft, fold, save] { child.isHidden = false }
             draft.isHidden = block.collapsed; save.isHidden = block.collapsed
-            fold.setTitle(block.collapsed ? "展开" : "收起", for: .normal)
+            fold.setTitle(block.collapsed ? CatalystInterfaceCopy.text("展开", "Expand") : CatalystInterfaceCopy.text("收起", "Collapse"), for: .normal)
             struct Card: Decodable { let title: String; let prompt: String }
             do {
                 let card = try JSONDecoder().decode(Card.self, from: Data(source.utf8))
@@ -121,7 +121,7 @@ final class BlockView: UIView, UITextViewDelegate {
                 draft.text = block.draft
                 save.isEnabled = true
             } catch {
-                cardTitle.text = "摘记卡内容无效：\(error.localizedDescription)"
+                cardTitle.text = CatalystInterfaceCopy.text("摘抄内容无效：", "Excerpt content is invalid: ") + error.localizedDescription
                 draft.text = source
                 save.isEnabled = false
             }
@@ -228,7 +228,7 @@ final class BlockView: UIView, UITextViewDelegate {
         case .card:
             lastHeight = record.collapsed ? 48 : 204
             draft.isHidden = record.collapsed; save.isHidden = record.collapsed
-            fold.setTitle(record.collapsed ? "展开" : "收起", for: .normal)
+            fold.setTitle(record.collapsed ? CatalystInterfaceCopy.text("展开", "Expand") : CatalystInterfaceCopy.text("收起", "Collapse"), for: .normal)
         case .diagram:
             lastHeight = max(180, diagram?.measuredHeight ?? 200)
         }
@@ -355,7 +355,7 @@ final class BlockView: UIView, UITextViewDelegate {
             return text
         case let .card(source): return record.draft.isEmpty ? source : record.draft
         case let .diagram(source): return source
-        case let .workspaceAttachment(identifier): return identifier.hasPrefix("activity/") ? "" : "[互动内容]"
+        case let .workspaceAttachment(identifier): return identifier.hasPrefix("activity/") ? "" : CatalystInterfaceCopy.text("[互动内容]", "[interactive content]")
         }
     }
 }

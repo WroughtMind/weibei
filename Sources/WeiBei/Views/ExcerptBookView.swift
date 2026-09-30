@@ -163,7 +163,15 @@ private struct ExcerptBookRow: View {
     @ViewBuilder private var actions: some View {
         Button(store.ui("回到原文", "View source")) { store.openExcerptSource(record) }
             .disabled(record.itemID.flatMap(store.item(withID:)) == nil)
+        Button(store.ui("插入到当前笔记", "Insert into current note")) {
+            store.insertExcerptIntoCurrentNote(record)
+        }
         Button(store.ui("编辑批注", "Edit remark")) { editing = true }
+        Button(role: .destructive) {
+            store.deleteExcerpt(record.id)
+        } label: {
+            Text(store.ui("删除", "Delete"))
+        }
     }
 }
 

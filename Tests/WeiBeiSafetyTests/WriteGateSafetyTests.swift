@@ -38,44 +38,6 @@ final class WriteGateSafetyTests: XCTestCase {
         return store
     }
 
-    /// async 测试方法运行在 MainActor 任务里，同步桥（waitForCourseFileOperation）
-    /// 会 RunLoop 自旋等待另一个 MainActor Task 而死锁，必须走异步入口。
-    private func makeStoreAsync(
-        base: URL,
-        library: URL,
-        backupRoot: URL,
-        notebookWriter: ((String, URL) throws -> Void)? = nil
-    ) async throws -> WorkspaceStore {
-        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        let store = WorkspaceStore(
-            workspaceDirectory: base.appendingPathComponent("workspace", isDirectory: true),
-            notebookMarkdownWriter: notebookWriter ?? {
-                try WorkspaceStore.writeNotebookMarkdown($0, to: $1)
-            },
-            noteBackupRootURL: backupRoot,
-            startsAtBlankEntries: true,
-            startsCourseFileMaintenance: false
-        )
-        try await store.configureCourseLibraryAsync(at: library)
-        return store
-    }
-
-    private func importNoteAsync(
-        _ store: WorkspaceStore,
-        base: URL,
-        courseID: UUID,
-        content: String,
-        fileName: String? = nil
-    ) async throws -> (item: StudyItem, url: URL) {
-        let source = base.appendingPathComponent("\(fileName ?? "笔记-\(UUID().uuidString)").md")
-        try content.write(to: source, atomically: true, encoding: .utf8)
-        let imported = try await store.importFileIntoCourse(
-            source, courseID: courseID, role: .material
-        )
-        let url = try XCTUnwrap(store.resolvedLibraryURL(for: imported.item))
-        return (imported.item, url)
-    }
-
     private func importNote(
         _ store: WorkspaceStore,
         base: URL,
@@ -377,18 +339,18 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertNil(reopened.notesByItemID[note.item.id])
     }
 
-    func testRestoreWeiBeiContentFailureKeepsDraftAndConflict() async throws {
+    func testRestoreWeiBeiContentFailureKeepsDraftAndConflict() throws {
         struct InjectedWriteFailure: Error {}
         let base = makeTempRoot("weibei-restore-conflict-failure")
         defer { try? FileManager.default.removeItem(at: base) }
-        let store = try await makeStoreAsync(
+        let store = try makeStore(
             base: base,
             library: base.appendingPathComponent("资料库"),
             backupRoot: base.appendingPathComponent("backups"),
             notebookWriter: { _, _ in throw InjectedWriteFailure() }
         )
-        let courseID = try await store.createCourseInLibraryAsync(title: "恢复失败课")
-        let note = try await importNoteAsync(
+        let courseID = try store.createCourseInLibrary(title: "恢复失败课")
+        let note = try importNote(
             store, base: base, courseID: courseID, content: "磁盘版本"
         )
         store.activeNotebookItemID = note.item.id
@@ -398,11 +360,68 @@ final class WriteGateSafetyTests: XCTestCase {
             pending: "仍须保留的正文"
         )
 
-        await store.resolveNoteEditorRecoveryConflict(useDisk: false)
+        try store.waitForCourseFileOperation {
+            await store.resolveNoteEditorRecoveryConflict(useDisk: false)
+        }
 
         XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "磁盘版本")
         XCTAssertEqual(store.notesByItemID[note.item.id], "仍须保留的正文")
         XCTAssertNotNil(store.noteEditorRecoveryConflict)
+    }
+
+    func testCleanExternalEditAdoptsDiskWithoutExternalModificationLabel() throws {
+        let base = makeTempRoot("weibei-external-adopt")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = try makeStore(
+            base: base,
+            library: base.appendingPathComponent("资料库"),
+            backupRoot: base.appendingPathComponent("backups")
+        )
+        store.createBlankNotebookNote()
+        let note = try XCTUnwrap(store.activeNoteItem)
+        let url = try XCTUnwrap(note.url)
+        let external = "# 外部正文\n磁盘上的新内容\n"
+        try external.write(to: url, atomically: true, encoding: .utf8)
+
+        try store.waitForCourseFileOperation {
+            await store.reconcileActiveNoteEditorWithBackingFile()
+        }
+
+        XCTAssertEqual(store.noteEditingSession.saveStatus, .idle)
+        XCTAssertNotEqual(store.activeNoteSaveStatus, .externallyModified)
+        XCTAssertNil(store.noteEditorRecoveryConflict)
+        XCTAssertTrue(store.noteText.contains("磁盘上的新内容"))
+    }
+
+    func testUserNamedNoteKeepsFileNameAfterHeadingSave() throws {
+        let base = makeTempRoot("weibei-named-note")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = try makeStore(
+            base: base,
+            library: base.appendingPathComponent("资料库"),
+            backupRoot: base.appendingPathComponent("backups")
+        )
+        store.notebookCreationDraft = NotebookCreationDraft(
+            kind: .blank,
+            sourceItemID: nil,
+            title: "我的速记"
+        )
+        store.confirmNotebookNoteCreation()
+        let note = try XCTUnwrap(store.activeNoteItem)
+        let originalURL = try XCTUnwrap(note.url)
+        XCTAssertEqual(originalURL.deletingPathExtension().lastPathComponent, "我的速记")
+
+        store.persistNote("# 另一标题\n正文", for: note)
+
+        let current = try XCTUnwrap(store.importedItems.first { $0.id == note.id })
+        XCTAssertEqual(current.url?.lastPathComponent, "我的速记.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: originalURL.path))
+        XCTAssertEqual(try String(contentsOf: originalURL, encoding: .utf8), "# 另一标题\n正文")
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: originalURL.deletingLastPathComponent().appendingPathComponent("另一标题.md").path
+            )
+        )
     }
 
 }

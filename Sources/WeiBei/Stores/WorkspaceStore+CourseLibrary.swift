@@ -99,7 +99,7 @@ extension WorkspaceStore {
             // Only then may the next generation include its portable state.
             if !(await persistWorkspaceNow()) {
                 reportWorkspaceSaveFailure(.coursePortableStateUnwritten, ui(
-                    "课程已创建，但可携带状态尚未写入；本机内容已保留。请重试。",
+                    "课程已创建，但课程记录还没写入磁盘；本机内容已保留。请重试。",
                     "The course was created, but its portable state was not written. Local content is preserved; please retry."
                 ))
             }
@@ -1012,7 +1012,7 @@ extension WorkspaceStore {
         }
         if !(await persistWorkspaceNow()) {
             reportWorkspaceSaveFailure(.coursePortableStateUnwritten, ui(
-                "课程已登记，但可携带状态尚未写入；本机内容已保留。请重试。",
+                "课程已记下，但课程记录还没写入磁盘；本机内容已保留。请重试。",
                 "The course was registered, but its portable state was not written. Local content is preserved; please retry."
             ))
         }
@@ -4847,6 +4847,17 @@ extension WorkspaceStore {
 #endif
     }
 
+    /// 在访达中显示资料库根。课程文件夹报「暂不可用」而资料库本身仍可
+    /// 访问时，这是用户排查的最直接出路。
+    func revealCourseLibraryRootInFinder() {
+        guard let root = courseLibraryRootURL else { return }
+#if targetEnvironment(macCatalyst)
+        CatalystDesktopWindow.shared.reveal(root)
+#else
+        NSWorkspace.shared.activateFileViewerSelecting([root])
+#endif
+    }
+
     func removeCourseFromWeiBeiForSelfCheck(
         _ courseID: UUID
     ) throws {
@@ -5685,7 +5696,7 @@ extension WorkspaceStore {
             )
         case (true, false):
             message = ui(
-                "“\(title)”加入课程的操作未完整完成；磁盘文件和课程入口状态无法确认。请检查原位置、通用目录和课程目录后再试。",
+                "“\(title)”加入课程的操作未完整完成；磁盘文件和课程入口状态无法确认。请检查原位置、通用资料和课程文件夹后再试。",
                 "The operation to add “\(title)” to the course did not fully complete. The disk file and course entry state could not be confirmed. Check the original location, common content, and course folder before trying again."
             )
         case (false, true):
@@ -5695,7 +5706,7 @@ extension WorkspaceStore {
             )
         case (false, false):
             message = ui(
-                "“\(title)”移出课程的操作未完整完成；磁盘文件和课程入口状态无法确认。请检查原位置、通用目录和课程目录后再试。",
+                "“\(title)”移出课程的操作未完整完成；磁盘文件和课程入口状态无法确认。请检查原位置、通用资料和课程文件夹后再试。",
                 "The operation to remove “\(title)” from the course did not fully complete. The disk file and course entry state could not be confirmed. Check the original location, common content, and course folder before trying again."
             )
         }

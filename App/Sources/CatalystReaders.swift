@@ -9,7 +9,13 @@ final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
     var handleAskUnderlineHover: ((CGPoint) -> Void)?
     var handleAskUnderlineClick: ((CGPoint) -> Bool)?
+    /// X8: plain tap inside the document (not on an ask-underline) — clears the
+    /// source-reference jump highlight, mirroring the AppKit mouseDown path.
+    var handleTapInDocument: (() -> Void)?
     var onPointerEvent: ((CGPoint?, UIGestureRecognizer.State) -> Void)?
+    /// R1: trackpad / scroll-wheel only. Kept off the touch pan so text selection
+    /// does not share a recognizer with scrolling.
+    var onScrollNavigation: (() -> Void)?
     private var adaptsDocumentColors = true
     private var documentAppearanceMode: WeiBeiAppearanceMode = .paper
     override init(frame: CGRect) {
@@ -17,6 +23,12 @@ final class ReaderPDFView: PDFView {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(pointer(_:)))
         pan.cancelsTouchesInView = false; pan.delegate = self
         addGestureRecognizer(pan)
+        let scroll = UIPanGestureRecognizer(target: self, action: #selector(scrollNavigation(_:)))
+        scroll.allowedScrollTypesMask = .all
+        scroll.allowedTouchTypes = []
+        scroll.cancelsTouchesInView = false
+        scroll.delegate = self
+        addGestureRecognizer(scroll)
         let tap = UITapGestureRecognizer(target: self, action: #selector(tap(_:)))
         tap.cancelsTouchesInView = false; tap.delegate = self
         addGestureRecognizer(tap)
@@ -32,9 +44,18 @@ final class ReaderPDFView: PDFView {
         onPointerEvent?(gesture.location(in: self), gesture.state)
         reportCurrentSelection?()
     }
+    @objc private func scrollNavigation(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began, .changed, .ended:
+            onScrollNavigation?()
+        default:
+            break
+        }
+    }
     @objc private func tap(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: self)
         if handleAskUnderlineClick?(point) == true { return }
+        handleTapInDocument?()
         onPointerEvent?(point, .began)
         clearSelection()
         onPointerEvent?(point, .ended)
@@ -120,13 +141,23 @@ final class PDFOCRPageOverlayView: UIView {
 struct SelectablePlainTextReader: UIViewRepresentable {
     var text: String
     var searchQuery: String
+    var searchNavigationRequest = 0
+    var searchRequestedIndex = 0
+    var searchSessionID = 0
+    var searchReturnRequest = 0
+    var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     var appearanceMode: WeiBeiAppearanceMode
+    var hidesHostedDocument = false
     var underlineSnippets: [String]
+    var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
         view.isEditable = false; view.isSelectable = true; view.backgroundColor = .clear
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.documentTapped))
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
         // Keep reading margins inside the scroll content so text can pass under
         // the toolbar instead of being clipped by an outer padding rectangle.
         view.textContainerInset = UIEdgeInsets(top: 50, left: 50, bottom: 50, right: 50)
@@ -136,9 +167,12 @@ struct SelectablePlainTextReader: UIViewRepresentable {
         return view
     }
     func updateUIView(_ view: UITextView, context: Context) {
+        view.isHidden = hidesHostedDocument
         let coordinator = context.coordinator
+        let sourceChanged = coordinator.parent.text != text
         let changed = coordinator.parent.text != text || coordinator.parent.appearanceMode != appearanceMode
-            || coordinator.parent.underlineSnippets != underlineSnippets || view.attributedText.length == 0
+            || coordinator.parent.underlineSnippets != underlineSnippets || coordinator.query != ReaderSearch.cleaned(searchQuery)
+            || view.attributedText.length == 0
         coordinator.parent = self
         coordinator.suppressSelection = true
         defer { coordinator.suppressSelection = false }
@@ -159,24 +193,76 @@ struct SelectablePlainTextReader: UIViewRepresentable {
                     search = NSRange(location: NSMaxRange(found), length: attributed.length - NSMaxRange(found))
                 }
             }
+            for range in ReaderSearch.matches(in: text, query: searchQuery) {
+                attributed.addAttribute(.backgroundColor, value: weiBeiColor(red: 0.67, green: 0.24, blue: 0.16, alpha: 0.24), range: range)
+            }
             let selected = view.selectedRange
+            let readingOffset = view.contentOffset
             view.attributedText = attributed
             if NSMaxRange(selected) <= attributed.length { view.selectedRange = selected }
+            if !sourceChanged { view.setContentOffset(readingOffset, animated: false) }
         }
         let query = ReaderSearch.cleaned(searchQuery)
-        if coordinator.query != query {
+        if coordinator.sessionID != searchSessionID {
+            coordinator.sessionID = searchSessionID
+            coordinator.searchOrigin = nil
+        }
+        let returned = coordinator.returnRequest != searchReturnRequest
+        coordinator.returnRequest = searchReturnRequest
+        if coordinator.query != query || sourceChanged {
             coordinator.query = query
+            coordinator.navigationRequest = searchNavigationRequest
+            coordinator.index = -1
             onSelectionChange("", nil)
-            if let match = ReaderSearch.firstMatch(in: text, query: query) {
+            let matches = ReaderSearch.matches(in: text, query: query)
+            coordinator.matches = matches
+            coordinator.publish(matches, query: query)
+        } else if !returned && coordinator.navigationRequest != searchNavigationRequest {
+            coordinator.navigationRequest = searchNavigationRequest
+            coordinator.index = min(searchRequestedIndex, max(0, coordinator.matches.count - 1))
+            coordinator.publish(coordinator.matches, query: query)
+            if coordinator.matches.indices.contains(coordinator.index) {
+                if coordinator.searchOrigin == nil {
+                    coordinator.searchOrigin = (view.contentOffset, view.selectedRange)
+                }
+                let match = coordinator.matches[coordinator.index]
                 view.selectedRange = match; view.scrollRangeToVisible(match)
-            } else { view.selectedRange = NSRange(location: 0, length: 0) }
+            }
+        }
+        if returned {
+            coordinator.index = -1
+            if let origin = coordinator.searchOrigin {
+                view.selectedRange = origin.range
+                view.setContentOffset(origin.offset, animated: false)
+            }
+            coordinator.searchOrigin = nil
+            coordinator.publish(coordinator.matches, query: query)
         }
     }
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: SelectablePlainTextReader
         var suppressSelection = false
         var query = ""
+        var navigationRequest = 0
+        var sessionID = 0
+        var returnRequest = 0
+        var searchOrigin: (offset: CGPoint, range: NSRange)?
+        var index = -1
+        var matches: [NSRange] = []
         init(_ parent: SelectablePlainTextReader) { self.parent = parent }
+        @objc func documentTapped() { parent.onDocumentTap() }
+        func publish(_ matches: [NSRange], query: String) {
+            let source = parent.text as NSString
+            let results = matches.enumerated().map { entry -> ReaderSearchResult in
+                let range = entry.element
+                let prefix = source.substring(to: range.location)
+                let line = prefix.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+                let snippet = ReaderSearch.snippet(in: parent.text, around: range)
+                return ReaderSearchResult(id: entry.offset, pageIndex: 0, preview: snippet.text,
+                    location: "第 \(line) 行", matchRange: snippet.matchRange)
+            }
+            parent.onSearchResults(query, results, index)
+        }
         func textViewDidChangeSelection(_ textView: UITextView) {
             guard !suppressSelection else { return }
             guard let range = textView.selectedTextRange, !range.isEmpty, let text = textView.text(in: range) else {

@@ -4,6 +4,7 @@ import UIKit
 import AppKit
 #endif
 import SwiftUI
+import UniformTypeIdentifiers
 import WeiBeiCore
 
 struct ContentView: View {
@@ -15,6 +16,9 @@ struct ContentView: View {
     @FocusState private var topSearchFocused: Bool
     @State private var floatingAgentExpanded = false
     @State private var windowIsFullScreen = false
+    /// Size of the document area under the top bar. The float uses it for placement
+    /// and must not measure that area with a GeometryReader laid over the reader.
+    @State private var documentCanvas = CGSize.zero
 
     var body: some View {
         GeometryReader { geometry in
@@ -55,6 +59,32 @@ struct ContentView: View {
                             // the document family is owned by AppKit StableDocumentWorkspace animation
                             // — a second SwiftUI layout animation here made toggles feel split/janky.
                             .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
+                            .background {
+                                GeometryReader { content in
+                                    Color.clear.preference(
+                                        key: DocumentCanvasSizeKey.self,
+                                        value: content.size
+                                    )
+                                }
+                            }
+                            .onPreferenceChange(DocumentCanvasSizeKey.self) { size in
+                                guard size.width > 1, size.height > 1 else { return }
+                                if abs(documentCanvas.width - size.width) > 0.5
+                                    || abs(documentCanvas.height - size.height) > 0.5 {
+                                    documentCanvas = size
+                                }
+                            }
+                            // Above the document, outside its layout. A ZStack sibling was
+                            // resizing the reader for a frame, so the page painted again.
+                            .overlay {
+                                ZStack(alignment: .topLeading) {
+                                    Color.clear.allowsHitTesting(false)
+                                    GlobalFloatingSelectionLayer(
+                                        expanded: $floatingAgentExpanded,
+                                        canvasSize: documentCanvas == .zero ? geometry.size : documentCanvas
+                                    )
+                                }
+                            }
 
                         // AppKit drawer: slide starts immediately; sidebar not store-synced while closed.
                         CourseLibraryDrawerLayer(store: store) {
@@ -67,13 +97,11 @@ struct ContentView: View {
                                 .transition(WeiBeiTransition.commandPalette)
                                 .zIndex(40)
                         }
-
-                        // Selection float observes `interaction` only — drag must not rebuild ContentView.
-                        GlobalFloatingSelectionLayer(
-                            expanded: $floatingAgentExpanded,
-                            canvasSize: geometry.size
-                        )
-                        .zIndex(30)
+                    }
+                }
+                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                    WeiBeiDroppedFileURLs.load(providers) { urls in
+                        store.importFiles(urls)
                     }
                 }
                 .allowsHitTesting(!store.courseWorkspacePresented)
@@ -285,6 +313,14 @@ private struct PaneChromeFocusBridge: View {
     }
 }
 
+private struct DocumentCanvasSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next.width > 1, next.height > 1 { value = next }
+    }
+}
+
 /// Selection float layer. Observes `WorkspaceInteractionState` (+ store for chat routing).
 private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var store: WorkspaceStore
@@ -293,22 +329,26 @@ private struct GlobalFloatingSelectionLayer: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var expanded: Bool
     let canvasSize: CGSize
+    /// Top-left of the expanded panel. Nil until 「问」/「记」 opens; cleared when the float hides.
+    @State private var placedOrigin: CGPoint? = nil
 
     var body: some View {
         Group {
             if showsGlobalFloatingAgent {
                 FloatingSelectionAgentView(
-                    expanded: $expanded
+                    expanded: $expanded,
+                    placedOrigin: $placedOrigin,
+                    canvasSize: canvasSize,
+                    topInset: CGFloat(selectionTopInset)
                 )
-                // Place from this layout pass's actual size. Writing measured
-                // size back into State moved the click target again next frame.
+                // Center is derived from the parked top-left plus this layout pass's size,
+                // so growing the answer pushes the bottom down and does not pick a new side.
                 .alignmentGuide(.leading) { dimensions in
                     dimensions.width / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).x
                 }
                 .alignmentGuide(.top) { dimensions in
                     dimensions.height / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).y
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .transition(.opacity)
             }
         }
@@ -316,6 +356,13 @@ private struct GlobalFloatingSelectionLayer: View {
         .transaction { transaction in
             // Fade visibility only; selection coordinates must track without a spring.
             transaction.animation = nil
+        }
+        .onChange(of: usesPlacedOrigin) { _, placed in
+            guard placed, placedOrigin == nil else { return }
+            placedOrigin = initialOrigin
+        }
+        .onChange(of: showsGlobalFloatingAgent) { _, shown in
+            if !shown { placedOrigin = nil }
         }
     }
 
@@ -327,12 +374,30 @@ private struct GlobalFloatingSelectionLayer: View {
                 surface: interaction.agentSurface,
                 hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
                 hasAnchor: interaction.selectionAnchor != nil,
-                pinned: interaction.pinnedFloatingAgent,
+                pinned: false,
                 keepOpen: interaction.keepFloatingSelectionForAnswer
             )
     }
 
+    private var usesPlacedOrigin: Bool {
+        expanded || interaction.keepFloatingSelectionForAnswer
+    }
+
+    private var initialOrigin: CGPoint {
+        let point = SelectionFloatingAgentPlacement.initialTopLeft(
+            anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
+            canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
+            topInset: selectionTopInset,
+            prefersAbove: interaction.selectionAnchor?.prefersAbove == true
+        )
+        return CGPoint(x: point.x, y: point.y)
+    }
+
     private func floatingAgentPosition(size: CGSize) -> CGPoint {
+        if usesPlacedOrigin {
+            let origin = placedOrigin ?? initialOrigin
+            return CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+        }
         let point = SelectionFloatingAgentPlacement.position(
             anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
@@ -340,7 +405,7 @@ private struct GlobalFloatingSelectionLayer: View {
             surfaceHalfWidth: Double(size.width / 2),
             measuredHalfHeight: Double(size.height / 2),
             prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
-            prefersAnchorCenter: !(expanded || interaction.keepFloatingSelectionForAnswer || interaction.pinnedFloatingAgent)
+            prefersAnchorCenter: true
         )
         return CGPoint(x: point.x, y: point.y)
     }
@@ -408,6 +473,12 @@ private struct WorkspaceStatusBanner: View {
         isImportant || isEditorCommandFailure || isNoteSelectionFailure
     }
 
+    private var showsBackupReveal: Bool {
+        !isAlert
+            && store.noteSelectionStatusMessage == nil
+            && store.transientNoteStatusRevealURL != nil
+    }
+
     private var message: String {
         store.importantOperationError
             ?? store.noteEditorCommandFailureMessage
@@ -449,7 +520,30 @@ private struct WorkspaceStatusBanner: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(store.ui("重试保存并切换笔记", "Retry saving and switching notes")))
+            } else if store.pendingDeletionUndo != nil {
+                Button {
+                    store.undoPendingDeletion()
+                } label: {
+                    Text(store.ui("撤销", "Undo"))
+                        .weiBeiText(12, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("撤销删除", "Undo delete")))
             } else if isImportant {
+                if case .defaultLibraryBootstrapFailed = store.importantOperationNotice {
+                    Button {
+                        store.retryBootstrapDefaultLibrary()
+                    } label: {
+                        Text(store.ui("重试", "Retry"))
+                            .weiBeiText(12, weight: .semibold)
+                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text(store.ui("重试建立默认资料库", "Retry creating the default library")))
+                }
                 Button {
                     store.dismissImportantOperationError()
                 } label: {
@@ -460,6 +554,29 @@ private struct WorkspaceStatusBanner: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(store.ui("关闭错误提示", "Dismiss error")))
+            } else if showsBackupReveal {
+                Button {
+                    if let url = store.transientNoteStatusRevealURL {
+                        store.revealMaterialFileInFinder(url)
+                    }
+                } label: {
+                    Text(store.ui("在访达中显示", "Show in Finder"))
+                        .weiBeiText(12, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("在访达中显示备份", "Show backup in Finder")))
+                Button {
+                    store.dismissTransientNoteStatus()
+                } label: {
+                    Image(systemName: "xmark")
+                        .weiBeiText(10.5, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("关闭提示", "Dismiss notice")))
             }
         }
         .padding(.horizontal, 12)
@@ -477,9 +594,9 @@ private struct WorkspaceStatusBanner: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
-        .allowsHitTesting(isAlert)
+        .allowsHitTesting(isAlert || showsBackupReveal || store.pendingDeletionUndo != nil)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text(store.ui("工作区状态提示", "Workspace status")))
+        .accessibilityLabel(Text(store.ui("工作台状态提示", "Workspace status")))
     }
 }
 
@@ -507,6 +624,9 @@ private struct LibraryAwareEscapeBridge: View {
                 EscapeKeyBridge(onEscape: onDismissFloatingAgent)
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showDocumentSearch {
                 EscapeKeyBridge(onEscape: onHideReaderSearch)
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && !store.readerSourceHighlight.isEmpty {
+                // X8: Esc clears the source-reference jump highlight (search UI closed).
+                EscapeKeyBridge(onEscape: { store.clearReaderSourceHighlight() })
             }
         }
     }
@@ -518,7 +638,7 @@ private struct LibraryAwareEscapeBridge: View {
                 surface: interaction.agentSurface,
                 hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
                 hasAnchor: interaction.selectionAnchor != nil,
-                pinned: interaction.pinnedFloatingAgent,
+                pinned: false,
                 keepOpen: interaction.keepFloatingSelectionForAnswer
             )
     }
@@ -548,6 +668,512 @@ private struct WorkspaceChromeBackdrop: View {
     }
 }
 
+#if targetEnvironment(macCatalyst)
+/// Find field we own. SwiftUI `TextField` on Catalyst keeps the system gray well
+/// and blue focus ring no matter which theme is active.
+struct WeiBeiPlainTextField: UIViewRepresentable {
+    @Binding var text: String
+    var prompt: String
+    var fontSize: CGFloat
+    var isFocused: Binding<Bool>
+    var focusRequest: Int
+    var focusesOnAppear: Bool
+    var brandLanguage: WeiBeiInterfaceLanguage?
+    var onSubmit: (() -> Void)?
+    var onEscape: (() -> Void)?
+    var onMove: ((Int) -> Void)?
+
+    func makeUIView(context: Context) -> WeiBeiSearchTextField {
+        let field = WeiBeiSearchTextField()
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .editingChanged)
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateUIView(_ field: WeiBeiSearchTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.text != text { field.text = text }
+        let font = Self.font(size: fontSize, brandLanguage: brandLanguage)
+        field.font = font
+        field.textColor = WeiBeiNativePalette.ink()
+        field.tintColor = WeiBeiNativePalette.cinnabar()
+        field.attributedPlaceholder = NSAttributedString(
+            string: prompt,
+            attributes: [
+                .foregroundColor: WeiBeiNativePalette.placeholderInk(),
+                .font: font
+            ]
+        )
+        field.accessibilityLabel = prompt
+        field.onSubmit = onSubmit
+        field.onEscape = onEscape
+        field.onMove = onMove
+        field.stripSystemChrome()
+        if field.appliedFocusRequest != focusRequest {
+            let shouldFocus = field.appliedFocusRequest != -1 || focusesOnAppear || isFocused.wrappedValue
+            field.appliedFocusRequest = focusRequest
+            if shouldFocus { field.scheduleFocus() }
+        } else if isFocused.wrappedValue, !field.wasFocusedBinding {
+            field.scheduleFocus()
+        }
+        field.wasFocusedBinding = isFocused.wrappedValue
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: WeiBeiSearchTextField, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 160, height: proposal.height ?? max(fontSize + 8, 22))
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    private static func font(size: CGFloat, brandLanguage: WeiBeiInterfaceLanguage?) -> UIFont {
+        guard let brandLanguage else { return .systemFont(ofSize: size) }
+        if brandLanguage == .english {
+            WeiBeiTypography.registerBundledFonts()
+            if let named = UIFont(name: WeiBeiTypography.englishDisplayFontName, size: size) { return named }
+        }
+        let base = UIFont.systemFont(ofSize: size, weight: .semibold)
+        if let descriptor = base.fontDescriptor.withDesign(.serif) {
+            return UIFont(descriptor: descriptor, size: size)
+        }
+        return base
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: WeiBeiPlainTextField
+        init(_ parent: WeiBeiPlainTextField) { self.parent = parent }
+
+        @objc func changed(_ field: UITextField) {
+            let next = field.text ?? ""
+            if parent.text != next { parent.text = next }
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            if !parent.isFocused.wrappedValue { parent.isFocused.wrappedValue = true }
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            if parent.isFocused.wrappedValue { parent.isFocused.wrappedValue = false }
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            guard let onSubmit = parent.onSubmit else { return true }
+            onSubmit()
+            return false
+        }
+    }
+}
+
+final class WeiBeiSearchTextField: UITextField {
+    var onSubmit: (() -> Void)?
+    var onEscape: (() -> Void)?
+    var onMove: ((Int) -> Void)?
+    var appliedFocusRequest = -1
+    var wasFocusedBinding = false
+    private var pendingFocus = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        borderStyle = .none
+        backgroundColor = .clear
+        autocorrectionType = .no
+        spellCheckingType = .no
+        clearButtonMode = .never
+        returnKeyType = .search
+        tintColor = WeiBeiNativePalette.cinnabar()
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override var focusEffect: UIFocusEffect? {
+        get { nil }
+        set { }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        stripSystemChrome()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        stripSystemChrome()
+        return accepted
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil, pendingFocus { scheduleFocus() }
+    }
+
+    func scheduleFocus() {
+        pendingFocus = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.pendingFocus = !self.becomeFirstResponder()
+        }
+    }
+
+    func stripSystemChrome() {
+        borderStyle = .none
+        backgroundColor = .clear
+        layer.borderWidth = 0
+        layer.borderColor = UIColor.clear.cgColor
+        layer.shadowOpacity = 0
+        for subview in subviews {
+            let name = NSStringFromClass(type(of: subview))
+            let isChrome = name.contains("Background") || name.contains("Rounded") || name.contains("Focus") || name.contains("Halo")
+            guard isChrome else { continue }
+            subview.isHidden = true
+            subview.alpha = 0
+            subview.backgroundColor = .clear
+            subview.layer.borderWidth = 0
+        }
+    }
+
+    override func textRect(forBounds bounds: CGRect) -> CGRect { bounds.insetBy(dx: 1, dy: 0) }
+    override func editingRect(forBounds bounds: CGRect) -> CGRect { textRect(forBounds: bounds) }
+    override func placeholderRect(forBounds bounds: CGRect) -> CGRect { textRect(forBounds: bounds) }
+
+    override var keyCommands: [UIKeyCommand]? {
+        var commands: [UIKeyCommand] = []
+        if onMove != nil {
+            let up = UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(moveUp))
+            let down = UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(moveDown))
+            up.wantsPriorityOverSystemBehavior = true
+            down.wantsPriorityOverSystemBehavior = true
+            commands.append(contentsOf: [up, down])
+        }
+        if onEscape != nil {
+            let escape = UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(escape))
+            escape.wantsPriorityOverSystemBehavior = true
+            commands.append(escape)
+        }
+        return commands.isEmpty ? nil : commands
+    }
+
+    @objc private func moveUp() { onMove?(-1) }
+    @objc private func moveDown() { onMove?(1) }
+    @objc private func escape() { onEscape?() }
+}
+
+/// One plate for the find cluster. Glass is a blur plus that theme's own tint.
+/// Paper themes use raised paper. Neither path is the system gray search well.
+private struct ReaderSearchPlate: UIViewRepresentable {
+    var mode: WeiBeiAppearanceMode
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView()
+        view.isUserInteractionEnabled = false
+        view.clipsToBounds = true
+        return view
+    }
+
+    func updateUIView(_ view: UIVisualEffectView, context: Context) {
+        if mode.isGlass {
+            view.effect = UIBlurEffect(style: mode.isDark ? .systemThinMaterialDark : .systemThinMaterialLight)
+            view.contentView.backgroundColor = WeiBeiNativePalette.glassTint(for: mode)
+                .withAlphaComponent(mode.isDark ? 0.78 : 0.70)
+        } else {
+            view.effect = nil
+            view.contentView.backgroundColor = WeiBeiNativePalette.paperRaised(for: mode)
+        }
+    }
+}
+#endif
+
+/// Search text used by the find cluster and the other search fields.
+/// On Catalyst this is a borderless field; the surrounding plate or
+/// `weibeiInputSurface` is the only chrome.
+struct WeiBeiSearchField: View {
+    @Binding var text: String
+    var prompt: String
+    var isFocused: Binding<Bool>
+    var fontSize: CGFloat = 12
+    var focusRequest: Int = 0
+    var focusesOnAppear: Bool = false
+    var drawsChrome: Bool = true
+    var chromeHeight: CGFloat = 28
+    var horizontalPadding: CGFloat = 10
+    var brandLanguage: WeiBeiInterfaceLanguage? = nil
+    var onSubmit: (() -> Void)? = nil
+    var onEscape: (() -> Void)? = nil
+    var onMove: ((Int) -> Void)? = nil
+
+    var body: some View {
+        field
+            .modifier(WeiBeiSearchFieldChrome(
+                drawsChrome: drawsChrome,
+                active: isFocused.wrappedValue,
+                height: chromeHeight,
+                horizontalPadding: horizontalPadding
+            ))
+    }
+
+    @ViewBuilder
+    private var field: some View {
+#if targetEnvironment(macCatalyst)
+        WeiBeiPlainTextField(
+            text: $text,
+            prompt: prompt,
+            fontSize: fontSize,
+            isFocused: isFocused,
+            focusRequest: focusRequest,
+            focusesOnAppear: focusesOnAppear,
+            brandLanguage: brandLanguage,
+            onSubmit: onSubmit,
+            onEscape: onEscape,
+            onMove: onMove
+        )
+#else
+        MacSearchField(
+            text: $text,
+            prompt: prompt,
+            isFocused: isFocused,
+            fontSize: fontSize,
+            focusRequest: focusRequest,
+            focusesOnAppear: focusesOnAppear,
+            brandLanguage: brandLanguage,
+            onSubmit: onSubmit,
+            onEscape: onEscape,
+            onMove: onMove
+        )
+#endif
+    }
+}
+
+#if !targetEnvironment(macCatalyst)
+private struct MacSearchField: View {
+    @Binding var text: String
+    var prompt: String
+    var isFocused: Binding<Bool>
+    var fontSize: CGFloat
+    var focusRequest: Int
+    var focusesOnAppear: Bool
+    var brandLanguage: WeiBeiInterfaceLanguage?
+    var onSubmit: (() -> Void)?
+    var onEscape: (() -> Void)?
+    var onMove: ((Int) -> Void)?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $text, prompt: promptText)
+            .textFieldStyle(.plain)
+            .focusEffectDisabled()
+            .modifier(MacSearchFieldFont(fontSize: fontSize, brandLanguage: brandLanguage))
+            .focused($focused)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .tint(WeiBeiTheme.cinnabar)
+            .onChange(of: focused) { _, value in
+                if isFocused.wrappedValue != value { isFocused.wrappedValue = value }
+            }
+            .onChange(of: isFocused.wrappedValue) { _, value in
+                if focused != value { focused = value }
+            }
+            .onAppear { focused = focusesOnAppear || isFocused.wrappedValue }
+            .onChange(of: focusRequest) { _, _ in focused = true }
+            .onSubmit { onSubmit?() }
+            .modifier(SearchExitCommand(action: onEscape))
+            .onKeyPress(.upArrow) {
+                guard onMove != nil else { return .ignored }
+                onMove?(-1)
+                return .handled
+            }
+            .onKeyPress(.downArrow) {
+                guard onMove != nil else { return .ignored }
+                onMove?(1)
+                return .handled
+            }
+    }
+
+    private var promptText: Text {
+        let prompt = Text(prompt).foregroundStyle(WeiBeiTheme.placeholderInk)
+        guard let brandLanguage else { return prompt }
+        return prompt.font(WeiBeiTypography.brandFont(language: brandLanguage, size: fontSize, weight: .semibold))
+    }
+}
+
+private struct SearchExitCommand: ViewModifier {
+    var action: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if let action {
+            content.weiBeiOnExitCommand(perform: action)
+        } else {
+            content
+        }
+    }
+}
+
+private struct MacSearchFieldFont: ViewModifier {
+    var fontSize: CGFloat
+    var brandLanguage: WeiBeiInterfaceLanguage?
+
+    func body(content: Content) -> some View {
+        if let brandLanguage {
+            content.weiBeiBrandFont(language: brandLanguage, size: fontSize, weight: .semibold)
+        } else {
+            content.weiBeiText(fontSize)
+        }
+    }
+}
+#endif
+
+private struct WeiBeiSearchFieldChrome: ViewModifier {
+    var drawsChrome: Bool
+    var active: Bool
+    var height: CGFloat
+    var horizontalPadding: CGFloat
+
+    func body(content: Content) -> some View {
+        if drawsChrome {
+            content.weibeiInputSurface(active: active, height: height, horizontalPadding: horizontalPadding)
+        } else {
+            content
+                .padding(.horizontal, 2)
+                .frame(minHeight: height)
+        }
+    }
+}
+
+/// Focus new and repeated find requests after the field enters its view hierarchy.
+private struct ToolbarSearchField: View {
+    @Binding var text: String
+    let prompt: String
+    let focusRequest: Int
+    let height: CGFloat
+    var width: CGFloat? = 220
+    var drawsOwnChrome = true
+    var onFocusedChange: (Bool) -> Void = { _ in }
+    let onSubmit: () -> Void
+    let onEscape: () -> Void
+    let onMove: (Int) -> Void
+    @State private var isFocused = false
+
+    var body: some View {
+        WeiBeiSearchField(
+            text: $text,
+            prompt: prompt,
+            isFocused: $isFocused,
+            fontSize: 12,
+            focusRequest: focusRequest,
+            focusesOnAppear: true,
+            drawsChrome: drawsOwnChrome,
+            chromeHeight: height,
+            horizontalPadding: drawsOwnChrome ? 8 : 2,
+            onSubmit: onSubmit,
+            onEscape: onEscape,
+            onMove: onMove
+        )
+        .frame(width: width)
+        .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+        .onChange(of: isFocused) { _, value in onFocusedChange(value) }
+    }
+}
+
+private struct SearchClusterIconStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        SearchClusterIconBody(configuration: configuration, isEnabled: isEnabled)
+    }
+}
+
+private struct SearchClusterIconBody: View {
+    let configuration: ButtonStyle.Configuration
+    let isEnabled: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        configuration.label
+            .foregroundStyle(foreground)
+            .background {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(hovering && isEnabled ? WeiBeiTheme.ink.opacity(0.08) : Color.clear)
+            }
+            .contentShape(Rectangle())
+            .onHover { hovering = isEnabled && $0 }
+    }
+
+    private var foreground: Color {
+        guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.45) }
+        return hovering || configuration.isPressed ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
+    }
+}
+
+private struct SearchClusterTextRow: View {
+    let title: String
+    let systemImage: String
+    var accessibilityLabel: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .weiBeiText(12, weight: .medium)
+                .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(hovering ? WeiBeiTheme.ink.opacity(0.06) : Color.clear)
+        .accessibilityLabel(Text(accessibilityLabel))
+        .onHover { hovering = $0 }
+    }
+}
+
+private struct SearchResultRow<Label: View>: View {
+    var selected: Bool
+    let action: () -> Void
+    @ViewBuilder var label: () -> Label
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .weiBeiText(12)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 14)
+                .padding(.trailing, 12)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(rowFill)
+        }
+        .onHover { hovering = $0 }
+    }
+
+    private var rowFill: Color {
+        if selected { return WeiBeiTheme.cinnabarSoft }
+        if hovering { return WeiBeiTheme.ink.opacity(0.06) }
+        return .clear
+    }
+}
+
+func readerSearchLocationLabel(_ result: ReaderSearchResult, language: WeiBeiInterfaceLanguage) -> String {
+    let raw = result.location.isEmpty ? "第 \(result.pageIndex + 1) 页" : result.location
+    let location = raw.hasPrefix("第 ")
+        ? raw.replacingOccurrences(of: "第 ", with: "").replacingOccurrences(of: " ", with: "")
+        : raw
+    guard language == .english else { return location }
+    if location.hasSuffix("页备注"), let page = Int(location.dropLast(3)) { return "Page \(page) notes" }
+    if location.hasSuffix("页"), let page = Int(location.dropLast()) { return "Page \(page)" }
+    if location.hasSuffix("行"), let line = Int(location.dropLast()) { return "Line \(line)" }
+    if location.hasPrefix("段 "), let paragraph = Int(location.dropFirst(2)) { return "Paragraph \(paragraph)" }
+    return location
+}
+
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var updateService: WeiBeiUpdateService
@@ -560,6 +1186,8 @@ private struct UnifiedTopBarView: View {
     let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
     @State private var appeared = false
+    @State private var readerSearchKeyboardFocusRequest = 0
+    @State private var searchFieldFocused = false
 
     var body: some View {
 #if targetEnvironment(macCatalyst)
@@ -574,6 +1202,45 @@ private struct UnifiedTopBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
             showSettings()
         }
+        .overlay(alignment: .topTrailing) {
+            if paneState.showDocumentSearch && shouldShowSearchAction {
+                let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+                VStack(spacing: 0) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "magnifyingglass")
+                            .weiBeiText(11, weight: .medium)
+                            .foregroundStyle(searchFieldFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                            .frame(width: 18)
+                        searchControls
+                    }
+                    .padding(.leading, 10)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 4)
+                    if showsReaderSearchResults {
+                        searchClusterHairline
+                        readerSearchResultsList
+                    }
+                    if paneState.canReturnToReaderSearchOrigin(for: store.selectedMaterialItem?.id) {
+                        searchClusterHairline
+                        readerSearchReturnRow
+                    }
+                }
+                .frame(width: searchClusterExpanded ? 348 : nil, alignment: .leading)
+                .fixedSize(horizontal: !searchClusterExpanded, vertical: true)
+                .background { ReaderSearchPlate(mode: store.appearanceMode) }
+                .clipShape(shape)
+                .overlay { shape.stroke(searchClusterStroke, lineWidth: 1) }
+                .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.36 : 0.16), radius: 16, y: 8)
+                .padding(.trailing, 12)
+                .padding(.top, 5)
+            }
+        }
+        .zIndex(10)
+        .onChange(of: store.readerSearch) { _, _ in readerSearchKeyboardFocusRequest = 0 }
+        .onChange(of: paneState.showDocumentSearch) { _, visible in
+            if !visible { readerSearchKeyboardFocusRequest = 0 }
+        }
+
 #else
         customTopBar
 #endif
@@ -582,7 +1249,7 @@ private struct UnifiedTopBarView: View {
 #if targetEnvironment(macCatalyst)
     private var toolbarOverflowMenus: [UIMenu] {
         var navigation = [
-            toolbarAction(store.ui("课程抽屉", "Course drawer"), selected: libraryDrawer.isOpen, action: store.toggleLibrary),
+            toolbarAction(store.ui("课程栏", "Course sidebar"), selected: libraryDrawer.isOpen, action: store.toggleLibrary),
             toolbarAction(store.ui("后退", "Back"), enabled: store.canNavigateBack) {
                 withAnimation(WeiBeiMotion.layout) { store.navigateBackInWorkspace() }
             },
@@ -631,50 +1298,236 @@ private struct UnifiedTopBarView: View {
     }
 #endif
 
+    @ViewBuilder
+    private var searchControls: some View {
+        ToolbarSearchField(
+            text: store.searchesNotes ? $store.noteSearch : $store.readerSearch,
+            prompt: searchPrompt,
+            focusRequest: paneState.searchFocusRequest,
+            height: searchControlHeight,
+            width: searchFieldLayoutWidth,
+            drawsOwnChrome: searchFieldDrawsOwnChrome,
+            onFocusedChange: { searchFieldFocused = $0 },
+            onSubmit: {
+                if store.searchesNotes { store.noteSearchRequest &+= 1 }
+                else if showsReaderSearchResults {
+                    moveReaderSearchResult(1, focusResults: true)
+                }
+            },
+            onEscape: {
+                store.hideDocumentSearch()
+                searchFocused.wrappedValue = false
+            },
+            onMove: { step in
+                if store.searchesNotes { store.noteSearchRequest &+= step }
+                else if showsReaderSearchResults { moveReaderSearchResult(step) }
+            }
+        )
+        if showsReaderSearchResults {
+            Text(readerSearchResultStatus)
+                .weiBeiText(11, weight: .medium)
+                .monospacedDigit()
+                .foregroundStyle(readerSearchStatusColor)
+                .fixedSize()
+                .accessibilityLabel(Text(store.ui("搜索结果：", "Search results: ") + readerSearchResultStatus))
+            searchStepButton("chevron.up", help: store.ui("上一个匹配（⇧⌘G）", "Previous match (⇧⌘G)")) { moveReaderSearchResult(-1, focusResults: true) }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
+            searchStepButton("chevron.down", help: store.ui("下一个匹配（⌘G）", "Next match (⌘G)")) { moveReaderSearchResult(1, focusResults: true) }
+                .keyboardShortcut("g", modifiers: .command)
+                .disabled(!readerSearchResultsReady || paneState.readerSearchResults.isEmpty)
+        }
+        if store.searchesNotes && !store.noteSearch.isEmpty {
+            if store.noteSearchFound == false {
+                Text(store.ui("无匹配", "No matches"))
+                    .weiBeiText(11, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    .fixedSize()
+            }
+            searchStepButton("chevron.up", help: store.ui("上一个匹配（⇧⌘G）", "Previous match (⇧⌘G)")) { store.noteSearchRequest &-= 1 }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+            searchStepButton("chevron.down", help: store.ui("下一个匹配（⌘G）", "Next match (⌘G)")) { store.noteSearchRequest &+= 1 }
+                .keyboardShortcut("g", modifiers: .command)
+        }
+        searchStepButton("xmark", help: store.ui("关闭查找", "Close search")) {
+            store.hideDocumentSearch()
+            searchFocused.wrappedValue = false
+        }
+    }
+
+    private var searchFieldLayoutWidth: CGFloat? {
+#if targetEnvironment(macCatalyst)
+        searchClusterExpanded ? nil : searchFieldWidth
+#else
+        searchFieldWidth
+#endif
+    }
+
+    private var searchClusterExpanded: Bool {
+        showsReaderSearchResults || paneState.canReturnToReaderSearchOrigin(for: store.selectedMaterialItem?.id)
+    }
+
+    private var searchClusterStroke: Color {
+        WeiBeiTheme.hairline.opacity(store.appearanceMode.isDark ? 0.58 : 0.42)
+    }
+
+    private var searchClusterHairline: some View {
+        Rectangle()
+            .fill(WeiBeiTheme.hairline.opacity(store.appearanceMode.isDark ? 0.55 : 0.42))
+            .frame(height: 1)
+    }
+
+    private var readerSearchStatusColor: Color {
+        if readerSearchResultsReady, paneState.readerSearchResults.isEmpty {
+            return WeiBeiTheme.tertiaryInk
+        }
+        return WeiBeiTheme.secondaryInk
+    }
+
+    private var readerSearchReturnRow: some View {
+        SearchClusterTextRow(
+            title: store.ui("回到查找前", "Back to reading position"),
+            systemImage: "arrow.uturn.backward",
+            accessibilityLabel: store.ui("回到查找前的阅读位置", "Return to reading position before search")
+        ) {
+            paneState.returnToReaderSearchOrigin()
+        }
+    }
+
+    private func searchStepButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
+#if targetEnvironment(macCatalyst)
+        Button(action: action) {
+            Image(systemName: systemName)
+                .weiBeiText(11, weight: .semibold)
+                .frame(width: 22 * textScale, height: 22 * textScale)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(SearchClusterIconStyle())
+        .accessibilityLabel(Text(help))
+        .help(help)
+#else
+        topIconButton(systemName, help: help, action: action)
+#endif
+    }
+
+    private var showsReaderSearchResults: Bool {
+        !store.searchesNotes && store.selectedMaterialItem != nil && !ReaderSearch.cleaned(store.readerSearch).isEmpty
+    }
+
+    private var readerSearchResultsReady: Bool {
+        paneState.readerSearchResultQuery == ReaderSearch.cleaned(store.readerSearch)
+            && paneState.readerSearchResultMaterialID == store.selectedMaterialItem?.id
+    }
+
+    private var readerSearchResultStatus: String {
+        guard readerSearchResultsReady else { return store.ui("查找中", "Finding…") }
+        let count = paneState.readerSearchResults.count
+        if count == 0 { return store.ui("无匹配", "No matches") }
+        if paneState.readerSearchResultIndex < 0 { return store.ui("\(count) 处", "\(count) \(count == 1 ? "match" : "matches")") }
+        return "\(paneState.readerSearchResultIndex + 1) / \(count)"
+    }
+
+    private func moveReaderSearchResult(_ step: Int, focusResults: Bool = false) {
+        guard readerSearchResultsReady else { return }
+        paneState.selectReaderSearchResult(ReaderSearch.matchIndex(current: paneState.readerSearchResultIndex,
+            step: step, count: paneState.readerSearchResults.count))
+        if focusResults { readerSearchKeyboardFocusRequest &+= 1 }
+    }
+
+    @ViewBuilder
+    private var readerSearchResultsList: some View {
+        if !readerSearchResultsReady {
+            searchClusterStatusRow(store.ui("查找中", "Finding…"))
+        } else if paneState.readerSearchResults.isEmpty {
+            searchClusterStatusRow(store.ui("没有找到匹配", "No matches"))
+        } else {
+            let results = paneState.readerSearchResults
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(results.indices, id: \.self) { index in
+                            let result = results[index]
+                            if index == 0 || result.location != results[index - 1].location {
+                                HStack(spacing: 8) {
+                                    Text(compactLocation(result))
+                                        .weiBeiText(10, weight: .semibold)
+                                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                                        .fixedSize()
+                                    Rectangle()
+                                        .fill(WeiBeiTheme.hairline.opacity(store.appearanceMode.isDark ? 0.55 : 0.42))
+                                        .frame(height: 1)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.top, index == 0 ? 8 : 10)
+                                .padding(.bottom, 2)
+                            }
+                            SearchResultRow(selected: result.id == paneState.readerSearchResultIndex) {
+                                paneState.selectReaderSearchResult(result.id)
+                                readerSearchKeyboardFocusRequest &+= 1
+                            } label: {
+                                highlightedPreview(result)
+                            }
+                            .id(result.id)
+                        }
+                    }
+                    .padding(.bottom, 6)
+                }
+                .scrollContentBackground(.hidden)
+                .frame(height: min(CGFloat(results.count * 40 + readerSearchLocationCount * 26 + 8), 360))
+#if targetEnvironment(macCatalyst)
+                .background {
+                    CatalystSearchResultsKeyboardBridge(focusRequest: readerSearchKeyboardFocusRequest) { step in
+                        moveReaderSearchResult(step, focusResults: true)
+                    }
+                    .frame(width: 1, height: 1)
+                }
+#endif
+                .onChange(of: paneState.readerSearchResultIndex) { _, index in proxy.scrollTo(index, anchor: .center) }
+            }
+        }
+    }
+
+    private func searchClusterStatusRow(_ title: String) -> some View {
+        Text(title)
+            .weiBeiText(12)
+            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+    }
+
+    private var readerSearchLocationCount: Int {
+        let results = paneState.readerSearchResults
+        return results.indices.filter { $0 == 0 || results[$0].location != results[$0 - 1].location }.count
+    }
+
+    private func compactLocation(_ result: ReaderSearchResult) -> String {
+        readerSearchLocationLabel(result, language: store.interfaceLanguage)
+    }
+
+    private func highlightedPreview(_ result: ReaderSearchResult) -> Text {
+        let source = result.preview as NSString
+        let range = result.matchRange
+        guard range.location != NSNotFound, NSMaxRange(range) <= source.length else {
+            return Text(result.preview).foregroundColor(WeiBeiTheme.ink)
+        }
+        let before = source.substring(to: range.location)
+        let match = source.substring(with: range)
+        let after = source.substring(from: NSMaxRange(range))
+        return Text(before).foregroundColor(WeiBeiTheme.ink)
+            + Text(match).foregroundColor(WeiBeiTheme.cinnabar).bold()
+            + Text(after).foregroundColor(WeiBeiTheme.ink)
+    }
+
     private var trailingControls: some View {
         HStack(spacing: topBarSpacing) {
-            if paneState.showDocumentSearch && shouldShowSearchAction {
-                TextField(
-                    "",
-                    text: store.searchesNotes ? $store.noteSearch : $store.readerSearch,
-                    prompt: Text(searchPrompt)
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
-                )
-                    .textFieldStyle(.plain)
-                    .weiBeiText(12)
-                    .focused(searchFocused)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .foregroundStyle(WeiBeiTheme.ink)
-                    .tint(WeiBeiTheme.link)
-                    .weiBeiText(12)
-                    .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
-                    .frame(width: 220)
-                .onSubmit {
-                    if store.searchesNotes { store.noteSearchRequest &+= 1 }
-                }
-                .weiBeiOnExitCommand {
-                    withAnimation(WeiBeiMotion.panel) {
-                        store.hideDocumentSearch()
-                        searchFocused.wrappedValue = false
-                    }
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-                if store.searchesNotes && !store.noteSearch.isEmpty {
-                    if store.noteSearchFound == false {
-                        Text(store.ui("无匹配", "No matches")).weiBeiText(11)
-                    }
-                    topIconButton("chevron.up", help: store.ui("上一个匹配", "Previous match")) { store.noteSearchRequest &-= 1 }
-                    topIconButton("chevron.down", help: store.ui("下一个匹配", "Next match")) { store.noteSearchRequest &+= 1 }
-                }
-                topIconButton("xmark", help: store.ui("关闭查找", "Close search")) {
-                    store.hideDocumentSearch()
-                    searchFocused.wrappedValue = false
-                }
-            }
-
-            if shouldShowSearchAction && !paneState.showDocumentSearch {
-                searchButton
-            }
+#if !targetEnvironment(macCatalyst)
+            if paneState.showDocumentSearch && shouldShowSearchAction { searchControls }
+            if shouldShowSearchAction && !paneState.showDocumentSearch { searchButton }
+#else
+            if shouldShowSearchAction { searchButton }
+#endif
 
             // Copy-reference is not top-bar chrome: use its configured shortcut, menu, or command palette when needed.
 
@@ -732,7 +1585,6 @@ private struct UnifiedTopBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
             showSettings()
         }
-        .animation(WeiBeiMotion.panel, value: paneState.showDocumentSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
         .animation(WeiBeiMotion.panel, value: paneState.showReader)
@@ -741,7 +1593,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private func showSettings() {
-        openSettingsWindow(id: "weibei-settings")
+        openSettingsWindow(id: "weibei-settings", value: "settings")
     }
 
     private func toggleAppearance() {
@@ -764,12 +1616,36 @@ private struct UnifiedTopBarView: View {
         28 * textScale
     }
 
+    private var searchFieldDrawsOwnChrome: Bool {
+#if targetEnvironment(macCatalyst)
+        false
+#else
+        true
+#endif
+    }
+
+    private var searchFieldWidth: CGFloat {
+#if targetEnvironment(macCatalyst)
+        170
+#else
+        220
+#endif
+    }
+
+    private var searchControlHeight: CGFloat {
+#if targetEnvironment(macCatalyst)
+        24 * textScale
+#else
+        controlHeight
+#endif
+    }
+
     private var shouldShowSearchAction: Bool {
         store.canSearchCurrentDocument
     }
 
     private var searchPrompt: String {
-        store.searchesNotes ? store.ui("笔记内查找", "Find in note") : store.ui("资料内搜索", "Search in material")
+        store.searchesNotes ? store.ui("在笔记中查找", "Find in note") : store.ui("在文稿中查找", "Find in document")
     }
 
     private var primaryText: Color {
@@ -908,7 +1784,7 @@ private struct UnifiedTopBarView: View {
     private var libraryButton: some View {
         topIconButton(
             "sidebar.left",
-            help: libraryDrawer.isOpen ? store.ui("收起课程抽屉", "Hide course drawer") : store.ui("打开课程抽屉", "Show course drawer"),
+            help: libraryDrawer.isOpen ? store.ui("收起课程栏", "Hide course sidebar") : store.ui("打开课程栏", "Show course sidebar"),
             active: libraryDrawer.isOpen
         ) {
             store.toggleLibrary()
@@ -917,26 +1793,25 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var searchButton: some View {
-        topIconButton("magnifyingglass", help: searchPrompt) {
+        topIconButton("magnifyingglass", help: searchPrompt, active: paneState.showDocumentSearch) {
             toggleReaderSearch()
         }
     }
 
     private func toggleReaderSearch() {
-        withAnimation(WeiBeiMotion.panel) {
-            if paneState.showDocumentSearch {
-                store.hideDocumentSearch()
-                searchFocused.wrappedValue = false
-            } else {
-                store.revealDocumentSearch()
-                searchFocused.wrappedValue = true
-            }
+        if paneState.showDocumentSearch {
+            store.hideDocumentSearch()
+            searchFocused.wrappedValue = false
+        } else {
+            store.revealDocumentSearch()
+            searchFocused.wrappedValue = true
         }
     }
 
     private func topIconButton(_ systemName: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
+                .frame(width: 24 * textScale, height: 24 * textScale)
                 .contentShape(Rectangle())
         }
         .buttonStyle(WeiBeiIconButtonStyle(active: active, size: 24))
@@ -1031,30 +1906,39 @@ private struct LayoutContentView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @StateObject private var paneHostRegistry = PersistentPaneHostRegistry()
-    @SceneStorage("documentThreePaneFirstSplit") private var firstSplitStorage: Double = 0.34
-    @SceneStorage("documentThreePaneSecondSplit") private var secondSplitStorage: Double = 0.67
-    @SceneStorage("documentNotesHalfSplit") private var halfSplitStorage: Double = 0.50
+    @AppStorage("documentThreePaneFirstSplit") private var firstSplitStorage: Double = 0.34
+    @AppStorage("documentThreePaneSecondSplit") private var secondSplitStorage: Double = 0.67
+    @AppStorage("documentNotesHalfSplit") private var halfSplitStorage: Double = 0.50
     
     var body: some View {
         Group {
             switch store.layout {
             case .documentAgentNotes, .documentNotesAgent:
                 documentPaneLayoutView()
+            // Each representable pane host re-insets to the toolbar safe area on
+            // its own; the outer ignoresSafeArea does not reach it. Without this
+            // the pane container starts at y=40, its toolbar fade mask is nil and
+            // content is cut at the toolbar edge. Same rule as StableDocumentWorkspace.
             case .immersiveReading:
                 PersistentPaneHost(role: .reader, registry: paneHostRegistry)
+                    .ignoresSafeArea(.container, edges: .top)
             case .immersiveConversation:
                 PersistentPaneHost(role: .agent, registry: paneHostRegistry)
+                    .ignoresSafeArea(.container, edges: .top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(WeiBeiTransition.layout)
             case .immersiveWriting:
                 PersistentPaneHost(role: .notes, registry: paneHostRegistry)
+                    .ignoresSafeArea(.container, edges: .top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .transition(WeiBeiTransition.layout)
         // Document-internal pane toggles must not re-trigger SwiftUI layout animation.
         .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
-        .animation(WeiBeiMotion.panel, value: interaction.agentSurface)
+        // Opening the selection float must not animate this workspace. That
+        // transaction was rebuilding the reader and painting the document again.
+        .animation(nil, value: interaction.agentSurface)
         // Touch pane flags so SwiftUI rebuilds visibleOrder when only paneState publishes.
         .animation(nil, value: paneState.showReader)
         .animation(nil, value: paneState.showAgent)
@@ -1449,5 +2333,37 @@ private struct PaneDropTargetView: View {
                 .padding(14)
             }
             .allowsHitTesting(false)
+    }
+}
+
+enum WeiBeiDroppedFileURLs {
+    static func load(_ providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) -> Bool {
+        let fileProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        }
+        guard !fileProviders.isEmpty else { return false }
+        let urlsLock = NSLock()
+        var urls: [URL] = []
+        let group = DispatchGroup()
+        for provider in fileProviders {
+            group.enter()
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                defer { group.leave() }
+                let url: URL?
+                if let data = item as? Data {
+                    url = URL(dataRepresentation: data, relativeTo: nil)
+                } else {
+                    url = item as? URL
+                }
+                guard let url else { return }
+                urlsLock.lock()
+                urls.append(url)
+                urlsLock.unlock()
+            }
+        }
+        group.notify(queue: .main) {
+            if !urls.isEmpty { completion(urls) }
+        }
+        return true
     }
 }

@@ -18,6 +18,7 @@ import Foundation
 
 public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable {
     case commandPalette
+    case newConversation
     case toggleAppearance
     case navigateBack
     case navigateForward
@@ -48,18 +49,19 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
     public func title(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .commandPalette: return language.text("命令面板", "Command Palette")
-        case .toggleAppearance: return language.text("切换外观主题", "Switch Appearance Theme")
+        case .newConversation: return language.text("新建对话", "New Chat")
+        case .toggleAppearance: return language.text("切换深浅色", "Toggle Light and Dark")
         case .navigateBack: return language.text("后退", "Back")
         case .navigateForward: return language.text("前进", "Forward")
-        case .courseIndex: return language.text("课程目录", "Course Index")
-        case .searchInMaterial: return language.text("当前文稿内查找", "Find in Current Document")
-        case .focusLibrary: return language.text("聚焦课程目录", "Focus Course Index")
+        case .courseIndex: return language.text("课程栏", "Course sidebar")
+        case .searchInMaterial: return language.text("在文稿中查找", "Find in document")
+        case .focusLibrary: return language.text("聚焦课程栏", "Focus course sidebar")
         case .focusReader: return language.text("聚焦阅读", "Focus Reader")
         case .focusNotes: return language.text("聚焦笔记", "Focus Notes")
         case .focusChat: return language.text("聚焦对话", "Focus Chat")
-        case .previousMaterial: return language.text("上一份资料", "Previous Material")
-        case .nextMaterial: return language.text("下一份资料", "Next Material")
-        case .toggleRightPane: return language.text("开关辅助栏", "Toggle Assistant Pane")
+        case .previousMaterial: return language.text("上一份文稿", "Previous document")
+        case .nextMaterial: return language.text("下一份文稿", "Next document")
+        case .toggleRightPane: return language.text("只看文稿 / 恢复三栏", "Document Only / Restore Three Panes")
         case .threePaneWorkspace: return language.text("三栏工作台", "Three-Pane Workspace")
         case .swapThreePaneSecondaryPanes: return language.text("交换笔记与对话", "Swap Notes and Chat")
         case .immersiveReading: return language.text("沉浸阅读", "Immersive Reading")
@@ -71,13 +73,13 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
         case .replaceNoteSelection: return language.text("替换笔记选区", "Replace Note Selection")
         case .applyAgentPatchToEditor: return language.text("追加整理建议", "Append Organization Suggestion")
         case .copyCurrentReference: return language.text("复制当前引用", "Copy Current Reference")
-        case .submitAgentDraft: return language.text("发送对话", "Send Chat")
+        case .submitAgentDraft: return language.text("发送问题", "Send question")
         }
     }
 
     public var group: AppShortcutGroup {
         switch self {
-        case .commandPalette, .toggleAppearance, .navigateBack, .navigateForward,
+        case .commandPalette, .newConversation, .toggleAppearance, .navigateBack, .navigateForward,
              .applyAgentAnswerToNote, .replaceNoteSelection, .applyAgentPatchToEditor,
              .copyCurrentReference, .submitAgentDraft:
             return .global
@@ -93,11 +95,12 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
     public var defaultChord: AppShortcutChord {
         switch self {
         case .commandPalette: return AppShortcutChord(key: "k", modifiers: .command)
-        case .toggleAppearance: return AppShortcutChord(key: "t", modifiers: [.command, .option])
+        case .newConversation: return AppShortcutChord(key: "n", modifiers: [.command, .shift])
+        case .toggleAppearance: return AppShortcutChord(key: "t", modifiers: [.command, .control])
         case .navigateBack: return AppShortcutChord(key: "[", modifiers: .command)
         case .navigateForward: return AppShortcutChord(key: "]", modifiers: .command)
         case .courseIndex: return AppShortcutChord(key: "b", modifiers: [.command, .option])
-        case .searchInMaterial: return AppShortcutChord(key: "f", modifiers: [.command, .option])
+        case .searchInMaterial: return AppShortcutChord(key: "f", modifiers: .command)
         case .focusLibrary: return AppShortcutChord(key: "1", modifiers: .command)
         case .focusReader: return AppShortcutChord(key: "2", modifiers: .command)
         case .focusNotes: return AppShortcutChord(key: "3", modifiers: .command)
@@ -194,17 +197,17 @@ public struct AppShortcutChord: Codable, Equatable, Hashable, Sendable {
             } else { return nil }
         }
         let flags = key.modifierFlags.intersection(mask)
-        if value.count == 1 && value.rangeOfCharacter(from: .alphanumerics) != nil && flags.isEmpty { return nil }
-        return AppShortcutChord(key: value, modifiers: flags)
+        let chord = AppShortcutChord(key: value, modifiers: flags)
+        guard AppShortcutCatalog.acceptsRecording(chord) else { return nil }
+        return chord
     }
 #else
     public static func from(event: NSEvent) -> AppShortcutChord? {
         guard let key = key(from: event) else { return nil }
         let flags = event.modifierFlags.intersection(mask)
-        // Require at least one modifier for letter/digit keys to avoid swallowing typing.
-        let needsModifier = key.count == 1 && key.rangeOfCharacter(from: .alphanumerics) != nil
-        if needsModifier && flags.isEmpty { return nil }
-        return AppShortcutChord(key: key, modifiers: flags)
+        let chord = AppShortcutChord(key: key, modifiers: flags)
+        guard AppShortcutCatalog.acceptsRecording(chord) else { return nil }
+        return chord
     }
 
     public static func key(from event: NSEvent) -> String? {
@@ -316,8 +319,18 @@ public enum AppShortcutCatalog {
         return matches.count == 1 ? matches[0] : nil
     }
 
+    /// System editing and app-lifecycle chords. Custom bindings cannot take these.
+    /// ⌘B stays reserved for bold, alongside the text-editing and window chords.
     public static func isReservedTextEditingChord(_ chord: AppShortcutChord) -> Bool {
-        chord.modifiers == .command && (chord.key == "b" || chord.key == "f")
+        let reserved = ["a", "b", "c", "n", "o", "q", "v", "w", "x", "z"]
+        return chord.modifiers == .command && reserved.contains(chord.key)
+    }
+
+    /// Recording must include ⌘, ⌃, or ⌥. Shift alone is not enough.
+    public static func acceptsRecording(_ chord: AppShortcutChord) -> Bool {
+        let flags = chord.modifiers
+        let hasPrimary = flags.contains(.command) || flags.contains(.control) || flags.contains(.option)
+        return hasPrimary && !isReservedTextEditingChord(chord)
     }
 
     /// Another action already using this chord (excluding `excluding`).

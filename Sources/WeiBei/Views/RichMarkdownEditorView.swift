@@ -709,8 +709,15 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     var attachmentDirectory: URL?
     var searchQuery = ""
     var searchRequest = 0
+    var readerSearchNavigationRequest = 0
+    var readerSearchRequestedIndex = 0
+    var readerSearchSessionID = 0
+    var readerSearchReturnRequest = 0
+    var onReaderSearchResults: ((String, [ReaderSearchResult], Int) -> Void)?
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    /// Glass paper is clear, and WKWebView ignores ancestor opacity.
+    var hidesHostedDocument = false
     var isCompactPreview = false
     var isChatWideTypography = false
     /// A live read-only answer uses Milkdown's cumulative streaming document
@@ -742,7 +749,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     private static let localImageScheme = "weibeiimage"
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(
+        let coordinator = Coordinator(
             documentID: documentID,
             markdown: markdown,
             command: $command,
@@ -777,6 +784,12 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             onSelectionAskMark: onSelectionAskMark,
             onSelectionRemarkMark: onSelectionRemarkMark
         )
+        coordinator.onReaderSearchResults = onReaderSearchResults
+        coordinator.readerSearchNavigationRequest = readerSearchNavigationRequest
+        coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
+        coordinator.readerSearchSessionID = readerSearchSessionID
+        coordinator.readerSearchReturnRequest = readerSearchReturnRequest
+        return coordinator
     }
 
 #if targetEnvironment(macCatalyst)
@@ -914,6 +927,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     }
 
     private func updateWebView(_ view: WKWebView, context: Context) {
+        view.isHidden = hidesHostedDocument
         (view as? MarkdownWebView)?.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         context.coordinator.markdown = markdown
@@ -942,6 +956,11 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         )
         context.coordinator.searchQuery = searchQuery
         context.coordinator.searchRequest = searchRequest
+        context.coordinator.onReaderSearchResults = onReaderSearchResults
+        context.coordinator.readerSearchNavigationRequest = readerSearchNavigationRequest
+        context.coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
+        context.coordinator.readerSearchSessionID = readerSearchSessionID
+        context.coordinator.readerSearchReturnRequest = readerSearchReturnRequest
         if context.coordinator.appearanceMode != appearanceMode {
             context.coordinator.appearanceMode = appearanceMode
             if context.coordinator.isReady {
@@ -1067,8 +1086,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         "activeHeadingChanged",
         "compactPreviewWheel",
         "selectionAskMark",
-        "remarkMark",
-        "streamDebug"
+        "remarkMark"
     ]
 
     /// CSS + apply helper for cinnabar underlines on asked selections (read-only markdown).
@@ -1129,6 +1147,17 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         var onContentCommandApplied: (String, NoteEditorCommand) -> Void
         var onCommandRejected: (String, NoteEditorCommand) -> Void
         var onSearchResult: (String, Bool) -> Void
+        var onReaderSearchResults: ((String, [ReaderSearchResult], Int) -> Void)?
+        var readerSearchNavigationRequest = 0
+        var readerSearchRequestedIndex = 0
+        var readerSearchSessionID = 0
+        var readerSearchReturnRequest = 0
+        private var lastReaderSearchNavigationRequest = 0
+        private var lastReaderSearchSessionID = 0
+        private var lastReaderSearchReturnRequest = 0
+        private var hasReaderSearchOrigin = false
+        private var readerSearchResults: [ReaderSearchResult] = []
+        private var readerSearchResultIndex = -1
         var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void
         var selectionAskMarks: String
         var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void
@@ -1399,8 +1428,6 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 guard messageMatchesDocument(message.body) else { return }
             }
             switch message.name {
-            case "streamDebug":
-                break
             case "editorReady":
                 hasReportedRenderFailure = false
                 isReady = true
@@ -1527,7 +1554,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 guard isEditable,
                       let body = message.body as? [String: Any],
                       let id = body["id"] as? String else { return }
-                if let attachment = saveImageAttachment(from: body) {
+                switch saveImageAttachment(from: body) {
+                case .success(let attachment):
                     evaluate("""
                     window.WeiBeiEditor?.resolveAttachment(
                       \(Self.json(id)),
@@ -1535,8 +1563,9 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                       \(Self.json(attachment.alt))
                     )
                     """)
-                } else {
-                    evaluate("window.WeiBeiEditor?.rejectAttachment(\(Self.json(id)), \(Self.json(interfaceLanguage.text("图片无法写入本地附件目录", "Image could not be written to the local attachments folder")))")
+                case .failure(let error):
+                    // The real reason reaches the in-editor notice (N2).
+                    evaluate("window.WeiBeiEditor?.rejectAttachment(\(Self.json(id)), \(Self.json(error.localizedDescription)))")
                 }
             case "imagePickerRequested":
                 guard isEditable,
@@ -1904,6 +1933,50 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 
         func applySearch() {
             let query = ReaderSearch.cleaned(searchQuery)
+            if !isEditable, let onReaderSearchResults {
+                guard let webView, isReady else { return }
+                let navigated = readerSearchNavigationRequest != lastReaderSearchNavigationRequest
+                let returned = readerSearchReturnRequest != lastReaderSearchReturnRequest
+                guard query != lastAppliedSearchQuery || navigated || returned else { return }
+                if readerSearchSessionID != lastReaderSearchSessionID {
+                    lastReaderSearchSessionID = readerSearchSessionID
+                    hasReaderSearchOrigin = false
+                }
+                lastReaderSearchReturnRequest = readerSearchReturnRequest
+                lastReaderSearchNavigationRequest = readerSearchNavigationRequest
+                if returned {
+                    lastAppliedSearchQuery = query
+                    readerSearchResultIndex = -1
+                    let shouldRestore = hasReaderSearchOrigin
+                    let navigationRequest = readerSearchNavigationRequest
+                    hasReaderSearchOrigin = false
+                    webView.evaluateJavaScript(ReaderWebSearch.script(query: query, root: ".ProseMirror")) { [weak self, weak webView] value, _ in
+                        guard let self, let webView else { return }
+                        if shouldRestore, self.readerSearchNavigationRequest == navigationRequest {
+                            webView.evaluateJavaScript(ReaderWebSearch.restoreOrigin())
+                        }
+                        guard self.searchQuery == query else { return }
+                        self.readerSearchResults = ReaderWebSearch.results(from: value)
+                        self.onReaderSearchResults?(query, self.readerSearchResults, -1)
+                    }
+                    return
+                }
+                if query == lastAppliedSearchQuery {
+                    readerSearchResultIndex = min(readerSearchRequestedIndex, max(0, readerSearchResults.count - 1))
+                    webView.evaluateJavaScript(ReaderWebSearch.activate(readerSearchResultIndex, captureOrigin: !hasReaderSearchOrigin))
+                    hasReaderSearchOrigin = true
+                    onReaderSearchResults(query, readerSearchResults, readerSearchResultIndex)
+                    return
+                }
+                lastAppliedSearchQuery = query
+                readerSearchResultIndex = -1
+                webView.evaluateJavaScript(ReaderWebSearch.script(query: query, root: ".ProseMirror")) { [weak self] value, _ in
+                    guard let self, self.searchQuery == query else { return }
+                    self.readerSearchResults = ReaderWebSearch.results(from: value)
+                    self.onReaderSearchResults?(query, self.readerSearchResults, self.readerSearchResultIndex)
+                }
+                return
+            }
             guard query != lastAppliedSearchQuery || searchRequest != lastAppliedSearchRequest else { return }
             let configuration = WKFindConfiguration()
             configuration.backwards = query == lastAppliedSearchQuery && searchRequest < lastAppliedSearchRequest
@@ -1971,9 +2044,15 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 
         func pasteImageFromClipboard() -> Bool {
             guard isEditable, let editingSession else { return false }
+            // Office apps place a rendered snapshot next to the real text; when
+            // the clipboard carries words (plain text or HTML), the normal paste
+            // path wins and no image is inserted (X6).
 #if targetEnvironment(macCatalyst)
+            if UIPasteboard.general.hasStrings { return false }
             guard let data = UIPasteboard.general.image?.pngData() else { return false }
 #else
+            if NSPasteboard.general.string(forType: .string) != nil
+                || NSPasteboard.general.types?.contains(.html) == true { return false }
             guard let image = NSImage(pasteboard: .general),
                   let tiff = image.tiffRepresentation,
                   let bitmap = NSBitmapImageRep(data: tiff),
@@ -1987,30 +2066,41 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 "name": "pasted-image.png",
                 "mime": "image/png"
             ]
-            guard let attachment = saveImageAttachment(from: body) else { return false }
-            let markdown = MarkdownAttachmentStore.markdownImage(for: attachment)
-            dispatchV2(NoteEditorCommandEnvelope(
-                documentID: editingSession.documentID,
-                documentGeneration: editingSession.documentGeneration,
-                minimumRevision: editingSession.currentRevision,
-                type: .insertStructuredBlock,
-                payload: NoteEditorMarkdownPayload(markdown: markdown)
-            ))
-            return true
+            switch saveImageAttachment(from: body) {
+            case .success(let attachment):
+                let markdown = MarkdownAttachmentStore.markdownImage(for: attachment)
+                dispatchV2(NoteEditorCommandEnvelope(
+                    documentID: editingSession.documentID,
+                    documentGeneration: editingSession.documentGeneration,
+                    minimumRevision: editingSession.currentRevision,
+                    type: .insertStructuredBlock,
+                    payload: NoteEditorMarkdownPayload(markdown: markdown)
+                ))
+                return true
+            case .failure(let error):
+                // Consume the paste attempt and surface the reason in the
+                // editor's own notice instead of failing silently (N2).
+                evaluate("window.WeiBeiEditor?.notifyImageFailure(\(Self.json(error.localizedDescription)))")
+                return true
+            }
         }
 
-        private func saveImageAttachment(from body: [String: Any]) -> MarkdownAttachment? {
+        private func saveImageAttachment(from body: [String: Any]) -> Result<MarkdownAttachment, Error> {
             guard let attachmentDirectory,
-                  let dataURL = body["dataURL"] as? String else { return nil }
+                  let dataURL = body["dataURL"] as? String else {
+                return .failure(MarkdownAttachmentStore.attachmentError(code: 9, message: "图片数据不完整"))
+            }
             let originalName = (body["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let mime = body["mime"] as? String ?? ""
-            return try? MarkdownAttachmentStore.save(
-                dataURL: dataURL,
-                originalName: originalName,
-                mime: mime,
-                attachmentDirectory: attachmentDirectory,
-                markdownBaseURLString: markdownBaseURLString
-            )
+            let mime = (body["mime"] as? String) ?? ""
+            return Result {
+                try MarkdownAttachmentStore.save(
+                    dataURL: dataURL,
+                    originalName: originalName,
+                    mime: mime,
+                    attachmentDirectory: attachmentDirectory,
+                    markdownBaseURLString: markdownBaseURLString
+                )
+            }
         }
 
         /**
@@ -2076,8 +2166,9 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                         switch result {
                         case let .success(attachment):
                             self.evaluate("window.WeiBeiEditor?.resolveImagePicker(\(Self.json(requestID)), \(Self.json(attachment.src)), \(Self.json(attachment.alt)))")
-                        case .failure:
-                            self.evaluate("window.WeiBeiEditor?.rejectImagePicker(\(Self.json(requestID)), \(Self.json(failureMessage)))")
+                        case let .failure(error):
+                            // Surface the store's real reason (损坏/过大) instead of a generic banner.
+                            self.evaluate("window.WeiBeiEditor?.rejectImagePicker(\(Self.json(requestID)), \(Self.json(error.localizedDescription.isEmpty ? failureMessage : error.localizedDescription)))")
                         }
                     }
                 }
@@ -2087,7 +2178,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         private static func saveImageAttachment(fromFileURL fileURL: URL, attachmentDirectory: URL, markdownBaseURLString: String) throws -> MarkdownAttachment {
             let data = try CourseProjectFileWorker.readBoundedRegularFile(
                 at: fileURL,
-                maximumByteCount: CourseProjectFileWorker.markdownImageMaximumByteCount
+                maximumByteCount: MarkdownAttachmentStore.saveMaximumImageByteCount
             )
             return try MarkdownAttachmentStore.save(
                 data: data,

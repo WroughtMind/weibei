@@ -111,8 +111,8 @@ struct CourseRecordsView: View {
                     : store.ui("没有匹配的对话", "No matching Chats"),
                 detail: cleanedSearch.isEmpty
                     ? store.ui(
-                        "从课程概览提问或开始新对话后，对话会出现在这里。对话本身仍保存在全局。",
-                        "Ask from the course overview or start a new Chat. The Chat itself remains global."
+                        "在文稿里选中文字后点「问」，或在对话窗格开始新对话。对话本身仍保存在全局。",
+                        "Select text and choose Ask, or start a new conversation in the chat pane. The conversation itself stays global."
                     )
                     : store.ui("换一个搜索词再试。", "Try another search term."),
                 systemImage: "bubble.left.and.text.bubble.right",
@@ -193,7 +193,7 @@ struct CourseMemoryWorkspaceView: View {
             if let courseID = store.courseWorkspaceCourseID {
                 LearningMemoryListSection(
                     scope: .course(courseID),
-                    title: store.ui("课程记忆", "Course Memory"),
+                    title: store.ui("学习记忆", "Study memory"),
                     search: search,
                     centerEmptyState: true
                 )
@@ -201,8 +201,8 @@ struct CourseMemoryWorkspaceView: View {
                 CourseEmptyState(
                     title: store.ui("先选择一门课程", "Choose a course first"),
                     detail: store.ui(
-                        "课程记忆按当前课程单独保存。",
-                        "Course Memory is stored separately for each course."
+                        "学习记忆按当前课程单独保存。",
+                        "Study memory is stored separately for each course."
                     ),
                     systemImage: "brain.head.profile",
                     alignment: .center
@@ -266,8 +266,8 @@ struct LearningMemoryListSection: View {
             } else if memories.isEmpty {
                 CourseEmptyState(
                     title: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? store.ui("还没有课程记忆", "No course memory yet")
-                        : store.ui("没有匹配的课程记忆", "No matching course memory"),
+                        ? store.ui("还没有学习记忆", "No study memory yet")
+                        : store.ui("没有匹配的学习记忆", "No matching study memory"),
                     detail: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         ? store.ui("学习过程中留下的要点会出现在这里。", "Highlights from study will appear here.")
                         : store.ui("换一个搜索词再试。", "Try another search term."),
@@ -373,11 +373,11 @@ struct LearningMemoryListSection: View {
         if let sessionID = memory.sessionID,
            let session = store.studySessions.first(where: { $0.id == sessionID }) {
             return store.ui(
-                "来自“\(session.title)” · \(revisionCount) 次修订",
+                "来自“\(session.title)” · 修订 \(revisionCount) 次",
                 "From \"\(session.title)\" · \(revisionCount) revisions"
             )
         }
-        return store.ui("用户维护 · \(revisionCount) 次修订", "User maintained · \(revisionCount) revisions")
+        return store.ui("用户维护 · 修订 \(revisionCount) 次", "User maintained · \(revisionCount) revisions")
     }
 }
 

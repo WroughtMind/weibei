@@ -1,8 +1,22 @@
+import AppKit
 import WeiBeiCore
+import SwiftMath
 import XCTest
 @testable import WeiBei
 
 final class ChatMarkdownAuditTests: XCTestCase {
+    func testSelectionAnswerFormulaRendersInsteadOfShowingLatexSource() {
+        let answer = #"$$\text{本币回报} \approx \underbrace{(1+i_{f})}_{\text{外币利息}}\times\underbrace{(1+\Delta e)}_{\text{汇率变动}}-1$$"#
+        let prepared = AgentChatKaTeXMarkdown.prepare(answer)
+        let latex = prepared.replacingOccurrences(of: "$$", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let renderer = MTMathImage(latex: latex, fontSize: 16, textColor: .black, labelMode: .text)
+        renderer.font?.fallbackFont = NSFont.systemFont(ofSize: 16)
+        let (error, image) = renderer.asImage()
+        XCTAssertNil(error)
+        XCTAssertNotNil(image)
+        XCTAssertTrue(latex.contains("外币利息") && latex.contains("汇率变动"))
+    }
+
     func testFormulaCleanupPreservesLiteralCodeAndLinks() {
         let literals = [
             "`\\hat y`", "``code ` \\hat y``", "```latex\n$$x$$\n\\hat\\beta\n```",
@@ -11,6 +25,7 @@ final class ChatMarkdownAuditTests: XCTestCase {
             "\t\\hat y\n", "```latex\r\n$$x$$\r\n```", "```latex\r$$x$$\r```",
             "> ```latex\n> \\hat y\n> ```",
             "[链接](https://example.com \"\\hat y\")", "<span title=\"\\hat y\">内容</span>",
+            #"`\underbrace{x}_{y}`"#, "```latex\n\\underbrace{x}_{y}\n```",
         ]
         for literal in literals {
             XCTAssertEqual(AgentChatKaTeXMarkdown.prepare(literal), literal, literal)

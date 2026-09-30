@@ -35,7 +35,11 @@ final class AgentStreamingState: ObservableObject {
     func applyingDisplayText(to message: AgentMessage) -> AgentMessage {
         guard isDisplaying(message.id) else { return message }
         var visible = message
-        visible.text = text
+        // A3: an empty stream has not produced a first character yet. Keep the
+        // persisted reply (the previous answer, while regenerating) on screen.
+        if !text.isEmpty {
+            visible.text = text
+        }
         // This is a presentation snapshot. The saved reply remains complete.
         if visible.completionState == .completed { visible.completionState = .generating }
         return visible

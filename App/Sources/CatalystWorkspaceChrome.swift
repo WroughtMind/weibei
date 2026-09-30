@@ -162,7 +162,7 @@ final class PersistentPaneHostRegistry: ObservableObject {
     private var hosts: [WorkspacePaneRole: CatalystHostingView] = [:]
     private var owners: [WorkspacePaneRole: OwnerToken] = [:]
     private var sequence = 0
-    func attach(_ role: WorkspacePaneRole, to container: UIView, store: WorkspaceStore) -> OwnerToken {
+    @MainActor func attach(_ role: WorkspacePaneRole, to container: UIView, store: WorkspaceStore) -> OwnerToken {
         sequence += 1
         let owner = OwnerToken(role: role, generation: sequence)
         owners[role] = owner
@@ -242,7 +242,7 @@ struct PersistentPaneHost: UIViewRepresentable {
     final class Coordinator {
         var owner: OwnerToken?
         var registry: PersistentPaneHostRegistry?
-        func attach(_ role: WorkspacePaneRole, registry: PersistentPaneHostRegistry, store: WorkspaceStore, view: UIView) {
+        @MainActor func attach(_ role: WorkspacePaneRole, registry: PersistentPaneHostRegistry, store: WorkspaceStore, view: UIView) {
             guard owner?.role != role || self.registry !== registry else { return }
             detach(view)
             self.registry = registry
@@ -340,10 +340,8 @@ final class CatalystDividerView: UIView {
         super.init(frame: frame)
         isOpaque = false
         isAccessibilityElement = true
-        accessibilityLabel = "调整分栏宽度"
         accessibilityTraits = .adjustable
-        accessibilityHint = "双击均分相邻两栏；按住 Option 松手可跳过吸附。"
-        accessibilityCustomActions = [UIAccessibilityCustomAction(name: "均分相邻两栏", target: self, selector: #selector(equalize))]
+        refreshCopy()
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(equalize))
         doubleTap.numberOfTapsRequired = 2
         addGestureRecognizer(doubleTap)
@@ -352,6 +350,11 @@ final class CatalystDividerView: UIView {
         accent.opacity = 0; layer.addSublayer(accent)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    private func refreshCopy() {
+        accessibilityLabel = CatalystInterfaceCopy.text("调整分栏宽度", "Resize panes")
+        accessibilityHint = CatalystInterfaceCopy.text("双击均分相邻两栏；按住 Option 松手可跳过吸附。", "Double-click to split the adjacent panes evenly. Hold Option while releasing to skip snapping.")
+        accessibilityCustomActions = [UIAccessibilityCustomAction(name: CatalystInterfaceCopy.text("均分相邻两栏", "Split adjacent panes evenly"), target: self, selector: #selector(equalize))]
+    }
     @objc private func drag(_ gesture: UIPanGestureRecognizer) {
         skipSnap = gesture.modifierFlags.contains(.alternate) || gesture.state == .cancelled
         switch gesture.state {
@@ -374,6 +377,7 @@ final class CatalystDividerView: UIView {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
+        refreshCopy()
         accent.frame = CGRect(x: bounds.midX - 0.5, y: 14, width: 1, height: max(0, bounds.height - 28))
         accent.backgroundColor = WeiBeiNativePalette.cinnabar(for: appearanceMode).cgColor
     }
@@ -433,15 +437,19 @@ struct CourseDrawerHost: UIViewRepresentable {
         var host: CatalystHostingView?
         var model: CourseSidebarModel?
         var open = false
+        var onDismiss: (() -> Void)?
         private let panelWidth = WeiBeiMetric.courseDrawerWidth
         override init(frame: CGRect) {
             super.init(frame: frame)
-            scrim.alpha = 0; scrim.isUserInteractionEnabled = false
+            scrim.alpha = 0
+            scrim.isUserInteractionEnabled = true
+            scrim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(closeFromScrim)))
             material.isUserInteractionEnabled = false
             addSubview(scrim); addSubview(panel); panel.addSubview(material)
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { open && point.x <= panelWidth && bounds.contains(point) }
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { open && bounds.contains(point) }
+        @objc private func closeFromScrim() { onDismiss?() }
         override func layoutSubviews() {
             super.layoutSubviews()
             scrim.frame = bounds
@@ -449,6 +457,7 @@ struct CourseDrawerHost: UIViewRepresentable {
             material.frame = panel.bounds; host?.frame = panel.bounds
         }
         func apply(open: Bool, store: WorkspaceStore, dismiss: @escaping () -> Void) {
+            onDismiss = dismiss
             if open, host == nil {
                 let model = CourseSidebarModel(store: store)
                 self.model = model
@@ -525,23 +534,30 @@ struct HoverPassThroughRegion: UIViewRepresentable {
 struct CatalystWindowChrome: UIViewRepresentable {
     let appearanceMode: WeiBeiAppearanceMode
     var initialSize = CGSize(width: 1240, height: 792)
+    var minimumSize = CGSize(width: 520, height: 560)
     func makeUIView(context: Context) -> Probe {
         let view = Probe()
         view.initialSize = initialSize
+        view.minimumSize = minimumSize
         view.isUserInteractionEnabled = false
         return view
     }
-    func updateUIView(_ view: Probe, context: Context) { view.mode = appearanceMode; view.configure() }
+    func updateUIView(_ view: Probe, context: Context) {
+        view.mode = appearanceMode
+        view.minimumSize = minimumSize
+        view.configure()
+    }
     final class Probe: UIView {
         var mode: WeiBeiAppearanceMode = .paper
         var initialSize = CGSize.zero
+        var minimumSize = CGSize(width: 520, height: 560)
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         func configure() {
             CatalystDesktopWindow.configure(mode: mode)
             guard let window, let scene = window.windowScene else { return }
             scene.titlebar?.titleVisibility = .hidden
             scene.titlebar?.separatorStyle = .none
-            scene.sizeRestrictions?.minimumSize = CGSize(width: 520, height: 720)
+            scene.sizeRestrictions?.minimumSize = minimumSize
             let initialSizeKey = "weibeiInitialWindowSizeApplied"
             if scene.session.userInfo?[initialSizeKey] as? Bool != true {
                 var info = scene.session.userInfo ?? [:]

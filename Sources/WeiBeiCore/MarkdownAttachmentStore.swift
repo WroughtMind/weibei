@@ -1,6 +1,12 @@
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
+#if targetEnvironment(macCatalyst)
+import QuickLookThumbnailing
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 public struct MarkdownAttachment: Equatable {
     public var src: String
@@ -13,8 +19,20 @@ public struct MarkdownAttachment: Equatable {
 }
 
 public enum MarkdownAttachmentStore {
+    /// Decode/display bound shared by the reading paths (scheme handler, remote fetch).
     public static let maximumImageByteCount = 20 * 1_024 * 1_024
     public static let maximumDecodedPixelCount = 40_000_000
+    /// Saving accepts far larger inputs: oversized still bitmaps are downscaled
+    /// and re-encoded instead of being rejected (48 MP phone photos included).
+    public static let saveMaximumImageByteCount = 200 * 1_024 * 1_024
+    /// Animated images keep their original bytes, so only the file size is capped.
+    public static let maximumAnimatedImageByteCount = 50 * 1_024 * 1_024
+    /// Long edge applied when a stored still image exceeds the decode bounds.
+    public static let downscaledImageLongEdge = 4096
+
+    public static func attachmentError(code: Int, message: String) -> NSError {
+        NSError(domain: "WeiBei.MarkdownAttachment", code: code, userInfo: [NSLocalizedDescriptionKey: message])
+    }
 
     public static func save(
         dataURL: String,
@@ -24,19 +42,19 @@ public enum MarkdownAttachmentStore {
         markdownBaseURLString: String
     ) throws -> MarkdownAttachment {
         guard let commaIndex = dataURL.firstIndex(of: ",") else {
-            throw NSError(domain: "WeiBei.MarkdownAttachment", code: 1, userInfo: [NSLocalizedDescriptionKey: "图片数据缺少 data URL 头部"])
+            throw attachmentError(code: 1, message: "图片数据缺少 data URL 头部")
         }
 
         let header = String(dataURL[..<commaIndex])
         let encodedSlice = dataURL[dataURL.index(after: commaIndex)...]
-        let maximumBase64CharacterCount = ((maximumImageByteCount + 2) / 3) * 4
+        let maximumBase64CharacterCount = ((saveMaximumImageByteCount + 2) / 3) * 4
         guard encodedSlice.utf8.count <= maximumBase64CharacterCount else {
-            throw NSError(domain: "WeiBei.MarkdownAttachment", code: 3, userInfo: [NSLocalizedDescriptionKey: "图片超过 20 MB 上限"])
+            throw attachmentError(code: 3, message: "图片数据过大")
         }
         let encoded = String(encodedSlice)
         guard header.contains(";base64"),
               let data = Data(base64Encoded: encoded) else {
-            throw NSError(domain: "WeiBei.MarkdownAttachment", code: 2, userInfo: [NSLocalizedDescriptionKey: "图片数据不是有效的 base64"])
+            throw attachmentError(code: 2, message: "图片数据不是有效的 base64")
         }
 
         return try save(
@@ -55,18 +73,9 @@ public enum MarkdownAttachmentStore {
         attachmentDirectory: URL,
         markdownBaseURLString: String
     ) throws -> MarkdownAttachment {
-        guard data.count <= maximumImageByteCount else {
-            throw NSError(domain: "WeiBei.MarkdownAttachment", code: 3, userInfo: [NSLocalizedDescriptionKey: "图片超过 20 MB 上限"])
-        }
-        guard validatedImageMIMEType(
-            data: data,
-            suggestedMIMEType: mime,
-            allowsSVG: false
-        ) != nil else {
-            throw NSError(domain: "WeiBei.MarkdownAttachment", code: 4, userInfo: [NSLocalizedDescriptionKey: "图片格式或尺寸无法安全读取"])
-        }
+        let stored = try prepareImageForStorage(data: data, suggestedMIMEType: mime)
         try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
-        let ext = fileExtension(originalName: originalName, mime: mime)
+        let ext = stored.fileExtension ?? fileExtension(originalName: originalName, mime: mime)
         let rawStem = originalName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "image"
             : URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
@@ -79,11 +88,226 @@ public enum MarkdownAttachmentStore {
             index += 1
         }
 
-        try data.write(to: target, options: [.atomic])
+        try stored.data.write(to: target, options: [.atomic])
         return MarkdownAttachment(
             src: relativePath(to: target, markdownBaseURLString: markdownBaseURLString),
             alt: stem.replacingOccurrences(of: "-", with: " ")
         )
+    }
+
+    /// What actually lands in the attachments directory after admission.
+    struct StoredImage {
+        let data: Data
+        let fileExtension: String?
+    }
+
+    /// Relaxed admission (N2): still bitmaps above the decode bounds are
+    /// downscaled to a 4096 px long edge and re-encoded rather than rejected;
+    /// animated images answer only for single-frame size and a 50 MB file cap;
+    /// SVGs are rasterised to PNG so scripts never enter the notes; only
+    /// corrupt, undecodable data fails. Decoding always goes through ImageIO
+    /// (thumbnail interface) so huge inputs never materialise full bitmaps.
+    static func prepareImageForStorage(data: Data, suggestedMIMEType: String?) throws -> StoredImage {
+        if looksLikeSVG(data: data, suggestedMIMEType: suggestedMIMEType) {
+            return try rasterizedSVG(data: data)
+        }
+        guard data.count <= saveMaximumImageByteCount else {
+            throw attachmentError(code: 5, message: "图片文件过大")
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              let typeIdentifier = CGImageSourceGetType(source),
+              let mimeType = UTType(typeIdentifier as String)?.preferredMIMEType,
+              mimeType.hasPrefix("image/") else {
+            throw attachmentError(code: 4, message: "图片文件已损坏或无法解码")
+        }
+        if CGImageSourceGetCount(source) > 1 {
+            guard data.count <= maximumAnimatedImageByteCount else {
+                throw attachmentError(code: 6, message: "动图文件超过 50 MB 上限")
+            }
+            guard largestFramePixelCount(source) <= maximumDecodedPixelCount else {
+                throw attachmentError(code: 7, message: "动图单帧尺寸过大")
+            }
+            return StoredImage(data: data, fileExtension: nil)
+        }
+        let exceedsDecodeBounds = data.count > maximumImageByteCount
+            || largestFramePixelCount(source) > maximumDecodedPixelCount
+        guard exceedsDecodeBounds else {
+            return StoredImage(data: data, fileExtension: nil)
+        }
+        guard let thumbnail = downscaledThumbnail(source) else {
+            throw attachmentError(code: 4, message: "图片文件已损坏或无法解码")
+        }
+        // Photos re-encode as JPEG; anything else (screenshots, diagrams,
+        // transparency) stays PNG, falling back to JPEG only if the PNG still
+        // exceeds what the reading paths accept.
+        let isPhoto = ["image/jpeg", "image/heic", "image/heif"].contains(mimeType)
+        if !isPhoto,
+           let png = encodedImage(thumbnail, typeIdentifier: UTType.png.identifier),
+           png.count <= maximumImageByteCount {
+            return StoredImage(data: png, fileExtension: "png")
+        }
+        if let jpeg = encodedImage(thumbnail, typeIdentifier: UTType.jpeg.identifier),
+           jpeg.count <= maximumImageByteCount {
+            return StoredImage(data: jpeg, fileExtension: "jpg")
+        }
+        throw attachmentError(code: 8, message: "图片过大，无法收纳")
+    }
+
+    static func looksLikeSVG(data: Data, suggestedMIMEType: String?) -> Bool {
+        if suggestedMIMEType?.lowercased() == "image/svg+xml" { return true }
+        let prefix = String(decoding: data.prefix(4_096), as: UTF8.self).lowercased()
+        return prefix.contains("<svg")
+    }
+
+    /// Rasterises SVG artwork to PNG — no script-capable vector ever reaches disk.
+    static func rasterizedSVG(data: Data) throws -> StoredImage {
+        let undecodable = attachmentError(code: 4, message: "SVG 图片无法解码")
+        guard let cgImage = cgImageByRasterizingSVG(data) else { throw undecodable }
+        let longEdge = max(cgImage.width, cgImage.height)
+        if longEdge > downscaledImageLongEdge {
+            guard let fitted = downscaledThumbnail(CGImageSourceCreateWithData(
+                (encodedImage(cgImage, typeIdentifier: UTType.png.identifier) ?? Data()) as CFData,
+                nil
+            )) else { throw undecodable }
+            guard let png = encodedImage(fitted, typeIdentifier: UTType.png.identifier) else { throw undecodable }
+            return StoredImage(data: png, fileExtension: "png")
+        }
+        guard let png = encodedImage(cgImage, typeIdentifier: UTType.png.identifier) else { throw undecodable }
+        return StoredImage(data: png, fileExtension: "png")
+    }
+
+    static func cgImageByRasterizingSVG(_ data: Data) -> CGImage? {
+        #if targetEnvironment(macCatalyst)
+        guard let pointSize = svgPointSize(data) else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("svg")
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            return nil
+        }
+        defer { try? FileManager.default.removeItem(at: url) }
+        let scale = max(UIScreen.main.scale, 1)
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url,
+            size: pointSize,
+            scale: scale,
+            representationTypes: .thumbnail
+        )
+        final class Slot { var image: CGImage? }
+        let slot = Slot()
+        let semaphore = DispatchSemaphore(value: 0)
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
+            slot.image = representation?.cgImage
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + 10) == .success else { return nil }
+        return slot.image
+        #elseif canImport(AppKit)
+        guard let image = NSImage(data: data),
+              image.size.width > 0, image.size.height > 0 else { return nil }
+        var proposedRect = NSRect(origin: .zero, size: image.size)
+        return image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
+        #else
+        _ = data
+        return nil
+        #endif
+    }
+
+    /// Point size NSImage would use: explicit lengths, otherwise the viewBox,
+    /// with percentages resolved against that viewBox.
+    static func svgPointSize(_ data: Data) -> CGSize? {
+        let text = String(decoding: data.prefix(16_384), as: UTF8.self)
+        guard let start = text.range(of: "<svg", options: .caseInsensitive) else { return nil }
+        let rest = text[start.lowerBound...]
+        guard let end = rest.range(of: ">") else { return nil }
+        let tag = String(rest[..<end.lowerBound])
+        let viewBox = svgAttribute("viewBox", in: tag)?
+            .split(whereSeparator: { $0.isWhitespace || $0 == "," })
+            .compactMap { Double($0) }
+        let viewWidth = viewBox?.count == 4 ? viewBox?[2] : nil
+        let viewHeight = viewBox?.count == 4 ? viewBox?[3] : nil
+        func length(_ name: String, relativeTo view: Double?) -> Double? {
+            guard let raw = svgAttribute(name, in: tag)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { return view }
+            if raw.hasSuffix("%"), let view, let percent = Double(raw.dropLast()) {
+                return view * percent / 100
+            }
+            let numeric = raw.drop(while: { $0.isNumber || $0 == "." || $0 == "-" })
+            let digits = raw.dropLast(numeric.count)
+            guard let value = Double(digits), value > 0 else { return nil }
+            return value
+        }
+        guard let width = length("width", relativeTo: viewWidth),
+              let height = length("height", relativeTo: viewHeight),
+              width > 0, height > 0 else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    static func svgAttribute(_ name: String, in tag: String) -> String? {
+        let pattern = "(?i)\\b\(NSRegularExpression.escapedPattern(for: name))\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')"
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) else {
+            return nil
+        }
+        let range = match.range(at: 1).location != NSNotFound ? match.range(at: 1) : match.range(at: 2)
+        guard let swiftRange = Range(range, in: tag) else { return nil }
+        return String(tag[swiftRange])
+    }
+
+    /// Largest single-frame pixel count; unreadable frame metadata is treated as
+    /// unbounded so such files go through the downscale path (and fail there if
+    /// they really are corrupt).
+    static func largestFramePixelCount(_ source: CGImageSource) -> Int {
+        var largest = 0
+        for frameIndex in 0..<CGImageSourceGetCount(source) {
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(
+                source,
+                frameIndex,
+                nil
+            ) as? [CFString: Any],
+            let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+            let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+            width > 0,
+            height > 0 else {
+                return Int.max
+            }
+            let (framePixels, frameOverflow) = width.multipliedReportingOverflow(by: height)
+            if frameOverflow { return Int.max }
+            largest = max(largest, framePixels)
+        }
+        return largest
+    }
+
+    /// ImageIO thumbnail decode: memory stays proportional to the target size,
+    /// never to the source resolution.
+    static func downscaledThumbnail(_ source: CGImageSource?) -> CGImage? {
+        guard let source else { return nil }
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: downscaledImageLongEdge,
+        ] as [CFString: Any]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    static func encodedImage(_ image: CGImage, typeIdentifier: String) -> Data? {
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            typeIdentifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        var properties: [CFString: Any] = [:]
+        if typeIdentifier == UTType.jpeg.identifier {
+            properties[kCGImageDestinationLossyCompressionQuality] = 0.85
+        }
+        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
     }
 
     public static func markdownImage(for attachment: MarkdownAttachment) -> String {

@@ -52,6 +52,8 @@ public struct NativePromptAssembler: Sendable {
             : "本服务不提供原生网页搜索；不能声称已搜索，需要外部核实时明确说明未联网。"
     }
 
+    static let webSearchUnavailable = "本轮后续不提供原生网页搜索。向用户说明搜索不可用，继续依据已获得的资料和其他实际可用工具完成任务；需要新的搜索才能核实的内容应明确尚未核实，不得声称完成了新的联网核实或编造来源。"
+
     /// Reference data is logged separately from the user's words and never changes the system prefix.
     public static func turnContext(
         for request: StudyAgentRequest,

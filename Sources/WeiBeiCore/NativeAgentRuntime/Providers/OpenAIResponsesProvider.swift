@@ -39,19 +39,8 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         return NativeHTTPByteStream.start(
             session: session,
             request: makeURLRequest(request),
-            fallbackRequest: webSearchSupported ? makeURLOrURLRequestWithoutSearch(request) : nil,
             translate: { try Self.translate($0, completedItems: &completedItems) }
         )
-    }
-
-    private func makeURLOrURLRequestWithoutSearch(_ request: NativeLLMRequest) -> URLRequest {
-        var urlRequest = makeURLRequest(request)
-        if let body = try? JSONSerialization.data(
-            withJSONObject: Self.payload(for: request, webSearchSupported: false), options: [.sortedKeys]
-        ) {
-            urlRequest.httpBody = body
-        }
-        return urlRequest
     }
 
     func makeURLRequest(_ request: NativeLLMRequest) -> URLRequest {
@@ -110,9 +99,7 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             ]
         }
         var include = ["reasoning.encrypted_content"]
-        let enableSearch = request.enableNativeWebSearch
-            || request.tools.contains(where: { $0.name == "weibei_course_map" })
-        if enableSearch, webSearchSupported {
+        if request.enableNativeWebSearch, webSearchSupported {
             if !tools.contains(where: { $0["type"] as? String == "web_search" }) {
                 tools.append(["type": "web_search"])
             }
@@ -158,6 +145,11 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
                     continue
                 }
                 if let calls = message.toolCalls, !calls.isEmpty {
+                    // Text first, then the calls. A message inserted between a
+                    // function_call and its output is rejected by the provider.
+                    if !message.content.isEmpty {
+                        input.append(["role": "assistant", "content": message.content])
+                    }
                     for call in calls {
                         input.append([
                             "type": "function_call",
@@ -165,9 +157,6 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
                             "name": call.name,
                             "arguments": call.arguments,
                         ])
-                    }
-                    if !message.content.isEmpty {
-                        input.append(["role": "assistant", "content": message.content])
                     }
                 } else {
                     input.append(["role": "assistant", "content": message.content])
@@ -224,9 +213,12 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             throw NativeLLMFailure(code: "invalid_sse", message: "Responses SSE was not JSON")
         }
         if let error = object["error"] as? [String: Any] {
-            throw NativeLLMFailure(
-                code: error["code"] as? String ?? "server_error",
-                message: error["message"] as? String ?? "Responses error"
+            let message = error["message"] as? String ?? "Responses error"
+            throw NativeHTTPByteStream.providerFailure(
+                code: error["code"] as? String,
+                type: error["type"] as? String,
+                statusName: error["status"] as? String,
+                message: message
             )
         }
         let type = object["type"] as? String ?? ""
@@ -308,10 +300,13 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
         case "response.failed", "error":
             let error = (object["response"] as? [String: Any])?["error"] as? [String: Any]
                 ?? object["error"] as? [String: Any]
-            throw NativeLLMFailure(
-                code: error?["code"] as? String ?? "server_error",
-                usage: tokenUsage((object["response"] as? [String: Any])?["usage"]),
-                message: error?["message"] as? String ?? object["message"] as? String ?? type
+            let message = error?["message"] as? String ?? object["message"] as? String ?? type
+            throw NativeHTTPByteStream.providerFailure(
+                code: error?["code"] as? String,
+                type: error?["type"] as? String,
+                statusName: error?["status"] as? String,
+                message: message,
+                usage: tokenUsage((object["response"] as? [String: Any])?["usage"])
             )
         default:
             return []

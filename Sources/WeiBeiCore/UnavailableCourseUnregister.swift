@@ -17,7 +17,7 @@ public enum UnavailableCourseUnregister {
 
     public static func confirmationMessage(chinese: Bool) -> String {
         chinese
-            ? "会移除课程登记和关系，不移动、不删除任何外部文件或备份。"
+            ? "会从魏碑里移出这门课的记录和关联，不移动、不删除任何外部文件或备份。"
             : "This removes the course registration and relations. It does not move or delete any external files or backups."
     }
 }

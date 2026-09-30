@@ -12,7 +12,7 @@ const serialize = (e: Node) => new XMLSerializer().serializeToString(e);
 const post = (name: string, payload: unknown) => (window as any).webkit?.messageHandlers?.[name]?.postMessage(payload);
 const parse = (xml: string) => {
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
-  if (doc.querySelector('parsererror')) throw new Error('文档内容损坏，无法读取');
+  if (doc.querySelector('parsererror')) throw new Error(t('文稿内容损坏，无法读取', 'This document is damaged and cannot be read'));
   return doc;
 };
 const math = (xml: string) => renderOmml(parse(xml).documentElement);
@@ -27,7 +27,12 @@ let mainPart = '';
 let loadError = '';
 let searchQuery = '';
 let searchResult = -1;
+let pptSearchHits: ReturnType<PptxViewer['searchText']> = [];
+let pptNoteSearchHits: { slideIndex: number; location: string; text: string; start: number; end: number }[] = [];
+let pptSearchOrder: { note: boolean; index: number }[] = [];
 const clean = (text?: string | null) => (text ?? '').replace(/\s+/g, ' ').trim();
+let english = false;
+const t = (zh: string, en: string) => (english ? en : zh);
 
 function fail(error: unknown) {
   loadError = error instanceof Error ? error.message : String(error);
@@ -35,23 +40,23 @@ function fail(error: unknown) {
   const message = document.createElement('p');
   message.setAttribute('role', 'alert');
   message.style.cssText = 'font:15px/1.8 -apple-system;padding:24px;white-space:pre-wrap';
-  message.textContent = `这份文档暂时无法完整显示。\n${loadError}\n原文件已保留。`;
+  message.textContent = t(`这份文稿暂时无法完整显示。\n${loadError}\n原文件已保留。`, `This document cannot be shown in full.\n${loadError}\nThe original file is unchanged.`);
   root.replaceChildren(message);
   post('officeReady', { error: loadError });
 }
 
 // Only the in-memory display package is adapted. Original file bytes are never written back.
 async function prepare(bytes: ArrayBuffer, format: string) {
-  if (bytes.byteLength > RECOMMENDED_ZIP_LIMITS.maxTotalUncompressedBytes) throw new Error('文档大小超过阅读组件容量');
+  if (bytes.byteLength > RECOMMENDED_ZIP_LIMITS.maxTotalUncompressedBytes) throw new Error(t('文稿大小超过阅读组件容量', 'This document is larger than the reader can open'));
   const zip = await JSZip.loadAsync(bytes);
   const entries = Object.values(zip.files).filter(f => !f.dir);
   const limits = RECOMMENDED_ZIP_LIMITS;
-  if (entries.length > limits.maxEntries) throw new Error('文档包含的内容超过阅读组件容量');
+  if (entries.length > limits.maxEntries) throw new Error(t('文稿包含的内容超过阅读组件容量', 'This document contains more than the reader can open'));
   let total = 0;
   for (const file of entries) {
     const size = (file as any)._data?.uncompressedSize ?? 0;
     total += size;
-    if (size > limits.maxEntryUncompressedBytes || total > limits.maxTotalUncompressedBytes) throw new Error('文档解压后的内容超过阅读组件容量');
+    if (size > limits.maxEntryUncompressedBytes || total > limits.maxTotalUncompressedBytes) throw new Error(t('文稿解压后的内容超过阅读组件容量', 'The unpacked document is larger than the reader can open'));
   }
   const renamed = new Map<string, string>();
   for (const file of entries.filter(f => /\.(wmf|emf)$/i.test(f.name))) {
@@ -89,7 +94,7 @@ async function prepare(bytes: ArrayBuffer, format: string) {
       const variants = Array.from(alternate.children);
       const chosen = variants.find(c => c.localName === 'Choice' && c.getElementsByTagNameNS(mathNS, 'oMath').length > 0)
         ?? variants.find(c => c.localName === 'Fallback');
-      if (!chosen) throw new Error('文档包含尚未支持的绘图对象');
+      if (!chosen) throw new Error(t('文稿包含尚未支持的绘图对象', 'This document contains a drawing the reader cannot show'));
       alternate.replaceWith(...Array.from(chosen.childNodes));
     }
     const ns = format === 'docx' ? 'http://schemas.openxmlformats.org/wordprocessingml/2006/main' : drawingNS;
@@ -103,7 +108,7 @@ async function prepare(bytes: ArrayBuffer, format: string) {
     if (format === 'pptx') {
       for (const wrapper of Array.from(doc.getElementsByTagNameNS('http://schemas.microsoft.com/office/drawing/2010/main', 'm'))) {
         const formula = Array.from(wrapper.children).find(c => c.namespaceURI === mathNS);
-        if (!formula) throw new Error('幻灯片公式缺少数学内容');
+        if (!formula) throw new Error(t('幻灯片公式缺少数学内容', 'A slide formula has no math content'));
         const run = doc.createElementNS(drawingNS, 'a:r');
         run.setAttribute('data-weibei-math', serialize(formula));
         const text = doc.createElementNS(drawingNS, 'a:t');
@@ -127,8 +132,19 @@ function verifyEquations(element: Element, part: string) {
   const expected = equations.get(part) ?? [];
   const rendered = new Set(Array.from(element.querySelectorAll('math[data-weibei-equation]')).map(e => e.getAttribute('data-weibei-equation')));
   const found = expected.filter(id => rendered.has(id)).length;
-  if (found !== expected.length) throw new Error(`原文公式未能完整显示：应有 ${expected.length} 个，已显示 ${found} 个`);
+  if (found !== expected.length) throw new Error(t(`原文公式未能完整显示：应有 ${expected.length} 个，已显示 ${found} 个`, `Formulas are incomplete: expected ${expected.length}, showed ${found}`));
 }
+// R6: single broken images/equations downgrade to the resource-issue dot
+// (htmlResourceIssues) instead of failing the whole document.
+let resourceIssues: string[] = [];
+const reportResourceIssue = (message: string) => {
+  if (!resourceIssues.includes(message)) resourceIssues.push(message);
+  post('htmlResourceIssues', resourceIssues.slice(0, 100));
+};
+const verifyEquationsQuietly = (element: Element, part: string) => {
+  try { verifyEquations(element, part); }
+  catch (error) { reportResourceIssue(error instanceof Error ? error.message : String(error)); }
+};
 function sourceElement(location: string) {
   return Array.from(root.querySelectorAll<HTMLElement>('[data-weibei-location]')).find(e => e.dataset.weibeiLocation === location);
 }
@@ -144,7 +160,7 @@ function sourceOrder(node: Node) {
   return [index * 2 + Number(noteParts.get(slides[index].slidePath) === part), Number(location.match(/#p(\d+)$/)?.[1] ?? 0)];
 }
 function sections() {
-  if (viewer) return viewer.presentationData!.slides.map((s, i) => ({ id: s.slidePath, title: `第 ${i + 1} 页`, excerpt: '', level: 1, position: i / Math.max(1, viewer!.slideCount - 1), metadata: `${i + 1} / ${viewer!.slideCount} · PPT` }));
+  if (viewer) return viewer.presentationData!.slides.map((s, i) => ({ id: s.slidePath, title: t(`第 ${i + 1} 页`, `Page ${i + 1}`), excerpt: '', level: 1, position: i / Math.max(1, viewer!.slideCount - 1), metadata: `${i + 1} / ${viewer!.slideCount} · PPT` }));
   const blocks = Array.from(root.querySelectorAll<HTMLElement>('p[data-weibei-location]')).filter(p => clean(p.textContent));
   const headings = blocks.filter(p => /heading|标题/i.test(p.className) || p.getAttribute('role') === 'heading');
   return (headings.length ? headings : blocks.filter((_, i) => i % 15 === 0)).map((p, i, all) => ({ id: p.dataset.weibeiLocation!, title: clean(p.textContent).slice(0, 60), excerpt: '', level: 1, position: i / Math.max(1, all.length - 1), metadata: 'Word' }));
@@ -195,6 +211,79 @@ async function find(query: string) {
   return (window as any).find(query, false, false, false, false, true, false);
 }
 
+function searchResults(query: string) {
+  if (!viewer) return null;
+  viewer.clearSearchHighlights();
+  pptSearchHits = query ? viewer.searchText(query) : [];
+  pptNoteSearchHits = [];
+  if (query) viewer.presentationData?.slides.forEach((slide, slideIndex) => {
+    for (const paragraph of notes.get(noteParts.get(slide.slidePath) ?? '') ?? []) {
+      const text = paragraph.textContent ?? '';
+      let from = 0, start;
+      while ((start = text.toLocaleLowerCase().indexOf(query.toLocaleLowerCase(), from)) !== -1) {
+        pptNoteSearchHits.push({ slideIndex, location: paragraph.getAttribute('data-weibei-location')!,
+          text, start, end: start + query.length });
+        from = start + query.length;
+      }
+    }
+  });
+  const slideRows = pptSearchHits.map(hit => {
+    const start = Math.max(0, hit.matchStart - 8);
+    const end = Math.min(hit.text.length, hit.matchEnd + 32);
+    const prefix = (start ? '…' : '') + hit.text.slice(start, hit.matchStart).replace(/\s+/g, ' ');
+    return {
+      preview: prefix + hit.text.slice(hit.matchStart, hit.matchEnd) + hit.text.slice(hit.matchEnd, end).replace(/\s+/g, ' ') + (end < hit.text.length ? '…' : ''),
+      matchStart: prefix.length, matchLength: hit.matchEnd - hit.matchStart,
+      location: t(`第 ${hit.slideIndex + 1} 页`, `Page ${hit.slideIndex + 1}`), pageIndex: hit.slideIndex
+    };
+  });
+  const noteRows = pptNoteSearchHits.map(hit => {
+    const start = Math.max(0, hit.start - 8), end = Math.min(hit.text.length, hit.end + 32);
+    const prefix = (start ? '…' : '') + hit.text.slice(start, hit.start);
+    return { preview: prefix + hit.text.slice(hit.start, end) + (end < hit.text.length ? '…' : ''),
+      matchStart: prefix.length, matchLength: hit.end - hit.start,
+      location: t(`第 ${hit.slideIndex + 1} 页备注`, `Notes for page ${hit.slideIndex + 1}`), pageIndex: hit.slideIndex };
+  });
+  const ordered = [
+    ...slideRows.map((row, index) => ({ row, note: false, index })),
+    ...noteRows.map((row, index) => ({ row, note: true, index }))
+  ].sort((a, b) => a.row.pageIndex - b.row.pageIndex || Number(a.note) - Number(b.note));
+  pptSearchOrder = ordered.map(({ note, index }) => ({ note, index }));
+  return ordered.map(({ row }) => row);
+}
+async function activateSearchResult(index: number) {
+  const target = pptSearchOrder[index];
+  const hit = target && !target.note ? pptSearchHits[target.index] : undefined;
+  if (!viewer) return;
+  if (!hit) {
+    const note = target?.note ? pptNoteSearchHits[target.index] : undefined;
+    if (!note) return;
+    await goTo(note.location);
+    const block = sourceElement(note.location);
+    if (!block) return;
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    const parts: { node: Node; start: number; end: number }[] = [];
+    let node, offset = 0;
+    while (node = walker.nextNode()) {
+      const length = node.textContent?.length ?? 0;
+      parts.push({ node, start: offset, end: offset + length }); offset += length;
+    }
+    const first = parts.find(part => part.end > note.start);
+    const last = parts.find(part => part.end >= note.end);
+    if (first && last) {
+      const range = document.createRange();
+      range.setStart(first.node, note.start - first.start);
+      range.setEnd(last.node, note.end - last.start);
+      const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+    }
+    return;
+  }
+  viewer.clearSearchHighlights();
+  await viewer.goToSlide(hit.slideIndex);
+  const match = await viewer.highlightSearchResult(hit, { scrollIntoView: false });
+  match?.element.scrollIntoView({ block: 'center', behavior: 'instant' });
+}
+
 function positionNote(note: HTMLElement) {
   const rect = note.previousElementSibling!.getBoundingClientRect();
   if (rect.bottom <= 0 || rect.top >= innerHeight) {
@@ -224,15 +313,15 @@ function attachNote(index: number, wrapper: HTMLElement | null) {
   wrapper.style.position = 'relative';
   const note = document.createElement('aside'); note.dataset.notePart = path;
   note.id = `office-note-${index}`; note.className = 'office-note'; note.popover = 'auto';
-  note.setAttribute('aria-label', `第 ${index + 1} 页备注`);
+  note.setAttribute('aria-label', t(`第 ${index + 1} 页备注`, `Notes for page ${index + 1}`));
   const button = document.createElement('button'); button.type = 'button'; button.className = 'office-note-trigger';
-  button.setAttribute('popovertarget', note.id); button.title = `查看第 ${index + 1} 页备注`;
+  button.setAttribute('popovertarget', note.id); button.title = t(`查看第 ${index + 1} 页备注`, `View notes for page ${index + 1}`);
   button.setAttribute('aria-label', button.title); button.dataset.weibeiAnnotationUi = 'true';
   button.style.top = `calc(${(wrapper.firstElementChild as HTMLElement).style.height} - 34px)`;
   button.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 3H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Zm0 0v5h5M6 11h8M6 14h5"/></svg>';
   const header = document.createElement('header'); header.dataset.weibeiAnnotationUi = 'true';
-  const title = document.createElement('strong'); title.textContent = `第 ${index + 1} 页备注`;
-  const close = document.createElement('button'); close.type = 'button'; close.setAttribute('aria-label', '关闭备注');
+  const title = document.createElement('strong'); title.textContent = t(`第 ${index + 1} 页备注`, `Notes for page ${index + 1}`);
+  const close = document.createElement('button'); close.type = 'button'; close.setAttribute('aria-label', t('关闭备注', 'Close notes'));
   close.setAttribute('popovertarget', note.id); close.setAttribute('popovertargetaction', 'hide');
   close.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>';
   header.append(title, close); note.append(header);
@@ -247,14 +336,15 @@ function attachNote(index: number, wrapper: HTMLElement | null) {
     body.append(block);
   }
   note.addEventListener('beforetoggle', event => { if ((event as ToggleEvent).newState === 'open') positionNote(note); });
-  verifyEquations(note, path);
+  verifyEquationsQuietly(note, path);
   wrapper.append(button, note);
 }
 
-async function open(url: string | ArrayBuffer, format: string) {
+async function open(url: string | ArrayBuffer, format: string, language?: string) {
+  english = language === 'english';
   root = document.getElementById('office-document')!;
   document.documentElement.style.setProperty('-webkit-text-size-adjust', '100%');
-  kind = format; loadError = ''; notes.clear(); noteParts.clear(); equations.clear(); mainPart = '';
+  kind = format; loadError = ''; resourceIssues = []; notes.clear(); noteParts.clear(); equations.clear(); mainPart = '';
   try {
     const bytes = typeof url === 'string' ? await (await fetch(url)).arrayBuffer() : url;
     const zip = await prepare(bytes, format);
@@ -265,7 +355,7 @@ async function open(url: string | ArrayBuffer, format: string) {
       root.dataset.weibeiLocation = 'word/document.xml';
       await renderAsync(zip, root, undefined, { useBase64URL: true, renderAltChunks: false, renderComments: true, ignoreWidth: false, ignoreHeight: false });
       await mountWordGraphics(root);
-      verifyEquations(root, mainPart);
+      verifyEquationsQuietly(root, mainPart);
     } else {
       delete root.dataset.weibeiLocation;
       viewer = new PptxViewer(root, {
@@ -277,8 +367,7 @@ async function open(url: string | ArrayBuffer, format: string) {
           const slide = viewer?.presentationData?.slides[index];
           if (slide) {
             element.dataset.weibeiLocation = slide.slidePath;
-            try { verifyEquations(element, slide.slidePath); }
-            catch (error) { loadError = String(error); queueMicrotask(() => fail(error)); return; }
+            verifyEquationsQuietly(element, slide.slidePath);
           }
           post('officeReady', {});
         },
@@ -306,7 +395,8 @@ async function open(url: string | ArrayBuffer, format: string) {
     }
     await document.fonts.ready;
     const broken = await Promise.all(Array.from(root.querySelectorAll('img, svg image')).map(async element => { const img = new Image(); img.src = element instanceof HTMLImageElement ? element.src : (element as SVGImageElement).href.baseVal; try { await img.decode(); return false; } catch { return true; } }));
-    if (broken.some(Boolean)) throw new Error('文档中的图片未能完整显示');
+    const brokenCount = broken.filter(Boolean).length;
+    if (brokenCount > 0) reportResourceIssue(t(`文稿中有 ${brokenCount} 张图片未能显示，正文已导入`, `${brokenCount} images could not be shown; the text was imported`));
     post('contentRailSections', sections());
     post('officeReady', { loaded: true });
   } catch (error) { fail(error); }
@@ -335,5 +425,5 @@ window.addEventListener('scroll', () => {
   if (active) post('contentRailActive', { id: active.dataset.weibeiLocation, reason: 'scroll' });
 }, { passive: true });
 
-(window as any).WeiBeiOffice = { open, math, drawWMFText, renderGraphic, graphicRelations, has3DChart, render3DChart, goTo, find, sections, sourceOrder, applyMarks, attachNote, get error() { return loadError; } };
+(window as any).WeiBeiOffice = { open, math, drawWMFText, renderGraphic, graphicRelations, has3DChart, render3DChart, goTo, find, searchResults, activateSearchResult, sections, sourceOrder, applyMarks, attachNote, get isPresentation() { return Boolean(viewer); }, get error() { return loadError; } };
 (window as any).WeiBeiContentRail = { installed: true, scrollTo: (id: string) => { void goTo(id); }, scan: () => post('contentRailSections', sections()) };

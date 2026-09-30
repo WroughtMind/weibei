@@ -43,15 +43,10 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
 
     public func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
         do {
-            let primary = try makeURLRequest(request, webSearchStyle: webSearchStyle)
-            let fallback = webSearchStyle == .none
-                ? nil
-                : try makeURLRequest(request, webSearchStyle: .none)
             var textIndex = 0
             return NativeHTTPByteStream.start(
                 session: session,
-                request: primary,
-                fallbackRequest: fallback,
+                request: try makeURLRequest(request),
                 translate: { try Self.translate(payload: $0, textIndex: &textIndex) }
             )
         } catch {
@@ -60,10 +55,6 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
     }
 
     func makeURLRequest(_ request: NativeLLMRequest) throws -> URLRequest {
-        try makeURLRequest(request, webSearchStyle: webSearchStyle)
-    }
-
-    func makeURLRequest(_ request: NativeLLMRequest, webSearchStyle style: ChatWebSearchStyle) throws -> URLRequest {
         var urlRequest = URLRequest(url: baseURL.appendingPathComponent("chat/completions"))
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -122,10 +113,8 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
             payload["stream_options"] = ["include_usage": true]
         }
         var allTools = tools
-        let enableSearch = request.enableNativeWebSearch
-            || request.tools.contains(where: { $0.name == "weibei_course_map" })
-        if enableSearch {
-            switch style {
+        if request.enableNativeWebSearch {
+            switch webSearchStyle {
             case .none:
                 break
             case .zai:
@@ -180,17 +169,6 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         return parts
     }
 
-    private static func httpFailure(_ status: Int, body: String) -> NativeLLMFailure {
-        let code: String
-        switch status {
-        case 401, 403: code = "unauthorized"
-        case 429: code = "rate_limited"
-        case 408, 504: code = "timeout"
-        default: code = "server_error"
-        }
-        return NativeLLMFailure(code: code, status: status, message: "HTTP \(status) \(body)")
-    }
-
     public static func translate(payload: String, textIndex: inout Int) throws -> [NativeStreamChunk] {
         guard let data = payload.data(using: .utf8),
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -198,7 +176,12 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         }
         if let error = object["error"] as? [String: Any] {
             let message = error["message"] as? String ?? "provider error"
-            throw NativeLLMFailure(code: error["code"] as? String ?? "server_error", message: message)
+            throw NativeHTTPByteStream.providerFailure(
+                code: error["code"] as? String,
+                type: error["type"] as? String,
+                statusName: error["status"] as? String,
+                message: message
+            )
         }
         var chunks: [NativeStreamChunk] = []
         if let usage = object["usage"] as? [String: Any] {

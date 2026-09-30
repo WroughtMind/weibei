@@ -8,6 +8,7 @@
   <link rel="preload" as="image" href="assets/第一幕-真实首页截图-去黑边.webp" imagesrcset="assets/mobile/第一幕-真实首页截图-去黑边.webp 1080w, assets/第一幕-真实首页截图-去黑边.webp 2940w" imagesizes="(max-width: 760px) 92vw, 72vw">
   <link rel="stylesheet" href="style.css?v=20260916-download-paper">
   <link rel="stylesheet" href="paper-fold.css?v=20260907-css-fold">
+  <link rel="stylesheet" href="credits.css?v=20260925-widget">
 </head>
 <body>
   <nav class="topbar" aria-label="主导航" data-en-label="Main navigation">
@@ -24,6 +25,7 @@
         <a href="labs.html">Labs</a>
         <a href="webi.html">Webi</a>
         <a href="feedback.html" data-en="Feedback">反馈</a>
+        <button class="credits-trigger release-nav-item" aria-haspopup="dialog" aria-expanded="false"><span data-en="Credits">Credits</span></button>
       </div>
       <a class="language-toggle" href="en/" hreflang="en" lang="en" data-language-toggle aria-label="Switch to English"><span>中</span><i aria-hidden="true"></i><span>EN</span></a>
       <a class="nav-download" href="#scene-4" data-en="Download">下载</a>
@@ -229,6 +231,53 @@
       <div class="scene scene-four"></div>
     </section>
   </main>
+
+
+
+  <div class="credits-pop" hidden role="dialog" aria-modal="true" aria-label="Credits">
+    <div class="credits-card">
+      <div class="credits-head"><h2>Credits</h2><button class="credits-close" aria-label="关闭">&times;</button></div>
+      <div class="credit-row" style="--c:#10a37f" data-tip="696 项 · +281,047 行">
+        <div class="credit-line"><img class="credit-logo" src="assets/credits/openai.svg" alt=""><span class="credit-name">Codex</span><span class="credit-pct">86.6%</span></div>
+        <div class="credit-track"><i style="width:86.6%"></i></div>
+      </div>
+      <div class="credit-row" style="--c:#00a0ff" data-tip="53 项 · +147,716 行">
+        <div class="credit-line"><img class="credit-logo" src="assets/credits/cursor.svg" alt=""><span class="credit-name">Cursor</span><span class="credit-pct">6.6%</span></div>
+        <div class="credit-track"><i style="width:6.6%"></i></div>
+      </div>
+      <div class="credit-row" style="--c:#1d1d1f" data-tip="32 项 · +5,582 行">
+        <div class="credit-line"><img class="credit-logo" src="assets/credits/x.svg" alt=""><span class="credit-name">Grok</span><span class="credit-pct">4.0%</span></div>
+        <div class="credit-track"><i style="width:4%"></i></div>
+      </div>
+      <div class="credit-row" style="--c:#d97757" data-tip="3 项 · +2,098 行">
+        <div class="credit-line"><img class="credit-logo" src="assets/credits/claude.svg" alt=""><span class="credit-name">Claude Code</span><span class="credit-pct">0.4%</span></div>
+        <div class="credit-track"><i style="width:0.4%"></i></div>
+      </div>
+      <div class="credit-row" style="--c:#4d6bfe" data-tip="3 项 · +1,389 行">
+        <div class="credit-line"><img class="credit-logo" src="assets/credits/deepseek.svg" alt=""><span class="credit-name">DeepSeek</span><span class="credit-pct">0.4%</span></div>
+        <div class="credit-track"><i style="width:0.4%"></i></div>
+      </div>
+      <div class="credit-row unknown" data-tip="13 项 · +8,080 行">
+        <div class="credit-line"><span class="credit-dot"></span><span class="credit-name" data-en="Unattributed">未确认</span><span class="credit-pct">1.6%</span></div>
+        <div class="credit-track"><i style="width:1.6%"></i></div>
+      </div>
+      <p class="credits-total" data-en="1,910 commits · 804 units · +445,981 lines">1,910 次提交 · 804 项 · +445,981 行</p>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var t = document.querySelector('.credits-trigger'), p = document.querySelector('.credits-pop');
+      if (!t || !p) return;
+      function toggle() {
+        p.hidden = !p.hidden;
+        t.setAttribute('aria-expanded', String(!p.hidden));
+      }
+      t.addEventListener('click', toggle);
+      p.addEventListener('click', function (e) { if (e.target === p || e.target.closest('.credits-close')) toggle(); });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !p.hidden) toggle(); });
+    })();
+  </script>
 
   <script type="module" src="app.js?v=20260916-download-paper"></script>
 </body>

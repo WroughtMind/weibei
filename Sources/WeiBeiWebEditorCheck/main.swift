@@ -2617,10 +2617,156 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                             self.fail("lost-receipt retry duplicated inserted body: \(second.markdown.debugDescription)")
                             return
                         }
-                        self.isDone = true
+                        self.validateEditorInputGuards()
                     }
                 }
             }
+        }
+    }
+
+    /// N1/N8/N3/N4/N7/X5/C7/C5: slash false-positives, reload undo, external
+    /// insert, IME Enter, ragged HTML tables, callout labels, and interface language.
+    private func validateEditorInputGuards() {
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          const open = (text) => { editor.setMarkdown(text); return editor.openSlashMenuForCheck(); };
+          const closed = ['1/2', 'km/h', 'and/or', 'https://example.com', '正文、补充'];
+          for (const text of closed) {
+            if (open(text)) throw new Error('slash menu opened for ' + text);
+          }
+          const opened = ['汉字/h2', '，/标题', ' /h2', '/', '、', '\\u200B、h2'];
+          for (const text of opened) {
+            if (!open(text)) throw new Error('slash menu stayed closed for ' + JSON.stringify(text));
+          }
+          if (open('/2')) throw new Error('prefix query /2 opened the menu');
+          const prefixState = editor.slashStateForCheck();
+          if ((prefixState.commands || []).includes('二级标题')) throw new Error('/2 matched h2: ' + JSON.stringify(prefixState));
+
+          editor.setMarkdown('1/2尾');
+          editor.selectDocumentEndForCheck();
+          const arrow = new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true });
+          document.querySelector('.ProseMirror').dispatchEvent(arrow);
+          if (arrow.defaultPrevented) throw new Error('arrow key was swallowed on 1/2');
+          const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+          document.querySelector('.ProseMirror').dispatchEvent(enter);
+          if (enter.defaultPrevented && editor.slashStateForCheck().show) throw new Error('Enter was captured by a slash menu on 1/2');
+          const fractionMarkdown = editor.getMarkdown();
+          if (!fractionMarkdown.includes('1/2') || fractionMarkdown.includes('##')) throw new Error('1/2 Enter became a heading: ' + JSON.stringify(fractionMarkdown));
+
+          if (!open('/')) throw new Error('slash menu did not open for dismiss');
+          editor.pressKeyForCheck('Escape');
+          if (editor.slashStateForCheck().show) throw new Error('Escape left the slash menu open');
+          editor.typeTextForCheck('h2');
+          if (editor.slashStateForCheck().show) throw new Error('dismissed slash reopened on the next character');
+          if (!editor.getMarkdown().includes('/h2')) throw new Error('Escape removed the slash text');
+
+          editor.setMarkdown('、h2');
+          if (!editor.openSlashMenuForCheck()) throw new Error('leading ideographic comma did not open the menu');
+          editor.executeSlashCommandForCheck('heading2');
+          const commaMarkdown = editor.getMarkdown();
+          if (commaMarkdown.includes('、') || !commaMarkdown.includes('##')) throw new Error('ideographic comma trigger was not consumed: ' + JSON.stringify(commaMarkdown));
+
+          editor.setMarkdown('旧正文');
+          editor.typeTextForCheck('甲');
+          const session = editor.getBridgeSessionForCheck();
+          const loaded = editor.dispatchCommand({
+            protocolVersion: 2,
+            commandID: 'editor-input-reload',
+            documentID: session.documentID,
+            documentGeneration: session.documentGeneration,
+            type: 'loadDocument',
+            payload: { markdown: '新正文', initialRevision: 0 }
+          });
+          if (!loaded) throw new Error('reload command was rejected');
+          const reloaded = editor.getBridgeSessionForCheck();
+          if (reloaded.dirty) throw new Error('reload marked the note dirty');
+          if (editor.undoForCheck()) throw new Error('reload entered the undo history');
+          if (!editor.getMarkdown().includes('新正文') || editor.getMarkdown().includes('旧正文')) throw new Error('undo after reload restored the previous note');
+
+          editor.setMarkdown('保留选区正文');
+          if (!editor.selectFirstTextForCheck('选区')) throw new Error('missing selection for external insert');
+          editor.insertMarkdown('\\n\\n插入的句子');
+          const inserted = editor.getMarkdown();
+          if (!inserted.includes('选区') || !inserted.includes('插入的句子')) throw new Error('external insert replaced the selection: ' + JSON.stringify(inserted));
+
+          editor.setMarkdown('> [!note] 旧标题\\n>\\n> 正文\\n');
+          const title = document.querySelector('.weibei-callout-title');
+          if (!title) throw new Error('callout title input missing');
+          title.focus();
+          title.value = '组字中';
+          title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }));
+          const duringCompose = document.querySelector('blockquote.weibei-callout')?.getAttribute('data-callout-title') || '';
+          if (duringCompose === '组字中') throw new Error('composing Enter committed the callout title');
+          title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+          const afterEnter = document.querySelector('blockquote.weibei-callout')?.getAttribute('data-callout-title') || '';
+          if (afterEnter !== '组字中') throw new Error('bare Enter did not commit the callout title: ' + afterEnter);
+
+          editor.setMarkdown('```\\nlet value = 1\\n```\\n');
+          const language = document.querySelector('.weibei-code-language-input');
+          if (!language) throw new Error('code language input missing');
+          language.focus();
+          language.value = 'swift';
+          language.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }));
+          if (editor.getMarkdown().includes('```swift')) throw new Error('composing Enter committed the code language');
+          language.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+          if (!editor.getMarkdown().includes('```swift')) throw new Error('bare Enter did not commit the code language');
+
+          editor.setMarkdown('锚点');
+          editor.selectFirstTextForCheck('锚点');
+          const ragged = new DataTransfer();
+          ragged.setData('text/plain', '前文\\n甲\\t乙\\n后文');
+          ragged.setData('text/html', '<p>前文</p><table><tr><td>甲</td><td>乙</td></tr></table><p>后文</p>');
+          document.querySelector('.ProseMirror').dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: ragged }));
+          const pasted = editor.getMarkdown();
+          const paragraphs = Array.from(document.querySelectorAll('.ProseMirror p')).map((node) => node.textContent || '');
+          if (!pasted.includes('前文') || !pasted.includes('后文') || !paragraphs.some((text) => text.includes('前文')) || !paragraphs.some((text) => text.includes('后文'))) {
+            throw new Error('ragged HTML table paste collapsed into one table: ' + JSON.stringify({ pasted, paragraphs }));
+          }
+
+          const withShot = new DataTransfer();
+          withShot.setData('text/plain', '来自表格的文字');
+          withShot.setData('text/html', '<p>来自表格的文字</p>');
+          withShot.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'snap.png', { type: 'image/png' }));
+          editor.setMarkdown('锚点');
+          editor.selectFirstTextForCheck('锚点');
+          document.querySelector('.ProseMirror').dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: withShot }));
+          const shotMarkdown = editor.getMarkdown();
+          if (!shotMarkdown.includes('来自表格的文字') || shotMarkdown.includes('![')) throw new Error('text clipboard was pasted as an image: ' + JSON.stringify(shotMarkdown));
+
+          editor.setMarkdown('> [!bug] 标题\\n>\\n> 内容\\n');
+          const bugOption = Array.from(document.querySelectorAll('.weibei-callout-type option')).find((option) => option.value === 'bug');
+          const questionOption = Array.from(document.querySelectorAll('.weibei-callout-type option')).find((option) => option.value === 'question');
+          if (!bugOption || bugOption.textContent !== '缺陷' || !questionOption || questionOption.textContent !== '问题') {
+            throw new Error('callout labels drifted: ' + JSON.stringify({ bug: bugOption?.textContent, question: questionOption?.textContent }));
+          }
+
+          const beforeNotice = editor.getMarkdown();
+          editor.notifyImageFailure('图片文件已损坏或无法解码');
+          if (!document.querySelector('.ProseMirror') || editor.getMarkdown() !== beforeNotice || !document.querySelector('.weibei-editor-notice') || document.querySelector('#editor pre')) {
+            throw new Error('image failure replaced the editor');
+          }
+
+          editor.setInterfaceLanguage('en');
+          const slashLabel = document.querySelector('.weibei-slash-menu')?.getAttribute('aria-label');
+          const plusLabel = document.querySelector('.weibei-line-plus')?.getAttribute('aria-label');
+          editor.setMarkdown('![图](assets/weibei.svg)');
+          const replaceLabel = document.querySelector('.weibei-image-controls button')?.textContent;
+          const sizeLabel = document.querySelector('.weibei-image-controls select')?.getAttribute('aria-label');
+          editor.setInterfaceLanguage('zh-Hans');
+          if (slashLabel !== 'Slash commands' || plusLabel !== 'Insert content' || replaceLabel !== 'Replace' || sizeLabel !== 'Image size') {
+            throw new Error('editor chrome ignored the interface language: ' + JSON.stringify({ slashLabel, plusLabel, replaceLabel, sizeLabel }));
+          }
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.fail("editor input guards failed: \(String(describing: error)); \(String(describing: value))")
+                return
+            }
+            self.isDone = true
         }
     }
 

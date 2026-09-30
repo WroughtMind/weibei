@@ -11,8 +11,8 @@
     },
     {
       "name": "editor-entry.js",
-      "bytes": 615788,
-      "sha256": "98d2ed6b709eb50a85d51dcf13368880d797ab16614ec13cad0da8eaf3ecc118"
+      "bytes": 618193,
+      "sha256": "4d5d062758d1d90778ea66b4167e293ea8451227884d028fd276c94880e4bcdd"
     },
     {
       "name": "editor.css",
@@ -21,8 +21,8 @@
     },
     {
       "name": "index.html",
-      "bytes": 58085,
-      "sha256": "04e604f9df6ff50be20a98504e0008b76c10f29201d2dc7746d477eebffd2bc8"
+      "bytes": 58670,
+      "sha256": "81e5fa9ee2cc85d262dd2d8757591c6da43c37a4c7d7409f80e14f0a693ae860"
     },
     {
       "name": "KaTeX_AMS-Regular.woff2",
@@ -151,8 +151,8 @@
     },
     {
       "name": "office-entry.js.deflate",
-      "bytes": 1445572,
-      "sha256": "4b4ec5812fccd5aa002490946d263e0ce05617f639e75d9304dbe499922b2e62"
+      "bytes": 1446591,
+      "sha256": "7cb1fb231f2cd692ee889c6cd71c4ffea52714b4ab09ced55e5dffbbabd9bbaf"
     },
     {
       "name": "office-licenses.txt",
@@ -171,8 +171,8 @@
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 538686,
-      "sha256": "a37b21db60560bfc0af8291d61eb5cd0b4b9f5c815d759793b506ccf5f8bcdda"
+      "bytes": 539272,
+      "sha256": "7de44d78606d35ac4e67abf21f91cd408f4a0e0cb77d4e4f91e4acaecb9b7f15"
     }
   ]
 }

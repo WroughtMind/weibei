@@ -105,6 +105,11 @@ struct EmptyWorkspaceLauncherView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("empty-workspace-launcher")
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            WeiBeiDroppedFileURLs.load(providers) { urls in
+                store.importFiles(urls)
+            }
+        }
     }
 
     @ViewBuilder
@@ -191,10 +196,7 @@ struct EmptyWorkspaceLauncherView: View {
     private func entryCluster(at date: Date, compact: Bool, spacing: CGFloat, entryWidth: CGFloat) -> some View {
         VStack(spacing: spacing) {
             greeting(at: date, compact: compact)
-            EmptyWorkspaceEntryRow(
-                entryWidth: entryWidth,
-                isEnabled: !requiresLibraryPlacement
-            )
+            EmptyWorkspaceEntryRow(entryWidth: entryWidth)
             if store.canContinueLastWork && !requiresLibraryPlacement {
                 Button(store.ui("继续上次", "Continue where you left off")) {
                     store.continueLastWork()
@@ -306,7 +308,7 @@ private struct EmptyWorkspaceEntryRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
     let entryWidth: CGFloat
-    let isEnabled: Bool
+    @AppStorage("weibei.libraryPlacementConfirmed") private var libraryPlacementConfirmed = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -315,7 +317,7 @@ private struct EmptyWorkspaceEntryRow: View {
                 accessibilityLabel: store.ui("打开文稿", "Open document"),
                 identifier: "empty-workspace-entry-doc",
                 width: entryWidth,
-                action: store.toggleReader
+                action: { confirmPlacement(); store.toggleReader() }
             )
 
             entryDivider
@@ -325,7 +327,7 @@ private struct EmptyWorkspaceEntryRow: View {
                 accessibilityLabel: store.ui("打开对话", "Open chat"),
                 identifier: "empty-workspace-entry-chat",
                 width: entryWidth,
-                action: store.toggleAgent
+                action: { confirmPlacement(); store.toggleAgent() }
             )
 
             entryDivider
@@ -335,13 +337,15 @@ private struct EmptyWorkspaceEntryRow: View {
                 accessibilityLabel: store.ui("打开笔记", "Open notes"),
                 identifier: "empty-workspace-entry-notes",
                 width: entryWidth,
-                action: store.toggleNotes
+                action: { confirmPlacement(); store.toggleNotes() }
             )
         }
         .fixedSize(horizontal: true, vertical: false)
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.42)
         .accessibilityElement(children: .contain)
+    }
+
+    private func confirmPlacement() {
+        libraryPlacementConfirmed = true
     }
 
     private var entryDivider: some View {
@@ -602,8 +606,8 @@ private struct LibraryPlacementNoticeCard: View {
     var body: some View {
         VStack(spacing: 9) {
             Text(store.ui(
-                "课程资料库文件夹将安放在这里，可现在更换，之后随时能在设置里改。",
-                "Your course library folder will live here — you can move it now or later in Settings."
+                "课程资料库文件夹已安放在这里，可现在更换，之后随时能在设置里改。",
+                "Your course library folder is already here. You can move it now, or later in Settings."
             ))
             .weiBeiText(12)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -697,8 +701,8 @@ private struct LibraryPlacementNoticeCard: View {
                 confirmed = true
             } catch CourseProjectRootError.destinationIsLibrary {
                 relocationErrorText = store.ui(
-                    "所选位置已经是一个魏碑资料库，请选择其他空文件夹。",
-                    "That location is already a WeiBei library. Choose an empty folder instead."
+                    "所选位置已经是一个魏碑资料库，请选择其他位置。",
+                    "That location is already a WeiBei library. Choose a different location."
                 )
             } catch {
                 store.recordCourseLibraryUIFailure(
@@ -706,9 +710,11 @@ private struct LibraryPlacementNoticeCard: View {
                     operation: "first_run_library_migration",
                     path: url
                 )
+                let reason = (error as? CourseProjectRootError)?.errorDescription
+                    ?? error.localizedDescription
                 relocationErrorText = store.ui(
-                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用所选位置。请先确认原位置内容完整、所选文件夹可写，再重试；也可以稍后在设置中更换。",
-                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the selected location. Check the original contents and make sure the selected folder is writable before trying again, or change it later in Settings."
+                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用所选位置。原因：\(reason) 可以重试，也可以稍后在设置中更换。",
+                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the selected location. Reason: \(error.localizedDescription) You can retry or change it later in Settings."
                 )
             }
             isRelocating = false

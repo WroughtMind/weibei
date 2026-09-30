@@ -1,5 +1,6 @@
 #if WEIBEI_ACCEPTANCE_CHECKS
 import UIKit
+import SwiftUI
 import WebKit
 import WeiBeiCore
 
@@ -39,7 +40,7 @@ enum CatalystBusinessCheck {
                 try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: path, options: .atomic)
                 exit(0)
             }
-            let courseID = try store.createCourseInLibrary(title: "退出保存检查")
+            let courseID = try await store.createCourseInLibraryAsync(title: "退出保存检查")
             guard let chat = store.createStudySession(courseID: courseID),
                   let noteID = await store.createCourseNotebookNote(courseID: courseID, title: "退出保存笔记",
                     markdown: "原始正文", revealInWorkspace: false),
@@ -375,13 +376,21 @@ enum CatalystBusinessCheck {
                 return abs(noteEditor.convert(noteEditor.bounds, to: window).minY) < 1
                     && noteEditor.scrollView.contentInsetAdjustmentBehavior == .never
             }
+            try await until("conversation viewport extends under the native toolbar") {
+                guard let chat = conversation(), let window = chat.collection.window else { return false }
+                return chat.collection.contentInsetAdjustmentBehavior == .never
+                    && abs(chat.collection.adjustedContentInset.top - chat.collection.contentInset.top) < 1
+                    && abs(chat.collection.convert(chat.collection.bounds, to: window).minY) < 1
+                    && conversationReachesToolbar(chat)
+                    && abs(chat.flow.topInset - chat.view.safeAreaInsets.top) < 1
+                    && chat.collection.contentInset.top == 0
+            }
             if #available(iOS 26.0, *) {
                 try await until("pane edges do not add separate toolbar materials") {
                     guard let window = noteEditor.window, let chat = conversation(),
                           let reader = descendants(window).first(where: { $0.accessibilityIdentifier == "persistent-pane-reader" }),
                           let text = descendants(reader).compactMap({ $0 as? UITextView }).first else { return false }
-                    // Check the three pane viewports, not WebKit's dynamically
-                    // created internal scrollers for HTML overflow content.
+                    // The shared pane mask owns the effect for all three viewports.
                     let scrolls: [UIScrollView] = [text, chat.collection, noteEditor.scrollView]
                     return scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
                 }
@@ -663,20 +672,26 @@ enum CatalystBusinessCheck {
         guard store.openAgentReplySource(source) else { throw Failure("discussion citation did not open") }
         try await until("citation revealed and floating draft restored") {
             guard store.selectionChatRevealMessageID == nil, floatingComposer()?.text == draft,
-                  let controller = conversation(containing: messageID),
-                  let section = controller.messages.firstIndex(where: { $0.id == messageID.uuidString }) else { return false }
-            return controller.collection.indexPathsForVisibleItems.contains { $0.section == section }
+                  let message = floatingMessage(messageID, in: window) else { return false }
+            return isVisible(message, in: window)
         }
         guard store.activeStudySessionID == mainID, mainComposer.text == mainDraft else { throw Failure("citation replaced the main conversation") }
         try capture("selection-discussion.png")
         mainConversation.quoteText?("主会话引用片段")
-        try await until("main quote focuses its own composer") {
-            mainComposer.isFirstResponder && mainComposer.text == "> 主会话引用片段\n\n" && floatingComposer()?.text == draft
+        // A2: 引用追加到各自草稿末尾（前面空一行），不再替换已写的草稿。
+        let mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
+        try await until("main quote appends to its own composer") {
+            mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
         }
-        conversation(containing: messageID)?.quoteText?("浮窗引用片段")
-        try await until("floating quote focuses its own composer") {
-            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == "> 浮窗引用片段\n\n"
-                && mainComposer.text == "> 主会话引用片段\n\n"
+        guard let floatingMessage = floatingMessage(messageID, in: window),
+              let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
+            throw Failure("floating message quote action unavailable")
+        }
+        let floatingQuoted = draft + "\n\n> " + quotedMessage.text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
+        floatingMessage.onQuote()
+        try await until("floating quote appends to its own composer") {
+            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
+                && mainComposer.text == mainQuoted
         }
         store.dismissFloatingSelectionAgent()
         store.clearSelectionAttachments()
@@ -777,6 +792,21 @@ enum CatalystBusinessCheck {
             conversation()?.messages.count == 240 && conversation()?.messages.last?.id == history.last?.id.uuidString
         }
         let controller = conversation()!
+        // The immersive host is a separate SwiftUI branch from the three-pane
+        // split; it must extend under the toolbar and carry the fade mask too.
+        try await until("immersive conversation pane fades within the original toolbar") {
+            guard let window = controller.collection.window,
+                  let pane = descendants(window).compactMap({ $0 as? PersistentPaneHost.Container })
+                      .first(where: { !$0.isHidden && $0.bounds.width > 0 }),
+                  let fade = pane.layer.mask as? CAGradientLayer,
+                  let end = fade.locations?.dropLast().last else { return false }
+            let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
+            return abs(pane.convert(pane.bounds, to: window).minY) < 1
+                && abs(fadeBottom - window.safeAreaInsets.top) < 1
+                && abs(controller.collection.convert(controller.collection.bounds, to: window).minY) < 1
+                && abs(controller.collection.adjustedContentInset.top - controller.collection.contentInset.top) < 1
+                && conversationReachesToolbar(controller)
+        }
         var measured: [String: Any] = [
             "first_history_page_ms": (CACurrentMediaTime() - started) * 1000,
             "first_page_messages": 240,
@@ -848,6 +878,18 @@ enum CatalystBusinessCheck {
             try await Task.sleep(for: .milliseconds(40))
         }
     }
+    private static func conversationReachesToolbar(_ controller: ConversationController) -> Bool {
+        guard let window = controller.collection.window else { return false }
+        var ancestor: UIView? = controller.collection
+        while let view = ancestor {
+            // A viewport at y=0 is insufficient if an intermediate SwiftUI clip
+            // still starts below the toolbar. Inspect the complete drawing path.
+            if view.clipsToBounds && view.convert(view.bounds, to: window).minY > 1 { return false }
+            if view is PersistentPaneHost.Container { return true }
+            ancestor = view.superview
+        }
+        return false
+    }
     private static func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
     private static func editor(documentID: String) async -> MarkdownWebView? {
         let views = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
@@ -865,10 +907,46 @@ enum CatalystBusinessCheck {
             .compactMap(\.rootViewController).flatMap(children).compactMap { $0 as? ConversationController }
             .first { controller in messageID.map { id in controller.messages.contains { $0.id == id.uuidString } } ?? true }
     }
+    private static func floatingMessage(_ id: UUID, in window: UIWindow) -> CatalystFloatingMessageCheckProbe.Probe? {
+        descendants(window).compactMap { $0 as? CatalystFloatingMessageCheckProbe.Probe }
+            .first { $0.messageID == id && $0.window === window }
+    }
+    private static func isVisible(_ view: UIView, in window: UIWindow) -> Bool {
+        guard view.window === window, view.bounds.width > 1, view.bounds.height > 1 else { return false }
+        var visible = view.convert(view.bounds, to: window).intersection(window.bounds)
+        var ancestor: UIView? = view
+        while let current = ancestor {
+            guard !current.isHidden, current.alpha > 0.01 else { return false }
+            if current.clipsToBounds {
+                visible = visible.intersection(current.convert(current.bounds, to: window))
+            }
+            ancestor = current.superview
+        }
+        return !visible.isNull && visible.width > 1 && visible.height > 1
+    }
     private static func waitingStatus(in view: UIView) -> UIView? {
         descendants(view).first {
             $0.accessibilityIdentifier == "agent-thinking-status-layout" && $0.window != nil && !$0.isHidden
         }
+    }
+}
+
+/// Test-only observation of the real SwiftUI row and its production quote action.
+/// It does not replace rendering, scrolling, draft mutation, or focus handling.
+struct CatalystFloatingMessageCheckProbe: UIViewRepresentable {
+    let messageID: UUID
+    let onQuote: () -> Void
+    final class Probe: UIView {
+        var messageID: UUID?
+        var onQuote: () -> Void = {}
+    }
+    func makeUIView(context: Context) -> Probe { Probe() }
+    func updateUIView(_ view: Probe, context: Context) {
+        view.messageID = messageID
+        view.onQuote = onQuote
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: Probe, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? uiView.bounds.width, height: proposal.height ?? uiView.bounds.height)
     }
 }
 

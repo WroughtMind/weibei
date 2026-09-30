@@ -19,7 +19,7 @@ enum CourseWorkspacePage: String, CaseIterable, Identifiable {
         case .records:
             language.text("对话", "Conversations")
         case .memory:
-            language.text("课程记忆", "Course Memory")
+            language.text("学习记忆", "Study memory")
         }
     }
 }
@@ -55,7 +55,7 @@ struct CourseWorkspaceView: View {
         CourseManagementPresentation?
     @State private var coursePendingDeletion: Course?
     @State private var courseDeletionError: String?
-    @FocusState private var searchFocused: Bool
+    @State private var searchFocused = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -89,7 +89,11 @@ struct CourseWorkspaceView: View {
                 EscapeKeyBridge(
                     isEnabled: !showsNewNotePrompt
                 ) {
-                    store.dismissCourseWorkspace()
+                    if !search.isEmpty {
+                        search = ""
+                    } else {
+                        store.dismissCourseWorkspace()
+                    }
                 }
             }
         }
@@ -257,7 +261,7 @@ struct CourseWorkspaceView: View {
         guard let root = store.courseRootURL(for: course.id) else {
             if store.courseHasNeverHadFolder(course.id) {
                 return store.ui(
-                    "这门旧课程从未有课程文件夹。删除会移除课程和全部关系；外部原文件会留在独立资料或笔记中，可从侧边栏分别删除。",
+                    "这门旧课程从未有课程文件夹。删除会移除课程和全部关系；外部原文件会留在通用资料或笔记中，可从侧边栏分别删除。",
                     "This legacy course never had a course folder. Deleting removes the course and all relations; external source files remain as independent materials or notes and can be deleted from the sidebar."
                 )
             }
@@ -385,7 +389,7 @@ struct CourseWorkspaceHeader: View {
     @Binding var page: CourseWorkspacePage
     @Namespace private var tabUnderlineNamespace
     @Binding var search: String
-    var searchFocused: FocusState<Bool>.Binding
+    var searchFocused: Binding<Bool>
     let isCompact: Bool
     let dismiss: () -> Void
     let manageCourse: () -> Void
@@ -450,11 +454,15 @@ struct CourseWorkspaceHeader: View {
 
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                TextField(searchPrompt, text: $search)
-                    .textFieldStyle(.plain)
-                    .focused(searchFocused)
-                    .weiBeiText(12)
+                    .foregroundStyle(searchFocused.wrappedValue ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                WeiBeiSearchField(
+                    text: $search,
+                    prompt: searchPrompt,
+                    isFocused: searchFocused,
+                    drawsChrome: false,
+                    chromeHeight: 30
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .weibeiInputSurface(active: searchFocused.wrappedValue, height: 30)
             .frame(width: isCompact ? 160 : 220)
@@ -467,13 +475,13 @@ struct CourseWorkspaceHeader: View {
     private var searchPrompt: String {
         switch page {
         case .hub:
-            store.ui("搜索本课", "Search this course")
+            store.ui("搜索全部课程", "Search all courses")
         case .map:
             store.ui("搜索本课文稿与笔记", "Search Docs and Notes in this course")
         case .records:
             store.ui("搜索本课对话", "Search Chats in this course")
         case .memory:
-            store.ui("搜索课程记忆", "Search Course Memory")
+            store.ui("搜索学习记忆", "Search study memory")
         }
     }
 

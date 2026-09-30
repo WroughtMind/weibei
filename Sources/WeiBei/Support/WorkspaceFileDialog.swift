@@ -80,10 +80,11 @@ enum WorkspaceFileDialog {
     }
 
     static var presenter: UIViewController? {
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive && $0.keyWindow != nil }
-        var controller = scene?.keyWindow?.rootViewController
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.windows.contains(where: \.isKeyWindow) }
+            ?? scenes.first { $0.activationState == .foregroundActive && $0.keyWindow != nil }
+        let window = scene?.windows.first(where: \.isKeyWindow) ?? scene?.keyWindow
+        var controller = window?.rootViewController
         while let presented = controller?.presentedViewController { controller = presented }
         return controller
     }

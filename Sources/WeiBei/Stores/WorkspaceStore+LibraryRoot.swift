@@ -3,8 +3,16 @@ import WeiBeiCore
 
 @MainActor
 extension WorkspaceStore {
+    /// 只有「从未配置过资料库」的全新安装才自动建默认库。
+    /// 曾经配置过（path / identity / bookmark 任一在场）的原库暂时连不上时，
+    /// 这里必须保持静默：不新建默认库、不改绑，交给缺席保护与重连流程
+    /// （`restoreCourseProjectRoots` 已把原因写进 `courseLibraryUnavailableReason`），
+    /// 否则外置盘拔掉再启动就会静默换库，用户会以为课程文件丢了。
     func bootstrapDefaultLibraryIfNeeded() {
-        guard courseLibraryRootURL == nil else { return }
+        guard courseLibraryRootPath == nil,
+              courseLibraryRootIdentity == nil,
+              courseLibraryRootBookmarkData == nil,
+              courseLibraryRootURL == nil else { return }
         let root = CourseLibraryLayout.defaultRootURL()
         do {
             try FileManager.default.createDirectory(
@@ -28,11 +36,27 @@ extension WorkspaceStore {
                 operation: "bootstrap_default_library",
                 path: root
             )
-            showImportantOperationError(ui(
-                "魏碑资料库未能建立；没有移动或覆盖现有内容。请确认文稿目录可写后重试。",
-                "The WeiBei Library could not be created. Existing content was not moved or overwritten. Make sure the Documents folder is writable, then try again."
-            ))
+            showImportantOperationError(
+                ImportantOperationNotice.defaultLibraryBootstrapFailed,
+                message: ui(
+                    "魏碑资料库未能建立；没有移动或覆盖现有内容。请到 系统设置 › 隐私与安全性 › 文件与文件夹 检查魏碑的访问权限，然后重试。",
+                    "The WeiBei Library could not be created. Nothing was moved or overwritten. Check WeiBei's access under System Settings › Privacy & Security › Files and Folders, then retry."
+                )
+            )
         }
+    }
+
+    /// 建库失败横幅上的「重试」：只在仍未配置时重试，成功后横幅自然消失。
+    func retryBootstrapDefaultLibrary() {
+        guard courseLibraryRootPath == nil,
+              courseLibraryRootIdentity == nil,
+              courseLibraryRootBookmarkData == nil,
+              courseLibraryRootURL == nil else {
+            dismissImportantOperationError()
+            return
+        }
+        dismissImportantOperationError()
+        bootstrapDefaultLibraryIfNeeded()
     }
 
     func copyExternalFileIntoCourse(
@@ -285,14 +309,13 @@ extension WorkspaceStore {
         guard let libraryRoot = courseLibraryRootURL else {
             throw CourseProjectRootError.missingLibrary
         }
-        try validateMigrationDestinationRelationship(
-            destination,
-            libraryRoot: libraryRoot
-        )
         let canonicalDestination: URL
         if FileManager.default.fileExists(atPath: destination.path) {
-            canonicalDestination = try CourseProjectPathPolicy.existingDirectory(destination)
-            try validateMigrationDestinationContent(canonicalDestination)
+            let existing = try CourseProjectPathPolicy.existingDirectory(destination)
+            if existing.standardizedFileURL.path == libraryRoot.standardizedFileURL.path {
+                throw CourseProjectRootError.destinationIsLibrary
+            }
+            canonicalDestination = try resolveMigrationDestinationFolder(existing)
         } else {
             let parent = try CourseProjectPathPolicy.existingDirectory(
                 destination.deletingLastPathComponent()
@@ -302,6 +325,13 @@ extension WorkspaceStore {
                 isDirectory: true
             )
         }
+        // 关系校验放在目标解析之后：选了资料库的上级目录时，解析出的
+        // 「上级/魏碑资料库」正撞上原库，能给出 destinationIsLibrary 的
+        // 准确原因，而不是一句笼统的 destinationContainsLibrary。
+        try validateMigrationDestinationRelationship(
+            canonicalDestination,
+            libraryRoot: libraryRoot
+        )
 
         // MainActor async 上下文禁止默认重载（内部会 flushPendingWorkspaceSave()
         // RunLoop 自旋，等待另一个 MainActor Task 会死锁）；改用异步落盘。
@@ -391,7 +421,7 @@ extension WorkspaceStore {
                   ),
                   courseManifestCourseID(at: folder) == course.id else {
                 throw CourseProjectRootError.migrationFailed(
-                    ui("课程 \(course.title) 的清单校验未通过", "Course manifest check failed for \(course.title)")
+                    ui("课程 \(course.title) 的文件核对未通过", "Course file check failed for \(course.title)")
                 )
             }
         }
@@ -459,13 +489,41 @@ extension WorkspaceStore {
         }
     }
 
-    private func validateMigrationDestinationContent(_ destination: URL) throws {
-        let entries = try FileManager.default.contentsOfDirectory(atPath: destination.path)
-        guard !entries.isEmpty else { return }
-        if courseManifestCourseID(at: destination) != nil {
+    /// 解析迁移目标。用户在文件面板里选到的几乎总是非空文件夹（「文稿」
+    /// 「下载」这类），一律拒绝会让「选资料库位置」几乎必失败。规则：
+    /// 所选文件夹本身就是资料库 → 拒绝（迁进自己/另一个库没有意义）；
+    /// 可见内容为空（忽略 `.DS_Store` 等隐藏文件）→ 就用它；
+    /// 非空 → 在其下用「魏碑资料库」子目录作为目标，原有内容一律不动。
+    private func resolveMigrationDestinationFolder(_ selected: URL) throws -> URL {
+        if courseManifestCourseID(at: selected) != nil {
             throw CourseProjectRootError.destinationIsLibrary
         }
-        throw CourseProjectRootError.destinationNotEmpty
+        // 空目录（含只剩隐藏文件）直接作为目标；非空才落到子目录。
+        if try !Self.hasVisibleEntries(selected) {
+            return selected
+        }
+        let nested = selected.appendingPathComponent(
+            CourseLibraryLayout.defaultFolderName,
+            isDirectory: true
+        )
+        guard FileManager.default.fileExists(atPath: nested.path) else {
+            return nested
+        }
+        let nestedDirectory = try CourseProjectPathPolicy.existingDirectory(nested)
+        if courseManifestCourseID(at: nestedDirectory) != nil {
+            throw CourseProjectRootError.destinationIsLibrary
+        }
+        guard try !Self.hasVisibleEntries(nestedDirectory) else {
+            throw CourseProjectRootError.destinationNotEmpty
+        }
+        return nestedDirectory
+    }
+
+    /// 判空忽略隐藏文件（`.` 开头）：Finder 逛过的文件夹都会躺着一个
+    /// `.DS_Store`，它不该把一个事实上的空目录变成「非空」。
+    private static func hasVisibleEntries(_ directory: URL) throws -> Bool {
+        let entries = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        return entries.contains { !$0.hasPrefix(".") }
     }
 
     private static func volumeDeviceID(of url: URL) -> dev_t? {

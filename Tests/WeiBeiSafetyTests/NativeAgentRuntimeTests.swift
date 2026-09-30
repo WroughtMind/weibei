@@ -1312,11 +1312,12 @@ final class NativeAgentRuntimeTests: XCTestCase {
         for tool in tools {
             let start = NativeToolActivityPresentation.activity(id: "call", name: tool.name, arguments: arguments, context: context)
             XCTAssertFalse(start.detail?.isEmpty ?? true, tool.name)
-            XCTAssertNotEqual(start.detail, "工具请求", "Registered tool missing presentation: \(tool.name)")
+            XCTAssertNotEqual(start.detail, context.request.language.text("工具请求", "Tool request"), "Registered tool missing presentation: \(tool.name)")
             let failure = NativeToolActivityPresentation.activity(id: "call", name: tool.name, arguments: arguments,
                 context: context, result: .init(text: "读取被拒绝", isError: true))
             XCTAssertEqual(failure.state, .failed)
-            XCTAssertEqual(failure.resultSummary, "读取被拒绝")
+            XCTAssertEqual(failure.resultSummary, context.request.language.text("未能完成", "Could not finish"))
+            XCTAssertFalse(failure.resultSummary?.contains("{") == true)
             XCTAssertEqual(failure.detail, start.detail)
         }
         let cancelled = NativeToolActivityPresentation.activity(id: "call", name: "create_document", arguments: arguments,
@@ -1326,14 +1327,40 @@ final class NativeAgentRuntimeTests: XCTestCase {
         for name in ["weibei_update_learning_memory", "weibei_course_profile_update"] {
             let queued = NativeToolActivityPresentation.activity(id: "call", name: name, arguments: arguments,
                 context: context, result: .init(text: "已提交"))
-            XCTAssertTrue(queued.resultSummary?.contains("等待保存") == true)
+            XCTAssertTrue(queued.resultSummary?.contains("等待保存") == true || queued.resultSummary?.localizedCaseInsensitiveContains("waiting") == true)
         }
         let host = StudyAgentHostToolResult(query: "利率", items: [], total: 50, nextCursor: "next")
         let search = NativeToolActivityPresentation.activity(id: "call", name: "weibei_search_workspace", arguments: arguments,
             context: context, result: .init(text: String(decoding: try JSONEncoder().encode(host), as: UTF8.self)))
-        XCTAssertTrue(search.resultSummary?.contains("本次返回 0 条命中") == true)
+        XCTAssertTrue(search.resultSummary?.contains("0") == true)
+        XCTAssertTrue(search.resultSummary?.contains("本次返回") == true || search.resultSummary?.localizedCaseInsensitiveContains("returned") == true)
         XCTAssertFalse(search.resultSummary?.contains("50") == true, "Total hits are not returned hits")
         XCTAssertEqual(try JSONDecoder().decode(AgentToolActivity.self, from: JSONEncoder().encode(search)), search)
+    }
+
+    func testFailedToolSummaryOmitsRawJSON() {
+        let context = NativeToolExecutionContext(request: testRequest())
+        let failure = NativeToolActivityPresentation.activity(
+            id: "call",
+            name: "weibei_update_learning_memory",
+            arguments: [:],
+            context: context,
+            result: .init(text: #"{"error":"rejected"}"#, isError: true)
+        )
+        XCTAssertEqual(failure.resultSummary, context.request.language.text("未能完成", "Could not finish"))
+        XCTAssertFalse(failure.resultSummary?.contains("{") == true)
+        let remembered = NativeToolActivityPresentation.activity(
+            id: "call",
+            name: "weibei_update_learning_memory",
+            arguments: [:],
+            context: context,
+            result: .init(
+                text: #"{"memoryIDs":["a","b"]}"#,
+                details: ["appliedMemoryUpdate": ["memoryIDs": ["a", "b"], "summary": "{\"raw\":true}"]]
+            )
+        )
+        XCTAssertEqual(remembered.resultSummary, "已记住 2 条")
+        XCTAssertFalse(remembered.resultSummary?.contains("{") == true)
     }
 
     func testSearchDetailsSurviveStatusUpdates() throws {
@@ -1757,7 +1784,8 @@ final class NativeAgentRuntimeTests: XCTestCase {
 
     func testProviderRoutingCoversCatalog() {
         XCTAssertEqual(NativeProviderRouting.route(.deepseek).family, .openaiResponses)
-        XCTAssertEqual(NativeProviderRouting.route(.deepseek).webSearch, .responsesTool)
+        XCTAssertEqual(NativeProviderRouting.route(.deepseek).webSearch, .none)
+        XCTAssertEqual(NativeProviderRouting.route(.deepseek).defaultModel, "deepseek-flash")
         XCTAssertEqual(NativeProviderRouting.route(.anthropic).webSearch, .anthropicTool)
         XCTAssertEqual(NativeProviderRouting.route(.google).webSearch, .googleGrounding)
         XCTAssertEqual(NativeProviderRouting.route(.xai).family, .openaiResponses)
@@ -2069,6 +2097,59 @@ final class NativeAgentRuntimeTests: XCTestCase {
 
         let chatParts = OpenAIChatCompletionsProvider.imageParts(toolMessage?.images ?? [], caption: "")
         XCTAssertEqual(chatParts.first?["type"] as? String, "image_url")
+    }
+
+    func testGeminiSameToolCallsKeepDistinctIDs() throws {
+        let raw = """
+        {"responseId":"resp-1","candidates":[{"content":{"parts":[
+          {"functionCall":{"name":"weibei_course_read","args":{"page":31}}},
+          {"functionCall":{"name":"weibei_course_read","args":{"page":32}}}
+        ]},"finishReason":"STOP"}]}
+        """
+        let chunks = try GoogleGenerativeAIProvider.translate(raw)
+        let ids = chunks.compactMap { chunk -> String? in
+            if case let .toolCallDelta(_, id, _, _) = chunk { return id }
+            return nil
+        }
+        XCTAssertEqual(ids, ["resp-1#0", "resp-1#1"])
+
+        let request = NativeLLMRequest(model: "gemini-2.5-flash", messages: [
+            NativeModelMessage(
+                role: .assistant,
+                content: "",
+                toolCalls: [
+                    NativeToolCall(id: "resp-1#0", name: "weibei_course_read", arguments: "{\"page\":31}"),
+                    NativeToolCall(id: "resp-1#1", name: "weibei_course_read", arguments: "{\"page\":32}"),
+                ]
+            ),
+            NativeModelMessage(role: .tool, content: "第31页", toolCallID: "resp-1#0"),
+            NativeModelMessage(role: .tool, content: "第32页", toolCallID: "resp-1#1"),
+        ])
+        let contents = GoogleGenerativeAIProvider.payload(for: request)["contents"] as? [[String: Any]] ?? []
+        let calls = (contents[0]["parts"] as? [[String: Any]] ?? []).compactMap { $0["functionCall"] as? [String: Any] }
+        let responses = (contents[1]["parts"] as? [[String: Any]] ?? []).compactMap { $0["functionResponse"] as? [String: Any] }
+        XCTAssertEqual(calls.compactMap { $0["id"] as? String }, ["resp-1#0", "resp-1#1"])
+        XCTAssertEqual(calls.compactMap { $0["name"] as? String }, ["weibei_course_read", "weibei_course_read"])
+        XCTAssertEqual(responses.compactMap { $0["id"] as? String }, ["resp-1#0", "resp-1#1"])
+        XCTAssertEqual(responses.compactMap { $0["name"] as? String }, ["weibei_course_read", "weibei_course_read"])
+        XCTAssertEqual(contents[1]["role"] as? String, "user")
+    }
+
+    func testResponsesToolFollowUpKeepsCallNextToItsOutput() {
+        let input = OpenAIResponsesProvider.assembleInput([
+            NativeModelMessage(role: .user, content: "解释一下"),
+            NativeModelMessage(
+                role: .assistant,
+                content: "我先读一下这页。",
+                toolCalls: [NativeToolCall(id: "call_1", name: "weibei_course_read", arguments: "{}")]
+            ),
+            NativeModelMessage(role: .tool, content: "页内容", toolCallID: "call_1"),
+        ]).input
+        let kinds = input.map { item -> String in
+            if let type = item["type"] as? String { return type }
+            return item["role"] as? String ?? ""
+        }
+        XCTAssertEqual(kinds, ["user", "assistant", "function_call", "function_call_output"])
     }
 
     func testLiveModelListURLAndIDParsing() throws {

@@ -300,7 +300,7 @@ public enum CoursePortableStateError: LocalizedError, Equatable {
         case .invalidLearningMemoryScope:
             return "课程学习记忆的作用域不正确。"
         case .invalidCourseKnowledgeProfile:
-            return "课程知识档案包含无效或越界的内容。"
+            return "课程档案包含无效或越界的内容。"
         case .invalidRelation:
             return "课程状态包含无效的文稿与笔记关系。"
         case .invalidStudyLocation:

@@ -7,9 +7,40 @@ import ZIPFoundation
 import WeiBeiCore
 
 final class WorkspaceSafetyTests: XCTestCase {
+    private var asyncStoreFixture: (store: WorkspaceStore, root: URL)?
+
     override class func setUp() {
         super.setUp()
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+    }
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        precondition(Thread.isMainThread)
+        asyncStoreFixture = MainActor.assumeIsolated {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("WorkspaceAsyncSafety-\(UUID().uuidString)")
+            return (
+                WorkspaceStore(
+                    workspaceDirectory: root.appendingPathComponent(
+                        "workspace",
+                        isDirectory: true
+                    ),
+                    startsAtBlankEntries: true,
+                    startsCourseFileMaintenance: false
+                ),
+                root
+            )
+        }
+    }
+
+    override func tearDownWithError() throws {
+        let root = asyncStoreFixture?.root
+        asyncStoreFixture = nil
+        if let root {
+            try? FileManager.default.removeItem(at: root)
+        }
+        try super.tearDownWithError()
     }
 
     @MainActor
@@ -492,9 +523,9 @@ final class WorkspaceSafetyTests: XCTestCase {
 
     @MainActor
     func testGlobalMemoryDedupKeepsIdentifierAndRevision() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("global-memory-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let fixture = try XCTUnwrap(asyncStoreFixture)
+        let root = fixture.root
+        let store = fixture.store
         let session = try XCTUnwrap(store.createStudySession(courseID: nil))
         let target = WorkspaceStore.AgentConversationTarget(sessionID: session.id, workingDirectory: root, courseID: nil)
         var update = StudyAgentLearningUpdate(contextRevision: "r1",
@@ -559,16 +590,11 @@ final class WorkspaceSafetyTests: XCTestCase {
     @MainActor
     func testCourseProfileKeepsFullTextBeyondPreviousEntryBoundary() async throws {
         // 落盘回执要求课程携带状态真实写入，夹具必须有真实课程根目录。
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("WeiBeiCourseProfile-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try XCTUnwrap(asyncStoreFixture)
+        let root = fixture.root
         let library = root.appendingPathComponent("资料库", isDirectory: true)
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        let store = WorkspaceStore(
-            workspaceDirectory: root.appendingPathComponent("workspace", isDirectory: true),
-            startsAtBlankEntries: true,
-            startsCourseFileMaintenance: false
-        )
+        let store = fixture.store
         try await store.configureCourseLibraryAsync(at: library)
         let courseID = try await store.createCourseInLibraryAsync(title: "课程")
         let target = WorkspaceStore.AgentConversationTarget(
@@ -619,16 +645,11 @@ final class WorkspaceSafetyTests: XCTestCase {
     @MainActor
     func testLearningUpdateKeepsFullSessionSummaryAndNextSteps() async throws {
         // 落盘回执要求课程携带状态真实写入，夹具必须有真实课程根目录。
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("WeiBeiSessionSummary-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try XCTUnwrap(asyncStoreFixture)
+        let root = fixture.root
         let library = root.appendingPathComponent("资料库", isDirectory: true)
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        let store = WorkspaceStore(
-            workspaceDirectory: root.appendingPathComponent("workspace", isDirectory: true),
-            startsAtBlankEntries: true,
-            startsCourseFileMaintenance: false
-        )
+        let store = fixture.store
         try await store.configureCourseLibraryAsync(at: library)
         let courseID = try await store.createCourseInLibraryAsync(title: "课程")
         let session = try XCTUnwrap(store.createStudySession(courseID: courseID))
@@ -698,7 +719,7 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testManualSessionTitlePersistsAndSurvivesFirstQuestionNaming() async throws {
+    func testManualSessionTitlePersistsAndSurvivesFirstQuestionNaming() throws {
         let firstQuestion = AgentMessage(
             role: .user,
             text: "请帮我解释利率为什么变化",
@@ -712,7 +733,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         store.messages = [firstQuestion]
         store.syncActiveStudySession(titleSeed: firstQuestion.text)
         XCTAssertTrue(store.renameStudySession(session.id, title: "我的利率课"))
-        let saved = await store.flushPendingWorkspaceSaveAsync()
+        let saved = store.flushPendingWorkspaceSave()
         XCTAssertTrue(saved)
 
         let reopened = WorkspaceStore(workspaceDirectory: root)
@@ -729,7 +750,7 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testSemanticSessionTitleOnlyReplacesFirstTurnFallback() async throws {
+    func testSemanticSessionTitleOnlyReplacesFirstTurnFallback() throws {
         let firstQuestion = AgentMessage(
             role: .user,
             text: "请帮我解释利率为什么变化",
@@ -784,7 +805,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         store.messages = [firstQuestion]
         store.syncActiveStudySession(titleSeed: firstQuestion.text)
         XCTAssertTrue(store.applySemanticSessionTitle("利率变化机制", to: session.id))
-        let saved = await store.flushPendingWorkspaceSaveAsync()
+        let saved = store.flushPendingWorkspaceSave()
         XCTAssertTrue(saved)
 
         let reopened = WorkspaceStore(workspaceDirectory: root)
@@ -798,13 +819,43 @@ final class WorkspaceSafetyTests: XCTestCase {
         )
     }
 
-    func testStandardTextEditingShortcutsAreNotAppActions() {
-        for key in ["b", "f"] {
-            XCTAssertNil(AppShortcutCatalog.action(
-                matching: AppShortcutChord(key: key, modifiers: .command),
-                overrides: [:]
-            ))
+    func testReaderSearchResultNavigationAndContext() {
+        XCTAssertEqual(ReaderSearch.matchIndex(current: -1, step: 1, count: 3), 0)
+        XCTAssertEqual(ReaderSearch.matchIndex(current: -1, step: -1, count: 3), 2)
+        XCTAssertEqual(ReaderSearch.matchIndex(current: 0, step: -1, count: 3), 2)
+        XCTAssertEqual(ReaderSearch.matchIndex(current: 2, step: 1, count: 3), 0)
+        XCTAssertEqual(ReaderSearch.matchIndex(current: 0, step: 1, count: 0), 0)
+        let text = String(repeating: "前文", count: 40) + "购买 A\n接着购买 B" + String(repeating: "后文", count: 40)
+        let range = (text as NSString).range(of: "购买 B")
+        let preview = ReaderSearch.preview(in: text, around: range)
+        XCTAssertTrue(preview.contains("购买 B"))
+        XCTAssertFalse(preview.contains("\n"))
+        XCTAssertTrue(preview.hasPrefix("…"))
+        XCTAssertTrue(preview.hasSuffix("…"))
+        XCTAssertEqual(ReaderSearch.preview(in: text, around: NSRange(location: NSNotFound, length: 0)), "")
+        let adjacent = "购买 A，购买 B；购买 C"
+        let matches = ReaderSearch.matches(in: adjacent, query: "购买")
+        XCTAssertEqual(matches.count, 3)
+        for match in matches {
+            let snippet = ReaderSearch.snippet(in: adjacent, around: match)
+            XCTAssertEqual((snippet.text as NSString).substring(with: snippet.matchRange), "购买")
         }
+        let pdfTextLayer = "评价是否真实、是否足够多。\n.\n.\n.\n.\n平台经济学"
+        let pdfSnippet = ReaderSearch.snippet(in: pdfTextLayer, around: (pdfTextLayer as NSString).range(of: "真实"))
+        XCTAssertFalse(pdfSnippet.text.contains(". ."))
+        XCTAssertEqual((pdfSnippet.text as NSString).substring(with: pdfSnippet.matchRange), "真实")
+        XCTAssertEqual(ReaderSearch.matches(in: "苹果 APPLE", query: "apple").count, 1)
+    }
+
+    func testCommandFFindsAndCommandBRemainsAnEditingShortcut() {
+        XCTAssertEqual(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "f", modifiers: .command),
+            overrides: [:]
+        ), .searchInMaterial)
+        XCTAssertNil(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "b", modifiers: .command),
+            overrides: [:]
+        ))
     }
 
     func testStoredShortcutConflictIsPreservedAndNotExecutable() throws {

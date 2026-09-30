@@ -223,7 +223,7 @@ enum CourseOwnedFileError: LocalizedError {
         case .replacementTargetIsShared:
             "这份共享原件正被其他课程使用，不能替换；可以取消或改名保留两份。"
         case .backupFailed:
-            "无法安全备份现有笔记，魏碑没有覆盖文件。待写内容仍在当前会话中，请重试。"
+            "无法安全备份现有笔记，魏碑没有覆盖文件。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。"
         case .itemBusy:
             "这份文件正在进行另一项操作，请稍后重试。"
         case .verificationFailed:
@@ -465,7 +465,16 @@ final class WorkspaceStore: ObservableObject {
         }
     }
     @Published var showDailyInspiration = true
-    @Published var commandPalettePresented = false
+    @Published var commandPalettePresented = false {
+        didSet {
+            if !commandPalettePresented {
+                commandPaletteChatsOnly = false
+                commandPaletteQuery = ""
+            }
+        }
+    }
+    @Published var commandPaletteChatsOnly = false
+    @Published var commandPaletteQuery = ""
     var librarySearch = ""
     @Published private(set) var readerSourceHighlight = ""
     @Published private(set) var readerSourceHighlightPageIndex: Int?
@@ -475,6 +484,14 @@ final class WorkspaceStore: ObservableObject {
             readerSourceHighlight = ""
             readerSourceHighlightPageIndex = nil
         }
+    }
+
+    /// X8: 引用跳转留下的原文高亮，按 Esc 或点击文稿时清除。
+    /// 只作用于「点引用跳原文」的高亮；正常查找的高亮由查找浮层自己管理。
+    func clearReaderSourceHighlight() {
+        guard !readerSourceHighlight.isEmpty || readerSourceHighlightPageIndex != nil else { return }
+        readerSourceHighlight = ""
+        readerSourceHighlightPageIndex = nil
     }
     @Published var noteSearch = "" {
         didSet { if noteSearch != oldValue { noteSearchFound = nil } }
@@ -650,6 +667,9 @@ final class WorkspaceStore: ObservableObject {
     @Published private var unresolvedContentCommands: [TrackedNoteEditorCommand] = []
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
+    /// 备份落点。有值时这条提示留着，直到用户打开访达或被下一条提示换掉。
+    @Published var transientNoteStatusRevealURL: URL?
+    var pendingDeletionUndo: PendingDeletionUndo?
     @Published private var noteSelectionTransitionState = NoteSelectionTransitionState.idle
     /// 卡死逃生:切换等待若长时间停在 .saving(如编辑器命令未回执、快照循环不收敛),
     /// 降级为失败态,让底部状态条的重试入口与新的切换恢复可用。只改状态,不动数据。
@@ -694,7 +714,7 @@ final class WorkspaceStore: ObservableObject {
     /// macOS switch by `WeiBeiMotionScope`. Persisted in UserDefaults, not workspace.json.
     @Published var motionPreference: WeiBeiMotionPreference = .system
     @Published var adaptImportedDocumentColors = true
-    @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .preferred
     @Published var interfaceTextScale: WeiBeiTypography.TextScale = .standard
     @Published var courseWorkspacePresented = false
     @Published var courseWorkspaceCourseID: UUID?
@@ -941,13 +961,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     static func userFacingAgentFailureDetail(for error: Error) -> String? {
-        guard let targetError = error as? AgentConversationTargetError else {
-            return nil
-        }
-        let message = targetError.message.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        return message.isEmpty ? nil : message
+        guard let targetError = error as? AgentConversationTargetError else { return nil }
+        let trimmed = targetError.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private struct ResolvedImportedFileBookmark {
@@ -1775,7 +1791,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var activeStudySessionTitle: String {
-        activeStudySession?.title ?? ui("新学习会话", "New Study Session")
+        activeStudySession?.title ?? ui("新对话", "New chat")
     }
 
     var activeStudySessionScopeTitle: String {
@@ -1988,7 +2004,7 @@ final class WorkspaceStore: ObservableObject {
             restoreAgentReplyState(from: session)
             return
         }
-        let session = StudySession(title: ui("新学习会话", "New Study Session"))
+        let session = StudySession(title: ui("新对话", "New chat"))
         studySessions.append(session)
         sessionMessagePersistence.markLoaded(session.id)
         activeStudySessionID = session.id
@@ -2269,7 +2285,7 @@ final class WorkspaceStore: ObservableObject {
             }
         }) != nil else { return .rejected("会话已不存在，内容未写入。") }
         guard await flushPendingWorkspaceSaveAsync() else {
-            return NativeStorePersistReceipt(status: .failed, message: "建议尚未安全保存，内容仍在当前会话中。", action: action)
+            return NativeStorePersistReceipt(status: .failed, message: "这条建议还没写入磁盘。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。", action: action)
         }
         if !userRequested || missingCourse {
             return NativeStorePersistReceipt(status: .pending,
@@ -3161,7 +3177,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var selectedMaterialTitle: String {
-        selectedMaterialItem.map(displayTitle) ?? ui("未选择材料", "No material selected")
+        selectedMaterialItem.map(displayTitle) ?? ui("未选择文稿", "No document selected")
     }
 
     var agentMessageSourceTitle: String? {
@@ -3321,17 +3337,10 @@ final class WorkspaceStore: ObservableObject {
 
     var agentNoteTitle: String {
         if let note = activeNoteItem {
-            // 正文抬头优先于文件名：只要有正文就可能提供显示名；自定义名存在时不必读正文。
-            // 活动笔记的正文本就在内存（noteText），不会触发额外加载。
-            let hasCustomTitle = note.customDisplayTitle?
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            let body = hasCustomTitle ? "" : noteText(for: note)
-            let resolved = NoteTabDisplayTitle.resolve(
-                customTitle: note.customDisplayTitle,
-                noteTitle: note.title,
-                body: body
-            )
-            return resolved.isEmpty ? ui("未命名笔记", "Untitled note") : resolved
+            // 与笔记列表共用同一条显示名管道（含当前编辑缓冲），
+            // 编辑正文后标题栏与列表同步更新。
+            let title = noteListDisplayTitle(for: note)
+            return title.isEmpty ? ui("未命名笔记", "Untitled note") : title
         }
         if let item = selectedMaterialItem {
             return ui("\(displayTitle(for: item)) 的笔记", "Notes for \(displayTitle(for: item))")
@@ -3344,7 +3353,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentPromptScope: String {
-        hasSelectedMaterial ? ui("当前材料和当前笔记", "the current material and current note") : ui("当前笔记", "the current note")
+        hasSelectedMaterial ? ui("当前文稿和当前笔记", "the current document and current note") : ui("当前笔记", "the current note")
     }
 
     var agentInputPrompt: String {
@@ -3395,8 +3404,8 @@ final class WorkspaceStore: ObservableObject {
         item.title
     }
 
-    /// "选择其他笔记"列表的显示名，与浮动 tab 同口径：
-    /// 自定义名 > 正文抬头 > 文件名 > 正文前几个字。
+    /// "选择其他笔记"列表的显示名，标题栏与笔记列表共用同一条管道：
+    /// 自定义名 > 当前正文第一行 > 文件名。
     /// 文件操作和引用匹配仍使用原文件标题。
     func noteListDisplayTitle(for item: StudyItem) -> String {
         guard item.isNotebookNote else { return item.title }
@@ -3542,7 +3551,7 @@ final class WorkspaceStore: ObservableObject {
             )
         case .persistenceFailed:
             ui(
-                "当前笔记尚未安全保存，魏碑没有切换。请重试。",
+                "魏碑没有切换笔记。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                 "The current note was not safely saved, so WeiBei did not switch. Please retry."
             )
         }
@@ -4112,20 +4121,12 @@ final class WorkspaceStore: ObservableObject {
                         path: sourceURL
                     )
                     showImportantOperationError(ui(
-                        "“\(sourceURL.lastPathComponent)”未完成课程登记；原文件没有被移动或覆盖，但课程目录可能留有已写入副本。请检查课程目录后再重试。",
+                        "“\(sourceURL.lastPathComponent)”还没记到这门课里；原文件没有被移动或覆盖，但课程文件夹里可能已有写入的副本。请检查课程文件夹后再试。",
                         "“\(sourceURL.lastPathComponent)” was not fully registered in the course. The original file was not moved or overwritten, but a written copy may remain in the course folder. Check the course folder before trying again."
                     ))
                 }
             }
             courseFileOperationProgress = nil
-            if !imported.isEmpty {
-                showTransientNoteStatus(
-                    ui(
-                        "已把 \(imported.count) 个文件移入课程目录。",
-                        "Moved \(imported.count) file(s) into the course folder."
-                    )
-                )
-            }
             completion(imported)
         }
     }
@@ -4254,6 +4255,15 @@ final class WorkspaceStore: ObservableObject {
         }
         save()
         return true
+    }
+
+    /// R6: 读不出来的文稿在失败页提供「在访达中显示」，直接定位原文件。
+    func revealMaterialFileInFinder(_ url: URL) {
+#if targetEnvironment(macCatalyst)
+        CatalystDesktopWindow.shared.reveal(url)
+#else
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+#endif
     }
 
     func revealCourseFolder(containing itemID: String, in requestedCourseID: UUID? = nil) {
@@ -4687,9 +4697,9 @@ final class WorkspaceStore: ObservableObject {
         if draft.kind == .currentMaterial,
            let sourceItemID = draft.sourceItemID,
            let item = allItems.first(where: { $0.id == sourceItemID && $0.isCourseMaterial }) {
-            createNotebookNote(seed: .currentMaterial(item), title: title)
+            createNotebookNote(seed: .currentMaterial(item), title: title, keepsUserChosenFileName: true)
         } else {
-            createNotebookNote(seed: .blank, title: title, courseID: courseWorkspaceCourseID)
+            createNotebookNote(seed: .blank, title: title, courseID: courseWorkspaceCourseID, keepsUserChosenFileName: true)
         }
     }
 
@@ -4701,6 +4711,14 @@ final class WorkspaceStore: ObservableObject {
             }
             showLibrary = true
         }
+        if pane == .reader, !showReader {
+            revealDocumentPane(.reader)
+            return
+        }
+        if pane == .notes, !showNotes {
+            revealDocumentPane(.notes)
+            return
+        }
         if pane == .agent {
             if layout == .immersiveReading || layout == .immersiveWriting {
                 // Primary chat is immersive conversation, not a deleted overlay surface.
@@ -4709,6 +4727,9 @@ final class WorkspaceStore: ObservableObject {
                 if agentSurface != .selectionFloat {
                     agentSurface = .hidden
                 }
+            } else if !showAgent {
+                revealDocumentPane(.agent)
+                return
             }
         }
         collapseSelectionFloatIntoConversationIfVisible()
@@ -4786,13 +4807,20 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// ⌘J：按窗格角色在「只看文稿」和「三栏都打开」之间切换，不看左右位置。
+    /// 沉浸对话没有文稿栏，这个动作不适用。
     func toggleRightPane() {
-        guard layout.hasCollapsibleRightPane else { return }
-        recordNavigationPoint()
-        showRightPane.toggle()
-        clearUnpinnedFloatingSelection()
-        focus(showRightPane ? rightPaneRevealFocus : fallbackDocumentPaneFocus())
-        save()
+        guard layout != .immersiveConversation else { return }
+        let showingThree = layout.isDocumentThreePane && showReader && showAgent && showNotes
+        if showingThree {
+            recordNavigationPoint()
+            clearUnpinnedFloatingSelection()
+            paneState.setDocumentPanes(reader: true, agent: false, notes: false)
+            focus(.reader)
+            save()
+        } else {
+            setLayout(.documentAgentNotes)
+        }
     }
 
     func revealRightPane(focusing pane: PaneFocus = .notes) {
@@ -4830,7 +4858,11 @@ final class WorkspaceStore: ObservableObject {
             // Only assign when changed — pane visibility lives on paneState; avoid store thrash.
             applyLayoutMatchingThreePaneOrderIfNeeded()
         }
-        focus(isPaneVisible(role) ? role.focus : fallbackDocumentPaneFocus())
+        if isPaneVisible(role) {
+            focus(role.focus)
+        } else if let nextFocus = visibleDocumentPaneOrder.first?.focus {
+            focus(nextFocus)
+        }
         save()
     }
 
@@ -4931,10 +4963,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func fallbackDocumentPaneFocus() -> PaneFocus {
-        visibleDocumentPaneOrder.first?.focus ?? .reader
-    }
-
     func revealDocumentSearch() {
         if searchesNotes {
             guard canSearchCurrentDocument else { return }
@@ -4951,6 +4979,7 @@ final class WorkspaceStore: ObservableObject {
         if !showDocumentSearch || layout == .immersiveConversation || layout == .immersiveWriting {
             recordNavigationPoint()
         }
+        if !showDocumentSearch { paneState.resetReaderSearchSession() }
         if layout == .immersiveConversation || layout == .immersiveWriting {
             setLayout(.immersiveReading)
         }
@@ -4963,6 +4992,7 @@ final class WorkspaceStore: ObservableObject {
         if showDocumentSearch || !readerSearch.isEmpty {
             recordNavigationPoint()
         }
+        if !searchesNotes { paneState.endReaderSearchSession() }
         showDocumentSearch = false
         if searchesNotes { noteSearch = "" }
         else { readerSearch = "" }
@@ -5181,20 +5211,36 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
+    func presentAllConversationsSearch() {
+        commandPaletteChatsOnly = true
+        commandPaletteQuery = ""
+        commandPalettePresented = true
+    }
+
     @discardableResult
     func openAgentReplySource(_ source: AgentReplySource) -> Bool {
         if let discussionID = source.discussionID {
             if selectionAskThreads.contains(where: { $0.id == discussionID }) {
                 openSelectionAskThread(discussionID, revealMessageID: source.messageID)
-                return selectionChatError == nil
+                if selectionChatError != nil {
+                    reportMissingCourseDocument()
+                    return false
+                }
+                return true
             }
-            guard activateStudySession(discussionID, expectedCourseID: nil, expectedScopeNeedsReview: false) else { return false }
+            guard activateStudySession(discussionID, expectedCourseID: nil, expectedScopeNeedsReview: false) else {
+                reportMissingCourseDocument()
+                return false
+            }
             if let messageID = source.messageID {
                 NotificationCenter.default.post(name: .weiBeiScrollAgentToMessage, object: messageID)
             }
             return true
         }
-        guard let item = agentReplySourceItem(source) else { return false }
+        guard let item = agentReplySourceItem(source) else {
+            reportMissingCourseDocument()
+            return false
+        }
         let chatID = activeStudySessionID
         if let courseID = source.courseID {
             activateCourse(courseID)
@@ -5223,9 +5269,7 @@ final class WorkspaceStore: ObservableObject {
             opened = openCourseMaterial(item.id)
         }
         guard opened else {
-            showTransientNoteStatus(
-                ui("资料不存在或无法打开。", "Source not found or unavailable.")
-            )
+            reportMissingCourseDocument()
             return false
         }
 
@@ -5275,7 +5319,10 @@ final class WorkspaceStore: ObservableObject {
         if openSourceReference("来源：\(trimmed)") { return true }
         if openSourceReference(trimmed) { return true }
         // Fuzzy title match for Agent short labels like "货币金融学课程 HTML".
-        guard let item = resolveStudyItem(matchingCitationTitle: trimmed) else { return false }
+        guard let item = resolveStudyItem(matchingCitationTitle: trimmed) else {
+            reportMissingCourseDocument()
+            return false
+        }
         if item.isNotebookNote || kind == "note" {
             if layout == .immersiveConversation || layout == .immersiveReading {
                 setLayout(.immersiveWriting)
@@ -5285,8 +5332,18 @@ final class WorkspaceStore: ObservableObject {
             focus(.notes)
             return true
         }
-        openCourseMaterial(item.id)
+        guard openCourseMaterial(item.id) else {
+            reportMissingCourseDocument()
+            return false
+        }
         return true
+    }
+
+    private func reportMissingCourseDocument() {
+        showTransientNoteStatus(ui(
+            "这份文稿已不在课程里",
+            "This document is no longer in the course."
+        ))
     }
 
     func setLayout(_ layout: WorkspaceLayout) {
@@ -5299,6 +5356,9 @@ final class WorkspaceStore: ObservableObject {
         self.layout = layout
         if let order = presetOrder {
             threePaneOrder = order
+        }
+        if layout.isDocumentThreePane {
+            paneState.setDocumentPanes(reader: true, agent: true, notes: true)
         }
         let nextFocus: PaneFocus = switch layout {
         case .immersiveConversation:
@@ -5442,7 +5502,7 @@ final class WorkspaceStore: ObservableObject {
             surface: .selectionFloat,
             hasSelection: selectionContext != nil || keepFloatingSelectionForAnswer,
             hasAnchor: selectionAnchor != nil,
-            pinned: pinnedFloatingAgent,
+            pinned: false,
             keepOpen: keepFloatingSelectionForAnswer
         )
     }
@@ -5953,6 +6013,9 @@ final class WorkspaceStore: ObservableObject {
         completion: @escaping ([StudyItem]) -> Void = { _ in }
     ) {
         if courseLibraryRootURL == nil {
+            // 只在「从未配置」时建默认库；原库暂时连不上（URL 为 nil 但
+            // path/identity/bookmark 仍在）时这里是空操作，导入走下面的
+            // 「不可用」报错，绝不静默改绑。
             bootstrapDefaultLibraryIfNeeded()
         }
         guard let libraryRoot = courseLibraryRootURL else {
@@ -6119,7 +6182,6 @@ final class WorkspaceStore: ObservableObject {
             importedItems[index].isNotebookNote = true
             removeLinksWhereSourceItemID(importedItems[index].id)
             select(itemID: importedItems[index].id)
-            showTransientNoteStatus(ui("已打开双链笔记：\(importedItems[index].subtitle)", "Opened wiki note: \(importedItems[index].subtitle)"))
             save()
             return
         }
@@ -6157,7 +6219,6 @@ final class WorkspaceStore: ObservableObject {
             }
             courseDocumentSearchIndex.synchronize(allItems)
             select(itemID: item.id)
-            showTransientNoteStatus(ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)"))
         } catch {
             recordCourseLibraryUIFailure(
                 error,
@@ -6176,7 +6237,8 @@ final class WorkspaceStore: ObservableObject {
         seed: NotebookNoteSeed,
         title rawTitle: String? = nil,
         initialMarkdown: String? = nil,
-        courseID: UUID? = nil
+        courseID: UUID? = nil,
+        keepsUserChosenFileName: Bool = false
     ) -> StudyItem? {
         let sourceItem: StudyItem?
         let defaultTitle = suggestedNotebookTitle(for: seed)
@@ -6234,7 +6296,7 @@ final class WorkspaceStore: ObservableObject {
                         "\(CourseLibraryLayout.commonNotesDirectoryName)/\(url.lastPathComponent)"
                 )
             }
-            let item = StudyItem(
+            var item = StudyItem(
                 id: Self.makeImportedItemID(),
                 title: url.deletingPathExtension().lastPathComponent,
                 subtitle: url.lastPathComponent,
@@ -6244,11 +6306,16 @@ final class WorkspaceStore: ObservableObject {
                 isNotebookNote: true,
                 storage: resolvedStorage
             )
+            if keepsUserChosenFileName {
+                item.customDisplayTitle = title
+            }
             let markdown = initialMarkdown
                 ?? defaultNotebookNote()
             try markdown.write(to: url, atomically: true, encoding: .utf8)
             noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(Data(markdown.utf8))
-            headingSyncedNoteStemByItemID[item.id] = url.deletingPathExtension().lastPathComponent
+            if !keepsUserChosenFileName {
+                headingSyncedNoteStemByItemID[item.id] = url.deletingPathExtension().lastPathComponent
+            }
             importedItems.append(item)
             courseDocumentSearchIndex.synchronize(allItems)
             if let sourceItem {
@@ -6258,7 +6325,7 @@ final class WorkspaceStore: ObservableObject {
             save()
             let status = sourceItem == nil
                 ? ui("已新建空白笔记：\(url.lastPathComponent)", "Created blank note: \(url.lastPathComponent)")
-                : ui("已为当前资料新建笔记：\(url.lastPathComponent)", "Created note from current material: \(url.lastPathComponent)")
+                : ui("已为当前文稿新建笔记：\(url.lastPathComponent)", "Created a note for this document: \(url.lastPathComponent)")
             requestNoteSelectionTransition(to: item.id) { [weak self] in
                 guard let self else { return }
                 activeNotebookItemID = item.id
@@ -6318,13 +6385,14 @@ final class WorkspaceStore: ObservableObject {
         let reference: String
         if !selectionAttachments.isEmpty {
             reference = selectionAttachments
-                .map { quotedReferenceBlock(text: $0.text, sourceTitle: $0.ownerTitle) }
+                .map { quotedReferenceBlock(text: $0.text, sourceTitle: Self.userFacingReferenceTitle($0.ownerTitle)) }
                 .joined(separator: "\n\n")
         } else if let selectionContext, let selection, !selection.isEmpty {
-            reference = quotedReferenceBlock(text: selection, sourceTitle: selectionContext.ownerTitle)
+            reference = quotedReferenceBlock(text: selection, sourceTitle: Self.userFacingReferenceTitle(selectionContext.ownerTitle))
         } else {
             guard selectedMaterialItem != nil || activeNoteItem?.isNotebookNote == true else { return }
-            reference = ui("来源：\(currentSourceReferenceTitle)", "Source: \(currentSourceReferenceTitle)")
+            let title = Self.userFacingReferenceTitle(currentSourceReferenceTitle)
+            reference = ui("来源：\(title)", "Source: \(title)")
         }
 #if targetEnvironment(macCatalyst)
         UIPasteboard.general.string = reference
@@ -6332,6 +6400,17 @@ final class WorkspaceStore: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(reference, forType: .string)
 #endif
+    }
+
+    /// C9: ⌘⇧C 的输出是给人看的，剥掉内部定位用的「章节标识」段（文件内位置 ID）。
+    /// 内部引用标记（Agent 来源、选区锚点）不走这里，仍保留完整标题用于跳转。
+    nonisolated static func userFacingReferenceTitle(_ title: String) -> String {
+        guard let range = title.range(
+            of: #"(?:，章节标识：\s*[A-Za-z0-9._/#%+-]+|,\s*section\s*(?:id|identifier):?\s*[A-Za-z0-9._/#%+-]+)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) else { return title }
+        return title.replacingCharacters(in: range, with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func updateSelection(_ text: String, source: SelectionSource, anchor: SelectionPopoverAnchor? = nil, ownerTitle: String? = nil, isEditable: Bool = true, documentAnchor: SelectionDocumentAnchor? = nil) {
@@ -6360,8 +6439,6 @@ final class WorkspaceStore: ObservableObject {
             ownerTitle: resolvedOwnerTitle, itemID: selectionItemID, isEditable: isEditable,
             documentAnchor: documentAnchor)
         updateAutomaticSelection(composerSelection)
-        // The open floating conversation keeps its own original passage.
-        guard !pinnedFloatingAgent else { return }
         // Multi-pane and immersive both get the selection capsule when there is an anchor
         // (previously suppressed whenever the chat column was open — looked "broken").
         let shouldRevealSelectionPrompt = anchor != nil
@@ -6415,6 +6492,7 @@ final class WorkspaceStore: ObservableObject {
 
         invalidateAgentContext()
         let nextSelection = composerSelection
+        interaction.rebaseSelectionNoteDraft(from: selectionContext, to: nextSelection)
         // Continuous fields update immediately so the capsule tracks like a native selection tool.
         // Only agentSurface show/hide keeps a one-shot panel spring.
         selectionContext = nextSelection
@@ -8614,7 +8692,7 @@ final class WorkspaceStore: ObservableObject {
         profile.updatedAt = now
         courseKnowledgeProfiles[profileIndex] = profile
         dirtyPortableCourseIDs.insert(courseID)
-        return NativeStorePersistReceipt(status: .saved, message: "已写入课程知识档案", profileUpdate: applied)
+        return NativeStorePersistReceipt(status: .saved, message: "已写入课程档案", profileUpdate: applied)
     }
 
     private enum OptionalRecordID {
@@ -8758,7 +8836,7 @@ final class WorkspaceStore: ObservableObject {
         if rollbackPersisted {
             return NativeStorePersistReceipt(status: .failed, message: "魏碑没有写入这次学习记忆，已恢复更新前的内容，同时发生的修改不受影响。请重试。")
         }
-        return NativeStorePersistReceipt(status: .failed, message: "魏碑无法确认这次学习记忆的最终磁盘状态。当前会话仍保留更新前的内容，请不要关闭并重试。")
+        return NativeStorePersistReceipt(status: .failed, message: "魏碑无法确认这次学习记忆是否已经写入磁盘。魏碑里仍是更新前的内容；请先不要退出，然后重试。")
     }
 
     func persistNativeCourseProfileUpdate(
@@ -8785,7 +8863,7 @@ final class WorkspaceStore: ObservableObject {
         if persisted && coursePersisted {
             return NativeStorePersistReceipt(
                 status: .saved,
-                message: "已写入课程知识档案",
+                message: "已写入课程档案",
                 profileUpdate: applied
             )
         }
@@ -8848,7 +8926,7 @@ final class WorkspaceStore: ObservableObject {
         if rollbackPersisted {
             return NativeStorePersistReceipt(status: .failed, message: "魏碑没有写入这次课程档案，已恢复更新前的内容，同时发生的修改不受影响。请重试。")
         }
-        return NativeStorePersistReceipt(status: .failed, message: "魏碑无法确认这次课程档案的最终磁盘状态。当前会话仍保留更新前的内容，请不要关闭并重试。")
+        return NativeStorePersistReceipt(status: .failed, message: "魏碑无法确认这次课程档案是否已经写入磁盘。魏碑里仍是更新前的内容；请先不要退出，然后重试。")
     }
 
     func isLearningMemoryResolved(_ memoryID: String, in scope: LearningMemoryScope) -> Bool {
@@ -9064,10 +9142,9 @@ final class WorkspaceStore: ObservableObject {
                 addSelectionAttachment(context)
                 floatingSelectionPrompt = context.label(language: interfaceLanguage)
             }
-            // Prefer keeping float if user is mid answer; otherwise collapse into chat.
+            // An open question stays until the answer finishes.
             if !keepFloatingSelectionForAnswer, agentSurface == .selectionFloat {
                 agentSurface = .hidden
-                pinnedFloatingAgent = false
             }
             if !keepFloatingSelectionForAnswer {
                 selectionAnchor = nil
@@ -9085,11 +9162,12 @@ final class WorkspaceStore: ObservableObject {
         selectionChatRevealMessageID = revealMessageID
         do { try ensureSelectionChat(thread) }
         catch { selectionChatError = error.localizedDescription }
-        withAnimation(WeiBeiMotion.panel) {
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
             activeSelectionAskThreadID = thread.id
             floatingSelectionPrompt = thread.ownerTitle
             keepFloatingSelectionForAnswer = true
-            // Do not force-pin on reopen — pin is an explicit user choice.
             agentSurface = .selectionFloat
             if let anchor {
                 selectionAnchor = anchor
@@ -9156,6 +9234,28 @@ final class WorkspaceStore: ObservableObject {
         return selectionAskThreads.filter { $0.itemID == itemID }
     }
 
+    /// Underlines and the「已问」menu count only threads that have actually sent a message.
+    /// Opening「问」creates an empty thread; that in-use empty thread stays off the marks.
+    func markedSelectionAskThreads(forItemID itemID: String?) -> [SelectionAskThread] {
+        selectionAskThreads(forItemID: itemID).filter { !$0.messageIDs.isEmpty }
+    }
+
+    /// Removes the selection-ask mark and its own chat. The parent conversation is left in place.
+    func deleteSelectionAskThread(_ id: UUID) {
+        guard let thread = selectionAskThreads.first(where: { $0.id == id }) else { return }
+        let ownsDedicatedChat = thread.parentSessionID != id
+            && studySessions.contains(where: { $0.id == id })
+        let session = ownsDedicatedChat ? studySessions.first(where: { $0.id == id }) : nil
+        if ownsDedicatedChat {
+            deleteStudySession(id)
+        } else {
+            selectionAskThreads.removeAll { $0.id == id }
+            if activeSelectionAskThreadID == id { dismissFloatingSelectionAgent() }
+            save()
+        }
+        armDeletionUndo(.selectionAsk(thread: thread, session: session))
+    }
+
     func selectionAskThread(matchingText text: String) -> SelectionAskThread? {
         let normalized = SelectionAttachmentMerge.normalized(text)
         guard !normalized.isEmpty else { return nil }
@@ -9212,15 +9312,20 @@ final class WorkspaceStore: ObservableObject {
         focus(.notes)
     }
 
+    /// A1: 回车与 ⌘↩ 只负责发送；「当前对话正在回答或正在停止」时直接返回，
+    /// 绝不把一次提交变成取消。停止只走 `cancelAgentRequest(in:)`。
     func submitAgentDraft(targetCourseID: UUID? = nil, sessionID: UUID? = nil) {
         guard let id = sessionID ?? activeStudySessionID else { return }
-        if isAgentRunning(in: id) {
-            cancelAgentRequest(in: id)
-            return
-        }
+        guard !isAgentRunning(in: id), agentRuns[id]?.isStoppingAgent != true else { return }
         guard !composerDraft(for: id).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let selection = selectionAskThreads.first(where: { $0.id == id }).map(selectionChatContext)
         askAgent(replayingSelections: selection.map { [$0] }, targetCourseID: targetCourseID, targetSessionID: id)
+    }
+
+    /// 命令面板「停止回答」的显式入口：只停止当前会话的回答，不碰草稿。
+    func stopActiveAgentChat() {
+        guard let id = activeStudySessionID else { return }
+        cancelAgentRequest(in: id)
     }
 
     @discardableResult
@@ -9447,7 +9552,8 @@ final class WorkspaceStore: ObservableObject {
                 lastFailedAgentQuestion = question
             }
             if !preserveComposerDraft {
-                replaceComposerDraft(question, for: session.id)
+                // A2: 本地准备失败也只在输入框为空时回填，不覆盖用户正在写的新草稿。
+                restoreComposerDraftIfEmpty(question, for: session.id)
             }
             focusedPane = .agent
             if appendUserMessage {
@@ -9652,7 +9758,7 @@ final class WorkspaceStore: ObservableObject {
         let sentMaterialTitle = replayContext?.materialTitle ?? sentSelections.first(where: { $0.source == .document })?.ownerTitle
             ?? (sentMaterialItem?.id == selectedMaterialItem?.id && sentMaterialItem != nil
                 ? currentSourceReferenceTitle : sentMaterialItem.map(displayTitle))
-            ?? ui("未选择材料", "No material selected")
+            ?? ui("未选择文稿", "No document selected")
         let sentMaterialItemID = sentMaterialItem?.id
         let sentNoteTitle = replayContext?.noteTitle ?? sentSelections.first(where: { $0.source == .note })?.ownerTitle
             ?? sentNoteItem.map(displayTitle) ?? ui("当前笔记", "Current Note")
@@ -9703,7 +9809,7 @@ final class WorkspaceStore: ObservableObject {
             agentStreamingDisplayPump.stopAndReset()
             agentVisualizationIDsUpdatingHistory = []
             agentStreaming.reset()
-            agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
+            agentStreaming.activityText = ui("正在准备这门课", "Preparing this course")
             defer {
                 if activeAgentRequestID == requestID {
                     activeAgentRequestID = nil
@@ -9758,7 +9864,9 @@ final class WorkspaceStore: ObservableObject {
                 let assistantMessage = AgentMessage(
                     id: previousReply?.id ?? UUID(),
                     role: .assistant,
-                    text: "",
+                    // A3: 重新生成在收到第一个字之前不清空原回答；流式首字落地时才替换。
+                    text: previousReply?.text ?? "",
+                    contentBlocks: previousReply?.contentBlocks ?? [],
                     source: sourceTitle,
                     backend: .native,
                     completionState: .generating,
@@ -9796,7 +9904,12 @@ final class WorkspaceStore: ObservableObject {
                 }
 
                 if questionOverride == nil {
-                    replaceComposerDraft("", for: target.sessionID)
+                    // 只清掉这次发出的问题。准备期间用户已经写下的新草稿必须留下。
+                    let current = composerDraft(for: target.sessionID)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if current.isEmpty || current == question {
+                        replaceComposerDraft("", for: target.sessionID)
+                    }
                 }
                 if activeStudySessionID == target.sessionID {
                     lastFailedAgentQuestion = nil
@@ -9813,7 +9926,7 @@ final class WorkspaceStore: ObservableObject {
                         }
                     }
                     // Opening another conversation pane does not dismiss the user's floating answer.
-                    if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
+                    if keepFloatingSelectionForAnswer {
                         agentSurface = .selectionFloat
                     } else if shouldClearSentDocumentSelection {
                         clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
@@ -9929,7 +10042,24 @@ final class WorkspaceStore: ObservableObject {
                        reply.toolTrace.isEmpty,
                        let message = studySessions.first(where: { $0.id == target.sessionID })?.messages.first(where: { $0.id == messageID }),
                        message.toolActivities.isEmpty, message.actions.isEmpty, message.memoryUpdate == nil, message.profileUpdate == nil {
-                        removeAgentMessage(messageID, from: target.sessionID)
+                        // A6: 模型返回空内容时保留一条可重试的中断消息，不再整条删除；
+                        // 重新生成收到空回复则恢复原回答（与 A3 同一处）。
+                        if let previousReply {
+                            _ = updateAgentMessage(messageID, in: target.sessionID) {
+                                $0.text = previousReply.text
+                                $0.contentBlocks = previousReply.contentBlocks
+                                $0.completionState = .interrupted
+                                $0.failureKind = .emptyReply
+                                $0.retryQuestion = question
+                            }
+                        } else {
+                            _ = updateAgentMessage(messageID, in: target.sessionID) {
+                                $0.text = ui("模型没有返回内容", "The model returned no content")
+                                $0.completionState = .interrupted
+                                $0.failureKind = .emptyReply
+                                $0.retryQuestion = question
+                            }
+                        }
                     }
                 }
                 associateStudySession(
@@ -9963,13 +10093,13 @@ final class WorkspaceStore: ObservableObject {
                         restoreDraft: questionOverride == nil
                     )
                 }
-                if questionOverride == nil {
-                    replaceComposerDraft(question, for: target.sessionID)
+                // A2: 用户主动停止（stopAgent 已置 isStoppingAgent）不回填旧问题；
+                // 其他取消仅在输入框为空时回填。
+                let userStopped = agentRuns[target.sessionID]?.isStoppingAgent == true
+                if questionOverride == nil, !userStopped {
+                    restoreComposerDraftIfEmpty(question, for: target.sessionID)
                 }
-                if questionOverride == nil,
-                   activeStudySessionID == target.sessionID,
-                   agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    agentDraft = question
+                if questionOverride == nil, !userStopped, activeStudySessionID == target.sessionID {
                     lastAgentFailureKind = .cancelled
                 }
                 return
@@ -9984,7 +10114,7 @@ final class WorkspaceStore: ObservableObject {
                         )
                     )
                 }
-                // Always restore the failed question so composer matches the failure copy.
+                // A2: the failed question comes back only when the composer is empty.
                 let kind = AgentFailureKind.classify(error)
                 if didStartModelRequest {
                     agentAuthenticationStatus.recordFailure(
@@ -9994,12 +10124,10 @@ final class WorkspaceStore: ObservableObject {
                     )
                 }
                 if questionOverride == nil {
-                    replaceComposerDraft(question, for: target.sessionID)
+                    // A2: 失败时仅在输入框为空时回填上一问。
+                    restoreComposerDraftIfEmpty(question, for: target.sessionID)
                 }
                 if activeStudySessionID == target.sessionID {
-                    if questionOverride == nil {
-                        agentDraft = question
-                    }
                     focusedPane = .agent
                     lastAgentFailureKind = kind
                     lastFailedAgentQuestion = question
@@ -10019,8 +10147,8 @@ final class WorkspaceStore: ObservableObject {
                         restoreDraft: questionOverride == nil
                     )
                 } else if let previousReply {
+                    // A3: 重新生成在消息创建前就失败时，原回答保持原样，只标中断、失败原因和重试。
                     _ = updateAgentMessage(previousReply.id, in: target.sessionID) {
-                        $0.text = failureText
                         $0.completionState = .interrupted
                         $0.failureKind = kind
                         $0.retryQuestion = question
@@ -10074,22 +10202,20 @@ final class WorkspaceStore: ObservableObject {
             $0.failureKind = kind
         }
         if restoreDraft, let question = updated?.retryQuestion {
-            replaceComposerDraft(question, for: chatID)
+            // A2: 回填只在输入框为空时发生。
+            restoreComposerDraftIfEmpty(question, for: chatID)
         }
         settleAgentStreamingDisplayImmediately()
         guard activeStudySessionID == chatID else { return }
         lastAgentFailureKind = kind
         lastFailedAgentQuestion = updated?.retryQuestion
-        if restoreDraft,
-           agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           let question = updated?.retryQuestion {
-            agentDraft = question
-        }
     }
 
+    /// A2: 用户主动停止（停止按钮、命令面板「停止回答」）不回填旧问题，
+    /// 输入框保持用户当下的状态。A1 之后这是停止的唯一 UI 入口。
     func cancelAgentRequest(in sessionID: UUID) {
         guard let run = agentRuns[sessionID] else { return }
-        AgentConversationExecution.$run.withValue(run) { stopAgent(restoreDraft: true) }
+        AgentConversationExecution.$run.withValue(run) { stopAgent(restoreDraft: false) }
     }
 
     func cancelAgentRequest(restoreDraft: Bool = true) {
@@ -10115,14 +10241,15 @@ final class WorkspaceStore: ObservableObject {
     private func stopAgent(restoreDraft: Bool, completion: (@MainActor () -> Void)? = nil) {
         let run = agentRun
         guard !run.isStoppingAgent, let requestTask = run.agentRequestTask else { return }
+        // 先标记，取消处理里才能分清「用户主动停止」和别的取消。
+        run.isStoppingAgent = true
+        objectWillChange.send()
         if let requestID = run.activeAgentRequestID,
            let messageID = run.activeAgentReplyMessageID,
            let chatID = run.chatID {
             interruptAgentReply(requestID: requestID, messageID: messageID, chatID: chatID, kind: .cancelled, restoreDraft: restoreDraft)
         }
         requestTask.cancel()
-        run.isStoppingAgent = true
-        objectWillChange.send()
         run.agentStopTask = Task { @MainActor [weak self] in
             await run.runtime?.cancel()
             await requestTask.value
@@ -10150,12 +10277,16 @@ final class WorkspaceStore: ObservableObject {
             replaceAgentAnswer(reply, in: id)
             return
         }
-        replaceComposerDraft(cleaned, for: id)
+        // A2: 重试不再把旧问题写回输入框，直接按原问题重新发送；用户正在写的草稿保持不动。
         if id == activeStudySessionID {
             lastFailedAgentQuestion = nil
             lastAgentFailureKind = nil
         }
-        submitAgentDraft(targetCourseID: targetCourseID, sessionID: id)
+        _ = askAgent(
+            targetCourseID: targetCourseID,
+            questionOverride: cleaned,
+            targetSessionID: id
+        )
     }
 
     func regenerateLastAssistantReply() {
@@ -10173,7 +10304,7 @@ final class WorkspaceStore: ObservableObject {
             [SelectionContext(id: thread.id, text: thread.selectionText, source: thread.source,
                 ownerTitle: thread.ownerTitle, itemID: thread.itemID, isEditable: thread.source == .note)]
         } ?? []
-        replaceComposerDraft(question, for: sessionID)
+        // A2: 重新生成不再覆盖输入框草稿；问题经 questionOverride 传入。
         _ = askAgent(reusingLastUserMessage: true, replayingSelections: selections,
             targetCourseID: reply.origin?.courseID, questionOverride: question, targetSessionID: sessionID)
     }
@@ -10269,7 +10400,7 @@ final class WorkspaceStore: ObservableObject {
             case "weibei_update_learning_memory":
                 base = ui("正在整理学习进展", "Updating study progress")
             case "weibei_course_profile_update":
-                base = ui("正在更新课程知识档案", "Updating course profile")
+                base = ui("正在更新课程档案", "Updating course profile")
             case "weibei_note_proposal":
                 base = ui("正在整理写入建议", "Preparing a note proposal")
             default:
@@ -11033,9 +11164,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true) {
-        // Never kill the float while a selection answer is streaming / pinned for reading.
-        if keepFloatingSelectionForAnswer
-            || (pinnedFloatingAgent && agentSurface == .selectionFloat && isAgentRunningInActiveChat) {
+        // An answer still arriving stays up. A finished window closes on an empty selection.
+        if keepFloatingSelectionForAnswer && isFloatingChatRunning {
             return
         }
         if !keepContext {
@@ -11053,35 +11183,36 @@ final class WorkspaceStore: ObservableObject {
                 invalidateAgentContext()
             }
 
+            interaction.rebaseSelectionNoteDraft(from: selectionContext, to: nil)
             selectionContext = nil
             selectionAnchor = nil
             let clearedPrompt = ui("当前选区", "Current selection")
             if floatingSelectionPrompt != clearedPrompt {
                 floatingSelectionPrompt = clearedPrompt
             }
-            pinnedFloatingAgent = false
+            keepFloatingSelectionForAnswer = false
             if agentSurface == .selectionFloat {
                 agentSurface = .hidden
             }
             return
         }
-        guard !pinnedFloatingAgent else { return }
         if selectionAnchor == nil, agentSurface != .selectionFloat {
             return
         }
         selectionAnchor = nil
+        keepFloatingSelectionForAnswer = false
         if agentSurface == .selectionFloat {
             agentSurface = .hidden
         }
     }
 
     private func collapseSelectionFloatIntoConversationIfVisible() {
-        // Keep dual-surface answer: do not auto-collapse float into chat while answering.
-        guard !keepFloatingSelectionForAnswer else { return }
+        // An answer still arriving stays beside the passage.
+        guard !(keepFloatingSelectionForAnswer && isFloatingChatRunning) else { return }
         guard isConversationSurfaceVisible, agentSurface == .selectionFloat else { return }
         agentSurface = .hidden
         selectionAnchor = nil
-        pinnedFloatingAgent = false
+        keepFloatingSelectionForAnswer = false
     }
 
     private func scheduleCourseNoteLoad(_ item: StudyItem) {
@@ -11247,7 +11378,7 @@ final class WorkspaceStore: ObservableObject {
                 // P0 降级标记：读盘失败且无草稿，展示的是模板而非正文。
                 setNoteFileError(
                     ui(
-                        "无法读取笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。",
+                        "读不出笔记文件，所以这里只显示空白模板；已暂停写回，以免盖掉磁盘上的内容。",
                         "The note file could not be read, so a template is shown instead of the note body. Automatic write-back is paused to protect the on-disk content."
                     ),
                     for: item.id
@@ -12045,7 +12176,7 @@ final class WorkspaceStore: ObservableObject {
                 extra: "outcome=failed generation=\(generation)"
             )
             noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.coursePortableStateUnsaved, ui(
-                "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                "这门课的记录没有成功保存。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                 "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
             ), reason: error.localizedDescription))
             return false
@@ -12185,17 +12316,17 @@ final class WorkspaceStore: ObservableObject {
             switch failure {
             case .portableState(let detail):
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.coursePortableStateUnsaved, ui(
-                    "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                    "这门课的记录没有成功保存。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
                 ), reason: detail))
             case .workspace(let detail):
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.workspaceChangesUnwritten, ui(
-                    "课程更改尚未写入磁盘。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                    "这门课的更改还没写入磁盘。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "Course changes were not saved to disk. This change remains in the current session but is not safely stored yet; do not close it, and retry."
                 ), reason: detail))
             case .rollbackConflict:
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.courseStateConcurrentConflict, ui(
-                    "课程状态提交时检测到并发变更，魏碑已停止覆盖。本次修改仍在当前会话中；请先处理冲突，再重试。",
+                    "保存时发现另一处也在修改，魏碑已停止覆盖。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                     "A concurrent change was detected while committing course state, so WeiBei stopped overwriting. This change remains in the current session; resolve the conflict, then retry."
                 )))
             case .stale:
@@ -12212,12 +12343,12 @@ final class WorkspaceStore: ObservableObject {
         sessionMessagePersistence.noteSuccessfulPersist(writes: prepared.request.sessionMessageWrites, deletions: prepared.request.sessionMessageDeletions)
         if !oversizedPortableCourseIDs.isEmpty {
             reportWorkspaceSaveFailure(.coursePortableStateOversized, ui(
-                "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
+                "工作台内容已保存，但这门课的记录超过 32 MB；课程文件夹里的原记录保持不变。请精简对话或未写入的草稿后再试。",
                 "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
             ))
         } else if !blockedPortableCourseIDs.isEmpty {
             reportWorkspaceSaveFailure(.coursePortableStateBlocked, ui(
-                "工作区内容已保存，但课程文件夹中的课程状态无法安全更新；原状态已保留。请处理冲突或损坏后重试。",
+                "工作台内容已保存，但课程文件夹里的课程记录无法安全更新；原记录已保留。请处理冲突或损坏后再试。",
                 "The workspace was saved, but the course state in the course folder could not be updated safely. The original state was preserved. Resolve the conflict or damage, then retry."
             ))
         } else {

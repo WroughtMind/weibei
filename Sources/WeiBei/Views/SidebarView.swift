@@ -4,7 +4,7 @@ import WeiBeiCore
 struct SidebarView: View {
     let store: WorkspaceStore
     @ObservedObject var model: CourseSidebarModel
-    @FocusState private var librarySearchFocused: Bool
+    @State private var librarySearchFocused = false
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
     @State private var courseToRename: Course?
     @State private var renameCourseTitle = ""
@@ -49,7 +49,7 @@ struct SidebarView: View {
             SidebarCourseNameSheet(
                 store: store,
                 heading: ui("重命名课程", "Rename Course"),
-                detail: ui("只修改显示名称，资料与笔记保持原位。", "Only the display title changes; files stay where they are."),
+                detail: ui("只修改显示名称，文稿与笔记保持原位。", "Only the display title changes; files stay where they are."),
                 confirmTitle: ui("保存", "Save"),
                 title: $renameCourseTitle,
                 cancel: { courseToRename = nil },
@@ -102,22 +102,18 @@ struct SidebarView: View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
                 .weiBeiText(10.5, weight: .medium)
-                .foregroundStyle(librarySearchFocused
-                    ? WeiBeiTheme.link.opacity(0.72)
-                    : WeiBeiTheme.placeholderInk)
-            TextField(
-                "",
+                .foregroundStyle(librarySearchFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.placeholderInk)
+            WeiBeiSearchField(
                 text: Binding(
                     get: { model.query },
                     set: model.updateQuery
                 ),
-                prompt: Text(ui("搜索课程资料与笔记", "Search course materials and notes"))
-                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+                prompt: ui("搜索课程文稿与笔记", "Search course documents and notes"),
+                isFocused: $librarySearchFocused,
+                drawsChrome: false,
+                chromeHeight: 28
             )
-            .textFieldStyle(.plain)
-            .focused($librarySearchFocused)
-            .foregroundColor(WeiBeiTheme.ink)
-            .weiBeiText(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .weibeiInputSurface(
@@ -185,7 +181,7 @@ struct CourseSidebarList: View {
                         itemRow(row, compact: false, accent: nil, opensNotebook: false)
                     }
                 } header: {
-                    SidebarSectionHeader(title: ui("独立资料", "Unassigned Materials"))
+                    SidebarSectionHeader(title: ui("通用资料", "General materials"))
                 }
             }
 
@@ -252,7 +248,8 @@ struct CourseSidebarList: View {
 
         if expanded {
             SidebarCourseGroupHeader(
-                title: ui("资料", "Materials"),
+                title: ui("文稿", "Documents"),
+                language: model.interfaceLanguage,
                 systemImage: "doc.text",
                 count: row.materials.count,
                 accent: accent,
@@ -268,8 +265,8 @@ struct CourseSidebarList: View {
 
             if row.materials.isEmpty {
                 SidebarEmptyRow(
-                    title: ui("暂无资料", "No materials"),
-                    actionTitle: ui("导入资料…", "Import…"),
+                    title: ui("暂无文稿", "No documents"),
+                    actionTitle: ui("导入文稿…", "Import…"),
                     action: { store.importCourseMaterialsFromPanel(courseID: course.id) }
                 )
                 .id("\(course.id.uuidString)-materials-empty")
@@ -283,6 +280,7 @@ struct CourseSidebarList: View {
 
             SidebarCourseGroupHeader(
                 title: ui("笔记", "Notes"),
+                language: model.interfaceLanguage,
                 systemImage: "note.text",
                 count: row.notes.count,
                 accent: accent,
@@ -339,6 +337,7 @@ struct CourseSidebarList: View {
                     Button { open(item, opensNotebook: opensNotebook) } label: {
                         LibraryRow(
                             item: item,
+                            subtitle: store.displaySubtitle(for: item),
                             resolvedTitle: row.resolvedTitle,
                             tags: row.tags,
                             selected: selected,
@@ -433,7 +432,7 @@ struct CourseSidebarList: View {
             } label: {
                 Text(opensNotebook
                     ? ui("删除笔记…", "Delete Note…")
-                    : ui("删除资料…", "Delete Material…"))
+                    : ui("删除文稿…", "Delete document…"))
             }
         }
     }
@@ -442,10 +441,13 @@ struct CourseSidebarList: View {
         if item.isSample {
             store.select(itemID: item.id)
             store.showLibrary = false
-        } else if opensNotebook {
-            store.openCourseNote(item.id)
-        } else {
-            store.openCourseMaterial(item.id)
+            return
+        }
+        let opened = opensNotebook
+            ? store.openCourseNote(item.id)
+            : store.openCourseMaterial(item.id)
+        if !opened {
+            store.revealCourseFolder(containing: item.id)
         }
     }
 
@@ -512,6 +514,7 @@ private struct SidebarEmptyRow: View {
 
 private struct SidebarCourseGroupHeader: View {
     let title: String
+    let language: WeiBeiInterfaceLanguage
     let systemImage: String
     let count: Int
     let accent: Color
@@ -550,8 +553,8 @@ private struct SidebarCourseGroupHeader: View {
                 .buttonStyle(.plain)
                 .onHover { hoveringAdd = $0 }
                 .foregroundStyle(accent.opacity(0.82))
-                .accessibilityLabel(Text("添加\(title)"))
-                .help("添加\(title)")
+                .accessibilityLabel(Text(language.text("添加\(title)", "Add \(title)")))
+                .help(language.text("添加\(title)", "Add \(title)"))
             }
         }
         .frame(height: 18)
@@ -808,6 +811,7 @@ private struct NotebookRenameRow: View {
 
 private struct LibraryRow: View {
     let item: StudyItem
+    let subtitle: String
     /// 解析后的显示名（自定义名 / 正文抬头）；nil 时显示文件名。
     let resolvedTitle: String?
     let tags: [String]
@@ -828,7 +832,7 @@ private struct LibraryRow: View {
                     .weiBeiText(compact ? 12.5 : 13, weight: compact ? .medium : .regular)
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.ink)
-                Text(item.subtitle)
+                Text(subtitle)
                     .font(compact ? .system(size: 10.5) : .caption)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)

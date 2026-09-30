@@ -58,6 +58,24 @@ extension WorkspaceStore {
         excerptBookPresented = true
     }
 
+    func deleteExcerpt(_ recordID: UUID) {
+        guard let index = selectionRemarkRecords.firstIndex(where: { $0.id == recordID }) else { return }
+        let record = selectionRemarkRecords.remove(at: index)
+        if excerptBookTargetRecordID == recordID { excerptBookTargetRecordID = nil }
+        if selectionContext?.id == recordID { dismissFloatingSelectionAgent() }
+        save()
+        armDeletionUndo(.excerpt(record: record, index: index))
+    }
+
+    func insertExcerptIntoCurrentNote(_ record: SelectionRemarkRecord) {
+        var block = "\n\n\(quotedReferenceBlock(text: record.selectionText, sourceTitle: record.ownerTitle))"
+        let note = record.remarkText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !note.isEmpty {
+            block += "\n\n\(note)\n"
+        }
+        insertMarkdownSnippet(block)
+    }
+
     func updateExcerptRemark(_ recordID: UUID, text: String) async -> Bool {
         guard let index = selectionRemarkRecords.firstIndex(where: { $0.id == recordID }) else { return false }
         selectionRemarkRecords[index].remarkText = text.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -51,6 +51,7 @@ struct SelectionRemarkField: View {
                     focusRequest: focusRequest,
                     appearanceMode: store.appearanceMode,
                     accessibilityLabel: store.ui("记一句，留空只存原文", "Add a remark; empty saves the passage"),
+                    submitsAgentDraft: false,
                     submit: submit
                 )
                 .frame(height: max(20, editorHeight))
@@ -77,7 +78,7 @@ struct SelectionRemarkField: View {
             ))
             .keyboardShortcut(.return, modifiers: [.command])
             .accessibilityLabel(Text(store.ui("保存到摘抄本", "Save excerpt")))
-            .help(store.ui("保存到摘抄本（⌘↩，留空只存原文）", "Save excerpt (⌘↩; empty saves the passage)"))
+            .help(store.ui("保存到摘抄本（⌘↩，留空只存原文）", "Save excerpt (⌘↩, empty saves the passage)"))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

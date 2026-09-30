@@ -69,7 +69,18 @@ struct CatalystConversationView: View {
             controller.setAnswering(targetID.map { workspace.isAgentRunning(in: $0) } ?? false, status: streaming.activityText ?? "")
             controller.quoteText = { [weak workspace] text in
                 guard let workspace, let targetID else { return }
-                workspace.replaceComposerDraft("> " + text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n", for: targetID)
+                // A2: 引用追加到草稿末尾（前面空一行），不冲掉用户已写的草稿。
+                let quote = "> " + text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
+                let existing = workspace.composerDraft(for: targetID)
+                let separator: String
+                if existing.isEmpty || existing.hasSuffix("\n\n") {
+                    separator = ""
+                } else if existing.hasSuffix("\n") {
+                    separator = "\n"
+                } else {
+                    separator = "\n\n"
+                }
+                workspace.replaceComposerDraft(existing + separator + quote, for: targetID)
                 workspace.focusedPane = .agent
                 onFocusComposer()
             }
@@ -241,7 +252,7 @@ private struct CatalystMessageFooter: View {
     let onHeight: (CGFloat) -> Void
     private var message: AgentMessage { streaming.applyingDisplayText(to: store.messages.first { $0.id == initial.id } ?? initial) }
     var body: some View {
-        let text = streaming.isDisplaying(message.id) ? streaming.text : message.text
+        let text = (streaming.isDisplaying(message.id) && !streaming.text.isEmpty) ? streaming.text : message.text
         VStack(alignment: .leading, spacing: 8) {
             if message.role == .user {
                 AgentBubble(message: message, isChatWideTypography: wideTypography)

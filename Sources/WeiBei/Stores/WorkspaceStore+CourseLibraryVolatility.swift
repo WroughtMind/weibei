@@ -20,7 +20,7 @@ extension WorkspaceStore {
 #if targetEnvironment(macCatalyst)
         Task { @MainActor in
             guard let url = await WorkspaceFileDialog.pick(
-                title: ui("迁移/更换魏碑资料库", "Move / Change WeiBei Library"), types: [.folder], multiple: false
+                title: ui("更换魏碑资料库", "Change WeiBei Library"), types: [.folder], multiple: false
             ).first else { return }
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -29,10 +29,10 @@ extension WorkspaceStore {
         }
 #else
         let panel = NSOpenPanel()
-        panel.title = ui("迁移/更换魏碑资料库", "Move / Change WeiBei Library")
+        panel.title = ui("更换魏碑资料库", "Change WeiBei Library")
         panel.message = ui(
-            "选择一个更持久的本地文件夹作为新的魏碑资料库。即使当前资料库仍可访问，也可以更换。课程记录会保留；安全书签失败或保存失败时会回滚。",
-            "Choose a more durable local folder as the WeiBei Library. This remains available even while the current library is still reachable. Course records are kept; bookmark or save failures roll back."
+            "选择一个新的本地文件夹作为魏碑资料库。魏碑会改用所选文件夹，课程文件不会被移动；课程记录保留，安全书签失败或保存失败时会回滚。",
+            "Choose a new local folder as the WeiBei Library. WeiBei will switch to the chosen folder without moving any course files. Course records are kept; bookmark or save failures roll back."
         )
         panel.prompt = ui("使用此目录", "Use This Folder")
         panel.allowsMultipleSelection = false
@@ -72,12 +72,14 @@ extension WorkspaceStore {
 
     private func presentCourseLibraryConfigurationError(_ error: Error) {
         recordCourseLibraryUIFailure(error, operation: "configure_library")
+        let reason = (error as? CourseProjectRootError)?.errorDescription
+            ?? error.localizedDescription
         Task { @MainActor in
             _ = await WorkspaceFileDialog.choose(
                 title: ui("无法更换魏碑资料库", "Could not change the WeiBei Library"),
                 message: ui(
-                    "资料库没有更换，原课程记录和文件保持不变。请选择可访问的本地文件夹后重试。",
-                    "The library was not changed. Existing course records and files remain in place. Choose an accessible local folder and try again."
+                    "资料库没有更换，原课程记录和文件保持不变。原因：\(reason)",
+                    "The library was not changed. Existing course records and files remain in place. Reason: \(error.localizedDescription)"
                 ), buttons: [ui("好", "OK")]
             )
         }

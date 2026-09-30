@@ -9,7 +9,7 @@ struct ContextualContentPicker: View {
     @State private var choosingImportTarget = false
     @State private var pendingImport: (() -> Void)?
     @State private var search = ""
-    @FocusState private var searchFocused: Bool
+    @State private var searchFocused = false
 
     private struct Group: Identifiable {
         let course: Course?
@@ -46,14 +46,15 @@ struct ContextualContentPicker: View {
             let width = min(available, CGFloat(columns) * 220 + CGFloat(columns - 1) * 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    TextField("", text: $search, prompt: Text(store.ui("按名称、文件名或标签筛选", "Filter by title, filename or tag"))
-                        .foregroundStyle(WeiBeiTheme.placeholderInk))
-                        .textFieldStyle(.plain)
-                        .weiBeiText(13)
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .focused($searchFocused)
-                        .weibeiInputSurface(active: searchFocused, height: 32)
-                        .accessibilityIdentifier("contextual-content-filter")
+                    WeiBeiSearchField(
+                        text: $search,
+                        prompt: store.ui("按名称、文件名或标签筛选", "Filter by title, filename or tag"),
+                        isFocused: $searchFocused,
+                        fontSize: 13,
+                        focusesOnAppear: kind == .note && store.notePickerPresented,
+                        chromeHeight: 32
+                    )
+                    .accessibilityIdentifier("contextual-content-filter")
                     globalActions
                     if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && groups.allSatisfy({ $0.items.isEmpty }) {
                         Text(store.ui("没有匹配的内容", "No matching content"))
@@ -200,14 +201,19 @@ struct ContextualContentPicker: View {
 
     private var globalActions: some View {
         HStack(spacing: 12) {
-            Button(store.ui("＋ 新建课程", "+ New Course")) { courseEntry = CourseProjectEntryPresentation(intent: .create) }
-            Button(kind == .note ? store.ui("导入笔记…", "Import notes…") : store.ui("导入资料…", "Import materials…")) {
-                choosingImportTarget = true
+            Button(store.ui("新建课程", "New Course")) {
+                courseEntry = CourseProjectEntryPresentation(intent: .create)
             }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+            Button(kind == .note ? store.ui("导入笔记…", "Import Notes…") : store.ui("导入资料…", "Import Materials…")) {
+                if store.courses.isEmpty {
+                    importFiles(into: nil)
+                } else {
+                    choosingImportTarget = true
+                }
+            }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
         }
-        .buttonStyle(.plain)
-        .weiBeiText(11.5)
-        .foregroundStyle(WeiBeiTheme.secondaryInk)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -24,6 +24,20 @@ public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable
     /// Same as `label` — kept for call sites that used the old "中文界面" wording.
     public var settingsLabel: String { label }
 
+    /// First launch only. A saved `interfaceLanguageRaw` always wins over this.
+    public static func matchingPreferredLanguages(_ languages: [String]) -> WeiBeiInterfaceLanguage {
+        for language in languages {
+            let code = language.lowercased()
+            if code.hasPrefix("zh") { return .chinese }
+            if code.hasPrefix("en") { return .english }
+        }
+        return .english
+    }
+
+    public static var preferred: WeiBeiInterfaceLanguage {
+        matchingPreferredLanguages(Locale.preferredLanguages)
+    }
+
     public func text(_ chinese: String, _ english: String) -> String {
         switch self {
         case .chinese:
@@ -113,7 +127,7 @@ public enum WorkspacePaneRole: String, Codable, CaseIterable, Identifiable, Hash
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .reader:
-            return language.text("文档", "Document")
+            return language.text("文稿", "Document")
         case .agent:
             return language.text("对话", "Chat")
         case .notes:
@@ -828,7 +842,7 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch source {
         case .document:
-            return language.text("文档选区：\(ownerTitle)", "Document selection: \(ownerTitle)")
+            return language.text("文稿选区：\(ownerTitle)", "Document selection: \(ownerTitle)")
         case .note:
             return language.text("笔记选区：\(ownerTitle)", "Note selection: \(ownerTitle)")
         }
@@ -973,6 +987,17 @@ public struct FloatingAgentResizeResult: Equatable {
     }
 }
 
+/// Top-left frame. Resize keeps the opposite edge still instead of recentering.
+public struct FloatingAgentTopLeftFrame: Equatable {
+    public var origin: FloatingAgentCoordinate
+    public var size: FloatingAgentSize
+
+    public init(origin: FloatingAgentCoordinate, size: FloatingAgentSize) {
+        self.origin = origin
+        self.size = size
+    }
+}
+
 public enum FloatingAgentResizeEdge {
     case top
     case bottom
@@ -1005,6 +1030,8 @@ public enum SelectionFloatingAgentPlacement {
     /// A typed question may grow to five lines, but never consume the floating panel.
     public static let expandedComposerMaxHeight = 96.0
     public static let expandedComposerCollapsedHeight = 40.0
+    /// Nominal height of the panel before an answer exists. Side choice uses this once.
+    public static let initialPlacedPanelHeight = 96.0
 
     public static func composerControlHostMinimumHeight(composerMinimumHeight: Double) -> Double {
         composerMinimumHeight
@@ -1015,6 +1042,127 @@ public enum SelectionFloatingAgentPlacement {
             measuredContentHeight,
             min: minimumAutomaticContentHeight,
             max: maximumAutomaticContentHeight
+        )
+    }
+
+    /// Answer viewport height. A fixed height scrolls inside. A floor still grows with the reply up to the cap.
+    public static func resolvedFeedHeight(
+        measuredContentHeight: Double,
+        userFloor: Double? = nil,
+        userFixed: Double? = nil
+    ) -> Double {
+        if let userFixed {
+            return clamp(userFixed, min: minimumResizableContentHeight, max: maximumResizableContentHeight)
+        }
+        let measured = max(0, measuredContentHeight)
+        if measured <= 1, (userFloor ?? 0) <= 1 { return 0 }
+        let preferred = max(measured, userFloor ?? 0)
+        let cap = (userFloor ?? 0) > maximumAutomaticContentHeight
+            ? maximumResizableContentHeight
+            : maximumAutomaticContentHeight
+        // A dragged floor keeps the resize minimum. Untouched text uses its own height.
+        let minimum = (userFloor ?? 0) > 1 ? minimumResizableContentHeight : 0
+        return clamp(preferred, min: minimum, max: cap)
+    }
+
+    /// Opening placement, returned as the panel's top-left. Side choice uses the nominal size only.
+    public static func initialTopLeft(
+        anchor: FloatingAgentCoordinate?,
+        canvas: FloatingAgentCoordinate,
+        topInset: Double = 0,
+        prefersAbove: Bool = false
+    ) -> FloatingAgentCoordinate {
+        let center = position(
+            anchor: anchor,
+            canvas: canvas,
+            topInset: topInset,
+            surfaceHalfWidth: expandedHalfWidth,
+            measuredHalfHeight: initialPlacedPanelHeight / 2,
+            prefersAbove: prefersAbove,
+            prefersAnchorCenter: false
+        )
+        return FloatingAgentCoordinate(
+            x: center.x - expandedHalfWidth,
+            y: center.y - initialPlacedPanelHeight / 2
+        )
+    }
+
+    /// Resize from the top-left. The edge under the pointer moves; the opposite edge stays.
+    /// Hitting the canvas stops that edge. The panel does not jump to the other side of the anchor.
+    public static func edgeAnchoredResize(
+        origin: FloatingAgentCoordinate,
+        size: FloatingAgentSize,
+        translation: FloatingAgentSize,
+        canvas: FloatingAgentSize,
+        edge: FloatingAgentResizeEdge,
+        minimumWidth: Double = minimumResizableWidth,
+        maximumWidth: Double = maximumResizableWidth,
+        minimumHeight: Double = minimumResizableContentHeight,
+        maximumHeight: Double = maximumResizableContentHeight,
+        edgePadding: Double = 8
+    ) -> FloatingAgentTopLeftFrame {
+        let resizesLeading = edge == .leading || edge == .topLeading || edge == .bottomLeading
+        let resizesTrailing = edge == .trailing || edge == .topTrailing || edge == .bottomTrailing
+        let resizesTop = edge == .top || edge == .topLeading || edge == .topTrailing
+        let resizesBottom = edge == .bottom || edge == .bottomLeading || edge == .bottomTrailing
+
+        var width = size.width
+        var height = size.height
+        var x = origin.x
+        var y = origin.y
+        let right = origin.x + size.width
+        let bottom = origin.y + size.height
+
+        if resizesLeading {
+            width = clamp(size.width - translation.width, min: minimumWidth, max: maximumWidth)
+            x = right - width
+        } else if resizesTrailing {
+            width = clamp(size.width + translation.width, min: minimumWidth, max: maximumWidth)
+        }
+        if resizesTop {
+            height = clamp(size.height - translation.height, min: minimumHeight, max: maximumHeight)
+            y = bottom - height
+        } else if resizesBottom {
+            height = clamp(size.height + translation.height, min: minimumHeight, max: maximumHeight)
+        }
+
+        let minimumX = edgePadding
+        let minimumY = edgePadding
+        let maximumX = max(minimumX + minimumWidth, canvas.width - edgePadding)
+        let maximumY = max(minimumY + minimumHeight, canvas.height - edgePadding)
+
+        if x < minimumX {
+            let keptRight = x + width
+            x = minimumX
+            if resizesLeading {
+                width = clamp(keptRight - x, min: minimumWidth, max: maximumWidth)
+            }
+        }
+        if x + width > maximumX {
+            if resizesLeading {
+                x = min(x, maximumX - width)
+            } else {
+                width = clamp(maximumX - x, min: minimumWidth, max: width)
+            }
+        }
+        if y < minimumY {
+            let keptBottom = y + height
+            y = minimumY
+            if resizesTop {
+                height = clamp(keptBottom - y, min: minimumHeight, max: maximumHeight)
+            }
+        }
+        if y + height > maximumY {
+            if resizesTop {
+                y = min(y, maximumY - height)
+            } else {
+                height = clamp(maximumY - y, min: minimumHeight, max: height)
+            }
+        }
+
+        return FloatingAgentTopLeftFrame(
+            origin: FloatingAgentCoordinate(x: x, y: y),
+            size: FloatingAgentSize(width: width, height: height)
         )
     }
 
@@ -2305,7 +2453,56 @@ public enum PDFModeChipPresentation {
     }
 }
 
+public struct ReaderSearchResult: Equatable, Identifiable {
+    public let id: Int
+    public let pageIndex: Int
+    public let preview: String
+    public let location: String
+    public let matchRange: NSRange
+
+    public init(id: Int, pageIndex: Int, preview: String, location: String = "", matchRange: NSRange = NSRange(location: NSNotFound, length: 0)) {
+        self.id = id
+        self.pageIndex = pageIndex
+        self.preview = preview
+        self.location = location
+        self.matchRange = matchRange
+    }
+}
+
 public enum ReaderSearch {
+    public static func matchIndex(current: Int, step: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        if current < 0 { return step < 0 ? count - 1 : 0 }
+        return ((current % count + step % count) % count + count) % count
+    }
+
+    public static func preview(in text: String, around range: NSRange) -> String {
+        snippet(in: text, around: range).text
+    }
+
+    public static func snippet(in text: String, around range: NSRange) -> (text: String, matchRange: NSRange) {
+        let source = text as NSString
+        guard range.location != NSNotFound, range.location <= source.length,
+              range.length <= source.length - range.location else { return ("", NSRange(location: NSNotFound, length: 0)) }
+        let start = max(0, range.location - 8)
+        let end = min(source.length, range.location + range.length + 32)
+        let slice = source.rangeOfComposedCharacterSequences(for: NSRange(location: start, length: end - start))
+        let before = source.substring(with: NSRange(location: slice.location, length: range.location - slice.location))
+        let match = source.substring(with: range)
+        let after = source.substring(with: NSRange(location: NSMaxRange(range), length: NSMaxRange(slice) - NSMaxRange(range)))
+        func compact(_ value: String) -> String {
+            value.components(separatedBy: .newlines)
+                .filter { $0.trimmingCharacters(in: .whitespaces) != "." }
+                .joined(separator: " ")
+                .split(whereSeparator: \.isWhitespace)
+                .joined(separator: " ")
+        }
+        let prefix = (start > 0 ? "…" : "") + compact(before)
+        let separator = prefix.hasSuffix(" ") || prefix.hasSuffix("…") || prefix.isEmpty ? "" : " "
+        let text = prefix + separator + match + (after.first?.isWhitespace == true ? " " : "") + compact(after) + (end < source.length ? "…" : "")
+        return (text, NSRange(location: (prefix + separator).utf16.count, length: match.utf16.count))
+    }
+
     public static func cleaned(_ query: String) -> String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -2315,6 +2512,22 @@ public enum ReaderSearch {
         guard !query.isEmpty else { return nil }
         let range = (text as NSString).range(of: query, options: [.caseInsensitive, .diacriticInsensitive])
         return range.location == NSNotFound ? nil : range
+    }
+
+    public static func matches(in text: String, query: String) -> [NSRange] {
+        let query = cleaned(query)
+        guard !query.isEmpty else { return [] }
+        let source = text as NSString
+        var search = NSRange(location: 0, length: source.length)
+        var result: [NSRange] = []
+        while search.length > 0 {
+            let found = source.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: search)
+            guard found.location != NSNotFound else { break }
+            result.append(found)
+            let next = NSMaxRange(found)
+            search = NSRange(location: next, length: source.length - next)
+        }
+        return result
     }
 }
 

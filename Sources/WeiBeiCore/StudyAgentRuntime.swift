@@ -882,8 +882,11 @@ public typealias StudyAgentSessionTitleHandler = @Sendable (String) async -> Voi
 /// User-facing classification for Agent request failures.
 public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     case offline
+    case requestRejected
     case unauthorized
     case rateLimited
+    case insufficientQuota
+    case modelUnavailable
     case serverError
     case timedOut
     case cancelled
@@ -891,15 +894,23 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     case truncated
     case paused
     case refused
+    /// 模型正常返回但正文为空（不来自错误分类，由空回复分支手动标记）。
+    case emptyReply
 
     public func title(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .offline:
             return language.text("网络不可用", "Network unavailable")
+        case .requestRejected:
+            return language.text("模型服务未接受请求", "Model service rejected the request")
         case .unauthorized:
             return language.text("认证已失效", "Authentication expired")
         case .rateLimited:
             return language.text("请求过于频繁", "Rate limited")
+        case .insufficientQuota:
+            return language.text("额度不足", "Quota exhausted")
+        case .modelUnavailable:
+            return language.text("请求被拒 · 检查所选模型", "Request rejected · check the selected model")
         case .serverError:
             return language.text("模型服务暂时不可用", "Model service temporarily unavailable")
         case .timedOut:
@@ -912,6 +923,8 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
             return language.text("回答已暂停，尚未完成", "Response paused and incomplete")
         case .refused:
             return language.text("模型拒绝了这次请求", "The model declined this request")
+        case .emptyReply:
+            return language.text("模型没有返回内容", "The model returned no content")
         case .generic:
             return language.text("请求失败", "Request failed")
         }
@@ -921,13 +934,22 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         switch self {
         case .offline:
             return language.text("请检查本机网络后重试。", "Check your network connection, then retry.")
+        case .requestRejected:
+            return language.text(
+                "请检查所选模型、服务地址或请求内容后重试。",
+                "Check the selected model, service URL, or request content, then retry."
+            )
         case .unauthorized:
             return language.text(
                 "请到设置中重新登录，或重新保存 API Key。",
                 "Sign in again in Settings, or save the API key again."
             )
         case .rateLimited:
-            return language.text("请稍后再试，或更换模型/提供商。", "Wait a moment, or switch model/provider.")
+            return language.text("请稍后再试，或更换模型或服务商。", "Wait a moment, or switch model or service.")
+        case .insufficientQuota:
+            return language.text("请点「去设置」查看额度或更换服务商。", "Choose Go to Settings to check the quota or switch provider.")
+        case .modelUnavailable:
+            return language.text("请到设置中检查所选模型是否可用。", "Check in Settings whether the selected model is available.")
         case .serverError:
             return language.text("服务端异常，请稍后重试。", "The server had an error. Try again shortly.")
         case .timedOut:
@@ -938,13 +960,31 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
             return language.text("已收到的内容已保留，可以继续提问。", "The received content is preserved. You can continue the conversation.")
         case .refused:
             return language.text("可以调整问题后再发送。", "You can revise the question and send it again.")
+        case .emptyReply:
+            return language.text("可以重试这次回答。", "You can retry this response.")
         case .generic:
             return language.text("可直接重试。", "You can retry.")
         }
     }
 
     public var isRetryable: Bool {
-        self != .refused
+        self != .refused && self != .insufficientQuota
+    }
+
+    /// 已收到部分正文时的中断说明。一个字都没收到时不说已保留内容。
+    public func partialFailureNotice(language: WeiBeiInterfaceLanguage, receivedText: Bool) -> String {
+        if self == .cancelled {
+            return language.text("已停止", "Stopped")
+        }
+        let reason: String
+        switch self {
+        case .offline, .timedOut:
+            reason = language.text("网络中断", "Connection interrupted")
+        default:
+            reason = title(language: language)
+        }
+        guard receivedText else { return reason }
+        return language.text("\(reason) · 已保留收到的内容", "\(reason) · Received content was kept")
     }
 
     public static func classify(_ error: Error) -> AgentFailureKind {
@@ -969,6 +1009,8 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         }
         if ns.domain == "WeiBei.OpenAI" || ns.domain == "WeiBei.NativeAgent" {
             switch ns.code {
+            case 400:
+                return .requestRejected
             case 401, 403:
                 return .unauthorized
             case 429:
@@ -991,6 +1033,12 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         }
         if lower.contains("timeout") || lower.contains("timed out") || message.contains("超时") {
             return .timedOut
+        }
+        if lower.contains("insufficient_quota") || lower.contains("insufficient quota") || lower.contains("credit balance") || lower.contains("billing_error") || message.contains("额度不足") || message.contains("额度用尽") || message.contains("余额不足") || lower.contains("http 402") || lower.contains("status 402") {
+            return .insufficientQuota
+        }
+        if lower.contains("http 404") || lower.contains("status 404") || lower.contains("model_not_found") || message.contains("检查所选模型") {
+            return .modelUnavailable
         }
         if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") || lower.contains("invalid api key") || message.contains("未授权") || message.contains("密钥") || message.contains("认证已失效") || message.contains("重新登录") {
             return .unauthorized

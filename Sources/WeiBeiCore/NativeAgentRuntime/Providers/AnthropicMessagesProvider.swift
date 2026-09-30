@@ -24,19 +24,8 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
         NativeHTTPByteStream.start(
             session: session,
             request: makeURLRequest(request),
-            fallbackRequest: webSearchTool ? makeURLRequestWithoutSearch(request) : nil,
             translate: Self.translate
         )
-    }
-
-    private func makeURLRequestWithoutSearch(_ request: NativeLLMRequest) -> URLRequest {
-        var urlRequest = makeURLRequest(request)
-        if let body = try? JSONSerialization.data(
-            withJSONObject: Self.payload(for: request, webSearchTool: false), options: [.sortedKeys]
-        ) {
-            urlRequest.httpBody = body
-        }
-        return urlRequest
     }
 
     func makeURLRequest(_ request: NativeLLMRequest) -> URLRequest {
@@ -116,8 +105,7 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
                 "input_schema": tool.schema.object,
             ]
         }
-        if webSearchTool, request.enableNativeWebSearch
-            || request.tools.contains(where: { $0.name == "weibei_course_map" }) {
+        if webSearchTool, request.enableNativeWebSearch {
             if !tools.contains(where: { $0["type"] as? String == "web_search_20250305" }) {
                 tools.append([
                     "type": "web_search_20250305",
@@ -261,9 +249,12 @@ public struct AnthropicMessagesProvider: NativeLLMAdapter {
             return []
         case "error":
             let error = object["error"] as? [String: Any]
-            throw NativeLLMFailure(
-                code: error?["type"] as? String ?? "server_error",
-                message: error?["message"] as? String ?? "Anthropic error"
+            let message = error?["message"] as? String ?? "Anthropic error"
+            throw NativeHTTPByteStream.providerFailure(
+                code: error?["code"] as? String,
+                type: error?["type"] as? String,
+                statusName: error?["status"] as? String,
+                message: message
             )
         default:
             return []

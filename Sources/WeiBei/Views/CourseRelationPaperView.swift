@@ -199,7 +199,7 @@ struct CourseRelationPaperView: View {
 
                 courseScopeRow(
                     title: store.ui("全部关系", "All relations"),
-                    detail: store.ui("整份工作区", "Whole workspace"),
+                    detail: store.ui("整个工作台", "Whole workspace"),
                     accent: WeiBeiTheme.secondaryInk,
                     selected: effectiveScope == .all
                 ) {
@@ -207,7 +207,7 @@ struct CourseRelationPaperView: View {
                 }
 
                 courseScopeRow(
-                    title: store.ui("未归属课程", "No course"),
+                    title: store.ui("通用资料", "General materials"),
                     detail: store.ui(
                         "文稿 \(store.unassignedCourseMaterials.count) · 笔记 \(store.unassignedCourseNotes.count)",
                         "\(store.unassignedCourseMaterials.count) materials · \(store.unassignedCourseNotes.count) notes"
@@ -283,7 +283,7 @@ struct CourseRelationPaperView: View {
             Button(store.ui("全部关系", "All relations")) {
                 setScope(.all)
             }
-            Button(store.ui("未归属课程", "No course")) {
+            Button(store.ui("通用资料", "General materials")) {
                 setScope(.unassigned)
             }
             Button(store.ui("未建立关系", "Unlinked")) {
@@ -680,7 +680,7 @@ struct CourseRelationPaperView: View {
 
     @ViewBuilder
     private func relationMenu(for node: CourseRelationGraphNode) -> some View {
-        Button(node.kind == .material ? store.ui("打开资料", "Open material") : store.ui("打开笔记", "Open note")) {
+        Button(node.kind == .material ? store.ui("打开文稿", "Open document") : store.ui("打开笔记", "Open note")) {
             open(node)
         }
         Divider()
@@ -798,7 +798,7 @@ struct CourseRelationPaperView: View {
         case .all:
             return store.ui("全部关系", "All relations")
         case .unassigned:
-            return store.ui("未归属课程", "No course")
+            return store.ui("通用资料", "General materials")
         case .unlinked:
             return store.ui("未建立关系", "Unlinked")
         }

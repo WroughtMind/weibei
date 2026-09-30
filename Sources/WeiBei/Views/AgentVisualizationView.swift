@@ -53,7 +53,6 @@ struct AgentVisualizationView: View {
 
     @State private var contentHeight: CGFloat = 180
     @State private var loadState = AgentVisualizationLoadState()
-    @State private var webViewAttached = true
 
     var body: some View {
         let receiptToken = store.nativeVisualizationWaiters[messageID]?.token
@@ -69,7 +68,7 @@ struct AgentVisualizationView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-            } else if webViewAttached {
+            } else {
                 AgentVisualizationWebView(
                     visualization: visualization,
                     appearance: store.appearanceMode,
@@ -102,8 +101,6 @@ struct AgentVisualizationView: View {
         .onChange(of: receiptToken) { _, token in
             if token != nil, loadState.failure != nil { loadState.reload() }
         }
-        .onAppear { webViewAttached = true }
-        .onDisappear { webViewAttached = false }
     }
 
     private var actionUnavailableReason: String? {

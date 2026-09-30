@@ -1,5 +1,19 @@
 import Foundation
 
+public enum WeiBeiFeedbackLink {
+    public static let newIssue = URL(string: "https://github.com/WroughtMind/weibei/issues/new")!
+
+    /// GitHub prefills `title` and `body` on the new-issue form. No label is sent.
+    public static func prefilled(title: String, body: String) -> URL? {
+        var components = URLComponents(url: newIssue, resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "title", value: title),
+            URLQueryItem(name: "body", value: body),
+        ]
+        return components?.url
+    }
+}
+
 /// Build identity stamped into the packaged app (`Info.plist`).
 public struct WeiBeiAppBuildInfo: Equatable, Sendable {
     public var version: String
@@ -30,16 +44,17 @@ public struct WeiBeiAppBuildInfo: Equatable, Sendable {
         return date
     }
 
+    /// Public version row: version and build number only.
     public var displayLine: String {
-        var parts = [version]
-        if let buildDate {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = .current
-            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-            parts.append("构建于 \(formatter.string(from: buildDate))")
-        }
-        parts.append(shortCommit)
+        let buildLabel = build.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !buildLabel.isEmpty else { return version }
+        return "\(version) (\(buildLabel))"
+    }
+
+    /// Commit and dirty state travel with copied diagnostics, not the public version row.
+    public var diagnosticLine: String {
+        var parts = [displayLine]
+        if !shortCommit.isEmpty, shortCommit != "—" { parts.append(shortCommit) }
         if isDirty { parts.append("dirty") }
         return parts.joined(separator: " · ")
     }

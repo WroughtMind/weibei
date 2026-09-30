@@ -68,7 +68,7 @@ struct CourseDocNoteWorkspaceView: View {
                     CourseEmptyState(
                         title: store.ui("先选择一门课程", "Choose a course first"),
                         detail: store.ui(
-                            "文稿与笔记关系始终在明确的课程现场中管理。",
+                            "文稿和笔记的关联只在确定的课程里管理。",
                             "Docs and notes are managed inside an explicit course context."
                         ),
                         systemImage: "books.vertical"

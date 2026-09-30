@@ -8,20 +8,24 @@ struct CommandPaletteView: View {
     @State private var hits: [GlobalSearchHit] = []
     @State private var searching = false
     @State private var selectedIndex = 0
-    @FocusState private var searchFocused: Bool
+    @State private var searchFocused = true
 
     private var commands: [PaletteCommand] {
         var items = [
             PaletteCommand(title: store.ui("打开课程空间", "Open Course Space"), shortcut: "⌘0", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace(.hub) },
-            PaletteCommand(title: store.ui("打开资料", "Open Material"), shortcut: "⌘O") { store.importFilesFromPanel() },
+            PaletteCommand(title: store.ui("打开文稿", "Open Document"), shortcut: "⌘O") { store.importFilesFromPanel() },
             PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.promptCreateBlankNotebookNote() },
-            PaletteCommand(title: store.ui("聚焦课程目录", "Focus Course Index"), shortcut: store.chord(for: .focusLibrary).display, animation: WeiBeiMotion.layout) { store.focus(.library) },
+            PaletteCommand(title: store.ui("新建对话", "New Chat"), shortcut: store.chord(for: .newConversation).display) {
+                if store.courseWorkspacePresented { store.dismissCourseWorkspace() }
+                _ = store.createStudySession(courseID: nil)
+            },
+            PaletteCommand(title: store.ui("聚焦课程栏", "Focus course sidebar"), shortcut: store.chord(for: .focusLibrary).display, animation: WeiBeiMotion.layout) { store.focus(.library) },
             PaletteCommand(title: store.ui("聚焦阅读", "Focus Reader"), shortcut: store.chord(for: .focusReader).display, animation: WeiBeiMotion.layout) { store.focus(.reader) },
             PaletteCommand(title: store.ui("聚焦笔记", "Focus Notes"), shortcut: store.chord(for: .focusNotes).display, animation: WeiBeiMotion.layout) { store.focus(.notes) },
             PaletteCommand(title: store.ui("聚焦对话", "Focus Chat"), shortcut: store.chord(for: .focusChat).display, animation: WeiBeiMotion.layout) { store.focus(.agent) },
             PaletteCommand(title: store.ui("上一份资料", "Previous Material"), shortcut: store.chord(for: .previousMaterial).display, animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
             PaletteCommand(title: store.ui("下一份资料", "Next Material"), shortcut: store.chord(for: .nextMaterial).display, animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
-            PaletteCommand(title: store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index"), shortcut: store.chord(for: .courseIndex).display) { store.toggleLibrary() },
+            PaletteCommand(title: store.showLibrary ? store.ui("收起课程栏", "Hide course sidebar") : store.ui("打开课程栏", "Show course sidebar"), shortcut: store.chord(for: .courseIndex).display) { store.toggleLibrary() },
             PaletteCommand(title: store.ui("三栏工作台", "Three-Pane Workspace"), shortcut: store.chord(for: .threePaneWorkspace).display, animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
             PaletteCommand(title: WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage), shortcut: store.chord(for: .immersiveReading).display, animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
             PaletteCommand(title: WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage), shortcut: store.chord(for: .immersiveChat).display, animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
@@ -39,7 +43,7 @@ struct CommandPaletteView: View {
         }
         if store.hasSelectedMaterial {
             items.insert(
-                PaletteCommand(title: store.ui("从当前资料开笔记", "Note from Current Material"), shortcut: "", animation: WeiBeiMotion.layout) { store.promptCreateNotebookNoteFromCurrentMaterial() },
+                PaletteCommand(title: store.ui("从当前文稿开笔记", "Note from this document"), shortcut: "", animation: WeiBeiMotion.layout) { store.promptCreateNotebookNoteFromCurrentMaterial() },
                 at: 2
             )
         }
@@ -62,7 +66,7 @@ struct CommandPaletteView: View {
             items.append(PaletteCommand(title: store.copyReferenceActionTitle, shortcut: store.chord(for: .copyCurrentReference).display) { store.copyCurrentReference() })
         }
         if store.canSearchCurrentDocument {
-            items.append(PaletteCommand(title: store.ui("在当前文稿中查找", "Find in Current Document"), shortcut: store.chord(for: .searchInMaterial).display) { store.revealDocumentSearch() })
+            items.append(PaletteCommand(title: store.ui("在文稿中查找", "Find in document"), shortcut: store.chord(for: .searchInMaterial).display) { store.revealDocumentSearch() })
         }
         if store.selectionContext != nil {
             items.append(PaletteCommand(title: store.ui("问当前选区", "Ask Current Selection"), shortcut: "") {
@@ -83,9 +87,16 @@ struct CommandPaletteView: View {
             items.append(PaletteCommand(title: store.ui("替换笔记选区", "Replace Note Selection"), shortcut: store.chord(for: .replaceNoteSelection).display) { store.replaceSelectionWithLastAgentAnswer() })
         }
         if canControlAgent {
-            items.append(PaletteCommand(title: store.sendAgentActionTitle, shortcut: store.chord(for: .submitAgentDraft).display) {
-                store.submitAgentDraft()
-            })
+            // A1: 发送与停止拆开；停止只调 stopActiveAgentChat，提交路径不再兼做停止。
+            if store.isAgentRunningInActiveChat {
+                items.append(PaletteCommand(title: store.ui("停止回答", "Stop response"), shortcut: "") {
+                    store.stopActiveAgentChat()
+                })
+            } else {
+                items.append(PaletteCommand(title: store.ui("发送问题", "Send question"), shortcut: store.chord(for: .submitAgentDraft).display) {
+                    store.submitAgentDraft()
+                })
+            }
         }
         return items
     }
@@ -108,9 +119,10 @@ struct CommandPaletteView: View {
     }
 
     private var rightPaneCommand: PaletteCommand? {
-        guard store.layout.hasCollapsibleRightPane else { return nil }
+        guard store.layout != .immersiveConversation else { return nil }
+        let showingThree = store.layout.isDocumentThreePane && store.showReader && store.showAgent && store.showNotes
         return PaletteCommand(
-            title: store.showRightPane ? store.ui("收起辅助栏", "Hide Assistant Pane") : store.ui("展开辅助栏", "Show Assistant Pane"),
+            title: showingThree ? store.ui("只看文稿", "Document Only") : store.ui("恢复三栏", "Restore Three Panes"),
             shortcut: store.chord(for: .toggleRightPane).display,
             animation: WeiBeiMotion.layout
         ) {
@@ -120,6 +132,31 @@ struct CommandPaletteView: View {
 
     private var filtered: [PaletteCommand] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if store.commandPaletteChatsOnly {
+            let chats = store.historicalStudySessions.map { session in
+                PaletteCommand(
+                    title: session.title,
+                    shortcut: "",
+                    detail: store.ui("对话", "Chat"),
+                    resultID: session.id.uuidString,
+                    action: {
+                        store.activateStudySession(session.id, expectedCourseID: nil, expectedScopeNeedsReview: false)
+                    }
+                )
+            }
+            guard !query.isEmpty else { return chats }
+            let searched = hits.filter { $0.result.kind == .chat }.map { hit in
+                PaletteCommand(
+                    title: hit.result.title,
+                    shortcut: "",
+                    detail: store.ui("对话", "Chat") + " · " + hit.courseTitle,
+                    snippet: hit.result.matchedText,
+                    resultID: hit.id,
+                    action: { store.openGlobalSearchHit(hit, query: query) }
+                )
+            }
+            return searched + chats.filter { $0.title.localizedCaseInsensitiveContains(query) }
+        }
         guard !query.isEmpty else { return commands }
         let content = hits.map { hit in
             let kind: String
@@ -134,7 +171,7 @@ struct CommandPaletteView: View {
                 detail: "\(kind) · \(hit.courseTitle)",
                 snippet: hit.result.matchedText,
                 resultID: hit.id,
-                action: { store.openGlobalSearchHit(hit) }
+                action: { store.openGlobalSearchHit(hit, query: query) }
             )
         }
         return content + commands.filter { $0.title.localizedCaseInsensitiveContains(query) }
@@ -156,18 +193,19 @@ struct CommandPaletteView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     Image(systemName: "command")
-                        .foregroundStyle(WeiBeiTheme.link)
-                    TextField(
-                        "",
+                        .foregroundStyle(searchFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                    WeiBeiSearchField(
                         text: $query,
-                        prompt: Text(store.ui("搜索资料、笔记、对话或命令", "Search files, notes, chats or commands"))
-                            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 18, weight: .semibold))
-                            .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        prompt: store.commandPaletteChatsOnly
+                            ? store.ui("搜索对话", "Search chats")
+                            : store.ui("搜索文稿、笔记、对话或命令", "Search documents, notes, or chats"),
+                        isFocused: $searchFocused,
+                        fontSize: 18,
+                        drawsChrome: false,
+                        chromeHeight: 36,
+                        brandLanguage: store.interfaceLanguage
                     )
-                        .textFieldStyle(.plain)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .focused($searchFocused)
-                        .weiBeiBrandFont(language: store.interfaceLanguage, size: 18, weight: .semibold)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .weibeiInputSurface(active: searchFocused, height: 36)
                 .padding(.horizontal, 12)
@@ -257,6 +295,7 @@ struct CommandPaletteView: View {
             }
         }
         .onAppear {
+            query = store.commandPaletteQuery
             searchFocused = true
         }
         .onChange(of: query) { _, _ in
