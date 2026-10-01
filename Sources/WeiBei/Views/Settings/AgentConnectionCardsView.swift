@@ -67,6 +67,11 @@ struct AgentConnectionCardsView: View {
         .task(id: store.activeAgentProfileID.uuidString + store.agentProviderID.rawValue + store.agentBaseURL) {
             oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { _ in
+            probeState.invalidateAll()
+            probingProfileID = nil
+            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { _ in
             probeState.invalidateAll()
             probingProfileID = nil
