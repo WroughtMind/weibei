@@ -4073,6 +4073,62 @@ final class SharedDiagramHarness: NSObject, WKScriptMessageHandler {
             view.stopLoading()
         }
         print("Shared diagram runtime: relationship view and GenUI passed")
+        verifyGenuiLabelGeometry(resources: resources)
+    }
+
+    private func verifyGenuiLabelGeometry(resources: URL) {
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(self, name: "weibeiGenUI")
+        let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 352, height: 180), configuration: configuration)
+        view.loadFileURL(resources.appendingPathComponent("genui.html"), allowingReadAccessTo: resources)
+        let script = """
+        (() => {
+          if (!window.WeiBeiGenUIHost) return null;
+          if (!window.labelProbeStarted) {
+            window.labelProbeStarted = true;
+            window.WeiBeiGenUIHost.render({id:'label-geometry',theme:{scale:'1'},spec:{items:[{type:'mermaid',code:'graph LR\\nA[WB514_START] --> B[WB514_END]'}]}});
+          }
+          const root = document.querySelector('#genui-content [data-genui]');
+          const svg = root?.querySelector('svg');
+          if (!svg) return null;
+          const rect = r => ({x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom});
+          const measure = (parent, text) => {
+            const span = document.createElement('span'); span.textContent = text;
+            span.style.cssText = 'position:fixed;left:-100000px;top:0;font-size:13px;white-space:nowrap;display:inline-block';
+            parent.appendChild(span); const style = getComputedStyle(span);
+            const value = {width:span.getBoundingClientRect().width,font:style.fontFamily,fontSize:style.fontSize,variant:style.fontVariantNumeric,boxSizing:style.boxSizing};
+            span.remove(); return value;
+          };
+          const labels = ['WB514_START','WB514_END'].map(text => {
+            const fo = Array.from(svg.querySelectorAll('foreignObject')).find(el => el.textContent.trim() === text);
+            if (!fo) return {text,missing:true,visible:false};
+            const walker = document.createTreeWalker(fo, NodeFilter.SHOW_TEXT);
+            let node; while ((node = walker.nextNode()) && !node.textContent.includes(text)) {}
+            if (!node) return {text,missing:true,visible:false};
+            const range = document.createRange(); const start = node.textContent.indexOf(text);
+            range.setStart(node,start); range.setEnd(node,start+text.length);
+            const bounds = fo.getBoundingClientRect(); const ranges = Array.from(range.getClientRects());
+            const style = getComputedStyle(node.parentElement);
+            return {text,visible:ranges.length>0 && ranges.every(r => r.left>=bounds.left-1 && r.right<=bounds.right+1 && r.top>=bounds.top-1 && r.bottom<=bounds.bottom+1),box:rect(bounds),ranges:ranges.map(rect),font:style.fontFamily,fontSize:style.fontSize,variant:style.fontVariantNumeric,boxSizing:style.boxSizing,bodyMeasure:measure(document.body,text),displayMeasure:measure(root,text)};
+          });
+          return {labels,passed:labels.every(label => label.visible)};
+        })()
+        """
+        let deadline = Date().addingTimeInterval(30)
+        var diagnostic: [String: Any]?
+        while diagnostic == nil && Date() < deadline {
+            var completed = false
+            view.evaluateJavaScript(script) { value, error in
+                diagnostic = value as? [String: Any]
+                if let error { print("GenUI label geometry JS: \(error.localizedDescription)") }
+                completed = true
+            }
+            while !completed && Date() < deadline { RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05)) }
+            if diagnostic == nil { RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1)) }
+        }
+        if let diagnostic, let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]), let text = String(data:data,encoding:.utf8) { print("GenUI label geometry: \(text)") }
+        expect(diagnostic?["passed"] as? Bool == true, "GenUI diagram label text is clipped inside its foreignObject")
+        view.stopLoading()
     }
 }
 
@@ -4097,6 +4153,10 @@ if benchmarkMode {
     exit(1)
 }
 NSApplication.shared.setActivationPolicy(.prohibited)
+if CommandLine.arguments.contains("--shared-diagram-only") {
+    SharedDiagramHarness().run()
+    exit(0)
+}
 if CommandLine.arguments.contains("--notes-interaction") {
     NativeSelectionWritingHarness().run(scriptName: "native-notes.js")
     exit(0)
