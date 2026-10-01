@@ -61,6 +61,8 @@ final class AgentAccountService: ObservableObject {
     @Published private(set) var authorizationCode: String?
     @Published private(set) var authorizationURL: URL?
     private var modelListTask: Task<Void, Never>?
+    private var modelRequestProvider: AgentProviderID?
+    private var modelRequestBaseURL = ""
     private var modelRequestGeneration = 0
 
     struct ModelCatalog {
@@ -95,7 +97,7 @@ final class AgentAccountService: ObservableObject {
 
     /// 打开设置或更换服务/密钥后，向服务商拉取可用模型。和测活走同一次鉴权请求。
     func refreshModels(provider: AgentProviderID, baseURL: String) {
-        let generation = beginModelRequest(for: provider)
+        let generation = beginModelRequest(for: provider, baseURL: baseURL)
         liveReasoningLevels = [:]
         modelListFailure = nil
         modelListTask = Task { [weak self] in
@@ -107,14 +109,16 @@ final class AgentAccountService: ObservableObject {
 
     /// 和刷新名单同一次请求。后发起的那次作废先发起的，避免两路同时改名单。
     func probeConnection(provider: AgentProviderID, baseURL: String) async -> Result<Int, ModelListFailure> {
-        let generation = beginModelRequest(for: provider)
+        let generation = beginModelRequest(for: provider, baseURL: baseURL)
         modelListFailure = nil
         let result = await fetchLiveModels(provider: provider, baseURL: baseURL, generation: generation)
         publish(result, generation: generation)
         return result
     }
 
-    private func beginModelRequest(for provider: AgentProviderID) -> Int {
+    private func beginModelRequest(for provider: AgentProviderID, baseURL: String) -> Int {
+        modelRequestProvider = provider
+        modelRequestBaseURL = baseURL
         modelListTask?.cancel()
         modelRequestGeneration += 1
         isRefreshingModels = true
@@ -150,8 +154,10 @@ final class AgentAccountService: ObservableObject {
     /// 冷启动的输入框也需要实时推理能力，不要求先打开设置。
     /// 多个输入框同时出现时复用当前查询，不清空已加载的能力。
     func refreshReasoningCatalogIfNeeded(provider: AgentProviderID, baseURL: String) {
-        guard provider == .openaiCodex, !isRefreshingModels,
-              !hasLoadedModels(provider: provider) else { return }
+        guard provider == .openaiCodex else { return }
+        let sameRequest = modelRequestProvider == provider && modelRequestBaseURL == baseURL
+        if isRefreshingModels && sameRequest { return }
+        guard !hasLoadedModels(provider: provider) else { return }
         refreshModels(provider: provider, baseURL: baseURL)
     }
 
