@@ -114,6 +114,15 @@ jobs:
           umask 077
           test -n "$SPARKLE_PRIVATE_KEY_BASE64"
           test -n "$SPARKLE_PUBLIC_KEY"
+          # Keep the release key compatible with the public key embedded in existing builds.
+          python3 - <<'PYTHON'
+          import os, re
+          from pathlib import Path
+          source = Path("script/build_and_run.sh").read_text()
+          match = re.search(r'SPARKLE_PUBLIC_KEY="\$\{WEIBEI_SPARKLE_PUBLIC_KEY:-([^}]+)\}"', source)
+          if not match or os.environ["SPARKLE_PUBLIC_KEY"] != match.group(1):
+              raise SystemExit("Sparkle release public key differs from the repository's installed-app key; stop before publishing.")
+          PYTHON
           /usr/bin/printf '%s' "$SPARKLE_PRIVATE_KEY_BASE64" | /usr/bin/base64 -D -o "$RUNNER_TEMP/weibei-sparkle-private-key"
           test -s "$RUNNER_TEMP/weibei-sparkle-private-key"
           chmod 600 "$RUNNER_TEMP/weibei-sparkle-private-key"

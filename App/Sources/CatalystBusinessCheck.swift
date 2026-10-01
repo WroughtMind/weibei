@@ -1,5 +1,6 @@
 #if WEIBEI_ACCEPTANCE_CHECKS
 import UIKit
+import SwiftUI
 import WebKit
 import WeiBeiCore
 
@@ -39,7 +40,7 @@ enum CatalystBusinessCheck {
                 try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: path, options: .atomic)
                 exit(0)
             }
-            let courseID = try store.createCourseInLibrary(title: "退出保存检查")
+            let courseID = try await store.createCourseInLibraryAsync(title: "退出保存检查")
             guard let chat = store.createStudySession(courseID: courseID),
                   let noteID = await store.createCourseNotebookNote(courseID: courseID, title: "退出保存笔记",
                     markdown: "原始正文", revealInWorkspace: false),
@@ -671,9 +672,8 @@ enum CatalystBusinessCheck {
         guard store.openAgentReplySource(source) else { throw Failure("discussion citation did not open") }
         try await until("citation revealed and floating draft restored") {
             guard store.selectionChatRevealMessageID == nil, floatingComposer()?.text == draft,
-                  let controller = conversation(containing: messageID),
-                  let section = controller.messages.firstIndex(where: { $0.id == messageID.uuidString }) else { return false }
-            return controller.collection.indexPathsForVisibleItems.contains { $0.section == section }
+                  let message = floatingMessage(messageID, in: window) else { return false }
+            return isVisible(message, in: window)
         }
         guard store.activeStudySessionID == mainID, mainComposer.text == mainDraft else { throw Failure("citation replaced the main conversation") }
         try capture("selection-discussion.png")
@@ -683,9 +683,14 @@ enum CatalystBusinessCheck {
         try await until("main quote appends to its own composer") {
             mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
         }
-        conversation(containing: messageID)?.quoteText?("浮窗引用片段")
+        guard let floatingMessage = floatingMessage(messageID, in: window),
+              let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
+            throw Failure("floating message quote action unavailable")
+        }
+        let floatingQuoted = draft + "\n\n> " + quotedMessage.text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
+        floatingMessage.onQuote()
         try await until("floating quote appends to its own composer") {
-            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == draft + "\n\n> 浮窗引用片段\n\n"
+            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
                 && mainComposer.text == mainQuoted
         }
         store.dismissFloatingSelectionAgent()
@@ -902,10 +907,46 @@ enum CatalystBusinessCheck {
             .compactMap(\.rootViewController).flatMap(children).compactMap { $0 as? ConversationController }
             .first { controller in messageID.map { id in controller.messages.contains { $0.id == id.uuidString } } ?? true }
     }
+    private static func floatingMessage(_ id: UUID, in window: UIWindow) -> CatalystFloatingMessageCheckProbe.Probe? {
+        descendants(window).compactMap { $0 as? CatalystFloatingMessageCheckProbe.Probe }
+            .first { $0.messageID == id && $0.window === window }
+    }
+    private static func isVisible(_ view: UIView, in window: UIWindow) -> Bool {
+        guard view.window === window, view.bounds.width > 1, view.bounds.height > 1 else { return false }
+        var visible = view.convert(view.bounds, to: window).intersection(window.bounds)
+        var ancestor: UIView? = view
+        while let current = ancestor {
+            guard !current.isHidden, current.alpha > 0.01 else { return false }
+            if current.clipsToBounds {
+                visible = visible.intersection(current.convert(current.bounds, to: window))
+            }
+            ancestor = current.superview
+        }
+        return !visible.isNull && visible.width > 1 && visible.height > 1
+    }
     private static func waitingStatus(in view: UIView) -> UIView? {
         descendants(view).first {
             $0.accessibilityIdentifier == "agent-thinking-status-layout" && $0.window != nil && !$0.isHidden
         }
+    }
+}
+
+/// Test-only observation of the real SwiftUI row and its production quote action.
+/// It does not replace rendering, scrolling, draft mutation, or focus handling.
+struct CatalystFloatingMessageCheckProbe: UIViewRepresentable {
+    let messageID: UUID
+    let onQuote: () -> Void
+    final class Probe: UIView {
+        var messageID: UUID?
+        var onQuote: () -> Void = {}
+    }
+    func makeUIView(context: Context) -> Probe { Probe() }
+    func updateUIView(_ view: Probe, context: Context) {
+        view.messageID = messageID
+        view.onQuote = onQuote
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: Probe, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? uiView.bounds.width, height: proposal.height ?? uiView.bounds.height)
     }
 }
 

@@ -970,18 +970,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     static func userFacingAgentFailureDetail(for error: Error) -> String? {
-        let message: String
-        if let targetError = error as? AgentConversationTargetError {
-            message = targetError.message
-        } else if let failure = error as? NativeLLMFailure {
-            if failure.message.hasPrefix("HTTP ") || failure.message.contains("{") {
-                return nil
-            }
-            message = failure.message
-        } else {
-            return nil
-        }
-        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let targetError = error as? AgentConversationTargetError else { return nil }
+        let trimmed = targetError.message.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
@@ -4885,7 +4875,11 @@ final class WorkspaceStore: ObservableObject {
             // Only assign when changed — pane visibility lives on paneState; avoid store thrash.
             applyLayoutMatchingThreePaneOrderIfNeeded()
         }
-        focus(isPaneVisible(role) ? role.focus : fallbackDocumentPaneFocus())
+        if isPaneVisible(role) {
+            focus(role.focus)
+        } else if let nextFocus = visibleDocumentPaneOrder.first?.focus {
+            focus(nextFocus)
+        }
         save()
     }
 
@@ -4984,10 +4978,6 @@ final class WorkspaceStore: ObservableObject {
             showNotes = visible
             if !visible && searchesNotes { showDocumentSearch = false; noteSearch = "" }
         }
-    }
-
-    private func fallbackDocumentPaneFocus() -> PaneFocus {
-        visibleDocumentPaneOrder.first?.focus ?? .reader
     }
 
     func revealDocumentSearch() {

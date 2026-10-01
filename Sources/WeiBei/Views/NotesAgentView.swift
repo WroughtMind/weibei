@@ -2974,7 +2974,8 @@ struct FloatingSelectionAgentView: View {
                     streaming: message.completionState == .generating
                         || floatingStreaming.isDisplaying(message.id)
                         ? floatingStreaming
-                        : inertAgentStreamingState
+                        : inertAgentStreamingState,
+                    onQuote: appendFloatingQuote
                 )
                 .id(message.id)
             }
@@ -3003,6 +3004,18 @@ struct FloatingSelectionAgentView: View {
         .onPreferenceChange(FloatingSelectionFeedHeightKey.self) { height in
             adoptMeasuredFeedHeight(height)
         }
+    }
+
+    private func appendFloatingQuote(_ text: String) {
+        guard let threadID = interaction.activeSelectionAskThreadID else { return }
+        let quote = "> " + text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
+        let existing = store.composerDraft(for: threadID)
+        let separator = existing.isEmpty || existing.hasSuffix("\n\n") ? ""
+            : existing.hasSuffix("\n") ? "\n" : "\n\n"
+        store.replaceComposerDraft(existing + separator + quote, for: threadID)
+        store.focusedPane = .agent
+        draftFocused = true
+        composerFocusTrigger &+= 1
     }
 
     private var locksFloatingFeedHeight: Bool {
@@ -3459,11 +3472,13 @@ private struct FloatingSelectionMessageRow: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     @ObservedObject var streaming: AgentStreamingState
+    var onQuote: (String) -> Void
 
     @ViewBuilder
     var body: some View {
         let isStreaming = streaming.isDisplaying(message.id)
         let text = (isStreaming && !streaming.text.isEmpty) ? streaming.text : store.agentDisplayText(for: message)
+        let quoteAction: () -> Void = { onQuote(text) }
         // Keep the native body mounted while the first-token indicator is visible.
         ZStack(alignment: .topLeading) {
             FloatingSelectionMessageBubble(
@@ -3479,6 +3494,15 @@ private struct FloatingSelectionMessageRow: View {
                     .padding(.vertical, 4)
             }
         }
+        .contextMenu {
+            Button(action: quoteAction) {
+                Label(store.ui("引用到输入框", "Quote into the input"), systemImage: "text.quote")
+            }
+        }
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+        .background(CatalystFloatingMessageCheckProbe(messageID: message.id, onQuote: quoteAction)
+            .allowsHitTesting(false).accessibilityHidden(true))
+#endif
         .onAppear { store.setAgentStreamingReduceMotion(reduceMotion, in: message.origin?.chatID) }
         .onDisappear {
             if streaming.isDisplaying(message.id) {
