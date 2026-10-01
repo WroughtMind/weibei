@@ -1585,7 +1585,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         let imageMarkdown = "![failed alt](missing.png)\n\n![success alt](data:image/svg+xml;base64,PHN2Zy8+)"
         let mermaidMarkdown = "```mermaid\ngraph TD\nA --> B\n```\n\nafter"
         let script = """
-        (() => {
+        return await (async () => {
           const editor = window.WeiBeiEditor;
           editor.setDocumentID('work-package-e-metrics');
           editor.setMarkdown(\(json(ordinaryMarkdown)));
@@ -1626,7 +1626,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           document.querySelector('.ProseMirror')?.dispatchEvent(new FocusEvent('focus'));
           if (!editor.selectFirstCodeBlockEndForCheck()) throw new Error('Mermaid selection helper unavailable');
           window.WeiBeiMermaidPreviewForE = document.querySelector('.weibei-mermaid-render');
-          window.WeiBeiMermaidHTMLForE = window.WeiBeiMermaidPreviewForE?.innerHTML || '';
+          // Isolate the debounce contract from lazy engine loading and the initial SVG render.
+          const initialDeadline = performance.now() + 5000;
+          while (window.WeiBeiMermaidPreviewForE?.dataset.rendered !== 'true' && performance.now() < initialDeadline) {
+            await new Promise(resolve => window.setTimeout(resolve, 25));
+          }
+          if (window.WeiBeiMermaidPreviewForE?.dataset.rendered !== 'true') throw new Error('initial Mermaid preview did not become ready');
+          window.WeiBeiMermaidHTMLForE = window.WeiBeiMermaidPreviewForE.innerHTML;
           editor.resetCheckMetrics();
           if (!editor.typeTextForCheck('x')) throw new Error('Mermaid typing helper unavailable');
           window.WeiBeiMermaidBeforeForE = new Promise((resolve) => window.setTimeout(() => resolve({
@@ -1648,9 +1654,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           };
         })();
         """
-        webView.evaluateJavaScript(script) { [weak self] value, error in
+        webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self] outcome in
             guard let self else { return }
-            guard error == nil,
+            guard case let .success(value) = outcome,
                   let result = value as? [String: Any],
                   result["selectionDecorationNodes"] as? Int == 0,
                   result["inputImageScans"] as? Int == 0,
@@ -1662,7 +1668,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                   result["successSelectable"] as? Bool == true,
                   result["mermaidPreviewExists"] as? Bool == true,
                   result["mermaidDOMReused"] as? Bool == true else {
-                self.fail("work package E structural metrics or image identity failed: \(String(describing: error)); \(String(describing: value))")
+                self.fail("work package E structural metrics or image identity failed: \(String(describing: outcome))")
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -1688,12 +1694,12 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                self.validateMermaidDebounceAfterDeadline()
+                self.validateMermaidDebounceAfterDeadline(deadline: Date().addingTimeInterval(5))
             }
         }
     }
 
-    private func validateMermaidDebounceAfterDeadline() {
+    private func validateMermaidDebounceAfterDeadline(deadline: Date) {
         webView.evaluateJavaScript("""
         ({
           sameDOM: document.querySelector('.weibei-mermaid-render') === window.WeiBeiMermaidPreviewForE,
@@ -1702,15 +1708,22 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         })
         """) { [weak self] value, error in
             guard let self else { return }
-            guard error == nil,
-                  let result = value as? [String: Any],
-                  result["sameDOM"] as? Bool == true,
-                  result["changedHTML"] as? Bool == true,
-                  (result["renders"] as? Int ?? 0) >= 1 else {
+            guard error == nil, let result = value as? [String: Any],
+                  result["sameDOM"] as? Bool == true else {
+                self.fail("focused Mermaid preview replaced its DOM or failed: \(String(describing: error)); \(String(describing: value))")
+                return
+            }
+            if result["changedHTML"] as? Bool == true && (result["renders"] as? Int ?? 0) >= 1 {
+                self.validateOutlineInitialEvent()
+                return
+            }
+            guard Date() < deadline else {
                 self.fail("focused Mermaid preview did not update in place after its 300ms debounce: \(String(describing: value))")
                 return
             }
-            self.validateOutlineInitialEvent()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.validateMermaidDebounceAfterDeadline(deadline: deadline)
+            }
         }
     }
 
