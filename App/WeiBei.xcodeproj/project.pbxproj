@@ -1030,9 +1030,11 @@
 			dependencies = (
 				49E6D4A20DE48D1533107998 /* PBXTargetDependency */,
 				0F01CE000000000000000003 /* PBXTargetDependency */,
+				D5130ACE0000000000000001 /* PBXTargetDependency */,
 			);
 			name = WeiBeiCore;
 			packageProductDependencies = (
+				D5130ACE0000000000000002 /* SwiftSoup */,
 				2357C0DC96C864EA89194FC2 /* Markdown */,
 				0F01CE000000000000000004 /* ZIPFoundation */,
 			);
@@ -1065,6 +1067,7 @@
 			mainGroup = CD245EE5BAF3B71C96D5FFE0;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				D5130ACE0000000000000003 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
 				0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 				EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */,
 				A362C2116CE98A2EFABB6D0E /* XCRemoteSwiftPackageReference "Sparkle" */,
@@ -1360,6 +1363,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		D5130ACE0000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = D5130ACE0000000000000002 /* SwiftSoup */;
+		};
 		0F01CE000000000000000003 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			productRef = 0F01CE000000000000000004 /* ZIPFoundation */;
@@ -1744,6 +1751,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		D5130ACE0000000000000003 /* XCRemoteSwiftPackageReference "SwiftSoup" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/scinfu/SwiftSoup.git";
+			requirement = {kind = exactVersion; version = 2.13.9; };
+		};
 		0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
@@ -1784,6 +1796,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		D5130ACE0000000000000002 /* SwiftSoup */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D5130ACE0000000000000003 /* XCRemoteSwiftPackageReference "SwiftSoup" */;
+			productName = SwiftSoup;
+		};
 		0F01CE000000000000000004 /* ZIPFoundation */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;

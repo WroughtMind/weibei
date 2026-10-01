@@ -3659,7 +3659,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
       const sectionLocationID = (title, body) => {
         const normalized = `${title}|${body}`
-          .toLocaleLowerCase()
+          .toLowerCase()
           .match(/[\\p{L}\\p{N}]/gu)?.join("").slice(0, 500) || "";
         const bytes = new TextEncoder().encode(normalized);
         let hash = 0x811c9dc5;

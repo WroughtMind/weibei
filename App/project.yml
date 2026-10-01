@@ -23,6 +23,9 @@ packages:
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation
     exactVersion: 0.9.20
+  SwiftSoup:
+    url: https://github.com/scinfu/SwiftSoup.git
+    exactVersion: 2.13.9
 targets:
   WeiBei:
     type: application
@@ -209,6 +212,8 @@ targets:
         product: Markdown
       - package: ZIPFoundation
         product: ZIPFoundation
+      - package: SwiftSoup
+        product: SwiftSoup
   WeiBeiPDFTextWorker:
     type: tool
     platform: macOS
