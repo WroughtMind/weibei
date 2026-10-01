@@ -23,12 +23,19 @@ public actor NativeAgentLoop {
         contextWindow: Int? = nil,
         hostToolHandler: StudyAgentHostToolHandler?,
         systemPrompt: String,
+        environment: NativeSessionEnvironment = NativeSessionEnvironment(),
         liveStores: NativeLiveStores = .empty,
         mode: NativeAgentMode = .assistant,
         progress: StudyAgentProgressHandler?
     ) async throws -> NativeLoopResult {
         await progress?(.preparing)
         let existingEvents = await ledger.allEvents()
+        let environmentText = environment.modelMessage.content
+        if existingEvents.last(where: { $0.type == .environmentContext })?.text != environmentText {
+            _ = try await ledger.append { seq, time in
+                NativeSessionEvent(type: .environmentContext, seq: seq, timeMS: time, text: environmentText)
+            }
+        }
         let turn = (existingEvents.compactMap(\.turn).max() ?? 0) + 1
         let aliasScope = NativeStateAliases.scopeKey(for: request)
         let persistedAliases = existingEvents.reversed().first {
@@ -127,10 +134,13 @@ public actor NativeAgentLoop {
                     }
                 }
                 var messages = [NativeModelMessage(role: .system, content: effectiveSystemPrompt)]
+                if let environmentMessage = projection.environmentMessage {
+                    messages.append(environmentMessage)
+                }
                 messages.append(contentsOf: projection.messages)
                 if let invariant = NativeAgentInvariant.mismatch(
                     logged: projection.messages,
-                    outgoing: Array(messages.dropFirst())
+                    outgoing: Array(messages.suffix(projection.messages.count))
                 ) {
                     assertionFailure(invariant)
                 }
