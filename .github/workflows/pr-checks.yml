@@ -152,6 +152,10 @@ jobs:
           git diff --exit-code -- Sources/WeiBei/Resources/Editor
           swift run WeiBeiWebEditorCheck
 
+      - name: 临时验收：白板真实 WebKit 行为
+        if: always() && steps.compile.outcome == 'success' && steps.dependencies.outcome == 'success'
+        run: swift run WeiBeiWebEditorCheck --whiteboard
+
       - name: 运行课程目录、数据与 Agent 安全自检
         id: safety
         if: (needs.scope.outputs.data_safety == 'true' || needs.scope.outputs.agent == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
