@@ -12,42 +12,19 @@ extension SettingsView {
     func agentSettingsContent() -> some View {
         VStack(alignment: .leading, spacing: 16) {
             AgentConnectionCardsView()
-        }
-        .sheet(isPresented: $showManualModelEntry) {
-            agentManualModelSheet
-        }
-    }
-
-    // MARK: Manual model entry sheet
-
-    private var agentManualModelSheet: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(store.ui("手动输入模型 ID", "Enter model id"))
-                .weiBeiText(15, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.ink)
-            TextField(
-                "",
-                text: Binding(
-                    get: { store.modelName },
-                    set: { store.updateModelName($0) }
-                ),
-                prompt: Text(oauthService.models(provider: store.agentProviderID).first ?? "model-id")
-                    .foregroundStyle(WeiBeiTheme.placeholderInk)
-            )
-            .textFieldStyle(.plain)
-            .weiBeiText(13)
-            .foregroundColor(WeiBeiTheme.ink)
-            .weiBeiText(13)
-            .weibeiInputSurface(active: true, height: 38)
-            HStack {
-                Spacer()
-                Button(store.ui("完成", "Done")) { showManualModelEntry = false }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+            if !store.agentReasoningLevels.isEmpty {
+                ForEach(AgentReasoningMode.allCases, id: \.self) { mode in
+                    settingsRow(title: mode.label, detail: store.ui("当前模型的推理强度", "Reasoning effort for this model")) {
+                        compactMenu(AgentReasoningEffort.label(store.agentReasoningEffort(for: mode) ?? mode.defaultEffort, language: store.interfaceLanguage)) {
+                            ForEach(store.agentReasoningLevels, id: \.self) { effort in
+                                Button(AgentReasoningEffort.label(effort, language: store.interfaceLanguage)) {
+                                    store.agentReasoningMappings[store.agentReasoningMappingKey(mode)] = effort
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
-        .padding(20)
-        .frame(width: 380)
-        .background(WeiBeiTheme.paper)
-        .weiBeiFittedSheet()
     }
 }

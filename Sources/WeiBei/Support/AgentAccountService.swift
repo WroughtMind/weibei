@@ -28,6 +28,11 @@ final class AgentAccountService: ObservableObject {
         var credentials: [CredentialInfo] = []
     }
 
+    struct SuccessfulModelListState: Equatable, Sendable {
+        var message: LocalizedMessage?
+        var canRetry: Bool
+    }
+
     @Published private(set) var catalog: CatalogInfo?
     @Published private(set) var isLoggingIn = false
     @Published private(set) var statusMessage: LocalizedMessage?
@@ -36,6 +41,9 @@ final class AgentAccountService: ObservableObject {
     @Published private(set) var liveReasoningLevels: [String: [String]] = [:]
     /// 最近一次名单请求的失败。成功或换服务时清掉。默认模型仍可选手输，但界面不能把失败说成刚刚同步。
     @Published private(set) var modelListFailure: ModelListFailure?
+    @Published private(set) var isRefreshingModels = false
+    @Published private(set) var modelListMessage: LocalizedMessage?
+    @Published private(set) var modelListCanRetry = false
     private var liveModelsProvider: AgentProviderID?
 
     enum ModelListFailure: Error, Equatable {
@@ -55,9 +63,17 @@ final class AgentAccountService: ObservableObject {
     private var modelListTask: Task<Void, Never>?
     private var modelRequestGeneration = 0
 
-    private init() {
+    struct ModelCatalog {
+        var ids: [String]
+        var reasoningLevels: [String: [String]]
+    }
+    private let modelCatalogLoader: ((AgentProviderID, String) async throws -> ModelCatalog)?
+
+    init(modelCatalogLoader: ((AgentProviderID, String) async throws -> ModelCatalog)? = nil) {
+        self.modelCatalogLoader = modelCatalogLoader
         reloadCredentialSnapshot()
     }
+
 
     /// The same endpoint-scoped lookup used when sending; cards must not inspect another gateway's key.
     static func connectionAPIKey(provider: AgentProviderID, baseURL: String,
@@ -65,11 +81,7 @@ final class AgentAccountService: ObservableObject {
         guard let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL),
               let records = try? credentialStore.load(),
               let record = records[endpoint.credentialProviderID] else { return nil }
-        if let bound = record.boundEndpoint {
-            guard let normalized = try? AgentProviderEndpoint(provider: provider, baseURL: bound),
-                  normalized.baseURL == endpoint.baseURL else { return nil }
-        }
-        return record.apiKey?.isEmpty == false ? record.apiKey : nil
+        return try? record.apiKey(for: provider, endpoint: endpoint)
     }
 
     func connectionAPIKey(provider: AgentProviderID, baseURL: String) -> String? {
@@ -102,15 +114,13 @@ final class AgentAccountService: ObservableObject {
         return result
     }
 
-    /// 只有服务商这次返回的 id。已保存的模型不在名单里时仍保持原选择，不把路由表默认名插进菜单。
-    func models(provider: AgentProviderID) -> [String] {
-        guard liveModelsProvider == provider else { return [] }
-        return liveModelIDs
-    }
-
     private func beginModelRequest(for provider: AgentProviderID) -> Int {
         modelListTask?.cancel()
         modelRequestGeneration += 1
+        isRefreshingModels = true
+        modelListMessage = nil
+        modelListCanRetry = false
+        liveModelIDs = []
         if liveModelsProvider != provider {
             liveModelIDs = []
             liveModelsProvider = nil
@@ -121,9 +131,63 @@ final class AgentAccountService: ObservableObject {
 
     private func publish(_ result: Result<Int, ModelListFailure>, generation: Int) {
         guard generation == modelRequestGeneration else { return }
-        if case .failure(let failure) = result, failure != .superseded {
+        isRefreshingModels = false
+        switch result {
+        case .success:
+            modelListFailure = nil
+            let state = Self.successfulModelListState(liveModelIDs)
+            modelListMessage = state.message
+            modelListCanRetry = state.canRetry
+        case .failure(let failure):
+            guard failure != .superseded else { return }
             modelListFailure = failure
+            modelListCanRetry = true
+            modelListMessage = LocalizedMessage(chinese: "模型名单获取失败，当前选择没有改变。请重试，或手动输入模型 ID。",
+                                               english: "Could not load the model list. Your selection is unchanged. Try again, or enter a model ID manually.")
         }
+    }
+
+    /// 冷启动的输入框也需要实时推理能力，不要求先打开设置。
+    /// 多个输入框同时出现时复用当前查询，不清空已加载的能力。
+    func refreshReasoningCatalogIfNeeded(provider: AgentProviderID, baseURL: String) {
+        guard provider == .openaiCodex, !isRefreshingModels,
+              !hasLoadedModels(provider: provider) else { return }
+        refreshModels(provider: provider, baseURL: baseURL)
+    }
+
+    /// 只返回当前服务商端点实际拉取到的名单；手输任意 ID 仍然有效。
+    func models(provider: AgentProviderID) -> [String] {
+        Self.catalogEntries(liveModelIDs, loadedFor: liveModelsProvider, provider: provider)
+    }
+
+    static func catalogEntries(
+        _ ids: [String],
+        loadedFor: AgentProviderID?,
+        provider: AgentProviderID
+    ) -> [String] {
+        guard loadedFor == provider else { return [] }
+        return ids
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    static func successfulModelListState(_ modelIDs: [String]) -> SuccessfulModelListState {
+        guard modelIDs.isEmpty else {
+            return SuccessfulModelListState(message: nil, canRetry: false)
+        }
+        return SuccessfulModelListState(
+            message: LocalizedMessage(
+                chinese: "服务返回的模型名单为空，当前选择没有改变。请刷新重试，或手动输入模型 ID。",
+                english: "The service returned an empty model list. Your selection is unchanged. Refresh to try again, or enter a model ID manually."
+            ),
+            canRetry: true
+        )
+    }
+
+    func hasLoadedModels(provider: AgentProviderID) -> Bool {
+        liveModelsProvider == provider
+            && !isRefreshingModels
+            && modelListMessage == nil
     }
 
     func reasoningLevels(provider: AgentProviderID, model: String) -> [String] {
@@ -334,6 +398,19 @@ final class AgentAccountService: ObservableObject {
         baseURL: String,
         generation: Int
     ) async -> Result<Int, ModelListFailure> {
+        if let modelCatalogLoader {
+            do {
+                let catalog = try await modelCatalogLoader(provider, baseURL)
+                guard generation == modelRequestGeneration, !Task.isCancelled else { return .failure(.superseded) }
+                liveReasoningLevels = catalog.reasoningLevels
+                liveModelIDs = Self.catalogEntries(catalog.ids, loadedFor: provider, provider: provider)
+                liveModelsProvider = provider
+                return .success(liveModelIDs.count)
+            } catch {
+                guard generation == modelRequestGeneration, !Task.isCancelled else { return .failure(.superseded) }
+                return .failure(Self.modelListFailure(from: error))
+            }
+        }
         let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL)
         let resolved = endpoint.flatMap {
             NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: $0)

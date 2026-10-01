@@ -29,6 +29,9 @@ struct AgentConnectionCardsView: View {
     @State private var probeState = AgentConnectionProbeState()
     @State private var showsManualModel = false
     @State private var manualModelDraft = ""
+    @State private var showsEndpointEditor = false
+    @State private var endpointDraft = ""
+    @State private var endpointError: String?
 
     /// 账号登录的服务排在前面。只支持订阅的（如 Codex）以前被 apiKey 过滤掉了。
     private var addServices: [AgentProviderID] {
@@ -86,6 +89,30 @@ struct AgentConnectionCardsView: View {
             .padding(24)
             .frame(minWidth: 320)
         }
+        .sheet(isPresented: $showsEndpointEditor) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(store.ui("服务地址", "Service URL")).font(.headline)
+                TextField("https://…", text: $endpointDraft).textFieldStyle(.roundedBorder)
+                if let endpointError { Text(endpointError).foregroundStyle(WeiBeiTheme.cinnabar) }
+                HStack {
+                    Button(store.ui("取消", "Cancel")) { showsEndpointEditor = false }
+                    Spacer()
+                    Button(store.ui("保存", "Save")) {
+                        do {
+                            let endpoint = try AgentProviderEndpoint(provider: store.agentProviderID, baseURL: endpointDraft)
+                            store.updateAgentBaseURL(endpoint.baseURL ?? "")
+                            probeState.invalidate(store.activeAgentProfileID)
+                            probingProfileID = nil
+                            endpointError = nil
+                            showsEndpointEditor = false
+                            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+                        } catch {
+                            endpointError = store.ui("请输入有效的服务地址", "Enter a valid service URL")
+                        }
+                    }
+                }
+            }.padding(24).frame(minWidth: 360)
+        }
         .onChange(of: store.activeAgentProfileID) { previous, _ in
             // 绿和红只属于刚测完的这一眼。离开这张卡就收掉，再点回来不接着亮。
             if probingProfileID != previous {
@@ -110,6 +137,13 @@ struct AgentConnectionCardsView: View {
             }
         }
         .contextMenu {
+            if selected, profile.provider.showsBaseURLField || !profile.baseURL.isEmpty {
+                Button(store.ui("编辑服务地址…", "Edit service URL…")) {
+                    endpointDraft = profile.baseURL
+                    endpointError = nil
+                    showsEndpointEditor = true
+                }
+            }
             if !selected {
                 Button(store.ui("设为使用中", "Set as Active")) {
                     store.selectAgentCredentialProfile(profile.id)
@@ -560,11 +594,14 @@ struct AgentConnectionCardsView: View {
         if let mark = probeState.marks[profile.id] {
             return mark.ok ? nil : mark.text
         }
-        guard profile.id == store.activeAgentProfileID,
-              probingProfileID == nil,
-              let failure = oauthService.modelListFailure,
-              failure != .superseded else { return nil }
-        return modelListFailureText(failure)
+        guard profile.id == store.activeAgentProfileID, probingProfileID == nil else { return nil }
+        if let failure = oauthService.modelListFailure, failure != .superseded {
+            return modelListFailureText(failure)
+        }
+        if let message = oauthService.modelListMessage {
+            return store.ui(message.chinese, message.english)
+        }
+        return nil
     }
 
     private func probeHelp(for profile: AgentCredentialProfile) -> String {

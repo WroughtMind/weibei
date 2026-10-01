@@ -123,6 +123,49 @@ final class AgentEndpointSecurityTests: XCTestCase {
         XCTAssertNil(try store.load()[AgentProviderID.custom.credentialProviderID])
     }
 
+    func testAzureCredentialCannotLeaveItsBoundEndpoint() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiAzureEndpointTest-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try AgentProviderEndpoint(
+            provider: .azureOpenAI,
+            baseURL: "https://first.openai.azure.com"
+        )
+        let second = try AgentProviderEndpoint(
+            provider: .azureOpenAI,
+            baseURL: "https://second.openai.azure.com"
+        )
+        let store = NativeAgentCredentialStore(fileURL: root.appendingPathComponent("credentials.json"))
+        try store.upsert(NativeAgentCredentialRecord(
+            provider: first.credentialProviderID,
+            apiKey: "first-secret",
+            boundEndpoint: first.baseURL
+        ))
+        XCTAssertTrue(first.matchesCredentialBinding(for: .azureOpenAI, boundEndpoint: first.baseURL))
+        XCTAssertFalse(second.matchesCredentialBinding(for: .azureOpenAI, boundEndpoint: first.baseURL))
+
+        let matching = try await NativeLLMAdapterFactory.make(
+            provider: .azureOpenAI,
+            model: "deployment",
+            endpoint: first,
+            authMethod: .apiKey,
+            credentialStore: store
+        )
+        XCTAssertEqual((matching as? OpenAIResponsesProvider)?.accessToken, "first-secret")
+        do {
+            _ = try await NativeLLMAdapterFactory.make(
+                provider: .azureOpenAI,
+                model: "deployment",
+                endpoint: second,
+                authMethod: .apiKey,
+                credentialStore: store
+            )
+            XCTFail("Azure 旧地址的密钥不得发送到新地址")
+        } catch {
+            XCTAssertEqual(error as? AgentProviderEndpointError, .azureCredentialRequiresReentry)
+        }
+    }
+
     @MainActor
     func testAgentOwnedRootsRejectSymlinksOutsideWorkspace() throws {
         enum OwnedRoot: String {
