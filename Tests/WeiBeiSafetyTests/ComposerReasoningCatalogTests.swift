@@ -59,9 +59,17 @@ final class ComposerReasoningCatalogTests: XCTestCase {
             try await withCheckedThrowingContinuation { pending.append($0) }
         })
         let old = Task { await account.probeConnection(provider: .openai, baseURL: "") }
-        while pending.count < 1 { await Task.yield() }
+        let firstDeadline = Date().addingTimeInterval(5)
+        while pending.count < 1 && Date() < firstDeadline { await Task.yield() }
+        guard pending.count == 1 else { old.cancel(); return XCTFail("First synthetic catalog request did not start") }
         let current = Task { await account.probeConnection(provider: .anthropic, baseURL: "") }
-        while pending.count < 2 { await Task.yield() }
+        let secondDeadline = Date().addingTimeInterval(5)
+        while pending.count < 2 && Date() < secondDeadline { await Task.yield() }
+        guard pending.count == 2 else {
+            old.cancel(); current.cancel()
+            pending[0].resume(throwing: CancellationError())
+            return XCTFail("Second synthetic catalog request did not start")
+        }
         pending[1].resume(returning: .init(ids: ["newer-model"], reasoningLevels: [:]))
         let currentResult = await current.value
         XCTAssertEqual(currentResult, .success(1))
