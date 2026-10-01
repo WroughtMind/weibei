@@ -1,6 +1,7 @@
 declare global {
   interface Window {
     WeiBeiKaTeX?: any;
+    WeiBeiKaTeXReady?: Promise<void>;
     WeiBeiMermaid?: any;
     WeiBeiPrism?: any;
   }
@@ -22,7 +23,7 @@ const loadScript = (name: string) => {
   return promise;
 };
 
-export const loadKaTeX = () => loadScript('katex-runtime.js').then(() => window.WeiBeiKaTeX);
+export const loadKaTeX = () => loadScript('katex-runtime.js').then(() => window.WeiBeiKaTeXReady).then(() => window.WeiBeiKaTeX);
 export const loadedKaTeX = () => window.WeiBeiKaTeX;
 export const loadMermaid = () => loadScript('mermaid-runtime.js').then(() => window.WeiBeiMermaid);
 export const loadPrism = () => loadScript('prism-runtime.js').then(() => window.WeiBeiPrism);
