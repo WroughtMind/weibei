@@ -242,7 +242,9 @@ jobs:
       - name: 生成并挂载验收当前架构安装包
         id: package
         if: needs.scope.outputs.release == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: ./script/build_release_dmg.sh --arch "$WEIBEI_TARGET_ARCH"
+        run: |
+          ./script/build_release_dmg.sh --arch "$WEIBEI_TARGET_ARCH"
+          python3 script/check_package_size_policy.py "dist/release/$WEIBEI_TARGET_ARCH/魏碑.app"
 
       - name: 在当前架构的真实 Catalyst 进程检查会话
         id: acceptance
