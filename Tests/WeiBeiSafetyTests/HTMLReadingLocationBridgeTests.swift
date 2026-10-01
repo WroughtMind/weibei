@@ -61,7 +61,7 @@ final class HTMLReadingLocationBridgeTests: XCTestCase {
         }
         // Hidden WebKit views do not drive display frames; still use real DOM geometry.
         _ = try evaluate("window.requestAnimationFrame = callback => { callback(); return 1; }; true;")
-        _ = try evaluate(WebReaderRepresentable.contentRailScript + "\n; true;")
+        _ = try evaluate(WebReaderRepresentable.contentRailScript(language: .chinese) + "\n; true;")
         let blocks = try evaluate("""
         ['first', 'short', 'emoji', 'nested', 'listed', 'optional-first', 'optional-second', 'quoted',
          'optional-li-first', 'optional-li-second', 'entities', 'block-17', 'block-37', 'second'].map(name => {

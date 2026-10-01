@@ -151,8 +151,8 @@
     },
     {
       "name": "office-entry.js.deflate",
-      "bytes": 1446771,
-      "sha256": "a6f68ca4968be5485fcefce3a35b86945b69e4b86df871af258ec8c6a5fddff5"
+      "bytes": 1446861,
+      "sha256": "0cc1a8120485ffa144d2b6f4836e06efdf2a2718e2f416b9d60280454ed6b113"
     },
     {
       "name": "office-licenses.txt",
@@ -171,8 +171,8 @@
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 539604,
-      "sha256": "4b679ada78cacb19fa3581c16d30c15018e345cc177c1b316f2466cf01741561"
+      "bytes": 539404,
+      "sha256": "7cb775e8759f1c70cbdcc7d41411ee33a80d01811d6e9d56dca22ee404506abb"
     }
   ]
 }

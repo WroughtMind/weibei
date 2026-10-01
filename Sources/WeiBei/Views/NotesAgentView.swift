@@ -3816,8 +3816,8 @@ struct AgentBubble: View {
 
             if message.completionState == .interrupted && !isFailureMessage {
                 HStack(spacing: 6) {
-                    // A3: 中断标注给出失败原因；emptyReply 的提示已写在正文里，不在这里重复。
-                    if message.failureKind != .emptyReply {
+                    // A3: 中断标注给出失败原因；正文已经是失败原因时不重复。
+                    if let interruptedNoticeTitle {
                         Text(interruptedNoticeTitle)
                             .weiBeiText(10.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -3935,10 +3935,23 @@ struct AgentBubble: View {
     }
 
     /// A5: 停止写「已停止」；其他失败写原因。没有收到正文时不说已保留内容。
-    private var interruptedNoticeTitle: String {
+    private var interruptedNoticeTitle: String? {
+        Self.interruptedNoticeTitle(for: message, language: store.interfaceLanguage)
+    }
+
+    /// 首次空回复的正文已经是错误原因；重新生成恢复旧回答时仍需另行显示原因。
+    static func interruptedNoticeTitle(
+        for message: AgentMessage,
+        language: WeiBeiInterfaceLanguage
+    ) -> String? {
         let kind = message.failureKind ?? .cancelled
-        let received = !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return kind.partialFailureNotice(language: store.interfaceLanguage, receivedText: received)
+        let body = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if kind == .emptyReply,
+           WeiBeiInterfaceLanguage.allCases.contains(where: { body == kind.title(language: $0) }) {
+            return nil
+        }
+        let received = !body.isEmpty
+        return kind.partialFailureNotice(language: language, receivedText: received)
     }
 
     private var offersFailureSettings: Bool {
@@ -4343,7 +4356,9 @@ final class AgentMessageMarkdownMemo {
                 language: language
             )
             display = AgentCitationParser.parse(presentation.markdown).displayText
-            finalized = AgentChatKaTeXMarkdown.prepare(display)
+            finalized = AgentChatKaTeXMarkdown.protectInlineMath(
+                AgentChatKaTeXMarkdown.prepare(display)
+            )
             key = nextKey
         }
         return (display, finalized)
@@ -4946,13 +4961,19 @@ private struct AgentMessageMarkdownText: View {
         Group {
             if rendersRichMarkdown {
 #if targetEnvironment(macCatalyst)
-                CatalystMessageMarkdown(markdown: preparedMarkdown, fontSize: (isChatWideTypography && !compact ? 16 : 14) * textScale,
-                    appearanceMode: store.appearanceMode, openLink: openLink)
+                CatalystRichAnswer(
+                    markdown: preparedMarkdown,
+                    fontSize: bodyFontSize,
+                    appearanceMode: store.appearanceMode,
+                    messageID: messageID,
+                    contentBlocks: contentBlocks,
+                    openLink: openLink
+                )
 #else
                 NativeChatMarkdownView(
                     markdown: preparedMarkdown,
                     messageID: messageID,
-                    fontSize: (isChatWideTypography && !compact ? 16 : 14) * textScale,
+                    fontSize: bodyFontSize,
                     isDark: store.appearanceMode.isDark,
                     appearanceKey: store.appearanceMode.rawValue,
                     interfaceLanguage: store.interfaceLanguage,
@@ -4984,7 +5005,7 @@ private struct AgentMessageMarkdownText: View {
 #endif
             } else {
                 Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
-                    .weiBeiText(compact ? 13.2 : 14.5)
+                    .weiBeiText(compact ? 11 : 14.5)
                     .lineSpacing(compact ? 4.2 : 4.5)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
@@ -5012,6 +5033,10 @@ private struct AgentMessageMarkdownText: View {
             imageHandler.invalidate()
             imageHandler = MarkdownImageSchemeHandler()
         }
+    }
+
+    private var bodyFontSize: CGFloat {
+        (compact ? 11 : (isChatWideTypography ? 16 : 14)) * textScale
     }
 
     private var initialBodyHeight: CGFloat {

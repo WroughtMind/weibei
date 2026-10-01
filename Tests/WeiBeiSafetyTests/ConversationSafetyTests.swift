@@ -185,6 +185,36 @@ final class ConversationSafetyTests: XCTestCase {
         XCTAssertEqual(store.conversationMessages(in: id).last?.completionState, .interrupted)
     }
 
+    @MainActor
+    func testUserStopWithTransportCancellationDoesNotRestoreQuestionIntoComposer() async throws {
+        let (store, id, cleanup) = try makeStore()
+        defer { cleanup() }
+        let gate = ReplyGate()
+        store.selfCheckAgentResponder = { _ in
+            await gate.wait()
+            throw URLError(.cancelled)
+        }
+        store.saveComposerDraft("主动停止的问题", for: id)
+        store.submitAgentDraft(sessionID: id)
+        try await waitUntil {
+            store.isAgentRunning(in: id)
+                && store.composerDraft(for: id).isEmpty
+                && store.conversationMessages(in: id).contains { $0.completionState == .generating }
+        }
+
+        // 停止按钮路径：只停止，不回填。
+        store.cancelAgentRequest(in: id)
+        gate.open()
+        await store.waitForAgentRequestsToStop()
+
+        XCTAssertFalse(store.isAgentRunning(in: id))
+        XCTAssertTrue(
+            store.composerDraft(for: id).isEmpty,
+            "用户主动停止不得把旧问题写回输入框"
+        )
+        XCTAssertEqual(store.conversationMessages(in: id).last?.completionState, .interrupted)
+    }
+
     /// A3: 重新生成失败且一个字都没收到时，原回答内容保持不变并标出可重试的中断状态。
     @MainActor
     func testRegenerateFailureKeepsPreviousReply() async throws {
@@ -294,6 +324,40 @@ final class ConversationSafetyTests: XCTestCase {
         XCTAssertEqual(messages.last?.text, "重新生成前的原回答。", "重新生成的空回复应恢复原回答")
         XCTAssertEqual(messages.last?.completionState, .interrupted)
         XCTAssertEqual(messages.last?.failureKind, .emptyReply)
+    }
+
+    /// A6: 首次空回复不重复错误原因；重新生成保留旧回答时必须另行显示原因。
+    @MainActor
+    func testEmptyReplyNoticeMatchesVisibleReplyBodyInBothLanguages() {
+        for language in WeiBeiInterfaceLanguage.allCases {
+            let emptyReplyTitle = AgentFailureKind.emptyReply.title(language: language)
+            let firstReply = AgentMessage(
+                role: .assistant,
+                text: emptyReplyTitle,
+                source: nil,
+                completionState: .interrupted,
+                failureKind: .emptyReply,
+                retryQuestion: "原始问题"
+            )
+            XCTAssertNil(
+                AgentBubble.interruptedNoticeTitle(for: firstReply, language: language),
+                "首次空回复的正文已经显示原因，不应在脚注重复"
+            )
+
+            let regeneratedReply = AgentMessage(
+                role: .assistant,
+                text: "重新生成前的原回答。",
+                source: nil,
+                completionState: .interrupted,
+                failureKind: .emptyReply,
+                retryQuestion: "原始问题"
+            )
+            XCTAssertEqual(
+                AgentBubble.interruptedNoticeTitle(for: regeneratedReply, language: language),
+                AgentFailureKind.emptyReply.partialFailureNotice(language: language, receivedText: true),
+                "重新生成保留原回答时仍应显示空回复原因"
+            )
+        }
     }
 
     @MainActor

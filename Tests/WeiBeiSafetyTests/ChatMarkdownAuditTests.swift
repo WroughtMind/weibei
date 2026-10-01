@@ -5,6 +5,64 @@ import XCTest
 @testable import WeiBei
 
 final class ChatMarkdownAuditTests: XCTestCase {
+    func testSingleDollarInlineMathIsProtectedBeforeMarkdownParsing() {
+        let source = "若 $f(|succ_i|,|succ_{-i}|)$ 成立，则继续。"
+        let protected = AgentChatKaTeXMarkdown.protectInlineMath(source)
+
+        XCTAssertEqual(protected, "若 \\(f(|succ_i|,|succ_{-i}|)\\) 成立，则继续。")
+        XCTAssertEqual(AgentChatKaTeXMarkdown.protectInlineMath(protected), protected)
+        let document = NativeChatMarkdownParser.parse(protected)
+        XCTAssertTrue(document.runs.contains {
+            $0.attachment == .math(latex: "f(|succ_i|,|succ_{-i}|)", display: false)
+        })
+    }
+
+    func testInlineMathProtectionPreservesLiteralAndEscapedDollars() {
+        let literals = [
+            "`$x_i$`",
+            "[金额 $5$](https://example.com)",
+            #"\$5$"#,
+            #"$x\$"#,
+            "$$x_i$$"
+        ]
+
+        for literal in literals {
+            XCTAssertEqual(AgentChatKaTeXMarkdown.protectInlineMath(literal), literal, literal)
+        }
+    }
+
+    func testRichAnswerSegmentsExtractAttachmentsWithoutChangingTextWhitespace() {
+        let source = "  前文\n\n![图示](weibei-visualization:activity/0)\n\n    后文\n"
+
+        XCTAssertEqual(
+            AgentAnswerMarkdownSegments.split(source),
+            [
+                .text("  前文\n\n"),
+                .attachment("activity/0"),
+                .text("\n\n    后文\n")
+            ]
+        )
+    }
+
+    func testRichAnswerSegmentsDecodePersistedContentIdentifiers() {
+        XCTAssertEqual(
+            AgentAnswerMarkdownSegments.split("![图示](weibei-visualization:chart%20one)"),
+            [.attachment("chart one")]
+        )
+    }
+
+    func testRichAnswerSegmentsPreserveMarkerExamplesInCodeAndLinks() {
+        let examples = [
+            "`![图示](weibei-visualization:activity/0)`",
+            "```markdown\n![图示](weibei-visualization:some-id)\n```",
+            "[![图示](weibei-visualization:some-id)](https://example.com)"
+        ]
+
+        for example in examples {
+            XCTAssertEqual(AgentAnswerMarkdownSegments.split(example), [.text(example)], example)
+        }
+    }
+
     func testSelectionAnswerFormulaRendersInsteadOfShowingLatexSource() {
         let answer = #"$$\text{本币回报} \approx \underbrace{(1+i_{f})}_{\text{外币利息}}\times\underbrace{(1+\Delta e)}_{\text{汇率变动}}-1$$"#
         let prepared = AgentChatKaTeXMarkdown.prepare(answer)
