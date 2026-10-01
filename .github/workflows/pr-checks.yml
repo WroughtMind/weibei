@@ -159,6 +159,15 @@ jobs:
           stdbuf -oL -eL swift test --filter WeiBeiSafetyTests
           WEIBEI_NATIVE_EVAL_EFFORT=high swift run WeiBeiNativeCheck --native-eval-self-check
 
+      - name: 保留合成原生界面回归截图
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-fix-evidence-${{ github.sha }}
+          path: .build/native-fix-evidence
+          retention-days: 2
+          if-no-files-found: ignore
+
       - name: 检查空白与生成文件
         run: |
           git diff --check
