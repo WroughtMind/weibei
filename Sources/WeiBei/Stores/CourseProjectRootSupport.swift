@@ -3147,41 +3147,124 @@ actor CourseProjectFileWorker {
         from urls: [URL],
         markdownOnly: Bool
     ) -> [URL] {
+        expandedImportSelection(from: urls, markdownOnly: markdownOnly).supported
+    }
+
+    nonisolated static func expandedImportSelection(
+        from urls: [URL],
+        markdownOnly: Bool
+    ) -> (
+        supported: [URL],
+        unsupportedNames: [String],
+        unavailableSourceURLs: [URL]
+    ) {
         let fileManager = FileManager.default
-        var seen = Set<String>()
-        var result: [URL] = []
+        var seenSupported = Set<String>()
+        var seenUnsupported = Set<String>()
+        var seenUnavailable = Set<String>()
+        var supported: [URL] = []
+        var unsupportedNames: [String] = []
+        var unavailableSourceURLs: [URL] = []
+        func recordUnavailable(_ url: URL) {
+            let standardized = url.standardizedFileURL
+            if seenUnavailable.insert(standardized.path).inserted {
+                unavailableSourceURLs.append(standardized)
+            }
+        }
         for rawURL in urls {
-            var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: rawURL.path, isDirectory: &isDirectory) else {
+            guard let rootValues = try? rawURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .isAliasFileKey,
+            ]) else {
+                recordUnavailable(rawURL)
                 continue
             }
-            if !isDirectory.boolValue {
-                appendSupported(rawURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
+            guard rootValues.isSymbolicLink != true,
+            rootValues.isAliasFile != true else {
+                continue
+            }
+            if rootValues.isDirectory != true {
+                guard fileManager.isReadableFile(atPath: rawURL.path) else {
+                    recordUnavailable(rawURL)
+                    continue
+                }
+                appendImportSelection(
+                    rawURL,
+                    displayName: rawURL.lastPathComponent,
+                    markdownOnly: markdownOnly,
+                    seenSupported: &seenSupported,
+                    seenUnsupported: &seenUnsupported,
+                    supported: &supported,
+                    unsupportedNames: &unsupportedNames
+                )
                 continue
             }
             guard !Self.ignoresImportDirectory(rawURL) else { continue }
             guard let enumerator = fileManager.enumerator(
                 at: rawURL,
                 includingPropertiesForKeys: [
+                    .isDirectoryKey,
                     .isRegularFileKey,
                     .isSymbolicLinkKey,
                     .isAliasFileKey,
                 ],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants],
-                errorHandler: { _, _ in false }
+                errorHandler: { failedURL, _ in
+                    recordUnavailable(failedURL)
+                    return true
+                }
             ) else {
+                recordUnavailable(rawURL)
                 continue
             }
             for case let fileURL as URL in enumerator {
-                if Self.ignoresImportDirectory(fileURL),
-                   (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                guard let values = try? fileURL.resourceValues(forKeys: [
+                    .isDirectoryKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ]) else {
+                    recordUnavailable(fileURL)
                     enumerator.skipDescendants()
                     continue
                 }
-                appendSupported(fileURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
+                if values.isSymbolicLink == true || values.isAliasFile == true {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                if Self.ignoresImportDirectory(fileURL),
+                   values.isDirectory == true {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                if values.isDirectory != true,
+                   !fileManager.isReadableFile(atPath: fileURL.path) {
+                    recordUnavailable(fileURL)
+                    continue
+                }
+                let rootPath = rawURL.standardizedFileURL.path
+                let filePath = fileURL.standardizedFileURL.path
+                let relativePath = filePath.hasPrefix(rootPath + "/")
+                    ? String(filePath.dropFirst(rootPath.count + 1))
+                    : fileURL.lastPathComponent
+                appendImportSelection(
+                    fileURL,
+                    displayName: "\(rawURL.lastPathComponent)/\(relativePath)",
+                    markdownOnly: markdownOnly,
+                    seenSupported: &seenSupported,
+                    seenUnsupported: &seenUnsupported,
+                    supported: &supported,
+                    unsupportedNames: &unsupportedNames
+                )
             }
         }
-        return result.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        return (
+            supported.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending },
+            unsupportedNames.sorted { $0.localizedStandardCompare($1) == .orderedAscending },
+            unavailableSourceURLs.sorted {
+                $0.path.localizedStandardCompare($1.path) == .orderedAscending
+            }
+        )
     }
 
     private func copyVisibleCourseTree(
@@ -3593,16 +3676,16 @@ actor CourseProjectFileWorker {
         }
     }
 
-    nonisolated private static func appendSupported(
+    nonisolated private static func appendImportSelection(
         _ rawURL: URL,
+        displayName: String,
         markdownOnly: Bool,
-        seen: inout Set<String>,
-        result: inout [URL]
+        seenSupported: inout Set<String>,
+        seenUnsupported: inout Set<String>,
+        supported: inout [URL],
+        unsupportedNames: inout [String]
     ) {
-        let pathExtension = rawURL.pathExtension.lowercased()
-        guard Self.supportedExtensions.contains(pathExtension),
-              !markdownOnly || ["md", "markdown"].contains(pathExtension),
-              let values = try? rawURL.resourceValues(forKeys: [
+        guard let values = try? rawURL.resourceValues(forKeys: [
                 .isRegularFileKey,
                 .isSymbolicLinkKey,
                 .isAliasFileKey,
@@ -3613,8 +3696,14 @@ actor CourseProjectFileWorker {
             return
         }
         let url = rawURL.standardizedFileURL
-        guard seen.insert(url.path).inserted else { return }
-        result.append(url)
+        let pathExtension = rawURL.pathExtension.lowercased()
+        if Self.supportedExtensions.contains(pathExtension),
+           !markdownOnly || ["md", "markdown"].contains(pathExtension) {
+            guard seenSupported.insert(url.path).inserted else { return }
+            supported.append(url)
+        } else if seenUnsupported.insert(url.path).inserted {
+            unsupportedNames.append(displayName)
+        }
     }
 
     nonisolated static func identity(at url: URL) -> ImportedFileIdentity? {

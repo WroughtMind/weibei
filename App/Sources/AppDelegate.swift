@@ -394,7 +394,7 @@ struct CatalystWeiBeiApp: App {
     private var workspaceContent: some View {
         // Native size restrictions own the minimum; scrolling panes extend under the toolbar.
         CatalystWorkspaceRoot(store: AppDelegate.workspace, appDelegate: appDelegate)
-            .onOpenURL { AppDelegate.workspace.importFiles([$0]) }
+            .onOpenURL { AppDelegate.workspace.receiveExternalFileForConfirmedImport($0) }
 #if WEIBEI_ACCEPTANCE_CHECKS
             .task {
                 if CommandLine.arguments.contains("--drag-profile"),

@@ -2914,7 +2914,7 @@ extension WorkspaceStore {
                 urlPath: resolvedTarget.path,
                 importedFileIdentity: targetIdentity,
                 isSample: false,
-                isNotebookNote: role == .note || detectedKind == .markdown,
+                isNotebookNote: role == .note,
                 appearsInMaterials: role == .material,
                 storage: itemStorage,
                 contentRevision: replacingItemIndex == nil

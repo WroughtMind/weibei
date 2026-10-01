@@ -199,6 +199,77 @@ final class SidebarPerformanceTests: XCTestCase {
     }
 
     @MainActor
+    func testRecentBatchClearsExistingSearchAndTargetsFirstVisibleRow() {
+        let fixture = makeStore(itemCount: 0)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let course = Course(title: "批量课")
+        let courseMaterial = StudyItem(
+            id: "recent-course-material",
+            title: "课程文稿",
+            subtitle: "course.txt",
+            kind: .text,
+            urlPath: nil,
+            isSample: false
+        )
+        let courseNote = StudyItem(
+            id: "recent-course-note",
+            title: "课程笔记",
+            subtitle: "course-note.md",
+            kind: .markdown,
+            urlPath: nil,
+            isSample: false,
+            isNotebookNote: true
+        )
+        let commonMaterial = StudyItem(
+            id: "recent-common-material",
+            title: "通用资料",
+            subtitle: "common.txt",
+            kind: .text,
+            urlPath: nil,
+            isSample: false
+        )
+        let commonNote = StudyItem(
+            id: "recent-common-note",
+            title: "独立笔记",
+            subtitle: "common-note.md",
+            kind: .markdown,
+            urlPath: nil,
+            isSample: false,
+            isNotebookNote: true
+        )
+        fixture.store.courses = [course]
+        fixture.store.importedItems = [courseMaterial, courseNote, commonMaterial, commonNote]
+        fixture.store.courseItemMemberships = [
+            CourseItemMembership(courseID: course.id, itemID: courseMaterial.id),
+            CourseItemMembership(courseID: course.id, itemID: courseNote.id),
+        ]
+        fixture.store.activeCourseID = course.id
+        let model = CourseSidebarModel(store: fixture.store)
+
+        XCTAssertEqual(
+            model.firstVisibleItemID(in: [courseNote.id, courseMaterial.id]),
+            courseMaterial.id
+        )
+        XCTAssertEqual(
+            model.firstVisibleItemID(in: [commonNote.id, commonMaterial.id]),
+            commonMaterial.id
+        )
+
+        model.updateQuery("不会匹配")
+        pumpMainRunLoop()
+        fixture.store.librarySearch = ""
+        fixture.store.recentlyImportedItemIDs = [commonMaterial.id, commonNote.id]
+        pumpMainRunLoop()
+
+        XCTAssertEqual(model.query, "")
+        XCTAssertEqual(model.recentlyImportedItemIDs, [commonMaterial.id, commonNote.id])
+        XCTAssertEqual(
+            model.firstVisibleItemID(in: model.recentlyImportedItemIDs),
+            commonMaterial.id
+        )
+    }
+
+    @MainActor
     func testFourthActiveNoteTagRemainsSearchableAfterRealLoad() async throws {
         let fixture = try XCTUnwrap(asyncStoreFixture)
         let note = StudyItem(

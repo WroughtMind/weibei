@@ -190,7 +190,7 @@ struct CourseManagementSheet: View {
         .padding(22)
         .frame(width: 460)
 #if targetEnvironment(macCatalyst)
-        .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
+        .background(CatalystIndependentSheetSizingProbe(color: WeiBeiNativePalette.paper()))
 #endif
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -300,6 +300,7 @@ struct CourseProjectEntrySheet: View {
     @EnvironmentObject private var store: WorkspaceStore
     let cancel: () -> Void
     let openCourse: (UUID) -> Void
+    let allowsInitialImport: Bool
 
     @State private var intent: CourseProjectEntryIntent
     @State private var title = ""
@@ -314,11 +315,13 @@ struct CourseProjectEntrySheet: View {
     init(
         initialIntent: CourseProjectEntryIntent = .create,
         cancel: @escaping () -> Void,
-        openCourse: @escaping (UUID) -> Void
+        openCourse: @escaping (UUID) -> Void,
+        allowsInitialImport: Bool = true
     ) {
         _intent = State(initialValue: initialIntent)
         self.cancel = cancel
         self.openCourse = openCourse
+        self.allowsInitialImport = allowsInitialImport
     }
 
     private var needsLibrary: Bool {
@@ -335,28 +338,34 @@ struct CourseProjectEntrySheet: View {
         title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var selectedImportIncludesMarkdown: Bool {
+        selectedImportURLs.contains { StudyItemKind.detect(from: $0) == .markdown }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(heading)
-                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
-                Text(detail)
-                    .weiBeiText(12)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
+                if let detail {
+                    Text(detail)
+                        .weiBeiText(12)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if needsLibrary {
                 libraryPicker
             } else {
                 courseTitleField
-                if let libraryPath = store.courseLibraryRootURL?.path {
+                if intent == .adopt, let libraryPath = store.courseLibraryRootURL?.path {
                     pathLine(
                         label: store.ui("魏碑资料库", "WeiBei Library"),
                         path: libraryPath
                     )
                 }
-                if intent == .create {
+                if intent == .create && allowsInitialImport {
                     importPicker
                 }
             }
@@ -375,9 +384,11 @@ struct CourseProjectEntrySheet: View {
             actionBar
         }
         .padding(22)
-        .frame(width: 460)
+        .frame(width: 440)
+        .fixedSize(horizontal: false, vertical: true)
+        .modifier(WeiBeiFittedSheetPresentation())
 #if targetEnvironment(macCatalyst)
-        .background(CatalystSheetBackground(color: WeiBeiNativePalette.paper()))
+        .modifier(CatalystIndependentSheetFitting(color: WeiBeiNativePalette.paper()))
 #endif
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -407,7 +418,7 @@ struct CourseProjectEntrySheet: View {
         }
     }
 
-    private var detail: String {
+    private var detail: String? {
         if rebindProposal != nil {
             return store.ui(
                 "魏碑认出了同一门课程，原文件夹当前无法访问。确认后会重新连接所选文件夹，读取其中的课程状态并扫描实际资料；本机未落盘草稿会保留。",
@@ -417,8 +428,8 @@ struct CourseProjectEntrySheet: View {
         if needsLibrary {
             if libraryNeedsReauthorization {
                 return store.ui(
-                    "魏碑记得原资料库，但当前无法访问。重新选择后魏碑会改用所选文件夹，课程文件不会被移动；要找回原课程，请选回原来的资料库。",
-                    "WeiBei remembers the library but cannot access it. Re-selecting switches WeiBei to the chosen folder without moving any course files; to find your original courses, pick the original library."
+                    "原资料库无法访问。选回原文件夹可恢复课程；选择其他文件夹会切换资料库，不移动文件。",
+                    "The original library is unavailable. Choose it again to restore courses, or choose another folder to switch libraries without moving files."
                 )
             }
             return store.ui(
@@ -428,10 +439,7 @@ struct CourseProjectEntrySheet: View {
         }
         switch intent {
         case .create:
-            return store.ui(
-                "魏碑会为这门课创建文稿、笔记和课程记录。对话始终是全局的，进入这门课只会把它设为当前课程。",
-                "WeiBei will create documents, notes, and a course record. Chats stay global; entering this course only makes it the current course."
-            )
+            return nil
         case .adopt:
             return store.ui(
                 "原地登记一个已有文件夹为课程；不会复制、移动或重排其中的可见内容。",
@@ -449,23 +457,6 @@ struct CourseProjectEntrySheet: View {
                         path: path
                     )
                 }
-                Label(
-                    store.ui(
-                        "原资料库当前无法访问，课程记录仍保留。选择别的文件夹会改用那个文件夹，课程文件不会被移动。",
-                        "The original library is currently unavailable, but course records are preserved. Choosing another folder switches to that folder; course files are not moved."
-                    ),
-                    systemImage: "exclamationmark.triangle"
-                )
-                .weiBeiText(12)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Label(
-                    store.ui("建议选择或新建一个名为“魏碑”的总文件夹。", "Choose or create a top-level WeiBei folder."),
-                    systemImage: "folder"
-                )
-                .weiBeiText(12)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
             Button(
@@ -537,7 +528,7 @@ struct CourseProjectEntrySheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Button(
                 selectedImportURLs.isEmpty
-                    ? store.ui("同时选择现有文稿或文件夹…", "Choose Existing Files or Folder…")
+                    ? store.ui("添加初始资料…", "Add Initial Materials…")
                     : store.ui("重新选择导入内容…", "Choose Different Content…"),
                 action: chooseImportContent
             )
@@ -545,10 +536,15 @@ struct CourseProjectEntrySheet: View {
             .disabled(isWorking)
 
             if !selectedImportURLs.isEmpty {
-                Text(store.ui(
-                    "已选择 \(selectedImportURLs.count) 项；课程创建后会直接导入。Markdown 会同时出现在文稿与笔记中。",
-                    "Selected \(selectedImportURLs.count) item(s). Markdown will appear in both Materials and Notes."
-                ))
+                Text(selectedImportIncludesMarkdown
+                    ? store.ui(
+                        "已选 \(selectedImportURLs.count) 项；Markdown 同时加入文稿和笔记。",
+                        "\(selectedImportURLs.count) selected; Markdown will be added to Materials and Notes."
+                    )
+                    : store.ui(
+                        "已选 \(selectedImportURLs.count) 项",
+                        "\(selectedImportURLs.count) selected"
+                    ))
                 .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
@@ -566,7 +562,7 @@ struct CourseProjectEntrySheet: View {
     private func pathLine(label: String, path: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .weiBeiText(10.5, weight: .semibold)
+                .weiBeiText(12, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
             Text(path)
                 .weiBeiText(12)
@@ -594,7 +590,7 @@ struct CourseProjectEntrySheet: View {
                     selectedFolder = nil
                     errorMessage = nil
                 }
-                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
                 .disabled(isWorking)
             }
 
@@ -607,7 +603,7 @@ struct CourseProjectEntrySheet: View {
             }
 
             Button(store.ui("取消", "Cancel"), action: cancel)
-                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
                 .keyboardShortcut(.cancelAction)
                 .disabled(isWorking)
 
@@ -619,9 +615,7 @@ struct CourseProjectEntrySheet: View {
                     ),
                     action: confirmRebind
                 )
-                .buttonStyle(
-                    WeiBeiTextActionButtonStyle(active: true)
-                )
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 .keyboardShortcut(.defaultAction)
                 .disabled(isWorking)
             } else if !needsLibrary {
@@ -631,7 +625,7 @@ struct CourseProjectEntrySheet: View {
                         : store.ui("创建并导入", "Create and Import"),
                     action: createCourse
                 )
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                     .keyboardShortcut(.defaultAction)
                     .disabled(cleanedTitle.isEmpty || isWorking)
             }
@@ -735,8 +729,6 @@ struct CourseProjectEntrySheet: View {
             .pdf,
             .html,
             .plainText,
-            UTType(filenameExtension: "md") ?? .plainText,
-            UTType(filenameExtension: "markdown") ?? .plainText,
         ]
         guard panel.runModal() == .OK else { return }
         let urls = panel.urls
@@ -778,15 +770,13 @@ struct CourseProjectEntrySheet: View {
             let courseID = try await store.createCourseInLibraryAsync(
                 title: cleanedTitle
             )
-            if selectedImportURLs.isEmpty {
-                openCourse(courseID)
-            } else {
-                store.importCourseFilesFromURLs(
-                    selectedImportURLs,
+            let initialImportURLs = selectedImportURLs
+            openCourse(courseID)
+            if !initialImportURLs.isEmpty {
+                store.prepareInitialCourseImportAfterEntryDismissal(
+                    initialImportURLs,
                     courseID: courseID
-                ) { _ in
-                    openCourse(courseID)
-                }
+                )
             }
         }
     }
