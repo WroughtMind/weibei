@@ -39,6 +39,39 @@ final class ComposerReasoningCatalogTests: XCTestCase {
         XCTAssertFalse(account.isRefreshingModels)
         XCTAssertTrue(account.models(provider: .custom).isEmpty)
     }
+    @MainActor
+    func testEmptyProbePublishesRetryableCatalogRatherThanAuthenticationFailure() async throws {
+        let account = AgentAccountService(modelCatalogLoader: { _, _ in
+            .init(ids: [], reasoningLevels: [:])
+        })
+        let result = await account.probeConnection(provider: .openaiCodex, baseURL: "")
+        XCTAssertEqual(result, .success(0))
+        XCTAssertNil(account.modelListFailure)
+        XCTAssertNotNil(account.modelListMessage)
+        XCTAssertTrue(account.modelListCanRetry)
+        XCTAssertFalse(account.isRefreshingModels)
+    }
+
+    @MainActor
+    func testOlderCatalogRequestCannotReplaceNewerConnectionCatalog() async throws {
+        var pending: [CheckedContinuation<AgentAccountService.ModelCatalog, Error>] = []
+        let account = AgentAccountService(modelCatalogLoader: { _, _ in
+            try await withCheckedThrowingContinuation { pending.append($0) }
+        })
+        let old = Task { await account.probeConnection(provider: .openai, baseURL: "") }
+        while pending.count < 1 { await Task.yield() }
+        let current = Task { await account.probeConnection(provider: .anthropic, baseURL: "") }
+        while pending.count < 2 { await Task.yield() }
+        pending[1].resume(returning: .init(ids: ["newer-model"], reasoningLevels: [:]))
+        let currentResult = await current.value
+        XCTAssertEqual(currentResult, .success(1))
+        pending[0].resume(returning: .init(ids: ["obsolete-model"], reasoningLevels: [:]))
+        let oldResult = await old.value
+        XCTAssertEqual(oldResult, .failure(.superseded))
+        XCTAssertEqual(account.models(provider: .anthropic), ["newer-model"])
+        XCTAssertTrue(account.models(provider: .openai).isEmpty)
+    }
+
 }
 
 #if os(macOS) && !targetEnvironment(macCatalyst)
