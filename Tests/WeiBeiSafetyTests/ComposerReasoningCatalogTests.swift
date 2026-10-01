@@ -89,6 +89,14 @@ extension ComposerReasoningCatalogTests {
         XCTAssertEqual(loads, 1, "Opening the real composer must start the cold capability lookup")
         XCTAssertEqual(account.reasoningLevels(provider: .openaiCodex, model: "synthetic-model"), ["low", "high"])
         XCTAssertEqual(store.modelName, "synthetic-model")
+        hosting.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let evidence = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/native-fix-evidence", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+        try png.write(to: evidence.appendingPathComponent("cold-codex-composer.png"))
     }
 }
 #endif
