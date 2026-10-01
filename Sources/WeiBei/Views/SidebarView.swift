@@ -779,6 +779,7 @@ private struct SidebarCourseNameSheet: View {
         .frame(width: 360)
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
+        .weiBeiFittedSheet()
         .onAppear { titleFocused = true }
     }
 }

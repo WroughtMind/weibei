@@ -359,8 +359,7 @@ final class WorkspaceStore: ObservableObject {
         mode.effort(saved: agentReasoningMappings[agentReasoningMappingKey(mode)], levels: agentReasoningLevels)
     }
     var agentReasoningModelName: String {
-        let selected = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return selected.isEmpty ? NativeProviderRouting.route(agentProviderID).defaultModel : selected
+        modelName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     var agentReasoningModelKey: String { activeAgentProfileID.uuidString + ":" + agentReasoningModelName }
     var agentReasoningLevels: [String] {
@@ -5761,6 +5760,14 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    @discardableResult
+    func saveManualAgentModel(_ value: String) -> Bool {
+        let model = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else { return false }
+        updateModelName(model)
+        return true
+    }
+
     func updateModelName(_ value: String) {
         modelName = value
         touchActiveAgentProfileMetadata()
@@ -5851,6 +5858,28 @@ final class WorkspaceStore: ObservableObject {
             authMethod: agentAuthMethod,
             modelName: modelName,
             baseURL: agentBaseURL
+        )
+        agentCredentialProfiles.append(profile)
+        AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+        selectAgentCredentialProfile(profile.id)
+        return profile.id
+    }
+
+    /// Adding a connection takes its endpoint only from the form, never from
+    /// the active profile. Validate before changing profiles or saving a key.
+    @discardableResult
+    func createAgentConnection(
+        provider: AgentProviderID,
+        authMethod: AgentAuthMethod,
+        baseURL: String
+    ) throws -> UUID {
+        let endpoint = try AgentProviderEndpoint(provider: provider, baseURL: baseURL)
+        let profile = AgentCredentialProfile(
+            name: ui("配置 \(agentCredentialProfiles.count + 1)", "Profile \(agentCredentialProfiles.count + 1)"),
+            provider: provider,
+            authMethod: authMethod,
+            modelName: provider == agentProviderID ? modelName : "",
+            baseURL: endpoint.baseURL ?? ""
         )
         agentCredentialProfiles.append(profile)
         AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
@@ -9345,6 +9374,27 @@ final class WorkspaceStore: ObservableObject {
               !question.isEmpty else {
             return ui("当前无法提交这条回答。", "This response cannot be submitted right now.")
         }
+        let selectedModel: String
+        do {
+            selectedModel = try Self.explicitAgentModel(modelName, language: interfaceLanguage)
+        } catch {
+            let reason = Self.userFacingAgentFailureDetail(for: error)
+                ?? ui(
+                    "尚未选择模型。请到设置中选择，或手动输入模型 ID 后重试。",
+                    "No model is selected. Choose one in Settings, or enter a model ID manually, then try again."
+                )
+            showImportantOperationError(reason)
+            return reason
+        }
+        if agentProviderID == .azureOpenAI,
+           !AgentProviderReadiness.hasActiveAPICredential(for: self) {
+            let reason = ui(
+                "当前 Azure 服务地址没有与之绑定的密钥。请在设置中为这个地址重新输入 API Key。",
+                "The current Azure service URL has no key bound to it. Re-enter the API key for this URL in Settings."
+            )
+            showImportantOperationError(reason)
+            return reason
+        }
         let target: AgentConversationTarget
         do {
             if reusingLastUserMessage, let id {
@@ -9384,7 +9434,7 @@ final class WorkspaceStore: ObservableObject {
         run.courseID = target.courseID
         run.authMethod = agentAuthMethod
         run.baseURL = agentBaseURL
-        run.modelName = modelName
+        run.modelName = selectedModel
         agentRuns[target.sessionID] = run
         objectWillChange.send()
         freshlyCreatedEmptyStudySessionID = nil

@@ -788,6 +788,7 @@ enum CourseProjectRootSelfCheck {
         let library = try fixture.makeDirectory("课程资料库")
         let imports = try fixture.makeDirectory("待导入")
         let store = makeStore(fixture: fixture)
+        store.modelName = "test-model"
         try store.configureCourseLibrary(at: library)
         let courseA = try store.createCourseInLibrary(title: "课程甲")
         let courseB = try store.createCourseInLibrary(title: "课程乙")

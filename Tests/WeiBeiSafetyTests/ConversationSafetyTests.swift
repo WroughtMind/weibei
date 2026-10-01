@@ -74,6 +74,7 @@ final class ConversationSafetyTests: XCTestCase {
     @MainActor
     private func makeStore() throws -> (store: WorkspaceStore, sessionID: UUID, cleanup: () -> Void) {
         let fixture = try XCTUnwrap(storeFixture)
+        fixture.store.modelName = "test-model"
         return (fixture.store, fixture.sessionID, {})
     }
 

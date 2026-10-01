@@ -641,14 +641,26 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             guard let window else { return }
             window.backgroundColor = color
             var responder: UIResponder? = self
+            var sheetController: UIViewController?
             while let current = responder {
                 if let controller = current as? UIViewController {
                     controller.view.backgroundColor = color
+                    sheetController = controller
                 }
                 responder = current.next
             }
-            guard let contentSize else { return }
-            resizeSheetIfNeeded(window: window, targetSize: contentSize)
+            if let contentSize {
+                resizeSheetIfNeeded(window: window, targetSize: contentSize)
+                return
+            }
+            // Legacy small sheets still use their measured content; explicit fitted
+            // sheets retain the guarded native geometry path from the import flow.
+            let size = bounds.size
+            guard size.width > 40, size.height > 40, let sheetController else { return }
+            let windowSize = window.bounds.size
+            let contentIsSmaller = size.width < windowSize.width - 1 || size.height < windowSize.height - 1
+            guard contentIsSmaller, sheetController.preferredContentSize != size else { return }
+            sheetController.preferredContentSize = size
         }
 
         private func resizeSheetIfNeeded(window: UIWindow, targetSize: CGSize) {

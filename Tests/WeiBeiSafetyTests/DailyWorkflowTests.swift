@@ -12,6 +12,7 @@ final class DailyWorkflowTests: XCTestCase {
     func testConcurrentChatsKeepTheirQuestionStreamAndCancellation() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("Workspace"), startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.modelName = "test-model"
         defer { store.selfCheckAgentResponder = nil; try? FileManager.default.removeItem(at: root) }
         let started = expectation(description: "Both requests reached their own responder")
         started.expectedFulfillmentCount = 2

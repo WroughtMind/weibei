@@ -178,6 +178,13 @@ public struct AgentProviderEndpoint: Equatable, Sendable {
         }
     }
 
+    public func matchesCredentialBinding(
+        for provider: AgentProviderID,
+        boundEndpoint: String?
+    ) -> Bool {
+        provider != .azureOpenAI || boundEndpoint == baseURL
+    }
+
     private static func isTrustedLocalHost(_ rawHost: String) -> Bool {
         let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
         if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") {

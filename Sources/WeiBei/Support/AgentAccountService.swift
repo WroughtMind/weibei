@@ -28,47 +28,166 @@ final class AgentAccountService: ObservableObject {
         var credentials: [CredentialInfo] = []
     }
 
+    struct SuccessfulModelListState: Equatable, Sendable {
+        var message: LocalizedMessage?
+        var canRetry: Bool
+    }
+
     @Published private(set) var catalog: CatalogInfo?
     @Published private(set) var isLoggingIn = false
     @Published private(set) var statusMessage: LocalizedMessage?
     @Published private(set) var lastError: LocalizedMessage?
     @Published private(set) var liveModelIDs: [String] = []
     @Published private(set) var liveReasoningLevels: [String: [String]] = [:]
+    /// 最近一次名单请求的失败。成功或换服务时清掉。默认模型仍可选手输，但界面不能把失败说成刚刚同步。
+    @Published private(set) var modelListFailure: ModelListFailure?
+    @Published private(set) var isRefreshingModels = false
+    @Published private(set) var modelListMessage: LocalizedMessage?
+    @Published private(set) var modelListCanRetry = false
     private var liveModelsProvider: AgentProviderID?
+
+    enum ModelListFailure: Error, Equatable {
+        case missingCredential
+        case missingBaseURL
+        case rejected
+        case signInExpired
+        case http(Int)
+        case offline
+        case unreadable
+        case superseded
+    }
     private var loginTask: Task<Void, Never>?
     private var loginID: UUID?
     @Published private(set) var authorizationCode: String?
     @Published private(set) var authorizationURL: URL?
     private var modelListTask: Task<Void, Never>?
+    private var modelRequestGeneration = 0
 
-    private init() {
+    struct ModelCatalog {
+        var ids: [String]
+        var reasoningLevels: [String: [String]]
+    }
+    private let modelCatalogLoader: ((AgentProviderID, String) async throws -> ModelCatalog)?
+
+    init(modelCatalogLoader: ((AgentProviderID, String) async throws -> ModelCatalog)? = nil) {
+        self.modelCatalogLoader = modelCatalogLoader
         reloadCredentialSnapshot()
+    }
+
+
+    /// The same endpoint-scoped lookup used when sending; cards must not inspect another gateway's key.
+    static func connectionAPIKey(provider: AgentProviderID, baseURL: String,
+                                 credentialStore: NativeAgentCredentialStore) -> String? {
+        guard let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL),
+              let records = try? credentialStore.load(),
+              let record = records[endpoint.credentialProviderID] else { return nil }
+        return try? record.apiKey(for: provider, endpoint: endpoint)
+    }
+
+    func connectionAPIKey(provider: AgentProviderID, baseURL: String) -> String? {
+        guard let credentialStore = try? NativeAgentCredentialStore.defaultStore() else { return nil }
+        return Self.connectionAPIKey(provider: provider, baseURL: baseURL, credentialStore: credentialStore)
     }
 
     func refreshCatalog() {
         reloadCredentialSnapshot()
     }
 
-    /// 打开设置或更换服务/密钥后，向服务商拉取可用模型；失败时保留默认 ID。
+    /// 打开设置或更换服务/密钥后，向服务商拉取可用模型。和测活走同一次鉴权请求。
     func refreshModels(provider: AgentProviderID, baseURL: String) {
+        let generation = beginModelRequest(for: provider)
         liveReasoningLevels = [:]
-        modelListTask?.cancel()
+        modelListFailure = nil
         modelListTask = Task { [weak self] in
-            await self?.fetchLiveModels(provider: provider, baseURL: baseURL)
+            guard let self else { return }
+            let result = await self.fetchLiveModels(provider: provider, baseURL: baseURL, generation: generation)
+            self.publish(result, generation: generation)
         }
     }
 
-    /// 已拉取的名单优先；没有名单时至少给出路由表默认模型。手输任意 ID 仍然有效。
+    /// 和刷新名单同一次请求。后发起的那次作废先发起的，避免两路同时改名单。
+    func probeConnection(provider: AgentProviderID, baseURL: String) async -> Result<Int, ModelListFailure> {
+        let generation = beginModelRequest(for: provider)
+        modelListFailure = nil
+        let result = await fetchLiveModels(provider: provider, baseURL: baseURL, generation: generation)
+        publish(result, generation: generation)
+        return result
+    }
+
+    private func beginModelRequest(for provider: AgentProviderID) -> Int {
+        modelListTask?.cancel()
+        modelRequestGeneration += 1
+        isRefreshingModels = true
+        modelListMessage = nil
+        modelListCanRetry = false
+        liveModelIDs = []
+        if liveModelsProvider != provider {
+            liveModelIDs = []
+            liveModelsProvider = nil
+            liveReasoningLevels = [:]
+        }
+        return modelRequestGeneration
+    }
+
+    private func publish(_ result: Result<Int, ModelListFailure>, generation: Int) {
+        guard generation == modelRequestGeneration else { return }
+        isRefreshingModels = false
+        switch result {
+        case .success:
+            modelListFailure = nil
+            let state = Self.successfulModelListState(liveModelIDs)
+            modelListMessage = state.message
+            modelListCanRetry = state.canRetry
+        case .failure(let failure):
+            guard failure != .superseded else { return }
+            modelListFailure = failure
+            modelListCanRetry = true
+            modelListMessage = LocalizedMessage(chinese: "模型名单获取失败，当前选择没有改变。请重试，或手动输入模型 ID。",
+                                               english: "Could not load the model list. Your selection is unchanged. Try again, or enter a model ID manually.")
+        }
+    }
+
+    /// 冷启动的输入框也需要实时推理能力，不要求先打开设置。
+    /// 多个输入框同时出现时复用当前查询，不清空已加载的能力。
+    func refreshReasoningCatalogIfNeeded(provider: AgentProviderID, baseURL: String) {
+        guard provider == .openaiCodex, !isRefreshingModels,
+              !hasLoadedModels(provider: provider) else { return }
+        refreshModels(provider: provider, baseURL: baseURL)
+    }
+
+    /// 只返回当前服务商端点实际拉取到的名单；手输任意 ID 仍然有效。
     func models(provider: AgentProviderID) -> [String] {
-        var ids: [String] = []
-        if liveModelsProvider == provider {
-            ids = liveModelIDs
-        }
-        let fallback = NativeProviderRouting.route(provider).defaultModel
-        if !fallback.isEmpty, !ids.contains(fallback) {
-            ids.insert(fallback, at: 0)
-        }
+        Self.catalogEntries(liveModelIDs, loadedFor: liveModelsProvider, provider: provider)
+    }
+
+    static func catalogEntries(
+        _ ids: [String],
+        loadedFor: AgentProviderID?,
+        provider: AgentProviderID
+    ) -> [String] {
+        guard loadedFor == provider else { return [] }
         return ids
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    static func successfulModelListState(_ modelIDs: [String]) -> SuccessfulModelListState {
+        guard modelIDs.isEmpty else {
+            return SuccessfulModelListState(message: nil, canRetry: false)
+        }
+        return SuccessfulModelListState(
+            message: LocalizedMessage(
+                chinese: "服务返回的模型名单为空，当前选择没有改变。请刷新重试，或手动输入模型 ID。",
+                english: "The service returned an empty model list. Your selection is unchanged. Refresh to try again, or enter a model ID manually."
+            ),
+            canRetry: true
+        )
+    }
+
+    func hasLoadedModels(provider: AgentProviderID) -> Bool {
+        liveModelsProvider == provider
+            && !isRefreshingModels
+            && modelListMessage == nil
     }
 
     func reasoningLevels(provider: AgentProviderID, model: String) -> [String] {
@@ -274,14 +393,31 @@ final class AgentAccountService: ObservableObject {
         .sorted { $0.providerId < $1.providerId })
     }
 
-    private func fetchLiveModels(provider: AgentProviderID, baseURL: String) async {
+    private func fetchLiveModels(
+        provider: AgentProviderID,
+        baseURL: String,
+        generation: Int
+    ) async -> Result<Int, ModelListFailure> {
+        if let modelCatalogLoader {
+            do {
+                let catalog = try await modelCatalogLoader(provider, baseURL)
+                guard generation == modelRequestGeneration, !Task.isCancelled else { return .failure(.superseded) }
+                liveReasoningLevels = catalog.reasoningLevels
+                liveModelIDs = Self.catalogEntries(catalog.ids, loadedFor: provider, provider: provider)
+                liveModelsProvider = provider
+                return .success(liveModelIDs.count)
+            } catch {
+                guard generation == modelRequestGeneration, !Task.isCancelled else { return .failure(.superseded) }
+                return .failure(Self.modelListFailure(from: error))
+            }
+        }
         let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL)
         let resolved = endpoint.flatMap {
             NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: $0)
         } ?? NativeProviderRouting.route(provider).baseURL
         let records = (try? NativeAgentCredentialStore.defaultStore().load()) ?? [:]
-        let record = records[provider.credentialProviderID]
-        let apiKey = record?.apiKey ?? record?.accessToken ?? ""
+        let record = records[endpoint?.credentialProviderID ?? provider.credentialProviderID]
+        let apiKey = connectionAPIKey(provider: provider, baseURL: baseURL) ?? record?.accessToken ?? ""
         let strategy = NativeProviderRouting.modelListStrategy(
             provider: provider,
             baseURL: resolved,
@@ -289,11 +425,10 @@ final class AgentAccountService: ObservableObject {
             accountID: record?.accountID
         )
         guard let strategy else {
-            await MainActor.run {
-                liveModelIDs = []
-                liveModelsProvider = provider
-            }
-            return
+            guard generation == modelRequestGeneration else { return .failure(.superseded) }
+            liveModelIDs = []
+            liveModelsProvider = provider
+            return .failure(apiKey.isEmpty ? .missingCredential : .missingBaseURL)
         }
         do {
             let ids: [String]
@@ -302,10 +437,10 @@ final class AgentAccountService: ObservableObject {
                 let fresh = try await NativeOpenAIOAuth.ensureFreshAccessToken()
                 let token = fresh.accessToken ?? ""
                 let accountID = fresh.accountID ?? ""
-                ids = try await AgentModelListService.shared.fetchModels(
-                    strategy: .codexSubscription(token: token, accountID: accountID), apiKey: ""
-                )
-                reasoningLevels = try await AgentModelListService.shared.codexReasoningLevels(token: token, accountID: accountID)
+                let service = AgentModelListService.shared
+                let codex = ModelListStrategy.codexSubscription(token: token, accountID: accountID)
+                ids = try await service.probe(strategy: codex, apiKey: "")
+                reasoningLevels = try await service.codexReasoningLevels(token: token, accountID: accountID)
             } else {
                 var key = apiKey
                 if NativeProviderOAuth.supports(provider) {
@@ -314,22 +449,44 @@ final class AgentAccountService: ObservableObject {
                 }
                 let modelService = NativeProviderOAuth.supports(provider)
                     ? AgentModelListService(session: NativeProviderOAuth.networkSession) : .shared
-                ids = try await modelService.fetchModels(strategy: strategy, apiKey: key)
+                ids = try await modelService.probe(strategy: strategy, apiKey: key)
             }
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                liveReasoningLevels = reasoningLevels
-                liveModelIDs = ids
-                liveModelsProvider = provider
-            }
+            guard generation == modelRequestGeneration, !Task.isCancelled else { return .failure(.superseded) }
+            modelListFailure = nil
+            liveReasoningLevels = reasoningLevels
+            liveModelIDs = ids
+            liveModelsProvider = provider
+            return .success(ids.count)
         } catch {
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                if liveModelsProvider != provider {
-                    liveModelIDs = []
-                }
-                liveModelsProvider = provider
+            guard generation == modelRequestGeneration, !Task.isCancelled else { return .failure(.superseded) }
+            if liveModelsProvider != provider {
+                liveModelIDs = []
             }
+            liveModelsProvider = provider
+            return .failure(Self.modelListFailure(from: error))
+        }
+    }
+
+    private static func modelListFailure(from error: Error) -> ModelListFailure {
+        if error is CancellationError { return .superseded }
+        if let failure = error as? NativeLLMFailure {
+            if failure.code == "oauth_timeout" { return .signInExpired }
+            if failure.code == "unauthorized" || failure.status == 401 || failure.status == 403 {
+                return .rejected
+            }
+            if let status = failure.status { return .http(status) }
+            return .signInExpired
+        }
+        if error is URLError { return .offline }
+        guard let error = error as? ModelListError else { return .unreadable }
+        switch error {
+        case .missingCredential: return .missingCredential
+        case .missingBaseURL: return .missingBaseURL
+        case .http(let status, _) where status == 401 || status == 403: return .rejected
+        case .http(let status, _): return .http(status)
+        case .transport(let message) where message == "cancelled": return .superseded
+        case .transport: return .offline
+        case .decoding: return .unreadable
         }
     }
 

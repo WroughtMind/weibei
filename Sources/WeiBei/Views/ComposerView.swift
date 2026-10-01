@@ -5,7 +5,7 @@ import WeiBeiCore
 struct ComposerView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
-    @ObservedObject private var agentAccount = AgentAccountService.shared
+    @ObservedObject var agentAccount = AgentAccountService.shared
     @State private var draft = ""
     @State private var editorHeight: CGFloat = 0
     @State private var editorActive = false
@@ -42,7 +42,7 @@ struct ComposerView: View {
     }
 
     private var hasReasoningControl: Bool {
-        showsReasoningEffort && !store.agentReasoningLevels.isEmpty
+        showsReasoningEffort && !agentAccount.reasoningLevels(provider: store.agentProviderID, model: store.agentReasoningModelName).isEmpty
     }
 
     private var showsControl: Bool {
@@ -160,8 +160,12 @@ struct ComposerView: View {
         }
         .onChange(of: store.agentReasoningModelKey) { _, _ in showsReasoningPicker = false }
         .task(id: store.activeAgentProfileID.uuidString + store.agentProviderID.rawValue + store.agentBaseURL) {
-            guard showsReasoningEffort else { return }
-            agentAccount.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            guard showsReasoningEffort, store.agentProviderID == .openaiCodex else { return }
+            agentAccount.refreshReasoningCatalogIfNeeded(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { _ in
+            guard showsReasoningEffort, store.agentProviderID == .openaiCodex else { return }
+            agentAccount.refreshReasoningCatalogIfNeeded(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
         .accessibilityIdentifier("agent-composer-compact")
     }
