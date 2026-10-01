@@ -59,6 +59,24 @@ final class AgentAccountService: ObservableObject {
         reloadCredentialSnapshot()
     }
 
+    /// The same endpoint-scoped lookup used when sending; cards must not inspect another gateway's key.
+    static func connectionAPIKey(provider: AgentProviderID, baseURL: String,
+                                 credentialStore: NativeAgentCredentialStore) -> String? {
+        guard let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL),
+              let records = try? credentialStore.load(),
+              let record = records[endpoint.credentialProviderID] else { return nil }
+        if let bound = record.boundEndpoint {
+            guard let normalized = try? AgentProviderEndpoint(provider: provider, baseURL: bound),
+                  normalized.baseURL == endpoint.baseURL else { return nil }
+        }
+        return record.apiKey?.isEmpty == false ? record.apiKey : nil
+    }
+
+    func connectionAPIKey(provider: AgentProviderID, baseURL: String) -> String? {
+        guard let credentialStore = try? NativeAgentCredentialStore.defaultStore() else { return nil }
+        return Self.connectionAPIKey(provider: provider, baseURL: baseURL, credentialStore: credentialStore)
+    }
+
     func refreshCatalog() {
         reloadCredentialSnapshot()
     }
@@ -321,8 +339,8 @@ final class AgentAccountService: ObservableObject {
             NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: $0)
         } ?? NativeProviderRouting.route(provider).baseURL
         let records = (try? NativeAgentCredentialStore.defaultStore().load()) ?? [:]
-        let record = records[provider.credentialProviderID]
-        let apiKey = record?.apiKey ?? record?.accessToken ?? ""
+        let record = records[endpoint?.credentialProviderID ?? provider.credentialProviderID]
+        let apiKey = connectionAPIKey(provider: provider, baseURL: baseURL) ?? record?.accessToken ?? ""
         let strategy = NativeProviderRouting.modelListStrategy(
             provider: provider,
             baseURL: resolved,

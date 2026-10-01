@@ -26,7 +26,9 @@ struct AgentConnectionCardsView: View {
     @State private var keyDraft = ""
     @State private var webSearchHover = false
     @State private var probingProfileID: UUID?
-    @State private var probeMarks: [UUID: ProbeMark] = [:]
+    @State private var probeState = AgentConnectionProbeState()
+    @State private var showsManualModel = false
+    @State private var manualModelDraft = ""
 
     /// 账号登录的服务排在前面。只支持订阅的（如 Codex）以前被 apiKey 过滤掉了。
     private var addServices: [AgentProviderID] {
@@ -59,10 +61,35 @@ struct AgentConnectionCardsView: View {
             .frame(maxWidth: 460, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { _ in
+            probeState.invalidateAll()
+            probingProfileID = nil
+        }
+        .sheet(isPresented: $showsManualModel) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(store.ui("手动输入模型 ID", "Enter model ID"))
+                    .font(.headline)
+                TextField(store.ui("模型 ID", "Model ID"), text: $manualModelDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("connection-manual-model-input")
+                HStack {
+                    Button(store.ui("取消", "Cancel")) { showsManualModel = false }
+                    Spacer()
+                    Button(store.ui("保存", "Save")) {
+                        guard store.saveManualAgentModel(manualModelDraft) else { return }
+                        showsManualModel = false
+                    }
+                    .disabled(manualModelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("connection-manual-model-save")
+                }
+            }
+            .padding(24)
+            .frame(minWidth: 320)
+        }
         .onChange(of: store.activeAgentProfileID) { previous, _ in
             // 绿和红只属于刚测完的这一眼。离开这张卡就收掉，再点回来不接着亮。
             if probingProfileID != previous {
-                probeMarks[previous] = nil
+                probeState.invalidate(previous)
             }
         }
     }
@@ -116,7 +143,7 @@ struct AgentConnectionCardsView: View {
                     HStack(alignment: .center, spacing: 8) {
                         if method(for: profile) == .subscription {
                             subscriptionStatusButton(profile)
-                        } else if hasAPIKey(profile.provider) {
+                        } else if hasAPIKey(profile) {
                             keyTailButton(profile)
                         } else {
                             Button {
@@ -184,7 +211,7 @@ struct AgentConnectionCardsView: View {
             keyEditProfileID = keyEditProfileID == profile.id ? nil : profile.id
         } label: {
             HStack(spacing: 5) {
-                Text(keyTail(profile.provider) ?? "sk-••••")
+                Text(keyTail(profile) ?? "sk-••••")
                     .font(ConnType.detail)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 Image(systemName: "chevron.right")
@@ -521,7 +548,7 @@ struct AgentConnectionCardsView: View {
     private func probeRing(for profile: AgentCredentialProfile) -> ConnProbeRing {
         guard profile.id == store.activeAgentProfileID else { return .none }
         if probingProfileID == profile.id { return .running }
-        switch probeMarks[profile.id]?.ok {
+        switch probeState.marks[profile.id]?.ok {
         case true: return .alive
         case false: return .dead
         case nil: return .none
@@ -530,7 +557,7 @@ struct AgentConnectionCardsView: View {
 
     /// 失败才写在这张卡上，而且只留到离开这张卡。成功不写字，说明在悬停里。
     private func statusNote(for profile: AgentCredentialProfile) -> String? {
-        if let mark = probeMarks[profile.id] {
+        if let mark = probeState.marks[profile.id] {
             return mark.ok ? nil : mark.text
         }
         guard profile.id == store.activeAgentProfileID,
@@ -544,7 +571,7 @@ struct AgentConnectionCardsView: View {
         if probingProfileID == profile.id {
             return store.ui("正在确认这组凭据", "Checking this credential")
         }
-        if let mark = probeMarks[profile.id] {
+        if let mark = probeState.marks[profile.id] {
             return mark.text
         }
         return store.ui("确认这组凭据是否还能连通", "Check whether this credential still connects")
@@ -554,10 +581,10 @@ struct AgentConnectionCardsView: View {
         Button {
             guard probingProfileID == nil else { return }
             probingProfileID = profile.id
-            probeMarks[profile.id] = nil
+            let requestID = probeState.begin(profile.id)
             let provider = profile.provider
             let baseURL = profile.baseURL
-            Task { await runProbe(profileID: profile.id, provider: provider, baseURL: baseURL) }
+            Task { await runProbe(profileID: profile.id, requestID: requestID, provider: provider, baseURL: baseURL) }
         } label: {
             // 图标只表示「测一次」。进行中和结果都在卡片边缘，不把按钮改成转圈、对勾或感叹号。
             Image(systemName: "waveform.path.ecg")
@@ -571,7 +598,7 @@ struct AgentConnectionCardsView: View {
         .help(probeHelp(for: profile))
     }
 
-    private func runProbe(profileID: UUID, provider: AgentProviderID, baseURL: String) async {
+    private func runProbe(profileID: UUID, requestID: UUID, provider: AgentProviderID, baseURL: String) async {
         let started = Date()
         let result = await oauthService.probeConnection(
             provider: provider,
@@ -582,7 +609,9 @@ struct AgentConnectionCardsView: View {
             let rest = UInt64((1.2 - elapsed) * 1_000_000_000)
             try? await Task.sleep(nanoseconds: rest)
         }
+        guard probeState.isCurrent(profileID, requestID: requestID) else { return }
         guard profileID == store.activeAgentProfileID else {
+            probeState.invalidate(profileID)
             if probingProfileID == profileID { probingProfileID = nil }
             return
         }
@@ -591,13 +620,13 @@ struct AgentConnectionCardsView: View {
         }
         switch result {
         case .success(let count):
-            probeMarks[profileID] = ProbeMark(
+            probeState.complete(profileID, requestID: requestID, mark: .init(
                 text: store.ui("凭据可用，\(count) 个模型", "Credential works, \(count) models"),
                 ok: true
-            )
+            ))
         case .failure(let failure):
             guard failure != .superseded else { return }
-            probeMarks[profileID] = ProbeMark(text: modelListFailureText(failure), ok: false)
+            probeState.complete(profileID, requestID: requestID, mark: .init(text: modelListFailureText(failure), ok: false))
         }
     }
 
@@ -676,8 +705,8 @@ struct AgentConnectionCardsView: View {
             .allowsHitTesting(false)
     }
 
-    private func keyTail(_ provider: AgentProviderID) -> String? {
-        guard let key = try? NativeAgentCredentialStore.apiKey(forProviderID: provider.credentialProviderID),
+    private func keyTail(_ profile: AgentCredentialProfile) -> String? {
+        guard let key = oauthService.connectionAPIKey(provider: profile.provider, baseURL: profile.baseURL),
               key.count > 4 else { return nil }
         return String(key.prefix(7)) + "••••••••"
     }
@@ -686,6 +715,8 @@ struct AgentConnectionCardsView: View {
         if profile.id != store.activeAgentProfileID {
             store.selectAgentCredentialProfile(profile.id)
         }
+        probeState.invalidate(profile.id)
+        probingProfileID = nil
         store.setAgentAuthMethod(.apiKey)
         oauthService.startAPIKeyLogin(
             keyDraft,
@@ -730,6 +761,8 @@ struct AgentConnectionCardsView: View {
         if profile.id != store.activeAgentProfileID {
             store.selectAgentCredentialProfile(profile.id)
         }
+        probeState.invalidate(profile.id)
+        probingProfileID = nil
         store.setAgentAuthMethod(.subscription)
         keyEditProfileID = nil
         subscriptionDetailProfileID = profile.id
@@ -772,8 +805,8 @@ struct AgentConnectionCardsView: View {
         return types.contains(.oauth) ? .subscription : .apiKey
     }
 
-    private func hasAPIKey(_ provider: AgentProviderID) -> Bool {
-        oauthService.isConfigured(providerID: provider.credentialProviderID, type: .apiKey)
+    private func hasAPIKey(_ profile: AgentCredentialProfile) -> Bool {
+        oauthService.connectionAPIKey(provider: profile.provider, baseURL: profile.baseURL)?.isEmpty == false
     }
 
     private func showsSubscriptionDetail(_ profile: AgentCredentialProfile) -> Bool {
@@ -793,7 +826,7 @@ struct AgentConnectionCardsView: View {
             }
             return store.ui("待登录", "Sign-in needed")
         case .apiKey:
-            if hasAPIKey(profile.provider), let tail = keyTail(profile.provider) {
+            if hasAPIKey(profile), let tail = keyTail(profile) {
                 return tail
             }
             return store.ui("待填密钥", "API key needed")
@@ -802,7 +835,7 @@ struct AgentConnectionCardsView: View {
 
     private func deleteConnection(_ profile: AgentCredentialProfile) {
         guard store.agentCredentialProfiles.count > 1 else { return }
-        probeMarks[profile.id] = nil
+        probeState.invalidate(profile.id)
         if probingProfileID == profile.id {
             probingProfileID = nil
         }
@@ -834,9 +867,14 @@ private func modelMenuButton(_ profile: AgentCredentialProfile) -> some View {
             }
         }
         Section {
+            Button(store.ui("手动输入模型 ID…", "Enter model ID…")) {
+                manualModelDraft = store.modelName
+                showsManualModel = true
+            }
+            .accessibilityIdentifier("connection-manual-model-menu")
             Button {
                 oauthService.refreshModels(provider: profile.provider, baseURL: profile.baseURL)
-                probeMarks[profile.id] = nil
+                probeState.invalidate(profile.id)
             } label: {
                 Label(store.ui("刷新模型名单", "Refresh model list"), systemImage: "arrow.clockwise")
             }
@@ -936,11 +974,6 @@ private struct ConnCardShell<Content: View>: View {
                 .onTapGesture(perform: onSelect)
         }
     }
-}
-
-private struct ProbeMark: Equatable {
-    var text: String
-    var ok: Bool
 }
 
 /// 一道光贴着整张卡片的边走。结果出来时，这道光淡出，整圈青或朱淡入。不接点击。

@@ -83,6 +83,10 @@ public actor AgentModelListService {
             }
             try await verifyOpenRouterKey(apiKey)
         }
+        if case let .codexSubscription(token, accountID) = strategy {
+            // A cached catalog is useful for capabilities, but cannot verify today's credential.
+            return try await fetchCodexCatalog(token: token, accountID: accountID, forceRefresh: true).map(\.id)
+        }
         return try await fetchModels(strategy: strategy, apiKey: apiKey)
     }
 
@@ -195,13 +199,13 @@ public actor AgentModelListService {
             .first { $0.id == model }?.contextWindow
     }
 
-    private func fetchCodexCatalog(token: String, accountID: String) async throws -> [CodexModel] {
+    private func fetchCodexCatalog(token: String, accountID: String, forceRefresh: Bool = false) async throws -> [CodexModel] {
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAccount = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedToken.isEmpty else { throw ModelListError.missingCredential }
         // Keep credentials out of persistent storage; separate anonymous account IDs by token.
         let cacheKey = trimmedAccount.isEmpty ? trimmedToken : trimmedAccount
-        if let cached = codexCatalogs[cacheKey], Date().timeIntervalSince(cached.0) < 300 {
+        if !forceRefresh, let cached = codexCatalogs[cacheKey], Date().timeIntervalSince(cached.0) < 300 {
             return cached.1
         }
         guard let url = URL(string: "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0") else {

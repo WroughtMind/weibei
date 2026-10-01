@@ -5721,6 +5721,14 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    @discardableResult
+    func saveManualAgentModel(_ value: String) -> Bool {
+        let model = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else { return false }
+        updateModelName(model)
+        return true
+    }
+
     func updateModelName(_ value: String) {
         modelName = value
         touchActiveAgentProfileMetadata()
