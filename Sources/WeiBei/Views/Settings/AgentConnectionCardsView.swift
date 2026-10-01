@@ -64,6 +64,9 @@ struct AgentConnectionCardsView: View {
             .frame(maxWidth: 460, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        .task(id: store.activeAgentProfileID.uuidString + store.agentProviderID.rawValue + store.agentBaseURL) {
+            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { _ in
             probeState.invalidateAll()
             probingProfileID = nil
