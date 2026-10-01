@@ -542,6 +542,8 @@ enum CatalystBusinessCheck {
             try await until("stopped message displayed") { !store.isAgentRunningInActiveChat && controller.messages.last?.state == .stopped }
             try check("stop_preserves_received_text", store.messages.last?.completionState == .interrupted
                 && store.messages.last?.text.hasPrefix(received) == true && controller.messages.last?.markdown.hasPrefix(received) == true)
+            try await verifyDividerLanguage(controller, workspace: store)
+            try check("divider_interface_language_updates", true)
             try await verifyDividerResize(controller)
             try check("divider_batches_widths_and_reflows_during_drag", true)
             try await verifyConversationAppearance(controller, workspace: store)
@@ -726,6 +728,34 @@ enum CatalystBusinessCheck {
                 && content.bounds.maxY - mainComposer.convert(mainComposer.bounds, to: content).maxY <= 40
         }
         try capture("reasoning-composer.png")
+    }
+
+    private static func verifyDividerLanguage(_ controller: ConversationController, workspace: WorkspaceStore) async throws {
+        guard let window = controller.view.window,
+              let split = descendants(window).compactMap({ $0 as? StableDocumentSplitView }).first,
+              split.dividerViews.count == 2, split.dividerViews.allSatisfy({ !$0.isHidden }) else {
+            throw Failure("three-pane dividers unavailable")
+        }
+        let originalLanguage = workspace.interfaceLanguage
+        defer { workspace.setInterfaceLanguage(originalLanguage) }
+        for language in [WeiBeiInterfaceLanguage.english, .chinese] {
+            workspace.setInterfaceLanguage(language)
+            try await until("divider applies changed interface language") {
+                let expected = (
+                    language.text("调整分栏宽度", "Resize panes"),
+                    language.text("双击均分相邻两栏；按住 Option 松手可跳过吸附。", "Double-click to split the adjacent panes evenly. Hold Option while releasing to skip snapping."),
+                    language.text("均分相邻两栏", "Split adjacent panes evenly")
+                )
+                return split.dividerViews.allSatisfy {
+                    $0.interfaceLanguage == language
+                        && $0.accessibilityLabel == expected.0
+                        && $0.accessibilityHint == expected.1
+                        && $0.accessibilityCustomActions?.first?.name == expected.2
+                }
+                    && controller.collection.accessibilityLabel
+                        == language.text("会话消息列表", "Conversation messages")
+            }
+        }
     }
 
     private static func verifyDividerResize(_ controller: ConversationController) async throws {

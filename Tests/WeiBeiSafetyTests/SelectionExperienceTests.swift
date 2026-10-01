@@ -529,26 +529,36 @@ final class SelectionExperienceTests: XCTestCase {
         let firstAnchor = SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 0, endOffset: 2))
         let secondAnchor = SelectionDocumentAnchor(text: SelectionTextAnchor(startOffset: 8, endOffset: 10))
         store.updateSelection(
-            "甲段",
+            "同一句",
             source: .document,
             anchor: SelectionPopoverAnchor(x: 10, y: 10),
             documentAnchor: firstAnchor
         )
         store.interaction.selectionNoteDraft = "草稿甲"
         store.updateSelection(
-            "乙段",
+            "同一句",
             source: .document,
             anchor: SelectionPopoverAnchor(x: 20, y: 20),
             documentAnchor: secondAnchor
         )
         XCTAssertEqual(store.interaction.selectionNoteDraft, "")
+        store.interaction.selectionNoteDraft = "草稿乙"
         store.updateSelection(
-            "甲段",
+            "同一句",
             source: .document,
             anchor: SelectionPopoverAnchor(x: 10, y: 12),
-            documentAnchor: firstAnchor
+            documentAnchor: SelectionDocumentAnchor(
+                text: SelectionTextAnchor(startOffset: 0, endOffset: 2)
+            )
         )
         XCTAssertEqual(store.interaction.selectionNoteDraft, "草稿甲")
+        store.updateSelection(
+            "同一句",
+            source: .document,
+            anchor: SelectionPopoverAnchor(x: 20, y: 22),
+            documentAnchor: secondAnchor
+        )
+        XCTAssertEqual(store.interaction.selectionNoteDraft, "草稿乙")
 
         let record = SelectionRemarkRecord(
             selectionText: "摘抄原文",

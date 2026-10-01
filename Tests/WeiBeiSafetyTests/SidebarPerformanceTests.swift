@@ -199,6 +199,26 @@ final class SidebarPerformanceTests: XCTestCase {
     }
 
     @MainActor
+    func testDrawerEscapeClearsSearchBeforeDismissal() {
+        let fixture = makeStore(itemCount: 0)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let model = CourseSidebarModel(store: fixture.store)
+        var dismissCount = 0
+
+        model.updateQuery("QA_SEARCH")
+        model.handleEscape { dismissCount += 1 }
+
+        XCTAssertEqual(model.query, "")
+        XCTAssertEqual(fixture.store.librarySearch, "")
+        XCTAssertEqual(dismissCount, 0, "first Escape must only clear a non-empty drawer search")
+
+        model.handleEscape { dismissCount += 1 }
+
+        XCTAssertEqual(dismissCount, 1, "second Escape may dismiss after the drawer search is empty")
+        withExtendedLifetime(model) {}
+    }
+
+    @MainActor
     func testFourthActiveNoteTagRemainsSearchableAfterRealLoad() async throws {
         let fixture = try XCTUnwrap(asyncStoreFixture)
         let note = StudyItem(

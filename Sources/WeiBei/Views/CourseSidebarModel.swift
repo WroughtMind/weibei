@@ -265,6 +265,14 @@ final class CourseSidebarModel: ObservableObject {
         scheduleRebuild()
     }
 
+    func handleEscape(dismiss: () -> Void) {
+        guard !query.isEmpty else {
+            dismiss()
+            return
+        }
+        updateQuery("")
+    }
+
     private func itemMatches(
         _ row: CourseSidebarItemRow,
         query: String,

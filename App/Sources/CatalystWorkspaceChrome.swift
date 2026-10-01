@@ -301,7 +301,11 @@ struct StableDocumentWorkspace: UIViewRepresentable {
         coordinator.onFramesChange = onFramesChange
         coordinator.onExpansionRequestHandled = onExpansionRequestHandled
         coordinator.reduceMotion = reduceMotion
-        for divider in view.dividerViews { divider.appearanceMode = appearanceMode; divider.reduceMotion = reduceMotion }
+        for divider in view.dividerViews {
+            divider.appearanceMode = appearanceMode
+            divider.reduceMotion = reduceMotion
+            divider.interfaceLanguage = store.interfaceLanguage
+        }
         coordinator.update(state: StableDocumentLayoutState(normalizedOrder: WorkspacePaneRole.normalized(normalizedOrder),
             visibleOrder: visibleOrder, firstSplit: firstSplit, secondSplit: secondSplit, halfSplit: halfSplit),
             draggedRole: draggedRole, expansionRequest: expansionRequest, in: view)
@@ -333,6 +337,12 @@ final class CatalystDividerView: UIView {
     var skipSnap = false
     var appearanceMode: WeiBeiAppearanceMode = .paper { didSet { setNeedsDisplay() } }
     var reduceMotion = false
+    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese {
+        didSet {
+            guard interfaceLanguage != oldValue else { return }
+            refreshCopy()
+        }
+    }
     private var hovering = false
     private var pressed = false
     private let accent = CALayer()
@@ -351,9 +361,9 @@ final class CatalystDividerView: UIView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     private func refreshCopy() {
-        accessibilityLabel = CatalystInterfaceCopy.text("调整分栏宽度", "Resize panes")
-        accessibilityHint = CatalystInterfaceCopy.text("双击均分相邻两栏；按住 Option 松手可跳过吸附。", "Double-click to split the adjacent panes evenly. Hold Option while releasing to skip snapping.")
-        accessibilityCustomActions = [UIAccessibilityCustomAction(name: CatalystInterfaceCopy.text("均分相邻两栏", "Split adjacent panes evenly"), target: self, selector: #selector(equalize))]
+        accessibilityLabel = interfaceLanguage.text("调整分栏宽度", "Resize panes")
+        accessibilityHint = interfaceLanguage.text("双击均分相邻两栏；按住 Option 松手可跳过吸附。", "Double-click to split the adjacent panes evenly. Hold Option while releasing to skip snapping.")
+        accessibilityCustomActions = [UIAccessibilityCustomAction(name: interfaceLanguage.text("均分相邻两栏", "Split adjacent panes evenly"), target: self, selector: #selector(equalize))]
     }
     @objc private func drag(_ gesture: UIPanGestureRecognizer) {
         skipSnap = gesture.modifierFlags.contains(.alternate) || gesture.state == .cancelled

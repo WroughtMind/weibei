@@ -72,7 +72,7 @@ export function parseOfficeCharts(bytes) {
         replace('    requestAnimationFrame(() => {\n      if (!i.isConnected)', '    setTimeout(() => {\n      if (!i.isConnected)');
         replace('if (n.setOption(t), r == null || r.add(n), typeof ResizeObserver > "u")', 'if (n.setOption({ ...t, animation: false }), n.getZr().flush(), r == null || r.add(n), typeof ResizeObserver > "u")');
         replace('  const i = document.createElement("div");\n  i.style.width = "100%", i.style.flex', '  if (window.WeiBeiOffice.has3DChart(e.chartPath)) { r.appendChild(window.WeiBeiOffice.render3DChart(e.chartPath, e.size)); return r; }\n  const i = document.createElement("div");\n  i.style.width = "100%", i.style.flex');
-        replace('o.textContent = `Slide ${t + 1}`', 'o.dataset.weibeiAnnotationUi = "true", o.textContent = `第 ${t + 1} 页`');
+        replace('o.textContent = `Slide ${t + 1}`', 'o.dataset.weibeiAnnotationUi = "true", o.dataset.weibeiSlideLabel = String(t + 1), o.textContent = window.WeiBeiOffice.pageLabel(t + 1)');
         // Keep note controls outside the lazily mounted slide content.
         replace('return { item: i, wrapper: a };', 'window.WeiBeiOffice.attachNote(t, i);\n    return { item: i, wrapper: a };');
         // Equal visibility must not replace the page the reader just chose.
