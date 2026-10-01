@@ -39,6 +39,33 @@ final class ComposerReasoningCatalogTests: XCTestCase {
         XCTAssertFalse(account.isRefreshingModels)
         XCTAssertTrue(account.models(provider: .custom).isEmpty)
     }
+    @MainActor
+    func testSwitchingToColdCodexSupersedesAnotherProvidersPendingCatalog() async throws {
+        var pending: [CheckedContinuation<AgentAccountService.ModelCatalog, Error>] = []
+        let account = AgentAccountService(modelCatalogLoader: { _, _ in
+            try await withCheckedThrowingContinuation { pending.append($0) }
+        })
+        account.refreshModels(provider: .openai, baseURL: "")
+        let firstDeadline = Date().addingTimeInterval(5)
+        while pending.count < 1 && Date() < firstDeadline { await Task.yield() }
+        guard pending.count == 1 else { return XCTFail("First synthetic request did not start") }
+        account.refreshReasoningCatalogIfNeeded(provider: .openaiCodex, baseURL: "")
+        let secondDeadline = Date().addingTimeInterval(5)
+        while pending.count < 2 && Date() < secondDeadline { await Task.yield() }
+        guard pending.count == 2 else {
+            pending[0].resume(throwing: CancellationError())
+            return XCTFail("The cold Codex lookup was incorrectly blocked by another provider")
+        }
+        pending[1].resume(returning: .init(ids: ["codex-model"], reasoningLevels: ["codex-model": ["low", "high"]]))
+        let publishDeadline = Date().addingTimeInterval(5)
+        while account.isRefreshingModels && Date() < publishDeadline { await Task.yield() }
+        XCTAssertFalse(account.isRefreshingModels)
+        pending[0].resume(returning: .init(ids: ["obsolete-openai-model"], reasoningLevels: [:]))
+        await Task.yield()
+        XCTAssertEqual(account.models(provider: .openaiCodex), ["codex-model"])
+        XCTAssertEqual(account.reasoningLevels(provider: .openaiCodex, model: "codex-model"), ["low", "high"])
+    }
+
 }
 
 #if os(macOS) && !targetEnvironment(macCatalyst)

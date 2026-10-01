@@ -48,6 +48,8 @@ final class AgentAccountService: ObservableObject {
     @Published private(set) var authorizationCode: String?
     @Published private(set) var authorizationURL: URL?
     private var modelListTask: Task<Void, Never>?
+    private var modelRequestProvider: AgentProviderID?
+    private var modelRequestBaseURL = ""
     struct ModelCatalog {
         var ids: [String]
         var reasoningLevels: [String: [String]]
@@ -65,6 +67,8 @@ final class AgentAccountService: ObservableObject {
 
     /// 打开设置、更换服务/端点/密钥或用户主动刷新时，向服务商拉取可用模型。
     func refreshModels(provider: AgentProviderID, baseURL: String) {
+        modelRequestProvider = provider
+        modelRequestBaseURL = baseURL
         liveReasoningLevels = [:]
         modelListTask?.cancel()
         liveModelsProvider = provider
@@ -80,8 +84,10 @@ final class AgentAccountService: ObservableObject {
     /// 冷启动的输入框也需要实时推理能力，不要求先打开设置。
     /// 多个输入框同时出现时复用当前查询，不清空已加载的能力。
     func refreshReasoningCatalogIfNeeded(provider: AgentProviderID, baseURL: String) {
-        guard provider == .openaiCodex, !isRefreshingModels,
-              !hasLoadedModels(provider: provider) else { return }
+        guard provider == .openaiCodex else { return }
+        let sameRequest = modelRequestProvider == provider && modelRequestBaseURL == baseURL
+        if isRefreshingModels && sameRequest { return }
+        guard !hasLoadedModels(provider: provider) else { return }
         refreshModels(provider: provider, baseURL: baseURL)
     }
 
