@@ -68,6 +68,19 @@ public enum ImportFileCopy {
         }
     }
 
+    /// Compare the bytes a source would import with an already imported file.
+    /// Do not re-embed HTML resources relative to the copy's new directory.
+    public static func sourceHasIdenticalImportedContents(
+        _ sourceURL: URL,
+        at importedURL: URL
+    ) throws -> Bool {
+        try importedContentsMatch(
+            from: sourceURL,
+            at: importedURL,
+            preparedHTML: HTMLResourceImport.dataIfHTML(at: sourceURL)
+        )
+    }
+
     private static func collision(
         from sourceURL: URL,
         into directory: URL,
@@ -77,15 +90,24 @@ public enum ImportFileCopy {
         guard FileManager.default.fileExists(atPath: preferred.path) else {
             return .available
         }
-        if let html = preparedHTML {
-            if try preferred.resourceValues(forKeys: [.fileSizeKey]).fileSize == html.count,
-               try Data(contentsOf: preferred) == html {
-                return .duplicate
-            }
-        } else if try filesHaveIdenticalContents(sourceURL, preferred) {
+        if try importedContentsMatch(from: sourceURL, at: preferred, preparedHTML: preparedHTML) {
             return .duplicate
         }
         return .conflict(suggestedFileName: uniqueCopyURL(in: directory, preferred: preferred).lastPathComponent)
+    }
+
+    private static func importedContentsMatch(
+        from sourceURL: URL,
+        at importedURL: URL,
+        preparedHTML: Data?
+    ) throws -> Bool {
+        if let html = preparedHTML {
+            guard try importedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize == html.count else {
+                return false
+            }
+            return try Data(contentsOf: importedURL) == html
+        }
+        return try filesHaveIdenticalContents(sourceURL, importedURL)
     }
 
     static func filesHaveIdenticalContents(_ lhs: URL, _ rhs: URL) throws -> Bool {

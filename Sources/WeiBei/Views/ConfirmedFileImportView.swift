@@ -37,6 +37,7 @@ struct ConfirmedFileImportBatch: Identifiable, Equatable, Sendable {
     var candidates: [ConfirmedFileImportCandidate] = []
     var unsupportedNames: [String] = []
     var importedItems: [StudyItem] = []
+    var successfulCopiesByOriginalName: [String: [URL]] = [:]
     var failures: [ConfirmedFileImportFailure] = []
     var previousDuplicateCount = 0
     var previousUnsupportedCount = 0
@@ -173,6 +174,7 @@ extension WorkspaceStore {
             courseID: batch.courseID,
             importsMarkdownAsNotes: batch.importsMarkdownAsNotes,
             importedItems: batch.importedItems,
+            successfulCopiesByOriginalName: batch.successfulCopiesByOriginalName,
             previousDuplicateCount: batch.duplicateCount,
             previousUnsupportedCount: batch.unsupportedCount,
             pendingSourceURLs: batch.pendingSourceURLs
@@ -202,7 +204,8 @@ extension WorkspaceStore {
             var imported = batch.importedItems
             var failures = preflightFailures
             var completed = batch.unsupportedNames.count
-            for candidate in batch.candidates {
+            for (candidateIndex, plannedCandidate) in batch.candidates.enumerated() {
+                var candidate = plannedCandidate
                 if confirmedFileImportStopRequested {
                     batch.stopped = true
                     break
@@ -215,11 +218,33 @@ extension WorkspaceStore {
                     batch.completed = completed
                     publishConfirmedFileImportProgress(batch)
                 }
-                if candidate.disposition == .duplicate { continue }
                 do {
+                    let successfulCopies = batch.successfulCopiesByOriginalName[
+                        candidate.sourceURL.lastPathComponent,
+                        default: []
+                    ]
+                    if candidate.disposition == .duplicate || !successfulCopies.isEmpty {
+                        // A preview may refer to an earlier source whose copy failed,
+                        // or to destination content that changed before confirmation.
+                        candidate.disposition = .ready
+                        batch.candidates[candidateIndex] = candidate
+                        candidate.disposition = try await revalidatedDuplicateDisposition(
+                            candidate.sourceURL,
+                            batch: batch,
+                            successfulCopies: successfulCopies
+                        )
+                        batch.candidates[candidateIndex] = candidate
+                        if candidate.disposition == .duplicate { continue }
+                    }
                     let item = try await importConfirmedFile(candidate, batch: batch)
                     if !imported.contains(where: { $0.id == item.id }) {
                         imported.append(item)
+                    }
+                    if let copiedURL = resolvedLibraryURL(for: item) {
+                        batch.successfulCopiesByOriginalName[
+                            candidate.sourceURL.lastPathComponent,
+                            default: []
+                        ].append(copiedURL)
                     }
                 } catch {
                     if let recovered = await recoverConfirmedCourseImport(
@@ -228,6 +253,12 @@ extension WorkspaceStore {
                     ) {
                         if !imported.contains(where: { $0.id == recovered.id }) {
                             imported.append(recovered)
+                        }
+                        if let copiedURL = resolvedLibraryURL(for: recovered) {
+                            batch.successfulCopiesByOriginalName[
+                                candidate.sourceURL.lastPathComponent,
+                                default: []
+                            ].append(copiedURL)
                         }
                         continue
                     }
@@ -401,6 +432,7 @@ extension WorkspaceStore {
         let urls = batch.sourceURLs
         let asNotes = batch.importsMarkdownAsNotes
         let courseID = batch.courseID
+        let successfulCopies = batch.successfulCopiesByOriginalName
         let destination: URL?
         if let courseID {
             destination = courseRootURL(for: courseID)?.appendingPathComponent(
@@ -428,7 +460,8 @@ extension WorkspaceStore {
                 Self.makeConfirmedFileImportPlan(
                     urls: urls,
                     destination: destination,
-                    markdownOnly: asNotes
+                    markdownOnly: asNotes,
+                    successfulCopiesByOriginalName: successfulCopies
                 )
             }.value
             guard let self, !Task.isCancelled,
@@ -464,7 +497,8 @@ extension WorkspaceStore {
     }
 
     nonisolated static func makeConfirmedFileImportPlan(
-        urls: [URL], destination: URL, markdownOnly: Bool
+        urls: [URL], destination: URL, markdownOnly: Bool,
+        successfulCopiesByOriginalName: [String: [URL]] = [:]
     ) -> (
         candidates: [ConfirmedFileImportCandidate],
         unsupportedNames: [String],
@@ -490,6 +524,14 @@ extension WorkspaceStore {
                 }
             } catch {}
             let originalName = url.lastPathComponent
+            let duplicatesSuccessfulCopy = successfulCopiesByOriginalName[originalName, default: []]
+                .contains { copiedURL in
+                    guard CourseProjectPathPolicy.isSame(
+                        copiedURL.deletingLastPathComponent().resolvingSymlinksInPath(),
+                        destination.resolvingSymlinksInPath()
+                    ) else { return false }
+                    return (try? ImportFileCopy.sourceHasIdenticalImportedContents(url, at: copiedURL)) == true
+                }
             let duplicatesReservedSource = reservedSourcesByOriginalName[originalName, default: []]
                 .contains { reservedSource in
                     (try? ImportFileCopy.sourcesHaveIdenticalImportedContents(
@@ -497,7 +539,7 @@ extension WorkspaceStore {
                         url
                     )) == true
                 }
-            if duplicatesReservedSource {
+            if duplicatesSuccessfulCopy || duplicatesReservedSource {
                 candidates.append(ConfirmedFileImportCandidate(sourceURL: url, disposition: .duplicate))
                 continue
             }
@@ -540,6 +582,58 @@ extension WorkspaceStore {
         return pathExtension.isEmpty
             ? "\(stem) \(UUID().uuidString.lowercased())"
             : "\(stem) \(UUID().uuidString.lowercased()).\(pathExtension)"
+    }
+
+    private func revalidatedDuplicateDisposition(
+        _ sourceURL: URL,
+        batch: ConfirmedFileImportBatch,
+        successfulCopies: [URL]
+    ) async throws -> ConfirmedFileImportDisposition {
+        let destination: URL
+        if let courseID = batch.courseID {
+            guard let root = courseRootURL(for: courseID) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            destination = root.appendingPathComponent(
+                batch.importsMarkdownAsNotes
+                    ? CourseOwnedFileRole.note.directoryName
+                    : CourseOwnedFileRole.material.directoryName,
+                isDirectory: true
+            )
+        } else {
+            guard let root = courseLibraryRootURL else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            destination = root.appendingPathComponent(
+                batch.importsMarkdownAsNotes
+                    ? CourseOwnedFileRole.note.commonDirectoryName
+                    : CourseOwnedFileRole.material.commonDirectoryName,
+                isDirectory: true
+            )
+        }
+        return try await Task.detached(priority: .userInitiated) {
+            () throws -> ConfirmedFileImportDisposition in
+            // A same-name representative may have been safely renamed by an
+            // earlier conflict. Compare its actual copy, never just its source.
+            for copiedURL in successfulCopies {
+                guard CourseProjectPathPolicy.isSame(
+                    copiedURL.deletingLastPathComponent().resolvingSymlinksInPath(),
+                    destination.resolvingSymlinksInPath()
+                ) else { continue }
+                if (try? ImportFileCopy.sourceHasIdenticalImportedContents(
+                    sourceURL,
+                    at: copiedURL
+                )) == true {
+                    return .duplicate
+                }
+            }
+            let collision = try ImportFileCopy.collision(from: sourceURL, into: destination)
+            switch collision {
+            case .available: return .ready
+            case .duplicate: return .duplicate
+            case .conflict(let suggested): return .conflict(suggestedFileName: suggested)
+            }
+        }.value
     }
 
     private func importConfirmedFile(

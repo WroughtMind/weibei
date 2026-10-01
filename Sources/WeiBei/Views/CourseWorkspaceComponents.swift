@@ -538,8 +538,8 @@ struct CourseProjectEntrySheet: View {
             if !selectedImportURLs.isEmpty {
                 Text(selectedImportIncludesMarkdown
                     ? store.ui(
-                        "已选 \(selectedImportURLs.count) 项；Markdown 同时加入文稿和笔记。",
-                        "\(selectedImportURLs.count) selected; Markdown will be added to Materials and Notes."
+                        "已选 \(selectedImportURLs.count) 项；Markdown 作为课程文稿导入。",
+                        "\(selectedImportURLs.count) selected; Markdown will be imported as course materials."
                     )
                     : store.ui(
                         "已选 \(selectedImportURLs.count) 项",
@@ -716,8 +716,8 @@ struct CourseProjectEntrySheet: View {
         let panel = NSOpenPanel()
         panel.title = store.ui("选择课程内容", "Choose Course Content")
         panel.message = store.ui(
-            "可以选择多个文件或一个文件夹。Markdown 会作为同一个文件同时用于阅读和笔记。",
-            "Choose files or a folder. Markdown stays one file and appears in both reading and notes."
+            "可以选择多个文件或一个文件夹。Markdown 作为课程文稿导入。",
+            "Choose files or a folder. Markdown will be imported as course materials."
         )
         panel.prompt = store.ui("选择", "Choose")
         panel.allowsMultipleSelection = true

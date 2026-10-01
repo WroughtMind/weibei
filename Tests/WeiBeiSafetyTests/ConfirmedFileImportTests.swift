@@ -706,6 +706,9 @@ final class ConfirmedFileImportTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let courseID = try fixture.store.createCourseInLibrary(title: "重复项恢复")
         let courseRoot = try XCTUnwrap(fixture.store.courseRootURL(for: courseID))
+        let existing = courseRoot.appendingPathComponent("文稿/同名.txt")
+        let existingContent = Data("different existing content".utf8)
+        try existingContent.write(to: existing)
         let directories = ["a", "b"].map {
             fixture.outside.appendingPathComponent($0, isDirectory: true)
         }
@@ -718,7 +721,9 @@ final class ConfirmedFileImportTests: XCTestCase {
 
         fixture.store.prepareConfirmedFileImport(files, courseID: courseID)
         waitForStage(.reviewing, in: fixture.store)
-        XCTAssertEqual(fixture.store.confirmedFileImport?.candidates.map(\.disposition), [.ready, .duplicate])
+        XCTAssertEqual(fixture.store.confirmedFileImport?.candidates.map(\.disposition), [
+            .conflict(suggestedFileName: "同名 2.txt"), .duplicate
+        ])
         failNextStaging = true
         fixture.store.confirmFileImport()
         waitForStage(.finished, in: fixture.store)
@@ -728,8 +733,70 @@ final class ConfirmedFileImportTests: XCTestCase {
         XCTAssertEqual(batch.importedItems.count, 1)
         XCTAssertEqual(batch.failures.map(\.sourceURL), [files[0]])
         XCTAssertEqual(batch.duplicateCount, 0)
-        XCTAssertEqual(try Data(contentsOf: courseRoot.appendingPathComponent("文稿/同名.txt")), content)
+        XCTAssertEqual(try Data(contentsOf: existing), existingContent)
+        XCTAssertEqual(try Data(contentsOf: courseRoot.appendingPathComponent("文稿/同名 2.txt")), content)
         XCTAssertEqual(fixture.store.courseMaterials(in: courseID).count, 1)
+        for file in files { XCTAssertEqual(try Data(contentsOf: file), content) }
+
+        fixture.store.retryFailedConfirmedFileImport()
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.sourceURLs, [files[0]])
+        XCTAssertEqual(fixture.store.confirmedFileImport?.candidates.map(\.disposition), [.duplicate])
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+        XCTAssertEqual(fixture.store.courseMaterials(in: courseID).count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: courseRoot.appendingPathComponent("文稿/同名 3.txt").path))
+        XCTAssertEqual(try Data(contentsOf: existing), existingContent)
+        XCTAssertEqual(try Data(contentsOf: courseRoot.appendingPathComponent("文稿/同名 2.txt")), content)
+    }
+
+    func testRetryInAnotherCourseDoesNotSkipCopyFromPreviousDestination() throws {
+        var failNextStaging = false
+        let fixture = try makeFixture { stage in
+            if failNextStaging, stage == .beforeCourseFileStagingCopy {
+                failNextStaging = false
+                throw CocoaError(.fileWriteUnknown)
+            }
+        }
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let firstCourseID = try fixture.store.createCourseInLibrary(title: "第一目标")
+        let nextCourseID = try fixture.store.createCourseInLibrary(title: "第二目标")
+        let firstRoot = try XCTUnwrap(fixture.store.courseRootURL(for: firstCourseID))
+        let nextRoot = try XCTUnwrap(fixture.store.courseRootURL(for: nextCourseID))
+        let existing = firstRoot.appendingPathComponent("文稿/同名.txt")
+        let existingContent = Data("different existing content".utf8)
+        try existingContent.write(to: existing)
+        let directories = ["a", "b"].map {
+            fixture.outside.appendingPathComponent($0, isDirectory: true)
+        }
+        for directory in directories {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let files = directories.map { $0.appendingPathComponent("同名.txt") }
+        let content = Data("same".utf8)
+        for file in files { try content.write(to: file) }
+
+        fixture.store.prepareConfirmedFileImport(files, courseID: firstCourseID)
+        waitForStage(.reviewing, in: fixture.store)
+        failNextStaging = true
+        fixture.store.confirmFileImport()
+        waitForStage(.finished, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.failures.map(\.sourceURL), [files[0]])
+        XCTAssertEqual(try Data(contentsOf: firstRoot.appendingPathComponent("文稿/同名 2.txt")), content)
+
+        fixture.store.retryFailedConfirmedFileImport()
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.candidates.map(\.disposition), [.duplicate])
+        fixture.store.setConfirmedFileImportDestination(courseID: nextCourseID)
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.candidates.map(\.disposition), [.ready])
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        XCTAssertEqual(try Data(contentsOf: nextRoot.appendingPathComponent("文稿/同名.txt")), content)
+        XCTAssertEqual(try Data(contentsOf: firstRoot.appendingPathComponent("文稿/同名 2.txt")), content)
+        XCTAssertEqual(try Data(contentsOf: existing), existingContent)
+        XCTAssertEqual(fixture.store.courseMaterials(in: nextCourseID).count, 1)
         for file in files { XCTAssertEqual(try Data(contentsOf: file), content) }
     }
 
@@ -752,6 +819,100 @@ final class ConfirmedFileImportTests: XCTestCase {
         XCTAssertEqual(fixture.store.importedItems.filter { $0.subtitle == "已存在.txt" }.count, 1)
         XCTAssertEqual(try Data(contentsOf: destination), content)
         XCTAssertEqual(try Data(contentsOf: source), content)
+    }
+
+    func testReviewedCourseDuplicateKeepsBothWhenDestinationChanges() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let courseID = try fixture.store.createCourseInLibrary(title: "确认后变更")
+        let courseRoot = try XCTUnwrap(fixture.store.courseRootURL(for: courseID))
+        let source = fixture.outside.appendingPathComponent("讲义.txt")
+        let destination = courseRoot.appendingPathComponent("文稿/讲义.txt")
+        let content = Data("original".utf8)
+        let changed = Data("external edit".utf8)
+        try content.write(to: source)
+        try content.write(to: destination)
+
+        fixture.store.prepareConfirmedFileImport([source], courseID: courseID)
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.candidates.map(\.disposition), [.duplicate])
+        try changed.write(to: destination)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        XCTAssertEqual(try Data(contentsOf: destination), changed)
+        XCTAssertEqual(try Data(contentsOf: courseRoot.appendingPathComponent("文稿/讲义 2.txt")), content)
+        XCTAssertEqual(try Data(contentsOf: source), content)
+    }
+
+    func testCourseDuplicateUsesSuccessfulRenamedRepresentative() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let courseID = try fixture.store.createCourseInLibrary(title: "同名另存恢复")
+        let courseRoot = try XCTUnwrap(fixture.store.courseRootURL(for: courseID))
+        let original = courseRoot.appendingPathComponent("文稿/同名.txt")
+        let originalContent = Data("existing".utf8)
+        try originalContent.write(to: original)
+        let directories = ["a", "b"].map {
+            fixture.outside.appendingPathComponent($0, isDirectory: true)
+        }
+        for directory in directories {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let files = directories.map { $0.appendingPathComponent("同名.txt") }
+        let content = Data("same new content".utf8)
+        for file in files { try content.write(to: file) }
+
+        fixture.store.prepareConfirmedFileImport(files, courseID: courseID)
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.candidates.map(\.disposition), [
+            .conflict(suggestedFileName: "同名 2.txt"), .duplicate
+        ])
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        XCTAssertEqual(try Data(contentsOf: original), originalContent)
+        XCTAssertEqual(try Data(contentsOf: courseRoot.appendingPathComponent("文稿/同名 2.txt")), content)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: courseRoot.appendingPathComponent("文稿/同名 3.txt").path))
+        for file in files { XCTAssertEqual(try Data(contentsOf: file), content) }
+    }
+
+    func testHTMLDuplicateUsesStoredRenamedCopyWithoutReembeddingLibraryResources() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let directories = ["a", "b"].map {
+            fixture.outside.appendingPathComponent($0, isDirectory: true)
+        }
+        for directory in directories {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let files = directories.map { $0.appendingPathComponent("页面.html") }
+        let content = Data("<html><body><iframe src=\"frame.html\"></iframe></body></html>".utf8)
+        for file in files { try content.write(to: file) }
+        let destination = fixture.library.appendingPathComponent("通用资料", isDirectory: true)
+        let original = destination.appendingPathComponent("页面.html")
+        let originalContent = Data("<html><body>different existing page</body></html>".utf8)
+        try originalContent.write(to: original)
+        let neighboringFrame = destination.appendingPathComponent("frame.html")
+        let frameContent = Data("<html><body>unrelated library frame</body></html>".utf8)
+        try frameContent.write(to: neighboringFrame)
+        let expectedImportedBytes = try XCTUnwrap(HTMLResourceImport.dataIfHTML(at: files[0]))
+
+        fixture.store.prepareConfirmedFileImport(files)
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.candidates.map(\.disposition), [
+            .conflict(suggestedFileName: "页面 2.html"), .duplicate
+        ])
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        let copied = destination.appendingPathComponent("页面 2.html")
+        XCTAssertEqual(try Data(contentsOf: copied), expectedImportedBytes)
+        XCTAssertNotEqual(try HTMLResourceImport.dataIfHTML(at: copied), expectedImportedBytes)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.appendingPathComponent("页面 3.html").path))
+        XCTAssertEqual(try Data(contentsOf: original), originalContent)
+        XCTAssertEqual(try Data(contentsOf: neighboringFrame), frameContent)
+        for file in files { XCTAssertEqual(try Data(contentsOf: file), content) }
     }
 
     func testInitialCourseMarkdownImportsAsMaterialOnly() throws {
