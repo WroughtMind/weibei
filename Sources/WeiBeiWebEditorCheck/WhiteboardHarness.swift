@@ -16,6 +16,15 @@ private struct WhiteboardMeasuredAdapter: NativeLLMAdapter {
 final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
     private var ready = false
     private var failure: String?
+    private var diagnosticEvents: [[String: Any]] = []
+    private var diagnosticReceivedEvents = 0
+    private let diagnosticEventLimit = 1024
+    private var diagnosticStage = "before-check"
+    private var diagnosticResult: String?
+    private var diagnosticWindowState: [String: Any]?
+    private var diagnosticWindowStateCaptureError: String?
+    private let diagnosticRunID = UUID().uuidString
+    private let diagnosticStarted = Date()
     private let web: WKWebView
     private var window: NSWindow?
     private var liveButton: NSButton?
@@ -31,12 +40,59 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
         config.userContentController.addScriptMessageHandler(WhiteboardVoiceResources(directory: resources), contentWorld: .page, name: "voiceResource")
         config.websiteDataStore = .nonPersistent()
         config.mediaTypesRequiringUserActionForPlayback = []
-        config.userContentController.addUserScript(.init(source: "window.wbMessages = []; window.addEventListener('error', e => window.webkit.messageHandlers.whiteboard.postMessage({type:'harness_error',message:e.message}));", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        config.userContentController.addUserScript(.init(source: #"""
+        window.wbMessages = [];
+        (() => {
+          const post = (type, details) => window.webkit.messageHandlers.whiteboard.postMessage({
+            type, ...details, stage:window.wbStage ?? 'before-check', result:window.wbResult ?? null,
+            visibility:document.visibilityState, at:performance.now()/1000
+          });
+          const errorDetails = error => ({name:error?.name ?? '', message:error?.message ?? String(error), stack:error?.stack ?? ''});
+          let stage;
+          Object.defineProperty(window, 'wbStage', {
+            configurable:true, get:() => stage,
+            set:value => { stage=value; post('harness_diagnostic', {kind:'stage'}); }
+          });
+          window.addEventListener('error', e => post('harness_error', {
+            message:e.message, filename:e.filename, line:e.lineno, column:e.colno, error:errorDetails(e.error)
+          }));
+          window.addEventListener('unhandledrejection', e => post('harness_diagnostic', {
+            kind:'unhandled_rejection', error:errorDetails(e.reason)
+          }));
+          // Temporary diagnostics: no errors are filtered or swallowed.
+          const NativeResizeObserver = window.ResizeObserver;
+          let observerID = 0, tracedCallbacks = 0;
+          window.ResizeObserver = class extends NativeResizeObserver {
+            constructor(callback) {
+              const id = ++observerID, created = new Error('ResizeObserver creation').stack ?? '';
+              super((entries, observer) => {
+                const traced = tracedCallbacks++ < 16;
+                const targets = () => entries.map(entry => {
+                  const r = entry.target.getBoundingClientRect();
+                  return {tag:entry.target.tagName, id:entry.target.id, classes:entry.target.getAttribute('class'),
+                    content_width:entry.contentRect.width, content_height:entry.contentRect.height,
+                    width:r.width, height:r.height};
+                });
+                if (traced) post('harness_diagnostic', {kind:'resize_begin', observer_id:id, created, targets:targets()});
+                try { callback.call(observer, entries, observer); }
+                catch (error) { post('harness_diagnostic', {kind:'resize_exception', observer_id:id, error:errorDetails(error)}); throw error; }
+                finally { if (traced) post('harness_diagnostic', {kind:'resize_end', observer_id:id, targets:targets()}); }
+              });
+            }
+          };
+          const nativeFrame = window.requestAnimationFrame.bind(window);
+          window.requestAnimationFrame = callback => nativeFrame(time => {
+            try { callback.call(window, time); }
+            catch (error) { post('harness_diagnostic', {kind:'frame_exception', error:errorDetails(error)}); throw error; }
+          });
+        })();
+        """#, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         web = WKWebView(frame: CGRect(x: 0, y: 0, width: 1000, height: 760), configuration: config)
         super.init(); config.userContentController.add(self, name: "whiteboard")
     }
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let value = message.body as? [String: Any] else { return }
+        recordDiagnosticEvent(value)
         if let start = liveStart {
             let eventTime = value["at"] as? Double ?? 0
             if value["type"] as? String == "board_revealed" {
@@ -85,9 +141,96 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
                 try? Data(status.utf8).write(to: URL(fileURLWithPath: folder).appendingPathComponent("dist-whiteboard-check/result.txt"))
             }
         }
+        if value["type"] as? String == "harness_error" || value["type"] as? String == "harness_diagnostic" {
+            if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+               let details = String(data: data, encoding: .utf8) {
+                print("whiteboard renderer diagnostics: \(details)"); fflush(stdout)
+            }
+        }
         if value["type"] as? String == "harness_error" { failure = String(describing: value["message"]) }
         if let data = try? JSONSerialization.data(withJSONObject: value), let json = String(data: data, encoding: .utf8) {
             web.evaluateJavaScript("window.wbMessages.push(\(json)); void 0")
+        }
+    }
+    private var diagnosticDirectory: URL? {
+        guard let path = ProcessInfo.processInfo.environment["WEIBEI_WHITEBOARD_DIAGNOSTIC_DIR"], !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+    private func recordDiagnosticEvent(_ value: [String: Any]) {
+        guard let directory = diagnosticDirectory else { return }
+        if let stage = value["stage"] as? String { diagnosticStage = stage }
+        if let result = value["result"] as? String { diagnosticResult = result }
+        if value["type"] as? String == "harness_result" { diagnosticResult = value["status"] as? String }
+        var event = value
+        event["native_elapsed_seconds"] = Date().timeIntervalSince(diagnosticStarted)
+        event["diagnostic_run_id"] = diagnosticRunID
+        diagnosticReceivedEvents += 1
+        if diagnosticEvents.count == diagnosticEventLimit { diagnosticEvents.removeFirst() }
+        diagnosticEvents.append(event)
+        // Keep terminal evidence current, while bounding event-log disk writes.
+        guard diagnosticReceivedEvents <= diagnosticEventLimit else { return }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let url = directory.appendingPathComponent("whiteboard-events.jsonl")
+            if !FileManager.default.fileExists(atPath: url.path) { try Data().write(to: url) }
+            var data = try JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])
+            data.append(10)
+            let log = try FileHandle(forWritingTo: url)
+            defer { try? log.close() }
+            _ = try log.seekToEnd()
+            try log.write(contentsOf: data)
+        } catch {
+            print("whiteboard diagnostic event write failed: \(error)"); fflush(stdout)
+        }
+    }
+    private func captureDiagnosticWindowState() {
+        guard diagnosticDirectory != nil else { return }
+        var done = false
+        diagnosticWindowStateCaptureError = nil
+        web.evaluateJavaScript(#"JSON.stringify({stage:window.wbStage ?? null,result:window.wbResult ?? null,visibility:document.visibilityState,messages:window.wbMessages ?? []})"#) { value, error in
+            defer { done = true }
+            if let error { self.diagnosticWindowStateCaptureError = String(describing: error); return }
+            guard let json = value as? String, let data = json.data(using: .utf8),
+                  let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                self.diagnosticWindowStateCaptureError = "Window state was not a JSON object"; return
+            }
+            self.diagnosticWindowState = state
+            if let stage = state["stage"] as? String { self.diagnosticStage = stage }
+            if let result = state["result"] as? String { self.diagnosticResult = result }
+        }
+        let end = Date().addingTimeInterval(0.2)
+        while !done && Date() < end { RunLoop.current.run(until: min(end, Date().addingTimeInterval(0.01))) }
+        if !done { diagnosticWindowStateCaptureError = "Window state capture timed out after 0.2 seconds" }
+    }
+    private func writeDiagnosticEvidence(outcome: String, terminal: Bool) {
+        guard let directory = diagnosticDirectory else { return }
+        if terminal { captureDiagnosticWindowState() }
+        let errors = diagnosticEvents.filter { event in
+            let type = event["type"] as? String, kind = event["kind"] as? String
+            return type == "harness_error" || type == "harness_evaluation_error" || type == "initialization_failed"
+                || kind == "resize_exception" || kind == "frame_exception" || kind == "unhandled_rejection"
+                || (type == "harness_result" && event["status"] as? String != "passed")
+        }
+        let report: [String: Any] = ["diagnostic_run_id": diagnosticRunID, "synthetic_fixture": true,
+            "terminal": terminal, "outcome": outcome, "stage": diagnosticStage,
+            "result": diagnosticResult.map { $0 as Any } ?? NSNull(), "ready": ready,
+            "window_state": diagnosticWindowState.map { $0 as Any } ?? NSNull(),
+            "window_state_capture_error": diagnosticWindowStateCaptureError.map { $0 as Any } ?? NSNull(),
+            "failure": failure.map { $0 as Any } ?? NSNull(), "elapsed_seconds": Date().timeIntervalSince(diagnosticStarted),
+            "errors": errors, "events": diagnosticEvents, "event_limit": diagnosticEventLimit,
+            "received_events": diagnosticReceivedEvents,
+            "omitted_early_events": max(0, diagnosticReceivedEvents - diagnosticEvents.count),
+            "event_log_limit_reached": diagnosticReceivedEvents > diagnosticEventLimit]
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: directory.appendingPathComponent("whiteboard-diagnostic.json"), options: [.atomic])
+            if terminal, let compact = try? JSONSerialization.data(withJSONObject: report.filter { $0.key != "events" }, options: [.sortedKeys]),
+               let json = String(data: compact, encoding: .utf8) {
+                print("whiteboard terminal diagnostics: \(json)"); fflush(stdout)
+            }
+        } catch {
+            print("whiteboard diagnostic report write failed: \(error)"); fflush(stdout)
         }
     }
     @objc private func light() { web.evaluateJavaScript("window.WeiBeiWhiteboard.setAppearance(false)") }
@@ -170,15 +313,28 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
             web.evaluateJavaScript("JSON.stringify({stage:window.wbStage,messages:window.wbMessages,result:window.wbResult,visibility:document.visibilityState})") { value, _ in
                 print("whiteboard timeout details: \(String(describing: value))"); fflush(stdout)
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            if diagnosticDirectory == nil { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+            writeDiagnosticEvidence(outcome: "timeout", terminal: true)
         }
+        if failure != nil { writeDiagnosticEvidence(outcome: "renderer_error", terminal: true) }
         expect(failure == nil && condition(), "Whiteboard renderer: \(failure ?? "timed out")")
     }
     @discardableResult private func js(_ code: String) -> Any? {
         var done = false, value: Any?
         web.evaluateJavaScript(code) { result, error in
             value = result; done = true
-            if let error { self.failure = String(describing: error) }
+            if let error {
+                self.failure = String(describing: error)
+                let native = error as NSError
+                let details: [String: Any] = ["type": "harness_evaluation_error", "message": String(describing: error),
+                    "domain": native.domain, "code": native.code,
+                    "user_info": native.userInfo.mapValues { String(describing: $0) }, "stage": self.diagnosticStage]
+                self.recordDiagnosticEvent(details)
+                if let data = try? JSONSerialization.data(withJSONObject: details, options: [.sortedKeys]),
+                   let json = String(data: data, encoding: .utf8) {
+                    print("whiteboard evaluation error diagnostics: \(json)"); fflush(stdout)
+                }
+            }
         }
         wait { done }; return value
     }
@@ -196,13 +352,16 @@ final class WhiteboardHarness: NSObject, WKScriptMessageHandler {
             value.title = "魏碑白板 · 渲染验收"; value.contentView = content; value.orderFront(nil); window = value
         }
         let resources = URL(fileURLWithPath: Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String ?? FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor")
+        writeDiagnosticEvidence(outcome: "running", terminal: false)
         web.loadFileURL(resources.appendingPathComponent("whiteboard.html"), allowingReadAccessTo: resources)
         if window != nil { return }
         wait { ready }
         print("whiteboard checks starting"); fflush(stdout)
         js(Self.check)
         wait { js("window.wbResult !== undefined") as? Bool == true }
+        writeDiagnosticEvidence(outcome: "fixture_finished", terminal: true)
         expect(js("window.wbResult") as? String == "passed", "Whiteboard checks: \(String(describing: js("window.wbResult")))")
+        writeDiagnosticEvidence(outcome: "passed", terminal: true)
         print("Whiteboard WebKit passed: real math and Mermaid, speech reveal gate, atomic ACK, pause, annotations, timeout failure, reflow, state reconstruction")
         if let folder = Bundle.main.infoDictionary?["WeiBeiSourceDirectory"] as? String {
             try? Data("passed".utf8).write(to: URL(fileURLWithPath: folder).appendingPathComponent("dist-whiteboard-check/result.txt"))
