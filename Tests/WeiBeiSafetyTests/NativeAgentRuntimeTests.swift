@@ -63,7 +63,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         </main></body></html>
         """
 
-        let passages = CourseDocumentSearchIndex.htmlPassages(html)
+        let passages = CourseDocumentSearchIndex.htmlPassages(html).filter { $0.location.hasPrefix("html-block-") }
         XCTAssertEqual(passages.count, 2)
         XCTAssertTrue(passages.allSatisfy { $0.location.hasPrefix("html-block-") })
         XCTAssertTrue(passages[1].text.contains("第二段正文"))

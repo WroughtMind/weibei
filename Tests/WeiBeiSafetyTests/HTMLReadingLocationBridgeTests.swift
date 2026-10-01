@@ -19,6 +19,10 @@ final class HTMLReadingLocationBridgeTests: XCTestCase {
         <p id="short">短段落</p><p id="emoji">🙂小段🙂</p>
         <blockquote><p id="nested">引用中的独立段落也必须和原文索引的位置一致，不能被外层引用吃掉。</p></blockquote>
         <ul><li><p id="listed">列表内部的正文不能因为嵌套层级而发生阅读位置编号偏移。</p></li></ul>
+        <p id="optional-first">First paragraph<p id="optional-second">Second paragraph</p>
+        <p id="quoted" data-expression="x > y">Visible paragraph</p>
+        <ul><li id="optional-li-first">First list item<li id="optional-li-second">Second list item</ul>
+        <p id="entities">A&amp;B&nbsp; C <strong>inline</strong> text</p>
         \(paragraphs)<p id="second">\(repeated)</p></main>
         <footer><p>页脚中的长段落只用于验证它不会改变正文段落位置，不属于阅读正文。</p></footer>
         """
@@ -59,9 +63,10 @@ final class HTMLReadingLocationBridgeTests: XCTestCase {
         _ = try evaluate("window.requestAnimationFrame = callback => { callback(); return 1; }; true;")
         _ = try evaluate(WebReaderRepresentable.contentRailScript + "\n; true;")
         let blocks = try evaluate("""
-        ['first', 'short', 'emoji', 'nested', 'listed', 'block-17', 'block-37', 'second'].map(name => {
+        ['first', 'short', 'emoji', 'nested', 'listed', 'optional-first', 'optional-second', 'quoted',
+         'optional-li-first', 'optional-li-second', 'entities', 'block-17', 'block-37', 'second'].map(name => {
           const element = document.getElementById(name);
-          return { name, location: element.dataset.weibeiContentRailID || '', text: element.textContent.trim() };
+          return { name, location: element.dataset.weibeiContentRailID || '', text: element.textContent.replace(/\\s+/g, ' ').trim() };
         })
         """) as? [[String: String]]
         let observed = try XCTUnwrap(blocks)
