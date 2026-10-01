@@ -45,6 +45,11 @@ def expect_measurement(result, expected_bytes):
         raise AssertionError(report)
     if report['app_size_policy'] != 'informational':
         raise AssertionError(report)
+    if int(report['app_size_target_bytes']) != 30_000_000:
+        raise AssertionError(report)
+    expected_status = 'within_soft_target' if expected_bytes <= 30_000_000 else 'above_soft_target'
+    if report['app_size_target_status'] != expected_status:
+        raise AssertionError(report)
 
 
 def check(app):

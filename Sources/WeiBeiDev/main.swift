@@ -176,6 +176,11 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     print("app_logical_bytes=\(appBytes)")
     print("app_logical_mb=\(Double(appBytes) / 1_000_000)")
     print("app_size_policy=informational")
+    print("app_size_target_bytes=30000000")
+    print("app_size_target_status=\(appBytes <= 30_000_000 ? "within_soft_target" : "above_soft_target")")
+    if appBytes > 30_000_000 {
+        FileHandle.standardError.write(Data("Package size exceeds the 30 MB soft target; quality checks continue.\n".utf8))
+    }
     // Pre-1.0 包不得把未来 1.0.0 发布计划散文当作现行法律副本打包。
     if fileManager.fileExists(atPath: legalDirectory.appendingPathComponent("v1.0.0.md").path) {
         fail("packaged Legal must not include future v1.0.0 release notes", exitCode: 11)
