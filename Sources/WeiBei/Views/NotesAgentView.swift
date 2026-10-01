@@ -4356,7 +4356,9 @@ final class AgentMessageMarkdownMemo {
                 language: language
             )
             display = AgentCitationParser.parse(presentation.markdown).displayText
-            finalized = AgentChatKaTeXMarkdown.prepare(display)
+            finalized = AgentChatKaTeXMarkdown.protectInlineMath(
+                AgentChatKaTeXMarkdown.prepare(display)
+            )
             key = nextKey
         }
         return (display, finalized)
@@ -4959,13 +4961,19 @@ private struct AgentMessageMarkdownText: View {
         Group {
             if rendersRichMarkdown {
 #if targetEnvironment(macCatalyst)
-                CatalystMessageMarkdown(markdown: preparedMarkdown, fontSize: (isChatWideTypography && !compact ? 16 : 14) * textScale,
-                    appearanceMode: store.appearanceMode, openLink: openLink)
+                CatalystRichAnswer(
+                    markdown: preparedMarkdown,
+                    fontSize: bodyFontSize,
+                    appearanceMode: store.appearanceMode,
+                    messageID: messageID,
+                    contentBlocks: contentBlocks,
+                    openLink: openLink
+                )
 #else
                 NativeChatMarkdownView(
                     markdown: preparedMarkdown,
                     messageID: messageID,
-                    fontSize: (isChatWideTypography && !compact ? 16 : 14) * textScale,
+                    fontSize: bodyFontSize,
                     isDark: store.appearanceMode.isDark,
                     appearanceKey: store.appearanceMode.rawValue,
                     interfaceLanguage: store.interfaceLanguage,
@@ -4997,7 +5005,7 @@ private struct AgentMessageMarkdownText: View {
 #endif
             } else {
                 Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
-                    .weiBeiText(compact ? 13.2 : 14.5)
+                    .weiBeiText(compact ? 11 : 14.5)
                     .lineSpacing(compact ? 4.2 : 4.5)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
@@ -5025,6 +5033,10 @@ private struct AgentMessageMarkdownText: View {
             imageHandler.invalidate()
             imageHandler = MarkdownImageSchemeHandler()
         }
+    }
+
+    private var bodyFontSize: CGFloat {
+        (compact ? 11 : (isChatWideTypography ? 16 : 14)) * textScale
     }
 
     private var initialBodyHeight: CGFloat {
