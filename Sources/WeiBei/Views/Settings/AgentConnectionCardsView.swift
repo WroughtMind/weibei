@@ -599,8 +599,8 @@ struct AgentConnectionCardsView: View {
 
     /// 失败才写在这张卡上，而且只留到离开这张卡。成功不写字，说明在悬停里。
     private func statusNote(for profile: AgentCredentialProfile) -> String? {
-        if let mark = probeState.marks[profile.id] {
-            return mark.ok ? nil : mark.text
+        if let mark = probeState.marks[profile.id], !mark.ok {
+            return mark.text
         }
         guard profile.id == store.activeAgentProfileID, probingProfileID == nil else { return nil }
         if let failure = oauthService.modelListFailure, failure != .superseded {
