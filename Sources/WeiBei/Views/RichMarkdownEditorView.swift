@@ -713,6 +713,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     var readerSearchRequestedIndex = 0
     var readerSearchSessionID = 0
     var readerSearchReturnRequest = 0
+    var readerLocationID: String?
+    var readerLocationRequestID: UUID?
     var onReaderSearchResults: ((String, [ReaderSearchResult], Int) -> Void)?
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
@@ -789,6 +791,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
         coordinator.readerSearchSessionID = readerSearchSessionID
         coordinator.readerSearchReturnRequest = readerSearchReturnRequest
+        coordinator.readerLocationID = readerLocationID
+        coordinator.readerLocationRequestID = readerLocationRequestID
         return coordinator
     }
 
@@ -961,6 +965,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         context.coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
         context.coordinator.readerSearchSessionID = readerSearchSessionID
         context.coordinator.readerSearchReturnRequest = readerSearchReturnRequest
+        context.coordinator.readerLocationID = readerLocationID
+        context.coordinator.readerLocationRequestID = readerLocationRequestID
         if context.coordinator.appearanceMode != appearanceMode {
             context.coordinator.appearanceMode = appearanceMode
             if context.coordinator.isReady {
@@ -1040,6 +1046,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 context.coordinator.setMarkdown(markdown)
             }
         }
+        context.coordinator.applyReaderLocation()
 
         if context.coordinator.isReady {
             context.coordinator.applySearch()
@@ -1152,9 +1159,12 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         var readerSearchRequestedIndex = 0
         var readerSearchSessionID = 0
         var readerSearchReturnRequest = 0
+        var readerLocationID: String?
+        var readerLocationRequestID: UUID?
         private var lastReaderSearchNavigationRequest = 0
         private var lastReaderSearchSessionID = 0
         private var lastReaderSearchReturnRequest = 0
+        private var lastReaderLocationRequestID: UUID?
         private var hasReaderSearchOrigin = false
         private var readerSearchResults: [ReaderSearchResult] = []
         private var readerSearchResultIndex = -1
@@ -1472,6 +1482,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                     }
                 }
                 applySearch()
+                applyReaderLocation()
                 setTheme(appearanceMode)
                 setChatWideTypography(isChatWideTypography)
                 setTextScale(textScale)
@@ -1609,6 +1620,26 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 return documentID.isEmpty
             }
             return messageDocumentID == documentID
+        }
+
+        func applyReaderLocation() {
+            guard isReady,
+                  let requestID = readerLocationRequestID,
+                  requestID != lastReaderLocationRequestID,
+                  let locationID = readerLocationID else { return }
+            let index: Int
+            if locationID == "markdown-preamble" {
+                index = -1
+            } else if let indexText = locationID.split(separator: "-").last,
+                      let parsed = Int(indexText) {
+                index = parsed
+            } else {
+                return
+            }
+            webView?.evaluateJavaScript("window.WeiBeiEditor?.scrollToHeading(\(index))") { [weak self] value, error in
+                guard error == nil, value as? Bool == true else { return }
+                self?.lastReaderLocationRequestID = requestID
+            }
         }
 
         func setMarkdown(_ text: String) {

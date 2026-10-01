@@ -93,6 +93,8 @@ extension WebReaderRepresentable {
             if (window.webkit?.messageHandlers?.remarkMark) {
               window.webkit.messageHandlers.remarkMark.postMessage({
                 recordId,
+                loadToken: document.querySelector('meta[name="weibei-reader-load-token"]')?.content
+                  || document.body?.dataset.weibeiReaderLoadToken || "",
                 rect: { x: ev.clientX, y: ev.clientY }
               });
             }
@@ -122,6 +124,8 @@ extension WebReaderRepresentable {
                 if (window.webkit?.messageHandlers?.remarkMark) {
                   window.webkit.messageHandlers.remarkMark.postMessage({
                     recordId,
+                    loadToken: document.querySelector('meta[name="weibei-reader-load-token"]')?.content
+                      || document.body?.dataset.weibeiReaderLoadToken || "",
                     rect: { x: ev.clientX, y: ev.clientY }
                   });
                 }

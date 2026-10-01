@@ -308,6 +308,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func saveWorkspace() {
         guard !Self.usesFixture else { return }
         guard saveTask == nil else { return }
+        Self.workspace.commitCurrentReaderLocation()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "保存魏碑工作台") { [weak self] in
             MainActor.assumeIsolated {
                 self?.saveTask?.cancel()
@@ -355,6 +356,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func applicationWillTerminate(_ application: UIApplication) {
         guard !Self.usesFixture else { return }
         Self.workspace.cancelAllAgentRequests()
+        Self.workspace.commitCurrentReaderLocation()
         _ = Self.workspace.flushPendingWorkspaceSave()
         Self.workspace.shutdownAgentRuntime()
     }

@@ -670,7 +670,11 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             return readPDFPassages(item: item, scheduled: scheduled, page: page, location: location,
                                    startingOrder: startingOrder, visit: visit)
         }
-        guard let sections = textSections(for: item, expectedSignature: scheduled.signature) else {
+        guard let sections = textSections(
+            for: item,
+            expectedSignature: scheduled.signature,
+            includeHTMLBlockAliases: item.kind == .html && location?.hasPrefix("html-block-") == true
+        ) else {
             return CourseDocumentIndexResult(text: nil, isTruncated: false, availability: .unavailable)
         }
         for (order, section) in sections.enumerated() {
@@ -1139,7 +1143,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         switch item.kind {
         case .pdf:
             guard let file = VerifiedRegularFile(item: item),
-                  "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+                  "\(Self.extractionVersion(for: item.kind))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                     == signature,
                   let snapshotURL = temporarySnapshot(of: file) else {
                 return false
@@ -1329,7 +1333,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         guard isExpected(signature: signature, for: storageID),
               Self.fileSignature(for: item) == signature,
               let file = VerifiedRegularFile(item: item),
-              "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+              "\(Self.extractionVersion(for: item.kind))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                 == signature,
               let snapshotURL = temporarySnapshot(of: file) else { return }
         defer { try? FileManager.default.removeItem(at: snapshotURL) }
@@ -1979,7 +1983,16 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
     private static func fileSignature(for item: StudyItem) -> String? {
         guard let metadata = VerifiedRegularFile(item: item)?.metadata else { return nil }
-        return "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+        return "\(extractionVersion(for: item.kind))#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+    }
+
+    private static func extractionVersion(for kind: StudyItemKind) -> String {
+        switch kind {
+        case .markdown: return "md8"
+        case .html: return "html7"
+        case .pdf: return "pdf7"
+        default: return "v6"
+        }
     }
 
     private static func scheduledItem(_ item: StudyItem) -> ScheduledItem? {
@@ -1990,7 +2003,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         return ScheduledItem(
             item: item,
             storageID: storageID(for: item.id),
-            signature: "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+            signature: "\(extractionVersion(for: item.kind))#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
         )
     }
 
@@ -2001,17 +2014,18 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
     private func textSections(
         for item: StudyItem,
-        expectedSignature: String
+        expectedSignature: String,
+        includeHTMLBlockAliases: Bool = false
     ) -> [TextSection]? {
         guard let file = VerifiedRegularFile(item: item),
-              "\(item.kind == .markdown ? "md7" : (item.kind == .pdf ? "pdf7" : "v6"))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+              "\(Self.extractionVersion(for: item.kind))#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
                 == expectedSignature,
               let data = file.readData(afterOpen: verifiedFileDidOpen) else {
             return nil
         }
         switch item.kind {
         case .html:
-            return Self.htmlSections(in: data)
+            return Self.htmlSections(in: data, includeBlockAliases: includeHTMLBlockAliases)
         case .docx, .pptx:
             return try? OfficeDocumentText.sections(in: data, kind: item.kind).map {
                 TextSection(location: $0.location, heading: $0.heading, text: $0.text)
@@ -2027,7 +2041,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         }
     }
 
-    private static func htmlSections(in data: Data) -> [TextSection] {
+    private static func htmlSections(in data: Data, includeBlockAliases: Bool = false) -> [TextSection] {
         guard let html = String(data: data, encoding: .utf8),
               let regex = try? NSRegularExpression(
                   pattern: #"<h([1-4])\b[^>]*>(.*?)</h\1\s*>"#,
@@ -2036,6 +2050,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
         let matches = regex.matches(in: html, range: range)
         guard !matches.isEmpty else {
+            let blocks = htmlBlockSections(in: html, range: range)
+            if !blocks.isEmpty { return blocks }
             let text = htmlPlainText(html)
             return text.isEmpty ? [] : [TextSection(location: "", heading: nil, text: text)]
         }
@@ -2081,7 +2097,43 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 )
             }
         }
+        // Visible headings drive normal indexing. Block aliases are added only
+        // for an exact read when the reader reports a visible fallback paragraph.
+        if includeBlockAliases {
+            sections.append(contentsOf: htmlBlockSections(in: html, range: range))
+        }
         return sections
+    }
+
+    private static func htmlBlockSections(in html: String, range: NSRange) -> [TextSection] {
+        guard let blockRegex = try? NSRegularExpression(
+            pattern: #"(?=<(p|li|figcaption|pre)\b[^>]*>(.*?)</\1\s*>)"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else { return [] }
+        let blocks = blockRegex.matches(in: html, range: range).compactMap { match -> String? in
+            guard match.numberOfRanges > 2,
+                  let bodyRange = Range(match.range(at: 2), in: html) else { return nil }
+            let body = String(html[bodyRange])
+            guard body.range(
+                of: #"<(?:p|li|figcaption|pre)\b"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) == nil else { return nil }
+            let text = htmlPlainText(body)
+            return text.isEmpty ? nil : text
+        }
+        var locationIDCounts: [String: Int] = [:]
+        return blocks.map { text in
+            let baseLocationID = htmlSectionLocationID(title: "", body: text)
+                .replacingOccurrences(of: "html-section-", with: "html-block-")
+            let count = locationIDCounts[baseLocationID, default: 0] + 1
+            locationIDCounts[baseLocationID] = count
+            let locationID = count == 1 ? baseLocationID : "\(baseLocationID)-dup-\(count)"
+            return TextSection(
+                location: "\(locationID) \(text.prefix(300))",
+                heading: nil,
+                text: text
+            )
+        }
     }
 
     private static func markdownSections(in text: String) -> [TextSection] {
@@ -2226,6 +2278,12 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
     public static func markdownPassages(_ markdown: String) -> [CourseDocumentPassage] {
         markdownSections(in: markdown).map { CourseDocumentPassage(storedLocation: $0.location, text: $0.text) }
+    }
+
+    public static func htmlPassages(_ html: String) -> [CourseDocumentPassage] {
+        htmlSections(in: Data(html.utf8), includeBlockAliases: true).map {
+            CourseDocumentPassage(storedLocation: $0.location, text: $0.text)
+        }
     }
 
     public static func readMarkdown(
