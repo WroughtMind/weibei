@@ -1,293 +1,39 @@
-name: 魏碑合并请求检查
-
+name: Temporary PR519 cached probe regression baseline
 on:
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
-    inputs:
-      full_suite:
-        description: "明确阶段整合或最终候选版：运行全部专项与安装包追溯"
-        required: false
-        type: boolean
-        default: false
-
 permissions:
   contents: read
-
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
+  group: pr519-before-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  scope:
-    name: 判断改动范围
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      build_number: ${{ steps.scope.outputs.build_number }}
-      code: ${{ steps.scope.outputs.code }}
-      release: ${{ steps.scope.outputs.release }}
-      agent: ${{ steps.scope.outputs.agent }}
-      editor: ${{ steps.scope.outputs.editor }}
-      data_safety: ${{ steps.scope.outputs.data_safety }}
-      tools: ${{ steps.scope.outputs.tools }}
-      website: ${{ steps.scope.outputs.website }}
-
-    steps:
-      - name: 取出完整源码历史
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-
-      - name: 判断本次风险范围
-        id: scope
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          printf 'build_number=%s\n' "$(python3 script/build_number.py)" >> "$GITHUB_OUTPUT"
-          ./script/ci_changed_scopes.sh --self-check
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            base="$(git merge-base "$PR_BASE_SHA" "$HEAD_SHA")"
-          else
-            base="$(git rev-parse "$HEAD_SHA^")"
-          fi
-          scopes="$(./script/ci_changed_scopes.sh "$base" "$HEAD_SHA")"
-          printf '%s\n' "$scopes"
-          printf '%s\n' "$scopes" >> "$GITHUB_OUTPUT"
-
-      - name: 验证工作流触发范围
-        run: |
-          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
-          python3 script/check_ci_routing.py
-          python3 script/check_build_number.py
-          for file in script/*.sh DesignSystem/scripts/*.sh; do bash -n "$file"; done
-
-  website-check:
-    name: 官网检查
-    needs: scope
-    if: needs.scope.outputs.website == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: 取出源码
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: 检查并组装官网
-        id: website
-        run: bash script/check_website.sh
-
-  tools-check:
-    name: 工具脚本检查
-    needs: scope
-    if: needs.scope.outputs.tools == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: 取出源码
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: 安装工具依赖
-        id: dependencies
-        run: npm ci
-      - name: 工具类型检查与行为测试
-        id: tools
-        run: |
-          npm run typecheck:tools
-          npm run test:release-tools
-
-  app-check:
-    name: 应用编译与相关自检
-    needs: scope
-    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.agent == 'true' || needs.scope.outputs.editor == 'true' || needs.scope.outputs.data_safety == 'true'
+  host-safety:
+    name: Targeted synthetic connection regression
     runs-on: macos-26
     timeout-minutes: 30
     steps:
-      - name: 取出源码
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: 验证构建时间显示
-        run: |
-          swiftc Sources/WeiBeiCore/WeiBeiAppBuildInfo.swift script/check_build_info.swift -o "$RUNNER_TEMP/check-build-info"
-          "$RUNNER_TEMP/check-build-info"
-
-      - name: 记录构建工具链
-        run: |
-          swift --version
-          xcodebuild -version
-
-      - name: 编译
-        id: compile
-        if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true'
-        run: swift build
-
-      - name: 运行应用自检
-        id: core
-        if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true'
-        run: swift run WeiBeiSelfCheck
-
-      - name: 运行开发工具子命令自检
-        id: dev
-        if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true'
-        run: |
-          swift run WeiBeiDev nslog-scan
-
-      - name: 安装 Node 依赖
-        id: dependencies
-        if: needs.scope.outputs.editor == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: npm ci
-
-      - name: 运行编辑器自检
-        id: editor
-        if: needs.scope.outputs.editor == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: |
-          python3 -m venv "$RUNNER_TEMP/weibei-editor-fonts"
-          "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
-          "$RUNNER_TEMP/weibei-editor-fonts/bin/python" script/convert_editor_fonts.py --check
-          npm run typecheck:genui
-          npm run build:genui
-          npm run typecheck:editor
-          npm run test:editor
-          npm run build:editor
-          git diff --exit-code -- Sources/WeiBei/Resources/Editor
-          swift run WeiBeiWebEditorCheck
-
-      - name: 运行课程目录、数据与 Agent 安全自检
-        id: safety
-        if: (needs.scope.outputs.data_safety == 'true' || needs.scope.outputs.agent == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: |
-          stdbuf -oL -eL swift test --filter WeiBeiSafetyTests
-          WEIBEI_NATIVE_EVAL_EFFORT=high swift run WeiBeiNativeCheck --native-eval-self-check
-
-      - name: 检查空白与生成文件
-        run: |
-          git diff --check
-          git diff --exit-code
-          test -z "$(git status --porcelain=v1)"
-
-  catalyst-check:
-    env:
-      WEIBEI_BUILD_NUMBER: ${{ needs.scope.outputs.build_number }}
-      WEIBEI_TARGET_ARCH: ${{ matrix.arch }}
-    name: Catalyst ${{ matrix.arch }} 构建、会话与安装包
-    needs: scope
-    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.editor == 'true' || needs.scope.outputs.release == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: macos-26
-          - arch: x86_64
-            runner: macos-26-intel
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 75
-    steps:
-      - name: 取出完整源码历史
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Check out exact fixture candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          fetch-depth: 0
-
-      - name: 验证当前架构工具链
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Record source and toolchain
         run: |
-          test "$(uname -m)" = "$WEIBEI_TARGET_ARCH"
-          xcodebuild -version
-
-      - name: 安装构建工具依赖
-        id: dependencies
+          mkdir -p .build/host-fixture-evidence
+          { git rev-parse HEAD; git rev-parse HEAD^; git status --porcelain=v1; swift --version; xcodebuild -version; } | tee .build/host-fixture-evidence/environment.log
+      - name: Run every existing safety test without dropping assertions
+        shell: bash
         run: |
-          npm ci
-          python3 -m venv "$RUNNER_TEMP/weibei-editor-fonts"
-          "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
-          echo "$RUNNER_TEMP/weibei-editor-fonts/bin" >> "$GITHUB_PATH"
-
-      - name: 通过唯一入口构建正式 Catalyst 应用
-        id: compile
-        run: ./script/build_and_run.sh package
-
-      - name: 检查聊天格式、原样代码与标准用例
-        run: |
-          swift build --package-path .build/catalyst-packages/checkouts/swift-cmark --product cmark-gfm-bin
-          CMARK_BIN_DIR="$(swift build --package-path .build/catalyst-packages/checkouts/swift-cmark --show-bin-path)"
-          python3 script/check_han_strong.py "$CMARK_BIN_DIR/cmark-gfm-bin" .build/catalyst-packages/checkouts/swift-cmark/test/spec.txt
-
-      - name: 逐架构验证正式应用启动
-        id: launch
-        run: |
-          swiftc App/WindowBridge/WindowBridgeContract.swift script/check_window_hover.swift -o "$RUNNER_TEMP/check-window-hover"
-          "$RUNNER_TEMP/check-window-hover" "dist/魏碑.app/Contents/PlugIns/WeiBeiWindowBridge.bundle"
-          ./script/verify_app_launch.sh "dist/魏碑.app"
-
-      - name: 保留应用启动失败原因
+          set +e
+          swift test --filter AgentConnectionProbeTests 2>&1 | tee .build/host-fixture-evidence/safety.log
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "$status" > .build/host-fixture-evidence/safety-exit-code.txt
+          exit "$status"
+      - name: Keep synthetic host evidence even on failure
         if: always()
-        env:
-          LAUNCH_OUTCOME: ${{ steps.launch.outcome }}
-        run: |
-          [[ "$LAUNCH_OUTCOME" == failure ]] || exit 0
-          mkdir -p App/Evidence
-          /usr/bin/log show --last 5m --style compact --predicate 'process == "WeiBei" OR eventMessage CONTAINS[c] "WeiBei"' > App/Evidence/ci-launch.log
-          for report in "$HOME"/Library/Logs/DiagnosticReports/WeiBei*.ips; do
-            [[ ! -f "$report" ]] || cp "$report" "App/Evidence/ci-$(basename "$report")"
-          done
-
-      - name: 生成并挂载验收当前架构安装包
-        id: package
-        if: needs.scope.outputs.release == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: ./script/build_release_dmg.sh --arch "$WEIBEI_TARGET_ARCH"
-
-      - name: 在当前架构的真实 Catalyst 进程检查会话
-        id: acceptance
-        run: ./App/script/check-ci.sh
-
-      - name: 保留候选和检查证据
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: catalyst-${{ matrix.arch }}-${{ github.sha }}
-          path: |
-            dist/release/${{ matrix.arch }}/WeiBei-*-macOS-${{ matrix.arch }}.dmg
-            dist/release/${{ matrix.arch }}/WeiBei-*-macOS-${{ matrix.arch }}.dmg.sha256
-            dist/package-${{ matrix.arch }}.json
-            App/Evidence/ci*.json
-            App/Evidence/ci*.jsonl
-            App/Evidence/ci*.png
-            App/Evidence/ci*.log
-            App/Evidence/ci*.ips
-            .build/ci-launch-console.log
-            .build/catalyst-${{ matrix.arch }}/build.log
+          name: host-fixture-${{ github.sha }}
+          path: .build/host-fixture-evidence
           retention-days: 2
           if-no-files-found: error
-
-  # 保留分支保护要求的名称；分类失败或应用检查失败不能被跳过伪装成成功。
-  fast-check:
-    # 手动局部检查不能以同名结果覆盖 PR 的必需合并检查。
-    name: ${{ github.event_name == 'pull_request' && '快速编译与核心自检' || '手动检查汇总' }}
-    needs: [scope, website-check, tools-check, app-check, catalyst-check]
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: 汇总相关检查结果
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-          EVENT_NAME: ${{ github.event_name }}
-          FULL_SUITE: ${{ inputs.full_suite || false }}
-        run: |
-          python3 - <<'PYTHON'
-          import json, os
-          results = json.loads(os.environ['RESULTS'])
-          assert results['scope']['result'] == 'success', '改动范围判断未通过'
-          scopes = results['scope']['outputs']
-          manual = os.environ['EVENT_NAME'] == 'workflow_dispatch'
-          full = manual and os.environ['FULL_SUITE'] == 'true'
-          enabled = lambda key: scopes[key] == 'true'
-          required = {
-              'website-check': enabled('website') or full,
-              'tools-check': enabled('tools') or full,
-              'app-check': manual or any(enabled(k) for k in ('code', 'agent', 'editor', 'data_safety')),
-              'catalyst-check': manual or enabled('code') or enabled('editor') or enabled('release'),
-          }
-          for name, needed in required.items():
-              allowed = ('success',) if needed else ('success', 'skipped')
-              assert results[name]['result'] in allowed, f"{name}: {results[name]['result']}"
-          PYTHON
