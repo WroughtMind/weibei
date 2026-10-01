@@ -54,7 +54,7 @@ classify_path() {
   esac
 
   case "$path" in
-    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|App/project.yml|App/WeiBei.xcodeproj/*|App/Config/*|App/Resources/*|App/script/*|script/verify_app_launch.sh|script/package_size.py|script/build_number.py|script/check_build_number.py|script/check_build_info.swift|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
+    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|App/project.yml|App/WeiBei.xcodeproj/*|App/Config/*|App/Resources/*|App/script/*|script/verify_app_launch.sh|script/package_size.py|script/check_package_size_policy.py|script/build_number.py|script/check_build_number.py|script/check_build_info.swift|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
@@ -96,6 +96,7 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes "" "Docs/plans/example.md" "Docs/releases/README.md" "DesignSystem/README.md" "LICENSE"
   expect_scopes "code agent editor data_safety website" ".github/workflows/pages.yml" "Sources/WeiBei/Stores/WorkspaceStore.swift"
   expect_scopes "release" ".github/workflows/release.yml" "script/build_release_dmg.sh" "PRIVACY.md"
+  expect_scopes "release" "script/check_package_size_policy.py"
   expect_scopes "code agent editor data_safety" "Sources/WeiBei/Stores/WorkspaceStore.swift"
   expect_scopes "code editor" "Sources/WeiBei/WebEditor/src/editor.ts" "Sources/WeiBeiCore/MarkdownAttachmentStore.swift"
   expect_scopes "editor" "tsconfig.editor.json" "script/build_editor.mjs"

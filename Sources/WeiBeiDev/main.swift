@@ -172,8 +172,10 @@ func runVerifyReleaseMetadata(arguments: [String]) {
         }
         if values.isRegularFile == true && values.isSymbolicLink != true { appBytes += values.fileSize ?? 0 }
     }
-    guard appBytes < 30_000_000 else { fail("app body is \(appBytes) bytes; limit is below 30 MB", exitCode: 10) }
+    // Size is informational; functionality, resources and package integrity remain required.
     print("app_logical_bytes=\(appBytes)")
+    print("app_logical_mb=\(Double(appBytes) / 1_000_000)")
+    print("app_size_policy=informational")
     // Pre-1.0 包不得把未来 1.0.0 发布计划散文当作现行法律副本打包。
     if fileManager.fileExists(atPath: legalDirectory.appendingPathComponent("v1.0.0.md").path) {
         fail("packaged Legal must not include future v1.0.0 release notes", exitCode: 11)
