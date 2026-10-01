@@ -847,6 +847,8 @@ final class ConfirmedFileImportTests: XCTestCase {
             startsAtBlankEntries: true,
             startsCourseFileMaintenance: false
         )
+        // These fixture assertions deliberately inspect Chinese localized feedback.
+        store.interfaceLanguage = .chinese
         try store.configureCourseLibrary(at: library)
         return (root, library, outside, store)
     }
