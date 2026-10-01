@@ -50,6 +50,7 @@ final class AgentAccountService: ObservableObject {
     private var modelListTask: Task<Void, Never>?
     private var modelRequestProvider: AgentProviderID?
     private var modelRequestBaseURL = ""
+    private var modelRequestGeneration = 0
     struct ModelCatalog {
         var ids: [String]
         var reasoningLevels: [String: [String]]
@@ -69,6 +70,8 @@ final class AgentAccountService: ObservableObject {
     func refreshModels(provider: AgentProviderID, baseURL: String) {
         modelRequestProvider = provider
         modelRequestBaseURL = baseURL
+        modelRequestGeneration += 1
+        let generation = modelRequestGeneration
         liveReasoningLevels = [:]
         modelListTask?.cancel()
         liveModelsProvider = provider
@@ -77,7 +80,7 @@ final class AgentAccountService: ObservableObject {
         modelListMessage = nil
         modelListCanRetry = false
         modelListTask = Task { [weak self] in
-            await self?.fetchLiveModels(provider: provider, baseURL: baseURL)
+            await self?.fetchLiveModels(provider: provider, baseURL: baseURL, generation: generation)
         }
     }
 
@@ -329,11 +332,11 @@ final class AgentAccountService: ObservableObject {
         .sorted { $0.providerId < $1.providerId })
     }
 
-    private func fetchLiveModels(provider: AgentProviderID, baseURL: String) async {
+    private func fetchLiveModels(provider: AgentProviderID, baseURL: String, generation: Int) async {
         if let modelCatalogLoader {
             do {
                 let catalog = try await modelCatalogLoader(provider, baseURL)
-                guard !Task.isCancelled else { return }
+                guard generation == modelRequestGeneration, !Task.isCancelled else { return }
                 let ids = Self.catalogEntries(catalog.ids, loadedFor: provider, provider: provider)
                 let state = Self.successfulModelListState(ids)
                 liveReasoningLevels = catalog.reasoningLevels
@@ -343,7 +346,7 @@ final class AgentAccountService: ObservableObject {
                 modelListMessage = state.message
                 modelListCanRetry = state.canRetry
             } catch {
-                guard !Task.isCancelled else { return }
+                guard generation == modelRequestGeneration, !Task.isCancelled else { return }
                 liveModelIDs = []
                 liveReasoningLevels = [:]
                 liveModelsProvider = provider
@@ -368,6 +371,7 @@ final class AgentAccountService: ObservableObject {
         )
         guard let strategy else {
             await MainActor.run {
+                guard generation == modelRequestGeneration, !Task.isCancelled else { return }
                 liveModelIDs = []
                 liveModelsProvider = provider
                 isRefreshingModels = false
@@ -423,8 +427,9 @@ final class AgentAccountService: ObservableObject {
             }
             let modelIDs = Self.catalogEntries(ids, loadedFor: provider, provider: provider)
             let state = Self.successfulModelListState(modelIDs)
-            guard !Task.isCancelled else { return }
+            guard generation == modelRequestGeneration, !Task.isCancelled else { return }
             await MainActor.run {
+                guard generation == modelRequestGeneration, !Task.isCancelled else { return }
                 liveReasoningLevels = reasoningLevels
                 liveModelIDs = modelIDs
                 liveModelsProvider = provider
@@ -433,9 +438,10 @@ final class AgentAccountService: ObservableObject {
                 modelListCanRetry = state.canRetry
             }
         } catch {
-            guard !Task.isCancelled else { return }
+            guard generation == modelRequestGeneration, !Task.isCancelled else { return }
             logFailure("agent_model_list_failed", providerID: provider.credentialProviderID, error: error)
             await MainActor.run {
+                guard generation == modelRequestGeneration, !Task.isCancelled else { return }
                 liveModelIDs = []
                 liveModelsProvider = provider
                 isRefreshingModels = false
