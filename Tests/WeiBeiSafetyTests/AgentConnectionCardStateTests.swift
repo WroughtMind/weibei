@@ -53,3 +53,45 @@ final class AgentConnectionCardStateTests: XCTestCase {
         XCTAssertEqual(store.modelName, "unlisted/private-deployment")
     }
 }
+
+#if os(macOS) && !targetEnvironment(macCatalyst)
+import AppKit
+import SwiftUI
+
+extension AgentConnectionCardStateTests {
+    @MainActor
+    func testNativeConnectionCardRendersAnExplicitUnlistedModel() async throws {
+        let keys = ["weibei.agentCredentialProfiles.v1", "weibei.agentCredentialActiveProfileID.v1"]
+        let saved = keys.map { UserDefaults.standard.object(forKey: $0) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            for (key, value) in zip(keys, saved) { UserDefaults.standard.set(value, forKey: key) }
+            try? FileManager.default.removeItem(at: root)
+        }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let profile = AgentCredentialProfile(name: "Synthetic connection", provider: .custom,
+            modelName: "private-model/synthetic", baseURL: "https://\(UUID().uuidString.lowercased()).example.test/v1")
+        store.agentCredentialProfiles = [profile]
+        AgentCredentialProfileStore.saveProfiles([profile])
+        store.selectAgentCredentialProfile(profile.id)
+        _ = NSApplication.shared
+        let hosting = NSHostingView(rootView: AgentConnectionCardsView().environmentObject(store).padding(20))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 320),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(store.modelName, "private-model/synthetic", "Rendering and an unavailable catalog must preserve the explicit choice")
+        hosting.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let evidence = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/native-fix-evidence", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+        try png.write(to: evidence.appendingPathComponent("connection-settings.png"))
+    }
+}
+#endif
