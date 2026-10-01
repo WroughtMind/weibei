@@ -1,5 +1,39 @@
 import Foundation
 
+public struct NativeSessionEnvironment: Equatable, Sendable {
+    public let date: String
+    public let timeZoneIdentifier: String
+    public let utcOffset: String
+
+    public init(now: Date = Date(), timeZone: TimeZone = .autoupdatingCurrent) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let components = calendar.dateComponents([.year, .month, .day], from: now)
+        date = String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
+        timeZoneIdentifier = timeZone.identifier
+        let offset = timeZone.secondsFromGMT(for: now)
+        utcOffset = String(
+            format: "UTC%@%02d:%02d",
+            offset < 0 ? "-" : "+",
+            abs(offset) / 3_600,
+            abs(offset) % 3_600 / 60
+        )
+    }
+
+    public var text: String {
+        "当前日期：\(date)；本地时区：\(timeZoneIdentifier)（\(utcOffset)）。"
+    }
+
+    var modelMessage: NativeModelMessage {
+        NativeModelMessage(role: .user, content: "会话环境：\(text)")
+    }
+}
+
 public struct NativePromptSection: Sendable {
     public var id: String
     public var order: Int
