@@ -66,12 +66,37 @@ launch('--exit-after-check')
 verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')
-assert len(business['checks']) == 21, business
+expected_business_checks = {
+    'conversation_appearance_and_scale_after_resize',
+    'divider_batches_widths_and_reflows_during_drag',
+    'divider_interface_language_updates',
+    'history_and_long_answer_through_original_messages',
+    'image_mounted_in_visible_message',
+    'mac_idiom_and_isolated_storage',
+    'native_workspace_toolbar_controls',
+    'original_answer_to_note',
+    'original_attachment_loader',
+    'original_editor_snapshot_and_note_write_gate',
+    'original_http_agent_tools_and_uikit_stream',
+    'original_import_reader_and_editor',
+    'original_source_navigation',
+    'original_update_service_through_native_bridge',
+    'reopen_original_note_and_session_files',
+    'return_clears_original_composer',
+    'selection_chat_composers_and_citation',
+    'signed_bounded_pdf_worker',
+    'signed_native_window_material',
+    'status_disappears_at_first_text',
+    'stop_preserves_received_text',
+    'waiting_status_not_clipped',
+}
+assert set(business['checks']) == expected_business_checks, business
+assert business['checks'].get('divider_interface_language_updates') == 'passed', business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
 for filename in ['selection-composers.png', 'selection-discussion.png', 'reasoning-composer.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
-print('14 项会话检查与 21 项原业务保存重开检查通过；含原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。')
+print('14 项会话检查与 22 项业务保存重开检查通过；含原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。')
 
 with tempfile.TemporaryDirectory(prefix='weibei-quit-check-') as scratch:
     helper = str(Path(scratch) / 'quit')
