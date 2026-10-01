@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 python3 App/script/business-server.test.py
+node --test App/script/floating-label-check.test.mjs
 CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-business-ci.XXXXXX")"
 python3 App/script/business-server.py --output "$CHECK_DIR" > "$CHECK_DIR/server.log" 2>&1 &
 server_pid=$!
@@ -17,6 +18,7 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-rich-answer-11pt.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/floating-rich-diagnostic.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
     [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
