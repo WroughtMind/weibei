@@ -6,6 +6,7 @@ import AppKit
 import CryptoKit
 import Darwin
 import Foundation
+import libxml2
 import PDFKit
 import SQLite3
 
@@ -1989,7 +1990,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private static func extractionVersion(for kind: StudyItemKind) -> String {
         switch kind {
         case .markdown: return "md8"
-        case .html: return "html7"
+        case .html: return "html8"
         case .pdf: return "pdf7"
         default: return "v6"
         }
@@ -2050,10 +2051,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
         let matches = regex.matches(in: html, range: range)
         guard !matches.isEmpty else {
-            let blocks = htmlBlockSections(in: html, range: range)
-            if !blocks.isEmpty { return blocks }
             let text = htmlPlainText(html)
-            return text.isEmpty ? [] : [TextSection(location: "", heading: nil, text: text)]
+            var sections = text.isEmpty ? [] : [TextSection(location: "", heading: nil, text: text)]
+            if includeBlockAliases { sections.append(contentsOf: htmlBlockSections(in: html)) }
+            return sections
         }
         var sections: [TextSection] = []
         if let first = matches.first, first.range.location > 0,
@@ -2100,27 +2101,48 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         // Visible headings drive normal indexing. Block aliases are added only
         // for an exact read when the reader reports a visible fallback paragraph.
         if includeBlockAliases {
-            sections.append(contentsOf: htmlBlockSections(in: html, range: range))
+            sections.append(contentsOf: htmlBlockSections(in: html))
         }
         return sections
     }
 
-    private static func htmlBlockSections(in html: String, range: NSRange) -> [TextSection] {
-        guard let blockRegex = try? NSRegularExpression(
-            pattern: #"(?=<(p|li|figcaption|pre)\b[^>]*>(.*?)</\1\s*>)"#,
-            options: [.caseInsensitive, .dotMatchesLineSeparators]
-        ) else { return [] }
-        let blocks = blockRegex.matches(in: html, range: range).compactMap { match -> String? in
-            guard match.numberOfRanges > 2,
-                  let bodyRange = Range(match.range(at: 2), in: html) else { return nil }
-            let body = String(html[bodyRange])
-            guard body.range(
-                of: #"<(?:p|li|figcaption|pre)\b"#,
-                options: [.regularExpression, .caseInsensitive]
-            ) == nil else { return nil }
-            let text = htmlPlainText(body)
-            return text.isEmpty ? nil : text
+    private static func htmlBlockSections(in html: String) -> [TextSection] {
+        let data = Data(html.utf8)
+        guard data.count <= Int(Int32.max),
+              let document = data.withUnsafeBytes({ bytes in
+                  htmlReadMemory(bytes.baseAddress?.assumingMemoryBound(to: CChar.self),
+                                 Int32(bytes.count), nil, "utf-8",
+                                 Int32(HTML_PARSE_RECOVER.rawValue | HTML_PARSE_NONET.rawValue
+                                       | HTML_PARSE_NOERROR.rawValue | HTML_PARSE_NOWARNING.rawValue))
+              }) else { return [] }
+        defer { xmlFreeDoc(document) }
+
+        // Match the reader's document-wide leaf-block traversal before its
+        // visibility/root filtering, so hidden and repeated blocks keep the same IDs.
+        // Parsing also honors optional end tags and quoted '>' in attributes.
+        let blockNames: Set<String> = ["p", "li", "figcaption", "pre"]
+        var blocks: [String] = []
+        @discardableResult
+        func collect(_ first: xmlNodePtr?) -> Bool {
+            var containsBlock = false
+            var current = first
+            while let node = current {
+                let isBlock = node.pointee.type == XML_ELEMENT_NODE
+                    && node.pointee.name.map { blockNames.contains(String(cString: $0).lowercased()) } == true
+                let hasBlockDescendant = collect(node.pointee.children)
+                if isBlock, !hasBlockDescendant, let content = xmlNodeGetContent(node) {
+                    let text = String(cString: content)
+                        .components(separatedBy: .whitespacesAndNewlines)
+                        .filter { !$0.isEmpty }.joined(separator: " ")
+                    xmlFree(content)
+                    if !text.isEmpty { blocks.append(text) }
+                }
+                containsBlock = containsBlock || isBlock || hasBlockDescendant
+                current = node.pointee.next
+            }
+            return containsBlock
         }
+        collect(xmlDocGetRootElement(document))
         var locationIDCounts: [String: Int] = [:]
         return blocks.map { text in
             let baseLocationID = htmlSectionLocationID(title: "", body: text)
