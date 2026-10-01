@@ -176,6 +176,7 @@ public enum NativeTurnEndReason: String, Codable, Sendable {
 }
 
 public enum NativeSessionEventType: String, Codable, Sendable {
+    case environmentContext = "environment/context"
     case turnStart = "turn/start"
     case turnEnd = "turn/end"
     case stepStart = "step/start"
