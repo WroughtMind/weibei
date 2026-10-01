@@ -8,6 +8,7 @@ struct NativeProjectedMessage: Sendable {
 }
 
 struct NativeLedgerProjection: Sendable {
+    var environmentMessage: NativeModelMessage?
     var summaryMessage: NativeModelMessage?
     var records: [NativeProjectedMessage]
     var turnCutSeqs: [Int]
@@ -180,6 +181,9 @@ public actor NativeAgentLedger {
         let checkpoint = events.last { event in
             event.type == .contextCompaction && !replacedRanges.contains(where: { $0.contains(event.seq) })
         }
+        let environmentMessage = events.last(where: { $0.type == .environmentContext })?.text.map {
+            NativeModelMessage(role: .user, content: $0)
+        }
         let firstVisibleSeq = checkpoint?.firstKeptSeq ?? Int.min
         let visibleEvents = events.filter { event in
             event.type != .contextCompaction && event.seq >= firstVisibleSeq
@@ -264,7 +268,7 @@ public actor NativeAgentLedger {
                         usage: nil
                     )
                 )
-            case .turnStart, .turnEnd, .stepStart, .stepEnd, .assistantChunk,
+            case .environmentContext, .turnStart, .turnEnd, .stepStart, .stepEnd, .assistantChunk,
                  .contextCompaction, .turnReplacement, .closer:
                 break
             }
@@ -289,6 +293,7 @@ public actor NativeAgentLedger {
             .filter { $0.type == .stepEnd }
             .map(cut)
         return NativeLedgerProjection(
+            environmentMessage: environmentMessage,
             summaryMessage: summaryMessage,
             records: records,
             turnCutSeqs: Array(Set(turnCuts)).sorted(),
