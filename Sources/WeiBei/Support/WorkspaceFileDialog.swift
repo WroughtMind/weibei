@@ -9,6 +9,11 @@ import AppKit
 /// The same file-operation choices on both hosts. A dismissed dialog cancels.
 @MainActor
 enum WorkspaceFileDialog {
+    static let markdownType = UTType(
+        importedAs: "net.daringfireball.markdown",
+        conformingTo: .plainText
+    )
+
     struct Choice {
         let index: Int
         let text: String?
@@ -52,6 +57,36 @@ enum WorkspaceFileDialog {
 #if targetEnvironment(macCatalyst)
     static func pick(title: String, types: [UTType], multiple: Bool) async -> [URL] {
         guard let presenter else { return [] }
+        let canChooseDirectories = types.contains(.folder)
+        let fileTypes = types.filter { $0 != .folder }
+        if canChooseDirectories, !fileTypes.isEmpty {
+            let sourceWindow = presenter.view.window
+            let toolbar = sourceWindow?.windowScene?.titlebar?.toolbar
+            if toolbar == nil, sourceWindow?.isKeyWindow != true {
+                await showNativeOpenPanelFailure(NSError(
+                    domain: "WeiBei.NativeOpenPanel",
+                    code: 5
+                ), from: presenter)
+                return []
+            }
+            let result: ([URL], NSError?) = await withCheckedContinuation { continuation in
+                CatalystDesktopWindow.shared.presentOpenPanel(
+                    title: title,
+                    contentTypeIdentifiers: fileTypes.map(\.identifier),
+                    allowsMultipleSelection: multiple,
+                    canChooseDirectories: true,
+                    canChooseFiles: true,
+                    presentationToolbar: toolbar
+                ) { urls, error in
+                    continuation.resume(returning: (urls, error))
+                }
+            }
+            if let error = result.1 {
+                await showNativeOpenPanelFailure(error, from: presenter)
+                return []
+            }
+            return result.0
+        }
         let picker = Picker(forOpeningContentTypes: types, asCopy: false)
         picker.title = title
         picker.allowsMultipleSelection = multiple
@@ -87,6 +122,33 @@ enum WorkspaceFileDialog {
         var controller = window?.rootViewController
         while let presented = controller?.presentedViewController { controller = presented }
         return controller
+    }
+
+    private static func showNativeOpenPanelFailure(
+        _ error: NSError,
+        from presenter: UIViewController
+    ) async {
+        let store = AppDelegate.workspace
+        let busy = error.code == 1 || error.code == 4
+        let alert = UIAlertController(
+            title: store.ui("无法打开文件选择器", "File Picker Unavailable"),
+            message: busy
+                ? store.ui(
+                    "当前窗口正在显示另一个文件选择器，请先关闭后重试。",
+                    "Another file picker is already open. Close it and try again."
+                )
+                : store.ui(
+                    "当前窗口暂时无法打开文件选择器，请关闭其他弹窗后重试。",
+                    "The file picker cannot open in this window right now. Close other dialogs and try again."
+                ),
+            preferredStyle: .alert
+        )
+        await withCheckedContinuation { continuation in
+            alert.addAction(UIAlertAction(title: store.ui("好", "OK"), style: .default) { _ in
+                continuation.resume()
+            })
+            presenter.present(alert, animated: true)
+        }
     }
 
     final class Picker: UIDocumentPickerViewController, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {

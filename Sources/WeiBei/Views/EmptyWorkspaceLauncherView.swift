@@ -22,6 +22,7 @@ struct EmptyWorkspaceLauncherView: View {
     @AppStorage("weibei.libraryPlacementConfirmed") private var libraryPlacementConfirmed = false
 
     @State private var selectedInspirationID: String?
+    @State private var isFileDropTargeted = false
     /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
     @State private var appearanceEpoch = 0
 
@@ -105,9 +106,24 @@ struct EmptyWorkspaceLauncherView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("empty-workspace-launcher")
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+        .onDrop(of: [.fileURL], isTargeted: $isFileDropTargeted) { providers in
             WeiBeiDroppedFileURLs.load(providers) { urls in
-                store.importFiles(urls)
+                store.prepareConfirmedFileImport(urls)
+            }
+        }
+        .overlay {
+            if isFileDropTargeted {
+                Label(store.ui("松开以导入资料", "Drop to import"), systemImage: "tray.and.arrow.down")
+                    .weiBeiText(14, weight: .semibold)
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .weibeiEtchedCapsuleBackground(
+                        fill: WeiBeiTheme.paperRaised.opacity(0.94),
+                        stroke: WeiBeiTheme.cinnabar.opacity(0.32),
+                        contactShadow: true
+                    )
+                    .allowsHitTesting(false)
             }
         }
     }

@@ -2000,3 +2000,14 @@ extension Image {
 }
 
 extension WeiBeiMetric { static let courseDrawerWidth: CGFloat = 252 }
+
+struct WeiBeiFittedSheetPresentation: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, macOS 15.0, *) {
+            content.presentationSizing(.fitted)
+        } else {
+            content
+        }
+    }
+}

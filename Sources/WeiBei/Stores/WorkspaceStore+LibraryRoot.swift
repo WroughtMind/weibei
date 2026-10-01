@@ -554,7 +554,7 @@ extension WorkspaceStore {
                 let nextTitle = url.deletingPathExtension().lastPathComponent
                 let nextSubtitle = url.lastPathComponent
                 let nextKind = StudyItemKind.detect(from: url)
-                let nextRole = Self.isMarkdownFile(url)
+                let nextRole = importsIntoNotes
                 let nextMaterialVisibility = !importsIntoNotes
                 if importedItems[matchingIndex].isNotebookNote != nextRole {
                     roleChanged = true
@@ -583,7 +583,7 @@ extension WorkspaceStore {
                 kind: StudyItemKind.detect(from: url),
                 urlPath: url.path,
                 isSample: false,
-                isNotebookNote: Self.isMarkdownFile(url),
+                isNotebookNote: importsIntoNotes,
                 appearsInMaterials: !importsIntoNotes,
                 storage: .common(relativePath: relativePath)
             )
