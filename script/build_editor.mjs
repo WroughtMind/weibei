@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { build } from 'esbuild';
 import pako from 'pako';
 import { packedWebScript } from './packed_web_script.mjs';
@@ -16,6 +16,7 @@ const generated = new Set([
   'editor-entry.js', 'viewer-entry.js', 'katex-runtime.js', 'mermaid-runtime.js',
   'prism-runtime.js', 'selection-runtime.js', 'office-entry.js', 'office-entry.js.deflate', 'editor.css', 'editor-resources.json', 'fonts', 'editor.js',
 ]);
+let adaptedMermaidMeasurement = false;
 
 const bundle = (entry, outfile, editable, globalName) => build({
   entryPoints: [resolve(source, entry)], bundle: true, format: 'iife', minify: true,
@@ -25,6 +26,22 @@ const bundle = (entry, outfile, editable, globalName) => build({
     '@milkdown/kit/plugin/upload', '@milkdown/kit/prose/history', '@milkdown/kit/prose/inputrules',
   ].map((name) => [name, resolve(source, 'viewerEditorStubs.ts')])),
   metafile: true, logLevel: 'warning', globalName,
+  plugins: entry === 'vendor/mermaid-runtime.ts' ? [{ name: 'host-mermaid-measurement-context', setup(builder) {
+    builder.onResolve({ filter: /^weibei-mermaid-measurement-context$/ }, () => ({
+      path: resolve(source, 'vendor/mermaid-measurement-context.ts'),
+    }));
+    builder.onLoad({ filter: /dsh-genui\/src\/client\/mermaid-core\.ts$/ }, async ({ path }) => {
+      const upstream = await readFile(path, 'utf8');
+      const mount = '  document.body?.appendChild(container)';
+      if (upstream.split(mount).length !== 2) throw new Error('Shared Mermaid measurement entry changed; verify the host context adapter');
+      adaptedMermaidMeasurement = true;
+      return {
+        contents: "import { mountMermaidMeasurementContainer } from 'weibei-mermaid-measurement-context';\n" +
+          upstream.replace(mount, '  mountMermaidMeasurementContainer(container)'),
+        loader: 'ts', resolveDir: dirname(path),
+      };
+    });
+  } }] : [],
   ...(entry === 'vendor/mermaid-runtime.ts' ? { supported: { 'template-literal': false } } : {}),
 });
 
@@ -61,6 +78,7 @@ const [editorMeta, viewerMeta] = await Promise.all([
     assetNames: '[name]', logLevel: 'warning',
   }),
 ]);
+if (!adaptedMermaidMeasurement) throw new Error('Shared Mermaid measurement context adapter was not applied');
 
 const officeBundle = resolve(output, 'office-entry.js');
 // Use the existing pinned JSZip compressor for identical bytes across build hosts.

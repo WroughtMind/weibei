@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inlineScripts": [
-    "'sha256-/Q7VUHZ+U6FCYUsHCtl/w3Is/xwvhiqHP86ympq/1/A='"
+    "'sha256-D/ZOHQCjLJsXgk4V/EWLSYmZUBRboUxK/jCMGhomXks='"
   ],
   "assets": [
     {
@@ -131,8 +131,8 @@
     },
     {
       "name": "mermaid-runtime.js",
-      "bytes": 1265894,
-      "sha256": "7b29e0d796d37808b9e74687a63d8ebd6cd67528c0d52b9fd68878e7c96073f7"
+      "bytes": 1265918,
+      "sha256": "131fe2f839ba32b7041e57c60714988cd8a8f63b18fce0449e05b924cb16add5"
     },
     {
       "name": "Mplus1p-Bold.woff2",
