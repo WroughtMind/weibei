@@ -74,6 +74,25 @@ public actor AgentModelListService {
         }
     }
 
+    /// Same listing as `fetchModels`, except OpenRouter's public catalog does not
+    /// check the key. A liveness probe must hit the authenticated key endpoint first.
+    public func probe(strategy: ModelListStrategy, apiKey: String) async throws -> [String] {
+        if case .openRouterPublic = strategy {
+            guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ModelListError.missingCredential
+            }
+            try await verifyOpenRouterKey(apiKey)
+        }
+        return try await fetchModels(strategy: strategy, apiKey: apiKey)
+    }
+
+    private func verifyOpenRouterKey(_ apiKey: String) async throws {
+        guard let url = URL(string: "https://openrouter.ai/api/v1/key") else {
+            throw ModelListError.transport("invalid url")
+        }
+        _ = try await perform(request: Self.bearerRequest(url: url, apiKey: apiKey))
+    }
+
     // MARK: - Strategies
 
     private func fetchOpenAICompatible(base: String, apiKey: String) async throws -> [String] {

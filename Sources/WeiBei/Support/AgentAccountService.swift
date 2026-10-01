@@ -34,12 +34,26 @@ final class AgentAccountService: ObservableObject {
     @Published private(set) var lastError: LocalizedMessage?
     @Published private(set) var liveModelIDs: [String] = []
     @Published private(set) var liveReasoningLevels: [String: [String]] = [:]
+    /// 最近一次名单请求的失败。成功或换服务时清掉。默认模型仍可选手输，但界面不能把失败说成刚刚同步。
+    @Published private(set) var modelListFailure: ModelListFailure?
     private var liveModelsProvider: AgentProviderID?
+
+    enum ModelListFailure: Error, Equatable {
+        case missingCredential
+        case missingBaseURL
+        case rejected
+        case signInExpired
+        case http(Int)
+        case offline
+        case unreadable
+        case superseded
+    }
     private var loginTask: Task<Void, Never>?
     private var loginID: UUID?
     @Published private(set) var authorizationCode: String?
     @Published private(set) var authorizationURL: URL?
     private var modelListTask: Task<Void, Never>?
+    private var modelRequestGeneration = 0
 
     private init() {
         reloadCredentialSnapshot()
@@ -49,26 +63,49 @@ final class AgentAccountService: ObservableObject {
         reloadCredentialSnapshot()
     }
 
-    /// 打开设置或更换服务/密钥后，向服务商拉取可用模型；失败时保留默认 ID。
+    /// 打开设置或更换服务/密钥后，向服务商拉取可用模型。和测活走同一次鉴权请求。
     func refreshModels(provider: AgentProviderID, baseURL: String) {
+        let generation = beginModelRequest(for: provider)
         liveReasoningLevels = [:]
-        modelListTask?.cancel()
+        modelListFailure = nil
         modelListTask = Task { [weak self] in
-            await self?.fetchLiveModels(provider: provider, baseURL: baseURL)
+            guard let self else { return }
+            let result = await self.fetchLiveModels(provider: provider, baseURL: baseURL, generation: generation)
+            self.publish(result, generation: generation)
         }
     }
 
-    /// 已拉取的名单优先；没有名单时至少给出路由表默认模型。手输任意 ID 仍然有效。
+    /// 和刷新名单同一次请求。后发起的那次作废先发起的，避免两路同时改名单。
+    func probeConnection(provider: AgentProviderID, baseURL: String) async -> Result<Int, ModelListFailure> {
+        let generation = beginModelRequest(for: provider)
+        modelListFailure = nil
+        let result = await fetchLiveModels(provider: provider, baseURL: baseURL, generation: generation)
+        publish(result, generation: generation)
+        return result
+    }
+
+    /// 只有服务商这次返回的 id。已保存的模型不在名单里时仍保持原选择，不把路由表默认名插进菜单。
     func models(provider: AgentProviderID) -> [String] {
-        var ids: [String] = []
-        if liveModelsProvider == provider {
-            ids = liveModelIDs
+        guard liveModelsProvider == provider else { return [] }
+        return liveModelIDs
+    }
+
+    private func beginModelRequest(for provider: AgentProviderID) -> Int {
+        modelListTask?.cancel()
+        modelRequestGeneration += 1
+        if liveModelsProvider != provider {
+            liveModelIDs = []
+            liveModelsProvider = nil
+            liveReasoningLevels = [:]
         }
-        let fallback = NativeProviderRouting.route(provider).defaultModel
-        if !fallback.isEmpty, !ids.contains(fallback) {
-            ids.insert(fallback, at: 0)
+        return modelRequestGeneration
+    }
+
+    private func publish(_ result: Result<Int, ModelListFailure>, generation: Int) {
+        guard generation == modelRequestGeneration else { return }
+        if case .failure(let failure) = result, failure != .superseded {
+            modelListFailure = failure
         }
-        return ids
     }
 
     func reasoningLevels(provider: AgentProviderID, model: String) -> [String] {
@@ -274,7 +311,11 @@ final class AgentAccountService: ObservableObject {
         .sorted { $0.providerId < $1.providerId })
     }
 
-    private func fetchLiveModels(provider: AgentProviderID, baseURL: String) async {
+    private func fetchLiveModels(
+        provider: AgentProviderID,
+        baseURL: String,
+        generation: Int
+    ) async -> Result<Int, ModelListFailure> {
         let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL)
         let resolved = endpoint.flatMap {
             NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: $0)
@@ -289,11 +330,10 @@ final class AgentAccountService: ObservableObject {
             accountID: record?.accountID
         )
         guard let strategy else {
-            await MainActor.run {
-                liveModelIDs = []
-                liveModelsProvider = provider
-            }
-            return
+            guard generation == modelRequestGeneration else { return .failure(.superseded) }
+            liveModelIDs = []
+            liveModelsProvider = provider
+            return .failure(apiKey.isEmpty ? .missingCredential : .missingBaseURL)
         }
         do {
             let ids: [String]
@@ -302,10 +342,10 @@ final class AgentAccountService: ObservableObject {
                 let fresh = try await NativeOpenAIOAuth.ensureFreshAccessToken()
                 let token = fresh.accessToken ?? ""
                 let accountID = fresh.accountID ?? ""
-                ids = try await AgentModelListService.shared.fetchModels(
-                    strategy: .codexSubscription(token: token, accountID: accountID), apiKey: ""
-                )
-                reasoningLevels = try await AgentModelListService.shared.codexReasoningLevels(token: token, accountID: accountID)
+                let service = AgentModelListService.shared
+                let codex = ModelListStrategy.codexSubscription(token: token, accountID: accountID)
+                ids = try await service.probe(strategy: codex, apiKey: "")
+                reasoningLevels = try await service.codexReasoningLevels(token: token, accountID: accountID)
             } else {
                 var key = apiKey
                 if NativeProviderOAuth.supports(provider) {
@@ -314,22 +354,44 @@ final class AgentAccountService: ObservableObject {
                 }
                 let modelService = NativeProviderOAuth.supports(provider)
                     ? AgentModelListService(session: NativeProviderOAuth.networkSession) : .shared
-                ids = try await modelService.fetchModels(strategy: strategy, apiKey: key)
+                ids = try await modelService.probe(strategy: strategy, apiKey: key)
             }
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                liveReasoningLevels = reasoningLevels
-                liveModelIDs = ids
-                liveModelsProvider = provider
-            }
+            guard generation == modelRequestGeneration, !Task.isCancelled else { return .failure(.superseded) }
+            modelListFailure = nil
+            liveReasoningLevels = reasoningLevels
+            liveModelIDs = ids
+            liveModelsProvider = provider
+            return .success(ids.count)
         } catch {
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                if liveModelsProvider != provider {
-                    liveModelIDs = []
-                }
-                liveModelsProvider = provider
+            guard generation == modelRequestGeneration, !Task.isCancelled else { return .failure(.superseded) }
+            if liveModelsProvider != provider {
+                liveModelIDs = []
             }
+            liveModelsProvider = provider
+            return .failure(Self.modelListFailure(from: error))
+        }
+    }
+
+    private static func modelListFailure(from error: Error) -> ModelListFailure {
+        if error is CancellationError { return .superseded }
+        if let failure = error as? NativeLLMFailure {
+            if failure.code == "oauth_timeout" { return .signInExpired }
+            if failure.code == "unauthorized" || failure.status == 401 || failure.status == 403 {
+                return .rejected
+            }
+            if let status = failure.status { return .http(status) }
+            return .signInExpired
+        }
+        if error is URLError { return .offline }
+        guard let error = error as? ModelListError else { return .unreadable }
+        switch error {
+        case .missingCredential: return .missingCredential
+        case .missingBaseURL: return .missingBaseURL
+        case .http(let status, _) where status == 401 || status == 403: return .rejected
+        case .http(let status, _): return .http(status)
+        case .transport(let message) where message == "cancelled": return .superseded
+        case .transport: return .offline
+        case .decoding: return .unreadable
         }
     }
 

@@ -194,6 +194,7 @@ struct CourseManagementSheet: View {
 #endif
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
+        .weiBeiFittedSheet()
         .interactiveDismissDisabled(isWorking)
         .confirmationDialog(
             store.ui(
@@ -381,6 +382,7 @@ struct CourseProjectEntrySheet: View {
 #endif
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
+        .weiBeiFittedSheet()
         .interactiveDismissDisabled(isWorking)
         .onAppear(perform: updateFocus)
         .onChange(of: intent) { _, _ in updateFocus() }

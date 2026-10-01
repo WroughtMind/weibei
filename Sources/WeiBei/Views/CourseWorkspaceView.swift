@@ -380,6 +380,7 @@ private struct CourseNewNoteSheet: View {
         .padding(24)
         .frame(width: 440)
         .background(WeiBeiTheme.paper)
+        .weiBeiFittedSheet()
     }
 }
 

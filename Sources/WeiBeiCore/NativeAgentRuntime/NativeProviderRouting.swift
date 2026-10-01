@@ -341,6 +341,81 @@ public enum NativeProviderRouting {
         return route(provider).baseURL
     }
 
+    /// 卡片上的地球看当前模型，不看整家服务商。依据是各家文档里写明会由服务端执行的联网，
+    /// 以及本应用实际会注入的那种请求。没写进文档的模型保持灰色。
+    public static func offersWebSearch(provider: AgentProviderID, model: String) -> Bool {
+        let leaf = model
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .split(separator: "/")
+            .last
+            .map(String.init) ?? ""
+        guard !leaf.isEmpty else { return false }
+        switch route(provider).webSearch {
+        case .none:
+            return false
+        case .responsesTool:
+            switch provider {
+            case .xai:
+                return grokSearches(leaf)
+            case .openai, .openaiCodex:
+                return openAIChatSearches(leaf)
+            default:
+                return false
+            }
+        case .anthropicTool:
+            if provider == .minimax || provider == .minimaxCN {
+                return true
+            }
+            return claudeSearches(leaf)
+        case .googleGrounding:
+            return leaf.contains("gemini") && !leaf.contains("embedding") && !leaf.contains("imagen")
+        case .openrouterPlugin:
+            return true
+        case .qwenEnableSearch:
+            return qwenSearches(leaf)
+        case .zaiChatTool:
+            return leaf.contains("glm")
+        case .kimiBuiltin:
+            return leaf.contains("kimi-k3") || leaf.contains("kimi-k2.6") || leaf.contains("kimi-k2-6")
+        case .xiaomiChatTool:
+            return leaf.contains("mimo-v2.5")
+        }
+    }
+
+    private static func openAIChatSearches(_ name: String) -> Bool {
+        if name.contains("gpt-3") || name.contains("whisper") || name.contains("tts")
+            || name.contains("embedding") || name.contains("dall-e") || name.contains("gpt-image")
+            || name.contains("sora") || name.contains("moderation") || name.contains("realtime") {
+            return false
+        }
+        return name.contains("gpt-4") || name.contains("gpt-5") || name.contains("gpt-6")
+            || name.hasPrefix("o1") || name.hasPrefix("o3") || name.hasPrefix("o4")
+            || name.contains("chatgpt")
+    }
+
+    private static func grokSearches(_ name: String) -> Bool {
+        guard let range = name.range(of: "grok-") else { return false }
+        guard let major = name[range.upperBound...].first, let value = Int(String(major)) else { return false }
+        return value >= 4
+    }
+
+    private static func claudeSearches(_ name: String) -> Bool {
+        if name.contains("claude-3-5") || name.contains("claude-3-7") || name.contains("mythos") { return true }
+        for prefix in ["claude-sonnet-", "claude-opus-", "claude-haiku-"] {
+            guard let range = name.range(of: prefix), let major = name[range.upperBound...].first else { continue }
+            if major >= "4" && major <= "9" { return true }
+        }
+        return false
+    }
+
+    private static func qwenSearches(_ name: String) -> Bool {
+        if name.contains("embedding") || name.contains("rerank") || name.contains("tts") { return false }
+        return name.contains("qwen3") || name.contains("qwen-max") || name.contains("qwen-plus")
+            || name.contains("qwen-flash") || name.contains("qwq")
+            || name.contains("deepseek-v4") || name.contains("glm-5")
+    }
+
     /// Azure Responses lives at `{resource}/openai/v1/responses`. The stored
     /// endpoint is the resource host; listing still uses that host.
     public static func azureResponsesRoot(_ resourceURL: URL) -> URL {

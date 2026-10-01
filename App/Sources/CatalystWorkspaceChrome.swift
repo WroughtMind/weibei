@@ -591,16 +591,26 @@ struct CatalystSheetBackground: UIViewRepresentable {
     final class Probe: UIView {
         var color = UIColor.clear
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
+        override func layoutSubviews() { super.layoutSubviews(); configure() }
         func configure() {
             guard let window else { return }
             window.backgroundColor = color
             var responder: UIResponder? = self
+            var sheetController: UIViewController?
             while let current = responder {
                 if let controller = current as? UIViewController {
                     controller.view.backgroundColor = color
+                    sheetController = controller
                 }
                 responder = current.next
             }
+            // 内容是固定小尺寸时，不要留着系统那层默认的大白底 sheet。
+            let size = bounds.size
+            guard size.width > 40, size.height > 40, let sheetController else { return }
+            let windowSize = window.bounds.size
+            let contentIsSmaller = size.width < windowSize.width - 1 || size.height < windowSize.height - 1
+            guard contentIsSmaller, sheetController.preferredContentSize != size else { return }
+            sheetController.preferredContentSize = size
         }
     }
 }
