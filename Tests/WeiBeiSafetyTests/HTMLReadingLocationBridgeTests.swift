@@ -23,6 +23,9 @@ final class HTMLReadingLocationBridgeTests: XCTestCase {
         <p id="quoted" data-expression="x > y">Visible paragraph</p>
         <ul><li id="optional-li-first">First list item<li id="optional-li-second">Second list item</ul>
         <p id="entities">A&amp;B&nbsp; C <strong>inline</strong> text</p>
+        <p id="before-figure">Before figure<figure><figcaption id="caption">Figure caption</figcaption></figure>
+        <p id="combining">Cafe\u{0301} with combining accent</p>
+        <p id="astral">\(String(repeating: "𐐀", count: 300)) tail</p>
         \(paragraphs)<p id="second">\(repeated)</p></main>
         <footer><p>页脚中的长段落只用于验证它不会改变正文段落位置，不属于阅读正文。</p></footer>
         """
@@ -64,7 +67,7 @@ final class HTMLReadingLocationBridgeTests: XCTestCase {
         _ = try evaluate(WebReaderRepresentable.contentRailScript(language: .chinese) + "\n; true;")
         let blocks = try evaluate("""
         ['first', 'short', 'emoji', 'nested', 'listed', 'optional-first', 'optional-second', 'quoted',
-         'optional-li-first', 'optional-li-second', 'entities', 'block-17', 'block-37', 'second'].map(name => {
+         'optional-li-first', 'optional-li-second', 'entities', 'before-figure', 'caption', 'combining', 'astral', 'block-17', 'block-37', 'second'].map(name => {
           const element = document.getElementById(name);
           return { name, location: element.dataset.weibeiContentRailID || '', text: element.textContent.replace(/\\s+/g, ' ').trim() };
         })

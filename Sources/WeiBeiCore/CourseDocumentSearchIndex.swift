@@ -6,9 +6,9 @@ import AppKit
 import CryptoKit
 import Darwin
 import Foundation
-import libxml2
 import PDFKit
 import SQLite3
+import SwiftSoup
 
 private final class CourseIndexCancellationProbe {
     var isCancelled: Bool {
@@ -2107,42 +2107,38 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     }
 
     private static func htmlBlockSections(in html: String) -> [TextSection] {
-        let data = Data(html.utf8)
-        guard data.count <= Int(Int32.max),
-              let document = data.withUnsafeBytes({ bytes in
-                  htmlReadMemory(bytes.baseAddress?.assumingMemoryBound(to: CChar.self),
-                                 Int32(bytes.count), nil, "utf-8",
-                                 Int32(HTML_PARSE_RECOVER.rawValue | HTML_PARSE_NONET.rawValue
-                                       | HTML_PARSE_NOERROR.rawValue | HTML_PARSE_NOWARNING.rawValue))
-              }) else { return [] }
-        defer { xmlFreeDoc(document) }
+        guard let document = try? SwiftSoup.parseHTML(html) else { return [] }
 
         // Match the reader's document-wide leaf-block traversal before its
         // visibility/root filtering, so hidden and repeated blocks keep the same IDs.
-        // Parsing also honors optional end tags and quoted '>' in attributes.
+        // HTML5 parsing also honors optional end tags, sectioning elements such
+        // as figure, quoted '>' in attributes and decoded character references.
         let blockNames: Set<String> = ["p", "li", "figcaption", "pre"]
-        var blocks: [String] = []
-        @discardableResult
-        func collect(_ first: xmlNodePtr?) -> Bool {
-            var containsBlock = false
-            var current = first
-            while let node = current {
-                let isBlock = node.pointee.type == XML_ELEMENT_NODE
-                    && node.pointee.name.map { blockNames.contains(String(cString: $0).lowercased()) } == true
-                let hasBlockDescendant = collect(node.pointee.children)
-                if isBlock, !hasBlockDescendant, let content = xmlNodeGetContent(node) {
-                    let text = String(cString: content)
-                        .components(separatedBy: .whitespacesAndNewlines)
-                        .filter { !$0.isEmpty }.joined(separator: " ")
-                    xmlFree(content)
-                    if !text.isEmpty { blocks.append(text) }
+        var candidates: [(parts: [String], hasBlockDescendant: Bool)] = []
+        var stack: [(node: SwiftSoup.Node, owner: Int?)] = [(document, nil)]
+        while let entry = stack.popLast() {
+            var owner = entry.owner
+            if let element = entry.node as? SwiftSoup.Element {
+                if element.tagName() == "template" { continue }
+                if blockNames.contains(element.tagName()) {
+                    if let owner { candidates[owner].hasBlockDescendant = true }
+                    owner = candidates.count
+                    candidates.append(([], false))
                 }
-                containsBlock = containsBlock || isBlock || hasBlockDescendant
-                current = node.pointee.next
             }
-            return containsBlock
+            if let owner {
+                if let text = entry.node as? SwiftSoup.TextNode {
+                    candidates[owner].parts.append(text.getWholeText())
+                } else if let data = entry.node as? SwiftSoup.DataNode {
+                    candidates[owner].parts.append(data.getWholeData())
+                }
+            }
+            stack.append(contentsOf: entry.node.getChildNodes().reversed().map { ($0, owner) })
         }
-        collect(xmlDocGetRootElement(document))
+        let whitespace = CharacterSet(charactersIn: "\u{0009}\u{000A}\u{000B}\u{000C}\u{000D}\u{0020}\u{00A0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}")
+        let blocks = candidates.filter { !$0.hasBlockDescendant }.map {
+            $0.parts.joined().components(separatedBy: whitespace).filter { !$0.isEmpty }.joined(separator: " ")
+        }.filter { !$0.isEmpty }
         var locationIDCounts: [String: Int] = [:]
         return blocks.map { text in
             let baseLocationID = htmlSectionLocationID(title: "", body: text)
@@ -2179,9 +2175,11 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
     private static func htmlSectionLocationID(title: String, body: String) -> String {
         let source = "\(title)|\(body)".lowercased()
-        let normalized = String(source.unicodeScalars.filter {
-            CharacterSet.alphanumerics.contains($0)
-        }.map(String.init).joined().prefix(500))
+        let lettersAndNumbers = source.replacingOccurrences(
+            of: #"[^\p{L}\p{N}]"#, with: "", options: .regularExpression
+        )
+        // The reader clips its normalized JavaScript string in UTF-16 units.
+        let normalized = String(decoding: lettersAndNumbers.utf16.prefix(500), as: UTF16.self)
         var hash: UInt32 = 2_166_136_261
         for byte in normalized.utf8 {
             hash ^= UInt32(byte)

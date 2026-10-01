@@ -36,6 +36,8 @@ final class HTMLPassageCompletenessTests: XCTestCase {
              ["First paragraph", "Second paragraph"]),
             ("<main><ul><li>First list item<li>Second list item</ul></main>",
              ["First list item", "Second list item"]),
+            ("<main><p>Before figure<figure><figcaption>Figure caption</figcaption></figure></main>",
+             ["Before figure", "Figure caption"]),
         ]
         for (html, expected) in fixtures {
             try withDocument(html) { item, index in
