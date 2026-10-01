@@ -18,6 +18,7 @@ struct AgentConnectionCardsView: View {
     @State private var addServiceIndex = 0
     @State private var addKeyDraft = ""
     @State private var addBaseURLDraft = ""
+    @State private var addEndpointError: String?
     @State private var addUsesSubscription = false
     @State private var showAddBaseURL = false
     @State private var keyEditProfileID: UUID?
@@ -348,6 +349,7 @@ struct AgentConnectionCardsView: View {
                 addServiceIndex = 0
                 addKeyDraft = ""
                 addBaseURLDraft = ""
+                addEndpointError = nil
                 showAddBaseURL = false
                 if let first = addServices.first {
                     addUsesSubscription = prefersSubscription(first)
@@ -396,6 +398,7 @@ struct AgentConnectionCardsView: View {
                         if let index = addServices.firstIndex(of: provider) {
                             addServiceIndex = index
                             addBaseURLDraft = ""
+                            addEndpointError = nil
                             showAddBaseURL = provider.showsBaseURLField
                             addUsesSubscription = prefersSubscription(provider)
                         }
@@ -451,6 +454,12 @@ struct AgentConnectionCardsView: View {
                 )
             }
 
+            if let addEndpointError {
+                Text(addEndpointError)
+                    .font(ConnType.detail)
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+            }
+
             HStack {
                 Spacer()
                 Button(store.ui("取消", "Cancel")) { closeAdd() }
@@ -480,6 +489,7 @@ struct AgentConnectionCardsView: View {
     private func closeAdd() {
         addingCard = false
         addKeyDraft = ""
+        addEndpointError = nil
     }
 
     private func modalSelect<MenuContent: View>(_ title: String, @ViewBuilder content: () -> MenuContent) -> some View {
@@ -691,10 +701,20 @@ struct AgentConnectionCardsView: View {
         let subscription = addingWithSubscription
         let key = addKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard subscription || !key.isEmpty else { return }
-        store.createAgentCredentialProfile()
-        store.setAgentProviderID(service)
-        if !addBaseURLDraft.isEmpty { store.updateAgentBaseURL(addBaseURLDraft) }
-        store.setAgentAuthMethod(subscription ? .subscription : .apiKey)
+        do {
+            try store.createAgentConnection(
+                provider: service,
+                authMethod: subscription ? .subscription : .apiKey,
+                baseURL: addBaseURLDraft
+            )
+        } catch {
+            addEndpointError = store.ui(
+                "请先填写有效的服务地址。连接和密钥尚未保存。",
+                "Enter a valid service URL first. The connection and API key have not been saved."
+            )
+            return
+        }
+        addEndpointError = nil
         if subscription {
             oauthService.startLogin(service, language: store.interfaceLanguage)
             subscriptionDetailProfileID = store.activeAgentProfileID

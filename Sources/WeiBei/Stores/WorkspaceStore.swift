@@ -5818,6 +5818,28 @@ final class WorkspaceStore: ObservableObject {
         return profile.id
     }
 
+    /// Adding a connection takes its endpoint only from the form, never from
+    /// the active profile. Validate before changing profiles or saving a key.
+    @discardableResult
+    func createAgentConnection(
+        provider: AgentProviderID,
+        authMethod: AgentAuthMethod,
+        baseURL: String
+    ) throws -> UUID {
+        let endpoint = try AgentProviderEndpoint(provider: provider, baseURL: baseURL)
+        let profile = AgentCredentialProfile(
+            name: ui("配置 \(agentCredentialProfiles.count + 1)", "Profile \(agentCredentialProfiles.count + 1)"),
+            provider: provider,
+            authMethod: authMethod,
+            modelName: provider == agentProviderID ? modelName : "",
+            baseURL: endpoint.baseURL ?? ""
+        )
+        agentCredentialProfiles.append(profile)
+        AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+        selectAgentCredentialProfile(profile.id)
+        return profile.id
+    }
+
     func renameActiveAgentCredentialProfile(_ name: String) {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
