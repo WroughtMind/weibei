@@ -309,29 +309,31 @@ final class AgentAccountService: ObservableObject {
         }
     }
 
+    @discardableResult
     func startAPIKeyLogin(
         _ key: String,
         provider: AgentProviderID,
-        baseURL: String = ""
-    ) {
+        baseURL: String = "",
+        credentialStore: NativeAgentCredentialStore? = nil
+    ) -> Bool {
         let cleaned = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !isLoggingIn else { return }
+        guard !isLoggingIn else { return false }
         guard let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL) else {
             lastError = LocalizedMessage(
                 chinese: "密钥未保存：服务地址无效。现有凭据未更改；请检查地址后重试。",
                 english: "The key was not saved because the service address is invalid. Existing credentials are unchanged; check the address and try again."
             )
-            return
+            return false
         }
         guard !cleaned.isEmpty else {
             lastError = LocalizedMessage(
                 chinese: "密钥未保存：API Key 不能为空。现有凭据未更改；请输入后重试。",
                 english: "The key was not saved because the API key is empty. Existing credentials are unchanged; enter a key and try again."
             )
-            return
+            return false
         }
         do {
-            let store = try NativeAgentCredentialStore.defaultStore()
+            let store = try credentialStore ?? NativeAgentCredentialStore.defaultStore()
             try store.upsert(NativeAgentCredentialRecord(
                 provider: endpoint.credentialProviderID,
                 apiKey: cleaned,
@@ -342,7 +344,7 @@ final class AgentAccountService: ObservableObject {
                 boundEndpoint: endpoint.baseURL
             ))
             lastError = nil
-            reloadCredentialSnapshot()
+            reloadCredentialSnapshot(from: store)
             NotificationCenter.default.post(
                 name: .weiBeiAgentCredentialsDidChange,
                 object: nil,
@@ -351,9 +353,11 @@ final class AgentAccountService: ObservableObject {
                     "type": AgentCredentialType.apiKey.rawValue,
                 ]
             )
+            return true
         } catch {
             logFailure("agent_api_key_save_failed", providerID: endpoint.credentialProviderID, error: error)
             lastError = apiKeySaveFailureMessage(providerID: endpoint.credentialProviderID)
+            return false
         }
     }
 
@@ -387,8 +391,9 @@ final class AgentAccountService: ObservableObject {
         statusMessage = nil
     }
 
-    private func reloadCredentialSnapshot() {
-        guard let records = try? NativeAgentCredentialStore.defaultStore().load() else { return }
+    private func reloadCredentialSnapshot(from suppliedStore: NativeAgentCredentialStore? = nil) {
+        guard let store = try? suppliedStore ?? NativeAgentCredentialStore.defaultStore(),
+              let records = try? store.load() else { return }
         catalog = CatalogInfo(credentials: records.values.map { record in
             CredentialInfo(
                 providerId: record.provider,
