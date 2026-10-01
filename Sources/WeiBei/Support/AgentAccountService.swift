@@ -48,8 +48,14 @@ final class AgentAccountService: ObservableObject {
     @Published private(set) var authorizationCode: String?
     @Published private(set) var authorizationURL: URL?
     private var modelListTask: Task<Void, Never>?
+    struct ModelCatalog {
+        var ids: [String]
+        var reasoningLevels: [String: [String]]
+    }
+    private let modelCatalogLoader: ((AgentProviderID, String) async throws -> ModelCatalog)?
 
-    private init() {
+    init(modelCatalogLoader: ((AgentProviderID, String) async throws -> ModelCatalog)? = nil) {
+        self.modelCatalogLoader = modelCatalogLoader
         reloadCredentialSnapshot()
     }
 
@@ -69,6 +75,14 @@ final class AgentAccountService: ObservableObject {
         modelListTask = Task { [weak self] in
             await self?.fetchLiveModels(provider: provider, baseURL: baseURL)
         }
+    }
+
+    /// 冷启动的输入框也需要实时推理能力，不要求先打开设置。
+    /// 多个输入框同时出现时复用当前查询，不清空已加载的能力。
+    func refreshReasoningCatalogIfNeeded(provider: AgentProviderID, baseURL: String) {
+        guard provider == .openaiCodex, !isRefreshingModels,
+              !hasLoadedModels(provider: provider) else { return }
+        refreshModels(provider: provider, baseURL: baseURL)
     }
 
     /// 只返回当前服务商端点实际拉取到的名单；手输任意 ID 仍然有效。
@@ -310,6 +324,30 @@ final class AgentAccountService: ObservableObject {
     }
 
     private func fetchLiveModels(provider: AgentProviderID, baseURL: String) async {
+        if let modelCatalogLoader {
+            do {
+                let catalog = try await modelCatalogLoader(provider, baseURL)
+                guard !Task.isCancelled else { return }
+                let ids = Self.catalogEntries(catalog.ids, loadedFor: provider, provider: provider)
+                let state = Self.successfulModelListState(ids)
+                liveReasoningLevels = catalog.reasoningLevels
+                liveModelIDs = ids
+                liveModelsProvider = provider
+                isRefreshingModels = false
+                modelListMessage = state.message
+                modelListCanRetry = state.canRetry
+            } catch {
+                guard !Task.isCancelled else { return }
+                liveModelIDs = []
+                liveReasoningLevels = [:]
+                liveModelsProvider = provider
+                isRefreshingModels = false
+                modelListCanRetry = true
+                modelListMessage = LocalizedMessage(chinese: "模型名单获取失败", english: "Could not load the model list")
+            }
+            return
+        }
+
         let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL)
         let resolved = endpoint.flatMap {
             NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: $0)
