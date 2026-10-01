@@ -294,6 +294,14 @@ final class CourseSidebarModel: ObservableObject {
         return projection.unassignedNotes.first(where: { itemIDs.contains($0.id) })?.id
     }
 
+    func handleEscape(dismiss: () -> Void) {
+        guard !query.isEmpty else {
+            dismiss()
+            return
+        }
+        updateQuery("")
+    }
+
     private func itemMatches(
         _ row: CourseSidebarItemRow,
         query: String,

@@ -413,6 +413,7 @@ final class WriteGateSafetyTests: XCTestCase {
             backupRoot: base.appendingPathComponent("backups")
         )
         store.createBlankNotebookNote()
+        XCTAssertNil(store.transientNoteStatus, "新建成功由笔记本身反馈，不弹成功横幅")
         let note = try XCTUnwrap(store.activeNoteItem)
         let url = try XCTUnwrap(note.url)
         let external = "# 外部正文\n磁盘上的新内容\n"
