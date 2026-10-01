@@ -25,13 +25,14 @@ struct AgentConnectionCardsView: View {
     @State private var subscriptionDetailProfileID: UUID?
     @State private var keyDraft = ""
     @State private var webSearchHover = false
-    @State private var probingProfileID: UUID?
     @State private var probeState = AgentConnectionProbeState()
     @State private var showsManualModel = false
     @State private var manualModelDraft = ""
     @State private var showsEndpointEditor = false
     @State private var endpointDraft = ""
     @State private var endpointError: String?
+
+    private var probingProfileID: UUID? { probeState.probingProfileID }
 
     /// 账号登录的服务排在前面。只支持订阅的（如 Codex）以前被 apiKey 过滤掉了。
     private var addServices: [AgentProviderID] {
@@ -69,12 +70,11 @@ struct AgentConnectionCardsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { _ in
             probeState.invalidateAll()
-            probingProfileID = nil
             oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { _ in
             probeState.invalidateAll()
-            probingProfileID = nil
+            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
         .sheet(isPresented: $showsManualModel) {
             VStack(alignment: .leading, spacing: 16) {
@@ -110,8 +110,7 @@ struct AgentConnectionCardsView: View {
                             let endpoint = try AgentProviderEndpoint(provider: store.agentProviderID, baseURL: endpointDraft)
                             store.updateAgentBaseURL(endpoint.baseURL ?? "")
                             probeState.invalidate(store.activeAgentProfileID)
-                            probingProfileID = nil
-                            endpointError = nil
+                                            endpointError = nil
                             showsEndpointEditor = false
                             oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
                         } catch {
@@ -123,9 +122,7 @@ struct AgentConnectionCardsView: View {
         }
         .onChange(of: store.activeAgentProfileID) { previous, _ in
             // 绿和红只属于刚测完的这一眼。离开这张卡就收掉，再点回来不接着亮。
-            if probingProfileID != previous {
-                probeState.invalidate(previous)
-            }
+            probeState.invalidate(previous)
         }
     }
 
@@ -286,6 +283,7 @@ struct AgentConnectionCardsView: View {
                 saveKey(for: profile)
             }
             .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
+            .disabled(oauthService.isLoggingIn || keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
             Button(store.ui("取消", "Cancel")) {
                 keyEditProfileID = nil
@@ -625,7 +623,6 @@ struct AgentConnectionCardsView: View {
     private func probeButton(_ profile: AgentCredentialProfile) -> some View {
         Button {
             guard probingProfileID == nil else { return }
-            probingProfileID = profile.id
             let requestID = probeState.begin(profile.id)
             let provider = profile.provider
             let baseURL = profile.baseURL
@@ -657,11 +654,7 @@ struct AgentConnectionCardsView: View {
         guard probeState.isCurrent(profileID, requestID: requestID) else { return }
         guard profileID == store.activeAgentProfileID else {
             probeState.invalidate(profileID)
-            if probingProfileID == profileID { probingProfileID = nil }
             return
-        }
-        if probingProfileID == profileID {
-            probingProfileID = nil
         }
         switch result {
         case .success(let count):
@@ -670,7 +663,7 @@ struct AgentConnectionCardsView: View {
                 ok: true
             ))
         case .failure(let failure):
-            guard failure != .superseded else { return }
+            guard failure != .superseded else { probeState.invalidate(profileID); return }
             probeState.complete(profileID, requestID: requestID, mark: .init(text: modelListFailureText(failure), ok: false))
         }
     }
@@ -757,23 +750,21 @@ struct AgentConnectionCardsView: View {
     }
 
     private func saveKey(for profile: AgentCredentialProfile) {
+        guard store.agentCredentialProfiles.contains(where: { $0.id == profile.id }),
+              oauthService.startAPIKeyLogin(keyDraft, provider: profile.provider, baseURL: profile.baseURL) else { return }
         if profile.id != store.activeAgentProfileID {
             store.selectAgentCredentialProfile(profile.id)
         }
         probeState.invalidate(profile.id)
-        probingProfileID = nil
         store.setAgentAuthMethod(.apiKey)
-        oauthService.startAPIKeyLogin(
-            keyDraft,
-            provider: store.agentProviderID,
-            baseURL: store.agentBaseURL
-        )
         keyEditProfileID = nil
         keyDraft = ""
     }
 
     private func commitAdd() {
-        guard let service = currentAddService else { return }
+        guard let service = currentAddService, !oauthService.isLoggingIn else { return }
+        let previousProfiles = store.agentCredentialProfiles
+        let previousActiveID = store.activeAgentProfileID
         let subscription = addingWithSubscription
         let key = addKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard subscription || !key.isEmpty else { return }
@@ -795,7 +786,17 @@ struct AgentConnectionCardsView: View {
             oauthService.startLogin(service, language: store.interfaceLanguage)
             subscriptionDetailProfileID = store.activeAgentProfileID
         } else {
-            oauthService.startAPIKeyLogin(key, provider: service, baseURL: store.agentBaseURL)
+            guard oauthService.startAPIKeyLogin(key, provider: service, baseURL: store.agentBaseURL) else {
+                store.agentCredentialProfiles = previousProfiles
+                AgentCredentialProfileStore.saveProfiles(previousProfiles)
+                store.selectAgentCredentialProfile(previousActiveID)
+                if let error = oauthService.lastError {
+                    addEndpointError = store.ui(error.chinese, error.english)
+                } else {
+                    addEndpointError = store.ui("密钥未保存，请重试。", "The key was not saved. Try again.")
+                }
+                return
+            }
         }
         addingCard = false
         addKeyDraft = ""
@@ -807,7 +808,6 @@ struct AgentConnectionCardsView: View {
             store.selectAgentCredentialProfile(profile.id)
         }
         probeState.invalidate(profile.id)
-        probingProfileID = nil
         store.setAgentAuthMethod(.subscription)
         keyEditProfileID = nil
         subscriptionDetailProfileID = profile.id
@@ -881,9 +881,6 @@ struct AgentConnectionCardsView: View {
     private func deleteConnection(_ profile: AgentCredentialProfile) {
         guard store.agentCredentialProfiles.count > 1 else { return }
         probeState.invalidate(profile.id)
-        if probingProfileID == profile.id {
-            probingProfileID = nil
-        }
         if store.activeAgentProfileID != profile.id {
             store.selectAgentCredentialProfile(profile.id)
         }

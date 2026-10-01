@@ -25,13 +25,19 @@ final class AgentConnectionCardStateTests: XCTestCase {
         state.complete(profile, requestID: initial, mark: .init(text: "synthetic success", ok: true))
         XCTAssertEqual(state.marks[profile]?.ok, true)
         let old = state.begin(profile)
+        XCTAssertEqual(state.probingProfileID, profile)
         state.invalidate(profile)
+        XCTAssertNil(state.probingProfileID)
         XCTAssertNil(state.marks[profile])
         state.complete(profile, requestID: old, mark: .init(text: "stale success", ok: true))
         XCTAssertNil(state.marks[profile])
         let current = state.begin(profile)
+        state.complete(profile, requestID: old, mark: .init(text: "late stale success", ok: true))
+        XCTAssertEqual(state.probingProfileID, profile)
+        XCTAssertNil(state.marks[profile])
         state.complete(profile, requestID: current, mark: .init(text: "new rejection", ok: false))
         XCTAssertEqual(state.marks[profile]?.ok, false)
+        XCTAssertNil(state.probingProfileID)
         state.invalidateAll()
         XCTAssertTrue(state.marks.isEmpty)
     }
@@ -46,6 +52,8 @@ final class AgentConnectionCardStateTests: XCTestCase {
             try? FileManager.default.removeItem(at: root)
         }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        try store.createAgentConnection(provider: .custom, authMethod: .apiKey,
+                                        baseURL: "https://manual-model.example.test/v1")
         XCTAssertTrue(store.saveManualAgentModel("  unlisted/private-deployment  "))
         XCTAssertEqual(store.modelName, "unlisted/private-deployment")
         XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.modelName, store.modelName)
@@ -95,3 +103,29 @@ extension AgentConnectionCardStateTests {
     }
 }
 #endif
+
+extension AgentConnectionCardStateTests {
+    @MainActor
+    func testKeySaveReportsFailureWithoutReplacingStoredCredential() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let credentials = NativeAgentCredentialStore(fileURL: root.appendingPathComponent("synthetic.json"))
+        let endpoint = try AgentProviderEndpoint(provider: .custom, baseURL: "https://gateway.example.test/v1")
+        try credentials.upsert(.init(provider: endpoint.credentialProviderID, apiKey: "synthetic-original", boundEndpoint: endpoint.baseURL))
+        let original = try Data(contentsOf: credentials.fileURL)
+        let account = AgentAccountService()
+        XCTAssertFalse(account.startAPIKeyLogin("synthetic-replacement", provider: .custom, baseURL: "", credentialStore: credentials))
+        XCTAssertNotNil(account.lastError)
+        XCTAssertEqual(try Data(contentsOf: credentials.fileURL), original)
+        XCTAssertFalse(account.startAPIKeyLogin("  ", provider: .custom, baseURL: endpoint.baseURL!, credentialStore: credentials))
+        XCTAssertEqual(try Data(contentsOf: credentials.fileURL), original)
+        let blocked = root.appendingPathComponent("blocked-parent")
+        try Data("synthetic blocker".utf8).write(to: blocked)
+        let unavailable = NativeAgentCredentialStore(fileURL: blocked.appendingPathComponent("credential.json"))
+        XCTAssertFalse(account.startAPIKeyLogin("synthetic-replacement", provider: .custom, baseURL: endpoint.baseURL!, credentialStore: unavailable))
+        XCTAssertNotNil(account.lastError)
+        XCTAssertTrue(account.startAPIKeyLogin("synthetic-replacement", provider: .custom, baseURL: endpoint.baseURL!, credentialStore: credentials))
+        XCTAssertNil(account.lastError)
+        XCTAssertEqual(try credentials.load()[endpoint.credentialProviderID]?.apiKey, "synthetic-replacement")
+    }
+}

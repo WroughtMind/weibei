@@ -61,6 +61,8 @@ final class AgentAccountService: ObservableObject {
     @Published private(set) var authorizationCode: String?
     @Published private(set) var authorizationURL: URL?
     private var modelListTask: Task<Void, Never>?
+    private var modelRequestProvider: AgentProviderID?
+    private var modelRequestBaseURL = ""
     private var modelRequestGeneration = 0
 
     struct ModelCatalog {
@@ -95,7 +97,7 @@ final class AgentAccountService: ObservableObject {
 
     /// 打开设置或更换服务/密钥后，向服务商拉取可用模型。和测活走同一次鉴权请求。
     func refreshModels(provider: AgentProviderID, baseURL: String) {
-        let generation = beginModelRequest(for: provider)
+        let generation = beginModelRequest(for: provider, baseURL: baseURL)
         liveReasoningLevels = [:]
         modelListFailure = nil
         modelListTask = Task { [weak self] in
@@ -107,14 +109,16 @@ final class AgentAccountService: ObservableObject {
 
     /// 和刷新名单同一次请求。后发起的那次作废先发起的，避免两路同时改名单。
     func probeConnection(provider: AgentProviderID, baseURL: String) async -> Result<Int, ModelListFailure> {
-        let generation = beginModelRequest(for: provider)
+        let generation = beginModelRequest(for: provider, baseURL: baseURL)
         modelListFailure = nil
         let result = await fetchLiveModels(provider: provider, baseURL: baseURL, generation: generation)
         publish(result, generation: generation)
         return result
     }
 
-    private func beginModelRequest(for provider: AgentProviderID) -> Int {
+    private func beginModelRequest(for provider: AgentProviderID, baseURL: String) -> Int {
+        modelRequestProvider = provider
+        modelRequestBaseURL = baseURL
         modelListTask?.cancel()
         modelRequestGeneration += 1
         isRefreshingModels = true
@@ -150,8 +154,10 @@ final class AgentAccountService: ObservableObject {
     /// 冷启动的输入框也需要实时推理能力，不要求先打开设置。
     /// 多个输入框同时出现时复用当前查询，不清空已加载的能力。
     func refreshReasoningCatalogIfNeeded(provider: AgentProviderID, baseURL: String) {
-        guard provider == .openaiCodex, !isRefreshingModels,
-              !hasLoadedModels(provider: provider) else { return }
+        guard provider == .openaiCodex else { return }
+        let sameRequest = modelRequestProvider == provider && modelRequestBaseURL == baseURL
+        if isRefreshingModels && sameRequest { return }
+        guard !hasLoadedModels(provider: provider) else { return }
         refreshModels(provider: provider, baseURL: baseURL)
     }
 
@@ -303,29 +309,31 @@ final class AgentAccountService: ObservableObject {
         }
     }
 
+    @discardableResult
     func startAPIKeyLogin(
         _ key: String,
         provider: AgentProviderID,
-        baseURL: String = ""
-    ) {
+        baseURL: String = "",
+        credentialStore: NativeAgentCredentialStore? = nil
+    ) -> Bool {
         let cleaned = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !isLoggingIn else { return }
+        guard !isLoggingIn else { return false }
         guard let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL) else {
             lastError = LocalizedMessage(
                 chinese: "密钥未保存：服务地址无效。现有凭据未更改；请检查地址后重试。",
                 english: "The key was not saved because the service address is invalid. Existing credentials are unchanged; check the address and try again."
             )
-            return
+            return false
         }
         guard !cleaned.isEmpty else {
             lastError = LocalizedMessage(
                 chinese: "密钥未保存：API Key 不能为空。现有凭据未更改；请输入后重试。",
                 english: "The key was not saved because the API key is empty. Existing credentials are unchanged; enter a key and try again."
             )
-            return
+            return false
         }
         do {
-            let store = try NativeAgentCredentialStore.defaultStore()
+            let store = try credentialStore ?? NativeAgentCredentialStore.defaultStore()
             try store.upsert(NativeAgentCredentialRecord(
                 provider: endpoint.credentialProviderID,
                 apiKey: cleaned,
@@ -336,7 +344,7 @@ final class AgentAccountService: ObservableObject {
                 boundEndpoint: endpoint.baseURL
             ))
             lastError = nil
-            reloadCredentialSnapshot()
+            reloadCredentialSnapshot(from: store)
             NotificationCenter.default.post(
                 name: .weiBeiAgentCredentialsDidChange,
                 object: nil,
@@ -345,9 +353,11 @@ final class AgentAccountService: ObservableObject {
                     "type": AgentCredentialType.apiKey.rawValue,
                 ]
             )
+            return true
         } catch {
             logFailure("agent_api_key_save_failed", providerID: endpoint.credentialProviderID, error: error)
             lastError = apiKeySaveFailureMessage(providerID: endpoint.credentialProviderID)
+            return false
         }
     }
 
@@ -381,8 +391,9 @@ final class AgentAccountService: ObservableObject {
         statusMessage = nil
     }
 
-    private func reloadCredentialSnapshot() {
-        guard let records = try? NativeAgentCredentialStore.defaultStore().load() else { return }
+    private func reloadCredentialSnapshot(from suppliedStore: NativeAgentCredentialStore? = nil) {
+        guard let store = try? suppliedStore ?? NativeAgentCredentialStore.defaultStore(),
+              let records = try? store.load() else { return }
         catalog = CatalogInfo(credentials: records.values.map { record in
             CredentialInfo(
                 providerId: record.provider,

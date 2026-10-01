@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		62B14F3FE41E983161CA0715 /* AgentConnectionProbeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80F04499AB2903533AA0A920 /* AgentConnectionProbeState.swift */; };
 		0F01CE000000000000000001 /* OfficeDocumentText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F01CE000000000000000002 /* OfficeDocumentText.swift */; };
 		014CAA0987ACF6294F39D1A2 /* AgentAccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D92418B7C7756A863085B9D /* AgentAccountService.swift */; };
 		0251D244D2FD142022993345 /* NativeAgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */; };
@@ -286,6 +287,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		80F04499AB2903533AA0A920 /* AgentConnectionProbeState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentConnectionProbeState.swift; sourceTree = "<group>"; };
 		0F01CE000000000000000002 /* OfficeDocumentText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeDocumentText.swift; sourceTree = "<group>"; };
 		00FB03E91469CACE2F8CEF89 /* CoursePortableState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoursePortableState.swift; sourceTree = "<group>"; };
 		0143654F5459DD613936A2D2 /* CourseProjectRootSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseProjectRootSupport.swift; sourceTree = "<group>"; };
@@ -833,6 +835,7 @@
 			isa = PBXGroup;
 			children = (
 				5D92418B7C7756A863085B9D /* AgentAccountService.swift */,
+				80F04499AB2903533AA0A920 /* AgentConnectionProbeState.swift */,
 				B50AB6E6DC9F8AC15B64CEA7 /* AgentChatKaTeXMarkdown.swift */,
 				851F281152AB3195E523BF46 /* LatestFirstSerialQueue.swift */,
 				D4DC97F117C4C9EF8A872EAA /* SelectionAnchorContentPoint.swift */,
@@ -1251,6 +1254,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				014CAA0987ACF6294F39D1A2 /* AgentAccountService.swift in Sources */,
+				62B14F3FE41E983161CA0715 /* AgentConnectionProbeState.swift in Sources */,
 				D0AE313DCDCE41A594791495 /* AgentChatKaTeXMarkdown.swift in Sources */,
 				D348A95E5B126E2C1EBB5950 /* AgentComposerTextEditor.swift in Sources */,
 				88B98A9691870247327A8B79 /* AgentConversationRun.swift in Sources */,

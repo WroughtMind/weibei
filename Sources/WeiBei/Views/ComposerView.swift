@@ -165,7 +165,7 @@ struct ComposerView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { _ in
             guard showsReasoningEffort, store.agentProviderID == .openaiCodex else { return }
-            agentAccount.refreshReasoningCatalogIfNeeded(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            agentAccount.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
         .accessibilityIdentifier("agent-composer-compact")
     }
