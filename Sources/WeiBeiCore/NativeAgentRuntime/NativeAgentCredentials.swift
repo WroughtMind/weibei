@@ -28,6 +28,16 @@ public struct NativeAgentCredentialRecord: Codable, Equatable, Sendable {
         self.accountID = accountID
         self.boundEndpoint = boundEndpoint
     }
+
+    public func apiKey(
+        for provider: AgentProviderID,
+        endpoint: AgentProviderEndpoint
+    ) throws -> String? {
+        if !endpoint.matchesCredentialBinding(for: provider, boundEndpoint: boundEndpoint) {
+            throw AgentProviderEndpointError.azureCredentialRequiresReentry
+        }
+        return apiKey?.isEmpty == false ? apiKey : nil
+    }
 }
 
 public struct NativeAgentCredentialStore: Sendable {

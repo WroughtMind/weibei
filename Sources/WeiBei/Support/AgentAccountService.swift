@@ -6,7 +6,7 @@ import WeiBeiCore
 import os
 
 /// Agent 账号与模型目录服务。
-/// 目录为服务商实时名单（失败时回退默认 ID；选择器永远允许手输任意 ID）；凭据走 NativeAgentCredentialStore；
+/// 目录只展示服务商实时名单；查询不可用或失败时由用户手动填写模型 ID；凭据走 NativeAgentCredentialStore；
 /// OpenAI 订阅登录走 NativeOpenAIOAuth 浏览器流程。
 @MainActor
 final class AgentAccountService: ObservableObject {
@@ -28,12 +28,20 @@ final class AgentAccountService: ObservableObject {
         var credentials: [CredentialInfo] = []
     }
 
+    struct SuccessfulModelListState: Equatable, Sendable {
+        var message: LocalizedMessage?
+        var canRetry: Bool
+    }
+
     @Published private(set) var catalog: CatalogInfo?
     @Published private(set) var isLoggingIn = false
     @Published private(set) var statusMessage: LocalizedMessage?
     @Published private(set) var lastError: LocalizedMessage?
     @Published private(set) var liveModelIDs: [String] = []
     @Published private(set) var liveReasoningLevels: [String: [String]] = [:]
+    @Published private(set) var isRefreshingModels = false
+    @Published private(set) var modelListMessage: LocalizedMessage?
+    @Published private(set) var modelListCanRetry = false
     private var liveModelsProvider: AgentProviderID?
     private var loginTask: Task<Void, Never>?
     private var loginID: UUID?
@@ -49,26 +57,53 @@ final class AgentAccountService: ObservableObject {
         reloadCredentialSnapshot()
     }
 
-    /// 打开设置或更换服务/密钥后，向服务商拉取可用模型；失败时保留默认 ID。
+    /// 打开设置、更换服务/端点/密钥或用户主动刷新时，向服务商拉取可用模型。
     func refreshModels(provider: AgentProviderID, baseURL: String) {
         liveReasoningLevels = [:]
         modelListTask?.cancel()
+        liveModelsProvider = provider
+        liveModelIDs = []
+        isRefreshingModels = true
+        modelListMessage = nil
+        modelListCanRetry = false
         modelListTask = Task { [weak self] in
             await self?.fetchLiveModels(provider: provider, baseURL: baseURL)
         }
     }
 
-    /// 已拉取的名单优先；没有名单时至少给出路由表默认模型。手输任意 ID 仍然有效。
+    /// 只返回当前服务商端点实际拉取到的名单；手输任意 ID 仍然有效。
     func models(provider: AgentProviderID) -> [String] {
-        var ids: [String] = []
-        if liveModelsProvider == provider {
-            ids = liveModelIDs
-        }
-        let fallback = NativeProviderRouting.route(provider).defaultModel
-        if !fallback.isEmpty, !ids.contains(fallback) {
-            ids.insert(fallback, at: 0)
-        }
+        Self.catalogEntries(liveModelIDs, loadedFor: liveModelsProvider, provider: provider)
+    }
+
+    static func catalogEntries(
+        _ ids: [String],
+        loadedFor: AgentProviderID?,
+        provider: AgentProviderID
+    ) -> [String] {
+        guard loadedFor == provider else { return [] }
         return ids
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    static func successfulModelListState(_ modelIDs: [String]) -> SuccessfulModelListState {
+        guard modelIDs.isEmpty else {
+            return SuccessfulModelListState(message: nil, canRetry: false)
+        }
+        return SuccessfulModelListState(
+            message: LocalizedMessage(
+                chinese: "服务返回的模型名单为空，当前选择没有改变。请刷新重试，或手动输入模型 ID。",
+                english: "The service returned an empty model list. Your selection is unchanged. Refresh to try again, or enter a model ID manually."
+            ),
+            canRetry: true
+        )
+    }
+
+    func hasLoadedModels(provider: AgentProviderID) -> Bool {
+        liveModelsProvider == provider
+            && !isRefreshingModels
+            && modelListMessage == nil
     }
 
     func reasoningLevels(provider: AgentProviderID, model: String) -> [String] {
@@ -280,8 +315,7 @@ final class AgentAccountService: ObservableObject {
             NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: $0)
         } ?? NativeProviderRouting.route(provider).baseURL
         let records = (try? NativeAgentCredentialStore.defaultStore().load()) ?? [:]
-        let record = records[provider.credentialProviderID]
-        let apiKey = record?.apiKey ?? record?.accessToken ?? ""
+        let record = endpoint.flatMap { records[$0.credentialProviderID] }
         let strategy = NativeProviderRouting.modelListStrategy(
             provider: provider,
             baseURL: resolved,
@@ -292,10 +326,37 @@ final class AgentAccountService: ObservableObject {
             await MainActor.run {
                 liveModelIDs = []
                 liveModelsProvider = provider
+                isRefreshingModels = false
+                modelListCanRetry = false
+                if provider == .openaiCodex {
+                    modelListMessage = LocalizedMessage(
+                        chinese: "请先连接服务商账号，再刷新模型名单。",
+                        english: "Connect the provider account, then refresh the model list."
+                    )
+                } else if provider.requiresUserBaseURL, endpoint == nil {
+                    modelListMessage = LocalizedMessage(
+                        chinese: "请先填写有效的服务地址；如果该地址没有模型名单，请手动输入模型 ID。",
+                        english: "Enter a valid service URL first. If it has no model list, enter a model ID manually."
+                    )
+                } else {
+                    modelListMessage = LocalizedMessage(
+                        chinese: "这个服务没有可查询的模型名单，请手动输入模型 ID。",
+                        english: "This service has no queryable model list. Enter a model ID manually."
+                    )
+                }
             }
             return
         }
         do {
+            let storedAPIKey: String?
+            if let endpoint {
+                storedAPIKey = try record?.apiKey(for: provider, endpoint: endpoint)
+            } else {
+                storedAPIKey = nil
+            }
+            let apiKey = storedAPIKey
+                ?? record?.accessToken
+                ?? ""
             let ids: [String]
             var reasoningLevels: [String: [String]] = [:]
             if provider == .openaiCodex {
@@ -316,19 +377,29 @@ final class AgentAccountService: ObservableObject {
                     ? AgentModelListService(session: NativeProviderOAuth.networkSession) : .shared
                 ids = try await modelService.fetchModels(strategy: strategy, apiKey: key)
             }
+            let modelIDs = Self.catalogEntries(ids, loadedFor: provider, provider: provider)
+            let state = Self.successfulModelListState(modelIDs)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 liveReasoningLevels = reasoningLevels
-                liveModelIDs = ids
+                liveModelIDs = modelIDs
                 liveModelsProvider = provider
+                isRefreshingModels = false
+                modelListMessage = state.message
+                modelListCanRetry = state.canRetry
             }
         } catch {
             guard !Task.isCancelled else { return }
+            logFailure("agent_model_list_failed", providerID: provider.credentialProviderID, error: error)
             await MainActor.run {
-                if liveModelsProvider != provider {
-                    liveModelIDs = []
-                }
+                liveModelIDs = []
                 liveModelsProvider = provider
+                isRefreshingModels = false
+                modelListCanRetry = true
+                modelListMessage = LocalizedMessage(
+                    chinese: "模型名单获取失败，当前选择没有改变。请重试，或手动输入模型 ID。",
+                    english: "Could not load the model list. Your selection is unchanged. Try again, or enter a model ID manually."
+                )
             }
         }
     }
