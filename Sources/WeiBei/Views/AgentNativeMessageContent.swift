@@ -47,6 +47,59 @@ enum AgentNativeMessageContent {
     }
 }
 
+enum AgentAnswerMarkdownSegments {
+    enum Part: Equatable {
+        case text(String)
+        case attachment(String)
+    }
+
+    private static let marker = try? NSRegularExpression(
+        pattern: #"!\[[^\]\n]*\]\(weibei-visualization:([^\)\s]+)\)"#
+    )
+
+    static func split(_ markdown: String) -> [Part] {
+        guard let marker else { return [.text(markdown)] }
+        let nsMarkdown = markdown as NSString
+        let rawMatches = marker.matches(
+            in: markdown,
+            range: NSRange(location: 0, length: nsMarkdown.length)
+        )
+        guard !rawMatches.isEmpty else { return [.text(markdown)] }
+
+        let literalRanges = MarkdownLiteralRanges.ranges(in: markdown)
+        let matches = rawMatches.filter { match in
+            // A real marker is itself a Markdown Image, so its literal range is
+            // exactly the regex range. A larger/different literal range means the
+            // spelling is only an example inside code, HTML, or an outer link.
+            !literalRanges.contains { literal in
+                NSIntersectionRange(literal, match.range).length > 0
+                    && !NSEqualRanges(literal, match.range)
+            }
+        }
+        guard !matches.isEmpty else { return [.text(markdown)] }
+
+        var parts: [Part] = []
+        var cursor = 0
+        for match in matches {
+            let leadingText = nsMarkdown.substring(
+                with: NSRange(location: cursor, length: match.range.location - cursor)
+            )
+            if !leadingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append(.text(leadingText))
+            }
+            let encodedIdentifier = nsMarkdown.substring(with: match.range(at: 1))
+            parts.append(.attachment(encodedIdentifier.removingPercentEncoding ?? encodedIdentifier))
+            cursor = NSMaxRange(match.range)
+        }
+
+        let trailingText = nsMarkdown.substring(from: cursor)
+        if !trailingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append(.text(trailingText))
+        }
+        return parts
+    }
+}
+
 struct AgentInlineToolActivity: View {
     @EnvironmentObject private var store: WorkspaceStore
     @ObservedObject var streaming: AgentStreamingState
