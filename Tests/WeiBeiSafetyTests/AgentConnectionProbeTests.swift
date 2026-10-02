@@ -40,4 +40,35 @@ final class AgentConnectionProbeTests: XCTestCase {
         }
         XCTAssertEqual(MockProtocol.requests, 2)
     }
+
+    func testProbeCredentialMatchesTheCardsAuthenticationMethod() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NativeAgentCredentialStore(fileURL: root.appendingPathComponent("credentials.json"))
+        let endpoint = try AgentProviderEndpoint(provider: .xai, baseURL: "")
+
+        try store.upsert(.init(provider: AgentProviderID.xai.credentialProviderID, apiKey: "synthetic-api-key"))
+        let apiKeyCredential = try await NativeLLMAdapterFactory.resolveCredential(
+            provider: .xai, endpoint: endpoint, authMethod: .apiKey, store: store
+        )
+        let accountCredentialWithoutLogin = try await NativeLLMAdapterFactory.resolveCredential(
+            provider: .xai, endpoint: endpoint, authMethod: .subscription, store: store
+        )
+        XCTAssertEqual(apiKeyCredential, "synthetic-api-key")
+        XCTAssertNil(accountCredentialWithoutLogin)
+
+        try store.upsert(.init(
+            provider: AgentProviderID.xai.credentialProviderID,
+            accessToken: "synthetic-account-token",
+            expiresAt: Date().addingTimeInterval(600)
+        ))
+        let apiKeyCredentialWithoutKey = try await NativeLLMAdapterFactory.resolveCredential(
+            provider: .xai, endpoint: endpoint, authMethod: .apiKey, store: store
+        )
+        let accountCredential = try await NativeLLMAdapterFactory.resolveCredential(
+            provider: .xai, endpoint: endpoint, authMethod: .subscription, store: store
+        )
+        XCTAssertNil(apiKeyCredentialWithoutKey)
+        XCTAssertEqual(accountCredential, "synthetic-account-token")
+    }
 }

@@ -65,16 +65,16 @@ struct AgentConnectionCardsView: View {
             .frame(maxWidth: 460, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .task(id: store.activeAgentProfileID.uuidString + store.agentProviderID.rawValue + store.agentBaseURL) {
-            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+        .task(id: activeModelRequestID) {
+            refreshActiveModels()
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { _ in
             probeState.invalidateAll()
-            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            refreshActiveModels()
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { _ in
             probeState.invalidateAll()
-            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            refreshActiveModels()
         }
         .sheet(isPresented: $showsManualModel) {
             VStack(alignment: .leading, spacing: 16) {
@@ -112,7 +112,7 @@ struct AgentConnectionCardsView: View {
                             probeState.invalidate(store.activeAgentProfileID)
                                             endpointError = nil
                             showsEndpointEditor = false
-                            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+                            refreshActiveModels()
                         } catch {
                             endpointError = store.ui("请输入有效的服务地址", "Enter a valid service URL")
                         }
@@ -358,6 +358,7 @@ struct AgentConnectionCardsView: View {
                     beginSubscriptionLogin(profile)
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
+                .disabled(oauthService.isLoggingIn)
 
                 if oauthService.isLinked(profile.provider) {
                     Button(store.ui("断开", "Disconnect")) {
@@ -378,12 +379,12 @@ struct AgentConnectionCardsView: View {
                         if profile.id != store.activeAgentProfileID {
                             store.selectAgentCredentialProfile(profile.id)
                         }
-                        store.setAgentAuthMethod(.apiKey)
                         subscriptionDetailProfileID = nil
                         keyDraft = ""
                         keyEditProfileID = profile.id
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
+                    .disabled(oauthService.isLoggingIn)
                 }
             }
 
@@ -626,7 +627,16 @@ struct AgentConnectionCardsView: View {
             let requestID = probeState.begin(profile.id)
             let provider = profile.provider
             let baseURL = profile.baseURL
-            Task { await runProbe(profileID: profile.id, requestID: requestID, provider: provider, baseURL: baseURL) }
+            let authMethod = method(for: profile)
+            Task {
+                await runProbe(
+                    profileID: profile.id,
+                    requestID: requestID,
+                    provider: provider,
+                    baseURL: baseURL,
+                    authMethod: authMethod
+                )
+            }
         } label: {
             // 图标只表示「测一次」。进行中和结果都在卡片边缘，不把按钮改成转圈、对勾或感叹号。
             Image(systemName: "waveform.path.ecg")
@@ -640,11 +650,18 @@ struct AgentConnectionCardsView: View {
         .help(probeHelp(for: profile))
     }
 
-    private func runProbe(profileID: UUID, requestID: UUID, provider: AgentProviderID, baseURL: String) async {
+    private func runProbe(
+        profileID: UUID,
+        requestID: UUID,
+        provider: AgentProviderID,
+        baseURL: String,
+        authMethod: AgentAuthMethod
+    ) async {
         let started = Date()
         let result = await oauthService.probeConnection(
             provider: provider,
-            baseURL: baseURL
+            baseURL: baseURL,
+            authMethod: authMethod
         )
         let elapsed = Date().timeIntervalSince(started)
         if elapsed < 1.2, profileID == store.activeAgentProfileID {
@@ -783,8 +800,13 @@ struct AgentConnectionCardsView: View {
         }
         addEndpointError = nil
         if subscription {
-            oauthService.startLogin(service, language: store.interfaceLanguage)
-            subscriptionDetailProfileID = store.activeAgentProfileID
+            let profileID = store.activeAgentProfileID
+            oauthService.startLogin(
+                service,
+                language: store.interfaceLanguage,
+                targetProfileID: profileID
+            )
+            subscriptionDetailProfileID = profileID
         } else {
             guard oauthService.startAPIKeyLogin(key, provider: service, baseURL: store.agentBaseURL) else {
                 store.agentCredentialProfiles = previousProfiles
@@ -804,15 +826,18 @@ struct AgentConnectionCardsView: View {
     }
 
     private func beginSubscriptionLogin(_ profile: AgentCredentialProfile) {
+        guard !oauthService.isLoggingIn else { return }
         if profile.id != store.activeAgentProfileID {
             store.selectAgentCredentialProfile(profile.id)
         }
         probeState.invalidate(profile.id)
-        store.setAgentAuthMethod(.subscription)
         keyEditProfileID = nil
         subscriptionDetailProfileID = profile.id
-        guard !oauthService.isLoggingIn else { return }
-        oauthService.startLogin(profile.provider, language: store.interfaceLanguage)
+        oauthService.startLogin(
+            profile.provider,
+            language: store.interfaceLanguage,
+            targetProfileID: profile.id
+        )
     }
 
     private func authTypes(for provider: AgentProviderID) -> [AgentCredentialType] {
@@ -850,11 +875,27 @@ struct AgentConnectionCardsView: View {
         return types.contains(.oauth) ? .subscription : .apiKey
     }
 
+    private func refreshActiveModels() {
+        oauthService.refreshModels(
+            provider: store.agentProviderID,
+            baseURL: store.agentBaseURL,
+            authMethod: store.agentAuthMethod
+        )
+    }
+
+    private var activeModelRequestID: String {
+        store.activeAgentProfileID.uuidString
+            + store.agentProviderID.rawValue
+            + store.agentBaseURL
+            + store.agentAuthMethod.rawValue
+    }
+
     private func hasAPIKey(_ profile: AgentCredentialProfile) -> Bool {
         oauthService.connectionAPIKey(provider: profile.provider, baseURL: profile.baseURL)?.isEmpty == false
     }
 
     private func showsSubscriptionDetail(_ profile: AgentCredentialProfile) -> Bool {
+        if oauthService.isLoggingIn, oauthService.loginTargetProfileID == profile.id { return true }
         guard method(for: profile) == .subscription else { return false }
         if subscriptionDetailProfileID == profile.id { return true }
         return oauthService.isLoggingIn && profile.id == store.activeAgentProfileID
@@ -915,7 +956,11 @@ private func modelMenuButton(_ profile: AgentCredentialProfile) -> some View {
             }
             .accessibilityIdentifier("connection-manual-model-menu")
             Button {
-                oauthService.refreshModels(provider: profile.provider, baseURL: profile.baseURL)
+                oauthService.refreshModels(
+                    provider: profile.provider,
+                    baseURL: profile.baseURL,
+                    authMethod: method(for: profile)
+                )
                 probeState.invalidate(profile.id)
             } label: {
                 Label(store.ui("刷新模型名单", "Refresh model list"), systemImage: "arrow.clockwise")

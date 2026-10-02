@@ -5786,6 +5786,22 @@ final class WorkspaceStore: ObservableObject {
         touchActiveAgentProfileMetadata()
     }
 
+    /// Login completion belongs to the card that started it, even if another card is active now.
+    @discardableResult
+    func setAgentAuthMethod(_ method: AgentAuthMethod, for profileID: UUID) -> Bool {
+        guard let index = agentCredentialProfiles.firstIndex(where: { $0.id == profileID }) else { return false }
+        if agentCredentialProfiles[index].authMethod != method {
+            agentCredentialProfiles[index].authMethod = method
+            agentCredentialProfiles[index].updatedAt = Date()
+            AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+        }
+        if activeAgentProfileID == profileID {
+            agentAuthMethod = method
+            save()
+        }
+        return true
+    }
+
     func recordAgentAuthenticationSuccess(
         provider: AgentProviderID,
         authMethod: AgentAuthMethod

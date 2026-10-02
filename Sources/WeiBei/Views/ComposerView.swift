@@ -159,13 +159,24 @@ struct ComposerView: View {
             }
         }
         .onChange(of: store.agentReasoningModelKey) { _, _ in showsReasoningPicker = false }
-        .task(id: store.activeAgentProfileID.uuidString + store.agentProviderID.rawValue + store.agentBaseURL) {
+        .task(id: store.activeAgentProfileID.uuidString
+            + store.agentProviderID.rawValue
+            + store.agentBaseURL
+            + store.agentAuthMethod.rawValue) {
             guard showsReasoningEffort, store.agentProviderID == .openaiCodex else { return }
-            agentAccount.refreshReasoningCatalogIfNeeded(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            agentAccount.refreshReasoningCatalogIfNeeded(
+                provider: store.agentProviderID,
+                baseURL: store.agentBaseURL,
+                authMethod: store.agentAuthMethod
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { _ in
             guard showsReasoningEffort, store.agentProviderID == .openaiCodex else { return }
-            agentAccount.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            agentAccount.refreshModels(
+                provider: store.agentProviderID,
+                baseURL: store.agentBaseURL,
+                authMethod: store.agentAuthMethod
+            )
         }
         .accessibilityIdentifier("agent-composer-compact")
     }

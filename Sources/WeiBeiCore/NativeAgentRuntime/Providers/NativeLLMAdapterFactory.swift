@@ -38,7 +38,7 @@ public enum NativeLLMAdapterFactory {
                 contextWindow: contextWindow
             )
         case .openaiResponses:
-            guard let key = try await credential(provider: provider, endpoint: endpoint, authMethod: authMethod, store: credentialStore) else {
+            guard let key = try await resolveCredential(provider: provider, endpoint: endpoint, authMethod: authMethod, store: credentialStore) else {
                 throw NativeLLMFailure(code: "unauthorized", status: 401, message: "missing API key")
             }
             guard let baseURL else {
@@ -55,7 +55,7 @@ public enum NativeLLMAdapterFactory {
                 session: provider == .xai ? NativeProviderOAuth.networkSession : .shared
             )
         case .anthropicMessages:
-            guard let key = try await credential(provider: provider, endpoint: endpoint, authMethod: authMethod, store: credentialStore) else {
+            guard let key = try await resolveCredential(provider: provider, endpoint: endpoint, authMethod: authMethod, store: credentialStore) else {
                 throw NativeLLMFailure(
                     code: "unauthorized",
                     status: 401,
@@ -73,7 +73,7 @@ public enum NativeLLMAdapterFactory {
                 webSearchTool: route.webSearch == .anthropicTool
             )
         case .googleGenerativeAI:
-            guard let key = try await credential(provider: provider, endpoint: endpoint, authMethod: authMethod, store: credentialStore) else {
+            guard let key = try await resolveCredential(provider: provider, endpoint: endpoint, authMethod: authMethod, store: credentialStore) else {
                 throw NativeLLMFailure(code: "unauthorized", status: 401, message: "missing API key")
             }
             guard let rootURL = baseURL else {
@@ -98,7 +98,7 @@ public enum NativeLLMAdapterFactory {
                         : "provider \(provider.rawValue) is missing a chat-completions base URL"
                 )
             }
-            guard let key = try await credential(provider: provider, endpoint: endpoint, authMethod: authMethod, store: credentialStore) else {
+            guard let key = try await resolveCredential(provider: provider, endpoint: endpoint, authMethod: authMethod, store: credentialStore) else {
                 throw NativeLLMFailure(
                     code: "unauthorized",
                     status: 401,
@@ -144,7 +144,13 @@ public enum NativeLLMAdapterFactory {
             )
         }
     }
-    private static func credential(provider: AgentProviderID, endpoint: AgentProviderEndpoint, authMethod: AgentAuthMethod?, store: NativeAgentCredentialStore?) async throws -> String? {
+    /// Resolve exactly the credential that a model request will use.
+    public static func resolveCredential(
+        provider: AgentProviderID,
+        endpoint: AgentProviderEndpoint,
+        authMethod: AgentAuthMethod?,
+        store: NativeAgentCredentialStore? = nil
+    ) async throws -> String? {
         if NativeProviderOAuth.supports(provider), provider != .openaiCodex {
             let store = try store ?? NativeAgentCredentialStore.defaultStore()
             if authMethod == .apiKey { return try store.load()[provider.credentialProviderID]?.apiKey }

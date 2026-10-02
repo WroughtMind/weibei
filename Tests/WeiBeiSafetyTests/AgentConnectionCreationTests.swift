@@ -244,4 +244,19 @@ final class AgentConnectionCreationTests: XCTestCase {
         XCTAssertEqual(store.activeAgentProfileID, id)
         XCTAssertEqual(store.agentBaseURL, "https://corrected.openai.azure.com")
     }
+
+    @MainActor
+    func testLoginCompletionUpdatesOnlyTheCardThatStartedIt() throws {
+        let store = try XCTUnwrap(storeFixture).store
+        let target = try store.createAgentConnection(provider: .xai, authMethod: .apiKey, baseURL: "")
+        let current = try store.createAgentConnection(provider: .openai, authMethod: .apiKey, baseURL: "")
+
+        XCTAssertTrue(store.setAgentAuthMethod(.subscription, for: target))
+
+        XCTAssertEqual(store.activeAgentProfileID, current)
+        XCTAssertEqual(store.agentProviderID, .openai)
+        XCTAssertEqual(store.agentAuthMethod, .apiKey)
+        XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == target })?.authMethod, .subscription)
+        XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == current })?.authMethod, .apiKey)
+    }
 }
