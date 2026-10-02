@@ -6,6 +6,61 @@ import WeiBeiCore
 
 final class HTMLReadingLocationBridgeTests: XCTestCase {
     @MainActor
+    func testStaleContentRailCompletionCannotFailAnotherDocumentRequest() async throws {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        let loaded = expectation(description: "content rail bridge loaded")
+        let navigationProbe = HTMLReadingLocationProbe()
+        navigationProbe.onLoad = { loaded.fulfill() }
+        let web = WKWebView(frame: .zero)
+        web.navigationDelegate = navigationProbe
+        web.loadHTMLString("""
+        <!doctype html><body></body><script>
+        window.WeiBeiContentRail = { scrollTo() { return false; }, scan() {} };
+        </script>
+        """, baseURL: nil)
+        await fulfillment(of: [loaded], timeout: 3)
+
+        var unavailableRequestIDs: [UUID] = []
+        let reader = WebReaderRepresentable(
+            html: "",
+            onContentRailTargetUnavailable: { unavailableRequestIDs.append($0) },
+            onSelectionChange: { _, _ in }
+        )
+        let coordinator = reader.makeCoordinator()
+        coordinator.webView = web
+        _ = coordinator.taggedHTML("", token: "first-document")
+        let staleRequestID = UUID()
+        coordinator.contentRailTarget = WebReaderContentRailTarget(
+            id: "html-heading-0",
+            requestID: staleRequestID
+        )
+        coordinator.applyContentRailTarget(in: web)
+
+        _ = coordinator.taggedHTML("", token: "second-document")
+        let currentRequestID = UUID()
+        coordinator.contentRailTarget = WebReaderContentRailTarget(
+            id: "html-heading-1",
+            requestID: currentRequestID
+        )
+        _ = try await web.evaluateJavaScript("true")
+        await Task.yield()
+        XCTAssertTrue(unavailableRequestIDs.isEmpty)
+
+        coordinator.webView(web, didFinish: nil)
+        _ = try await web.evaluateJavaScript("true")
+        await Task.yield()
+        XCTAssertTrue(unavailableRequestIDs.isEmpty)
+
+        coordinator.applyContentRailTarget(in: web)
+        let deadline = Date().addingTimeInterval(3)
+        while unavailableRequestIDs.isEmpty && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(unavailableRequestIDs, [currentRequestID])
+        withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
     func testVisibleHTMLLocationsReadTheSameBlocksIncludingDuplicatesAndLongPages() throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let repeated = "重复段落用于检查当前阅读位置，重新打开时必须回到第二次出现的位置。"
@@ -115,8 +170,12 @@ final class HTMLReadingLocationBridgeTests: XCTestCase {
 
 private final class HTMLReadingLocationProbe: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     var didLoad = false
+    var onLoad: () -> Void = {}
     var activeIDs: [String] = []
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { didLoad = true }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        didLoad = true
+        onLoad()
+    }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "contentRailActive", let body = message.body as? [String: Any],
               let id = body["id"] as? String else { return }

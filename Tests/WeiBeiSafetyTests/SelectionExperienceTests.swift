@@ -26,7 +26,58 @@ final class SelectionExperienceTests: XCTestCase {
         store.select(itemID: markdown.id)
         XCTAssertEqual(store.readerLocationID, "markdown-block-7")
         XCTAssertEqual(store.readerTargetLocationID, "markdown-block-7")
-        XCTAssertNotNil(store.readerTargetLocationRequestID)
+        let restoredRequestID = store.readerTargetLocationRequestID
+
+        store.consumeReaderHTMLLocationRequest(restoredRequestID)
+        XCTAssertNil(store.readerTargetLocationID)
+        XCTAssertNil(store.readerTargetLocationTitle)
+
+        store.select(itemID: next.id)
+        store.select(itemID: markdown.id)
+        let nextRequestID = store.readerTargetLocationRequestID
+        XCTAssertNotEqual(nextRequestID, restoredRequestID)
+        store.consumeReaderHTMLLocationRequest(restoredRequestID)
+        XCTAssertEqual(store.readerTargetLocationID, "markdown-block-7")
+        XCTAssertEqual(store.readerTargetLocationRequestID, nextRequestID)
+    }
+
+    @MainActor
+    func testFailedWebDocumentRestoreAdoptsVisibleLocationAndRejectsStaleCallback() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let document = StudyItem(id: "word-location", title: "课堂讲义", subtitle: "", kind: .docx, urlPath: nil, isSample: false)
+        let next = StudyItem(id: "next-word", title: "下一份讲义", subtitle: "", kind: .docx, urlPath: nil, isSample: false)
+        store.importedItems = [document, next]
+        store.select(itemID: document.id)
+        store.updateReaderHTMLLocation(id: "word/document.xml#p8", title: "第 9 段", reason: "scroll")
+        store.select(itemID: next.id)
+        store.select(itemID: document.id)
+        let failedRequestID = store.readerTargetLocationRequestID
+
+        store.failReaderHTMLLocationRequest(
+            failedRequestID,
+            visibleID: "word/document.xml#p2",
+            visibleTitle: "第 3 段"
+        )
+
+        XCTAssertNil(store.readerTargetLocationID)
+        XCTAssertNil(store.readerTargetLocationTitle)
+        XCTAssertEqual(store.readerLocationID, "word/document.xml#p2")
+        XCTAssertEqual(store.readerLocationTitle, "第 3 段")
+        XCTAssertEqual(store.studyLocation(for: document.id)?.locationID, "word/document.xml#p2")
+        XCTAssertEqual(SourceReferenceTitle.parse(store.currentSourceReferenceTitle).sectionLocationID, "word/document.xml#p2")
+
+        store.select(itemID: next.id)
+        store.select(itemID: document.id)
+        let nextRequestID = store.readerTargetLocationRequestID
+        store.failReaderHTMLLocationRequest(
+            failedRequestID,
+            visibleID: "word/document.xml#p0",
+            visibleTitle: "第 1 段"
+        )
+        XCTAssertEqual(store.readerTargetLocationID, "word/document.xml#p2")
+        XCTAssertEqual(store.readerTargetLocationRequestID, nextRequestID)
     }
 
     @MainActor

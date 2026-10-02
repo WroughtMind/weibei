@@ -261,6 +261,7 @@ struct ReaderView: View {
     @State private var htmlContentRailItems: [ContentRailItem] = []
     @State private var htmlContentRailActiveID: String?
     @State private var htmlContentRailTarget: WebReaderContentRailTarget?
+    @State private var pendingHTMLVisibleLocation: WebReaderContentRailActiveChange?
     @State private var pendingHTMLContentRailActiveCommit: Task<Void, Never>?
     @State private var markdownSnapshotItemID: String?
     @State private var markdownSnapshotText: String?
@@ -443,6 +444,7 @@ struct ReaderView: View {
             htmlContentRailItems = []
             htmlContentRailActiveID = store.readerLocationID
             htmlContentRailTarget = nil
+            pendingHTMLVisibleLocation = nil
             syncReaderLocationTitle()
             capturePendingPDFPageRequest()
             applyPendingPDFPageIfReady()
@@ -672,12 +674,17 @@ struct ReaderView: View {
         let hasPendingRestore = store.readerTargetLocationID != nil || store.readerTargetLocationTitle != nil
         if hasPendingRestore {
             if change.reason == .initial || change.reason == .programmatic {
+                pendingHTMLVisibleLocation = change
                 return
             }
             if change.reason == .scroll {
+                pendingHTMLVisibleLocation = nil
                 store.cancelReaderHTMLLocationTarget()
                 htmlContentRailTarget = nil
             }
+        }
+        if change.reason == .jump {
+            pendingHTMLVisibleLocation = nil
         }
         // Jump must update the rail highlight immediately. Scroll updates are
         // coalesced so fast section crossings do not re-enter WebReader updateNSView.
@@ -749,13 +756,32 @@ struct ReaderView: View {
             targetID = nil
         }
         guard let targetID else {
-            store.cancelReaderHTMLLocationTarget()
-            htmlContentRailTarget = nil
+            failPendingHTMLLocation(store.readerTargetLocationRequestID)
             return
         }
         let requestID = store.readerTargetLocationRequestID
         guard htmlContentRailTarget?.requestID != requestID else { return }
         htmlContentRailTarget = WebReaderContentRailTarget(id: targetID, requestID: requestID)
+    }
+
+    private func failPendingHTMLLocation(_ requestID: UUID) {
+        guard store.readerTargetLocationRequestID == requestID,
+              store.readerTargetLocationID != nil || store.readerTargetLocationTitle != nil else { return }
+        let visibleLocation = pendingHTMLVisibleLocation
+        pendingHTMLVisibleLocation = nil
+        htmlContentRailTarget = nil
+        let visibleTitle = visibleLocation?.title ?? visibleLocation?.id.flatMap { activeID in
+            htmlContentRailItems.first(where: { $0.id == activeID })?.title
+        } ?? Self.officeFallbackLocationTitle(
+            id: visibleLocation?.id,
+            kind: store.selectedMaterialItem?.kind,
+            language: store.interfaceLanguage
+        )
+        store.failReaderHTMLLocationRequest(
+            requestID,
+            visibleID: visibleLocation?.id,
+            visibleTitle: visibleTitle
+        )
     }
 
     private static func normalizedHTMLSectionTitle(_ title: String) -> String {
@@ -1255,8 +1281,7 @@ struct ReaderView: View {
                         onContentRailActiveChange: applyHTMLContentRailActiveID,
                         onContentRailTargetUnavailable: { requestID in
                             guard htmlContentRailTarget?.requestID == requestID else { return }
-                            store.cancelReaderHTMLLocationTarget()
-                            htmlContentRailTarget = nil
+                            failPendingHTMLLocation(requestID)
                         },
                         onSelectionAskMark: { threadID, anchor in
                             if let uuid = UUID(uuidString: threadID) {
@@ -4320,15 +4345,30 @@ struct WebReaderRepresentable: ReaderRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            lastAppliedSearchQuery = ""
-            lastAppliedContentRailTargetRequestID = nil
-            lastAppliedSelectionAskMarks = ""
-            lastAppliedSelectionRemarkMarks = ""
-            webView.evaluateJavaScript(WebReaderRepresentable.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors))
-            applyInterfaceLanguage(in: webView)
-            applySearch(in: webView)
-            applyContentRailTarget(in: webView)
-            applySelectionMarksIfNeeded()
+            let completedLoadToken = readerLoadToken
+            webView.evaluateJavaScript(
+                "document.querySelector('meta[name=\"weibei-reader-load-token\"]')?.content || document.body?.dataset.weibeiReaderLoadToken || ''"
+            ) { [weak self, weak webView] value, _ in
+                guard let self,
+                      let webView,
+                      self.webView === webView,
+                      self.readerLoadToken == completedLoadToken,
+                      value as? String == completedLoadToken else { return }
+                self.lastAppliedSearchQuery = ""
+                self.lastAppliedContentRailTargetRequestID = nil
+                self.lastAppliedSelectionAskMarks = ""
+                self.lastAppliedSelectionRemarkMarks = ""
+                webView.evaluateJavaScript(
+                    WebReaderRepresentable.readerStyleScript(
+                        for: self.appearanceMode,
+                        adaptsDocumentColors: self.adaptsDocumentColors
+                    )
+                )
+                self.applyInterfaceLanguage(in: webView)
+                self.applySearch(in: webView)
+                self.applyContentRailTarget(in: webView)
+                self.applySelectionMarksIfNeeded()
+            }
         }
 
         func applySearch(in view: WKWebView) {
@@ -4378,8 +4418,11 @@ struct WebReaderRepresentable: ReaderRepresentable {
         func applyContentRailTarget(in view: WKWebView) {
             guard let contentRailTarget,
                   contentRailTarget.requestID != lastAppliedContentRailTargetRequestID else { return }
+            let loadToken = readerLoadToken
             view.evaluateJavaScript("window.WeiBeiContentRail?.scrollTo(\(Self.json(contentRailTarget.id)))") { [weak self] value, error in
-                guard let self else { return }
+                guard let self,
+                      self.readerLoadToken == loadToken,
+                      self.contentRailTarget?.requestID == contentRailTarget.requestID else { return }
                 if error == nil, value as? Bool == true {
                     self.lastAppliedContentRailTargetRequestID = contentRailTarget.requestID
                     return
@@ -4441,17 +4484,19 @@ private struct MarkdownDocumentReaderView: View {
             hidesHostedDocument: store.materialPickerPresented,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
+            onReaderLocationApplied: { requestID in
+                store.consumeReaderHTMLLocationRequest(requestID)
+            },
+            onReaderLocationUnavailable: { requestID, activeIndex in
+                let passage = Self.passage(for: activeIndex, in: passages)
+                store.failReaderHTMLLocationRequest(
+                    requestID,
+                    visibleID: passage?.location,
+                    visibleTitle: passage?.title
+                )
+            },
             onActiveHeadingChange: { index in
-                guard let index else { return }
-                if index == -1,
-                   let passage = passages.first(where: { $0.location == "markdown-preamble" }) {
-                    store.updateReaderHTMLLocation(id: passage.location, title: passage.title, reason: "scroll")
-                    return
-                }
-                let prefix = passages.contains(where: { $0.location.hasPrefix("markdown-heading-") })
-                    ? "markdown-heading-"
-                    : "markdown-block-"
-                guard let passage = passages.first(where: { $0.location == "\(prefix)\(index)" }) else { return }
+                guard let passage = Self.passage(for: index, in: passages) else { return }
                 store.updateReaderHTMLLocation(
                     id: passage.location,
                     title: passage.title,
@@ -4466,6 +4511,20 @@ private struct MarkdownDocumentReaderView: View {
             selectionRemarkMarks: selectionRemarkMarks,
             onSelectionRemarkMark: onSelectionRemarkMark
         )
+    }
+
+    private static func passage(
+        for index: Int?,
+        in passages: [CourseDocumentPassage]
+    ) -> CourseDocumentPassage? {
+        guard let index else { return nil }
+        if index == -1 {
+            return passages.first(where: { $0.location == "markdown-preamble" })
+        }
+        let prefix = passages.contains(where: { $0.location.hasPrefix("markdown-heading-") })
+            ? "markdown-heading-"
+            : "markdown-block-"
+        return passages.first(where: { $0.location == "\(prefix)\(index)" })
     }
 }
 
