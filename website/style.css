@@ -70,6 +70,14 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--vermilion); out
 .brand img { width: 28px; height: 28px; object-fit: cover; mix-blend-mode: multiply; }
 .brand span { font-family: "WeiBei Stele", serif; font-size: 17px; font-weight: 400; line-height: 1; letter-spacing: .11em; text-transform: uppercase; }
 .brand i { width: 6px; height: 6px; margin: 0 0 7px -6px; align-self: flex-end; background: var(--vermilion); }
+/* 首屏按展示尺寸绘制，只向下缩放，避免 Safari 放大小尺寸合成缓存。 */
+@media (min-width: 761px) {
+  .compact-brand { position: absolute; left: 3.4vw; top: 50%; translate: 0 -50%; gap: 32px; transform: scale(.3125); }
+  .compact-brand img { width: 89.6px; height: 89.6px; }
+  .compact-brand span { font-size: 54.4px; }
+  .compact-brand i { width: 19.2px; height: 19.2px; margin: 0 0 22.4px -19.2px; }
+  .top-actions { margin-left: auto; }
+}
 .top-actions { display: flex; align-items: center; gap: 20px; font-size: 14px; }
 .github-link { display: grid; place-items: center; width: 28px; height: 28px; opacity: .72; transition: opacity .2s ease, transform .2s ease; }
 .github-link svg { width: 18px; height: 18px; fill: currentColor; }
@@ -273,7 +281,7 @@ html[data-scene="3"][data-theme="mist-slate"] .scene-rail button::before { backg
 html[data-scene="3"][data-theme="xuan-stone"] .scene-rail button.is-active::before,
 html[data-scene="3"][data-theme="mist-slate"] .scene-rail button.is-active::before { background: var(--vermilion); }
 
-.giant-webi { position: absolute; z-index: 2; right: -5vw; bottom: -5vh; width: min(42vw, 700px); opacity: .14; filter: brightness(.48) sepia(.3); mix-blend-mode: multiply; }
+.giant-webi { position: absolute; z-index: 2; right: -5vw; bottom: -5vh; width: min(42vw, 700px); height: auto; opacity: .14; filter: brightness(.48) sepia(.3); mix-blend-mode: multiply; }
 .mascot { position: absolute; z-index: 32; width: 250px; height: 250px; object-fit: contain; pointer-events: none; }
 .mascot-one { left: 5vw; bottom: 1.5vh; }
 .mascot-two { left: 24vw; bottom: -1vh; width: 230px; height: 230px; }
@@ -337,9 +345,9 @@ html[data-scene="4"] body::after { visibility: visible; }
     19%, 100% { opacity: 0; transform: translateY(-12px); }
   }
   @keyframes brand-journey {
-    0%, 12% { transform: translate3d(2.6vw, calc(46vh - 36px), 0) scale(3.2); animation-timing-function: var(--ease-smooth-out); }
-    17% { transform: translate3d(1.45vw, calc(24vh - 20px), 0) scale(2.05); animation-timing-function: var(--ease-smooth-out); }
-    23%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    0%, 12% { transform: translate3d(2.6vw, calc(46vh - 36px), 0) scale(1); animation-timing-function: var(--ease-smooth-out); }
+    17% { transform: translate3d(1.45vw, calc(24vh - 20px), 0) scale(.640625); animation-timing-function: var(--ease-smooth-out); }
+    23%, 100% { transform: translate3d(0, 0, 0) scale(.3125); }
   }
 
   @keyframes stage-journey {
@@ -365,7 +373,7 @@ html[data-scene="4"] body::after { visibility: visible; }
 
 @supports not (animation-timeline: scroll()) {
   .journey-stage { transition: transform .8s cubic-bezier(.16,1,.3,1); }
-  html[data-scene="1"] .compact-brand { transform: translate3d(2.6vw, calc(46vh - 36px), 0) scale(3.2); }
+  html[data-scene="1"] .compact-brand { transform: translate3d(2.6vw, calc(46vh - 36px), 0) scale(1); }
   html:not([data-scene="1"]) .hero-tagline { opacity: 0; transform: translateY(-12px); }
   html[data-scene="2"] .journey-stage { transform: translate3d(-50%, calc(-50% - 1vh), 0) scale(.88) rotate(.5deg); }
   html[data-scene="3"] .journey-stage { transform: translate3d(-50%, -50%, 0) scale(.98) rotate(0deg); }
@@ -491,7 +499,7 @@ html[data-scene="4"] body::after { visibility: visible; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   .journey-stage { animation: none !important; }
-  html[data-scene="1"] .compact-brand { transform: translate3d(2.6vw, calc(46vh - 36px), 0) scale(3.2); }
+  html[data-scene="1"] .compact-brand { transform: translate3d(2.6vw, calc(46vh - 36px), 0) scale(1); }
   html[data-scene="2"] .journey-stage { transform: translate3d(-50%, calc(-50% - 1vh), 0) scale(.88) rotate(.5deg); }
   html[data-scene="3"] .journey-stage { transform: translate3d(-50%, -50%, 0) scale(.98) rotate(0deg); }
   html[data-scene="4"] .journey-stage { transform: translate3d(-50%, -50%, 0) scale(.98); }
