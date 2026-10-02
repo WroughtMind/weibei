@@ -15,6 +15,7 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-failure.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/confirmed-import.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
     [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
@@ -67,6 +68,7 @@ verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')
 expected_business_checks = {
+    'confirmed_import_review_copy_and_dismiss',
     'conversation_appearance_and_scale_after_resize',
     'divider_batches_widths_and_reflows_during_drag',
     'divider_interface_language_updates',
@@ -94,7 +96,7 @@ assert set(business['checks']) == expected_business_checks, business
 assert business['checks'].get('divider_interface_language_updates') == 'passed', business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
-for filename in ['selection-composers.png', 'selection-discussion.png', 'reasoning-composer.png']:
+for filename in ['selection-composers.png', 'selection-discussion.png', 'confirmed-import.png', 'reasoning-composer.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
 print('14 项会话检查与 22 项业务保存重开检查通过；含原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。')
 
