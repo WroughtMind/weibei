@@ -294,6 +294,9 @@ final class LibraryDrawerState: ObservableObject {
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
     @Published var selectedItemID: String? {
+        willSet {
+            if selectedItemID != newValue { commitCurrentReaderLocation() }
+        }
         didSet {
             if materialPickerPresented { materialPickerPresented = false }
             if oldValue != selectedItemID { clearAutomaticSelectionAttachment() }
@@ -321,7 +324,11 @@ final class WorkspaceStore: ObservableObject {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
         }
     }
-    @Published var activeCourseID: UUID?
+    @Published var activeCourseID: UUID? {
+        willSet {
+            if activeCourseID != newValue { commitCurrentReaderLocation() }
+        }
+    }
     @Published var noteText = ""
     @Published var noteEditorRecoveryConflictsByItemID: [String: NoteEditorRecoveryConflict] = [:]
     var noteEditorConflictProbeDocumentID: String?
@@ -510,6 +517,7 @@ final class WorkspaceStore: ObservableObject {
     private var readerLocationIDValue: String?
     private var readerLocationTitleValue: String?
     private var readerPageIndexValue = 0
+    private var readerPageIndexNeedsCommit = false
     var readerLocationID: String? {
         get { readerLocationIDValue }
         set {
@@ -543,7 +551,8 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published var readerTargetPageIndex: Int?
     @Published private(set) var readerTargetPageRequestID = UUID()
-    @Published private(set) var readerTargetPageRecordsLocation = false
+    @Published private(set) var readerTargetPageMaterialID: String?
+    @Published private(set) var readerTargetPageDocumentURL: URL?
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
     @Published private(set) var readerTargetLocationRequestID = UUID()
@@ -1984,7 +1993,7 @@ final class WorkspaceStore: ObservableObject {
             focus(.notes)
             return
         }
-        requestReaderPDFPage(location.pageIndex, recordsLocation: false)
+        requestReaderPDFPage(location.pageIndex)
         requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         showReader = true
         focus(.reader)
@@ -3207,7 +3216,7 @@ final class WorkspaceStore: ObservableObject {
             guard let locationTitle = readerLocationTitle,
                   locationTitle != itemTitle else { return itemTitle }
             if let locationID = readerLocationID,
-               locationID.hasPrefix("html-section-") {
+               locationID.hasPrefix("html-section-") || locationID.hasPrefix("html-block-") {
                 return ui(
                     "\(itemTitle)，章节标识：\(locationID)，章节：\(locationTitle)",
                     "\(itemTitle), section id: \(locationID), section: \(locationTitle)"
@@ -3224,7 +3233,13 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             return ui("\(itemTitle)，章节：\(locationTitle)", "\(itemTitle), section: \(locationTitle)")
-        case .markdown, .text:
+        case .markdown:
+            guard let locationID = readerLocationID else { return itemTitle }
+            return ui(
+                "\(itemTitle)，章节标识：\(locationID)，章节：\(readerLocationTitle ?? itemTitle)",
+                "\(itemTitle), section id: \(locationID), section: \(readerLocationTitle ?? itemTitle)"
+            )
+        case .text:
             return itemTitle
         }
     }
@@ -3934,7 +3949,7 @@ final class WorkspaceStore: ObservableObject {
             readerSourceHighlightPageIndex = nil
             readerPageIndex = 0
             readerLocationID = nil
-            requestReaderPDFPage(nil, recordsLocation: false)
+            requestReaderPDFPage(nil)
             readerTargetLocationID = nil
             readerTargetLocationTitle = nil
         }
@@ -3943,6 +3958,7 @@ final class WorkspaceStore: ObservableObject {
             restoreCurrentStudyLocation()
         } else if let item = selectedMaterialItem,
                   courseMembershipIndex.courseIDs(for: item.id).count > 1 {
+            commitCurrentReaderLocation()
             restoreCurrentStudyLocation()
         } else if readerLocationTitle == nil {
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
@@ -4413,8 +4429,9 @@ final class WorkspaceStore: ObservableObject {
                 readerLocationID = location.locationID
                 readerLocationTitle = location.locationTitle ?? location.itemTitle
                 if selectedMaterialItem?.kind == .pdf {
-                    requestReaderPDFPage(location.pageIndex, recordsLocation: false)
-                } else if selectedMaterialItem?.kind.isWebDocument == true {
+                    requestReaderPDFPage(location.pageIndex)
+                } else if let kind = selectedMaterialItem?.kind,
+                          kind.isWebDocument || kind == .markdown {
                     requestReaderHTMLLocation(
                         id: location.locationID,
                         title: location.locationTitle
@@ -5007,7 +5024,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateReaderHTMLLocation(id: String?, title: String?, reason: String) {
-        guard selectedMaterialItem?.kind.isWebDocument == true else { return }
+        guard let kind = selectedMaterialItem?.kind,
+              kind.isWebDocument || kind == .markdown else { return }
         let cleanedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextID = cleanedID.isEmpty ? nil : String(cleanedID.prefix(500))
@@ -5046,32 +5064,71 @@ final class WorkspaceStore: ObservableObject {
         readerTargetLocationTitle = nil
     }
 
-    private func requestReaderPDFPage(_ pageIndex: Int?, recordsLocation: Bool) {
-        readerTargetPageRecordsLocation = recordsLocation && pageIndex != nil
-        readerTargetPageIndex = pageIndex.map { max($0, 0) }
+    func consumeReaderHTMLLocationRequest(_ requestID: UUID) {
+        guard readerTargetLocationRequestID == requestID,
+              readerTargetLocationID != nil || readerTargetLocationTitle != nil else { return }
+        clearReaderHTMLLocationTarget()
+    }
+
+    func failReaderHTMLLocationRequest(
+        _ requestID: UUID,
+        visibleID: String?,
+        visibleTitle: String?
+    ) {
+        guard readerTargetLocationRequestID == requestID,
+              readerTargetLocationID != nil || readerTargetLocationTitle != nil else { return }
+        clearReaderHTMLLocationTarget()
+        updateReaderHTMLLocation(
+            id: visibleID,
+            title: visibleTitle,
+            reason: "restore-fallback"
+        )
+    }
+
+    func cancelReaderHTMLLocationTarget() {
+        clearReaderHTMLLocationTarget()
+    }
+
+    private func requestReaderPDFPage(_ pageIndex: Int?) {
+        let targetPageIndex = pageIndex.map { max($0, 0) }
+        if targetPageIndex != nil,
+           let item = selectedMaterialItem,
+           item.kind == .pdf,
+           let url = item.url {
+            readerTargetPageMaterialID = item.id
+            readerTargetPageDocumentURL = url.standardizedFileURL
+        } else {
+            readerTargetPageMaterialID = nil
+            readerTargetPageDocumentURL = nil
+        }
         readerTargetPageRequestID = UUID()
+        readerTargetPageIndex = targetPageIndex
     }
 
     func consumeReaderPDFPageRequest(_ requestID: UUID) {
         guard readerTargetPageRequestID == requestID else { return }
+        readerTargetPageMaterialID = nil
+        readerTargetPageDocumentURL = nil
         readerTargetPageIndex = nil
-        readerTargetPageRecordsLocation = false
     }
 
-    func updateReaderPageIndex(_ index: Int, publishesUI: Bool = false) {
+    func updateReaderPageIndex(_ index: Int) {
         let nextIndex = max(index, 0)
         guard readerPageIndex != nextIndex else { return }
-        // Continuous PDF scroll uses publishesUI=false so agent chat WKWebViews
-        // are not remasured on every page crossing (same hang class as HTML scroll).
-        if publishesUI {
-            readerPageIndex = nextIndex
-            recordCurrentStudyLocation(incrementVisit: false)
-        } else {
-            suppressReaderViewportPublish = true
-            readerPageIndex = nextIndex
-            suppressReaderViewportPublish = false
-            recordCurrentStudyLocation(incrementVisit: false, schedulesSave: false)
-        }
+        // Keep the visible page live for questions without publishing the whole
+        // workspace tree or turning every scroll crossing into a study record.
+        suppressReaderViewportPublish = true
+        readerPageIndex = nextIndex
+        suppressReaderViewportPublish = false
+        readerPageIndexNeedsCommit = true
+    }
+
+    /// Study progress is committed only when leaving the current reading context.
+    /// The caller that switches context or exits owns the following workspace save.
+    func commitCurrentReaderLocation() {
+        guard readerPageIndexNeedsCommit else { return }
+        recordCurrentStudyLocation(incrementVisit: false, schedulesSave: false)
+        readerPageIndexNeedsCommit = false
     }
 
     private func recordCurrentStudyLocation(incrementVisit: Bool, schedulesSave: Bool = true) {
@@ -5083,7 +5140,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let previous = studyLocation(for: item.id, in: activeCourseID)
         let itemTitle = sourceReferenceBaseTitle(for: item)
-        let locationID = item.kind.isWebDocument ? readerLocationID : nil
+        let locationID = item.kind.isWebDocument || item.kind == .markdown ? readerLocationID : nil
         let pageIndex = item.kind == .pdf ? readerPageIndex : nil
         let locationChanged = incrementVisit
             || previous?.itemTitle != itemTitle
@@ -5139,16 +5196,16 @@ final class WorkspaceStore: ObservableObject {
             readerLocationID = nil
             readerLocationTitle = displayTitle(for: item)
             readerPageIndex = 0
-            requestReaderPDFPage(nil, recordsLocation: false)
+            requestReaderPDFPage(nil)
             clearReaderHTMLLocationTarget()
             return
         }
-        readerLocationID = item.kind.isWebDocument ? location.locationID : nil
+        readerLocationID = item.kind.isWebDocument || item.kind == .markdown ? location.locationID : nil
         readerLocationTitle = location.locationTitle ?? displayTitle(for: item)
         if item.kind == .pdf {
             readerPageIndex = max(location.pageIndex ?? 0, 0)
-            requestReaderPDFPage(location.pageIndex, recordsLocation: false)
-        } else if item.kind.isWebDocument {
+            requestReaderPDFPage(location.pageIndex)
+        } else if item.kind.isWebDocument || item.kind == .markdown {
             requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         }
     }
@@ -5194,17 +5251,15 @@ final class WorkspaceStore: ObservableObject {
             return true
         }
         showReader = true
-        requestReaderPDFPage(
-            item.kind == .pdf ? reference.pageIndex : nil,
-            recordsLocation: item.kind == .pdf && reference.pageIndex != nil
-        )
-        let htmlTargetID = item.kind.isWebDocument
+        requestReaderPDFPage(item.kind == .pdf ? reference.pageIndex : nil)
+        let supportsSectionLocation = item.kind.isWebDocument || item.kind == .markdown
+        let htmlTargetID = supportsSectionLocation
             ? reference.sectionLocationID
                 ?? (item.kind == .html ? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind.isWebDocument ? reference.sectionTitle : nil
+            title: supportsSectionLocation ? reference.sectionTitle : nil
         )
         focus(.reader)
         return true
@@ -5272,17 +5327,15 @@ final class WorkspaceStore: ObservableObject {
             return false
         }
 
-        requestReaderPDFPage(
-            item.kind == .pdf ? source.pageIndex : nil,
-            recordsLocation: item.kind == .pdf && source.pageIndex != nil
-        )
-        let htmlTargetID = item.kind.isWebDocument
+        requestReaderPDFPage(item.kind == .pdf ? source.pageIndex : nil)
+        let supportsSectionLocation = item.kind.isWebDocument || item.kind == .markdown
+        let htmlTargetID = supportsSectionLocation
             ? source.sectionLocationID
                 ?? (item.kind == .html ? source.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind.isWebDocument ? source.sectionTitle : nil
+            title: supportsSectionLocation ? source.sectionTitle : nil
         )
         readerSourceHighlight = source.highlightQuery
         readerSourceHighlightPageIndex = item.kind == .pdf ? source.pageIndex : nil
@@ -5625,12 +5678,14 @@ final class WorkspaceStore: ObservableObject {
         threePaneOrder = WorkspacePaneRole.normalized(snapshot.threePaneOrder)
         noteText = noteText(for: activeNoteItem)
         requestReaderPDFPage(
-            selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil,
-            recordsLocation: false
+            selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
         )
+        let supportsSectionLocation = selectedMaterialItem.map {
+            $0.kind.isWebDocument || $0.kind == .markdown
+        } ?? false
         requestReaderHTMLLocation(
-            id: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationID : nil,
-            title: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationTitle : nil
+            id: supportsSectionLocation ? snapshot.readerLocationID : nil,
+            title: supportsSectionLocation ? snapshot.readerLocationTitle : nil
         )
         latestAgentLearningUpdate = nil
         syncActiveStudySession()

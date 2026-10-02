@@ -7,6 +7,172 @@ import WeiBeiCore
 
 final class SelectionExperienceTests: XCTestCase {
     @MainActor
+    func testMarkdownReadingLocationReachesQuestionAndRestoresAfterReselect() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let markdown = StudyItem(id: "markdown-location", title: "无标题文稿", subtitle: "", kind: .markdown, urlPath: nil, isSample: false)
+        let next = StudyItem(id: "next-markdown", title: "下一份文稿", subtitle: "", kind: .markdown, urlPath: nil, isSample: false)
+        store.importedItems = [markdown, next]
+        store.select(itemID: markdown.id)
+
+        store.updateReaderHTMLLocation(id: "markdown-block-7", title: "第八段的短摘录", reason: "scroll")
+        let source = SourceReferenceTitle.parse(store.currentSourceReferenceTitle)
+        XCTAssertEqual(source.sectionLocationID, "markdown-block-7")
+        XCTAssertEqual(source.sectionTitle, "第八段的短摘录")
+        XCTAssertEqual(store.studyLocation(for: markdown.id)?.locationID, "markdown-block-7")
+
+        store.select(itemID: next.id)
+        store.select(itemID: markdown.id)
+        XCTAssertEqual(store.readerLocationID, "markdown-block-7")
+        XCTAssertEqual(store.readerTargetLocationID, "markdown-block-7")
+        let restoredRequestID = store.readerTargetLocationRequestID
+
+        store.updateReaderHTMLLocation(id: "markdown-block-7", title: "第八段更新后的标题", reason: "scroll")
+        store.consumeReaderHTMLLocationRequest(restoredRequestID)
+        XCTAssertNil(store.readerTargetLocationID)
+        XCTAssertNil(store.readerTargetLocationTitle)
+        XCTAssertEqual(store.readerLocationID, "markdown-block-7")
+        XCTAssertEqual(store.readerLocationTitle, "第八段更新后的标题")
+        XCTAssertEqual(SourceReferenceTitle.parse(store.currentSourceReferenceTitle).sectionTitle, "第八段更新后的标题")
+
+        store.select(itemID: next.id)
+        store.select(itemID: markdown.id)
+        let nextRequestID = store.readerTargetLocationRequestID
+        XCTAssertNotEqual(nextRequestID, restoredRequestID)
+        store.consumeReaderHTMLLocationRequest(restoredRequestID)
+        XCTAssertEqual(store.readerTargetLocationID, "markdown-block-7")
+        XCTAssertEqual(store.readerTargetLocationTitle, "第八段更新后的标题")
+        XCTAssertEqual(store.readerTargetLocationRequestID, nextRequestID)
+    }
+
+    @MainActor
+    func testFailedWebDocumentRestoreAdoptsVisibleLocationAndRejectsStaleCallback() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let document = StudyItem(id: "word-location", title: "课堂讲义", subtitle: "", kind: .docx, urlPath: nil, isSample: false)
+        let next = StudyItem(id: "next-word", title: "下一份讲义", subtitle: "", kind: .docx, urlPath: nil, isSample: false)
+        store.importedItems = [document, next]
+        store.select(itemID: document.id)
+        store.updateReaderHTMLLocation(id: "word/document.xml#p8", title: "第 9 段", reason: "scroll")
+        store.select(itemID: next.id)
+        store.select(itemID: document.id)
+        let failedRequestID = store.readerTargetLocationRequestID
+
+        store.failReaderHTMLLocationRequest(
+            failedRequestID,
+            visibleID: "word/document.xml#p2",
+            visibleTitle: "第 3 段"
+        )
+
+        XCTAssertNil(store.readerTargetLocationID)
+        XCTAssertNil(store.readerTargetLocationTitle)
+        XCTAssertEqual(store.readerLocationID, "word/document.xml#p2")
+        XCTAssertEqual(store.readerLocationTitle, "第 3 段")
+        XCTAssertEqual(store.studyLocation(for: document.id)?.locationID, "word/document.xml#p2")
+        XCTAssertEqual(SourceReferenceTitle.parse(store.currentSourceReferenceTitle).sectionLocationID, "word/document.xml#p2")
+
+        store.select(itemID: next.id)
+        store.select(itemID: document.id)
+        let nextRequestID = store.readerTargetLocationRequestID
+        store.failReaderHTMLLocationRequest(
+            failedRequestID,
+            visibleID: "word/document.xml#p0",
+            visibleTitle: "第 1 段"
+        )
+        XCTAssertEqual(store.readerTargetLocationID, "word/document.xml#p2")
+        XCTAssertEqual(store.readerTargetLocationRequestID, nextRequestID)
+    }
+
+    @MainActor
+    func testQuestionUsesVisiblePDFPageBeforeSwitchCommitsResumePoint() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let material = StudyItem(id: "pdf-location", title: "阅读材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        let nextMaterial = StudyItem(id: "next-pdf", title: "下一份材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        store.importedItems = [material, nextMaterial]
+        store.select(itemID: material.id)
+        store.updateReaderPageIndex(64)
+        store.commitCurrentReaderLocation()
+
+        store.updateReaderPageIndex(89)
+        XCTAssertEqual(SourceReferenceTitle.parse(store.currentSourceReferenceTitle).pageIndex, 89)
+        XCTAssertEqual(store.studyLocation(for: material.id)?.pageIndex, 64)
+
+        store.select(itemID: nextMaterial.id)
+        XCTAssertEqual(store.studyLocation(for: material.id)?.pageIndex, 89)
+    }
+
+    @MainActor
+    func testCourseSwitchCommitsPDFPageOnlyToTheCourseBeingLeft() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let courseA = Course(id: UUID(), title: "课程 A")
+        let courseB = Course(id: UUID(), title: "课程 B")
+        let material = StudyItem(id: "shared-pdf", title: "共用材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        store.importedItems = [material]
+        store.courses = [courseA, courseB]
+        store.courseItemMemberships = [
+            CourseItemMembership(courseID: courseA.id, itemID: material.id),
+            CourseItemMembership(courseID: courseB.id, itemID: material.id),
+        ]
+        store.activeCourseID = courseA.id
+        store.select(itemID: material.id)
+
+        store.updateReaderPageIndex(41)
+        store.activateCourse(courseB.id)
+
+        XCTAssertEqual(store.studyLocation(for: material.id, in: courseA.id)?.pageIndex, 41)
+        XCTAssertNil(store.studyLocation(for: material.id, in: courseB.id))
+    }
+
+    @MainActor
+    func testReselectingSharedPDFKeepsAndCommitsVisiblePage() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let courseA = Course(id: UUID(), title: "课程 A")
+        let courseB = Course(id: UUID(), title: "课程 B")
+        let material = StudyItem(id: "shared-pdf", title: "共用材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        store.importedItems = [material]
+        store.courses = [courseA, courseB]
+        store.courseItemMemberships = [
+            CourseItemMembership(courseID: courseA.id, itemID: material.id),
+            CourseItemMembership(courseID: courseB.id, itemID: material.id),
+        ]
+        store.activeCourseID = courseA.id
+        store.select(itemID: material.id)
+        store.updateReaderPageIndex(64)
+        store.commitCurrentReaderLocation()
+        store.updateReaderPageIndex(89)
+
+        store.select(itemID: material.id)
+
+        XCTAssertEqual(store.readerPageIndex, 89)
+        XCTAssertEqual(store.studyLocation(for: material.id, in: courseA.id)?.pageIndex, 89)
+    }
+
+    @MainActor
+    func testExitCommitPersistsVisiblePDFPage() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let material = StudyItem(id: "exit-pdf", title: "退出时材料", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.importedItems = [material]
+        store.select(itemID: material.id)
+        store.updateReaderPageIndex(27)
+
+        store.commitCurrentReaderLocation()
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: false, startsCourseFileMaintenance: false)
+        XCTAssertEqual(reopened.studyLocation(for: material.id)?.pageIndex, 27)
+    }
+
+    @MainActor
     func testClearingReaderSelectionRemovesCapsuleAndAutomaticAttachment() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

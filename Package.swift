@@ -15,6 +15,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/weichsel/ZIPFoundation", exact: "0.9.20"),
+        .package(url: "https://github.com/scinfu/SwiftSoup.git", exact: "2.13.9"),
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
         .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.7.3"),
         .package(url: "https://github.com/WroughtMind/SwiftMath", revision: "b6d15610552aa04a54c36bf205efaf34409dc335")
@@ -22,7 +23,7 @@ let package = Package(
     targets: [
         .target(
             name: "WeiBeiCore",
-            dependencies: [.product(name: "Markdown", package: "swift-markdown"), "ZIPFoundation"],
+            dependencies: [.product(name: "Markdown", package: "swift-markdown"), "ZIPFoundation", "SwiftSoup"],
             resources: [
                 .copy("AgentResources")
             ],

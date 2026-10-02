@@ -3549,7 +3549,10 @@ const reportActiveHeading = () => {
   window.cancelAnimationFrame(activeHeadingFrame);
   activeHeadingFrame = window.requestAnimationFrame(() => {
     const headings = headingElements();
-    if (headings.length === 0) {
+    const readingBlocks = headings.length === 0 && !isEditable
+      ? Array.from(document.querySelectorAll<HTMLElement>('.ProseMirror > *'))
+      : headings;
+    if (readingBlocks.length === 0) {
       if (lastActiveHeadingIndex !== -1) {
         lastActiveHeadingIndex = -1;
         post('activeHeadingChanged', { index: null });
@@ -3557,9 +3560,10 @@ const reportActiveHeading = () => {
       return;
     }
     const readingLine = Math.max(0, window.innerHeight * 0.32);
-    let activeIndex = 0;
-    headings.forEach((heading, index) => {
-      if (heading.getBoundingClientRect().top <= readingLine) activeIndex = index;
+    let activeIndex = headings.length > 0 && !isEditable
+      && headings[0].getBoundingClientRect().top > readingLine ? -1 : 0;
+    readingBlocks.forEach((block, index) => {
+      if (block.getBoundingClientRect().top <= readingLine) activeIndex = index;
     });
     if (activeIndex === lastActiveHeadingIndex) return;
     lastActiveHeadingIndex = activeIndex;
@@ -3569,11 +3573,19 @@ const reportActiveHeading = () => {
 
 const scrollToHeadingInternal = (rawIndex: any) => {
   const index = Number(rawIndex);
+  if (index === -1 && !isEditable) {
+    window.scrollTo({ top: 0, behavior: isEditorReduceMotion() ? 'auto' : 'smooth' });
+    window.setTimeout(reportActiveHeading, isEditorReduceMotion() ? 0 : 180);
+    return true;
+  }
   const headings = headingElements();
-  const heading = Number.isFinite(index) ? headings[Math.max(0, Math.floor(index))] : null;
-  if (!heading) return false;
+  const readingBlocks = headings.length === 0 && !isEditable
+    ? Array.from(document.querySelectorAll<HTMLElement>('.ProseMirror > *'))
+    : headings;
+  const block = Number.isFinite(index) ? readingBlocks[Math.max(0, Math.floor(index))] : null;
+  if (!block) return false;
   const reduceMotion = isEditorReduceMotion();
-  heading.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+  block.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
   if (reduceMotion) {
     // Instant jump settled this frame — report the position immediately;
     // only smooth scrolling needs the delayed report.
