@@ -22,6 +22,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         didSet {
             CatalystInterfaceCopy.language = interfaceLanguage
             latest.accessibilityLabel = interfaceLanguage.text("回到最新消息", "Jump to latest")
+            if isViewLoaded {
+                collection.accessibilityLabel = interfaceLanguage.text("会话消息列表", "Conversation messages")
+            }
         }
     }
     private var loadingSession = false
@@ -98,7 +101,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         collection.register(MessageCell.self, forCellWithReuseIdentifier: "message")
         collection.alwaysBounceVertical = true
         collection.keyboardDismissMode = .none
-        collection.accessibilityLabel = "会话消息列表"
+        collection.accessibilityLabel = interfaceLanguage.text("会话消息列表", "Conversation messages")
         flow.itemHeight = { [weak self] path in self?.itemHeight(at: path) ?? 0 }
         flow.replyStartSection = { [weak self] in
             guard let self, reservesReplySpace else { return nil }
