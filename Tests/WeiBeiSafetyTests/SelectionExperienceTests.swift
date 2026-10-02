@@ -28,9 +28,13 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertEqual(store.readerTargetLocationID, "markdown-block-7")
         let restoredRequestID = store.readerTargetLocationRequestID
 
+        store.updateReaderHTMLLocation(id: "markdown-block-7", title: "第八段更新后的标题", reason: "scroll")
         store.consumeReaderHTMLLocationRequest(restoredRequestID)
         XCTAssertNil(store.readerTargetLocationID)
         XCTAssertNil(store.readerTargetLocationTitle)
+        XCTAssertEqual(store.readerLocationID, "markdown-block-7")
+        XCTAssertEqual(store.readerLocationTitle, "第八段更新后的标题")
+        XCTAssertEqual(SourceReferenceTitle.parse(store.currentSourceReferenceTitle).sectionTitle, "第八段更新后的标题")
 
         store.select(itemID: next.id)
         store.select(itemID: markdown.id)
@@ -38,6 +42,7 @@ final class SelectionExperienceTests: XCTestCase {
         XCTAssertNotEqual(nextRequestID, restoredRequestID)
         store.consumeReaderHTMLLocationRequest(restoredRequestID)
         XCTAssertEqual(store.readerTargetLocationID, "markdown-block-7")
+        XCTAssertEqual(store.readerTargetLocationTitle, "第八段更新后的标题")
         XCTAssertEqual(store.readerTargetLocationRequestID, nextRequestID)
     }
 

@@ -5067,11 +5067,7 @@ final class WorkspaceStore: ObservableObject {
     func consumeReaderHTMLLocationRequest(_ requestID: UUID) {
         guard readerTargetLocationRequestID == requestID,
               readerTargetLocationID != nil || readerTargetLocationTitle != nil else { return }
-        updateReaderHTMLLocation(
-            id: readerTargetLocationID,
-            title: readerTargetLocationTitle,
-            reason: "jump"
-        )
+        clearReaderHTMLLocationTarget()
     }
 
     func failReaderHTMLLocationRequest(
