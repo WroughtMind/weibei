@@ -159,6 +159,15 @@ jobs:
           stdbuf -oL -eL swift test --filter WeiBeiSafetyTests
           WEIBEI_NATIVE_EVAL_EFFORT=high swift run WeiBeiNativeCheck --native-eval-self-check
 
+      - name: 保留合成原生界面回归截图
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-fix-evidence-${{ github.sha }}
+          path: .build/native-fix-evidence
+          retention-days: 2
+          if-no-files-found: ignore
+
       - name: 检查空白与生成文件
         run: |
           git diff --check
@@ -233,7 +242,9 @@ jobs:
       - name: 生成并挂载验收当前架构安装包
         id: package
         if: needs.scope.outputs.release == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: ./script/build_release_dmg.sh --arch "$WEIBEI_TARGET_ARCH"
+        run: |
+          ./script/build_release_dmg.sh --arch "$WEIBEI_TARGET_ARCH"
+          python3 script/check_package_size_policy.py "dist/release/$WEIBEI_TARGET_ARCH/魏碑.app"
 
       - name: 在当前架构的真实 Catalyst 进程检查会话
         id: acceptance

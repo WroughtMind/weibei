@@ -93,6 +93,7 @@ with tempfile.TemporaryDirectory() as directory:
         ('字体工具依赖', ['script/editor-font-requirements.txt'], {'app-check', 'catalyst-check'}),
         ('安装包声明', ['PRIVACY.md'], {'catalyst-check'}),
         ('打包脚本', ['script/build_release_dmg.sh'], {'catalyst-check'}),
+        ('安装包体积政策回归', ['script/check_package_size_policy.py'], {'catalyst-check'}),
         ('会话验收脚本', ['App/script/check-ci.sh'], {'catalyst-check'}),
         ('图标生成工具', ['DesignSystem/scripts/build-icns.ts'], {'tools-check', 'catalyst-check'}),
         ('依赖清单', ['package.json'], {'tools-check', 'app-check', 'catalyst-check'}),

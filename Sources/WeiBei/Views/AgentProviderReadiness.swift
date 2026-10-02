@@ -60,7 +60,10 @@ enum AgentProviderReadiness {
         return isStored && oauth.catalog?.credentials.contains(where: {
             $0.providerId == AgentProviderID.azureOpenAI.credentialProviderID
                 && $0.type == .apiKey
-                && $0.boundEndpoint == endpoint.baseURL
+                && endpoint.matchesCredentialBinding(
+                    for: .azureOpenAI,
+                    boundEndpoint: $0.boundEndpoint
+                )
         }) == true
     }
 

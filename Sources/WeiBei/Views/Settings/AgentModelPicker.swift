@@ -46,11 +46,17 @@ extension SettingsView {
     }
 
     private var effectiveModelEntries: [String] {
+        oauthService.models(provider: store.agentProviderID)
+    }
+
+    var selectedModelIsMissing: Bool {
+        store.modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var selectedModelIsUnavailable: Bool {
         let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        var entries = oauthService.models(provider: store.agentProviderID)
-        if !current.isEmpty, !entries.contains(current) {
-            entries.insert(current, at: 0)
-        }
-        return entries
+        return !current.isEmpty
+            && oauthService.hasLoadedModels(provider: store.agentProviderID)
+            && !effectiveModelEntries.contains(current)
     }
 }
