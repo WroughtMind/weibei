@@ -4,6 +4,8 @@ set -euo pipefail
 [[ "${CI:-}" == true ]] || { echo '本机候选请在画中画验收。' >&2; exit 1; }
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+python3 App/script/business-server.test.py
+node --test App/script/floating-label-check.test.mjs App/script/mermaid-measurement-observer.test.mjs App/script/mermaid-mounted-label-geometry.test.mjs
 CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-business-ci.XXXXXX")"
 python3 App/script/business-server.py --output "$CHECK_DIR" > "$CHECK_DIR/server.log" 2>&1 &
 server_pid=$!
@@ -15,6 +17,8 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-failure.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-rich-answer-11pt.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/floating-rich-diagnostic.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
     [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
@@ -66,37 +70,32 @@ launch('--exit-after-check')
 verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')
-expected_business_checks = {
-    'conversation_appearance_and_scale_after_resize',
+required_business_checks = {
+    'reopen_original_note_and_session_files', 'mac_idiom_and_isolated_storage',
+    'original_update_service_through_native_bridge', 'native_workspace_toolbar_controls',
+    'signed_native_window_material', 'original_import_reader_and_editor',
+    'original_editor_snapshot_and_note_write_gate', 'signed_bounded_pdf_worker',
+    'waiting_status_not_clipped', 'return_clears_original_composer',
+    'status_disappears_at_first_text', 'original_http_agent_tools_and_uikit_stream',
+    'original_source_navigation', 'original_attachment_loader',
+    'image_mounted_in_visible_message', 'original_answer_to_note',
+    'selection_chat_composers_and_citation', 'stop_preserves_received_text',
     'divider_batches_widths_and_reflows_during_drag',
-    'divider_interface_language_updates',
+    'conversation_appearance_and_scale_after_resize',
     'history_and_long_answer_through_original_messages',
-    'image_mounted_in_visible_message',
-    'mac_idiom_and_isolated_storage',
-    'native_workspace_toolbar_controls',
-    'original_answer_to_note',
-    'original_attachment_loader',
-    'original_editor_snapshot_and_note_write_gate',
-    'original_http_agent_tools_and_uikit_stream',
-    'original_import_reader_and_editor',
-    'original_source_navigation',
-    'original_update_service_through_native_bridge',
-    'reopen_original_note_and_session_files',
-    'return_clears_original_composer',
-    'selection_chat_composers_and_citation',
-    'signed_bounded_pdf_worker',
-    'signed_native_window_material',
-    'status_disappears_at_first_text',
-    'stop_preserves_received_text',
-    'waiting_status_not_clipped',
+    'floating_11pt_math_diagram_and_layout',
+    'divider_interface_language_updates',
 }
-assert set(business['checks']) == expected_business_checks, business
-assert business['checks'].get('divider_interface_language_updates') == 'passed', business
+# Require all baseline, floating, and interface-language gates; verify() above
+# rejects failures in additional gates as well.
+assert required_business_checks <= business['checks'].keys(), business
+assert business['floating_rich_answer']['body_font_size_pt'] == 11, business
+assert business['floating_rich_answer']['math_images'] == 2, business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
-for filename in ['selection-composers.png', 'selection-discussion.png', 'reasoning-composer.png']:
+for filename in ['selection-composers.png', 'selection-discussion.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
-print('14 项会话检查与 22 项业务保存重开检查通过；含原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。')
+print(f"14 项会话检查与 {len(business['checks'])} 项原业务保存重开检查通过；含浮窗 11pt 公式与图示、原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。")
 
 with tempfile.TemporaryDirectory(prefix='weibei-quit-check-') as scratch:
     helper = str(Path(scratch) / 'quit')

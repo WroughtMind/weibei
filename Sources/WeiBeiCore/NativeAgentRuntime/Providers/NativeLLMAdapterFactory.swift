@@ -156,8 +156,11 @@ public enum NativeLLMAdapterFactory {
             }
             return record?.accessToken
         }
-        if let store { return try store.load()[endpoint.credentialProviderID]?.apiKey }
-        return try NativeAgentCredentialStore.apiKey(forProviderID: endpoint.credentialProviderID)
+        let store = try store ?? NativeAgentCredentialStore.defaultStore()
+        return try store.load()[endpoint.credentialProviderID]?.apiKey(
+            for: provider,
+            endpoint: endpoint
+        )
     }
 
 }

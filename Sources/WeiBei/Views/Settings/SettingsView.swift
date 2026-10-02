@@ -143,9 +143,6 @@ struct SettingsView: View {
                 provider: provider,
                 authMethod: .subscription
             )
-            if let firstModel = oauthService.models(provider: provider).first {
-                store.updateModelName(firstModel)
-            }
             oauthService.refreshCatalog()
             oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
@@ -160,12 +157,6 @@ struct SettingsView: View {
             oauthService.refreshCatalog()
             oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
-        .onChange(of: oauthService.catalog) { _, _ in
-            fillModelIfEmpty()
-        }
-        .onChange(of: oauthService.liveModelIDs) { _, _ in
-            fillModelIfEmpty()
-        }
         .onChange(of: store.agentBaseURL) { _, _ in
             oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
         }
@@ -174,16 +165,6 @@ struct SettingsView: View {
         }
         .onChange(of: store.activeAgentProfileID) { _, _ in
             oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
-        }
-    }
-
-    private func fillModelIfEmpty() {
-        let models = oauthService.models(provider: store.agentProviderID)
-        let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let firstModel = models.first,
-           !models.contains(current),
-           current.isEmpty {
-            store.updateModelName(firstModel)
         }
     }
 

@@ -151,9 +151,11 @@ public actor AgentModelListService {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ModelListError.decoding("missing models array")
         }
-        let ids = Self.publisherModelIDs(object["publisherModels"] ?? object["models"])
-        guard !ids.isEmpty else { throw ModelListError.decoding("missing models array") }
-        return ids
+        guard let rawModels = object["publisherModels"] ?? object["models"],
+              rawModels is [Any] else {
+            throw ModelListError.decoding("missing models array")
+        }
+        return Self.publisherModelIDs(rawModels)
     }
 
     /// ChatGPT/Codex subscription catalog. Mirrors the Codex backend's own model
@@ -203,7 +205,6 @@ public actor AgentModelListService {
             throw ModelListError.decoding("missing models array")
         }
         let catalog = Self.codexModels(models)
-        guard !catalog.isEmpty else { throw ModelListError.decoding("no supported models") }
         codexCatalogs = codexCatalogs.filter { Date().timeIntervalSince($0.value.0) < 300 }
         codexCatalogs[cacheKey] = (Date(), catalog)
         return catalog
@@ -249,7 +250,8 @@ public actor AgentModelListService {
     ) async throws -> [String] {
         let data = try await perform(request: request)
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let raw = object[dataKey] else {
+              let raw = object[dataKey],
+              raw is [Any] else {
             throw ModelListError.decoding("missing data array")
         }
         return Self.coerceModelIDs(raw, stripPrefix: stripPrefix)
@@ -304,10 +306,10 @@ public actor AgentModelListService {
 
     static func coerceModelIDs(_ raw: Any?, stripPrefix: String?) -> [String] {
         let ids: [String]
-        if let array = raw as? [Any] {
-            ids = array.compactMap { ($0 as? [String: Any])?["id"] as? String }
-        } else if let strings = raw as? [String] {
+        if let strings = raw as? [String] {
             ids = strings
+        } else if let array = raw as? [Any] {
+            ids = array.compactMap { ($0 as? [String: Any])?["id"] as? String }
         } else {
             return []
         }

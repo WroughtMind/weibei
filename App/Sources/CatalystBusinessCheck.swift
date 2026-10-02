@@ -3,6 +3,8 @@ import UIKit
 import SwiftUI
 import WebKit
 import WeiBeiCore
+import MarkdownView
+import Litext
 
 /// One isolated product round trip through the production store, HTTP client,
 /// editor bridge and write gate. Enabled only in the separately identified check App.
@@ -15,6 +17,82 @@ enum CatalystBusinessCheck {
     }
     private static let finalMarker = "【候选真实业务链路结束】"
     private static let noteMarker = "编辑器输入、保存与重开验证：中文 café 👩🏽‍💻。"
+    private static let floatingBodyMarker = "WB514_FLOATING_BODY"
+    // Executed against the actual mounted GenUI DOM. Diagnostics contain only
+    // the synthetic labels, geometry and effective fonts, never the SVG CSS.
+    private static let floatingDiagramCheckScript = #"""
+    (() => {
+      const root = document.querySelector('#genui-content');
+      const svg = root?.querySelector('svg');
+      const result = {ok: false, stage: 'diagram_root_missing', labels: []};
+      if (!root) return result;
+      if (!svg) { result.stage = 'diagram_svg_missing'; return result; }
+      const rect = svg.getBoundingClientRect();
+      const pack = r => [r.left, r.top, r.width, r.height].map(v => Math.round(v * 100) / 100);
+      result.width = rect.width; result.height = rect.height;
+      result.svg_rect = pack(rect);
+      result.observed_labels = Array.from(svg.querySelectorAll('.nodeLabel'))
+        .slice(0, 4).map(label => label.textContent.trim().slice(0, 32));
+      if (root.querySelector('[data-genui-error]')) { result.stage = 'diagram_render_error'; return result; }
+      const text = svg.textContent || '';
+      if (!text.includes('WB514_START') || !text.includes('WB514_END') || root.textContent.includes('graph LR')) {
+        result.stage = 'diagram_labels_or_raw_source'; return result;
+      }
+      if (rect.width <= 0 || rect.height <= 0 || rect.left < -1 || rect.right > innerWidth + 1 || rect.top < -1 || rect.bottom > innerHeight + 1) {
+        result.stage = 'diagram_svg_bounds'; return result;
+      }
+      const fits = (r, b, x, y) => (!x || (r.left >= b.left - 1 && r.right <= b.right + 1))
+        && (!y || (r.top >= b.top - 1 && r.bottom <= b.bottom + 1));
+      const clips = value => ['hidden', 'clip', 'scroll', 'auto', 'overlay'].includes(value);
+      const labels = Array.from(svg.querySelectorAll('.nodeLabel'));
+      const inspectLabel = expected => {
+        const matches = labels.filter(label => label.textContent.trim() === expected);
+        const observed = {text: expected, matches: matches.length, visible: false};
+        const fail = stage => { observed.stage = stage; return observed; };
+        if (matches.length !== 1) return fail('diagram_label_count');
+        const label = matches[0];
+        const font = getComputedStyle(label);
+        observed.font = {family: font.fontFamily.slice(0, 96), size: font.fontSize, line_height: font.lineHeight};
+        const foreign = label.closest('foreignObject');
+        if (!foreign) return fail('diagram_label_foreign_object_missing');
+        const bounds = foreign.getBoundingClientRect();
+        observed.foreign_rect = pack(bounds);
+        observed.foreign_size = [foreign.getAttribute('width'), foreign.getAttribute('height')];
+        const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+        const ranges = [];
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (!node.textContent.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          ranges.push(...Array.from(range.getClientRects()).filter(r => r.width > 0 && r.height > 0));
+        }
+        observed.text_rects = ranges.map(pack);
+        observed.label_width = [label.clientWidth, label.scrollWidth];
+        if (!ranges.length) return fail('diagram_label_text_empty');
+        if (!ranges.every(r => fits(r, bounds, true, true))) {
+          return fail('diagram_label_foreign_object_clip');
+        }
+        observed.clips = [];
+        for (let parent = label; parent && root.contains(parent); parent = parent.parentElement) {
+          const style = getComputedStyle(parent);
+          const clipX = clips(style.overflowX), clipY = clips(style.overflowY);
+          if (!clipX && !clipY) continue;
+          const parentBounds = parent.getBoundingClientRect();
+          const visible = ranges.every(r => fits(r, parentBounds, clipX, clipY));
+          observed.clips.push({tag: parent.localName, rect: pack(parentBounds),
+            x: style.overflowX, y: style.overflowY, visible});
+          if (!visible) return fail('diagram_label_ancestor_clip');
+        }
+        observed.visible = true; observed.stage = 'passed';
+        return observed;
+      };
+      result.labels = ['WB514_START', 'WB514_END'].map(inspectLabel);
+      const failed = result.labels.find(label => !label.visible);
+      if (failed) { result.stage = failed.stage; return result; }
+      result.ok = true; result.stage = 'passed';
+      return result;
+    })()
+    """#
 
     /// Real Quit while a confirmed action is in flight must save both the note and
     /// its executed state. The gate exists only in the isolated acceptance App.
@@ -524,8 +602,9 @@ enum CatalystBusinessCheck {
             store.flushPendingNotePersistence(flushWorkspace: false)
             try check("original_answer_to_note", (try String(contentsOf: persistedNote, encoding: .utf8)).contains(finalMarker))
 
-            try await verifySelectionChat(store, material: material, mainComposer: composer, mainConversation: controller)
+            result["floating_rich_answer"] = try await verifySelectionChat(store, material: material, mainComposer: composer, mainConversation: controller)
             try check("selection_chat_composers_and_citation", true)
+            try check("floating_11pt_math_diagram_and_layout", true)
 
             store.agentDraft = "WB452_STOP：持续输出，检查停止时保留已收到正文。"
             store.pendingComposerDraft = store.agentDraft
@@ -602,7 +681,7 @@ enum CatalystBusinessCheck {
 
     private static func verifySelectionChat(_ store: WorkspaceStore, material: StudyItem,
                                             mainComposer: AgentComposerTextEditor.ComposerTextView,
-                                            mainConversation: ConversationController) async throws {
+                                            mainConversation: ConversationController) async throws -> [String: Any] {
         guard let mainID = store.activeStudySessionID, let window = mainComposer.window else { throw Failure("main composer unavailable") }
         let mainHistory = store.messages
         let mainDraft = "主会话草稿：稍后比较这段解释。"
@@ -615,7 +694,7 @@ enum CatalystBusinessCheck {
         func floatingComposer() -> AgentComposerTextEditor.ComposerTextView? {
             descendants(window).compactMap { $0 as? AgentComposerTextEditor.ComposerTextView }.first { $0 !== mainComposer }
         }
-        func capture(_ name: String) throws {
+        func capture(_ name: String, label: String? = nil) throws {
             guard let content = window.rootViewController?.view,
                   let split = descendants(content).compactMap({ $0 as? StableDocumentSplitView }).first,
                   content.bounds.contains(split.convert(split.bounds, to: content)),
@@ -623,7 +702,14 @@ enum CatalystBusinessCheck {
                 throw Failure("workspace or main composer outside visible content")
             }
             // Capture workspace content; the native toolbar is outside this view.
-            let snapshot = UIGraphicsImageRenderer(bounds: content.bounds).image { _ in
+            let labelHeight: CGFloat = label == nil ? 0 : 32
+            let snapshot = UIGraphicsImageRenderer(size: CGSize(width: content.bounds.width, height: content.bounds.height + labelHeight)).image { context in
+                if let label {
+                    UIColor.white.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: content.bounds.width, height: labelHeight))
+                    NSString(string: label).draw(at: CGPoint(x: 10, y: 8), withAttributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: UIColor.black])
+                    context.cgContext.translateBy(x: -content.bounds.minX, y: labelHeight - content.bounds.minY)
+                }
                 content.drawHierarchy(in: content.bounds, afterScreenUpdates: true)
             }
             try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent(name))
@@ -647,7 +733,10 @@ enum CatalystBusinessCheck {
             throw Failure("Ask changed the main composer or selection")
         }
         try capture("selection-composers.png")
-        composer.text = "解释刚才选中的原文。WB452_ITEM=\(material.id)"
+        let originalTextScale = store.interfaceTextScale
+        store.setInterfaceTextScale(.standard)
+        defer { store.setInterfaceTextScale(originalTextScale) }
+        composer.text = "解释刚才选中的原文。WB452_ITEM=\(material.id) WB514_FLOATING_RICH"
         composer.delegate?.textViewDidChange?(composer)
         try await until("floating draft saved") { store.composerDraft(for: threadID) == composer.text }
         _ = composer.delegate?.textView?(composer, shouldChangeTextIn: NSRange(location: composer.text.utf16.count, length: 0), replacementText: "\n")
@@ -660,6 +749,11 @@ enum CatalystBusinessCheck {
               mainComposer.text == mainDraft, store.selectionAttachments == attachments else {
             throw Failure("floating send changed the main conversation")
         }
+        guard let richReply = store.conversationMessages(in: threadID).last, richReply.role == .assistant else {
+            throw Failure("floating rich answer unavailable")
+        }
+        let richEvidence = try await verifyFloatingRichAnswer(messageID: richReply.id, in: window)
+        try capture("selection-rich-answer-11pt.png", label: "Floating selection answer · 11 pt · native inline/display math + rendered diagram")
         let draft = "浮窗草稿：这一句再展开说明。"
         composer.text = draft
         composer.delegate?.textViewDidChange?(composer)
@@ -728,6 +822,120 @@ enum CatalystBusinessCheck {
                 && content.bounds.maxY - mainComposer.convert(mainComposer.bounds, to: content).maxY <= 40
         }
         try capture("reasoning-composer.png")
+        return richEvidence
+    }
+
+    private static func verifyFloatingRichAnswer(messageID: UUID, in window: UIWindow) async throws -> [String: Any] {
+        var evidence: [String: Any] = [:]
+        var diagnostic: [String: Any] = [:]
+        do {
+            try await until("floating 11pt text, formula attachments and diagram fit their real views", seconds: 30) {
+                window.layoutIfNeeded()
+                diagnostic = ["stage": "floating_row_missing"]
+                guard let row = floatingMessage(messageID, in: window) else { return false }
+                diagnostic["row_frame"] = String(describing: row.convert(row.bounds, to: window))
+                diagnostic["stage"] = "floating_row_visibility"
+                guard isVisible(row, in: window) else { return false }
+                diagnostic["stage"] = "floating_body_missing"
+                guard let body = descendants(window).compactMap({ $0 as? MarkdownTextView }).first(where: {
+                    $0.window === window && $0.textLabelView.attributedText.string.contains(floatingBodyMarker)
+                }) else { return false }
+                body.layoutIfNeeded()
+                let text = body.textLabelView.attributedText
+                let mathImages = body.content.rendered.values.compactMap(\.image)
+                let markerRange = (text.string as NSString).range(of: floatingBodyMarker)
+                let font = markerRange.location == NSNotFound ? nil
+                    : text.attribute(.font, at: markerRange.location, effectiveRange: nil) as? UIFont
+                diagnostic["body_frame"] = String(describing: body.convert(body.bounds, to: window))
+                diagnostic["font_size_pt"] = font?.pointSize ?? 0
+                diagnostic["line_height_pt"] = font?.lineHeight ?? 0
+                diagnostic["math_images"] = mathImages.count
+                diagnostic["math_images_valid"] = mathImages.allSatisfy { $0.cgImage != nil && $0.size.width > 0 && $0.size.height > 0 }
+                diagnostic["stage"] = "floating_body_font"
+                guard markerRange.location != NSNotFound,
+                      let font, abs(font.pointSize - 11) < 0.01 else { return false }
+                diagnostic["stage"] = "floating_math_images"
+                guard mathImages.count == 2,
+                      mathImages.allSatisfy({ $0.cgImage != nil && $0.size.width > 0 && $0.size.height > 0 }) else { return false }
+                diagnostic["stage"] = "floating_raw_math"
+                guard !text.string.contains("\\frac"), !text.string.contains("$") else { return false }
+                diagnostic["stage"] = "floating_body_visibility"
+                guard fullyVisible(body, in: window) else { return false }
+                var mathAttachments = 0
+                text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, _, _ in
+                    if attributes[.litextAttachment] is TextLabel.Attachment,
+                       attributes[.litextLineDrawingAction] != nil { mathAttachments += 1 }
+                }
+                let measured = body.boundingSize(for: body.bounds.width)
+                let rowFrame = row.convert(row.bounds, to: window)
+                let bodyFrame = body.convert(body.bounds, to: window)
+                diagnostic["native_math_attachments"] = mathAttachments
+                diagnostic["measured_body_size"] = String(describing: measured)
+                diagnostic["stage"] = "floating_math_attachments"
+                guard mathAttachments >= 2 else { return false }
+                diagnostic["stage"] = "floating_native_layout"
+                guard body.bounds.width > 1,
+                      measured.height > 1, body.bounds.height + 1 >= measured.height,
+                      rowFrame.insetBy(dx: -1, dy: -1).contains(bodyFrame) else { return false }
+                diagnostic["stage"] = "floating_diagram_view_missing"
+                for webView in descendants(window).compactMap({ $0 as? WKWebView }) {
+                    let webFrame = webView.convert(webView.bounds, to: window)
+                    guard rowFrame.insetBy(dx: -1, dy: -1).contains(webFrame) else { continue }
+                    diagnostic["web_frame"] = String(describing: webFrame)
+                    guard fullyVisible(webView, in: window) else {
+                        diagnostic["stage"] = "floating_diagram_view_visibility"
+                        continue
+                    }
+                    let diagram: [String: Any]
+                    do {
+                        guard let value = try await webView.evaluateJavaScript(floatingDiagramCheckScript) as? [String: Any] else {
+                            diagnostic["stage"] = "floating_diagram_bridge_result"
+                            continue
+                        }
+                        if value["stage"] as? String == "diagram_root_missing" { continue }
+                        diagram = value
+                    } catch {
+                        diagnostic["stage"] = "floating_diagram_javascript"
+                        diagnostic["javascript_error"] = String(error.localizedDescription.prefix(200))
+                        continue
+                    }
+                    diagnostic["diagram"] = diagram
+                    diagnostic["stage"] = diagram["stage"] as? String ?? "floating_diagram_result"
+                    guard diagram["ok"] as? Bool == true else { continue }
+                    evidence = ["body_font_size_pt": font.pointSize, "body_frame": String(describing: bodyFrame),
+                                "measured_body_size": String(describing: measured), "math_images": mathImages.count,
+                                "native_math_attachments": mathAttachments, "diagram": diagram,
+                                "screenshot": "selection-rich-answer-11pt.png"]
+                    return true
+                }
+                return false
+            }
+        } catch {
+            diagnostic["source"] = Bundle.main.object(forInfoDictionaryKey: "WeiBeiGitCommit") as? String ?? ""
+            diagnostic["source_dirty"] = Bundle.main.object(forInfoDictionaryKey: "WeiBeiSourceDirty") as? Bool ?? true
+            diagnostic["status"] = "failed"
+            let path = LabMetrics.directory.appendingPathComponent("floating-rich-diagnostic.json")
+            do {
+                try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
+                try JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]).write(to: path, options: .atomic)
+            } catch {
+                print("floating rich diagnostic could not be saved: \(error.localizedDescription)")
+            }
+            throw Failure(error.localizedDescription + " (stage: " + (diagnostic["stage"] as? String ?? "unrecorded") + ")")
+        }
+        return evidence
+    }
+
+    private static func fullyVisible(_ view: UIView, in window: UIWindow) -> Bool {
+        guard isVisible(view, in: window) else { return false }
+        let frame = view.convert(view.bounds, to: window)
+        guard window.bounds.insetBy(dx: -1, dy: -1).contains(frame) else { return false }
+        var ancestor = view.superview
+        while let current = ancestor {
+            if current.clipsToBounds && !current.convert(current.bounds, to: window).insetBy(dx: -1, dy: -1).contains(frame) { return false }
+            ancestor = current.superview
+        }
+        return true
     }
 
     private static func verifyDividerLanguage(_ controller: ConversationController, workspace: WorkspaceStore) async throws {
