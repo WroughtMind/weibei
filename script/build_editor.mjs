@@ -34,10 +34,16 @@ const bundle = (entry, outfile, editable, globalName) => build({
       const upstream = await readFile(path, 'utf8');
       const mount = '  document.body?.appendChild(container)';
       if (upstream.split(mount).length !== 2) throw new Error('Shared Mermaid measurement entry changed; verify the host context adapter');
+      const theme = "      theme: 'base',";
+      if (upstream.split(theme).length !== 2) throw new Error('Shared Mermaid configuration entry changed; verify font inheritance');
       adaptedMermaidMeasurement = true;
       return {
         contents: "import { mountMermaidMeasurementContainer } from 'weibei-mermaid-measurement-context';\n" +
-          upstream.replace(mount, '  mountMermaidMeasurementContainer(container)'),
+          upstream.replace(mount, '  mountMermaidMeasurementContainer(container)')
+            // Mermaid's hidden SVG wrapper reads top-level fontFamily. The
+            // visible labels already inherit host fonts via themeVariables.
+            // Keep both measurements identical instead of default Trebuchet.
+            .replace(theme, `${theme}\n      fontFamily: 'inherit',`),
         loader: 'ts', resolveDir: dirname(path),
       };
     });
