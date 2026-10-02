@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 @testable import WeiBei
 import WeiBeiCore
@@ -48,7 +49,7 @@ final class WriteGateSafetyTests: XCTestCase {
         let source = base.appendingPathComponent("\(fileName ?? "笔记-\(UUID().uuidString)").md")
         try content.write(to: source, atomically: true, encoding: .utf8)
         let imported = try store.importFileIntoCourseForSelfCheck(
-            source, courseID: courseID, role: .material
+            source, courseID: courseID, role: .note
         )
         let url = try XCTUnwrap(store.resolvedLibraryURL(for: imported.item))
         return (imported.item, url)
@@ -108,6 +109,8 @@ final class WriteGateSafetyTests: XCTestCase {
         let store = try makeStore(base: base, library: library, backupRoot: backupRoot)
         let courseID = try store.createCourseInLibrary(title: "闸门课")
         let (item, url) = try importNote(store, base: base, courseID: courseID, content: "原始内容")
+        // 真实笔记导入会建立可信基线；本场景专门验证“没有基线且无法重读”。
+        store.noteBackingContentDigestsByItemID[item.id] = nil
 
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path) }
@@ -192,6 +195,38 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertEqual(store.lastSelfWrittenNoteDigestsByItemID[item.id], Self.digest(of: "第二版"))
     }
 
+    func testGateAdoptsIdenticalExternalDiskContentWithoutConflict() throws {
+        let base = makeTempRoot("weibei-gate-identical-external-content")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
+        let store = WorkspaceStore(
+            workspaceDirectory: base.appendingPathComponent("workspace", isDirectory: true),
+            noteBackupRootURL: backupRoot,
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        let original = "# 原文\n\n这是原始正文。\n"
+        let external = original + "\n这句来自应用外部。\n"
+        let itemID = "imported:identical-external-content"
+        let url = base.appendingPathComponent("合成笔记.md")
+
+        try original.write(to: url, atomically: true, encoding: .utf8)
+        try external.write(to: url, atomically: true, encoding: .utf8)
+
+        XCTAssertNoThrow(
+            try store.writeNotebookMarkdownThroughGate(
+                external,
+                itemID: itemID,
+                url: url,
+                expectedBaseline: Self.digest(of: original)
+            ),
+            "干净快照与当前磁盘正文完全一致时，旧基线不应制造外部修改冲突"
+        )
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), external)
+        XCTAssertEqual(store.noteBackingContentDigestsByItemID[itemID], Self.digest(of: external))
+        XCTAssertEqual(store.lastSelfWrittenNoteDigestsByItemID[itemID], Self.digest(of: external))
+    }
+
     func testRenameRewriteRoutesThroughGate() throws {
         let base = makeTempRoot("weibei-gate-rename")
         defer { try? FileManager.default.removeItem(at: base) }
@@ -254,7 +289,7 @@ final class WriteGateSafetyTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "闸门课")
         let source = base.appendingPathComponent("笔记.md")
         try "第一版".write(to: source, atomically: true, encoding: .utf8)
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note)
         let item = imported.item
         let url = try XCTUnwrap(store.resolvedLibraryURL(for: item))
         store.noteEditingSession.replaceDocument(with: item.id)
@@ -392,6 +427,68 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertNotEqual(store.activeNoteSaveStatus, .externallyModified)
         XCTAssertNil(store.noteEditorRecoveryConflict)
         XCTAssertTrue(store.noteText.contains("磁盘上的新内容"))
+    }
+
+    func testAtomicExternalEditAdoptsDiskAfterSwitchingAwayAndBack() throws {
+        let base = makeTempRoot("weibei-external-adopt-after-switch")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = try makeStore(
+            base: base,
+            library: base.appendingPathComponent("资料库"),
+            backupRoot: base.appendingPathComponent("backups")
+        )
+        let courseID = try store.createCourseInLibrary(title: "外部修改课")
+        let original = "# 合成笔记\n\n原始正文\n"
+        let external = original + "\n外部修改验收：正文已从磁盘更新，界面应自动采用。\n"
+        let target = try importNote(
+            store, base: base, courseID: courseID,
+            content: original, fileName: "合成笔记"
+        )
+        let other = try importNote(
+            store, base: base, courseID: courseID,
+            content: "# 01\n\n另一份笔记\n", fileName: "01"
+        )
+
+        XCTAssertTrue(store.openCourseNote(target.item.id, in: courseID))
+        waitForCourseNoteLoad(store, itemID: target.item.id)
+        store.noteEditingSession.replaceDocument(with: target.item.id)
+        XCTAssertEqual(store.noteText, original)
+
+        var completionPublished = false
+        let observation = store.objectWillChange.sink {
+            if store.activeNoteItemID == target.item.id,
+               store.noteText == external,
+               !store.activeNoteIsLoading {
+                completionPublished = true
+            }
+        }
+        defer { observation.cancel() }
+
+        try external.write(to: target.url, atomically: true, encoding: .utf8)
+        XCTAssertTrue(store.openCourseNote(other.item.id, in: courseID))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        XCTAssertTrue(store.openCourseNote(target.item.id, in: courseID))
+        waitForCourseNoteLoad(store, itemID: target.item.id)
+
+        XCTAssertFalse(store.activeNoteIsLoading, "返回后不能一直停在无编辑器的载入态")
+        XCTAssertEqual(store.activeNoteItemID, target.item.id)
+        XCTAssertEqual(store.noteText, external)
+        XCTAssertTrue(
+            completionPublished,
+            "外部正文采用并结束读盘后必须再发布一次，否则笔记栏仍停在无编辑器的载入画面"
+        )
+    }
+
+    private func waitForCourseNoteLoad(
+        _ store: WorkspaceStore,
+        itemID: String,
+        timeout: TimeInterval = 2
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while store.courseNoteLoadTasksByItemID[itemID] != nil,
+              Date() < deadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
     }
 
     func testUserNamedNoteKeepsFileNameAfterHeadingSave() throws {

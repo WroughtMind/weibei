@@ -594,33 +594,177 @@ struct CatalystWindowChrome: UIViewRepresentable {
 }
 
 // SwiftUI's Mac Catalyst sheet is hosted in a separate UIKit window.
-struct CatalystSheetBackground: UIViewRepresentable {
+struct CatalystIndependentSheetFitting: ViewModifier {
     let color: UIColor
+    @State private var contentSize = CGSize.zero
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGSize.self) { proxy in
+                proxy.size
+            } action: { size in
+                contentSize = size
+            }
+            .background(CatalystIndependentSheetSizingProbe(
+                color: color,
+                contentSize: contentSize
+            ))
+    }
+}
+
+struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
+    let color: UIColor
+    var contentSize: CGSize?
+
+    init(color: UIColor, contentSize: CGSize? = nil) {
+        self.color = color
+        self.contentSize = contentSize
+    }
+
     func makeUIView(context: Context) -> Probe { Probe() }
-    func updateUIView(_ view: Probe, context: Context) { view.color = color; view.configure() }
+
+    func updateUIView(_ view: Probe, context: Context) {
+        view.color = color
+        view.contentSize = contentSize
+        view.configure()
+    }
+
     final class Probe: UIView {
         var color = UIColor.clear
+        var contentSize: CGSize?
+        private var lastGeometryRequestSignature: String?
+
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         override func layoutSubviews() { super.layoutSubviews(); configure() }
+
         func configure() {
             guard let window else { return }
             window.backgroundColor = color
             var responder: UIResponder? = self
-            var sheetController: UIViewController?
             while let current = responder {
                 if let controller = current as? UIViewController {
                     controller.view.backgroundColor = color
-                    sheetController = controller
                 }
                 responder = current.next
             }
-            // 内容是固定小尺寸时，不要留着系统那层默认的大白底 sheet。
-            let size = bounds.size
-            guard size.width > 40, size.height > 40, let sheetController else { return }
-            let windowSize = window.bounds.size
-            let contentIsSmaller = size.width < windowSize.width - 1 || size.height < windowSize.height - 1
-            guard contentIsSmaller, sheetController.preferredContentSize != size else { return }
-            sheetController.preferredContentSize = size
+            guard let contentSize else { return }
+            resizeSheetIfNeeded(window: window, targetSize: contentSize)
         }
+
+        private func resizeSheetIfNeeded(window: UIWindow, targetSize: CGSize) {
+            guard targetSize.width.isFinite, targetSize.height.isFinite,
+                  targetSize.width > 0, targetSize.height > 0,
+                  !Self.sameSize(window.bounds.size, targetSize),
+                  let scene = window.windowScene else { return }
+            let sourceFrame = scene.effectiveGeometry.systemFrame
+            let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
+            guard Self.sameSize(sourceFrame.size, window.bounds.size),
+                  rootedWindows.count == 1,
+                  rootedWindows[0] === window else { return }
+            let targetFrame = Self.centeredFrame(size: targetSize, in: sourceFrame)
+            let signature = "\(sourceFrame)|\(targetFrame)"
+            guard signature != lastGeometryRequestSignature else { return }
+            lastGeometryRequestSignature = signature
+            DispatchQueue.main.async { [weak self, weak window, weak scene] in
+                guard let self else { return }
+                guard let window, let scene, window.windowScene === scene else {
+                    self.clearGeometryRequest(signature)
+                    return
+                }
+                self.requestGeometryUpdate(
+                    window: window,
+                    scene: scene,
+                    targetSize: targetSize,
+                    signature: signature
+                )
+            }
+        }
+
+        private func requestGeometryUpdate(
+            window: UIWindow,
+            scene: UIWindowScene,
+            targetSize: CGSize,
+            signature: String
+        ) {
+            guard self.window === window,
+                  let contentSize,
+                  Self.sameSize(contentSize, targetSize) else {
+                clearGeometryRequest(signature)
+                return
+            }
+            let sourceFrame = scene.effectiveGeometry.systemFrame
+            let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
+            guard !Self.sameSize(window.bounds.size, targetSize),
+                  Self.sameSize(sourceFrame.size, window.bounds.size),
+                  rootedWindows.count == 1,
+                  rootedWindows[0] === window else {
+                clearGeometryRequest(signature)
+                return
+            }
+            let targetFrame = Self.centeredFrame(size: targetSize, in: sourceFrame)
+            scene.requestGeometryUpdate(.Mac(systemFrame: targetFrame)) { [weak self] _ in
+                self?.clearGeometryRequest(signature)
+            }
+            DispatchQueue.main.async { [weak self, weak window, weak scene] in
+                guard let self, let window, let scene else { return }
+                self.synchronizeWindowWithSceneIfNeeded(
+                    window: window,
+                    scene: scene,
+                    targetSize: targetSize
+                )
+            }
+        }
+
+        private func synchronizeWindowWithSceneIfNeeded(
+            window: UIWindow,
+            scene: UIWindowScene,
+            targetSize: CGSize
+        ) {
+            let effectiveFrame = scene.effectiveGeometry.systemFrame
+            let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
+            guard self.window === window,
+                  window.windowScene === scene,
+                  rootedWindows.count == 1,
+                  rootedWindows[0] === window,
+                  Self.sameSize(effectiveFrame.size, targetSize),
+                  let rootViewController = window.rootViewController,
+                  let presentationController = rootViewController.presentationController,
+                  presentationController.presentedViewController === rootViewController,
+                  let containerView = presentationController.containerView else { return }
+            rootViewController.preferredContentSize = targetSize
+            presentationController.preferredContentSizeDidChange(
+                forChildContentContainer: rootViewController
+            )
+            containerView.setNeedsLayout()
+            containerView.layoutIfNeeded()
+            DispatchQueue.main.async { [weak self, weak window, weak scene] in
+                guard let self, let window, let scene,
+                      self.window === window,
+                      window.windowScene === scene else { return }
+                guard let contentSize,
+                      !Self.sameSize(contentSize, targetSize) else { return }
+                self.configure()
+            }
+        }
+
+        private func clearGeometryRequest(_ signature: String) {
+            if lastGeometryRequestSignature == signature {
+                lastGeometryRequestSignature = nil
+            }
+        }
+
+        private static func sameSize(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
+            abs(lhs.width - rhs.width) < 1 && abs(lhs.height - rhs.height) < 1
+        }
+
+        private static func centeredFrame(size: CGSize, in frame: CGRect) -> CGRect {
+            CGRect(
+                x: frame.midX - size.width / 2,
+                y: frame.midY - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+        }
+
     }
 }

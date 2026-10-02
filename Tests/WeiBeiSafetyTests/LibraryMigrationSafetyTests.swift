@@ -393,7 +393,7 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "挂起课")
         let source = base.appendingPathComponent("笔记.md")
         try "原始内容".write(to: source, atomically: true, encoding: .utf8)
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note)
         let item = imported.item
         let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
 

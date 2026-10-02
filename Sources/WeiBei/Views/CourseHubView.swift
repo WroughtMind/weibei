@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import UniformTypeIdentifiers
 import WeiBeiCore
 
 /// A quiet course landing page: resume reading first, then browse recent course content.
@@ -326,6 +325,26 @@ struct CourseHubView: View {
         .onDrop(of: [.fileURL], isTargeted: $isMaterialDropTargeted) { providers in
             handleDrop(providers, asNotes: false)
         }
+        .overlay {
+            if isMaterialDropTargeted || isNoteDropTargeted {
+                Label(
+                    isNoteDropTargeted
+                        ? store.ui("松开以导入笔记", "Drop to import notes")
+                        : store.ui("松开以导入资料", "Drop to import"),
+                    systemImage: "tray.and.arrow.down"
+                )
+                    .weiBeiText(14, weight: .semibold)
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .weibeiEtchedCapsuleBackground(
+                        fill: WeiBeiTheme.paperRaised.opacity(0.94),
+                        stroke: WeiBeiTheme.cinnabar.opacity(0.32),
+                        contactShadow: true
+                    )
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     @ViewBuilder
@@ -506,6 +525,7 @@ struct CourseHubView: View {
                             noteID: selectedNoteID,
                             sessionID: selectedSessionID
                         ),
+                        highlighted: entry.itemID.map(store.recentlyImportedItemIDs.contains) ?? false,
                         action: { open(entry) }
                     )
 
@@ -757,50 +777,10 @@ struct CourseHubView: View {
 
     private func handleDrop(_ providers: [NSItemProvider], asNotes: Bool) -> Bool {
         guard let courseID else { return false }
-        var urls: [URL] = []
-        let urlsLock = NSLock()
-        let group = DispatchGroup()
-
-        for provider in providers {
-            group.enter()
-            provider.loadItem(
-                forTypeIdentifier: UTType.fileURL.identifier,
-                options: nil
-            ) { item, _ in
-                defer { group.leave() }
-                let url: URL?
-                if let data = item as? Data {
-                    url = URL(dataRepresentation: data, relativeTo: nil)
-                } else {
-                    url = item as? URL
-                }
-                guard let url else { return }
-                urlsLock.lock()
-                urls.append(url)
-                urlsLock.unlock()
-            }
+        return WeiBeiDroppedFileURLs.load(providers) { urls in
+            guard store.courseWorkspaceCourseID == courseID else { return }
+            store.prepareConfirmedFileImport(urls, courseID: courseID, asNotes: asNotes)
         }
-
-        group.notify(queue: .main) {
-            guard !urls.isEmpty,
-                  store.courseWorkspaceCourseID == courseID else {
-                return
-            }
-            store.importCourseFilesFromURLs(
-                urls,
-                asNotes: asNotes,
-                courseID: courseID
-            ) { imported in
-                if asNotes {
-                    selectedNoteID = selectedNoteID
-                        ?? imported.first(where: \.isNotebookNote)?.id
-                } else {
-                    selectedMaterialID = selectedMaterialID
-                        ?? imported.first(where: \.isCourseMaterial)?.id
-                }
-            }
-        }
-        return true
     }
 
     // MARK: - Display helpers
@@ -915,6 +895,13 @@ private struct CourseHomeEntry: Identifiable {
     let title: String
     let detail: String
     let date: Date
+
+    var itemID: String? {
+        switch kind {
+        case .material(let item), .note(let item): item.id
+        case .chat: nil
+        }
+    }
 
     func isSelected(
         materialID: String?,
@@ -1066,6 +1053,7 @@ private struct CourseHubContentRow: View {
     var snippet: String? = nil
     var courseBadge: String? = nil
     let selected: Bool
+    var highlighted = false
     let action: () -> Void
 
     @State private var hovering = false
@@ -1124,7 +1112,9 @@ private struct CourseHubContentRow: View {
             .frame(minHeight: snippet == nil ? 58 : 72)
             .contentShape(Rectangle())
             .background(
-                selected
+                highlighted
+                    ? WeiBeiTheme.cinnabarSoft.opacity(0.24)
+                    : selected
                     ? WeiBeiTheme.paperInset.opacity(0.34)
                     : (hovering ? WeiBeiTheme.paperInset.opacity(0.16) : .clear)
             )

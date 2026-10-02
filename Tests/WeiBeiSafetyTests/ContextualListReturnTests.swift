@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import XCTest
 @testable import WeiBei
@@ -383,5 +384,57 @@ final class ContextualListReturnTests: XCTestCase {
         XCTAssertEqual(store.agentNoteTitle, "手动标题")
         store.setNoteCustomDisplayTitle("", for: noteID)
         XCTAssertEqual(store.agentNoteTitle, "普通首行也作为标题")
+    }
+
+    /// 课程笔记读盘结束必须再次发布状态，否则笔记栏会一直停在载入动画，
+    /// 直到用户另开一份文稿才被无关刷新带回正文。
+    @MainActor
+    func testCourseNoteLoadPublishesCompletionWithoutOpeningAnotherDocument() throws {
+        let fixture = try Fixture(name: "course-note-load-publish")
+        defer { fixture.remove() }
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        try store.configureCourseLibrary(at: fixture.importsDirectory)
+        let courseID = try store.createCourseInLibrary(title: "直接打开课程笔记")
+        let expected = "# 课程笔记定位\n\n无需先打开另一份文稿。"
+        let createdID = try store.waitForCourseFileOperation {
+            await store.createCourseNotebookNote(
+                courseID: courseID,
+                title: "课程笔记定位",
+                markdown: expected
+            )
+        }
+        let noteID = try XCTUnwrap(createdID)
+
+        store.activeNotebookItemID = nil
+        store.noteText = ""
+        store.notesByItemID.removeValue(forKey: noteID)
+        store.loadedCourseNoteTextByItemID.removeValue(forKey: noteID)
+
+        var publishedAfterBodyAdoption = false
+        let observation = store.objectWillChange.sink {
+            if store.noteText == expected, store.activeNoteIsLoading {
+                publishedAfterBodyAdoption = true
+            }
+        }
+        defer { observation.cancel() }
+
+        XCTAssertTrue(store.openCourseNote(noteID, in: courseID))
+        XCTAssertTrue(store.activeNoteIsLoading)
+        let deadline = Date().addingTimeInterval(2)
+        while store.activeNoteIsLoading, Date() < deadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+
+        XCTAssertFalse(store.activeNoteIsLoading)
+        XCTAssertEqual(store.noteText, expected)
+        XCTAssertTrue(
+            publishedAfterBodyAdoption,
+            "正文采用后必须再发布加载结束，不能等另开文稿触发刷新"
+        )
     }
 }

@@ -381,6 +381,11 @@ enum CatalystBusinessCheck {
                 store.continueLastWork()
                 store.ensureAllStudySessionMessagesLoaded()
                 try await until("reopened note editor") { !store.activeNoteIsLoading && store.noteText.contains(noteMarker) }
+                let renderedMarker = String(decoding: try JSONEncoder().encode(finalMarker), as: UTF8.self)
+                try await until("reopened note editor content") {
+                    guard let webView = await editor(documentID: store.activeNoteEditorDocumentID) else { return false }
+                    return (try? await webView.evaluateJavaScript("document.querySelector('.ProseMirror')?.textContent?.includes(\(renderedMarker)) === true") as? Bool) == true
+                }
                 let history = store.studySessions.flatMap(\.messages)
                 try check("reopen_original_note_and_session_files",
                     store.noteText.contains(finalMarker) && history.contains { $0.text.contains(finalMarker) && $0.completionState == .completed }
@@ -432,12 +437,45 @@ enum CatalystBusinessCheck {
             try "# 阅读位置\n\n候选独立合成资料：内容增长时保留同一处文字。材料标记 WB452_SOURCE。\n".write(to: materialURL, atomically: true, encoding: .utf8)
             let noteURL = inputs.appendingPathComponent("候选验证笔记.md")
             try "# 候选验证笔记\n\n这是独立测试资料，不是用户笔记。\n".write(to: noteURL, atomically: true, encoding: .utf8)
-            let materials: [StudyItem] = await withCheckedContinuation { done in
-                store.importFiles([materialURL]) { done.resume(returning: $0) }
+            var confirmedItems: [StudyItem] = []
+            let importSheet = {
+                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                    .flatMap(\.windows).flatMap(descendants)
+                    .compactMap { $0 as? CatalystIndependentSheetSizingProbe.Probe }
+                    .first { $0.window != nil && !$0.isHidden && $0.contentSize != nil }
             }
-            let notes: [StudyItem] = await withCheckedContinuation { done in
-                store.importFiles([noteURL], markdownAsNotes: true) { done.resume(returning: $0) }
+            for (url, asNotes) in [(materialURL, false), (noteURL, true)] {
+                let previousIDs = Set(store.importedItems.map(\.id))
+                store.prepareConfirmedFileImport([url], asNotes: asNotes)
+                try await until("confirmed import review and fitted native sheet") {
+                    guard store.confirmedFileImport?.stage == .reviewing,
+                          let sheet = importSheet(), let size = sheet.contentSize,
+                          let window = sheet.window, !window.isHidden else { return false }
+                    return abs(window.bounds.width - size.width) < 1
+                        && abs(window.bounds.height - size.height) < 1
+                        && size.width > 100 && size.height > 100
+                }
+                if !asNotes, let window = importSheet()?.window {
+                    let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                    }
+                    try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("confirmed-import.png"))
+                }
+                store.confirmFileImport()
+                try await until("confirmed import completes and dismisses") {
+                    store.confirmedFileImport == nil && importSheet() == nil
+                }
+                let added = store.importedItems.filter { !previousIDs.contains($0.id) }
+                guard added.count == 1, let imported = added.first,
+                      let copiedURL = store.resolvedLibraryURL(for: imported),
+                      try Data(contentsOf: copiedURL) == Data(contentsOf: url) else {
+                    throw Failure("confirmed import did not preserve the material/note")
+                }
+                confirmedItems.append(imported)
             }
+            let materials = Array(confirmedItems.prefix(1))
+            let notes = Array(confirmedItems.suffix(1))
+            try check("confirmed_import_review_copy_and_dismiss", confirmedItems.count == 2)
             guard let material = materials.first, let note = notes.first,
                   let persistedNote = store.resolvedLibraryURL(for: note) else { throw Failure("original import returned no material/note") }
             store.openCourseNote(note.id)
