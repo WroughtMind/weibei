@@ -84,9 +84,10 @@ required_business_checks = {
     'conversation_appearance_and_scale_after_resize',
     'history_and_long_answer_through_original_messages',
     'floating_11pt_math_diagram_and_layout',
+    'divider_interface_language_updates',
 }
-# Require every original gate and the new floating gate; verify() above also
-# rejects any failed additional gate, including accepted PR515's language check.
+# Require all baseline, floating, and interface-language gates; verify() above
+# rejects failures in additional gates as well.
 assert required_business_checks <= business['checks'].keys(), business
 assert business['floating_rich_answer']['body_font_size_pt'] == 11, business
 assert business['floating_rich_answer']['math_images'] == 2, business

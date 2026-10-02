@@ -33,6 +33,7 @@ let pptSearchOrder: { note: boolean; index: number }[] = [];
 const clean = (text?: string | null) => (text ?? '').replace(/\s+/g, ' ').trim();
 let english = false;
 const t = (zh: string, en: string) => (english ? en : zh);
+const pageLabel = (page: number) => t(`第 ${page} 页`, `Page ${page}`);
 
 function fail(error: unknown) {
   loadError = error instanceof Error ? error.message : String(error);
@@ -340,6 +341,15 @@ function attachNote(index: number, wrapper: HTMLElement | null) {
   wrapper.append(button, note);
 }
 
+function setLanguage(language?: string) {
+  english = language === 'english';
+  root?.querySelectorAll<HTMLElement>('[data-weibei-slide-label]').forEach(label => {
+    const page = Number(label.dataset.weibeiSlideLabel);
+    if (Number.isFinite(page)) label.textContent = pageLabel(page);
+  });
+  if (viewer || root) post('contentRailSections', sections());
+}
+
 async function open(url: string | ArrayBuffer, format: string, language?: string) {
   english = language === 'english';
   root = document.getElementById('office-document')!;
@@ -425,5 +435,5 @@ window.addEventListener('scroll', () => {
   if (active) post('contentRailActive', { id: active.dataset.weibeiLocation, reason: 'scroll' });
 }, { passive: true });
 
-(window as any).WeiBeiOffice = { open, math, drawWMFText, renderGraphic, graphicRelations, has3DChart, render3DChart, goTo, find, searchResults, activateSearchResult, sections, sourceOrder, applyMarks, attachNote, get isPresentation() { return Boolean(viewer); }, get error() { return loadError; } };
-(window as any).WeiBeiContentRail = { installed: true, scrollTo: (id: string) => { void goTo(id); }, scan: () => post('contentRailSections', sections()) };
+(window as any).WeiBeiOffice = { open, math, drawWMFText, renderGraphic, graphicRelations, has3DChart, render3DChart, goTo, find, searchResults, activateSearchResult, sections, sourceOrder, applyMarks, attachNote, pageLabel, setLanguage, get isPresentation() { return Boolean(viewer); }, get error() { return loadError; } };
+(window as any).WeiBeiContentRail = { installed: true, scrollTo: (id: string) => { void goTo(id); }, scan: () => post('contentRailSections', sections()), setLanguage };

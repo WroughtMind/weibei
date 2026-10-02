@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import WebKit
 import XCTest
 @testable import WeiBei
@@ -332,12 +333,19 @@ final class AgentVisualizationSizingTests: XCTestCase {
         window.contentView = conversationScroller
         container.layoutSubtreeIfNeeded()
         XCTAssertEqual(container.webView.frame, container.bounds)
+        XCTAssertTrue(container.window === window)
+        XCTAssertFalse(window.isVisible)
+
+        let wheelEvent = conversationScrollWheelEvent()
+        XCTAssertEqual(wheelEvent.type, .scrollWheel)
+        XCTAssertEqual(wheelEvent.scrollingDeltaX, 0)
+        XCTAssertEqual(wheelEvent.scrollingDeltaY, 24)
 
         let visiblePoint = container.convert(
             CGPoint(x: visibleHost.bounds.midX, y: container.bounds.midY),
             to: nil
         )
-        NSApp.sendEvent(ConversationScrollWheelEvent(window: window, location: visiblePoint))
+        XCTAssertTrue(container.forwardScrollWheel(wheelEvent, in: window, at: visiblePoint))
 
         XCTAssertEqual(conversationScroller.receivedWheelEventCount, 1)
 
@@ -345,7 +353,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
             CGPoint(x: container.bounds.midX, y: container.bounds.midY),
             to: nil
         )
-        NSApp.sendEvent(ConversationScrollWheelEvent(window: window, location: clippedPoint))
+        XCTAssertFalse(container.forwardScrollWheel(wheelEvent, in: window, at: clippedPoint))
 
         XCTAssertEqual(conversationScroller.receivedWheelEventCount, 1)
         withExtendedLifetime(window) {}
@@ -462,25 +470,18 @@ private final class GenUIActionProbe: NSObject, WKScriptMessageHandler {
     }
 }
 
-private final class ConversationScrollWheelEvent: NSEvent {
-    private weak var eventWindow: NSWindow?
-    private let eventLocation: NSPoint
-
-    init(window: NSWindow, location: NSPoint) {
-        eventWindow = window
-        eventLocation = location
-        super.init()
+private func conversationScrollWheelEvent() -> NSEvent {
+    guard let cgEvent = CGEvent(
+        scrollWheelEvent2Source: nil,
+        units: .pixel,
+        wheelCount: 1,
+        wheel1: 24,
+        wheel2: 0,
+        wheel3: 0
+    ), let event = NSEvent(cgEvent: cgEvent) else {
+        preconditionFailure("Unable to create a native scroll-wheel event")
     }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override var type: NSEvent.EventType { .scrollWheel }
-    override weak var window: NSWindow? { eventWindow }
-    override var locationInWindow: NSPoint { eventLocation }
-    override var scrollingDeltaX: CGFloat { 0 }
-    override var scrollingDeltaY: CGFloat { 24 }
+    return event
 }
 
 private final class ConversationScrollProbe: NSScrollView {

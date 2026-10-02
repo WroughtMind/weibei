@@ -162,7 +162,6 @@ struct ContentView: View {
             .background {
                 LibraryAwareEscapeBridge(
                     courseWorkspacePresented: store.courseWorkspacePresented,
-                    onToggleLibrary: { store.toggleLibrary() },
                     onDismissFloatingAgent: { store.dismissFloatingSelectionAgent() },
                     onHideReaderSearch: {
                         store.hideDocumentSearch()
@@ -607,7 +606,6 @@ private struct LibraryAwareEscapeBridge: View {
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @EnvironmentObject private var store: WorkspaceStore
     let courseWorkspacePresented: Bool
-    let onToggleLibrary: () -> Void
     let onDismissFloatingAgent: () -> Void
     let onHideReaderSearch: () -> Void
 
@@ -618,8 +616,6 @@ private struct LibraryAwareEscapeBridge: View {
                     store.notePickerPresented = false
                     store.focus(.notes)
                 })
-            } else if !courseWorkspacePresented && libraryDrawer.isOpen {
-                EscapeKeyBridge(onEscape: onToggleLibrary)
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showsGlobalFloatingAgent {
                 EscapeKeyBridge(onEscape: onDismissFloatingAgent)
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showDocumentSearch {
@@ -722,7 +718,21 @@ struct WeiBeiPlainTextField: UIViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: WeiBeiSearchTextField, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 160, height: proposal.height ?? max(fontSize + 8, 22))
+        let intrinsicHeight = uiView.intrinsicContentSize.height
+        let fittedHeight = intrinsicHeight.isFinite && intrinsicHeight > 0
+            ? intrinsicHeight
+            : uiView.sizeThatFits(
+                CGSize(
+                    width: proposal.width ?? UIView.layoutFittingCompressedSize.width,
+                    height: UIView.layoutFittingCompressedSize.height
+                )
+            ).height
+        return CGSize(
+            width: proposal.width ?? 160,
+            height: fittedHeight.isFinite && fittedHeight > 0
+                ? fittedHeight
+                : max(fontSize + 8, 22)
+        )
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
