@@ -133,19 +133,7 @@ struct SettingsView: View {
             oauthService.refreshCatalog()
             refreshActiveModelCatalog()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { note in
-            guard let raw = note.userInfo?["provider"] as? String,
-                  let provider = AgentProviderID(rawValue: raw),
-                  let profileID = note.userInfo?["profileID"] as? UUID,
-                  store.agentCredentialProfiles.contains(where: {
-                      $0.id == profileID && $0.provider == provider
-                  }) else { return }
-            store.shutdownAgentRuntime()
-            store.setAgentAuthMethod(.subscription, for: profileID)
-            store.recordAgentAuthenticationSuccess(
-                provider: provider,
-                authMethod: .subscription
-            )
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { _ in
             oauthService.refreshCatalog()
             refreshActiveModelCatalog()
         }

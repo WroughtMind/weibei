@@ -246,17 +246,48 @@ final class AgentConnectionCreationTests: XCTestCase {
     }
 
     @MainActor
-    func testLoginCompletionUpdatesOnlyTheCardThatStartedIt() throws {
+    func testLoginCompletionPersistsWithoutSettingsAndKeepsTheCurrentCardsRunAlive() throws {
         let store = try XCTUnwrap(storeFixture).store
         let target = try store.createAgentConnection(provider: .xai, authMethod: .apiKey, baseURL: "")
         let current = try store.createAgentConnection(provider: .openai, authMethod: .apiKey, baseURL: "")
+        let currentRunID = UUID()
+        let currentTask = Task<Void, Never> {
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
+        }
+        defer { currentTask.cancel() }
+        let currentRun = AgentConversationRun(chatID: currentRunID)
+        currentRun.agentRequestTask = currentTask
+        store.agentRuns[currentRunID] = currentRun
 
-        XCTAssertTrue(store.setAgentAuthMethod(.subscription, for: target))
+        XCTAssertTrue(store.completeAgentSubscriptionLogin(provider: .xai, profileID: target))
 
         XCTAssertEqual(store.activeAgentProfileID, current)
         XCTAssertEqual(store.agentProviderID, .openai)
         XCTAssertEqual(store.agentAuthMethod, .apiKey)
         XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == target })?.authMethod, .subscription)
         XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == current })?.authMethod, .apiKey)
+        XCTAssertFalse(currentTask.isCancelled)
+    }
+
+    @MainActor
+    func testLoginCompletionRejectsDeletedOrChangedTargetsWithoutTouchingCurrentCard() throws {
+        let store = try XCTUnwrap(storeFixture).store
+        let deleted = try store.createAgentConnection(provider: .xai, authMethod: .apiKey, baseURL: "")
+        let changed = try store.createAgentConnection(provider: .xai, authMethod: .apiKey, baseURL: "")
+        let current = try store.createAgentConnection(provider: .openai, authMethod: .apiKey, baseURL: "")
+        store.agentCredentialProfiles.removeAll { $0.id == deleted }
+        let changedIndex = try XCTUnwrap(store.agentCredentialProfiles.firstIndex { $0.id == changed })
+        store.agentCredentialProfiles[changedIndex].provider = .anthropic
+        AgentCredentialProfileStore.saveProfiles(store.agentCredentialProfiles)
+
+        XCTAssertFalse(store.completeAgentSubscriptionLogin(provider: .xai, profileID: deleted))
+        XCTAssertFalse(store.completeAgentSubscriptionLogin(provider: .xai, profileID: changed))
+
+        XCTAssertEqual(store.activeAgentProfileID, current)
+        XCTAssertEqual(store.agentProviderID, .openai)
+        XCTAssertEqual(store.agentAuthMethod, .apiKey)
+        XCTAssertFalse(store.agentCredentialProfiles.contains(where: { $0.id == deleted }))
+        XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == changed })?.provider, .anthropic)
+        XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == changed })?.authMethod, .apiKey)
     }
 }

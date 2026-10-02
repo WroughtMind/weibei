@@ -5802,6 +5802,24 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
+    /// Commit a completed login to its originating card. The settings window may
+    /// already be closed, and another card may now be active.
+    @discardableResult
+    func completeAgentSubscriptionLogin(
+        provider: AgentProviderID,
+        profileID: UUID
+    ) -> Bool {
+        guard agentCredentialProfiles.contains(where: {
+            $0.id == profileID && $0.provider == provider
+        }) else { return false }
+        if activeAgentProfileID == profileID {
+            shutdownAgentRuntime()
+        }
+        guard setAgentAuthMethod(.subscription, for: profileID) else { return false }
+        recordAgentAuthenticationSuccess(provider: provider, authMethod: .subscription)
+        return true
+    }
+
     func recordAgentAuthenticationSuccess(
         provider: AgentProviderID,
         authMethod: AgentAuthMethod

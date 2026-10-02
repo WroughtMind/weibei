@@ -273,7 +273,8 @@ final class AgentAccountService: ObservableObject {
     func startLogin(
         _ provider: AgentProviderID,
         language: WeiBeiInterfaceLanguage,
-        targetProfileID: UUID
+        targetProfileID: UUID,
+        onSuccess: @escaping @MainActor (AgentProviderID, UUID) -> Void
     ) {
         guard NativeProviderOAuth.supports(provider) else {
             lastError = LocalizedMessage(
@@ -322,6 +323,7 @@ final class AgentAccountService: ObservableObject {
                 self.isLoggingIn = false
                 self.statusMessage = nil
                 self.reloadCredentialSnapshot()
+                onSuccess(provider, targetProfileID)
                 NotificationCenter.default.post(
                     name: .weiBeiAgentOAuthDidSucceed,
                     object: nil,
@@ -329,6 +331,7 @@ final class AgentAccountService: ObservableObject {
                 )
                 self.loginID = nil
                 self.loginTargetProfileID = nil
+                self.loginTask = nil
             } catch is CancellationError {
                 guard self.loginID == attempt else { return }
                 self.authorizationCode = nil
@@ -337,6 +340,7 @@ final class AgentAccountService: ObservableObject {
                 self.statusMessage = nil
                 self.loginID = nil
                 self.loginTargetProfileID = nil
+                self.loginTask = nil
             } catch {
                 guard self.loginID == attempt else { return }
                 self.authorizationCode = nil
@@ -345,6 +349,7 @@ final class AgentAccountService: ObservableObject {
                 self.statusMessage = nil
                 self.loginID = nil
                 self.loginTargetProfileID = nil
+                self.loginTask = nil
                 self.logFailure("agent_login_failed", providerID: provider.credentialProviderID, error: error)
                 self.lastError = self.authorizationFailureMessage(error, providerID: provider.credentialProviderID)
             }
@@ -426,6 +431,7 @@ final class AgentAccountService: ObservableObject {
 
     func cancelLogin() {
         loginTask?.cancel()
+        loginTask = nil
         loginID = nil
         loginTargetProfileID = nil
         authorizationCode = nil

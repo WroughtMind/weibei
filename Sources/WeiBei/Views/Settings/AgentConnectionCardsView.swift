@@ -801,11 +801,7 @@ struct AgentConnectionCardsView: View {
         addEndpointError = nil
         if subscription {
             let profileID = store.activeAgentProfileID
-            oauthService.startLogin(
-                service,
-                language: store.interfaceLanguage,
-                targetProfileID: profileID
-            )
+            startSubscriptionLogin(service, profileID: profileID)
             subscriptionDetailProfileID = profileID
         } else {
             guard oauthService.startAPIKeyLogin(key, provider: service, baseURL: store.agentBaseURL) else {
@@ -833,11 +829,20 @@ struct AgentConnectionCardsView: View {
         probeState.invalidate(profile.id)
         keyEditProfileID = nil
         subscriptionDetailProfileID = profile.id
+        startSubscriptionLogin(profile.provider, profileID: profile.id)
+    }
+
+    private func startSubscriptionLogin(_ provider: AgentProviderID, profileID: UUID) {
         oauthService.startLogin(
-            profile.provider,
+            provider,
             language: store.interfaceLanguage,
-            targetProfileID: profile.id
-        )
+            targetProfileID: profileID
+        ) { [store] completedProvider, completedProfileID in
+            store.completeAgentSubscriptionLogin(
+                provider: completedProvider,
+                profileID: completedProfileID
+            )
+        }
     }
 
     private func authTypes(for provider: AgentProviderID) -> [AgentCredentialType] {
