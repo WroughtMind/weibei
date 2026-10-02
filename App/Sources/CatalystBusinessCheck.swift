@@ -506,6 +506,31 @@ enum CatalystBusinessCheck {
             try Data(contentsOf: Bundle.main.url(forResource: "landscape", withExtension: "png")!).write(to: imageURL, options: .atomic)
             store.setAgentProviderID(.custom); store.updateAgentBaseURL(endpoint); store.updateModelName("catalyst-local-check")
             AgentAccountService.shared.startAPIKeyLogin("catalyst-test-only", provider: .custom, baseURL: endpoint)
+            let activeConnection = store.activeAgentProfileID
+            _ = try store.createAgentConnection(provider: .openaiCodex, authMethod: .subscription, baseURL: "")
+            store.selectAgentCredentialProfile(activeConnection)
+            NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
+            let settingsScene = {
+                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                    .first { ($0.session.userInfo?["weibei-settings"] as? Bool) == true }
+            }
+            try await until("connection cards in the real settings window") {
+                guard let window = settingsScene()?.windows.first(where: { !$0.isHidden }) else { return false }
+                return window.bounds.width >= 700 && window.bounds.height >= 600
+                    && !AgentAccountService.shared.isRefreshingModels
+                    && AgentAccountService.shared.hasLoadedModels(provider: .custom)
+                    && AgentAccountService.shared.liveModelIDs.contains("catalyst-local-check")
+            }
+            guard let scene = settingsScene(), let window = scene.windows.first(where: { !$0.isHidden }) else {
+                throw Failure("connection settings window disappeared")
+            }
+            let settingsSnapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            try settingsSnapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("connection-cards.png"))
+            try check("connection_cards_settings_and_authenticated_models", true)
+            UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil, errorHandler: nil)
+            try await until("settings window closes") { settingsScene() == nil }
             store.select(itemID: material.id)
             try await until("original composer mounted") {
                 AgentProviderReadiness.isConfigured(for: store)

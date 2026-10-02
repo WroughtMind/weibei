@@ -82,7 +82,6 @@
 
 ## Learned Workspace Facts
 
-- GitHub 目前不可用。日常开发、推送和合并先走 Codeberg 远端 `codeberg`（`https://codeberg.org/WroughtMind/weibei.git`），新的代码分支从 `codeberg/main` 拉出。`origin` 仍指向 GitHub，解封后再收尾。
 - 命令行访问 Codeberg 用的是 macOS 钥匙串里的凭据，与 Chrome 网页登录无关。不要执行 `git credential reject`，它会把钥匙串里的 Codeberg 登录删掉，导致后续推送和合入失败。
 - Mac 版走 Mac Catalyst 目标；Swift 包编译通过不代表 Catalyst 能编过，打候选包前要单独编 Catalyst。同一时间只能跑一路 `xcodebuild` 打包，并行会锁住编译数据库。
 - `check-ci.sh` 会弹出独立测试窗口（约两分钟），会打扰用户桌面；没跑时如实记为未运行。

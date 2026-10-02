@@ -17,6 +17,7 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-failure.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/connection-cards.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-rich-answer-11pt.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/floating-rich-diagnostic.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
@@ -71,6 +72,7 @@ verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')
 required_business_checks = {
+    'connection_cards_settings_and_authenticated_models',
     'reopen_original_note_and_session_files', 'mac_idiom_and_isolated_storage',
     'original_update_service_through_native_bridge', 'native_workspace_toolbar_controls',
     'signed_native_window_material', 'original_import_reader_and_editor',
@@ -93,7 +95,7 @@ assert business['floating_rich_answer']['body_font_size_pt'] == 11, business
 assert business['floating_rich_answer']['math_images'] == 2, business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
-for filename in ['selection-composers.png', 'selection-discussion.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png']:
+for filename in ['selection-composers.png', 'selection-discussion.png', 'connection-cards.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
 print(f"14 项会话检查与 {len(business['checks'])} 项原业务保存重开检查通过；含浮窗 11pt 公式与图示、原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。")
 
