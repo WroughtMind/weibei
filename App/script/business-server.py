@@ -70,12 +70,26 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             item = re.search(r"WB452_ITEM=(\S+)", user)
+            floating_rich = item is not None and "WB514_FLOATING_RICH" in user
             if item and "read452" not in tools:
                 chunk({"tool_calls": [{"index": 0, "id": "read452", "type": "function",
                     "function": {"name": "weibei_course_read", "arguments": json.dumps({"itemID": item[1]})}}]})
                 chunk({}, "tool_calls")
+            elif floating_rich and "floating514" not in tools:
+                # A separate short answer exercises the actual floating native
+                # text and render_ui attachment, without reusing the main fixture.
+                chunk({"content": "WB514_FLOATING_BODY：行内公式 $x+1$。\n\n$$\\frac{1}{2}+\\frac{1}{2}=1$$\n\n"})
+                chunk({"tool_calls": [{"index": 0, "id": "floating514", "type": "function",
+                    "function": {"name": "render_ui", "arguments": json.dumps({
+                        "id": "floating-compact-diagram",
+                        "spec": {"items": [{"type": "mermaid", "code": "graph LR\nA[WB514_START] --> B[WB514_END]"}]},
+                    })}}]})
+                chunk({}, "tool_calls")
             else:
-                if "WB452_STOP" in user:
+                if floating_rich:
+                    answer = "浮窗公式与图示结束。\n\n【候选真实业务链路结束】"
+                    step, delay = 40, 0.05
+                elif "WB452_STOP" in user:
                     answer = "## 停止验证\n\n" + "正在输出的正文应完整保留。中文 café 👩🏽‍💻。\n\n" * 400
                     step, delay = 30, 0.06
                 elif item:

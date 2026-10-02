@@ -207,11 +207,10 @@ extension WorkspaceStore {
             provider: selectedProvider,
             baseURL: agentRun.baseURL
         )
-        let selectedModel = agentRun.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let routedModel = NativeProviderRouting.route(selectedProvider).defaultModel
-        let model = selectedModel.isEmpty
-            ? (routedModel.isEmpty ? "deepseek-chat" : routedModel)
-            : selectedModel
+        let model = try Self.explicitAgentModel(
+            agentRun.modelName,
+            language: interfaceLanguage
+        )
         let adapter = try await NativeLLMAdapterFactory.make(
             provider: selectedProvider,
             model: model,
@@ -336,6 +335,22 @@ extension WorkspaceStore {
                 }
             }
         )
+    }
+
+    static func explicitAgentModel(
+        _ value: String,
+        language: WeiBeiInterfaceLanguage
+    ) throws -> String {
+        let model = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else {
+            throw AgentConversationTargetError(
+                message: language.text(
+                    "尚未选择模型。请到设置中选择，或手动输入模型 ID 后重试。",
+                    "No model is selected. Choose one in Settings, or enter a model ID manually, then try again."
+                )
+            )
+        }
+        return model
     }
 
     nonisolated private static func pagedSearchResult(
