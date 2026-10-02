@@ -477,10 +477,11 @@ final class ConfirmedFileImportTests: XCTestCase {
             sourceFolderNames: [],
             courseID: nil,
             importsMarkdownAsNotes: false,
-            stage: .finished,
-            failures: [failure],
-            pendingSourceURLs: [waiting]
+            stage: .importing,
+            failures: [failure]
         )
+        fixture.store.prepareConfirmedFileImport([waiting])
+        fixture.store.confirmedFileImport?.stage = .finished
 
         fixture.store.continuePendingConfirmedFileImport()
         XCTAssertEqual(fixture.store.confirmedFileImport?.failures, [failure])
@@ -505,10 +506,11 @@ final class ConfirmedFileImportTests: XCTestCase {
             sourceFolderNames: [],
             courseID: nil,
             importsMarkdownAsNotes: false,
-            stage: .finished,
-            failures: [ConfirmedFileImportFailure(sourceURL: failed, message: "失败")],
-            pendingSourceURLs: [waiting]
+            stage: .importing,
+            failures: [ConfirmedFileImportFailure(sourceURL: failed, message: "失败")]
         )
+        fixture.store.prepareConfirmedFileImport([waiting])
+        fixture.store.confirmedFileImport?.stage = .finished
 
         fixture.store.continuePendingConfirmedFileImport(abandoningFailures: true)
         waitForStage(.reviewing, in: fixture.store)

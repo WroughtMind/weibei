@@ -381,6 +381,11 @@ enum CatalystBusinessCheck {
                 store.continueLastWork()
                 store.ensureAllStudySessionMessagesLoaded()
                 try await until("reopened note editor") { !store.activeNoteIsLoading && store.noteText.contains(noteMarker) }
+                let renderedMarker = String(decoding: try JSONEncoder().encode(finalMarker), as: UTF8.self)
+                try await until("reopened note editor content") {
+                    guard let webView = await editor(documentID: store.activeNoteEditorDocumentID) else { return false }
+                    return (try? await webView.evaluateJavaScript("document.querySelector('.ProseMirror')?.textContent?.includes(\(renderedMarker)) === true") as? Bool) == true
+                }
                 let history = store.studySessions.flatMap(\.messages)
                 try check("reopen_original_note_and_session_files",
                     store.noteText.contains(finalMarker) && history.contains { $0.text.contains(finalMarker) && $0.completionState == .completed }

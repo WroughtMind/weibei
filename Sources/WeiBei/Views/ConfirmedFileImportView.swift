@@ -162,19 +162,9 @@ extension WorkspaceStore {
     func continuePendingConfirmedFileImport(abandoningFailures: Bool = false) {
         guard let batch = confirmedFileImport,
               batch.stage == .finished,
-              !batch.pendingSourceURLs.isEmpty,
+              !pendingConfirmedFileImports.isEmpty,
               batch.failures.isEmpty || abandoningFailures else { return }
-        let request: PendingConfirmedFileImport
-        if pendingConfirmedFileImports.isEmpty {
-            request = PendingConfirmedFileImport(
-                sourceURLs: batch.pendingSourceURLs,
-                courseID: nil,
-                importsMarkdownAsNotes: false,
-                securityScopedURLs: []
-            )
-        } else {
-            request = pendingConfirmedFileImports.removeFirst()
-        }
+        let request = pendingConfirmedFileImports.removeFirst()
         releaseConfirmedFileImportSecurityScopes(confirmedFileImportSecurityScopes)
         confirmedFileImportSecurityScopes = request.securityScopedURLs
         let remainingURLs = pendingConfirmedFileImports.flatMap(\.sourceURLs)
