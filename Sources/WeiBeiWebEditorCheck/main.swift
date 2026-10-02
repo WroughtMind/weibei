@@ -4049,7 +4049,7 @@ final class SharedDiagramHarness: NSObject, WKScriptMessageHandler {
             let script = """
             (() => {
               if (!window.diagramCheckStarted) { \(start) window.diagramCheckStarted = true; }
-              const svg = document.querySelector('#diagram svg, #genui-content svg');
+              const svg = document.querySelector('#diagram svg, #genui-content [data-genui-mermaid] svg');
               return Boolean(svg && svg.textContent.includes('阅读') && svg.textContent.includes('整理') && svg.getBoundingClientRect().height > 0);
             })()
             """
@@ -4076,9 +4076,32 @@ final class SharedDiagramHarness: NSObject, WKScriptMessageHandler {
         verifyGenuiLabelGeometry(resources: resources)
     }
 
+    private static let genuiMeasurementObserver = #"""
+    (() => {
+      const observed = [];
+      window.__WeiBeiLabelMeasurements = observed;
+      const original = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = function(...args) {
+        const rectangle = Reflect.apply(original, this, args);
+        try {
+          const text = this.textContent?.trim();
+          if (observed.length < 128 && /^WB514_(START|END)$/.test(text ?? '')) {
+            const style = getComputedStyle(this);
+            observed.push({text,tag:this.localName,font:style.fontFamily,fontSize:style.fontSize,
+              lineHeight:style.lineHeight,variant:style.fontVariantNumeric,boxSizing:style.boxSizing,
+              rect:[rectangle.x,rectangle.y,rectangle.width,rectangle.height],
+              inDisplayRoot:Boolean(this.closest('#genui-content [data-genui]'))});
+          }
+        } catch (_) { /* Diagnostics cannot change the measured rectangle. */ }
+        return rectangle;
+      };
+    })()
+    """#
+
     private func verifyGenuiLabelGeometry(resources: URL) {
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.add(self, name: "weibeiGenUI")
+        configuration.userContentController.addUserScript(WKUserScript(source: Self.genuiMeasurementObserver, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 352, height: 180), configuration: configuration)
         view.loadFileURL(resources.appendingPathComponent("genui.html"), allowingReadAccessTo: resources)
         let script = """
@@ -4086,10 +4109,12 @@ final class SharedDiagramHarness: NSObject, WKScriptMessageHandler {
           if (!window.WeiBeiGenUIHost) return null;
           if (!window.labelProbeStarted) {
             window.labelProbeStarted = true;
-            window.WeiBeiGenUIHost.render({id:'label-geometry',theme:{scale:'1'},spec:{items:[{type:'mermaid',code:'graph LR\\nA[WB514_START] --> B[WB514_END]'}]}});
+            window.WeiBeiGenUIHost.render({id:'label-geometry',theme:{surface:'rgba(255,255,255,1)',ink:'rgba(30,30,30,1)',muted:'rgba(80,80,80,1)',soft:'rgba(120,120,120,1)',border:'rgba(0,0,0,0.1)',scale:'1'},spec:{items:[{type:'mermaid',code:'graph LR\\nA[WB514_START] --> B[WB514_END]'}]}});
           }
           const root = document.querySelector('#genui-content [data-genui]');
-          const svg = root?.querySelector('svg');
+          // The engine mounts a temporary measurement SVG under this root.
+          // Only the renderer's final mounted diagram is ready for acceptance.
+          const svg = root?.querySelector('[data-genui-mermaid] svg');
           if (!svg) return null;
           const rect = r => ({x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom});
           const measure = (parent, text) => {
@@ -4111,7 +4136,7 @@ final class SharedDiagramHarness: NSObject, WKScriptMessageHandler {
             const style = getComputedStyle(node.parentElement);
             return {text,visible:ranges.length>0 && ranges.every(r => r.left>=bounds.left-1 && r.right<=bounds.right+1 && r.top>=bounds.top-1 && r.bottom<=bounds.bottom+1),box:rect(bounds),ranges:ranges.map(rect),font:style.fontFamily,fontSize:style.fontSize,variant:style.fontVariantNumeric,boxSizing:style.boxSizing,bodyMeasure:measure(document.body,text),displayMeasure:measure(root,text)};
           });
-          return {labels,passed:labels.every(label => label.visible)};
+          return {labels,measurements:window.__WeiBeiLabelMeasurements ?? [],passed:labels.every(label => label.visible)};
         })()
         """
         let deadline = Date().addingTimeInterval(30)
@@ -4126,7 +4151,13 @@ final class SharedDiagramHarness: NSObject, WKScriptMessageHandler {
             while !completed && Date() < deadline { RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05)) }
             if diagnostic == nil { RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1)) }
         }
-        if let diagnostic, let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]), let text = String(data:data,encoding:.utf8) { print("GenUI label geometry: \(text)") }
+        if let diagnostic, let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]), let text = String(data:data,encoding:.utf8) {
+            print("GenUI label geometry: \(text)")
+            fflush(stdout)
+            let folder = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".build/native-fix-evidence", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? data.write(to: folder.appendingPathComponent("genui-label-geometry.json"), options: .atomic)
+        }
         expect(diagnostic?["passed"] as? Bool == true, "GenUI diagram label text is clipped inside its foreignObject")
         view.stopLoading()
     }

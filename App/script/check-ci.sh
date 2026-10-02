@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 python3 App/script/business-server.test.py
-node --test App/script/floating-label-check.test.mjs
+node --test App/script/floating-label-check.test.mjs App/script/mermaid-measurement-observer.test.mjs App/script/mermaid-mounted-label-geometry.test.mjs
 CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-business-ci.XXXXXX")"
 python3 App/script/business-server.py --output "$CHECK_DIR" > "$CHECK_DIR/server.log" 2>&1 &
 server_pid=$!
