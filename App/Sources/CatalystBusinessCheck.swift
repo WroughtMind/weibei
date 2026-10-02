@@ -451,9 +451,12 @@ enum CatalystBusinessCheck {
                 }
                 try await until("confirmed import fitted native sheet") {
                     guard let sheet = importSheet(), let size = sheet.contentSize,
-                          let window = sheet.window, !window.isHidden else { return false }
+                          let window = sheet.window, !window.isHidden,
+                          let sceneSize = window.windowScene?.effectiveGeometry.systemFrame.size else { return false }
                     return abs(window.bounds.width - size.width) < 1
                         && abs(window.bounds.height - size.height) < 1
+                        && abs(sceneSize.width - size.width) < 1
+                        && abs(sceneSize.height - size.height) < 1
                         && size.width > 100 && size.height > 100
                 }
                 if !asNotes, let window = importSheet()?.window {
@@ -712,6 +715,14 @@ enum CatalystBusinessCheck {
                      "content_size": String(describing: probe.contentSize),
                      "window_bounds": String(describing: probe.window?.bounds),
                      "window_hidden": String(describing: probe.window?.isHidden),
+                     "root_controller": String(describing: probe.window?.rootViewController.map { type(of: $0) }),
+                     "root_preferred_size": String(describing: probe.window?.rootViewController?.preferredContentSize),
+                     "presentation_controller": String(describing: probe.window?.rootViewController?.presentationController.map { type(of: $0) }),
+                     "rooted_window_count": String(probe.window?.windowScene?.windows.filter { $0.rootViewController != nil }.count ?? 0),
+                     "scene_minimum_size": String(describing: probe.window?.windowScene?.sizeRestrictions?.minimumSize),
+                     "scene_maximum_size": String(describing: probe.window?.windowScene?.sizeRestrictions?.maximumSize),
+                     "geometry_request": probe.checkGeometryRequest ?? "",
+                     "geometry_error": probe.checkGeometryError ?? "",
                      "scene_frame": String(describing: probe.window?.windowScene?.effectiveGeometry.systemFrame),
                      "scene_connected": String(probe.window?.windowScene.map {
                          UIApplication.shared.connectedScenes.contains($0)

@@ -638,6 +638,8 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
     final class Probe: UIView {
 #if WEIBEI_ACCEPTANCE_CHECKS
         @MainActor static let checkInstances = NSHashTable<Probe>.weakObjects()
+        var checkGeometryError: String?
+        var checkGeometryRequest: String? { lastGeometryRequestSignature }
 #endif
         var color = UIColor.clear
         var contentSize: CGSize?
@@ -663,13 +665,16 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
         private func resizeSheetIfNeeded(window: UIWindow, targetSize: CGSize) {
             guard targetSize.width.isFinite, targetSize.height.isFinite,
                   targetSize.width > 0, targetSize.height > 0,
-                  !Self.sameSize(window.bounds.size, targetSize),
                   let scene = window.windowScene else { return }
             let sourceFrame = scene.effectiveGeometry.systemFrame
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
-            guard Self.sameSize(sourceFrame.size, window.bounds.size),
-                  rootedWindows.count == 1,
+            guard rootedWindows.count == 1,
                   rootedWindows[0] === window else { return }
+            if Self.sameSize(window.bounds.size, targetSize),
+               Self.sameSize(sourceFrame.size, targetSize) {
+                lastGeometryRequestSignature = nil
+                return
+            }
             let targetFrame = Self.centeredFrame(size: targetSize, in: sourceFrame)
             let signature = "\(sourceFrame)|\(targetFrame)"
             guard signature != lastGeometryRequestSignature else { return }
@@ -701,22 +706,31 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                 clearGeometryRequest(signature)
                 return
             }
+            // Publish the new content size before asking the host to resize.
+            // Otherwise its preparing-stage size can constrain the review sheet.
+            updatePresentationContentSize(window: window, scene: scene, targetSize: targetSize)
             let sourceFrame = scene.effectiveGeometry.systemFrame
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
-            guard !Self.sameSize(window.bounds.size, targetSize),
-                  Self.sameSize(sourceFrame.size, window.bounds.size),
+            guard (!Self.sameSize(window.bounds.size, targetSize)
+                    || !Self.sameSize(sourceFrame.size, targetSize)),
                   rootedWindows.count == 1,
                   rootedWindows[0] === window else {
                 clearGeometryRequest(signature)
                 return
             }
             let targetFrame = Self.centeredFrame(size: targetSize, in: sourceFrame)
-            scene.requestGeometryUpdate(.Mac(systemFrame: targetFrame)) { [weak self] _ in
+#if WEIBEI_ACCEPTANCE_CHECKS
+            checkGeometryError = nil
+#endif
+            scene.requestGeometryUpdate(.Mac(systemFrame: targetFrame)) { [weak self] error in
+#if WEIBEI_ACCEPTANCE_CHECKS
+                self?.checkGeometryError = error.localizedDescription
+#endif
                 self?.clearGeometryRequest(signature)
             }
             DispatchQueue.main.async { [weak self, weak window, weak scene] in
                 guard let self, let window, let scene else { return }
-                self.synchronizeWindowWithSceneIfNeeded(
+                self.updatePresentationContentSize(
                     window: window,
                     scene: scene,
                     targetSize: targetSize
@@ -724,23 +738,22 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
             }
         }
 
-        private func synchronizeWindowWithSceneIfNeeded(
+        private func updatePresentationContentSize(
             window: UIWindow,
             scene: UIWindowScene,
             targetSize: CGSize
         ) {
-            let effectiveFrame = scene.effectiveGeometry.systemFrame
             let rootedWindows = scene.windows.filter { $0.rootViewController != nil }
             guard self.window === window,
                   window.windowScene === scene,
                   rootedWindows.count == 1,
                   rootedWindows[0] === window,
-                  Self.sameSize(effectiveFrame.size, targetSize),
-                  let rootViewController = window.rootViewController,
-                  let presentationController = rootViewController.presentationController,
+                  let contentSize, Self.sameSize(contentSize, targetSize),
+                  let rootViewController = window.rootViewController else { return }
+            rootViewController.preferredContentSize = targetSize
+            guard let presentationController = rootViewController.presentationController,
                   presentationController.presentedViewController === rootViewController,
                   let containerView = presentationController.containerView else { return }
-            rootViewController.preferredContentSize = targetSize
             presentationController.preferredContentSizeDidChange(
                 forChildContentContainer: rootViewController
             )
@@ -750,7 +763,7 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
                 guard let self, let window, let scene,
                       self.window === window,
                       window.windowScene === scene else { return }
-                guard let contentSize,
+                guard let contentSize = self.contentSize,
                       !Self.sameSize(contentSize, targetSize) else { return }
                 self.configure()
             }
