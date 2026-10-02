@@ -1904,6 +1904,153 @@ actor CourseProjectFileWorker {
         return identity
     }
 
+    func copyImportedFilePreservingOriginal(
+        from rawSourceURL: URL,
+        into rawDestinationDirectory: URL,
+        libraryRoot rawLibraryRoot: URL,
+        expectedLibraryRootIdentity: ImportedFileIdentity
+    ) throws -> URL {
+        let source = try validatedRegularSource(rawSourceURL)
+        let sourceSnapshot = try stableSnapshot(
+            at: source.url,
+            expectedIdentity: source.identity
+        )
+        let rawLibraryRoot = rawLibraryRoot.standardizedFileURL
+        let libraryRoot = try CourseProjectPathPolicy.existingDirectory(rawLibraryRoot)
+        guard CourseProjectPathPolicy.isSame(rawLibraryRoot, libraryRoot),
+              Self.identity(at: libraryRoot) == expectedLibraryRootIdentity else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let destinationDirectory = try ensureRealDirectory(
+            rawDestinationDirectory,
+            inside: libraryRoot
+        )
+        guard let destinationDirectoryIdentity = Self.identity(at: destinationDirectory),
+              Self.identity(at: libraryRoot) == expectedLibraryRootIdentity else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let preparedHTML = try prepareHTMLImport(at: source.url)
+        let payloadSnapshot = preparedHTML.map { snapshot(of: $0) }
+            ?? sourceSnapshot
+        let preferredURL = destinationDirectory.appendingPathComponent(
+            source.url.lastPathComponent
+        )
+        let targetURL: URL
+        if !fileManager.fileExists(atPath: preferredURL.path) {
+            targetURL = preferredURL
+        } else {
+            let existingSource = try validatedRegularSource(preferredURL)
+            let existingSnapshot = try stableSnapshot(
+                at: preferredURL,
+                expectedIdentity: existingSource.identity
+            )
+            let existing = try stableMetadata(
+                at: preferredURL,
+                expectedIdentity: existingSource.identity,
+                expectedSnapshot: existingSnapshot
+            )
+            if existingSnapshot == payloadSnapshot {
+                _ = try stableSnapshot(
+                    at: source.url,
+                    expectedIdentity: source.identity,
+                    expectedSnapshot: sourceSnapshot
+                )
+                let currentDirectory = try ensureRealDirectory(
+                    rawDestinationDirectory,
+                    inside: libraryRoot
+                )
+                guard CourseProjectPathPolicy.isSame(
+                    currentDirectory,
+                    destinationDirectory
+                ), Self.identity(at: currentDirectory)
+                    == destinationDirectoryIdentity,
+                    Self.identity(at: libraryRoot)
+                    == expectedLibraryRootIdentity else {
+                    throw CourseProjectFileWorkerError.unsafePath
+                }
+                _ = try stableMetadata(
+                    at: existing.url,
+                    expectedIdentity: existing.identity,
+                    expectedSnapshot: existingSnapshot
+                )
+                return existing.url
+            }
+            targetURL = ImportFileCopy.uniqueCopyURL(
+                in: destinationDirectory,
+                preferred: preferredURL
+            )
+        }
+
+        let rawStagingDirectory = try fileManager.url(
+            for: .itemReplacementDirectory,
+            in: .userDomainMask,
+            appropriateFor: destinationDirectory,
+            create: true
+        )
+        defer { try? fileManager.removeItem(at: rawStagingDirectory) }
+        let stagingValues = try rawStagingDirectory.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+            .isAliasFileKey,
+        ])
+        let stagingDirectory = try CourseProjectPathPolicy.existingDirectory(
+            rawStagingDirectory
+        )
+        guard stagingValues.isDirectory == true,
+              stagingValues.isSymbolicLink != true,
+              stagingValues.isAliasFile != true,
+              CourseProjectPathPolicy.isSame(
+                  rawStagingDirectory,
+                  stagingDirectory
+              ),
+              Self.identity(at: stagingDirectory)?.volumeID
+                == destinationDirectoryIdentity.volumeID else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let payloadURL = stagingDirectory.appendingPathComponent("payload")
+        let stagedIdentity = try copyAndVerify(
+            from: preparedHTML == nil ? source.url : nil,
+            generatedData: preparedHTML,
+            to: payloadURL,
+            expectedSnapshot: payloadSnapshot
+        )
+        _ = try stableMetadata(
+            at: payloadURL,
+            expectedIdentity: stagedIdentity,
+            expectedSnapshot: payloadSnapshot
+        )
+        _ = try stableSnapshot(
+            at: source.url,
+            expectedIdentity: source.identity,
+            expectedSnapshot: sourceSnapshot
+        )
+        guard Self.identity(at: libraryRoot)
+                == expectedLibraryRootIdentity else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let placedIdentity = try placeWithoutReplacement(
+            from: payloadURL,
+            to: targetURL,
+            courseRoot: libraryRoot,
+            destinationDirectory: destinationDirectory,
+            expectedDestinationIdentity: destinationDirectoryIdentity,
+            expectedSnapshot: payloadSnapshot
+        )
+        guard placedIdentity == stagedIdentity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        _ = try stableMetadata(
+            at: targetURL,
+            expectedIdentity: placedIdentity,
+            expectedSnapshot: payloadSnapshot
+        )
+        guard Self.identity(at: libraryRoot)
+                == expectedLibraryRootIdentity else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        return targetURL
+    }
+
     func write(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: [.atomic])
     }

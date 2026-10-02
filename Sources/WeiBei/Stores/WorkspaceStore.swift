@@ -703,6 +703,7 @@ final class WorkspaceStore: ObservableObject {
     var confirmedFileImportTask: Task<Void, Never>?
     var confirmedFileImportStopRequested = false
     var confirmedFileImportSecurityScopes: [URL] = []
+    var pendingConfirmedFileImports: [PendingConfirmedFileImport] = []
     var recentlyImportedClearTask: Task<Void, Never>?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
@@ -5944,7 +5945,7 @@ final class WorkspaceStore: ObservableObject {
                 types: types, multiple: true
             )
             guard !urls.isEmpty else { return }
-            let scoped = urls.filter { $0.startAccessingSecurityScopedResource() }
+            let scoped = urls.filter(courseSecurityScopeStarter)
             prepareConfirmedFileImport(
                 urls,
                 courseID: assigningToCourseID,
@@ -6008,7 +6009,10 @@ final class WorkspaceStore: ObservableObject {
                 let importsIntoNotes = Self.isMarkdownFile(rawURL)
                     && (markdownNotePaths?.contains(rawURL.path) ?? markdownAsNotes)
                 do {
-                    let url = try Self.copyExternalFileIntoLibrary(
+                    guard let self else {
+                        throw CancellationError()
+                    }
+                    let url = try await self.copyExternalFileIntoLibrary(
                         root: libraryRoot,
                         sourceURL: rawURL,
                         isNote: importsIntoNotes

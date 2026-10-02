@@ -130,7 +130,7 @@ public enum ImportFileCopy {
         }
     }
 
-    static func uniqueCopyURL(in directory: URL, preferred: URL) -> URL {
+    public static func uniqueCopyURL(in directory: URL, preferred: URL) -> URL {
         let stem = preferred.deletingPathExtension().lastPathComponent
         let ext = preferred.pathExtension
         var index = 2

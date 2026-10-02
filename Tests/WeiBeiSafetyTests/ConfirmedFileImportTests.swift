@@ -516,6 +516,56 @@ final class ConfirmedFileImportTests: XCTestCase {
         XCTAssertTrue(fixture.store.confirmedFileImport?.failures.isEmpty == true)
     }
 
+    func testFilePickerBatchDuringImportKeepsDestinationAndSecurityScope() throws {
+        var stoppedScopes: [URL] = []
+        let fixture = try makeFixture(
+            securityScopeStopper: { stoppedScopes.append($0.standardizedFileURL) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let courseID = try fixture.store.createCourseInLibrary(title: "稍后导入")
+        let current = fixture.outside.appendingPathComponent("当前.txt")
+        let waiting = fixture.outside.appendingPathComponent("稍后.md")
+        try Data("current".utf8).write(to: current)
+        try Data("waiting".utf8).write(to: waiting)
+
+        fixture.store.prepareConfirmedFileImport([current])
+        waitForStage(.reviewing, in: fixture.store)
+        var batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        batch.stage = .importing
+        fixture.store.confirmedFileImport = batch
+
+        fixture.store.prepareConfirmedFileImport(
+            [waiting],
+            courseID: courseID,
+            asNotes: true,
+            securityScopedURLs: [waiting]
+        )
+
+        batch = try XCTUnwrap(fixture.store.confirmedFileImport)
+        XCTAssertEqual(batch.pendingSourceURLs, [waiting])
+        XCTAssertTrue(stoppedScopes.isEmpty)
+
+        batch.stage = .finished
+        fixture.store.confirmedFileImport = batch
+        fixture.store.continuePendingConfirmedFileImport()
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.sourceURLs, [waiting])
+        XCTAssertEqual(fixture.store.confirmedFileImport?.courseID, courseID)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.importsMarkdownAsNotes, true)
+        XCTAssertTrue(stoppedScopes.isEmpty)
+
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+        let imported = try XCTUnwrap(
+            fixture.store.importedItems.first { $0.subtitle == "稍后.md" }
+        )
+        XCTAssertEqual(
+            imported.storage,
+            .courseOwned(ownerCourseID: courseID, relativePath: "笔记/稍后.md")
+        )
+        XCTAssertEqual(stoppedScopes, [waiting.standardizedFileURL])
+    }
+
     func testInitialCourseFilesWaitForUnifiedConfirmation() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -1074,6 +1124,54 @@ final class ConfirmedFileImportTests: XCTestCase {
         XCTAssertTrue(expansion.unavailableSourceURLs.isEmpty)
     }
 
+    func testConfirmationRejectsSourceReplacedBySymbolicLink() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let source = fixture.outside.appendingPathComponent("讲义.txt")
+        let outside = fixture.root.appendingPathComponent("边界外.txt")
+        try Data("preview".utf8).write(to: source)
+        try Data("outside".utf8).write(to: outside)
+
+        fixture.store.prepareConfirmedFileImport([source])
+        waitForStage(.reviewing, in: fixture.store)
+        try FileManager.default.removeItem(at: source)
+        try FileManager.default.createSymbolicLink(at: source, withDestinationURL: outside)
+
+        fixture.store.confirmFileImport()
+        waitForStage(.finished, in: fixture.store)
+
+        XCTAssertEqual(fixture.store.confirmedFileImport?.failures.map(\.sourceURL), [source])
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.library.appendingPathComponent("通用资料/讲义.txt").path
+        ))
+    }
+
+    func testConfirmationRejectsCommonDirectoryReplacedBySymbolicLink() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let source = fixture.outside.appendingPathComponent("讲义.txt")
+        let commonMaterials = fixture.library.appendingPathComponent("通用资料", isDirectory: true)
+        let outsideDirectory = fixture.root.appendingPathComponent("边界外目录", isDirectory: true)
+        try Data("source".utf8).write(to: source)
+        try FileManager.default.createDirectory(at: outsideDirectory, withIntermediateDirectories: true)
+
+        fixture.store.prepareConfirmedFileImport([source])
+        waitForStage(.reviewing, in: fixture.store)
+        try FileManager.default.removeItem(at: commonMaterials)
+        try FileManager.default.createSymbolicLink(
+            at: commonMaterials,
+            withDestinationURL: outsideDirectory
+        )
+
+        fixture.store.confirmFileImport()
+        waitForStage(.finished, in: fixture.store)
+
+        XCTAssertEqual(fixture.store.confirmedFileImport?.failures.map(\.sourceURL), [source])
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: outsideDirectory.appendingPathComponent("讲义.txt").path
+        ))
+    }
+
     private func waitForStage(
         _ stage: ConfirmedFileImportStage,
         in store: WorkspaceStore,
@@ -1102,7 +1200,8 @@ final class ConfirmedFileImportTests: XCTestCase {
     }
 
     private func makeFixture(
-        mutationHook: @escaping (CourseProjectMutationStage) throws -> Void = { _ in }
+        mutationHook: @escaping (CourseProjectMutationStage) throws -> Void = { _ in },
+        securityScopeStopper: @escaping (URL) -> Void = { _ in }
     ) throws -> (
         root: URL,
         library: URL,
@@ -1128,7 +1227,7 @@ final class ConfirmedFileImportTests: XCTestCase {
                 )
             },
             courseSecurityScopeStarter: { _ in true },
-            courseSecurityScopeStopper: { _ in },
+            courseSecurityScopeStopper: securityScopeStopper,
             courseProjectMutationHook: mutationHook,
             startsAtBlankEntries: true,
             startsCourseFileMaintenance: false

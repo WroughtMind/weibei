@@ -27,6 +27,13 @@ struct ConfirmedFileImportFailure: Identifiable, Equatable, Sendable {
     var id: String { sourceURL.path }
 }
 
+struct PendingConfirmedFileImport: Sendable {
+    var sourceURLs: [URL]
+    var courseID: UUID?
+    var importsMarkdownAsNotes: Bool
+    var securityScopedURLs: [URL]
+}
+
 struct ConfirmedFileImportBatch: Identifiable, Equatable, Sendable {
     let id: UUID
     var sourceURLs: [URL]
@@ -73,8 +80,19 @@ extension WorkspaceStore {
         asNotes: Bool = false,
         securityScopedURLs: [URL] = []
     ) {
-        guard !urls.isEmpty else { return }
-        guard confirmedFileImport?.stage != .importing else { return }
+        guard !urls.isEmpty else {
+            releaseConfirmedFileImportSecurityScopes(securityScopedURLs)
+            return
+        }
+        if confirmedFileImport?.stage == .importing {
+            enqueuePendingConfirmedFileImport(
+                urls,
+                courseID: courseID,
+                asNotes: asNotes,
+                securityScopedURLs: securityScopedURLs
+            )
+            return
+        }
         dismissConfirmedFileImport()
         confirmedFileImportSecurityScopes = securityScopedURLs
         let folders = urls.filter {
@@ -91,14 +109,8 @@ extension WorkspaceStore {
     }
 
     func receiveExternalFileForConfirmedImport(_ url: URL) {
-        if var batch = confirmedFileImport, batch.stage == .importing {
-            let knownURLs = batch.sourceURLs + batch.pendingSourceURLs
-            if !knownURLs.contains(where: {
-                $0.standardizedFileURL == url.standardizedFileURL
-            }) {
-                batch.pendingSourceURLs.append(url)
-                confirmedFileImport = batch
-            }
+        if confirmedFileImport?.stage == .importing {
+            enqueuePendingConfirmedFileImport([url])
             return
         }
         if var batch = confirmedFileImport,
@@ -132,8 +144,12 @@ extension WorkspaceStore {
     func dismissConfirmedFileImport() {
         confirmedFileImportTask?.cancel()
         confirmedFileImportTask = nil
-        confirmedFileImportSecurityScopes.forEach { $0.stopAccessingSecurityScopedResource() }
+        releaseConfirmedFileImportSecurityScopes(confirmedFileImportSecurityScopes)
+        for request in pendingConfirmedFileImports {
+            releaseConfirmedFileImportSecurityScopes(request.securityScopedURLs)
+        }
         confirmedFileImportSecurityScopes = []
+        pendingConfirmedFileImports = []
         confirmedFileImportStopRequested = false
         confirmedFileImport = nil
     }
@@ -148,7 +164,78 @@ extension WorkspaceStore {
               batch.stage == .finished,
               !batch.pendingSourceURLs.isEmpty,
               batch.failures.isEmpty || abandoningFailures else { return }
-        prepareConfirmedFileImport(batch.pendingSourceURLs)
+        let request: PendingConfirmedFileImport
+        if pendingConfirmedFileImports.isEmpty {
+            request = PendingConfirmedFileImport(
+                sourceURLs: batch.pendingSourceURLs,
+                courseID: nil,
+                importsMarkdownAsNotes: false,
+                securityScopedURLs: []
+            )
+        } else {
+            request = pendingConfirmedFileImports.removeFirst()
+        }
+        releaseConfirmedFileImportSecurityScopes(confirmedFileImportSecurityScopes)
+        confirmedFileImportSecurityScopes = request.securityScopedURLs
+        let remainingURLs = pendingConfirmedFileImports.flatMap(\.sourceURLs)
+        let folders = request.sourceURLs.filter {
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }.map(\.lastPathComponent)
+        confirmedFileImport = ConfirmedFileImportBatch(
+            id: UUID(),
+            sourceURLs: request.sourceURLs,
+            sourceFolderNames: folders,
+            courseID: request.courseID,
+            importsMarkdownAsNotes: request.importsMarkdownAsNotes,
+            pendingSourceURLs: remainingURLs
+        )
+        refreshConfirmedFileImportPlan()
+    }
+
+    private func enqueuePendingConfirmedFileImport(
+        _ urls: [URL],
+        courseID: UUID? = nil,
+        asNotes: Bool = false,
+        securityScopedURLs: [URL] = []
+    ) {
+        guard var batch = confirmedFileImport, batch.stage == .importing else {
+            releaseConfirmedFileImportSecurityScopes(securityScopedURLs)
+            return
+        }
+        var knownPaths = Set<String>()
+        if batch.courseID == courseID, batch.importsMarkdownAsNotes == asNotes {
+            knownPaths.formUnion(batch.sourceURLs.map { $0.standardizedFileURL.path })
+        }
+        for request in pendingConfirmedFileImports
+        where request.courseID == courseID
+            && request.importsMarkdownAsNotes == asNotes {
+            knownPaths.formUnion(request.sourceURLs.map { $0.standardizedFileURL.path })
+        }
+        let acceptedURLs = urls.filter {
+            knownPaths.insert($0.standardizedFileURL.path).inserted
+        }
+        let acceptedPaths = Set(acceptedURLs.map { $0.standardizedFileURL.path })
+        let acceptedScopes = securityScopedURLs.filter {
+            acceptedPaths.contains($0.standardizedFileURL.path)
+        }
+        releaseConfirmedFileImportSecurityScopes(
+            securityScopedURLs.filter {
+                !acceptedPaths.contains($0.standardizedFileURL.path)
+            }
+        )
+        guard !acceptedURLs.isEmpty else { return }
+        pendingConfirmedFileImports.append(PendingConfirmedFileImport(
+            sourceURLs: acceptedURLs,
+            courseID: courseID,
+            importsMarkdownAsNotes: asNotes,
+            securityScopedURLs: acceptedScopes
+        ))
+        batch.pendingSourceURLs = pendingConfirmedFileImports.flatMap(\.sourceURLs)
+        confirmedFileImport = batch
+    }
+
+    private func releaseConfirmedFileImportSecurityScopes(_ urls: [URL]) {
+        urls.forEach(courseSecurityScopeStopper)
     }
 
     func prepareInitialCourseImportAfterEntryDismissal(
@@ -482,7 +569,7 @@ extension WorkspaceStore {
             confirmedFileImportTask = nil
             if current.candidates.isEmpty {
                 confirmedFileImport = current
-                if current.failures.isEmpty {
+                if current.failures.isEmpty, current.pendingSourceURLs.isEmpty {
                     let feedback = confirmedImportCompletionFeedback(current)
                     dismissConfirmedFileImport()
                     if let feedback { showTransientNoteStatus(feedback) }
@@ -659,13 +746,11 @@ extension WorkspaceStore {
         guard let root = courseLibraryRootURL else {
             throw CocoaError(.fileNoSuchFile)
         }
-        let copiedURL = try await Task.detached(priority: .userInitiated) {
-            try Self.copyExternalFileIntoLibrary(
-                root: root,
-                sourceURL: candidate.sourceURL,
-                isNote: batch.importsMarkdownAsNotes
-            )
-        }.value
+        let copiedURL = try await copyExternalFileIntoLibrary(
+            root: root,
+            sourceURL: candidate.sourceURL,
+            isNote: batch.importsMarkdownAsNotes
+        )
         guard let item = applyImportedCommonFiles(
             [(copiedURL, batch.importsMarkdownAsNotes)],
             selectsFirstImportedItem: false,
