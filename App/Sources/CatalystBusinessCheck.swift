@@ -439,17 +439,18 @@ enum CatalystBusinessCheck {
             try "# 候选验证笔记\n\n这是独立测试资料，不是用户笔记。\n".write(to: noteURL, atomically: true, encoding: .utf8)
             var confirmedItems: [StudyItem] = []
             let importSheet = {
-                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-                    .flatMap(\.windows).flatMap(descendants)
-                    .compactMap { $0 as? CatalystIndependentSheetSizingProbe.Probe }
-                    .first { $0.window != nil && !$0.isHidden && $0.contentSize != nil }
+                // Catalyst can host the sheet outside connectedScenes.windows.
+                CatalystIndependentSheetSizingProbe.Probe.checkInstances.allObjects
+                    .first { $0.window?.isHidden == false && !$0.isHidden && $0.contentSize != nil }
             }
             for (url, asNotes) in [(materialURL, false), (noteURL, true)] {
                 let previousIDs = Set(store.importedItems.map(\.id))
                 store.prepareConfirmedFileImport([url], asNotes: asNotes)
-                try await until("confirmed import review and fitted native sheet") {
-                    guard store.confirmedFileImport?.stage == .reviewing,
-                          let sheet = importSheet(), let size = sheet.contentSize,
+                try await until("confirmed import review") {
+                    store.confirmedFileImport?.stage == .reviewing
+                }
+                try await until("confirmed import fitted native sheet") {
+                    guard let sheet = importSheet(), let size = sheet.contentSize,
                           let window = sheet.window, !window.isHidden else { return false }
                     return abs(window.bounds.width - size.width) < 1
                         && abs(window.bounds.height - size.height) < 1
@@ -700,6 +701,23 @@ enum CatalystBusinessCheck {
         } catch {
             result["failure"] = error.localizedDescription
             let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+            let sheetProbes = CatalystIndependentSheetSizingProbe.Probe.checkInstances.allObjects
+            result["confirmed_import_state"] = [
+                "stage": store.confirmedFileImport.map { String(describing: $0.stage) } ?? "dismissed",
+                "destination_error": store.confirmedFileImport?.destinationError ?? "",
+                "candidate_count": store.confirmedFileImport?.candidates.count ?? 0,
+                "sheet_probes": sheetProbes.map { probe in
+                    ["frame": String(describing: probe.frame),
+                     "hidden": String(probe.isHidden),
+                     "content_size": String(describing: probe.contentSize),
+                     "window_bounds": String(describing: probe.window?.bounds),
+                     "window_hidden": String(describing: probe.window?.isHidden),
+                     "scene_frame": String(describing: probe.window?.windowScene?.effectiveGeometry.systemFrame),
+                     "scene_connected": String(probe.window?.windowScene.map {
+                         UIApplication.shared.connectedScenes.contains($0)
+                     } ?? false)]
+                }
+            ]
             result["failure_state"] = [
                 "application_state": UIApplication.shared.applicationState.rawValue,
                 "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
@@ -730,7 +748,8 @@ enum CatalystBusinessCheck {
                     "follows_latest": controller.followsLatest
                 ]
             }
-            if let window = conversation()?.view.window ?? windows.first {
+            if let window = sheetProbes.first(where: { $0.window?.isHidden == false })?.window
+                ?? conversation()?.view.window ?? windows.first {
                 let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                     window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
                 }

@@ -621,7 +621,13 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
         self.contentSize = contentSize
     }
 
-    func makeUIView(context: Context) -> Probe { Probe() }
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+#if WEIBEI_ACCEPTANCE_CHECKS
+        Probe.checkInstances.add(view)
+#endif
+        return view
+    }
 
     func updateUIView(_ view: Probe, context: Context) {
         view.color = color
@@ -630,6 +636,9 @@ struct CatalystIndependentSheetSizingProbe: UIViewRepresentable {
     }
 
     final class Probe: UIView {
+#if WEIBEI_ACCEPTANCE_CHECKS
+        @MainActor static let checkInstances = NSHashTable<Probe>.weakObjects()
+#endif
         var color = UIColor.clear
         var contentSize: CGSize?
         private var lastGeometryRequestSignature: String?
