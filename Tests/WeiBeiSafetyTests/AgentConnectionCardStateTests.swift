@@ -5,6 +5,31 @@ import WeiBeiCore
 
 final class AgentConnectionCardStateTests: XCTestCase {
     @MainActor
+    func testFirstLaunchConnectionRemainsSelectableAfterAddingAnother() throws {
+        let keys = ["weibei.agentCredentialProfiles.v1", "weibei.agentCredentialActiveProfileID.v1"]
+        let saved = keys.map { UserDefaults.standard.object(forKey: $0) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            for (key, value) in zip(keys, saved) { UserDefaults.standard.set(value, forKey: key) }
+            try? FileManager.default.removeItem(at: root)
+        }
+        for key in keys { UserDefaults.standard.removeObject(forKey: key) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let originalID = try XCTUnwrap(store.agentCredentialProfiles.first).id
+        XCTAssertEqual(store.activeAgentProfileID, originalID)
+        store.setAgentProviderID(.custom)
+        store.updateAgentBaseURL("https://first-connection.example.test/v1")
+        store.updateModelName("synthetic-first-model")
+        try store.createAgentConnection(provider: .openaiCodex, authMethod: .subscription, baseURL: "")
+        store.selectAgentCredentialProfile(originalID)
+        XCTAssertEqual(store.activeAgentProfileID, originalID)
+        XCTAssertEqual(store.agentProviderID, .custom)
+        XCTAssertEqual(store.agentAuthMethod, .apiKey)
+        XCTAssertEqual(store.agentBaseURL, "https://first-connection.example.test/v1")
+        XCTAssertEqual(store.modelName, "synthetic-first-model")
+    }
+
+    @MainActor
     func testCustomCredentialStatusResolvesExactEndpointAndRejectsOtherGateway() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

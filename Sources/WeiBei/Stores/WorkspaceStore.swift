@@ -720,10 +720,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
     @Published var agentAuthMethod: AgentAuthMethod = .apiKey
-    @Published var agentCredentialProfiles: [AgentCredentialProfile] = AgentCredentialProfileStore.loadProfiles()
-    @Published var activeAgentProfileID: UUID = AgentCredentialProfileStore.activeProfileID()
-        ?? AgentCredentialProfileStore.loadProfiles().first?.id
-        ?? AgentCredentialProfileStore.defaultProfile().id
+    @Published var agentCredentialProfiles: [AgentCredentialProfile]
+    @Published var activeAgentProfileID: UUID
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
     /// App-wide motion preference (system / reduce / full); resolved against the
     /// macOS switch by `WeiBeiMotionScope`. Persisted in UserDefaults, not workspace.json.
@@ -1065,6 +1063,9 @@ final class WorkspaceStore: ObservableObject {
         startsAtBlankEntries: Bool = false,
         startsCourseFileMaintenance: Bool = true
     ) {
+        let profiles = AgentCredentialProfileStore.loadProfiles()
+        agentCredentialProfiles = profiles
+        activeAgentProfileID = AgentCredentialProfileStore.activeProfileID() ?? profiles[0].id
         workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
         sessionMessagePersistence = StudySessionMessagePersistence(storageURL: storageURL)

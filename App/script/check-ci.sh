@@ -73,6 +73,7 @@ verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')
 required_business_checks = {
+    'active_connection_profile_matches_configuration', 'connection_profile_switch_back',
     'connection_cards_settings_and_authenticated_models',
     'confirmed_import_review_copy_and_dismiss',
     'reopen_original_note_and_session_files', 'mac_idiom_and_isolated_storage',

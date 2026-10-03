@@ -549,8 +549,15 @@ enum CatalystBusinessCheck {
             store.setAgentProviderID(.custom); store.updateAgentBaseURL(endpoint); store.updateModelName("catalyst-local-check")
             AgentAccountService.shared.startAPIKeyLogin("catalyst-test-only", provider: .custom, baseURL: endpoint)
             let activeConnection = store.activeAgentProfileID
+            try check("active_connection_profile_matches_configuration", store.agentCredentialProfiles.contains {
+                $0.id == activeConnection && $0.provider == .custom && $0.authMethod == .apiKey
+                    && $0.baseURL == endpoint && $0.modelName == "catalyst-local-check"
+            })
             _ = try store.createAgentConnection(provider: .openaiCodex, authMethod: .subscription, baseURL: "")
             store.selectAgentCredentialProfile(activeConnection)
+            try check("connection_profile_switch_back", store.activeAgentProfileID == activeConnection
+                && store.agentProviderID == .custom && store.agentAuthMethod == .apiKey
+                && store.agentBaseURL == endpoint && store.modelName == "catalyst-local-check")
             NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
             let settingsScene = {
                 UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -703,6 +710,13 @@ enum CatalystBusinessCheck {
             if CommandLine.arguments.contains("--exit-after-check") { exit(0) }
         } catch {
             result["failure"] = error.localizedDescription
+            result["connection_state"] = [
+                "provider": store.agentProviderID.rawValue,
+                "auth_method": store.agentAuthMethod.rawValue,
+                "model_list_failure": String(describing: AgentAccountService.shared.modelListFailure),
+                "live_models": AgentAccountService.shared.liveModelIDs.joined(separator: ","),
+                "is_refreshing": String(AgentAccountService.shared.isRefreshingModels)
+            ]
             let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
             let sheetProbes = CatalystIndependentSheetSizingProbe.Probe.checkInstances.allObjects
             let sheetProbeStates: [[String: String]] = sheetProbes.map { probe in
