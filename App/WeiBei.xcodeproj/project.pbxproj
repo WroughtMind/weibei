@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		62B14F3FE41E983161CA0715 /* AgentConnectionProbeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80F04499AB2903533AA0A920 /* AgentConnectionProbeState.swift */; };
 		0F01CE000000000000000001 /* OfficeDocumentText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F01CE000000000000000002 /* OfficeDocumentText.swift */; };
 		014CAA0987ACF6294F39D1A2 /* AgentAccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D92418B7C7756A863085B9D /* AgentAccountService.swift */; };
 		0251D244D2FD142022993345 /* NativeAgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B87CFBF75DA1ADF8EC2F14 /* NativeAgentTools.swift */; };
@@ -42,6 +43,8 @@
 		1886682864C9CDF2CD29F9EE /* CatalystSystemViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDE07528343BB6E0417ECFF /* CatalystSystemViews.swift */; };
 		188C4C3CE758FFE66AD04566 /* CourseSidebarTagSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01EDB37E094162897A3C510E /* CourseSidebarTagSupport.swift */; };
 		1AAAA87588FAA0B80C752166 /* AgentSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B9F879EC63031CEEA300B6 /* AgentSettingsView.swift */; };
+		B8D4F02C5E306192C6F15D88 /* ProviderLogo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C3E91B4D2F6081B5E04C77 /* ProviderLogo.swift */; };
+		D0F6124E705283B4E8137FAA /* AgentConnectionCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9E5013D6F4172A3D7026E99 /* AgentConnectionCardsView.swift */; };
 		1BACBE16408835D31B827081 /* PDFSelectionReportGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 909B209624E66CFAFB738B90 /* PDFSelectionReportGate.swift */; };
 		1BCBBBA58D6AD0919EFBBB74 /* DiagramView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBE910F7A08873EDEB2E1769 /* DiagramView.swift */; };
 		1C8433473F31B864845671FA /* NativeAgentSubagent.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECB6E3E976222146630F0A23 /* NativeAgentSubagent.swift */; };
@@ -156,6 +159,7 @@
 		9E35B424552BEC714D64E69B /* HTMLResourceImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E587D2C74173406238893D89 /* HTMLResourceImport.swift */; };
 		9E82B06347DF8AAD02442C3D /* WorkspaceStore+NativeAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74D3DDD62890E2095AE206E6 /* WorkspaceStore+NativeAgent.swift */; };
 		9FB05F925099B527532D6EB2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C114483E09D9B95115B4EF5 /* ContentView.swift */; };
+		CF1A00000000000000000001 /* ConfirmedFileImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF1A00000000000000000002 /* ConfirmedFileImportView.swift */; };
 		9FD230DCC3C1CCEE79F5B1C1 /* EmptyWorkspaceInspiration.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA378A62D30B6A6251AD9DA6 /* EmptyWorkspaceInspiration.swift */; };
 		9FF041C038C5AB9C8A27287A /* PDFReaderOpenSafety.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178A366B5659AC7A47E7AA30 /* PDFReaderOpenSafety.swift */; };
 		A29105E5484EFF5BE88B2979 /* PaneSeatMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A434A3C22BC374DD87D0E041 /* PaneSeatMotion.swift */; };
@@ -283,6 +287,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		80F04499AB2903533AA0A920 /* AgentConnectionProbeState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentConnectionProbeState.swift; sourceTree = "<group>"; };
 		0F01CE000000000000000002 /* OfficeDocumentText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeDocumentText.swift; sourceTree = "<group>"; };
 		00FB03E91469CACE2F8CEF89 /* CoursePortableState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoursePortableState.swift; sourceTree = "<group>"; };
 		0143654F5459DD613936A2D2 /* CourseProjectRootSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseProjectRootSupport.swift; sourceTree = "<group>"; };
@@ -331,6 +336,8 @@
 		343CB37ECF7BC6AFFA2D37D5 /* AgentComposerTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentComposerTextEditor.swift; sourceTree = "<group>"; };
 		34B53E38967ACD5B8B394ACE /* landscape.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = landscape.png; sourceTree = "<group>"; };
 		34B9F879EC63031CEEA300B6 /* AgentSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSettingsView.swift; sourceTree = "<group>"; };
+		A7C3E91B4D2F6081B5E04C77 /* ProviderLogo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderLogo.swift; sourceTree = "<group>"; };
+		C9E5013D6F4172A3D7026E99 /* AgentConnectionCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentConnectionCardsView.swift; sourceTree = "<group>"; };
 		352DD8F71F8DC45F948FCBED /* NativeAgentOAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentOAuth.swift; sourceTree = "<group>"; };
 		35438FDF550E11C4215B4DFD /* NativeAgentEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentEvents.swift; sourceTree = "<group>"; };
 		37E8D9872F023903DF204CF8 /* ConversationData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationData.swift; sourceTree = "<group>"; };
@@ -348,6 +355,7 @@
 		4639CC2F72655275FF9EF5C5 /* WorkspaceStore+GlobalSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+GlobalSearch.swift"; sourceTree = "<group>"; };
 		4787853DDB4CD028D2FABC51 /* ContentRailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentRailView.swift; sourceTree = "<group>"; };
 		4C114483E09D9B95115B4EF5 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		CF1A00000000000000000002 /* ConfirmedFileImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmedFileImportView.swift; sourceTree = "<group>"; };
 		4CDF85F80AC46C5FE414E777 /* NativeAgentSSE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentSSE.swift; sourceTree = "<group>"; };
 		4D52600F1258F2C0DAB31B39 /* ConversationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationController.swift; sourceTree = "<group>"; };
 		50D90DFD2794222AD19D98DD /* WeiBeiUpdateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiUpdateService.swift; sourceTree = "<group>"; };
@@ -746,6 +754,7 @@
 				BCFA6009ED31791018CA93D2 /* ComposerView.swift */,
 				4787853DDB4CD028D2FABC51 /* ContentRailView.swift */,
 				4C114483E09D9B95115B4EF5 /* ContentView.swift */,
+				CF1A00000000000000000002 /* ConfirmedFileImportView.swift */,
 				E51AB9EF50CCEDB319397D8C /* ContextualContentPicker.swift */,
 				E59061F53CCAA6551A4ABABC /* ConversationWebClippingView.swift */,
 				ED28080243B8A8B552763344 /* CourseDocNoteWorkspaceView.swift */,
@@ -826,6 +835,7 @@
 			isa = PBXGroup;
 			children = (
 				5D92418B7C7756A863085B9D /* AgentAccountService.swift */,
+				80F04499AB2903533AA0A920 /* AgentConnectionProbeState.swift */,
 				B50AB6E6DC9F8AC15B64CEA7 /* AgentChatKaTeXMarkdown.swift */,
 				851F281152AB3195E523BF46 /* LatestFirstSerialQueue.swift */,
 				D4DC97F117C4C9EF8A872EAA /* SelectionAnchorContentPoint.swift */,
@@ -845,6 +855,8 @@
 			children = (
 				8D2D56A564786A1FEE7F20A7 /* AgentModelPicker.swift */,
 				34B9F879EC63031CEEA300B6 /* AgentSettingsView.swift */,
+				C9E5013D6F4172A3D7026E99 /* AgentConnectionCardsView.swift */,
+				A7C3E91B4D2F6081B5E04C77 /* ProviderLogo.swift */,
 				61FB2C8B3FEBD19BC27B4B08 /* SettingsView.swift */,
 			);
 			path = Settings;
@@ -1030,9 +1042,11 @@
 			dependencies = (
 				49E6D4A20DE48D1533107998 /* PBXTargetDependency */,
 				0F01CE000000000000000003 /* PBXTargetDependency */,
+				D5130ACE0000000000000001 /* PBXTargetDependency */,
 			);
 			name = WeiBeiCore;
 			packageProductDependencies = (
+				D5130ACE0000000000000002 /* SwiftSoup */,
 				2357C0DC96C864EA89194FC2 /* Markdown */,
 				0F01CE000000000000000004 /* ZIPFoundation */,
 			);
@@ -1065,6 +1079,7 @@
 			mainGroup = CD245EE5BAF3B71C96D5FFE0;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				D5130ACE0000000000000003 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
 				0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 				EB07E84F9F479A4FC27B9DFB /* XCRemoteSwiftPackageReference "MarkdownView" */,
 				A362C2116CE98A2EFABB6D0E /* XCRemoteSwiftPackageReference "Sparkle" */,
@@ -1239,6 +1254,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				014CAA0987ACF6294F39D1A2 /* AgentAccountService.swift in Sources */,
+				62B14F3FE41E983161CA0715 /* AgentConnectionProbeState.swift in Sources */,
 				D0AE313DCDCE41A594791495 /* AgentChatKaTeXMarkdown.swift in Sources */,
 				D348A95E5B126E2C1EBB5950 /* AgentComposerTextEditor.swift in Sources */,
 				88B98A9691870247327A8B79 /* AgentConversationRun.swift in Sources */,
@@ -1254,6 +1270,8 @@
 				E7939285E4E0C9937364F5C3 /* AgentReplyMemoryUpdateTag.swift in Sources */,
 				E818370843CF10A7F41BD707 /* AgentReplyProfileUpdateTag.swift in Sources */,
 				1AAAA87588FAA0B80C752166 /* AgentSettingsView.swift in Sources */,
+				D0F6124E705283B4E8137FAA /* AgentConnectionCardsView.swift in Sources */,
+				B8D4F02C5E306192C6F15D88 /* ProviderLogo.swift in Sources */,
 				523D849A53601A3BD6F76B08 /* AgentStreamingDisplayPump.swift in Sources */,
 				61CF242E8A01AFF86B247CFB /* AgentStreamingState.swift in Sources */,
 				12EB9E42DF2FD8D5172FB892 /* AgentTurnReadingPosition.swift in Sources */,
@@ -1271,6 +1289,7 @@
 				90A2214DC79342A465A01D96 /* ComposerView.swift in Sources */,
 				186031B66D5FC7464EB6CB2C /* ContentRailView.swift in Sources */,
 				9FB05F925099B527532D6EB2 /* ContentView.swift in Sources */,
+				CF1A00000000000000000001 /* ConfirmedFileImportView.swift in Sources */,
 				24D17FE22AAD67D99C583D71 /* ContextualContentPicker.swift in Sources */,
 				82A9C07B68A5A0E9C1844E14 /* ConversationController.swift in Sources */,
 				C2683F836E4926D9F60998FD /* ConversationData.swift in Sources */,
@@ -1360,6 +1379,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		D5130ACE0000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = D5130ACE0000000000000002 /* SwiftSoup */;
+		};
 		0F01CE000000000000000003 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			productRef = 0F01CE000000000000000004 /* ZIPFoundation */;
@@ -1744,6 +1767,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		D5130ACE0000000000000003 /* XCRemoteSwiftPackageReference "SwiftSoup" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/scinfu/SwiftSoup.git";
+			requirement = {kind = exactVersion; version = 2.13.9; };
+		};
 		0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
@@ -1784,6 +1812,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		D5130ACE0000000000000002 /* SwiftSoup */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D5130ACE0000000000000003 /* XCRemoteSwiftPackageReference "SwiftSoup" */;
+			productName = SwiftSoup;
+		};
 		0F01CE000000000000000004 /* ZIPFoundation */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 0F01CE000000000000000005 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;

@@ -381,6 +381,11 @@ enum CatalystBusinessCheck {
                 store.continueLastWork()
                 store.ensureAllStudySessionMessagesLoaded()
                 try await until("reopened note editor") { !store.activeNoteIsLoading && store.noteText.contains(noteMarker) }
+                let renderedMarker = String(decoding: try JSONEncoder().encode(finalMarker), as: UTF8.self)
+                try await until("reopened note editor content") {
+                    guard let webView = await editor(documentID: store.activeNoteEditorDocumentID) else { return false }
+                    return (try? await webView.evaluateJavaScript("document.querySelector('.ProseMirror')?.textContent?.includes(\(renderedMarker)) === true") as? Bool) == true
+                }
                 let history = store.studySessions.flatMap(\.messages)
                 try check("reopen_original_note_and_session_files",
                     store.noteText.contains(finalMarker) && history.contains { $0.text.contains(finalMarker) && $0.completionState == .completed }
@@ -432,12 +437,49 @@ enum CatalystBusinessCheck {
             try "# 阅读位置\n\n候选独立合成资料：内容增长时保留同一处文字。材料标记 WB452_SOURCE。\n".write(to: materialURL, atomically: true, encoding: .utf8)
             let noteURL = inputs.appendingPathComponent("候选验证笔记.md")
             try "# 候选验证笔记\n\n这是独立测试资料，不是用户笔记。\n".write(to: noteURL, atomically: true, encoding: .utf8)
-            let materials: [StudyItem] = await withCheckedContinuation { done in
-                store.importFiles([materialURL]) { done.resume(returning: $0) }
+            var confirmedItems: [StudyItem] = []
+            let importSheet = {
+                // Catalyst can host the sheet outside connectedScenes.windows.
+                CatalystIndependentSheetSizingProbe.Probe.checkInstances.allObjects
+                    .first { $0.window?.isHidden == false && !$0.isHidden && $0.contentSize != nil }
             }
-            let notes: [StudyItem] = await withCheckedContinuation { done in
-                store.importFiles([noteURL], markdownAsNotes: true) { done.resume(returning: $0) }
+            for (url, asNotes) in [(materialURL, false), (noteURL, true)] {
+                let previousIDs = Set(store.importedItems.map(\.id))
+                store.prepareConfirmedFileImport([url], asNotes: asNotes)
+                try await until("confirmed import review") {
+                    store.confirmedFileImport?.stage == .reviewing
+                }
+                try await until("confirmed import fitted native sheet") {
+                    guard let sheet = importSheet(), let size = sheet.contentSize,
+                          let window = sheet.window, !window.isHidden,
+                          let sceneSize = window.windowScene?.effectiveGeometry.systemFrame.size else { return false }
+                    return abs(window.bounds.width - size.width) < 1
+                        && abs(window.bounds.height - size.height) < 1
+                        && abs(sceneSize.width - size.width) < 1
+                        && abs(sceneSize.height - size.height) < 1
+                        && size.width > 100 && size.height > 100
+                }
+                if !asNotes, let window = importSheet()?.window {
+                    let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                    }
+                    try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("confirmed-import.png"))
+                }
+                store.confirmFileImport()
+                try await until("confirmed import completes and dismisses") {
+                    store.confirmedFileImport == nil && importSheet() == nil
+                }
+                let added = store.importedItems.filter { !previousIDs.contains($0.id) }
+                guard added.count == 1, let imported = added.first,
+                      let copiedURL = store.resolvedLibraryURL(for: imported),
+                      try Data(contentsOf: copiedURL) == Data(contentsOf: url) else {
+                    throw Failure("confirmed import did not preserve the material/note")
+                }
+                confirmedItems.append(imported)
             }
+            let materials = Array(confirmedItems.prefix(1))
+            let notes = Array(confirmedItems.suffix(1))
+            try check("confirmed_import_review_copy_and_dismiss", confirmedItems.count == 2)
             guard let material = materials.first, let note = notes.first,
                   let persistedNote = store.resolvedLibraryURL(for: note) else { throw Failure("original import returned no material/note") }
             store.openCourseNote(note.id)
@@ -506,6 +548,38 @@ enum CatalystBusinessCheck {
             try Data(contentsOf: Bundle.main.url(forResource: "landscape", withExtension: "png")!).write(to: imageURL, options: .atomic)
             store.setAgentProviderID(.custom); store.updateAgentBaseURL(endpoint); store.updateModelName("catalyst-local-check")
             AgentAccountService.shared.startAPIKeyLogin("catalyst-test-only", provider: .custom, baseURL: endpoint)
+            let activeConnection = store.activeAgentProfileID
+            try check("active_connection_profile_matches_configuration", store.agentCredentialProfiles.contains {
+                $0.id == activeConnection && $0.provider == .custom && $0.authMethod == .apiKey
+                    && $0.baseURL == endpoint && $0.modelName == "catalyst-local-check"
+            })
+            _ = try store.createAgentConnection(provider: .openaiCodex, authMethod: .subscription, baseURL: "")
+            store.selectAgentCredentialProfile(activeConnection)
+            try check("connection_profile_switch_back", store.activeAgentProfileID == activeConnection
+                && store.agentProviderID == .custom && store.agentAuthMethod == .apiKey
+                && store.agentBaseURL == endpoint && store.modelName == "catalyst-local-check")
+            NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
+            let settingsScene = {
+                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                    .first { ($0.session.userInfo?["weibei-settings"] as? Bool) == true }
+            }
+            try await until("connection cards in the real settings window") {
+                guard let window = settingsScene()?.windows.first(where: { !$0.isHidden }) else { return false }
+                return window.bounds.width >= 700 && window.bounds.height >= 600
+                    && !AgentAccountService.shared.isRefreshingModels
+                    && AgentAccountService.shared.hasLoadedModels(provider: .custom)
+                    && AgentAccountService.shared.liveModelIDs.contains("catalyst-local-check")
+            }
+            guard let scene = settingsScene(), let window = scene.windows.first(where: { !$0.isHidden }) else {
+                throw Failure("connection settings window disappeared")
+            }
+            let settingsSnapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            try settingsSnapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("connection-cards.png"))
+            try check("connection_cards_settings_and_authenticated_models", true)
+            UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil, errorHandler: nil)
+            try await until("settings window closes") { settingsScene() == nil }
             store.select(itemID: material.id)
             try await until("original composer mounted") {
                 AgentProviderReadiness.isConfigured(for: store)
@@ -636,7 +710,49 @@ enum CatalystBusinessCheck {
             if CommandLine.arguments.contains("--exit-after-check") { exit(0) }
         } catch {
             result["failure"] = error.localizedDescription
+            result["connection_state"] = [
+                "provider": store.agentProviderID.rawValue,
+                "auth_method": store.agentAuthMethod.rawValue,
+                "model_list_failure": String(describing: AgentAccountService.shared.modelListFailure),
+                "live_models": AgentAccountService.shared.liveModelIDs.joined(separator: ","),
+                "is_refreshing": String(AgentAccountService.shared.isRefreshingModels)
+            ]
             let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+            let sheetProbes = CatalystIndependentSheetSizingProbe.Probe.checkInstances.allObjects
+            let sheetProbeStates: [[String: String]] = sheetProbes.map { probe in
+                let window = probe.window
+                let scene = window?.windowScene
+                let root = window?.rootViewController
+                let rootView = root?.viewIfLoaded
+                let presentation = root?.presentationController
+                var state: [String: String] = [:]
+                state["frame"] = String(describing: probe.frame)
+                state["hidden"] = String(probe.isHidden)
+                state["content_size"] = String(describing: probe.contentSize)
+                state["window_bounds"] = String(describing: window?.bounds)
+                state["window_hidden"] = String(describing: window?.isHidden)
+                state["root_controller"] = root.map { String(reflecting: type(of: $0)) } ?? "nil"
+                state["root_preferred_size"] = String(describing: root?.preferredContentSize)
+                state["root_contains_probe"] = String(rootView.map { probe.isDescendant(of: $0) } ?? false)
+                state["root_view_window_matches"] = String(window != nil && rootView?.window === window)
+                state["presented_root_matches"] = String(root != nil && presentation?.presentedViewController === root)
+                state["root_has_presented_child"] = String(root?.presentedViewController != nil)
+                state["presentation_controller"] = presentation.map { String(reflecting: type(of: $0)) } ?? "nil"
+                state["rooted_window_count"] = String(scene?.windows.filter { $0.rootViewController != nil }.count ?? 0)
+                state["scene_minimum_size"] = String(describing: scene?.sizeRestrictions?.minimumSize)
+                state["scene_maximum_size"] = String(describing: scene?.sizeRestrictions?.maximumSize)
+                state["geometry_request"] = probe.checkGeometryRequest ?? ""
+                state["geometry_error"] = probe.checkGeometryError ?? ""
+                state["scene_frame"] = String(describing: scene?.effectiveGeometry.systemFrame)
+                state["scene_connected"] = String(scene.map { UIApplication.shared.connectedScenes.contains($0) } ?? false)
+                return state
+            }
+            result["confirmed_import_state"] = [
+                "stage": store.confirmedFileImport.map { String(describing: $0.stage) } ?? "dismissed",
+                "destination_error": store.confirmedFileImport?.destinationError ?? "",
+                "candidate_count": store.confirmedFileImport?.candidates.count ?? 0,
+                "sheet_probes": sheetProbeStates
+            ]
             result["failure_state"] = [
                 "application_state": UIApplication.shared.applicationState.rawValue,
                 "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
@@ -667,7 +783,8 @@ enum CatalystBusinessCheck {
                     "follows_latest": controller.followsLatest
                 ]
             }
-            if let window = conversation()?.view.window ?? windows.first {
+            if let window = sheetProbes.first(where: { $0.window?.isHidden == false })?.window
+                ?? conversation()?.view.window ?? windows.first {
                 let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                     window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
                 }

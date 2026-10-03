@@ -1766,6 +1766,26 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     }
 }
 
+extension View {
+    /// Catalyst 的 `.sheet` 是另一层窗口，默认又大又白，不会跟着内容的 `frame(width:)` 缩小。
+    /// 内容再自己涂一块纸色，就会变成小卡套在大白底里。这层表面要贴合内容，并且只涂一次纸色。
+    func weiBeiFittedSheet() -> some View {
+        modifier(WeiBeiFittedSheetModifier())
+    }
+}
+
+private struct WeiBeiFittedSheetModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let papered = content.presentationBackground(WeiBeiTheme.paper)
+        if #available(macOS 15.0, iOS 18.0, *) {
+            papered.presentationSizing(.fitted)
+        } else {
+            papered
+        }
+    }
+}
+
 /// Dialog / sheet action buttons in the paper language: the solid-cinnabar
 /// primary (same filled treatment as the send action) and the etched
 /// secondary, so sheets stop mixing system `.bordered` chrome in.
@@ -2000,3 +2020,14 @@ extension Image {
 }
 
 extension WeiBeiMetric { static let courseDrawerWidth: CGFloat = 252 }
+
+struct WeiBeiFittedSheetPresentation: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, macOS 15.0, *) {
+            content.presentationSizing(.fitted)
+        } else {
+            content
+        }
+    }
+}

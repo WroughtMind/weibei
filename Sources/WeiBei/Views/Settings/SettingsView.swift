@@ -131,20 +131,11 @@ struct SettingsView: View {
             // Always land on Chat: highest-frequency durable settings (provider / key / model).
             selectedSection = .agent
             oauthService.refreshCatalog()
-            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            refreshActiveModelCatalog()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { note in
-            guard let raw = note.userInfo?["provider"] as? String,
-                  let provider = AgentProviderID(rawValue: raw) else { return }
-            store.shutdownAgentRuntime()
-            store.setAgentAuthMethod(.subscription)
-            store.setAgentProviderID(provider)
-            store.recordAgentAuthenticationSuccess(
-                provider: provider,
-                authMethod: .subscription
-            )
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { _ in
             oauthService.refreshCatalog()
-            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            refreshActiveModelCatalog()
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { note in
             store.shutdownAgentRuntime()
@@ -155,17 +146,28 @@ struct SettingsView: View {
                 apiKeyDraft = ""
             }
             oauthService.refreshCatalog()
-            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            refreshActiveModelCatalog()
         }
         .onChange(of: store.agentBaseURL) { _, _ in
-            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            refreshActiveModelCatalog()
         }
         .onChange(of: store.agentProviderID) { _, _ in
-            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            refreshActiveModelCatalog()
         }
         .onChange(of: store.activeAgentProfileID) { _, _ in
-            oauthService.refreshModels(provider: store.agentProviderID, baseURL: store.agentBaseURL)
+            refreshActiveModelCatalog()
         }
+        .onChange(of: store.agentAuthMethod) { _, _ in
+            refreshActiveModelCatalog()
+        }
+    }
+
+    private func refreshActiveModelCatalog() {
+        oauthService.refreshModels(
+            provider: store.agentProviderID,
+            baseURL: store.agentBaseURL,
+            authMethod: store.agentAuthMethod
+        )
     }
 
     enum Field: Hashable {

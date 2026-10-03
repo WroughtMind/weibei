@@ -22,6 +22,9 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path == "/v1/models" and self.headers.get("Authorization") != "Bearer catalyst-test-only":
+            self.send_error(401)
+            return
         if self.path in {"/v1/hold-answer", "/v1/continue-answer"}:
             if self.headers.get("Authorization") != "Bearer catalyst-test-only":
                 self.send_error(401)

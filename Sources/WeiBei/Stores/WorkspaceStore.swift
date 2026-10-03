@@ -294,6 +294,9 @@ final class LibraryDrawerState: ObservableObject {
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
     @Published var selectedItemID: String? {
+        willSet {
+            if selectedItemID != newValue { commitCurrentReaderLocation() }
+        }
         didSet {
             if materialPickerPresented { materialPickerPresented = false }
             if oldValue != selectedItemID { clearAutomaticSelectionAttachment() }
@@ -321,7 +324,11 @@ final class WorkspaceStore: ObservableObject {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
         }
     }
-    @Published var activeCourseID: UUID?
+    @Published var activeCourseID: UUID? {
+        willSet {
+            if activeCourseID != newValue { commitCurrentReaderLocation() }
+        }
+    }
     @Published var noteText = ""
     @Published var noteEditorRecoveryConflictsByItemID: [String: NoteEditorRecoveryConflict] = [:]
     var noteEditorConflictProbeDocumentID: String?
@@ -510,6 +517,7 @@ final class WorkspaceStore: ObservableObject {
     private var readerLocationIDValue: String?
     private var readerLocationTitleValue: String?
     private var readerPageIndexValue = 0
+    private var readerPageIndexNeedsCommit = false
     var readerLocationID: String? {
         get { readerLocationIDValue }
         set {
@@ -543,7 +551,8 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published var readerTargetPageIndex: Int?
     @Published private(set) var readerTargetPageRequestID = UUID()
-    @Published private(set) var readerTargetPageRecordsLocation = false
+    @Published private(set) var readerTargetPageMaterialID: String?
+    @Published private(set) var readerTargetPageDocumentURL: URL?
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
     @Published private(set) var readerTargetLocationRequestID = UUID()
@@ -697,6 +706,13 @@ final class WorkspaceStore: ObservableObject {
     /// 展示兼容:界面与对话框仍按字符串消费保存失败文案。
     var workspaceSaveError: String? { workspaceSaveFailure?.message }
     @Published private(set) var courseFileOperationProgress: CourseFileOperationProgress?
+    @Published var confirmedFileImport: ConfirmedFileImportBatch?
+    @Published var recentlyImportedItemIDs: Set<String> = []
+    var confirmedFileImportTask: Task<Void, Never>?
+    var confirmedFileImportStopRequested = false
+    var confirmedFileImportSecurityScopes: [URL] = []
+    var pendingConfirmedFileImports: [PendingConfirmedFileImport] = []
+    var recentlyImportedClearTask: Task<Void, Never>?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
     var notebookRenameInFlight = false
@@ -704,10 +720,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
     @Published var agentAuthMethod: AgentAuthMethod = .apiKey
-    @Published var agentCredentialProfiles: [AgentCredentialProfile] = AgentCredentialProfileStore.loadProfiles()
-    @Published var activeAgentProfileID: UUID = AgentCredentialProfileStore.activeProfileID()
-        ?? AgentCredentialProfileStore.loadProfiles().first?.id
-        ?? AgentCredentialProfileStore.defaultProfile().id
+    @Published var agentCredentialProfiles: [AgentCredentialProfile]
+    @Published var activeAgentProfileID: UUID
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
     /// App-wide motion preference (system / reduce / full); resolved against the
     /// macOS switch by `WeiBeiMotionScope`. Persisted in UserDefaults, not workspace.json.
@@ -737,7 +751,7 @@ final class WorkspaceStore: ObservableObject {
     /// 先登记、不动文件。内存态即可：重启丢基线只少一次自动改名，方向安全。
     var headingSyncedNoteStemByItemID: [String: String] = [:]
     var loadedCourseNoteTextByItemID: [String: String] = [:]
-    var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
+    @Published var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
     var courseNoteWritesInFlight = Set<String>()
     var courseNoteWriteTasksByItemID: [String: Task<Void, Never>] = [:]
@@ -1049,6 +1063,9 @@ final class WorkspaceStore: ObservableObject {
         startsAtBlankEntries: Bool = false,
         startsCourseFileMaintenance: Bool = true
     ) {
+        let profiles = AgentCredentialProfileStore.loadProfiles()
+        agentCredentialProfiles = profiles
+        activeAgentProfileID = AgentCredentialProfileStore.activeProfileID() ?? profiles[0].id
         workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
         sessionMessagePersistence = StudySessionMessagePersistence(storageURL: storageURL)
@@ -1140,7 +1157,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    deinit {
+    isolated deinit {
         courseReconciliationTask?.cancel()
         courseNoteLoadTasksByItemID.values.forEach { $0.cancel() }
         courseNoteWriteTasksByItemID.values.forEach { $0.cancel() }
@@ -1984,7 +2001,7 @@ final class WorkspaceStore: ObservableObject {
             focus(.notes)
             return
         }
-        requestReaderPDFPage(location.pageIndex, recordsLocation: false)
+        requestReaderPDFPage(location.pageIndex)
         requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         showReader = true
         focus(.reader)
@@ -3207,7 +3224,7 @@ final class WorkspaceStore: ObservableObject {
             guard let locationTitle = readerLocationTitle,
                   locationTitle != itemTitle else { return itemTitle }
             if let locationID = readerLocationID,
-               locationID.hasPrefix("html-section-") {
+               locationID.hasPrefix("html-section-") || locationID.hasPrefix("html-block-") {
                 return ui(
                     "\(itemTitle)，章节标识：\(locationID)，章节：\(locationTitle)",
                     "\(itemTitle), section id: \(locationID), section: \(locationTitle)"
@@ -3224,7 +3241,13 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             return ui("\(itemTitle)，章节：\(locationTitle)", "\(itemTitle), section: \(locationTitle)")
-        case .markdown, .text:
+        case .markdown:
+            guard let locationID = readerLocationID else { return itemTitle }
+            return ui(
+                "\(itemTitle)，章节标识：\(locationID)，章节：\(readerLocationTitle ?? itemTitle)",
+                "\(itemTitle), section id: \(locationID), section: \(readerLocationTitle ?? itemTitle)"
+            )
+        case .text:
             return itemTitle
         }
     }
@@ -3934,7 +3957,7 @@ final class WorkspaceStore: ObservableObject {
             readerSourceHighlightPageIndex = nil
             readerPageIndex = 0
             readerLocationID = nil
-            requestReaderPDFPage(nil, recordsLocation: false)
+            requestReaderPDFPage(nil)
             readerTargetLocationID = nil
             readerTargetLocationTitle = nil
         }
@@ -3943,6 +3966,7 @@ final class WorkspaceStore: ObservableObject {
             restoreCurrentStudyLocation()
         } else if let item = selectedMaterialItem,
                   courseMembershipIndex.courseIDs(for: item.id).count > 1 {
+            commitCurrentReaderLocation()
             restoreCurrentStudyLocation()
         } else if readerLocationTitle == nil {
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
@@ -4413,8 +4437,9 @@ final class WorkspaceStore: ObservableObject {
                 readerLocationID = location.locationID
                 readerLocationTitle = location.locationTitle ?? location.itemTitle
                 if selectedMaterialItem?.kind == .pdf {
-                    requestReaderPDFPage(location.pageIndex, recordsLocation: false)
-                } else if selectedMaterialItem?.kind.isWebDocument == true {
+                    requestReaderPDFPage(location.pageIndex)
+                } else if let kind = selectedMaterialItem?.kind,
+                          kind.isWebDocument || kind == .markdown {
                     requestReaderHTMLLocation(
                         id: location.locationID,
                         title: location.locationTitle
@@ -5007,7 +5032,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateReaderHTMLLocation(id: String?, title: String?, reason: String) {
-        guard selectedMaterialItem?.kind.isWebDocument == true else { return }
+        guard let kind = selectedMaterialItem?.kind,
+              kind.isWebDocument || kind == .markdown else { return }
         let cleanedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextID = cleanedID.isEmpty ? nil : String(cleanedID.prefix(500))
@@ -5046,32 +5072,71 @@ final class WorkspaceStore: ObservableObject {
         readerTargetLocationTitle = nil
     }
 
-    private func requestReaderPDFPage(_ pageIndex: Int?, recordsLocation: Bool) {
-        readerTargetPageRecordsLocation = recordsLocation && pageIndex != nil
-        readerTargetPageIndex = pageIndex.map { max($0, 0) }
+    func consumeReaderHTMLLocationRequest(_ requestID: UUID) {
+        guard readerTargetLocationRequestID == requestID,
+              readerTargetLocationID != nil || readerTargetLocationTitle != nil else { return }
+        clearReaderHTMLLocationTarget()
+    }
+
+    func failReaderHTMLLocationRequest(
+        _ requestID: UUID,
+        visibleID: String?,
+        visibleTitle: String?
+    ) {
+        guard readerTargetLocationRequestID == requestID,
+              readerTargetLocationID != nil || readerTargetLocationTitle != nil else { return }
+        clearReaderHTMLLocationTarget()
+        updateReaderHTMLLocation(
+            id: visibleID,
+            title: visibleTitle,
+            reason: "restore-fallback"
+        )
+    }
+
+    func cancelReaderHTMLLocationTarget() {
+        clearReaderHTMLLocationTarget()
+    }
+
+    private func requestReaderPDFPage(_ pageIndex: Int?) {
+        let targetPageIndex = pageIndex.map { max($0, 0) }
+        if targetPageIndex != nil,
+           let item = selectedMaterialItem,
+           item.kind == .pdf,
+           let url = item.url {
+            readerTargetPageMaterialID = item.id
+            readerTargetPageDocumentURL = url.standardizedFileURL
+        } else {
+            readerTargetPageMaterialID = nil
+            readerTargetPageDocumentURL = nil
+        }
         readerTargetPageRequestID = UUID()
+        readerTargetPageIndex = targetPageIndex
     }
 
     func consumeReaderPDFPageRequest(_ requestID: UUID) {
         guard readerTargetPageRequestID == requestID else { return }
+        readerTargetPageMaterialID = nil
+        readerTargetPageDocumentURL = nil
         readerTargetPageIndex = nil
-        readerTargetPageRecordsLocation = false
     }
 
-    func updateReaderPageIndex(_ index: Int, publishesUI: Bool = false) {
+    func updateReaderPageIndex(_ index: Int) {
         let nextIndex = max(index, 0)
         guard readerPageIndex != nextIndex else { return }
-        // Continuous PDF scroll uses publishesUI=false so agent chat WKWebViews
-        // are not remasured on every page crossing (same hang class as HTML scroll).
-        if publishesUI {
-            readerPageIndex = nextIndex
-            recordCurrentStudyLocation(incrementVisit: false)
-        } else {
-            suppressReaderViewportPublish = true
-            readerPageIndex = nextIndex
-            suppressReaderViewportPublish = false
-            recordCurrentStudyLocation(incrementVisit: false, schedulesSave: false)
-        }
+        // Keep the visible page live for questions without publishing the whole
+        // workspace tree or turning every scroll crossing into a study record.
+        suppressReaderViewportPublish = true
+        readerPageIndex = nextIndex
+        suppressReaderViewportPublish = false
+        readerPageIndexNeedsCommit = true
+    }
+
+    /// Study progress is committed only when leaving the current reading context.
+    /// The caller that switches context or exits owns the following workspace save.
+    func commitCurrentReaderLocation() {
+        guard readerPageIndexNeedsCommit else { return }
+        recordCurrentStudyLocation(incrementVisit: false, schedulesSave: false)
+        readerPageIndexNeedsCommit = false
     }
 
     private func recordCurrentStudyLocation(incrementVisit: Bool, schedulesSave: Bool = true) {
@@ -5083,7 +5148,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let previous = studyLocation(for: item.id, in: activeCourseID)
         let itemTitle = sourceReferenceBaseTitle(for: item)
-        let locationID = item.kind.isWebDocument ? readerLocationID : nil
+        let locationID = item.kind.isWebDocument || item.kind == .markdown ? readerLocationID : nil
         let pageIndex = item.kind == .pdf ? readerPageIndex : nil
         let locationChanged = incrementVisit
             || previous?.itemTitle != itemTitle
@@ -5139,16 +5204,16 @@ final class WorkspaceStore: ObservableObject {
             readerLocationID = nil
             readerLocationTitle = displayTitle(for: item)
             readerPageIndex = 0
-            requestReaderPDFPage(nil, recordsLocation: false)
+            requestReaderPDFPage(nil)
             clearReaderHTMLLocationTarget()
             return
         }
-        readerLocationID = item.kind.isWebDocument ? location.locationID : nil
+        readerLocationID = item.kind.isWebDocument || item.kind == .markdown ? location.locationID : nil
         readerLocationTitle = location.locationTitle ?? displayTitle(for: item)
         if item.kind == .pdf {
             readerPageIndex = max(location.pageIndex ?? 0, 0)
-            requestReaderPDFPage(location.pageIndex, recordsLocation: false)
-        } else if item.kind.isWebDocument {
+            requestReaderPDFPage(location.pageIndex)
+        } else if item.kind.isWebDocument || item.kind == .markdown {
             requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         }
     }
@@ -5194,17 +5259,15 @@ final class WorkspaceStore: ObservableObject {
             return true
         }
         showReader = true
-        requestReaderPDFPage(
-            item.kind == .pdf ? reference.pageIndex : nil,
-            recordsLocation: item.kind == .pdf && reference.pageIndex != nil
-        )
-        let htmlTargetID = item.kind.isWebDocument
+        requestReaderPDFPage(item.kind == .pdf ? reference.pageIndex : nil)
+        let supportsSectionLocation = item.kind.isWebDocument || item.kind == .markdown
+        let htmlTargetID = supportsSectionLocation
             ? reference.sectionLocationID
                 ?? (item.kind == .html ? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind.isWebDocument ? reference.sectionTitle : nil
+            title: supportsSectionLocation ? reference.sectionTitle : nil
         )
         focus(.reader)
         return true
@@ -5272,17 +5335,15 @@ final class WorkspaceStore: ObservableObject {
             return false
         }
 
-        requestReaderPDFPage(
-            item.kind == .pdf ? source.pageIndex : nil,
-            recordsLocation: item.kind == .pdf && source.pageIndex != nil
-        )
-        let htmlTargetID = item.kind.isWebDocument
+        requestReaderPDFPage(item.kind == .pdf ? source.pageIndex : nil)
+        let supportsSectionLocation = item.kind.isWebDocument || item.kind == .markdown
+        let htmlTargetID = supportsSectionLocation
             ? source.sectionLocationID
                 ?? (item.kind == .html ? source.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" } : nil)
             : nil
         requestReaderHTMLLocation(
             id: htmlTargetID,
-            title: item.kind.isWebDocument ? source.sectionTitle : nil
+            title: supportsSectionLocation ? source.sectionTitle : nil
         )
         readerSourceHighlight = source.highlightQuery
         readerSourceHighlightPageIndex = item.kind == .pdf ? source.pageIndex : nil
@@ -5625,12 +5686,14 @@ final class WorkspaceStore: ObservableObject {
         threePaneOrder = WorkspacePaneRole.normalized(snapshot.threePaneOrder)
         noteText = noteText(for: activeNoteItem)
         requestReaderPDFPage(
-            selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil,
-            recordsLocation: false
+            selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
         )
+        let supportsSectionLocation = selectedMaterialItem.map {
+            $0.kind.isWebDocument || $0.kind == .markdown
+        } ?? false
         requestReaderHTMLLocation(
-            id: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationID : nil,
-            title: selectedMaterialItem?.kind.isWebDocument == true ? snapshot.readerLocationTitle : nil
+            id: supportsSectionLocation ? snapshot.readerLocationID : nil,
+            title: supportsSectionLocation ? snapshot.readerLocationTitle : nil
         )
         latestAgentLearningUpdate = nil
         syncActiveStudySession()
@@ -5720,6 +5783,14 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    @discardableResult
+    func saveManualAgentModel(_ value: String) -> Bool {
+        let model = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else { return false }
+        updateModelName(model)
+        return true
+    }
+
     func updateModelName(_ value: String) {
         modelName = value
         touchActiveAgentProfileMetadata()
@@ -5778,6 +5849,40 @@ final class WorkspaceStore: ObservableObject {
         touchActiveAgentProfileMetadata()
     }
 
+    /// Login completion belongs to the card that started it, even if another card is active now.
+    @discardableResult
+    func setAgentAuthMethod(_ method: AgentAuthMethod, for profileID: UUID) -> Bool {
+        guard let index = agentCredentialProfiles.firstIndex(where: { $0.id == profileID }) else { return false }
+        if agentCredentialProfiles[index].authMethod != method {
+            agentCredentialProfiles[index].authMethod = method
+            agentCredentialProfiles[index].updatedAt = Date()
+            AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+        }
+        if activeAgentProfileID == profileID {
+            agentAuthMethod = method
+            save()
+        }
+        return true
+    }
+
+    /// Commit a completed login to its originating card. The settings window may
+    /// already be closed, and another card may now be active.
+    @discardableResult
+    func completeAgentSubscriptionLogin(
+        provider: AgentProviderID,
+        profileID: UUID
+    ) -> Bool {
+        guard agentCredentialProfiles.contains(where: {
+            $0.id == profileID && $0.provider == provider
+        }) else { return false }
+        if activeAgentProfileID == profileID {
+            shutdownAgentRuntime()
+        }
+        guard setAgentAuthMethod(.subscription, for: profileID) else { return false }
+        recordAgentAuthenticationSuccess(provider: provider, authMethod: .subscription)
+        return true
+    }
+
     func recordAgentAuthenticationSuccess(
         provider: AgentProviderID,
         authMethod: AgentAuthMethod
@@ -5810,6 +5915,28 @@ final class WorkspaceStore: ObservableObject {
             authMethod: agentAuthMethod,
             modelName: modelName,
             baseURL: agentBaseURL
+        )
+        agentCredentialProfiles.append(profile)
+        AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+        selectAgentCredentialProfile(profile.id)
+        return profile.id
+    }
+
+    /// Adding a connection takes its endpoint only from the form, never from
+    /// the active profile. Validate before changing profiles or saving a key.
+    @discardableResult
+    func createAgentConnection(
+        provider: AgentProviderID,
+        authMethod: AgentAuthMethod,
+        baseURL: String
+    ) throws -> UUID {
+        let endpoint = try AgentProviderEndpoint(provider: provider, baseURL: baseURL)
+        let profile = AgentCredentialProfile(
+            name: ui("配置 \(agentCredentialProfiles.count + 1)", "Profile \(agentCredentialProfiles.count + 1)"),
+            provider: provider,
+            authMethod: authMethod,
+            modelName: provider == agentProviderID ? modelName : "",
+            baseURL: endpoint.baseURL ?? ""
         )
         agentCredentialProfiles.append(profile)
         AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
@@ -5880,7 +6007,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func importFilesFromPanel() {
-        presentImportPanel(linkToActiveNote: false)
+        presentImportPanel()
     }
 
     @discardableResult
@@ -5905,9 +6032,6 @@ final class WorkspaceStore: ObservableObject {
 
     func importCourseMaterialsFromPanel(courseID: UUID?) {
         presentImportPanel(
-            linkToActiveNote: false,
-            selectsFirstImportedItem: false,
-            reclassifiesExistingMarkdown: true,
             assigningToCourseID: courseID,
             panelTitle: ui("选择课程资料或文件夹", "Choose course materials or a folder")
         )
@@ -5919,52 +6043,34 @@ final class WorkspaceStore: ObservableObject {
 
     func importCourseNotesFromPanel(courseID: UUID?) {
         presentImportPanel(
-            linkToActiveNote: false,
-            selectsFirstImportedItem: false,
             markdownAsNotes: true,
-            markdownOnly: true,
-            reclassifiesExistingMarkdown: true,
             assigningToCourseID: courseID,
             panelTitle: ui("选择 Markdown 笔记或文件夹", "Choose Markdown notes or a folder")
         )
     }
 
     private func presentImportPanel(
-        linkToActiveNote: Bool,
-        selectsFirstImportedItem: Bool = true,
         markdownAsNotes: Bool = false,
-        markdownOnly: Bool = false,
-        reclassifiesExistingMarkdown: Bool = false,
         assigningToCourseID: UUID? = nil,
         panelTitle: String? = nil
     ) {
 #if targetEnvironment(macCatalyst)
         Task { @MainActor in
-            let types: [UTType] = markdownOnly
-                ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
-                : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .folder]
+            let types: [UTType] = markdownAsNotes
+                ? [WorkspaceFileDialog.markdownType, .folder]
+                : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, .folder]
             let urls = await WorkspaceFileDialog.pick(
                 title: panelTitle ?? ui("选择学习资料或课程文件夹", "Choose study materials or a course folder"),
                 types: types, multiple: true
             )
             guard !urls.isEmpty else { return }
-            let scoped = urls.filter { $0.startAccessingSecurityScopedResource() }
-            let releaseScopes = { scoped.forEach { $0.stopAccessingSecurityScopedResource() } }
-            if let assigningToCourseID {
-                importCourseFilesFromURLs(urls, asNotes: markdownAsNotes, courseID: assigningToCourseID) { _ in releaseScopes() }
-                return
-            }
-            let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
-            importFiles(urls, selectsFirstImportedItem: selectsFirstImportedItem,
-                        markdownAsNotes: markdownAsNotes, markdownOnly: markdownOnly,
-                        reclassifiesExistingMarkdown: reclassifiesExistingMarkdown) { selectedItems in
-                defer { releaseScopes() }
-                if let targetNoteID, self.activeNotebookItemID == targetNoteID {
-                    self.setLinkedSourceIDsForActiveNote(
-                        Set(self.linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
-                    )
-                }
-            }
+            let scoped = urls.filter(courseSecurityScopeStarter)
+            prepareConfirmedFileImport(
+                urls,
+                courseID: assigningToCourseID,
+                asNotes: markdownAsNotes,
+                securityScopedURLs: scoped
+            )
         }
 #else
         let panel = NSOpenPanel()
@@ -5972,33 +6078,16 @@ final class WorkspaceStore: ObservableObject {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.canChooseFiles = true
-        panel.allowedContentTypes = markdownOnly
-            ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
-            : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
+        panel.allowedContentTypes = markdownAsNotes
+            ? [WorkspaceFileDialog.markdownType]
+            : [UTType(importedAs: "org.openxmlformats.wordprocessingml.document"), UTType(importedAs: "org.openxmlformats.presentationml.presentation"), .pdf, .html, .plainText]
 
         guard panel.runModal() == .OK else { return }
-        if let assigningToCourseID {
-            importCourseFilesFromURLs(
-                panel.urls,
-                asNotes: markdownAsNotes,
-                courseID: assigningToCourseID
-            )
-            return
-        }
-        let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
-        importFiles(
+        prepareConfirmedFileImport(
             panel.urls,
-            selectsFirstImportedItem: selectsFirstImportedItem,
-            markdownAsNotes: markdownAsNotes,
-            markdownOnly: markdownOnly,
-            reclassifiesExistingMarkdown: reclassifiesExistingMarkdown
-        ) { selectedItems in
-            if let targetNoteID, self.activeNotebookItemID == targetNoteID {
-                self.setLinkedSourceIDsForActiveNote(
-                    Set(self.linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
-                )
-            }
-        }
+            courseID: assigningToCourseID,
+            asNotes: markdownAsNotes
+        )
 #endif
     }
 
@@ -6039,7 +6128,10 @@ final class WorkspaceStore: ObservableObject {
                 let importsIntoNotes = Self.isMarkdownFile(rawURL)
                     && (markdownNotePaths?.contains(rawURL.path) ?? markdownAsNotes)
                 do {
-                    let url = try Self.copyExternalFileIntoLibrary(
+                    guard let self else {
+                        throw CancellationError()
+                    }
+                    let url = try await self.copyExternalFileIntoLibrary(
                         root: libraryRoot,
                         sourceURL: rawURL,
                         isNote: importsIntoNotes
@@ -11257,6 +11349,9 @@ final class WorkspaceStore: ObservableObject {
             defer {
                 if courseNoteLoadGenerationByItemID[itemID] == generation {
                     courseNoteLoadTasksByItemID[itemID] = nil
+                    // @Published 在字典改动前发出通知；读盘结束后再发布一次，
+                    // 让笔记栏按已经清空的任务状态退出载入分支并重新挂载编辑器。
+                    objectWillChange.send()
                 }
             }
             do {

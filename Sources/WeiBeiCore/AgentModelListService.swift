@@ -74,6 +74,29 @@ public actor AgentModelListService {
         }
     }
 
+    /// Same listing as `fetchModels`, except OpenRouter's public catalog does not
+    /// check the key. A liveness probe must hit the authenticated key endpoint first.
+    public func probe(strategy: ModelListStrategy, apiKey: String) async throws -> [String] {
+        if case .openRouterPublic = strategy {
+            guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ModelListError.missingCredential
+            }
+            try await verifyOpenRouterKey(apiKey)
+        }
+        if case let .codexSubscription(token, accountID) = strategy {
+            // A cached catalog is useful for capabilities, but cannot verify today's credential.
+            return try await fetchCodexCatalog(token: token, accountID: accountID, forceRefresh: true).map(\.id)
+        }
+        return try await fetchModels(strategy: strategy, apiKey: apiKey)
+    }
+
+    private func verifyOpenRouterKey(_ apiKey: String) async throws {
+        guard let url = URL(string: "https://openrouter.ai/api/v1/key") else {
+            throw ModelListError.transport("invalid url")
+        }
+        _ = try await perform(request: Self.bearerRequest(url: url, apiKey: apiKey))
+    }
+
     // MARK: - Strategies
 
     private func fetchOpenAICompatible(base: String, apiKey: String) async throws -> [String] {
@@ -178,13 +201,13 @@ public actor AgentModelListService {
             .first { $0.id == model }?.contextWindow
     }
 
-    private func fetchCodexCatalog(token: String, accountID: String) async throws -> [CodexModel] {
+    private func fetchCodexCatalog(token: String, accountID: String, forceRefresh: Bool = false) async throws -> [CodexModel] {
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAccount = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedToken.isEmpty else { throw ModelListError.missingCredential }
         // Keep credentials out of persistent storage; separate anonymous account IDs by token.
         let cacheKey = trimmedAccount.isEmpty ? trimmedToken : trimmedAccount
-        if let cached = codexCatalogs[cacheKey], Date().timeIntervalSince(cached.0) < 300 {
+        if !forceRefresh, let cached = codexCatalogs[cacheKey], Date().timeIntervalSince(cached.0) < 300 {
             return cached.1
         }
         guard let url = URL(string: "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0") else {

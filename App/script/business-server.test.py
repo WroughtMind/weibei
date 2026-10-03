@@ -81,6 +81,22 @@ class BusinessFixtureTests(unittest.TestCase):
         self.assertNotIn("WB514_FLOATING_BODY", answer)
         self.assertFalse(any("tool_calls" in chunk["delta"] for chunk in chunks))
 
+    def test_model_catalog_requires_the_same_credential_as_chat(self):
+        for key, expected in [(None, 401), ("Bearer wrong", 401), ("Bearer catalyst-test-only", 200)]:
+            with self.subTest(key=key):
+                handler = object.__new__(self.fixture["Handler"])
+                handler.path = "/v1/models"
+                handler.headers = {"Authorization": key}
+                handler.wfile = io.BytesIO()
+                statuses = []
+                handler.send_response = handler.send_error = statuses.append
+                handler.send_header = lambda *_: None
+                handler.end_headers = lambda: None
+                handler.do_GET()
+                self.assertEqual(statuses, [expected])
+                if expected == 200:
+                    self.assertEqual(json.loads(handler.wfile.getvalue())["data"][0]["id"], "catalyst-local-check")
+
 
 if __name__ == "__main__":
     unittest.main()

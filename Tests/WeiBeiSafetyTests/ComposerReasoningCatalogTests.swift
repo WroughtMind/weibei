@@ -14,13 +14,13 @@ final class ComposerReasoningCatalogTests: XCTestCase {
             return .init(ids: ["synthetic-model"], reasoningLevels: ["synthetic-model": ["low", "high"]])
         })
         XCTAssertTrue(account.reasoningLevels(provider: .openaiCodex, model: "synthetic-model").isEmpty)
-        account.refreshReasoningCatalogIfNeeded(provider: .openaiCodex, baseURL: "")
-        account.refreshReasoningCatalogIfNeeded(provider: .openaiCodex, baseURL: "")
+        account.refreshReasoningCatalogIfNeeded(provider: .openaiCodex, baseURL: "", authMethod: .subscription)
+        account.refreshReasoningCatalogIfNeeded(provider: .openaiCodex, baseURL: "", authMethod: .subscription)
         for _ in 0..<100 where account.isRefreshingModels { await Task.yield() }
         XCTAssertFalse(account.isRefreshingModels)
         XCTAssertEqual(loads, 1)
         XCTAssertEqual(account.reasoningLevels(provider: .openaiCodex, model: "synthetic-model"), ["low", "high"])
-        account.refreshReasoningCatalogIfNeeded(provider: .openaiCodex, baseURL: "")
+        account.refreshReasoningCatalogIfNeeded(provider: .openaiCodex, baseURL: "", authMethod: .subscription)
         XCTAssertEqual(loads, 1)
         XCTAssertEqual(account.models(provider: .openaiCodex), ["synthetic-model"])
         XCTAssertTrue(account.reasoningLevels(provider: .openai, model: "synthetic-model").isEmpty)
@@ -33,23 +33,64 @@ final class ComposerReasoningCatalogTests: XCTestCase {
             loads += 1
             return .init(ids: ["server-first"], reasoningLevels: [:])
         })
-        account.refreshReasoningCatalogIfNeeded(provider: .custom, baseURL: "https://synthetic.example.test")
+        account.refreshReasoningCatalogIfNeeded(provider: .custom, baseURL: "https://synthetic.example.test", authMethod: .apiKey)
         await Task.yield()
         XCTAssertEqual(loads, 0)
         XCTAssertFalse(account.isRefreshingModels)
         XCTAssertTrue(account.models(provider: .custom).isEmpty)
     }
     @MainActor
+    func testEmptyProbePublishesRetryableCatalogRatherThanAuthenticationFailure() async throws {
+        let account = AgentAccountService(modelCatalogLoader: { _, _ in
+            .init(ids: [], reasoningLevels: [:])
+        })
+        let result = await account.probeConnection(provider: .openaiCodex, baseURL: "", authMethod: .subscription)
+        XCTAssertEqual(result, .success(0))
+        XCTAssertNil(account.modelListFailure)
+        XCTAssertNotNil(account.modelListMessage)
+        XCTAssertTrue(account.modelListCanRetry)
+        XCTAssertFalse(account.isRefreshingModels)
+    }
+
+    @MainActor
+    func testOlderCatalogRequestCannotReplaceNewerConnectionCatalog() async throws {
+        var pending: [CheckedContinuation<AgentAccountService.ModelCatalog, Error>] = []
+        let account = AgentAccountService(modelCatalogLoader: { _, _ in
+            try await withCheckedThrowingContinuation { pending.append($0) }
+        })
+        let old = Task { await account.probeConnection(provider: .openai, baseURL: "", authMethod: .apiKey) }
+        let firstDeadline = Date().addingTimeInterval(5)
+        while pending.count < 1 && Date() < firstDeadline { await Task.yield() }
+        guard pending.count == 1 else { old.cancel(); return XCTFail("First synthetic catalog request did not start") }
+        let current = Task { await account.probeConnection(provider: .anthropic, baseURL: "", authMethod: .apiKey) }
+        let secondDeadline = Date().addingTimeInterval(5)
+        while pending.count < 2 && Date() < secondDeadline { await Task.yield() }
+        guard pending.count == 2 else {
+            old.cancel(); current.cancel()
+            pending[0].resume(throwing: CancellationError())
+            return XCTFail("Second synthetic catalog request did not start")
+        }
+        pending[1].resume(returning: .init(ids: ["newer-model"], reasoningLevels: [:]))
+        let currentResult = await current.value
+        XCTAssertEqual(currentResult, .success(1))
+        pending[0].resume(returning: .init(ids: ["obsolete-model"], reasoningLevels: [:]))
+        let oldResult = await old.value
+        XCTAssertEqual(oldResult, .failure(.superseded))
+        XCTAssertEqual(account.models(provider: .anthropic), ["newer-model"])
+        XCTAssertTrue(account.models(provider: .openai).isEmpty)
+    }
+
+    @MainActor
     func testSwitchingToColdCodexSupersedesAnotherProvidersPendingCatalog() async throws {
         var pending: [CheckedContinuation<AgentAccountService.ModelCatalog, Error>] = []
         let account = AgentAccountService(modelCatalogLoader: { _, _ in
             try await withCheckedThrowingContinuation { pending.append($0) }
         })
-        account.refreshModels(provider: .openai, baseURL: "")
+        account.refreshModels(provider: .openai, baseURL: "", authMethod: .apiKey)
         let firstDeadline = Date().addingTimeInterval(5)
         while pending.count < 1 && Date() < firstDeadline { await Task.yield() }
         guard pending.count == 1 else { return XCTFail("First synthetic request did not start") }
-        account.refreshReasoningCatalogIfNeeded(provider: .openaiCodex, baseURL: "")
+        account.refreshReasoningCatalogIfNeeded(provider: .openaiCodex, baseURL: "", authMethod: .subscription)
         let secondDeadline = Date().addingTimeInterval(5)
         while pending.count < 2 && Date() < secondDeadline { await Task.yield() }
         guard pending.count == 2 else {

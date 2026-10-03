@@ -59,40 +59,17 @@ extension WorkspaceStore {
         bootstrapDefaultLibraryIfNeeded()
     }
 
-    func copyExternalFileIntoCourse(
-        _ sourceURL: URL,
-        courseID: UUID,
-        isNote: Bool
-    ) throws -> URL {
-        guard let courseRoot = courseRootURL(for: courseID) else {
-            throw CourseProjectRootError.unavailableLibrary
-        }
-        let directoryName = isNote
-            ? CourseLibraryLayout.courseNotesDirectoryName
-            : CourseLibraryLayout.courseMaterialsDirectoryName
-        let directory = courseRoot.appendingPathComponent(
-            directoryName,
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return try Self.copyPreservingOriginal(from: sourceURL, into: directory)
-    }
-
-    /// Kernel-side copy with the original dedupe semantics: identical content
-    /// resolves to the existing file, real conflicts get a unique name. Size is
-    /// compared before any byte read, so large imports never enter memory whole.
-    nonisolated static func copyPreservingOriginal(from sourceURL: URL, into directory: URL) throws -> URL {
-        try ImportFileCopy.copyPreservingOriginal(from: sourceURL, into: directory)
-    }
-
-    nonisolated static func copyExternalFileIntoLibrary(
+    func copyExternalFileIntoLibrary(
         root: URL,
         sourceURL: URL,
         isNote: Bool
-    ) throws -> URL {
+    ) async throws -> URL {
+        guard let expectedLibraryRootIdentity = courseLibraryRootIdentity,
+              courseLibraryRootURL.map({
+                  CourseProjectPathPolicy.isSame($0, root)
+              }) == true else {
+            throw CourseProjectRootError.unavailableLibrary
+        }
         let directoryName = isNote
             ? CourseLibraryLayout.commonNotesDirectoryName
             : CourseLibraryLayout.commonMaterialsDirectoryName
@@ -100,11 +77,13 @@ extension WorkspaceStore {
             directoryName,
             isDirectory: true
         )
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return try ImportFileCopy.copyPreservingOriginal(from: sourceURL, into: directory)
+        return try await courseProjectFileWorker
+            .copyImportedFilePreservingOriginal(
+                from: sourceURL,
+                into: directory,
+                libraryRoot: root,
+                expectedLibraryRootIdentity: expectedLibraryRootIdentity
+            )
     }
 
     func libraryRelativePath(of url: URL) -> String? {
@@ -554,7 +533,7 @@ extension WorkspaceStore {
                 let nextTitle = url.deletingPathExtension().lastPathComponent
                 let nextSubtitle = url.lastPathComponent
                 let nextKind = StudyItemKind.detect(from: url)
-                let nextRole = Self.isMarkdownFile(url)
+                let nextRole = importsIntoNotes
                 let nextMaterialVisibility = !importsIntoNotes
                 if importedItems[matchingIndex].isNotebookNote != nextRole {
                     roleChanged = true
@@ -583,7 +562,7 @@ extension WorkspaceStore {
                 kind: StudyItemKind.detect(from: url),
                 urlPath: url.path,
                 isSample: false,
-                isNotebookNote: Self.isMarkdownFile(url),
+                isNotebookNote: importsIntoNotes,
                 appearsInMaterials: !importsIntoNotes,
                 storage: .common(relativePath: relativePath)
             )

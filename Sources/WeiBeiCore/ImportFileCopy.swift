@@ -1,5 +1,11 @@
 import Foundation
 
+public enum ImportFileCollision: Equatable, Sendable {
+    case available
+    case duplicate
+    case conflict(suggestedFileName: String)
+}
+
 /// Kernel-side import copying for the course library.
 ///
 /// Dedupe semantics: byte-identical content resolves to the existing library
@@ -11,28 +17,97 @@ public enum ImportFileCopy {
     static let comparisonChunkSize = 1 << 20
 
     public static func copyPreservingOriginal(from sourceURL: URL, into directory: URL) throws -> URL {
-        if let html = try HTMLResourceImport.dataIfHTML(at: sourceURL) {
-            let preferred = directory.appendingPathComponent(sourceURL.lastPathComponent)
-            var target = preferred
-            if FileManager.default.fileExists(atPath: preferred.path) {
-                if try preferred.resourceValues(forKeys: [.fileSizeKey]).fileSize == html.count,
-                   try Data(contentsOf: preferred) == html { return preferred }
-                target = uniqueCopyURL(in: directory, preferred: preferred)
+        let html = try HTMLResourceImport.dataIfHTML(at: sourceURL)
+        switch try collision(from: sourceURL, into: directory, preparedHTML: html) {
+        case .available:
+            break
+        case .duplicate:
+            return directory.appendingPathComponent(sourceURL.lastPathComponent)
+        case .conflict(let suggestedFileName):
+            let target = directory.appendingPathComponent(suggestedFileName)
+            if let html {
+                try html.write(to: target, options: .withoutOverwriting)
+            } else {
+                try FileManager.default.copyItem(at: sourceURL, to: target)
             }
-            try html.write(to: target, options: .withoutOverwriting)
             return target
         }
         let preferred = directory.appendingPathComponent(sourceURL.lastPathComponent)
-        if FileManager.default.fileExists(atPath: preferred.path) {
-            if try filesHaveIdenticalContents(sourceURL, preferred) {
-                return preferred
-            }
-            let unique = uniqueCopyURL(in: directory, preferred: preferred)
-            try FileManager.default.copyItem(at: sourceURL, to: unique)
-            return unique
+        if let html {
+            try html.write(to: preferred, options: .withoutOverwriting)
+            return preferred
         }
         try FileManager.default.copyItem(at: sourceURL, to: preferred)
         return preferred
+    }
+
+    /// Read-only counterpart of `copyPreservingOriginal`. The confirmation UI
+    /// uses the same comparison and naming rules without creating directories
+    /// or copying bytes before the user confirms.
+    public static func collision(from sourceURL: URL, into directory: URL) throws -> ImportFileCollision {
+        try collision(
+            from: sourceURL,
+            into: directory,
+            preparedHTML: HTMLResourceImport.dataIfHTML(at: sourceURL)
+        )
+    }
+
+    public static func sourcesHaveIdenticalImportedContents(
+        _ lhs: URL,
+        _ rhs: URL
+    ) throws -> Bool {
+        let lhsHTML = try HTMLResourceImport.dataIfHTML(at: lhs)
+        let rhsHTML = try HTMLResourceImport.dataIfHTML(at: rhs)
+        switch (lhsHTML, rhsHTML) {
+        case let (.some(lhsData), .some(rhsData)):
+            return lhsData == rhsData
+        case (.none, .none):
+            return try filesHaveIdenticalContents(lhs, rhs)
+        default:
+            return false
+        }
+    }
+
+    /// Compare the bytes a source would import with an already imported file.
+    /// Do not re-embed HTML resources relative to the copy's new directory.
+    public static func sourceHasIdenticalImportedContents(
+        _ sourceURL: URL,
+        at importedURL: URL
+    ) throws -> Bool {
+        try importedContentsMatch(
+            from: sourceURL,
+            at: importedURL,
+            preparedHTML: HTMLResourceImport.dataIfHTML(at: sourceURL)
+        )
+    }
+
+    private static func collision(
+        from sourceURL: URL,
+        into directory: URL,
+        preparedHTML: Data?
+    ) throws -> ImportFileCollision {
+        let preferred = directory.appendingPathComponent(sourceURL.lastPathComponent)
+        guard FileManager.default.fileExists(atPath: preferred.path) else {
+            return .available
+        }
+        if try importedContentsMatch(from: sourceURL, at: preferred, preparedHTML: preparedHTML) {
+            return .duplicate
+        }
+        return .conflict(suggestedFileName: uniqueCopyURL(in: directory, preferred: preferred).lastPathComponent)
+    }
+
+    private static func importedContentsMatch(
+        from sourceURL: URL,
+        at importedURL: URL,
+        preparedHTML: Data?
+    ) throws -> Bool {
+        if let html = preparedHTML {
+            guard try importedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize == html.count else {
+                return false
+            }
+            return try Data(contentsOf: importedURL) == html
+        }
+        return try filesHaveIdenticalContents(sourceURL, importedURL)
     }
 
     static func filesHaveIdenticalContents(_ lhs: URL, _ rhs: URL) throws -> Bool {
@@ -55,7 +130,7 @@ public enum ImportFileCopy {
         }
     }
 
-    static func uniqueCopyURL(in directory: URL, preferred: URL) -> URL {
+    public static func uniqueCopyURL(in directory: URL, preferred: URL) -> URL {
         let stem = preferred.deletingPathExtension().lastPathComponent
         let ext = preferred.pathExtension
         var index = 2

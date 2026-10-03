@@ -66,6 +66,51 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
     }
 
     @MainActor
+    func testStaleReaderLocationCompletionCannotConsumeAnotherDocumentRequest() async throws {
+        let loaded = expectation(description: "reader bridge loaded")
+        let navigationProbe = FinalizedMarkdownNavigationProbe { loaded.fulfill() }
+        let webView = WKWebView(frame: .zero)
+        webView.navigationDelegate = navigationProbe
+        webView.loadHTMLString("""
+        <!doctype html><body></body><script>
+        window.WeiBeiEditor = { scrollToHeading() { return true; } };
+        </script>
+        """, baseURL: nil)
+        await fulfillment(of: [loaded], timeout: 3)
+
+        var appliedRequestIDs: [UUID] = []
+        let editor = RichMarkdownEditorView(
+            documentID: "first-document",
+            markdown: "# First",
+            command: .constant(nil),
+            onSelectionChange: { _, _ in },
+            onAskAgentWithSelection: { _, _ in },
+            onReaderLocationApplied: { appliedRequestIDs.append($0) }
+        )
+        let coordinator = editor.makeCoordinator()
+        coordinator.webView = webView
+        coordinator.isReady = true
+        let staleRequestID = UUID()
+        coordinator.readerLocationID = "markdown-heading-0"
+        coordinator.readerLocationRequestID = staleRequestID
+        coordinator.applyReaderLocation()
+
+        coordinator.documentID = "second-document"
+        coordinator.readerLocationRequestID = staleRequestID
+        _ = try await webView.evaluateJavaScript("true")
+        await Task.yield()
+        XCTAssertTrue(appliedRequestIDs.isEmpty)
+
+        let currentRequestID = UUID()
+        coordinator.readerLocationRequestID = currentRequestID
+        coordinator.applyReaderLocation()
+        _ = try await webView.evaluateJavaScript("true")
+        await Task.yield()
+        XCTAssertEqual(appliedRequestIDs, [currentRequestID])
+        withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
     func testFinalizedStreamingHeightNeverShrinksTheLiveAnswer() {
         XCTAssertEqual(
             MarkdownPreviewView.resolvedContentHeight(

@@ -713,6 +713,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     var readerSearchRequestedIndex = 0
     var readerSearchSessionID = 0
     var readerSearchReturnRequest = 0
+    var readerLocationID: String?
+    var readerLocationRequestID: UUID?
     var onReaderSearchResults: ((String, [ReaderSearchResult], Int) -> Void)?
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
@@ -729,6 +731,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     var onLinkEditorRequest: () -> Void = {}
     var onAskAgentWithSelection: (String, SelectionPopoverAnchor?) -> Void
     var onContentHeightChange: (CGFloat) -> Void = { _ in }
+    var onReaderLocationApplied: (UUID) -> Void = { _ in }
+    var onReaderLocationUnavailable: (UUID, Int?) -> Void = { _, _ in }
     var onActiveHeadingChange: (Int?) -> Void = { _ in }
     var onOutlineChange: ([NoteEditorOutlineItem]) -> Void = { _ in }
     var onWikiLink: (String) -> Void = { _ in }
@@ -766,6 +770,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             selectionAskMarks: selectionAskMarks,
             selectionRemarkMarks: selectionRemarkMarks,
             onContentHeightChange: onContentHeightChange,
+            onReaderLocationApplied: onReaderLocationApplied,
+            onReaderLocationUnavailable: onReaderLocationUnavailable,
             onActiveHeadingChange: onActiveHeadingChange,
             onOutlineChange: onOutlineChange,
             onSelectionChange: onSelectionChange,
@@ -789,6 +795,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
         coordinator.readerSearchSessionID = readerSearchSessionID
         coordinator.readerSearchReturnRequest = readerSearchReturnRequest
+        coordinator.readerLocationID = readerLocationID
+        coordinator.readerLocationRequestID = readerLocationRequestID
         return coordinator
     }
 
@@ -961,6 +969,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         context.coordinator.readerSearchRequestedIndex = readerSearchRequestedIndex
         context.coordinator.readerSearchSessionID = readerSearchSessionID
         context.coordinator.readerSearchReturnRequest = readerSearchReturnRequest
+        context.coordinator.readerLocationID = readerLocationID
+        context.coordinator.readerLocationRequestID = readerLocationRequestID
         if context.coordinator.appearanceMode != appearanceMode {
             context.coordinator.appearanceMode = appearanceMode
             if context.coordinator.isReady {
@@ -1016,6 +1026,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         context.coordinator.onLinkEditorRequest = onLinkEditorRequest
         context.coordinator.onAskAgentWithSelection = onAskAgentWithSelection
         context.coordinator.onContentHeightChange = onContentHeightChange
+        context.coordinator.onReaderLocationApplied = onReaderLocationApplied
+        context.coordinator.onReaderLocationUnavailable = onReaderLocationUnavailable
         context.coordinator.onActiveHeadingChange = onActiveHeadingChange
         context.coordinator.onOutlineChange = onOutlineChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
@@ -1040,6 +1052,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 context.coordinator.setMarkdown(markdown)
             }
         }
+        context.coordinator.applyReaderLocation()
 
         if context.coordinator.isReady {
             context.coordinator.applySearch()
@@ -1136,6 +1149,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         var onLinkEditorRequest: () -> Void
         var onAskAgentWithSelection: (String, SelectionPopoverAnchor?) -> Void
         var onContentHeightChange: (CGFloat) -> Void
+        var onReaderLocationApplied: (UUID) -> Void
+        var onReaderLocationUnavailable: (UUID, Int?) -> Void
         var onActiveHeadingChange: (Int?) -> Void
         var onOutlineChange: ([NoteEditorOutlineItem]) -> Void
         var onWikiLink: (String) -> Void
@@ -1152,9 +1167,13 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         var readerSearchRequestedIndex = 0
         var readerSearchSessionID = 0
         var readerSearchReturnRequest = 0
+        var readerLocationID: String?
+        var readerLocationRequestID: UUID?
         private var lastReaderSearchNavigationRequest = 0
         private var lastReaderSearchSessionID = 0
         private var lastReaderSearchReturnRequest = 0
+        private var lastReaderLocationRequestID: UUID?
+        private var lastActiveHeadingIndex: Int?
         private var hasReaderSearchOrigin = false
         private var readerSearchResults: [ReaderSearchResult] = []
         private var readerSearchResultIndex = -1
@@ -1220,6 +1239,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             selectionAskMarks: String,
             selectionRemarkMarks: String,
             onContentHeightChange: @escaping (CGFloat) -> Void,
+            onReaderLocationApplied: @escaping (UUID) -> Void,
+            onReaderLocationUnavailable: @escaping (UUID, Int?) -> Void,
             onActiveHeadingChange: @escaping (Int?) -> Void,
             onOutlineChange: @escaping ([NoteEditorOutlineItem]) -> Void,
             onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void,
@@ -1254,6 +1275,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             self.selectionAskMarks = selectionAskMarks
             self.selectionRemarkMarks = selectionRemarkMarks
             self.onContentHeightChange = onContentHeightChange
+            self.onReaderLocationApplied = onReaderLocationApplied
+            self.onReaderLocationUnavailable = onReaderLocationUnavailable
             self.onActiveHeadingChange = onActiveHeadingChange
             self.onOutlineChange = onOutlineChange
             self.onSelectionChange = onSelectionChange
@@ -1472,6 +1495,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                     }
                 }
                 applySearch()
+                applyReaderLocation()
                 setTheme(appearanceMode)
                 setChatWideTypography(isChatWideTypography)
                 setTextScale(textScale)
@@ -1593,7 +1617,9 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 reportRenderFailure()
             case "activeHeadingChanged":
                 guard let body = message.body as? [String: Any] else { return }
-                onActiveHeadingChange((body["index"] as? NSNumber)?.intValue)
+                let index = (body["index"] as? NSNumber)?.intValue
+                lastActiveHeadingIndex = index
+                onActiveHeadingChange(index)
             case "compactPreviewWheel":
                 guard let body = message.body as? [String: Any],
                       let deltaY = body["deltaY"] as? Double else { return }
@@ -1609,6 +1635,36 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 return documentID.isEmpty
             }
             return messageDocumentID == documentID
+        }
+
+        func applyReaderLocation() {
+            guard isReady,
+                  let requestID = readerLocationRequestID,
+                  requestID != lastReaderLocationRequestID,
+                  let locationID = readerLocationID else { return }
+            let index: Int
+            if locationID == "markdown-preamble" {
+                index = -1
+            } else if let indexText = locationID.split(separator: "-").last,
+                      let parsed = Int(indexText) {
+                index = parsed
+            } else {
+                lastReaderLocationRequestID = requestID
+                onReaderLocationUnavailable(requestID, lastActiveHeadingIndex)
+                return
+            }
+            let requestedDocumentID = documentID
+            webView?.evaluateJavaScript("window.WeiBeiEditor?.scrollToHeading(\(index))") { [weak self] value, error in
+                guard let self,
+                      self.documentID == requestedDocumentID,
+                      self.readerLocationRequestID == requestID else { return }
+                self.lastReaderLocationRequestID = requestID
+                if error == nil, value as? Bool == true {
+                    self.onReaderLocationApplied(requestID)
+                } else {
+                    self.onReaderLocationUnavailable(requestID, self.lastActiveHeadingIndex)
+                }
+            }
         }
 
         func setMarkdown(_ text: String) {
@@ -1674,6 +1730,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         }
 
         func setDocumentID(_ id: String) {
+            lastActiveHeadingIndex = nil
             evaluate("window.WeiBeiEditor?.setDocumentID(\(Self.json(id)))")
         }
 

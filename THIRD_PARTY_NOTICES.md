@@ -24,6 +24,13 @@ ZRender (Apache-2.0). Its component renderer, safe mathematical evaluator,
 validation, and model instructions are built from the same upstream package.
 The bundled engine scripts retain their copyright and license notices.
 
+## HTML parsing
+
+Exact HTML paragraph locations use [SwiftSoup](https://github.com/scinfu/SwiftSoup)
+2.13.9 (MIT), pinned to commit `18b80329749eca5ea29fc50211dca5c7eff5bfec`.
+Its original copyright and full license are included in the App's
+`ThirdPartyNotices.txt`. The parser has no transitive package dependencies.
+
 ## Native conversation rendering
 
 The native conversation view uses Swift Markdown (Apache 2.0 with Swift

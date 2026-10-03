@@ -306,6 +306,11 @@ struct CourseDocNoteWorkspaceView: View {
                 select(item, kind: kind)
             }
         }
+        .background(
+            store.recentlyImportedItemIDs.contains(item.id)
+                ? WeiBeiTheme.cinnabarSoft.opacity(0.24)
+                : Color.clear
+        )
     }
 
     @ViewBuilder
