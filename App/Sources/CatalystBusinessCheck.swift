@@ -705,33 +705,39 @@ enum CatalystBusinessCheck {
             result["failure"] = error.localizedDescription
             let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
             let sheetProbes = CatalystIndependentSheetSizingProbe.Probe.checkInstances.allObjects
+            let sheetProbeStates: [[String: String]] = sheetProbes.map { probe in
+                let window = probe.window
+                let scene = window?.windowScene
+                let root = window?.rootViewController
+                let rootView = root?.viewIfLoaded
+                let presentation = root?.presentationController
+                var state: [String: String] = [:]
+                state["frame"] = String(describing: probe.frame)
+                state["hidden"] = String(probe.isHidden)
+                state["content_size"] = String(describing: probe.contentSize)
+                state["window_bounds"] = String(describing: window?.bounds)
+                state["window_hidden"] = String(describing: window?.isHidden)
+                state["root_controller"] = root.map { String(reflecting: type(of: $0)) } ?? "nil"
+                state["root_preferred_size"] = String(describing: root?.preferredContentSize)
+                state["root_contains_probe"] = String(rootView.map { probe.isDescendant(of: $0) } ?? false)
+                state["root_view_window_matches"] = String(window != nil && rootView?.window === window)
+                state["presented_root_matches"] = String(root != nil && presentation?.presentedViewController === root)
+                state["root_has_presented_child"] = String(root?.presentedViewController != nil)
+                state["presentation_controller"] = presentation.map { String(reflecting: type(of: $0)) } ?? "nil"
+                state["rooted_window_count"] = String(scene?.windows.filter { $0.rootViewController != nil }.count ?? 0)
+                state["scene_minimum_size"] = String(describing: scene?.sizeRestrictions?.minimumSize)
+                state["scene_maximum_size"] = String(describing: scene?.sizeRestrictions?.maximumSize)
+                state["geometry_request"] = probe.checkGeometryRequest ?? ""
+                state["geometry_error"] = probe.checkGeometryError ?? ""
+                state["scene_frame"] = String(describing: scene?.effectiveGeometry.systemFrame)
+                state["scene_connected"] = String(scene.map { UIApplication.shared.connectedScenes.contains($0) } ?? false)
+                return state
+            }
             result["confirmed_import_state"] = [
                 "stage": store.confirmedFileImport.map { String(describing: $0.stage) } ?? "dismissed",
                 "destination_error": store.confirmedFileImport?.destinationError ?? "",
                 "candidate_count": store.confirmedFileImport?.candidates.count ?? 0,
-                "sheet_probes": sheetProbes.map { probe in
-                    ["frame": String(describing: probe.frame),
-                     "hidden": String(probe.isHidden),
-                     "content_size": String(describing: probe.contentSize),
-                     "window_bounds": String(describing: probe.window?.bounds),
-                     "window_hidden": String(describing: probe.window?.isHidden),
-                     "root_controller": String(describing: probe.window?.rootViewController.map { type(of: $0) }),
-                     "root_preferred_size": String(describing: probe.window?.rootViewController?.preferredContentSize),
-                     "root_contains_probe": String(probe.window?.rootViewController?.viewIfLoaded.map { probe.isDescendant(of: $0) } ?? false),
-                     "root_view_window_matches": String(probe.window != nil && probe.window?.rootViewController?.viewIfLoaded?.window === probe.window),
-                     "presented_root_matches": String(probe.window?.rootViewController != nil && probe.window?.rootViewController?.presentationController?.presentedViewController === probe.window?.rootViewController),
-                     "root_has_presented_child": String(probe.window?.rootViewController?.presentedViewController != nil),
-                     "presentation_controller": String(describing: probe.window?.rootViewController?.presentationController.map { type(of: $0) }),
-                     "rooted_window_count": String(probe.window?.windowScene?.windows.filter { $0.rootViewController != nil }.count ?? 0),
-                     "scene_minimum_size": String(describing: probe.window?.windowScene?.sizeRestrictions?.minimumSize),
-                     "scene_maximum_size": String(describing: probe.window?.windowScene?.sizeRestrictions?.maximumSize),
-                     "geometry_request": probe.checkGeometryRequest ?? "",
-                     "geometry_error": probe.checkGeometryError ?? "",
-                     "scene_frame": String(describing: probe.window?.windowScene?.effectiveGeometry.systemFrame),
-                     "scene_connected": String(probe.window?.windowScene.map {
-                         UIApplication.shared.connectedScenes.contains($0)
-                     } ?? false)]
-                }
+                "sheet_probes": sheetProbeStates
             ]
             result["failure_state"] = [
                 "application_state": UIApplication.shared.applicationState.rawValue,
