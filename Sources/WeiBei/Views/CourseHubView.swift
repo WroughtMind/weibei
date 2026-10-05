@@ -777,10 +777,7 @@ struct CourseHubView: View {
 
     private func handleDrop(_ providers: [NSItemProvider], asNotes: Bool) -> Bool {
         guard let courseID else { return false }
-        return WeiBeiDroppedFileURLs.load(providers) { urls in
-            guard store.courseWorkspaceCourseID == courseID else { return }
-            store.prepareConfirmedFileImport(urls, courseID: courseID, asNotes: asNotes)
-        }
+        return store.receiveDroppedFiles(providers, courseID: courseID, asNotes: asNotes)
     }
 
     // MARK: - Display helpers
