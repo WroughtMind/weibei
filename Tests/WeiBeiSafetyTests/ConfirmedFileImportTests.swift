@@ -10,6 +10,28 @@ final class ConfirmedFileImportTests: XCTestCase {
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
     }
 
+    func testDroppedStringFileAddressRequiresConfirmationAndPreservesSource() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let source = fixture.outside.appendingPathComponent("拖入讲义.txt")
+        let content = Data("拖入后的原始内容".utf8)
+        try content.write(to: source)
+        let provider = NSItemProvider(item: source.absoluteString as NSString,
+            typeIdentifier: "public.file-url")
+
+        XCTAssertTrue(fixture.store.receiveDroppedFiles([provider]))
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.sourceURLs, [source])
+        XCTAssertTrue(fixture.store.importedItems.isEmpty)
+        fixture.store.confirmFileImport()
+        waitForImportIdle(in: fixture.store)
+
+        let item = try XCTUnwrap(fixture.store.importedItems.first)
+        let copied = try XCTUnwrap(fixture.store.resolvedLibraryURL(for: item))
+        XCTAssertEqual(try Data(contentsOf: copied), content)
+        XCTAssertEqual(try Data(contentsOf: source), content)
+    }
+
     func testCancelBeforeConfirmationWritesNothing() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

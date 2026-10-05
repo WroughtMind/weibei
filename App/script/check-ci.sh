@@ -76,6 +76,7 @@ required_business_checks = {
     'active_connection_profile_matches_configuration', 'connection_profile_switch_back',
     'connection_cards_settings_and_authenticated_models',
     'confirmed_import_review_copy_and_dismiss',
+    'workspace_file_drop_receiver',
     'reopen_original_note_and_session_files', 'mac_idiom_and_isolated_storage',
     'original_update_service_through_native_bridge', 'native_workspace_toolbar_controls',
     'signed_native_window_material', 'original_import_reader_and_editor',
