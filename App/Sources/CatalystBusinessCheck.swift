@@ -1289,7 +1289,7 @@ enum CatalystBusinessCheck {
                     let session = FileDropCheckSession(provider: provider, target: view)
                     let accepts = interaction.delegate?.dropInteraction?(interaction, canHandle: session) == true
                     let isProductionReceiver = interaction.delegate is WorkspaceFileDropBridge.Probe
-                    observed.append(["view": String(describing: type(of: view)), "bounds": NSStringFromCGRect(view.bounds),
+                    observed.append(["view": String(describing: type(of: view)), "bounds": String(describing: view.bounds),
                         "window_matches": view.window === window, "production_receiver": isProductionReceiver,
                         "accepts_file": accepts, "visible": view === window || isVisible(view, in: window)])
                     if isProductionReceiver && accepts && (view === window || isVisible(view, in: window))
