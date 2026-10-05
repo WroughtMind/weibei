@@ -74,6 +74,26 @@ struct ConfirmedFileImportBatch: Identifiable, Equatable, Sendable {
 }
 
 extension WorkspaceStore {
+    @discardableResult
+    func receiveDroppedFiles(_ providers: [NSItemProvider], courseID: UUID? = nil, asNotes: Bool = false) -> Bool {
+        WeiBeiDroppedFileURLs.load(providers) { [weak self] result in
+            guard let self else {
+                result.securityScopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
+                return
+            }
+            if !result.urls.isEmpty {
+                self.prepareConfirmedFileImport(result.urls, courseID: courseID, asNotes: asNotes,
+                    securityScopedURLs: result.securityScopedURLs)
+            }
+            if !result.failures.isEmpty {
+                self.importantOperationError = self.ui(
+                    "未能接收 \(result.failures.count) 个拖入文件，请重试。",
+                    "Could not receive \(result.failures.count) dropped file(s). Please try again."
+                )
+            }
+        }
+    }
+
     func prepareConfirmedFileImport(
         _ urls: [URL],
         courseID: UUID? = nil,

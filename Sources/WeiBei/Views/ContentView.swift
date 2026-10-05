@@ -100,16 +100,6 @@ struct ContentView: View {
                         }
                     }
                 }
-                .onDrop(of: [.fileURL], isTargeted: $isFileDropTargeted) { providers in
-                    WeiBeiDroppedFileURLs.load(providers) { urls in
-                        store.prepareConfirmedFileImport(urls)
-                    }
-                }
-                .overlay {
-                    if isFileDropTargeted {
-                        WeiBeiFileDropPrompt()
-                    }
-                }
                 .allowsHitTesting(!store.courseWorkspacePresented)
                 .accessibilityHidden(store.courseWorkspacePresented)
                 .opacity(
@@ -160,6 +150,20 @@ struct ContentView: View {
                 // Agent 创建文稿的写盘确认浮层：覆盖课程空间等全部层级。
                 AgentDocumentConfirmationOverlay()
             }
+            .contentShape(Rectangle())
+#if targetEnvironment(macCatalyst)
+            .background {
+                WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted, receive: receiveFileDrop)
+                    .allowsHitTesting(false)
+            }
+#else
+            .onDrop(of: [.fileURL], isTargeted: $isFileDropTargeted) { providers in
+                receiveFileDrop(providers)
+            }
+#endif
+            .overlay {
+                if isFileDropTargeted { WeiBeiFileDropPrompt() }
+            }
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
             .animation(WeiBeiMotion.panel, value: store.lastPersistState)
             .animation(WeiBeiMotion.panel, value: store.noteEditorCommandFailureMessage)
@@ -209,6 +213,11 @@ struct ContentView: View {
 
     private var isImmersiveLayout: Bool {
         [.immersiveReading, .immersiveConversation, .immersiveWriting].contains(store.layout)
+    }
+
+    private func receiveFileDrop(_ providers: [NSItemProvider]) -> Bool {
+        store.receiveDroppedFiles(providers, courseID: store.courseWorkspacePresented
+            ? store.courseWorkspaceCourseID : nil)
     }
 }
 
@@ -2376,34 +2385,58 @@ private struct PaneDropTargetView: View {
     }
 }
 
+struct WeiBeiDroppedFileResult {
+    var urls: [URL] = []
+    var securityScopedURLs: [URL] = []
+    var failures: [String] = []
+}
+
 enum WeiBeiDroppedFileURLs {
-    static func load(_ providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) -> Bool {
+    /// Complete even when every item fails: a claimed drop must never disappear silently.
+    static func load(_ providers: [NSItemProvider], completion: @escaping (WeiBeiDroppedFileResult) -> Void) -> Bool {
         let fileProviders = providers.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
         }
         guard !fileProviders.isEmpty else { return false }
-        let urlsLock = NSLock()
-        var urls: [URL] = []
+        let lock = NSLock()
+        var results = Array(repeating: WeiBeiDroppedFileResult(), count: fileProviders.count)
         let group = DispatchGroup()
-        for provider in fileProviders {
+        for (index, provider) in fileProviders.enumerated() {
             group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                defer { group.leave() }
-                let url: URL?
-                if let data = item as? Data {
-                    url = URL(dataRepresentation: data, relativeTo: nil)
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                var result = WeiBeiDroppedFileResult()
+                if let url = fileURL(from: item) {
+                    // Hold access until review/import/cancel finishes, just like the file chooser.
+                    if url.startAccessingSecurityScopedResource() { result.securityScopedURLs = [url] }
+                    result.urls = [url]
                 } else {
-                    url = item as? URL
+                    result.failures = [error?.localizedDescription ?? provider.suggestedName ?? "public.file-url"]
                 }
-                guard let url else { return }
-                urlsLock.lock()
-                urls.append(url)
-                urlsLock.unlock()
+                lock.lock()
+                results[index] = result
+                lock.unlock()
+                group.leave()
             }
         }
         group.notify(queue: .main) {
-            if !urls.isEmpty { completion(urls) }
+            completion(WeiBeiDroppedFileResult(
+                urls: results.flatMap(\.urls),
+                securityScopedURLs: results.flatMap(\.securityScopedURLs),
+                failures: results.flatMap(\.failures)
+            ))
         }
         return true
+    }
+
+    private static func fileURL(from item: NSSecureCoding?) -> URL? {
+        let url: URL?
+        switch item {
+        case let value as URL: url = value
+        case let value as Data: url = URL(dataRepresentation: value, relativeTo: nil)
+        case let value as String: url = URL(string: value)
+        default: url = nil
+        }
+        guard let url, url.isFileURL, !url.path.isEmpty else { return nil }
+        return url
     }
 }
