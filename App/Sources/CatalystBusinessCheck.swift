@@ -11,6 +11,7 @@ import Litext
 @MainActor
 enum CatalystBusinessCheck {
     private static var started = false
+    private static var fileDropDiagnostics: [String: Any] = [:]
     private struct Failure: LocalizedError {
         let errorDescription: String?
         init(_ description: String) { errorDescription = description }
@@ -460,6 +461,7 @@ enum CatalystBusinessCheck {
                           let delegate = interaction.delegate as? WorkspaceFileDropBridge.Probe else {
                         throw Failure("workspace file-drop receiver disappeared")
                     }
+                    result["file_drop_state"] = fileDropDiagnostics
                     delegate.dropInteraction(interaction, sessionDidEnter: session)
                     let proposal = delegate.dropInteraction(interaction, sessionDidUpdate: session)
                     let textSession = FileDropCheckSession(provider: NSItemProvider(object: "pane-id" as NSString),
@@ -775,6 +777,7 @@ enum CatalystBusinessCheck {
                 state["scene_connected"] = String(scene.map { UIApplication.shared.connectedScenes.contains($0) } ?? false)
                 return state
             }
+            result["file_drop_state"] = fileDropDiagnostics
             result["confirmed_import_state"] = [
                 "stage": store.confirmedFileImport.map { String(describing: $0.stage) } ?? "dismissed",
                 "destination_error": store.confirmedFileImport?.destinationError ?? "",
@@ -1275,15 +1278,23 @@ enum CatalystBusinessCheck {
     }
     private static func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
     private static func workspaceFileDropReceiver(provider: NSItemProvider) -> (UIDropInteraction, FileDropCheckSession)? {
+        var observed: [[String: Any]] = []
+        var anchors: [[String: String]] = []
+        defer { fileDropDiagnostics = ["provider_types": provider.registeredTypeIdentifiers, "receivers": observed, "anchors": anchors] }
         for window in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows) {
             guard !window.isHidden else { continue }
-            for view in descendants(window) where isVisible(view, in: window)
-                && view.bounds.width >= window.bounds.width * 0.9
-                && view.bounds.height >= window.bounds.height * 0.9 {
+            for view in descendants(window) {
+                if let probe = view as? WorkspaceFileDropBridge.Probe { anchors.append(probe.registrationCheckState) }
                 for interaction in view.interactions.compactMap({ $0 as? UIDropInteraction }) {
-                    guard interaction.delegate is WorkspaceFileDropBridge.Probe else { continue }
                     let session = FileDropCheckSession(provider: provider, target: view)
-                    if interaction.delegate?.dropInteraction?(interaction, canHandle: session) == true {
+                    let accepts = interaction.delegate?.dropInteraction?(interaction, canHandle: session) == true
+                    let isProductionReceiver = interaction.delegate is WorkspaceFileDropBridge.Probe
+                    observed.append(["view": String(describing: type(of: view)), "bounds": NSStringFromCGRect(view.bounds),
+                        "window_matches": view.window === window, "production_receiver": isProductionReceiver,
+                        "accepts_file": accepts, "visible": view === window || isVisible(view, in: window)])
+                    if isProductionReceiver && accepts && (view === window || isVisible(view, in: window))
+                        && view.bounds.width >= window.bounds.width * 0.9
+                        && view.bounds.height >= window.bounds.height * 0.9 {
                         return (interaction, session)
                     }
                 }

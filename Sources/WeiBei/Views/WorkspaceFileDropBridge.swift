@@ -19,8 +19,17 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
     final class Probe: UIView, UIDropInteractionDelegate {
         var isTargeted: Binding<Bool>?
         var receive: ([NSItemProvider]) -> Bool = { _ in false }
-        private weak var dropWindow: UIWindow?
+        private weak var dropView: UIView?
         private lazy var fileDropInteraction = UIDropInteraction(delegate: self)
+
+#if WEIBEI_ACCEPTANCE_CHECKS
+        var registrationCheckState: [String: String] {
+            ["window_present": String(window != nil), "root_present": String(window?.rootViewController?.viewIfLoaded != nil),
+                "registered_view": dropView.map { String(describing: type(of: $0)) } ?? "nil",
+                "interaction_view_matches": String(dropView != nil && fileDropInteraction.view === dropView),
+                "binding_present": String(isTargeted != nil)]
+        }
+#endif
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -28,15 +37,19 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
         }
 
         func attachToWindow() {
-            guard dropWindow !== window else { return }
+            guard let target = window?.rootViewController?.view else {
+                detach()
+                return
+            }
+            guard dropView !== target else { return }
             detach()
-            dropWindow = window
-            window?.addInteraction(fileDropInteraction)
+            dropView = target
+            target.addInteraction(fileDropInteraction)
         }
 
         func detach() {
-            dropWindow?.removeInteraction(fileDropInteraction)
-            dropWindow = nil
+            dropView?.removeInteraction(fileDropInteraction)
+            dropView = nil
         }
 
         func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
