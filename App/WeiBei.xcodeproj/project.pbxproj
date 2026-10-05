@@ -160,6 +160,7 @@
 		9E82B06347DF8AAD02442C3D /* WorkspaceStore+NativeAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74D3DDD62890E2095AE206E6 /* WorkspaceStore+NativeAgent.swift */; };
 		9FB05F925099B527532D6EB2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C114483E09D9B95115B4EF5 /* ContentView.swift */; };
 		CF1A00000000000000000001 /* ConfirmedFileImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF1A00000000000000000002 /* ConfirmedFileImportView.swift */; };
+		FD5200000000000000000001 /* WorkspaceFileDropBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD5200000000000000000002 /* WorkspaceFileDropBridge.swift */; };
 		9FD230DCC3C1CCEE79F5B1C1 /* EmptyWorkspaceInspiration.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA378A62D30B6A6251AD9DA6 /* EmptyWorkspaceInspiration.swift */; };
 		9FF041C038C5AB9C8A27287A /* PDFReaderOpenSafety.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178A366B5659AC7A47E7AA30 /* PDFReaderOpenSafety.swift */; };
 		A29105E5484EFF5BE88B2979 /* PaneSeatMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A434A3C22BC374DD87D0E041 /* PaneSeatMotion.swift */; };
@@ -356,6 +357,7 @@
 		4787853DDB4CD028D2FABC51 /* ContentRailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentRailView.swift; sourceTree = "<group>"; };
 		4C114483E09D9B95115B4EF5 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		CF1A00000000000000000002 /* ConfirmedFileImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmedFileImportView.swift; sourceTree = "<group>"; };
+		FD5200000000000000000002 /* WorkspaceFileDropBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileDropBridge.swift; sourceTree = "<group>"; };
 		4CDF85F80AC46C5FE414E777 /* NativeAgentSSE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentSSE.swift; sourceTree = "<group>"; };
 		4D52600F1258F2C0DAB31B39 /* ConversationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationController.swift; sourceTree = "<group>"; };
 		50D90DFD2794222AD19D98DD /* WeiBeiUpdateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiUpdateService.swift; sourceTree = "<group>"; };
@@ -755,6 +757,7 @@
 				4787853DDB4CD028D2FABC51 /* ContentRailView.swift */,
 				4C114483E09D9B95115B4EF5 /* ContentView.swift */,
 				CF1A00000000000000000002 /* ConfirmedFileImportView.swift */,
+				FD5200000000000000000002 /* WorkspaceFileDropBridge.swift */,
 				E51AB9EF50CCEDB319397D8C /* ContextualContentPicker.swift */,
 				E59061F53CCAA6551A4ABABC /* ConversationWebClippingView.swift */,
 				ED28080243B8A8B552763344 /* CourseDocNoteWorkspaceView.swift */,
@@ -1290,6 +1293,7 @@
 				186031B66D5FC7464EB6CB2C /* ContentRailView.swift in Sources */,
 				9FB05F925099B527532D6EB2 /* ContentView.swift in Sources */,
 				CF1A00000000000000000001 /* ConfirmedFileImportView.swift in Sources */,
+				FD5200000000000000000001 /* WorkspaceFileDropBridge.swift in Sources */,
 				24D17FE22AAD67D99C583D71 /* ContextualContentPicker.swift in Sources */,
 				82A9C07B68A5A0E9C1844E14 /* ConversationController.swift in Sources */,
 				C2683F836E4926D9F60998FD /* ConversationData.swift in Sources */,

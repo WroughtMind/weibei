@@ -449,7 +449,7 @@ enum CatalystBusinessCheck {
                     typeIdentifier: "public.file-url")
                 if !asNotes {
                     // Invoke the mounted, full-workspace native receiver. This
-                    // checks the actual onDrop connection, not physical mouse
+                    // checks the production window connection, not physical mouse
                     // dragging or the representations offered by other apps.
                     var receiver: (UIDropInteraction, FileDropCheckSession)?
                     try await until("full-workspace native file-drop receiver") {
@@ -457,14 +457,18 @@ enum CatalystBusinessCheck {
                         return receiver != nil
                     }
                     guard let (interaction, session) = receiver,
-                          let delegate = interaction.delegate else {
+                          let delegate = interaction.delegate as? WorkspaceFileDropBridge.Probe else {
                         throw Failure("workspace file-drop receiver disappeared")
                     }
-                    delegate.dropInteraction?(interaction, sessionDidEnter: session)
-                    let proposal = delegate.dropInteraction?(interaction, sessionDidUpdate: session)
-                    try check("workspace_file_drop_receiver", proposal?.operation == .copy)
-                    delegate.dropInteraction?(interaction, performDrop: session)
-                    delegate.dropInteraction?(interaction, sessionDidEnd: session)
+                    delegate.dropInteraction(interaction, sessionDidEnter: session)
+                    let proposal = delegate.dropInteraction(interaction, sessionDidUpdate: session)
+                    let textSession = FileDropCheckSession(provider: NSItemProvider(object: "pane-id" as NSString),
+                        target: session.target)
+                    try check("workspace_file_drop_receiver", proposal.operation == .copy
+                        && delegate.isTargeted?.wrappedValue == true
+                        && !delegate.dropInteraction(interaction, canHandle: textSession))
+                    delegate.dropInteraction(interaction, performDrop: session)
+                    delegate.dropInteraction(interaction, sessionDidEnd: session)
                 } else {
                     guard store.receiveDroppedFiles([provider], asNotes: true) else {
                         throw Failure("note file-drop provider was rejected")
@@ -1277,6 +1281,7 @@ enum CatalystBusinessCheck {
                 && view.bounds.width >= window.bounds.width * 0.9
                 && view.bounds.height >= window.bounds.height * 0.9 {
                 for interaction in view.interactions.compactMap({ $0 as? UIDropInteraction }) {
+                    guard interaction.delegate is WorkspaceFileDropBridge.Probe else { continue }
                     let session = FileDropCheckSession(provider: provider, target: view)
                     if interaction.delegate?.dropInteraction?(interaction, canHandle: session) == true {
                         return (interaction, session)

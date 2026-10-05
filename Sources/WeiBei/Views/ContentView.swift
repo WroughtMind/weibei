@@ -151,10 +151,16 @@ struct ContentView: View {
                 AgentDocumentConfirmationOverlay()
             }
             .contentShape(Rectangle())
-            .onDrop(of: [.fileURL], isTargeted: $isFileDropTargeted) { providers in
-                store.receiveDroppedFiles(providers, courseID: store.courseWorkspacePresented
-                    ? store.courseWorkspaceCourseID : nil)
+#if targetEnvironment(macCatalyst)
+            .background {
+                WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted, receive: receiveFileDrop)
+                    .allowsHitTesting(false)
             }
+#else
+            .onDrop(of: [.fileURL], isTargeted: $isFileDropTargeted) { providers in
+                receiveFileDrop(providers)
+            }
+#endif
             .overlay {
                 if isFileDropTargeted { WeiBeiFileDropPrompt() }
             }
@@ -207,6 +213,11 @@ struct ContentView: View {
 
     private var isImmersiveLayout: Bool {
         [.immersiveReading, .immersiveConversation, .immersiveWriting].contains(store.layout)
+    }
+
+    private func receiveFileDrop(_ providers: [NSItemProvider]) -> Bool {
+        store.receiveDroppedFiles(providers, courseID: store.courseWorkspacePresented
+            ? store.courseWorkspaceCourseID : nil)
     }
 }
 
