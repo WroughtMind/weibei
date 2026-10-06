@@ -279,6 +279,34 @@ final class DroppedFileURLsTests: XCTestCase {
         wait(for: [completed], timeout: 5)
     }
 
+    func testMixedDelayedAndAddressFilesKeepTheirOwnNamesAndBytes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let exported = root.appendingPathComponent("系统导出临时副本")
+        let bytes = Data("延迟导出的文本讲义".utf8)
+        try bytes.write(to: exported)
+        let address = root.appendingPathComponent("现有资料.pdf")
+        let addressBytes = Data("独立地址来源内容".utf8)
+        try addressBytes.write(to: address)
+        let delayed = NSItemProvider()
+        delayed.suggestedName = "延迟讲义.txt"
+        delayed.registerFileRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+            fileOptions: [], visibility: .all) { completion in
+            completion(exported, false, nil); return nil
+        }
+        let local = NSItemProvider(item: address as NSURL, typeIdentifier: UTType.fileURL.identifier)
+        let completed = expectation(description: "Sparse source metadata does not rename another file")
+        XCTAssertTrue(WeiBeiDroppedFileURLs.loadTransferredFiles([delayed, local], sourceURLs: [address]) { result in
+            defer { result.release() }
+            XCTAssertTrue(result.failures.isEmpty)
+            XCTAssertEqual(result.urls.map(\.lastPathComponent), ["延迟讲义.txt", "现有资料.pdf"])
+            XCTAssertEqual(result.urls.map { try? Data(contentsOf: $0) }, [bytes, addressBytes])
+            completed.fulfill()
+        })
+        wait(for: [completed], timeout: 5)
+    }
+
     private func assertDelivered(_ provider: NSItemProvider) {
         let completed = expectation(description: "File address reaches import")
         XCTAssertTrue(WeiBeiDroppedFileURLs.load([provider]) { result in

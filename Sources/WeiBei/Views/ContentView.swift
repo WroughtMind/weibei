@@ -2419,7 +2419,9 @@ enum WeiBeiDroppedFileURLs {
         var results = Array(repeating: WeiBeiDroppedFileResult(), count: providers.count)
         let group = DispatchGroup()
         for (index, provider) in providers.enumerated() {
-            let metadata = sourceURLs.indices.contains(index) ? sourceURLs[index] : nil
+            // Promised files have no URL yet, so a mixed drag's URL list is
+            // sparse. Do not assign another provider's name or content type.
+            let metadata = sourceURLs.count == providers.count ? sourceURLs[index] : nil
             let preferredType = metadata.flatMap { UTType(filenameExtension: $0.pathExtension) }
             let contentType: String?
             if let preferredType, provider.hasItemConformingToTypeIdentifier(preferredType.identifier) {
