@@ -227,7 +227,6 @@ struct ContentView: View {
     }
 #endif
     private func receiveFileDrop(_ providers: [NSItemProvider]) -> Bool {
-        WeiBeiLog.workspace.notice("[DEBUG-wb-drop] workspace_receive course_presented=\(store.courseWorkspacePresented, privacy: .public)")
         return store.receiveDroppedFiles(providers, courseID: store.courseWorkspacePresented
             ? store.courseWorkspaceCourseID : nil)
     }
@@ -2476,15 +2475,12 @@ enum WeiBeiDroppedFileURLs {
                 } catch {
                     if let directory { removeTemporaryDirectories([directory]) }
                     result.failures = [error.localizedDescription]
-                    let code = (error as NSError).code
-                    WeiBeiLog.workspace.notice("[DEBUG-wb-drop] transfer_failed code=\(code, privacy: .public)")
                 }
                 lock.lock(); results[index] = result; lock.unlock()
                 group.leave()
             }
         }
         group.notify(queue: .main) {
-            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] transfer_received count=\(results.flatMap(\.urls).count, privacy: .public) failed=\(results.flatMap(\.failures).count, privacy: .public)")
             completion(WeiBeiDroppedFileResult(urls: results.flatMap(\.urls),
                 temporaryDirectories: results.flatMap(\.temporaryDirectories), failures: results.flatMap(\.failures)))
         }
@@ -2505,7 +2501,6 @@ enum WeiBeiDroppedFileURLs {
             $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
         }
         guard !fileProviders.isEmpty else { return false }
-        WeiBeiLog.workspace.notice("[DEBUG-wb-drop] load_start count=\(fileProviders.count, privacy: .public)")
         let lock = NSLock()
         var results = Array(repeating: WeiBeiDroppedFileResult(), count: fileProviders.count)
         let group = DispatchGroup()
@@ -2513,8 +2508,6 @@ enum WeiBeiDroppedFileURLs {
             group.enter()
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
                 var result = WeiBeiDroppedFileResult()
-                let type = item.map { String(describing: Swift.type(of: $0)) } ?? "nil"
-                WeiBeiLog.workspace.notice("[DEBUG-wb-drop] loaded representation=\(type, privacy: .public) has_error=\(error != nil, privacy: .public)")
                 if let url = fileURL(from: item) {
                     // Hold access until review/import/cancel finishes, just like the file chooser.
                     if url.startAccessingSecurityScopedResource() { result.securityScopedURLs = [url] }
@@ -2529,7 +2522,6 @@ enum WeiBeiDroppedFileURLs {
             }
         }
         group.notify(queue: .main) {
-            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] load_complete accepted=\(results.flatMap(\.urls).count, privacy: .public) failed=\(results.flatMap(\.failures).count, privacy: .public)")
             completion(WeiBeiDroppedFileResult(
                 urls: results.flatMap(\.urls),
                 securityScopedURLs: results.flatMap(\.securityScopedURLs),

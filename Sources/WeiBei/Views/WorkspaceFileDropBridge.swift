@@ -48,7 +48,6 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
                 dropView?.removeInteraction(fileDropInteraction)
                 dropView = root
                 root.addInteraction(fileDropInteraction)
-                WeiBeiLog.workspace.notice("[DEBUG-wb-drop] uikit_registered enabled=\(root.isUserInteractionEnabled, privacy: .public)")
             }
             guard let toolbar = window.windowScene?.titlebar?.toolbar,
                   registeredToolbar !== toolbar else { return }
@@ -72,7 +71,6 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             // fileURL. Classify the actual external drag pasteboard instead.
             let accepts = session.localDragSession == nil && !session.items.isEmpty
                 && !CatalystDesktopWindow.shared.currentDraggedFileURLs().isEmpty
-            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] uikit_can_handle accepted=\(accepts, privacy: .public)")
             return accepts
         }
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnter session: UIDropSession) {
@@ -87,7 +85,6 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             isTargeted?.wrappedValue = false
             guard session.localDragSession == nil else { return }
             let urls = CatalystDesktopWindow.shared.currentDraggedFileURLs()
-            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] uikit_performed count=\(urls.count, privacy: .public)")
             guard !urls.isEmpty else { return }
             receive(session.items.map(\.itemProvider), urls)
         }

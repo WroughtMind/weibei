@@ -289,7 +289,6 @@ private final class NativeFileDropRegistration {
             }
             window.delegate = delegate
             window.registerForDraggedTypes([.fileURL])
-            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] native_registered toolbar=\(window.toolbar === toolbar, privacy: .public)")
         }
     }
     @MainActor func detach() {
@@ -352,7 +351,6 @@ private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggi
     func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
         let accepted = !Self.fileURLs(from: sender.draggingPasteboard).isEmpty
         targeted(accepted)
-        WeiBeiLog.workspace.notice("[DEBUG-wb-drop] native_can_handle accepted=\(accepted, privacy: .public)")
         return accepted ? .copy : []
     }
     func draggingExited(_ sender: (any NSDraggingInfo)?) { targeted(false) }
@@ -365,7 +363,6 @@ private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggi
         targeted(false)
         let urls = Self.fileURLs(from: board)
         guard !urls.isEmpty else { return false }
-        WeiBeiLog.workspace.notice("[DEBUG-wb-drop] native_performed count=\(urls.count, privacy: .public)")
         receive(urls)
         return true
     }
