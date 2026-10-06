@@ -9,7 +9,19 @@ import Foundation
     func setCursor(_ name: String)
     func open(_ url: URL) -> Bool
     func reveal(_ url: URL)
+    @MainActor func setWorkspaceToolbarVisible(_ visible: Bool, toolbar: NSObject)
     func materialWindowCount() -> Int
+    @MainActor func registerFileDrop(
+        id: String, toolbar: NSObject,
+        targeted: @MainActor @escaping (Bool) -> Void,
+        receive: @MainActor @escaping ([URL]) -> Void
+    )
+    @MainActor func unregisterFileDrop(id: String)
+    @MainActor func currentDraggedFileURLs() -> [URL]
+#if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func prepareFileDropCheck(id: String, urls: [URL]) -> [String: Bool]
+    @MainActor func finishFileDropCheck()
+#endif
     @MainActor func presentOpenPanel(
         title: String,
         contentTypeIdentifiers: [String],

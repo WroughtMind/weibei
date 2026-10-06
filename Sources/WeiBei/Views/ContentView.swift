@@ -153,7 +153,8 @@ struct ContentView: View {
             .contentShape(Rectangle())
 #if targetEnvironment(macCatalyst)
             .background {
-                WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted, receive: receiveFileDrop)
+                WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted,
+                    receive: receiveTransferredFileDrop, receiveNative: receiveFileDropURLs)
                     .allowsHitTesting(false)
             }
 #else
@@ -215,8 +216,18 @@ struct ContentView: View {
         [.immersiveReading, .immersiveConversation, .immersiveWriting].contains(store.layout)
     }
 
+#if targetEnvironment(macCatalyst)
+    private func receiveTransferredFileDrop(_ providers: [NSItemProvider], _ urls: [URL]) {
+        store.receiveTransferredFiles(providers, sourceURLs: urls,
+            courseID: store.courseWorkspacePresented ? store.courseWorkspaceCourseID : nil)
+    }
+    private func receiveFileDropURLs(_ urls: [URL]) {
+        store.receiveDroppedFileURLs(urls, courseID: store.courseWorkspacePresented
+            ? store.courseWorkspaceCourseID : nil)
+    }
+#endif
     private func receiveFileDrop(_ providers: [NSItemProvider]) -> Bool {
-        store.receiveDroppedFiles(providers, courseID: store.courseWorkspacePresented
+        return store.receiveDroppedFiles(providers, courseID: store.courseWorkspacePresented
             ? store.courseWorkspaceCourseID : nil)
     }
 }
@@ -2388,10 +2399,102 @@ private struct PaneDropTargetView: View {
 struct WeiBeiDroppedFileResult {
     var urls: [URL] = []
     var securityScopedURLs: [URL] = []
+    var temporaryDirectories: [URL] = []
     var failures: [String] = []
+
+    func release() {
+        securityScopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
+        WeiBeiDroppedFileURLs.removeTemporaryDirectories(temporaryDirectories)
+    }
 }
 
 enum WeiBeiDroppedFileURLs {
+    /// A cross-app URL is metadata, not permission to read the source app's
+    /// private directory. Receive its file representation through UIKit and
+    /// retain an owned copy before the provider's completion handler returns.
+    static func loadTransferredFiles(_ providers: [NSItemProvider], sourceURLs: [URL],
+        completion: @escaping (WeiBeiDroppedFileResult) -> Void) -> Bool {
+        guard !providers.isEmpty, !sourceURLs.isEmpty else { return false }
+        let lock = NSLock()
+        var results = Array(repeating: WeiBeiDroppedFileResult(), count: providers.count)
+        let group = DispatchGroup()
+        for (index, provider) in providers.enumerated() {
+            let metadata = sourceURLs.indices.contains(index) ? sourceURLs[index] : nil
+            let preferredType = metadata.flatMap { UTType(filenameExtension: $0.pathExtension) }
+            let contentType: String?
+            if let preferredType, provider.hasItemConformingToTypeIdentifier(preferredType.identifier) {
+                contentType = preferredType.identifier
+            } else {
+                contentType = provider.registeredTypeIdentifiers.first {
+                    guard let type = UTType($0), !type.conforms(to: .url) else { return false }
+                    return type == .folder || type.conforms(to: .content) || type.conforms(to: .data)
+                }
+            }
+            guard let contentType else {
+                lock.lock()
+                results[index].failures = [provider.suggestedName ?? "file representation unavailable"]
+                lock.unlock()
+                continue
+            }
+            group.enter()
+            provider.loadInPlaceFileRepresentation(forTypeIdentifier: contentType) { url, _, error in
+                var result = WeiBeiDroppedFileResult()
+                var directory: URL?
+                do {
+                    if let error { throw error }
+                    guard let url, url.isFileURL else { throw CocoaError(.fileReadUnknown) }
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    let owned = FileManager.default.temporaryDirectory.appendingPathComponent(
+                        "WeiBeiDroppedFiles-" + UUID().uuidString, isDirectory: true)
+                    try FileManager.default.createDirectory(at: owned, withIntermediateDirectories: false,
+                        attributes: [.posixPermissions: 0o700])
+                    directory = owned
+                    let name = metadata?.lastPathComponent
+                        ?? provider.suggestedName.map { URL(fileURLWithPath: $0).lastPathComponent }
+                        ?? url.lastPathComponent
+                    guard !name.isEmpty, name != ".", name != ".." else { throw CocoaError(.fileReadInvalidFileName) }
+                    let target = owned.appendingPathComponent(name, isDirectory: url.hasDirectoryPath)
+                    var coordinationError: NSError?
+                    var copyError: Error?
+                    NSFileCoordinator().coordinate(readingItemAt: url, options: .withoutChanges,
+                        error: &coordinationError) { readableURL in
+                        do {
+                            if let html = try HTMLResourceImport.dataIfHTML(at: readableURL) {
+                                try html.write(to: target, options: .withoutOverwriting)
+                            } else {
+                                try FileManager.default.copyItem(at: readableURL, to: target)
+                            }
+                        } catch { copyError = error }
+                    }
+                    if let coordinationError { throw coordinationError }
+                    if let copyError { throw copyError }
+                    guard FileManager.default.fileExists(atPath: target.path) else { throw CocoaError(.fileReadUnknown) }
+                    result.urls = [target]
+                    result.temporaryDirectories = [owned]
+                } catch {
+                    if let directory { removeTemporaryDirectories([directory]) }
+                    result.failures = [error.localizedDescription]
+                }
+                lock.lock(); results[index] = result; lock.unlock()
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            completion(WeiBeiDroppedFileResult(urls: results.flatMap(\.urls),
+                temporaryDirectories: results.flatMap(\.temporaryDirectories), failures: results.flatMap(\.failures)))
+        }
+        return true
+    }
+
+    static func removeTemporaryDirectories(_ directories: [URL]) {
+        let parent = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().standardizedFileURL
+        for directory in directories where directory.lastPathComponent.hasPrefix("WeiBeiDroppedFiles-")
+            && directory.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL == parent {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
     /// Complete even when every item fails: a claimed drop must never disappear silently.
     static func load(_ providers: [NSItemProvider], completion: @escaping (WeiBeiDroppedFileResult) -> Void) -> Bool {
         let fileProviders = providers.filter {

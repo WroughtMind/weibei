@@ -32,6 +32,7 @@ struct PendingConfirmedFileImport: Sendable {
     var courseID: UUID?
     var importsMarkdownAsNotes: Bool
     var securityScopedURLs: [URL]
+    var temporaryDirectories: [URL] = []
 }
 
 struct ConfirmedFileImportBatch: Identifiable, Equatable, Sendable {
@@ -75,6 +76,33 @@ struct ConfirmedFileImportBatch: Identifiable, Equatable, Sendable {
 
 extension WorkspaceStore {
     @discardableResult
+    func receiveTransferredFiles(_ providers: [NSItemProvider], sourceURLs: [URL], courseID: UUID? = nil) -> Bool {
+        WeiBeiDroppedFileURLs.loadTransferredFiles(providers, sourceURLs: sourceURLs) { [weak self] result in
+            guard let self else { result.release(); return }
+            if !result.urls.isEmpty {
+                self.prepareConfirmedFileImport(result.urls, courseID: courseID,
+                    temporaryDirectories: result.temporaryDirectories)
+            } else {
+                result.release()
+            }
+            if !result.failures.isEmpty {
+                self.importantOperationError = self.ui(
+                    "未能读取 \(result.failures.count) 个拖入文件，请重试。",
+                    "Could not receive \(result.failures.count) dropped file(s). Please try again."
+                )
+            }
+        }
+    }
+    @discardableResult
+    func receiveDroppedFileURLs(_ urls: [URL], courseID: UUID? = nil) -> Bool {
+        let files = urls.filter { $0.isFileURL && !$0.path.isEmpty }
+        guard !files.isEmpty else { return false }
+        // Acquire access while the system's actual drop is still being handled.
+        let scoped = files.filter { $0.startAccessingSecurityScopedResource() }
+        prepareConfirmedFileImport(files, courseID: courseID, securityScopedURLs: scoped)
+        return true
+    }
+    @discardableResult
     func receiveDroppedFiles(_ providers: [NSItemProvider], courseID: UUID? = nil, asNotes: Bool = false) -> Bool {
         WeiBeiDroppedFileURLs.load(providers) { [weak self] result in
             guard let self else {
@@ -98,10 +126,12 @@ extension WorkspaceStore {
         _ urls: [URL],
         courseID: UUID? = nil,
         asNotes: Bool = false,
-        securityScopedURLs: [URL] = []
+        securityScopedURLs: [URL] = [],
+        temporaryDirectories: [URL] = []
     ) {
         guard !urls.isEmpty else {
             releaseConfirmedFileImportSecurityScopes(securityScopedURLs)
+            WeiBeiDroppedFileURLs.removeTemporaryDirectories(temporaryDirectories)
             return
         }
         if confirmedFileImport?.stage == .importing {
@@ -109,12 +139,14 @@ extension WorkspaceStore {
                 urls,
                 courseID: courseID,
                 asNotes: asNotes,
-                securityScopedURLs: securityScopedURLs
+                securityScopedURLs: securityScopedURLs,
+                temporaryDirectories: temporaryDirectories
             )
             return
         }
         dismissConfirmedFileImport()
         confirmedFileImportSecurityScopes = securityScopedURLs
+        confirmedFileImportTemporaryDirectories = temporaryDirectories
         let folders = urls.filter {
             (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
         }.map(\.lastPathComponent)
@@ -165,10 +197,13 @@ extension WorkspaceStore {
         confirmedFileImportTask?.cancel()
         confirmedFileImportTask = nil
         releaseConfirmedFileImportSecurityScopes(confirmedFileImportSecurityScopes)
+        WeiBeiDroppedFileURLs.removeTemporaryDirectories(confirmedFileImportTemporaryDirectories)
         for request in pendingConfirmedFileImports {
             releaseConfirmedFileImportSecurityScopes(request.securityScopedURLs)
+            WeiBeiDroppedFileURLs.removeTemporaryDirectories(request.temporaryDirectories)
         }
         confirmedFileImportSecurityScopes = []
+        confirmedFileImportTemporaryDirectories = []
         pendingConfirmedFileImports = []
         confirmedFileImportStopRequested = false
         confirmedFileImport = nil
@@ -186,7 +221,9 @@ extension WorkspaceStore {
               batch.failures.isEmpty || abandoningFailures else { return }
         let request = pendingConfirmedFileImports.removeFirst()
         releaseConfirmedFileImportSecurityScopes(confirmedFileImportSecurityScopes)
+        WeiBeiDroppedFileURLs.removeTemporaryDirectories(confirmedFileImportTemporaryDirectories)
         confirmedFileImportSecurityScopes = request.securityScopedURLs
+        confirmedFileImportTemporaryDirectories = request.temporaryDirectories
         let remainingURLs = pendingConfirmedFileImports.flatMap(\.sourceURLs)
         let folders = request.sourceURLs.filter {
             (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
@@ -206,10 +243,12 @@ extension WorkspaceStore {
         _ urls: [URL],
         courseID: UUID? = nil,
         asNotes: Bool = false,
-        securityScopedURLs: [URL] = []
+        securityScopedURLs: [URL] = [],
+        temporaryDirectories: [URL] = []
     ) {
         guard var batch = confirmedFileImport, batch.stage == .importing else {
             releaseConfirmedFileImportSecurityScopes(securityScopedURLs)
+            WeiBeiDroppedFileURLs.removeTemporaryDirectories(temporaryDirectories)
             return
         }
         var knownPaths = Set<String>()
@@ -233,12 +272,17 @@ extension WorkspaceStore {
                 !acceptedPaths.contains($0.standardizedFileURL.path)
             }
         )
+        let acceptedDirectories = temporaryDirectories.filter { directory in
+            acceptedURLs.contains { $0.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path }
+        }
+        WeiBeiDroppedFileURLs.removeTemporaryDirectories(temporaryDirectories.filter { !acceptedDirectories.contains($0) })
         guard !acceptedURLs.isEmpty else { return }
         pendingConfirmedFileImports.append(PendingConfirmedFileImport(
             sourceURLs: acceptedURLs,
             courseID: courseID,
             importsMarkdownAsNotes: asNotes,
-            securityScopedURLs: acceptedScopes
+            securityScopedURLs: acceptedScopes,
+            temporaryDirectories: acceptedDirectories
         ))
         batch.pendingSourceURLs = pendingConfirmedFileImports.flatMap(\.sourceURLs)
         confirmedFileImport = batch
@@ -571,8 +615,8 @@ extension WorkspaceStore {
                 ConfirmedFileImportFailure(
                     sourceURL: $0,
                     message: self.ui(
-                        "文件已移动、删除或暂时无法访问。请恢复文件后重试。",
-                        "The file was moved, deleted, or is temporarily unavailable. Restore it, then retry."
+                        "暂时无法读取源文件，请重试。",
+                        "The source file cannot be read right now. Please try again."
                     )
                 )
             }

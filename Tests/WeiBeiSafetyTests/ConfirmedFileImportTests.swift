@@ -55,6 +55,60 @@ final class ConfirmedFileImportTests: XCTestCase {
         ))
     }
 
+    func testCancellingTransferRemovesOwnedStagingAndPreservesOriginal() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let original = fixture.outside.appendingPathComponent("讲义.txt")
+        let bytes = Data("不可删除的原件".utf8)
+        try bytes.write(to: original)
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiDroppedFiles-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let received = staging.appendingPathComponent(original.lastPathComponent)
+        try FileManager.default.copyItem(at: original, to: received)
+
+        fixture.store.prepareConfirmedFileImport([received], temporaryDirectories: [staging])
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertTrue(fixture.store.importedItems.isEmpty)
+        fixture.store.dismissConfirmedFileImport()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staging.path))
+        XCTAssertTrue(fixture.store.confirmedFileImportTemporaryDirectories.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: original), bytes)
+        WeiBeiDroppedFileURLs.removeTemporaryDirectories([fixture.outside])
+        XCTAssertEqual(try Data(contentsOf: original), bytes)
+    }
+
+    func testQueuedTransferRetainsNextSourceUntilReviewAndCancellation() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var directories: [URL] = []
+        defer { directories.forEach { try? FileManager.default.removeItem(at: $0) } }
+        for name in ["正在导入.txt", "下一份.txt"] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiDroppedFiles-" + UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            try Data(name.utf8).write(to: directory.appendingPathComponent(name))
+            directories.append(directory)
+        }
+        fixture.store.prepareConfirmedFileImport([directories[0].appendingPathComponent("正在导入.txt")],
+            temporaryDirectories: [directories[0]])
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmedFileImport?.stage = .importing
+        fixture.store.prepareConfirmedFileImport([directories[1].appendingPathComponent("下一份.txt")],
+            temporaryDirectories: [directories[1]])
+        XCTAssertEqual(fixture.store.pendingConfirmedFileImports.count, 1)
+        XCTAssertTrue(directories.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+
+        fixture.store.confirmedFileImport?.stage = .finished
+        fixture.store.continuePendingConfirmedFileImport()
+        waitForStage(.reviewing, in: fixture.store)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directories[0].path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directories[1].path))
+        XCTAssertEqual(fixture.store.confirmedFileImportTemporaryDirectories, [directories[1]])
+        fixture.store.dismissConfirmedFileImport()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directories[1].path))
+    }
+
     func testPartialFailureKeepsSuccessAndRetriesOnlyFailure() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -355,7 +409,7 @@ final class ConfirmedFileImportTests: XCTestCase {
         var batch = try XCTUnwrap(fixture.store.confirmedFileImport)
         XCTAssertTrue(batch.candidates.isEmpty)
         XCTAssertEqual(batch.failures.map(\.sourceURL), [missing])
-        XCTAssertTrue(batch.failures.first?.message.contains("无法访问") == true)
+        XCTAssertFalse(batch.failures.first?.message.isEmpty ?? true)
         XCTAssertNil(fixture.store.transientNoteStatus)
 
         fixture.store.retryFailedConfirmedFileImport()

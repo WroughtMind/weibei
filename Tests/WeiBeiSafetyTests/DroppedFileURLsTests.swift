@@ -70,6 +70,128 @@ final class DroppedFileURLsTests: XCTestCase {
         })
     }
 
+    func testTransferredFileUsesExportedBytesInsteadOfProtectedSourceAddress() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let exported = root.appendingPathComponent("传输副本.txt")
+        let bytes = Data("微信传输的原始内容".utf8)
+        try bytes.write(to: exported)
+        let metadata = root.appendingPathComponent("无法直接访问/原始讲义.txt")
+        let provider = NSItemProvider()
+        provider.registerFileRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+            fileOptions: [], visibility: .all) { completion in
+            completion(exported, false, nil)
+            return nil
+        }
+        let completed = expectation(description: "Transferred file is retained for review")
+        XCTAssertTrue(WeiBeiDroppedFileURLs.loadTransferredFiles([provider], sourceURLs: [metadata]) { result in
+            defer { result.release() }
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(result.failures.isEmpty)
+            XCTAssertEqual(result.urls.first?.lastPathComponent, metadata.lastPathComponent)
+            XCTAssertEqual(result.temporaryDirectories.count, 1)
+            if let received = result.urls.first {
+                XCTAssertEqual(try? Data(contentsOf: received), bytes)
+                XCTAssertEqual(received.deletingLastPathComponent(), result.temporaryDirectories.first)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: metadata.path))
+            XCTAssertEqual(try? Data(contentsOf: exported), bytes)
+            completed.fulfill()
+        })
+        wait(for: [completed], timeout: 5)
+    }
+
+    func testProviderTemporaryFileCanDisappearAfterCallbackWithoutLosingReviewCopy() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("临时传输.txt")
+        let bytes = Data("必须在提供器回调内保留".utf8)
+        try bytes.write(to: source)
+        let provider = EphemeralFileProvider(source: source)
+        let completed = expectation(description: "Provider lifetime does not expire the review copy")
+        XCTAssertTrue(WeiBeiDroppedFileURLs.loadTransferredFiles([provider], sourceURLs: [source]) { result in
+            XCTAssertTrue(result.failures.isEmpty)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+            XCTAssertEqual(result.urls.first.flatMap { try? Data(contentsOf: $0) }, bytes)
+            let directories = result.temporaryDirectories
+            result.release()
+            XCTAssertTrue(directories.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+            completed.fulfill()
+        })
+        wait(for: [completed], timeout: 5)
+    }
+
+    func testTransferredProviderFailureCompletesWithoutStaging() {
+        let provider = NSItemProvider()
+        provider.registerFileRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+            fileOptions: [], visibility: .all) { completion in
+            completion(nil, false, NSError(domain: "DroppedFileURLsTests", code: 2))
+            return nil
+        }
+        let completed = expectation(description: "Failed file transfer is reported")
+        XCTAssertTrue(WeiBeiDroppedFileURLs.loadTransferredFiles([provider], sourceURLs: [source]) { result in
+            XCTAssertTrue(result.urls.isEmpty)
+            XCTAssertTrue(result.temporaryDirectories.isEmpty)
+            XCTAssertEqual(result.failures.count, 1)
+            completed.fulfill()
+        })
+        wait(for: [completed], timeout: 5)
+    }
+
+    func testTransferredFolderPreservesFilesAndOriginalDirectory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceFile = root.appendingPathComponent("讲义.txt")
+        let bytes = Data("文件夹中的内容".utf8)
+        try bytes.write(to: sourceFile)
+        let provider = NSItemProvider()
+        provider.registerFileRepresentation(forTypeIdentifier: UTType.folder.identifier,
+            fileOptions: .openInPlace, visibility: .all) { completion in
+            completion(root, true, nil)
+            return nil
+        }
+        let completed = expectation(description: "Folder representation survives review")
+        let metadata = URL(fileURLWithPath: "/protected/课程文件夹", isDirectory: true)
+        XCTAssertTrue(WeiBeiDroppedFileURLs.loadTransferredFiles([provider], sourceURLs: [metadata]) { result in
+            defer { result.release() }
+            XCTAssertTrue(result.failures.isEmpty)
+            XCTAssertEqual(result.urls.first?.lastPathComponent, metadata.lastPathComponent)
+            XCTAssertEqual(result.urls.first.flatMap { try? Data(contentsOf: $0.appendingPathComponent("讲义.txt")) }, bytes)
+            XCTAssertEqual(try? Data(contentsOf: sourceFile), bytes)
+            completed.fulfill()
+        })
+        wait(for: [completed], timeout: 5)
+    }
+
+    func testTransferredHTMLRetainsLocalImageBeforeLeavingProviderContext() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let page = root.appendingPathComponent("网页.html")
+        let original = "<html><body><img src=\"asset.png\"></body></html>"
+        try original.write(to: page, atomically: true, encoding: .utf8)
+        try Data([1, 2, 3]).write(to: root.appendingPathComponent("asset.png"))
+        let provider = NSItemProvider()
+        provider.registerFileRepresentation(forTypeIdentifier: UTType.html.identifier,
+            fileOptions: .openInPlace, visibility: .all) { completion in
+            completion(page, true, nil)
+            return nil
+        }
+        let completed = expectation(description: "HTML keeps its received local image")
+        XCTAssertTrue(WeiBeiDroppedFileURLs.loadTransferredFiles([provider], sourceURLs: [page]) { result in
+            defer { result.release() }
+            XCTAssertTrue(result.failures.isEmpty)
+            let received = result.urls.first.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            XCTAssertTrue(received?.contains("data:image/png;base64,") == true)
+            XCTAssertEqual(try? String(contentsOf: page, encoding: .utf8), original)
+            completed.fulfill()
+        })
+        wait(for: [completed], timeout: 5)
+    }
+
     private func assertDelivered(_ provider: NSItemProvider) {
         let completed = expectation(description: "File address reaches import")
         XCTAssertTrue(WeiBeiDroppedFileURLs.load([provider]) { result in
@@ -79,5 +201,23 @@ final class DroppedFileURLsTests: XCTestCase {
             completed.fulfill()
         })
         wait(for: [completed], timeout: 3)
+    }
+}
+
+private final class EphemeralFileProvider: NSItemProvider, @unchecked Sendable {
+    let source: URL
+    init(source: URL) {
+        self.source = source
+        super.init()
+        registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier, visibility: .all) { completion in
+            completion(Data(), nil)
+            return nil
+        }
+    }
+    override func loadInPlaceFileRepresentation(forTypeIdentifier typeIdentifier: String,
+        completionHandler: @escaping (URL?, Bool, Error?) -> Void) -> Progress {
+        completionHandler(source, false, nil)
+        try? FileManager.default.removeItem(at: source)
+        return Progress(totalUnitCount: 1)
     }
 }

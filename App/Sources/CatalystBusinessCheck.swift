@@ -448,29 +448,57 @@ enum CatalystBusinessCheck {
                 let previousIDs = Set(store.importedItems.map(\.id))
                 let provider = NSItemProvider(item: url.absoluteString as NSString,
                     typeIdentifier: "public.file-url")
+                var transferredDirectories: [URL] = []
                 if !asNotes {
-                    // Invoke the mounted, full-workspace native receiver. This
-                    // checks the production window connection, not physical mouse
-                    // dragging or the representations offered by other apps.
-                    var receiver: (UIDropInteraction, FileDropCheckSession)?
-                    try await until("full-workspace native file-drop receiver") {
-                        receiver = workspaceFileDropReceiver(provider: provider)
-                        return receiver != nil
+                    // Model the real Catalyst payload: content/Finder-node types
+                    // on the provider, with the file address on the native board.
+                    // This verifies the production UIKit entry; physical cross-app
+                    // mouse acceptance is recorded separately.
+                    var receiver: WorkspaceFileDropBridge.Probe?
+                    try await until("workspace UIKit file-drop registration") {
+                        receiver = workspaceFileDropReceiver()
+                        return receiver?.registeredInteraction != nil
                     }
-                    guard let (interaction, session) = receiver,
-                          let delegate = interaction.delegate as? WorkspaceFileDropBridge.Probe else {
+                    guard let receiver, let interaction = receiver.registeredInteraction,
+                          let target = interaction.view, let window = target.window else {
                         throw Failure("workspace file-drop receiver disappeared")
                     }
-                    result["file_drop_state"] = fileDropDiagnostics
-                    delegate.dropInteraction(interaction, sessionDidEnter: session)
-                    let proposal = delegate.dropInteraction(interaction, sessionDidUpdate: session)
-                    let textSession = FileDropCheckSession(provider: NSItemProvider(object: "pane-id" as NSString),
-                        target: session.target)
-                    try check("workspace_file_drop_receiver", proposal.operation == .copy
-                        && delegate.isTargeted?.wrappedValue == true
-                        && !delegate.dropInteraction(interaction, canHandle: textSession))
-                    delegate.dropInteraction(interaction, performDrop: session)
-                    delegate.dropInteraction(interaction, sessionDidEnd: session)
+                    // The native board gives an inaccessible source address;
+                    // only the provider's exported representation is readable.
+                    let metadataFolder = inputs.appendingPathComponent("ProtectedMetadata", isDirectory: true)
+                    try FileManager.default.createDirectory(at: metadataFolder, withIntermediateDirectories: true)
+                    let metadataURL = metadataFolder.appendingPathComponent(url.lastPathComponent)
+                    try Data(contentsOf: url).write(to: metadataURL)
+                    try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: metadataURL.path)
+                    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: metadataURL.path) }
+                    let contentProvider = NSItemProvider()
+                    contentProvider.registerFileRepresentation(forTypeIdentifier: "public.plain-text",
+                        fileOptions: [], visibility: .all) { completion in
+                        completion(url, false, nil)
+                        return nil
+                    }
+                    contentProvider.registerDataRepresentation(forTypeIdentifier: "com.apple.finder.node",
+                        visibility: .all) { completion in completion(Data(), nil); return nil }
+                    let session = FileDropCheckSession(provider: contentProvider, target: target)
+                    defer { CatalystDesktopWindow.shared.finishFileDropCheck() }
+                    _ = CatalystDesktopWindow.shared.prepareFileDropCheck(id: receiver.registrationID, urls: [])
+                    let rejectsText = !receiver.dropInteraction(interaction, canHandle: session)
+                    var checks = CatalystDesktopWindow.shared.prepareFileDropCheck(id: receiver.registrationID, urls: [metadataURL])
+                    checks["content_provider_without_file_url"] = !contentProvider.hasItemConformingToTypeIdentifier("public.file-url")
+                    checks["plain_text_rejected"] = rejectsText
+                    checks["mounted_root_receiver"] = target === window.rootViewController?.view
+                        && target.bounds.width >= window.bounds.width * 0.9
+                        && target.bounds.height >= window.bounds.height * 0.9
+                    checks["file_accepted_at_uikit_entry"] = receiver.dropInteraction(interaction, canHandle: session)
+                    receiver.dropInteraction(interaction, sessionDidEnter: session)
+                    checks["drag_guidance_shown"] = receiver.isTargeted?.wrappedValue == true
+                    checks["copy_proposed"] = receiver.dropInteraction(interaction, sessionDidUpdate: session).operation == .copy
+                    receiver.dropInteraction(interaction, performDrop: session)
+                    receiver.dropInteraction(interaction, sessionDidEnd: session)
+                    checks["drag_guidance_cleared"] = receiver.isTargeted?.wrappedValue == false
+                    fileDropDiagnostics = checks
+                    result["file_drop_state"] = checks
+                    try check("workspace_file_drop_receiver", checks.count == 11 && checks.values.allSatisfy { $0 })
                 } else {
                     guard store.receiveDroppedFiles([provider], asNotes: true) else {
                         throw Failure("note file-drop provider was rejected")
@@ -478,6 +506,16 @@ enum CatalystBusinessCheck {
                 }
                 try await until("confirmed import review") {
                     store.confirmedFileImport?.stage == .reviewing
+                }
+                if !asNotes {
+                    transferredDirectories = store.confirmedFileImportTemporaryDirectories
+                    guard let received = store.confirmedFileImport?.sourceURLs.first,
+                          transferredDirectories.count == 1,
+                          received.deletingLastPathComponent() == transferredDirectories.first,
+                          try Data(contentsOf: received) == Data(contentsOf: url),
+                          Set(store.importedItems.map(\.id)) == previousIDs else {
+                        throw Failure("external drop did not preserve the exported representation before confirmation")
+                    }
                 }
                 try await until("confirmed import fitted native sheet") {
                     guard let sheet = importSheet(), let size = sheet.contentSize,
@@ -498,6 +536,12 @@ enum CatalystBusinessCheck {
                 store.confirmFileImport()
                 try await until("confirmed import completes and dismisses") {
                     store.confirmedFileImport == nil && importSheet() == nil
+                }
+                if !asNotes {
+                    try check("workspace_external_transfer_preserves_bytes_and_cleans_staging",
+                        store.confirmedFileImportTemporaryDirectories.isEmpty
+                            && transferredDirectories.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
+                            && FileManager.default.fileExists(atPath: url.path))
                 }
                 let added = store.importedItems.filter { !previousIDs.contains($0.id) }
                 guard added.count == 1, let imported = added.first,
@@ -1277,30 +1321,10 @@ enum CatalystBusinessCheck {
         return false
     }
     private static func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-    private static func workspaceFileDropReceiver(provider: NSItemProvider) -> (UIDropInteraction, FileDropCheckSession)? {
-        var observed: [[String: Any]] = []
-        var anchors: [[String: String]] = []
-        defer { fileDropDiagnostics = ["provider_types": provider.registeredTypeIdentifiers, "receivers": observed, "anchors": anchors] }
-        for window in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows) {
-            guard !window.isHidden else { continue }
-            for view in descendants(window) {
-                if let probe = view as? WorkspaceFileDropBridge.Probe { anchors.append(probe.registrationCheckState) }
-                for interaction in view.interactions.compactMap({ $0 as? UIDropInteraction }) {
-                    let session = FileDropCheckSession(provider: provider, target: view)
-                    let accepts = interaction.delegate?.dropInteraction?(interaction, canHandle: session) == true
-                    let isProductionReceiver = interaction.delegate is WorkspaceFileDropBridge.Probe
-                    observed.append(["view": String(describing: type(of: view)), "bounds": String(describing: view.bounds),
-                        "window_matches": view.window === window, "production_receiver": isProductionReceiver,
-                        "accepts_file": accepts, "visible": view === window || isVisible(view, in: window)])
-                    if isProductionReceiver && accepts && (view === window || isVisible(view, in: window))
-                        && view.bounds.width >= window.bounds.width * 0.9
-                        && view.bounds.height >= window.bounds.height * 0.9 {
-                        return (interaction, session)
-                    }
-                }
-            }
-        }
-        return nil
+    private static func workspaceFileDropReceiver() -> WorkspaceFileDropBridge.Probe? {
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+            .filter { !$0.isHidden }.flatMap(descendants).compactMap { $0 as? WorkspaceFileDropBridge.Probe }
+            .first { $0.window != nil }
     }
     private static func editor(documentID: String) async -> MarkdownWebView? {
         let views = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
@@ -1373,8 +1397,8 @@ enum CatalystBusinessCheck {
 
     func loadObjects(ofClass aClass: NSItemProviderReading.Type,
         completion: @escaping ([NSItemProviderReading]) -> Void) -> Progress {
-        // The production onDrop receiver loads each provider's file URL. If that
-        // changes, this check must implement and verify the new loading path.
+        // File addresses come from the native drag board. The provider
+        // must not be asked to decode content as a file URL.
         preconditionFailure("Unexpected object loading in the file-drop receiver check")
     }
 }
