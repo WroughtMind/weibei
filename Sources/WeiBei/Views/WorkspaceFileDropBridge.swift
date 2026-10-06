@@ -2,6 +2,7 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import WeiBeiCore
 
 /// A window-level native receiver also covers independently hosted workspace panes.
 struct WorkspaceFileDropBridge: UIViewRepresentable {
@@ -45,6 +46,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             detach()
             dropView = target
             target.addInteraction(fileDropInteraction)
+            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] registered root_enabled=\(target.isUserInteractionEnabled, privacy: .public) probe_enabled=\(self.isUserInteractionEnabled, privacy: .public) width=\(target.bounds.width, privacy: .public) height=\(target.bounds.height, privacy: .public)")
         }
 
         func detach() {
@@ -53,10 +55,14 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
         }
 
         func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
-            session.hasItemsConforming(toTypeIdentifiers: [UTType.fileURL.identifier])
+            let accepted = session.hasItemsConforming(toTypeIdentifiers: [UTType.fileURL.identifier])
+            let types = session.items.flatMap { $0.itemProvider.registeredTypeIdentifiers }.joined(separator: ",")
+            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] can_handle accepted=\(accepted, privacy: .public) types=\(types, privacy: .public)")
+            return accepted
         }
 
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnter session: UIDropSession) {
+            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] entered")
             setTargeted(dropInteraction(interaction, canHandle: session))
         }
 
@@ -67,6 +73,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
         }
 
         func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
+            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] performed count=\(session.items.count, privacy: .public)")
             setTargeted(false)
             _ = receive(session.items.map(\.itemProvider))
         }
@@ -75,7 +82,10 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnd session: UIDropSession) { setTargeted(false) }
 
         private func setTargeted(_ value: Bool) {
-            if isTargeted?.wrappedValue != value { isTargeted?.wrappedValue = value }
+            if isTargeted?.wrappedValue != value {
+                WeiBeiLog.workspace.notice("[DEBUG-wb-drop] targeted value=\(value, privacy: .public) binding_present=\(self.isTargeted != nil, privacy: .public)")
+                isTargeted?.wrappedValue = value
+            }
         }
     }
 }

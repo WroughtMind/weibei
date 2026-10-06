@@ -78,6 +78,7 @@ extension WorkspaceStore {
     func receiveDroppedFiles(_ providers: [NSItemProvider], courseID: UUID? = nil, asNotes: Bool = false) -> Bool {
         WeiBeiDroppedFileURLs.load(providers) { [weak self] result in
             guard let self else {
+                WeiBeiLog.workspace.notice("[DEBUG-wb-drop] store_released")
                 result.securityScopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
                 return
             }
@@ -91,6 +92,8 @@ extension WorkspaceStore {
                     "Could not receive \(result.failures.count) dropped file(s). Please try again."
                 )
             }
+            let stage = self.confirmedFileImport.map { String(describing: $0.stage) } ?? "nil"
+            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] store_received stage=\(stage, privacy: .public) error_present=\(self.importantOperationError != nil, privacy: .public)")
         }
     }
 
@@ -861,6 +864,9 @@ struct ConfirmedFileImportView: View {
         .preferredColorScheme(store.appearanceMode.colorScheme)
         .modifier(WeiBeiFittedSheetPresentation())
         .interactiveDismissDisabled(batch?.stage == .importing)
+        .onAppear {
+            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] confirmation_appeared")
+        }
         .sheet(isPresented: $creatingCourse) {
             CourseProjectEntrySheet(
                 cancel: { creatingCourse = false },
