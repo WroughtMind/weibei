@@ -153,7 +153,7 @@ struct ContentView: View {
             .contentShape(Rectangle())
 #if targetEnvironment(macCatalyst)
             .background {
-                WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted, receive: receiveFileDrop)
+                WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted, receive: receiveFileDropURLs)
                     .allowsHitTesting(false)
             }
 #else
@@ -215,6 +215,12 @@ struct ContentView: View {
         [.immersiveReading, .immersiveConversation, .immersiveWriting].contains(store.layout)
     }
 
+#if targetEnvironment(macCatalyst)
+    private func receiveFileDropURLs(_ urls: [URL]) {
+        store.receiveDroppedFileURLs(urls, courseID: store.courseWorkspacePresented
+            ? store.courseWorkspaceCourseID : nil)
+    }
+#endif
     private func receiveFileDrop(_ providers: [NSItemProvider]) -> Bool {
         WeiBeiLog.workspace.notice("[DEBUG-wb-drop] workspace_receive course_presented=\(store.courseWorkspacePresented, privacy: .public)")
         return store.receiveDroppedFiles(providers, courseID: store.courseWorkspacePresented

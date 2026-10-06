@@ -11,6 +11,9 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var observers: [NSObjectProtocol] = []
     private var activeOpenPanel: NSOpenPanel?
     private var fileDrops: [String: NativeFileDropRegistration] = [:]
+#if WEIBEI_ACCEPTANCE_CHECKS
+    private var fileDropCheckBoard: NSPasteboard?
+#endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
     @MainActor private var updateObservation: AnyCancellable?
@@ -147,9 +150,24 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
         fileDrops.values.forEach { $0.attach() }
     }
+    @MainActor func currentDraggedFileURLs() -> [URL] {
 #if WEIBEI_ACCEPTANCE_CHECKS
-    @MainActor func checkFileDrop(id: String, urls: [URL]) -> [String: Bool] {
-        fileDrops[id]?.check(urls: urls) ?? [:]
+        if let board = fileDropCheckBoard { return NativeFileDropDelegate.fileURLs(from: board) }
+#endif
+        return NativeFileDropDelegate.fileURLs(from: NSPasteboard(name: .drag))
+    }
+#if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func prepareFileDropCheck(id: String, urls: [URL]) -> [String: Bool] {
+        finishFileDropCheck()
+        let checks = fileDrops[id]?.check(urls: urls) ?? [:]
+        let board = NSPasteboard.withUniqueName()
+        board.writeObjects(urls as [NSURL])
+        fileDropCheckBoard = board
+        return checks
+    }
+    @MainActor func finishFileDropCheck() {
+        fileDropCheckBoard?.releaseGlobally()
+        fileDropCheckBoard = nil
     }
 #endif
     @MainActor func presentOpenPanel(
@@ -305,11 +323,9 @@ private final class NativeFileDropRegistration {
         let rejectsText = NativeFileDropDelegate.fileURLs(from: board).isEmpty
         board.clearContents()
         board.writeObjects(urls as [NSURL])
-        delegate.targeted(true)
-        let delivered = delegate.receiveDrop(from: board)
         return ["registered_window": window.delegate === delegate,
                 "file_urls_preserved": roundTrip, "text_rejected": rejectsText,
-                "delivered": delivered, "reattached_after_delegate_change": rebound]
+                "reattached_after_delegate_change": rebound]
     }
 #endif
 }

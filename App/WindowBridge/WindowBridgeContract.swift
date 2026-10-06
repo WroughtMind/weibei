@@ -17,8 +17,10 @@ import Foundation
         receive: @MainActor @escaping ([URL]) -> Void
     )
     @MainActor func unregisterFileDrop(id: String)
+    @MainActor func currentDraggedFileURLs() -> [URL]
 #if WEIBEI_ACCEPTANCE_CHECKS
-    @MainActor func checkFileDrop(id: String, urls: [URL]) -> [String: Bool]
+    @MainActor func prepareFileDropCheck(id: String, urls: [URL]) -> [String: Bool]
+    @MainActor func finishFileDropCheck()
 #endif
     @MainActor func presentOpenPanel(
         title: String,

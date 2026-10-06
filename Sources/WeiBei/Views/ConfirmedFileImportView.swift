@@ -75,6 +75,16 @@ struct ConfirmedFileImportBatch: Identifiable, Equatable, Sendable {
 
 extension WorkspaceStore {
     @discardableResult
+    func receiveDroppedFileURLs(_ urls: [URL], courseID: UUID? = nil) -> Bool {
+        let files = urls.filter { $0.isFileURL && !$0.path.isEmpty }
+        guard !files.isEmpty else { return false }
+        // Acquire access while the system's actual drop is still being handled.
+        let scoped = files.filter { $0.startAccessingSecurityScopedResource() }
+        prepareConfirmedFileImport(files, courseID: courseID, securityScopedURLs: scoped)
+        WeiBeiLog.workspace.notice("[DEBUG-wb-drop] urls_received count=\(files.count, privacy: .public)")
+        return true
+    }
+    @discardableResult
     func receiveDroppedFiles(_ providers: [NSItemProvider], courseID: UUID? = nil, asNotes: Bool = false) -> Bool {
         WeiBeiDroppedFileURLs.load(providers) { [weak self] result in
             guard let self else {
