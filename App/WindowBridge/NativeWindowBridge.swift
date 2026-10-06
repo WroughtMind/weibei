@@ -10,6 +10,8 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private let materials = NSMapTable<NSWindow, NSVisualEffectView>.weakToStrongObjects()
     private var observers: [NSObjectProtocol] = []
     private var activeOpenPanel: NSOpenPanel?
+    private var fileDrops: [String: NativeFileDropRegistration] = [:]
+    private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
     @MainActor private var updateObservation: AnyCancellable?
 
@@ -26,6 +28,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         // background/PiP window need not become key. Apply input settings too.
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: nil, queue: .main) { [weak self] note in
             guard let self, let window = note.object as? NSWindow else { return }
+            self.updateFileDrops()
             self.updateToolbarBackground(in: window)
             guard !window.acceptsMouseMovedEvents
                 || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
@@ -37,6 +40,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         NSApp.windows.forEach(apply)
     }
     private func apply(to window: NSWindow) {
+        updateFileDrops()
         // Popovers are borderless windows too; their rows need mouse-move events.
         window.acceptsMouseMovedEvents = true
         updateToolbarBackground(in: window)
@@ -117,6 +121,37 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     func open(_ url: URL) -> Bool { NSWorkspace.shared.open(url) }
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func materialWindowCount() -> Int { materials.count }
+    @MainActor func registerFileDrop(
+        id: String, toolbar: NSObject,
+        targeted: @MainActor @escaping (Bool) -> Void,
+        receive: @MainActor @escaping ([URL]) -> Void
+    ) {
+        guard let toolbar = toolbar as? NSToolbar else { return }
+        unregisterFileDrop(id: id)
+        fileDrops[id] = NativeFileDropRegistration(toolbar: toolbar, targeted: targeted, receive: receive)
+        updateFileDrops()
+    }
+    @MainActor func unregisterFileDrop(id: String) {
+        fileDrops.removeValue(forKey: id)?.detach()
+    }
+    @MainActor func setWorkspaceToolbarVisible(_ visible: Bool, toolbar: NSObject) {
+        guard let toolbar = toolbar as? NSToolbar else { return }
+        toolbarVisibility.setObject(NSNumber(value: visible), forKey: toolbar)
+        updateFileDrops()
+    }
+    private func updateFileDrops() {
+        for window in NSApp.windows {
+            guard let toolbar = window.toolbar, let visible = toolbarVisibility.object(forKey: toolbar)?.boolValue,
+                  toolbar.isVisible != visible else { continue }
+            toolbar.isVisible = visible
+        }
+        fileDrops.values.forEach { $0.attach() }
+    }
+#if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func checkFileDrop(id: String, urls: [URL]) -> [String: Bool] {
+        fileDrops[id]?.check(urls: urls) ?? [:]
+    }
+#endif
     @MainActor func presentOpenPanel(
         title: String,
         contentTypeIdentifiers: [String],
@@ -201,4 +236,109 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     @MainActor func checkForUpdates() { updateService.checkForUpdates() }
     @MainActor func installAvailableUpdate() { updateService.installAvailableUpdate() }
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+}
+
+/// NSWindow forwards drag destination messages to its delegate. Preserve the
+/// existing delegate's window behavior while handling file drags at this level.
+private final class NativeFileDropRegistration {
+    weak var toolbar: NSToolbar?
+    let targeted: @MainActor (Bool) -> Void
+    let receive: @MainActor ([URL]) -> Void
+    private let destinations = NSMapTable<NSWindow, NativeFileDropDelegate>.weakToStrongObjects()
+
+    init(toolbar: NSToolbar, targeted: @MainActor @escaping (Bool) -> Void,
+         receive: @MainActor @escaping ([URL]) -> Void) {
+        self.toolbar = toolbar
+        self.targeted = targeted
+        self.receive = receive
+    }
+    func attach() {
+        guard let toolbar else { return }
+        var windows = NSApp.windows.filter { $0.toolbar === toolbar }
+        // In full screen, AppKit hosts the toolbar in a separate native window.
+        for window in toolbar.items.compactMap({ $0.view?.window }) where !windows.contains(window) {
+            windows.append(window)
+        }
+        for window in windows where destinations.object(forKey: window) == nil {
+            let delegate = NativeFileDropDelegate(original: window.delegate, targeted: targeted, receive: receive)
+            destinations.setObject(delegate, forKey: window)
+            window.delegate = delegate
+            window.registerForDraggedTypes([.fileURL])
+            WeiBeiLog.workspace.notice("[DEBUG-wb-drop] native_registered toolbar=\(window.toolbar === toolbar, privacy: .public)")
+        }
+    }
+    @MainActor func detach() {
+        for window in destinations.keyEnumerator().allObjects.compactMap({ $0 as? NSWindow }) {
+            guard let delegate = destinations.object(forKey: window), window.delegate === delegate else { continue }
+            window.delegate = delegate.original
+        }
+        destinations.removeAllObjects()
+        targeted(false)
+    }
+#if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func check(urls: [URL]) -> [String: Bool] {
+        attach()
+        let windows = destinations.keyEnumerator().allObjects.compactMap { $0 as? NSWindow }
+        guard let window = windows.first(where: { $0.toolbar === toolbar }),
+              let delegate = destinations.object(forKey: window) else { return [:] }
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.writeObjects(urls as [NSURL])
+        let loaded = NativeFileDropDelegate.fileURLs(from: board)
+        // The real Finder payload reaches AppKit as file URLs, even when
+        // Catalyst would expose only content-type + Finder node providers.
+        let roundTrip = loaded == urls
+        board.clearContents()
+        board.setString("pane-id", forType: .string)
+        let rejectsText = NativeFileDropDelegate.fileURLs(from: board).isEmpty
+        board.clearContents()
+        board.writeObjects(urls as [NSURL])
+        delegate.targeted(true)
+        let delivered = delegate.receiveDrop(from: board)
+        return ["registered_window": window.delegate === delegate,
+                "file_urls_preserved": roundTrip, "text_rejected": rejectsText,
+                "delivered": delivered]
+    }
+#endif
+}
+
+private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggingDestination {
+    weak var original: (any NSWindowDelegate)?
+    let targeted: @MainActor (Bool) -> Void
+    let receive: @MainActor ([URL]) -> Void
+    init(original: (any NSWindowDelegate)?, targeted: @MainActor @escaping (Bool) -> Void,
+         receive: @MainActor @escaping ([URL]) -> Void) {
+        self.original = original; self.targeted = targeted; self.receive = receive
+        super.init()
+    }
+    override func responds(to selector: Selector!) -> Bool {
+        super.responds(to: selector) || original?.responds(to: selector) == true
+    }
+    override func forwardingTarget(for selector: Selector!) -> Any? {
+        original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
+    }
+    static func fileURLs(from board: NSPasteboard) -> [URL] {
+        (board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+    func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
+    func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        let accepted = !Self.fileURLs(from: sender.draggingPasteboard).isEmpty
+        targeted(accepted)
+        WeiBeiLog.workspace.notice("[DEBUG-wb-drop] native_can_handle accepted=\(accepted, privacy: .public)")
+        return accepted ? .copy : []
+    }
+    func draggingExited(_ sender: (any NSDraggingInfo)?) { targeted(false) }
+    func draggingEnded(_ sender: any NSDraggingInfo) { targeted(false) }
+    func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        !Self.fileURLs(from: sender.draggingPasteboard).isEmpty
+    }
+    func performDragOperation(_ sender: any NSDraggingInfo) -> Bool { receiveDrop(from: sender.draggingPasteboard) }
+    @MainActor func receiveDrop(from board: NSPasteboard) -> Bool {
+        targeted(false)
+        let urls = Self.fileURLs(from: board)
+        guard !urls.isEmpty else { return false }
+        WeiBeiLog.workspace.notice("[DEBUG-wb-drop] native_performed count=\(urls.count, privacy: .public)")
+        receive(urls)
+        return true
+    }
 }

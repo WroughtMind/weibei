@@ -76,8 +76,10 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             if scene !== next { detach(); scene = next }
             next.titlebar?.toolbarStyle = .unifiedCompact
             next.titlebar?.autoHidesToolbarInFullScreen = false
-            let desired = showsToolbar ? toolbar : nil
-            if next.titlebar?.toolbar !== desired { next.titlebar?.toolbar = desired }
+            // Keep a stable native window identity even when immersive mode
+            // hides the toolbar. Visibility remains owned by AppKit.
+            if next.titlebar?.toolbar !== toolbar { next.titlebar?.toolbar = toolbar }
+            CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(showsToolbar, toolbar: toolbar)
         }
 
         func detach() {
