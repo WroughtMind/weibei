@@ -18,6 +18,7 @@ import Foundation
     )
     @MainActor func unregisterFileDrop(id: String)
     @MainActor func currentDraggedFileURLs() -> [URL]
+    @MainActor func currentDragContainsFilePromises() -> Bool
 #if WEIBEI_ACCEPTANCE_CHECKS
     @MainActor func prepareFileDropCheck(id: String, urls: [URL]) -> [String: Bool]
     @MainActor func finishFileDropCheck()

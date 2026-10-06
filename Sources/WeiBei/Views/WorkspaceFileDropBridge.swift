@@ -70,7 +70,8 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             // Catalyst advertises a file's content type (e.g. plain text), not
             // fileURL. Classify the actual external drag pasteboard instead.
             let accepts = session.localDragSession == nil && !session.items.isEmpty
-                && !CatalystDesktopWindow.shared.currentDraggedFileURLs().isEmpty
+                && (!CatalystDesktopWindow.shared.currentDraggedFileURLs().isEmpty
+                    || CatalystDesktopWindow.shared.currentDragContainsFilePromises())
             return accepts
         }
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnter session: UIDropSession) {
@@ -85,7 +86,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             isTargeted?.wrappedValue = false
             guard session.localDragSession == nil else { return }
             let urls = CatalystDesktopWindow.shared.currentDraggedFileURLs()
-            guard !urls.isEmpty else { return }
+            guard !urls.isEmpty || CatalystDesktopWindow.shared.currentDragContainsFilePromises() else { return }
             receive(session.items.map(\.itemProvider), urls)
         }
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidExit session: UIDropSession) { isTargeted?.wrappedValue = false }

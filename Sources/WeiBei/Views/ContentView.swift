@@ -2414,7 +2414,7 @@ enum WeiBeiDroppedFileURLs {
     /// retain an owned copy before the provider's completion handler returns.
     static func loadTransferredFiles(_ providers: [NSItemProvider], sourceURLs: [URL],
         completion: @escaping (WeiBeiDroppedFileResult) -> Void) -> Bool {
-        guard !providers.isEmpty, !sourceURLs.isEmpty else { return false }
+        guard !providers.isEmpty else { return false }
         let lock = NSLock()
         var results = Array(repeating: WeiBeiDroppedFileResult(), count: providers.count)
         let group = DispatchGroup()
@@ -2430,14 +2430,14 @@ enum WeiBeiDroppedFileURLs {
                     return type == .folder || type.conforms(to: .content) || type.conforms(to: .data)
                 }
             }
-            guard let contentType else {
+            guard contentType != nil || provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else {
                 lock.lock()
                 results[index].failures = [provider.suggestedName ?? "file representation unavailable"]
                 lock.unlock()
                 continue
             }
             group.enter()
-            provider.loadInPlaceFileRepresentation(forTypeIdentifier: contentType) { url, _, error in
+            let receive: (URL?, Error?) -> Void = { url, error in
                 var result = WeiBeiDroppedFileResult()
                 var directory: URL?
                 do {
@@ -2478,6 +2478,18 @@ enum WeiBeiDroppedFileURLs {
                 }
                 lock.lock(); results[index] = result; lock.unlock()
                 group.leave()
+            }
+            // Content and file-address representations are distinct source
+            // contracts. Prefer exported bytes; never retry a failed export
+            // against metadata from the source app's private directory.
+            if let contentType {
+                provider.loadInPlaceFileRepresentation(forTypeIdentifier: contentType) { url, _, error in
+                    receive(url, error)
+                }
+            } else {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                    receive(fileURL(from: item), error)
+                }
             }
         }
         group.notify(queue: .main) {

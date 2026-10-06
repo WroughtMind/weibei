@@ -156,6 +156,10 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
 #endif
         return NativeFileDropDelegate.fileURLs(from: NSPasteboard(name: .drag))
     }
+    @MainActor func currentDragContainsFilePromises() -> Bool {
+        let board = NSPasteboard(name: .drag)
+        return !(board.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil) ?? []).isEmpty
+    }
 #if WEIBEI_ACCEPTANCE_CHECKS
     @MainActor func prepareFileDropCheck(id: String, urls: [URL]) -> [String: Bool] {
         finishFileDropCheck()
