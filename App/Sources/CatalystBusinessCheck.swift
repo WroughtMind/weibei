@@ -448,6 +448,7 @@ enum CatalystBusinessCheck {
                 let previousIDs = Set(store.importedItems.map(\.id))
                 let provider = NSItemProvider(item: url.absoluteString as NSString,
                     typeIdentifier: "public.file-url")
+                var transferredDirectories: [URL] = []
                 if !asNotes {
                     // Model the real Catalyst payload: content/Finder-node types
                     // on the provider, with the file address on the native board.
@@ -462,14 +463,27 @@ enum CatalystBusinessCheck {
                           let target = interaction.view, let window = target.window else {
                         throw Failure("workspace file-drop receiver disappeared")
                     }
-                    let contentProvider = NSItemProvider(object: "external text" as NSString)
+                    // The native board gives an inaccessible source address;
+                    // only the provider's exported representation is readable.
+                    let metadataFolder = inputs.appendingPathComponent("ProtectedMetadata", isDirectory: true)
+                    try FileManager.default.createDirectory(at: metadataFolder, withIntermediateDirectories: true)
+                    let metadataURL = metadataFolder.appendingPathComponent(url.lastPathComponent)
+                    try Data(contentsOf: url).write(to: metadataURL)
+                    try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: metadataURL.path)
+                    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: metadataURL.path) }
+                    let contentProvider = NSItemProvider()
+                    contentProvider.registerFileRepresentation(forTypeIdentifier: "public.plain-text",
+                        fileOptions: [], visibility: .all) { completion in
+                        completion(url, false, nil)
+                        return nil
+                    }
                     contentProvider.registerDataRepresentation(forTypeIdentifier: "com.apple.finder.node",
                         visibility: .all) { completion in completion(Data(), nil); return nil }
                     let session = FileDropCheckSession(provider: contentProvider, target: target)
                     defer { CatalystDesktopWindow.shared.finishFileDropCheck() }
                     _ = CatalystDesktopWindow.shared.prepareFileDropCheck(id: receiver.registrationID, urls: [])
                     let rejectsText = !receiver.dropInteraction(interaction, canHandle: session)
-                    var checks = CatalystDesktopWindow.shared.prepareFileDropCheck(id: receiver.registrationID, urls: [url])
+                    var checks = CatalystDesktopWindow.shared.prepareFileDropCheck(id: receiver.registrationID, urls: [metadataURL])
                     checks["content_provider_without_file_url"] = !contentProvider.hasItemConformingToTypeIdentifier("public.file-url")
                     checks["plain_text_rejected"] = rejectsText
                     checks["mounted_root_receiver"] = target === window.rootViewController?.view
@@ -493,6 +507,16 @@ enum CatalystBusinessCheck {
                 try await until("confirmed import review") {
                     store.confirmedFileImport?.stage == .reviewing
                 }
+                if !asNotes {
+                    transferredDirectories = store.confirmedFileImportTemporaryDirectories
+                    guard let received = store.confirmedFileImport?.sourceURLs.first,
+                          transferredDirectories.count == 1,
+                          received.deletingLastPathComponent() == transferredDirectories.first,
+                          try Data(contentsOf: received) == Data(contentsOf: url),
+                          Set(store.importedItems.map(\.id)) == previousIDs else {
+                        throw Failure("external drop did not preserve the exported representation before confirmation")
+                    }
+                }
                 try await until("confirmed import fitted native sheet") {
                     guard let sheet = importSheet(), let size = sheet.contentSize,
                           let window = sheet.window, !window.isHidden,
@@ -512,6 +536,12 @@ enum CatalystBusinessCheck {
                 store.confirmFileImport()
                 try await until("confirmed import completes and dismisses") {
                     store.confirmedFileImport == nil && importSheet() == nil
+                }
+                if !asNotes {
+                    try check("workspace_external_transfer_preserves_bytes_and_cleans_staging",
+                        store.confirmedFileImportTemporaryDirectories.isEmpty
+                            && transferredDirectories.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
+                            && FileManager.default.fileExists(atPath: url.path))
                 }
                 let added = store.importedItems.filter { !previousIDs.contains($0.id) }
                 guard added.count == 1, let imported = added.first,

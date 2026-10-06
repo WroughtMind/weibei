@@ -711,6 +711,7 @@ final class WorkspaceStore: ObservableObject {
     var confirmedFileImportTask: Task<Void, Never>?
     var confirmedFileImportStopRequested = false
     var confirmedFileImportSecurityScopes: [URL] = []
+    var confirmedFileImportTemporaryDirectories: [URL] = []
     var pendingConfirmedFileImports: [PendingConfirmedFileImport] = []
     var recentlyImportedClearTask: Task<Void, Never>?
     @Published var notebookCreationDraft: NotebookCreationDraft?

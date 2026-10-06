@@ -3,16 +3,18 @@ import SwiftUI
 import UIKit
 import WeiBeiCore
 
-/// UIKit owns content/hosted-toolbar drag routing. AppKit provides the actual
-/// file URLs and receives drags on native window regions. Both enter one import.
+/// UIKit receives exported files from the source app. AppKit provides file URL
+/// metadata for classification and receives drags on native window regions.
 struct WorkspaceFileDropBridge: UIViewRepresentable {
     @Binding var isTargeted: Bool
-    let receive: ([URL]) -> Void
+    let receive: ([NSItemProvider], [URL]) -> Void
+    let receiveNative: ([URL]) -> Void
 
     func makeUIView(context: Context) -> Probe { Probe() }
     func updateUIView(_ view: Probe, context: Context) {
         view.isTargeted = $isTargeted
         view.receive = receive
+        view.receiveNative = receiveNative
         view.attachToWindow()
     }
     static func dismantleUIView(_ view: Probe, coordinator: ()) { view.detach() }
@@ -20,7 +22,8 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
     final class Probe: UIView, UIDropInteractionDelegate {
         let registrationID = UUID().uuidString
         var isTargeted: Binding<Bool>?
-        var receive: ([URL]) -> Void = { _ in }
+        var receive: ([NSItemProvider], [URL]) -> Void = { _, _ in }
+        var receiveNative: ([URL]) -> Void = { _ in }
         private weak var registeredToolbar: NSToolbar?
         private var isRegistered = false
         private weak var dropView: UIView?
@@ -54,7 +57,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             isRegistered = true
             CatalystDesktopWindow.shared.registerFileDrop(id: registrationID, toolbar: toolbar,
                 targeted: { [weak self] value in self?.isTargeted?.wrappedValue = value },
-                receive: { [weak self] urls in self?.receive(urls) })
+                receive: { [weak self] urls in self?.receiveNative(urls) })
         }
         func detach() {
             dropView?.removeInteraction(fileDropInteraction)
@@ -86,7 +89,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             let urls = CatalystDesktopWindow.shared.currentDraggedFileURLs()
             WeiBeiLog.workspace.notice("[DEBUG-wb-drop] uikit_performed count=\(urls.count, privacy: .public)")
             guard !urls.isEmpty else { return }
-            receive(urls)
+            receive(session.items.map(\.itemProvider), urls)
         }
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidExit session: UIDropSession) { isTargeted?.wrappedValue = false }
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnd session: UIDropSession) { isTargeted?.wrappedValue = false }
