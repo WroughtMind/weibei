@@ -460,7 +460,7 @@ enum CatalystBusinessCheck {
                     let checks = CatalystDesktopWindow.shared.checkFileDrop(id: receiver.registrationID, urls: [url])
                     fileDropDiagnostics = checks
                     result["file_drop_state"] = checks
-                    try check("workspace_file_drop_receiver", checks.count == 4
+                    try check("workspace_file_drop_receiver", checks.count == 5
                         && checks.values.allSatisfy { $0 } && receiver.isTargeted?.wrappedValue == false)
                 } else {
                     guard store.receiveDroppedFiles([provider], asNotes: true) else {

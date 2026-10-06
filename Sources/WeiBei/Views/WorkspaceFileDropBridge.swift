@@ -21,6 +21,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
         var isTargeted: Binding<Bool>?
         var receive: ([NSItemProvider]) -> Bool = { _ in false }
         private weak var registeredToolbar: NSToolbar?
+        private var isRegistered = false
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -36,6 +37,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
                   registeredToolbar !== toolbar else { return }
             detach()
             registeredToolbar = toolbar
+            isRegistered = true
             CatalystDesktopWindow.shared.registerFileDrop(id: registrationID, toolbar: toolbar,
                 targeted: { [weak self] value in self?.isTargeted?.wrappedValue = value },
                 receive: { [weak self] urls in
@@ -46,9 +48,10 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
                 })
         }
         func detach() {
-            guard registeredToolbar != nil else { return }
+            guard isRegistered else { return }
             CatalystDesktopWindow.shared.unregisterFileDrop(id: registrationID)
             registeredToolbar = nil
+            isRegistered = false
             isTargeted?.wrappedValue = false
         }
     }

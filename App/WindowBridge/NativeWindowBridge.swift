@@ -259,9 +259,16 @@ private final class NativeFileDropRegistration {
         for window in toolbar.items.compactMap({ $0.view?.window }) where !windows.contains(window) {
             windows.append(window)
         }
-        for window in windows where destinations.object(forKey: window) == nil {
-            let delegate = NativeFileDropDelegate(original: window.delegate, targeted: targeted, receive: receive)
-            destinations.setObject(delegate, forKey: window)
+        for window in windows {
+            let delegate: NativeFileDropDelegate
+            if let existing = destinations.object(forKey: window) {
+                guard window.delegate !== existing else { continue }
+                existing.original = window.delegate
+                delegate = existing
+            } else {
+                delegate = NativeFileDropDelegate(original: window.delegate, targeted: targeted, receive: receive)
+                destinations.setObject(delegate, forKey: window)
+            }
             window.delegate = delegate
             window.registerForDraggedTypes([.fileURL])
             WeiBeiLog.workspace.notice("[DEBUG-wb-drop] native_registered toolbar=\(window.toolbar === toolbar, privacy: .public)")
@@ -281,6 +288,11 @@ private final class NativeFileDropRegistration {
         let windows = destinations.keyEnumerator().allObjects.compactMap { $0 as? NSWindow }
         guard let window = windows.first(where: { $0.toolbar === toolbar }),
               let delegate = destinations.object(forKey: window) else { return [:] }
+        // Scene transitions may replace AppKit's original delegate. Keep the
+        // registration bound and continue forwarding to the latest delegate.
+        window.delegate = delegate.original
+        attach()
+        let rebound = window.delegate === delegate
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         board.writeObjects(urls as [NSURL])
@@ -297,7 +309,7 @@ private final class NativeFileDropRegistration {
         let delivered = delegate.receiveDrop(from: board)
         return ["registered_window": window.delegate === delegate,
                 "file_urls_preserved": roundTrip, "text_rejected": rejectsText,
-                "delivered": delivered]
+                "delivered": delivered, "reattached_after_delegate_change": rebound]
     }
 #endif
 }
