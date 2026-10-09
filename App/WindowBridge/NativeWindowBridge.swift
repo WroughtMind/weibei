@@ -18,6 +18,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private weak var checkedFullScreenWorkspace: NSWindow?
     private var checkedFullScreenEntered = false
     private var checkedFullScreenExited = false
+    private var fullScreenCheckNotifications: [String] = []
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
@@ -34,6 +35,12 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
                     self.settingsPresentationHandled.remove(window)
                 }
 #if WEIBEI_ACCEPTANCE_CHECKS
+                if note.name == NSWindow.didEnterFullScreenNotification || note.name == NSWindow.didExitFullScreenNotification {
+                    self.fullScreenCheckNotifications.append(note.name.rawValue + " "
+                        + String(describing: ObjectIdentifier(window)) + " toolbar="
+                        + (window.toolbar.map { String(describing: $0.identifier) } ?? "nil"))
+                    if self.fullScreenCheckNotifications.count > 16 { self.fullScreenCheckNotifications.removeFirst() }
+                }
                 if window === self.checkedFullScreenWorkspace {
                     if note.name == NSWindow.didEnterFullScreenNotification { self.checkedFullScreenEntered = true }
                     if note.name == NSWindow.didExitFullScreenNotification { self.checkedFullScreenExited = true }
@@ -171,6 +178,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]] {
         NSApp.windows.map { window in
             var state = ["class": NSStringFromClass(type(of: window)),
+             "window_identity": String(describing: ObjectIdentifier(window)),
              "number": String(window.windowNumber),
              "toolbar": window.toolbar.map { String(describing: $0.identifier) } ?? "",
              "toolbar_identity": window.toolbar.map { String(describing: ObjectIdentifier($0)) } ?? "",
@@ -183,6 +191,8 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
              "main": String(window.isMainWindow),
              "on_active_space": String(window.isOnActiveSpace)]
             state["delegate"] = NativeFileDropDelegate.describe(window.delegate)
+            state["checked_workspace_identity"] = checkedFullScreenWorkspace.map { String(describing: ObjectIdentifier($0)) } ?? "nil"
+            state["full_screen_notifications"] = fullScreenCheckNotifications.joined(separator: "\n")
             state["toolbar_visible"] = window.toolbar.map { String($0.isVisible) } ?? "nil"
             state["toolbar_visibility_override"] = window.toolbar.flatMap {
                 toolbarVisibility.object(forKey: $0).map { String($0.boolValue) }
