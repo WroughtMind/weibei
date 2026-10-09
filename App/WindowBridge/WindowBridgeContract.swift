@@ -23,6 +23,7 @@ import Foundation
     @MainActor func finishFileDropCheck()
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool
     @MainActor func fullScreenWindowStateForCheck() -> [String: Bool]
+    @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]]
 #endif
     @MainActor func presentOpenPanel(
         title: String,

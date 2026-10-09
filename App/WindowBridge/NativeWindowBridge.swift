@@ -107,11 +107,31 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
 
     @MainActor func fullScreenWindowStateForCheck() -> [String: Bool] {
         guard let workspace = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }),
-              let settings = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.settings" }) else { return [:] }
+              let settings = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.settings" }) else {
+            return ["workspace_found": NSApp.windows.contains { $0.toolbar?.identifier == "weibei.workspace" },
+                    "settings_found": NSApp.windows.contains { $0.toolbar?.identifier == "weibei.settings" }]
+        }
         return ["workspace_full_screen": workspace.styleMask.contains(.fullScreen),
                 "workspace_on_active_space": workspace.isOnActiveSpace,
                 "settings_full_screen": settings.styleMask.contains(.fullScreen),
                 "settings_on_active_space": settings.isOnActiveSpace]
+    }
+
+    @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]] {
+        NSApp.windows.map { window in
+            ["class": NSStringFromClass(type(of: window)),
+             "number": String(window.windowNumber),
+             "toolbar": window.toolbar?.identifier.rawValue ?? "",
+             "toolbar_identity": window.toolbar.map { String(describing: ObjectIdentifier($0)) } ?? "",
+             "parent_toolbar": window.parent?.toolbar?.identifier.rawValue ?? "",
+             "collection_behavior": String(window.collectionBehavior.rawValue),
+             "style_mask": String(window.styleMask.rawValue),
+             "frame": NSStringFromRect(window.frame),
+             "visible": String(window.isVisible),
+             "key": String(window.isKeyWindow),
+             "main": String(window.isMainWindow),
+             "on_active_space": String(window.isOnActiveSpace)]
+        }
     }
 #endif
 

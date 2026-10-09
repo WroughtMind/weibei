@@ -659,6 +659,8 @@ enum CatalystBusinessCheck {
             }
             try await until("settings stays beside the full-screen workspace") {
                 let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
+                result["settings_full_screen"] = state
+                result["settings_native_windows"] = CatalystDesktopWindow.shared.fullScreenWindowDiagnosticsForCheck()
                 return state["workspace_full_screen"] == true && state["workspace_on_active_space"] == true
                     && state["settings_full_screen"] == false && state["settings_on_active_space"] == true
             }
@@ -851,6 +853,15 @@ enum CatalystBusinessCheck {
             result["failure_state"] = [
                 "application_state": UIApplication.shared.applicationState.rawValue,
                 "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
+                "window_scenes": UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.map { scene in
+                    ["id": scene.session.persistentIdentifier,
+                     "settings": String(scene.session.userInfo?["weibei-settings"] as? Bool == true),
+                     "activation_state": String(scene.activationState.rawValue),
+                     "full_screen": String(scene.isFullScreen),
+                     "allows_full_screen": String(describing: scene.sizeRestrictions?.allowsFullScreen),
+                     "toolbar": scene.titlebar?.toolbar?.identifier.rawValue ?? "",
+                     "toolbar_identity": scene.titlebar?.toolbar.map { String(describing: ObjectIdentifier($0)) } ?? ""]
+                },
                 "motion_preference": store.motionPreference.rawValue,
                 "system_reduce_motion": UIAccessibility.isReduceMotionEnabled,
                 "agent_running": store.isAgentRunningInActiveChat,
