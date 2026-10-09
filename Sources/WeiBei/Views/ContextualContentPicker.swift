@@ -165,11 +165,11 @@ struct ContextualContentPicker: View {
             Button(store.ui("新建课程", "New Course")) {
                 courseEntry = CourseProjectEntryPresentation(intent: .create)
             }
-            .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28))
+            .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28, neutralHoverWhenInactive: true, idleOpacity: 0))
             Button(kind == .note ? store.ui("导入笔记…", "Import Notes…") : store.ui("导入资料…", "Import Materials…")) {
                 importFiles(into: nil)
             }
-            .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28))
+            .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28, neutralHoverWhenInactive: true, idleOpacity: 0))
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
