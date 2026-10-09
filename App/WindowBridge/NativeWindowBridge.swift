@@ -19,6 +19,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var checkedFullScreenEntered = false
     private var checkedFullScreenExited = false
     private var fullScreenCheckNotifications: [String] = []
+    private var fullScreenCheckToolbarChanges: [String] = []
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
@@ -187,6 +188,8 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
              "style_mask": String(window.styleMask.rawValue),
              "frame": NSStringFromRect(window.frame),
              "visible": String(window.isVisible),
+             "main_thread": String(Thread.isMainThread),
+             "run_loop_mode": RunLoop.current.currentMode?.rawValue ?? "nil",
              "key": String(window.isKeyWindow),
              "main": String(window.isMainWindow),
              "on_active_space": String(window.isOnActiveSpace)]
@@ -197,6 +200,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             state["toolbar_visibility_override"] = window.toolbar.flatMap {
                 toolbarVisibility.object(forKey: $0).map { String($0.boolValue) }
             } ?? "nil"
+            state["toolbar_visibility_changes"] = fullScreenCheckToolbarChanges.joined(separator: "\n")
             if let delegate = window.delegate as? NativeFileDropDelegate {
                 state.merge(delegate.fullScreenDiagnostics) { _, new in new }
             }
@@ -266,6 +270,12 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         for window in NSApp.windows {
             guard let toolbar = window.toolbar, let visible = toolbarVisibility.object(forKey: toolbar)?.boolValue,
                   toolbar.isVisible != visible else { continue }
+#if WEIBEI_ACCEPTANCE_CHECKS
+            fullScreenCheckToolbarChanges.append(String(describing: toolbar.identifier) + " "
+                + String(toolbar.isVisible) + " -> " + String(visible)
+                + " full_screen=" + String(window.styleMask.contains(.fullScreen)))
+            if fullScreenCheckToolbarChanges.count > 32 { fullScreenCheckToolbarChanges.removeFirst() }
+#endif
             toolbar.isVisible = visible
         }
         fileDrops.values.forEach { $0.attach() }

@@ -202,6 +202,36 @@ jobs:
           test "$(uname -m)" = "$WEIBEI_TARGET_ARCH"
           xcodebuild -version
 
+      - name: 记录系统原生全屏对照
+        id: native_full_screen
+        # 只收集环境对照；后续真实 App 仍须完成全屏进出，原验收条件不变。
+        continue-on-error: true
+        run: |
+          swiftc App/script/check-native-full-screen.swift -o "$RUNNER_TEMP/check-native-full-screen"
+          python3 - "$RUNNER_TEMP/check-native-full-screen" "$PWD/App/Evidence/ci-native-full-screen.json" <<'PYTHON'
+          import subprocess, sys
+          subprocess.run(sys.argv[1:], check=True, timeout=65)
+          PYTHON
+
+      - name: 保留原生全屏对照失败的系统记录
+        if: always()
+        continue-on-error: true
+        env:
+          NATIVE_FULLSCREEN_OUTCOME: ${{ steps.native_full_screen.outcome }}
+        run: |
+          [[ "$NATIVE_FULLSCREEN_OUTCOME" == failure ]] || exit 0
+          mkdir -p App/Evidence
+          /usr/bin/log show --last 2m --style compact --predicate 'process == "Dock" OR process == "WindowServer"' > App/Evidence/ci-native-full-screen-system.log
+
+      - name: 立即保留原生全屏对照证据
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-full-screen-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: App/Evidence/ci-native-full-screen*
+          retention-days: 2
+          if-no-files-found: warn
+
       - name: 安装构建工具依赖
         id: dependencies
         run: |
@@ -249,6 +279,15 @@ jobs:
       - name: 在当前架构的真实 Catalyst 进程检查会话
         id: acceptance
         run: ./App/script/check-ci.sh
+
+      - name: 保留真实应用全屏失败的系统记录
+        if: always()
+        continue-on-error: true
+        env:
+          ACCEPTANCE_OUTCOME: ${{ steps.acceptance.outcome }}
+        run: |
+          [[ "$ACCEPTANCE_OUTCOME" == failure ]] || exit 0
+          /usr/bin/log show --last 2m --style compact --predicate 'process == "Dock" OR process == "WindowServer"' > App/Evidence/ci-full-screen-system.log
 
       - name: 保留候选和检查证据
         if: always()
