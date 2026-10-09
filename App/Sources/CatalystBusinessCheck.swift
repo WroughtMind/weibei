@@ -640,7 +640,11 @@ enum CatalystBusinessCheck {
                   CatalystDesktopWindow.shared.setWorkspaceFullScreenForCheck(true) else {
                 throw Failure("workspace full-screen check unavailable")
             }
-            try await until("workspace enters full screen") { workspaceScene.isFullScreen }
+            try await until("workspace finishes entering full screen") {
+                let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
+                result["workspace_full_screen_transition"] = state
+                return workspaceScene.isFullScreen && state["workspace_entered_full_screen"] == true
+            }
             NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
             let settingsScene = {
                 UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -673,9 +677,16 @@ enum CatalystBusinessCheck {
             try settingsSnapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("connection-cards.png"))
             try check("connection_cards_settings_and_authenticated_models", true)
             UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil, errorHandler: nil)
-            try await until("settings window closes") { settingsScene() == nil }
+            try await until("settings window closes") {
+                settingsScene() == nil
+                    && CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()["settings_visible"] != true
+            }
             _ = CatalystDesktopWindow.shared.setWorkspaceFullScreenForCheck(false)
-            try await until("workspace returns to window mode") { !workspaceScene.isFullScreen }
+            try await until("workspace finishes returning to window mode") {
+                let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
+                result["workspace_full_screen_transition"] = state
+                return !workspaceScene.isFullScreen && state["workspace_exited_full_screen"] == true
+            }
             store.select(itemID: material.id)
             try await until("original composer mounted") {
                 AgentProviderReadiness.isConfigured(for: store)
@@ -875,6 +886,7 @@ enum CatalystBusinessCheck {
                     return state
                 }
             ]
+            result["failure_native_windows"] = CatalystDesktopWindow.shared.fullScreenWindowDiagnosticsForCheck()
             if let controller = conversation() {
                 let collection = controller.collection
                 result["conversation_state"] = [

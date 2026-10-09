@@ -8,11 +8,16 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var mode = "paper"
     private var intensity = 1.0
     private let materials = NSMapTable<NSWindow, NSVisualEffectView>.weakToStrongObjects()
+    private let settingsPresentationHandled = NSHashTable<NSWindow>.weakObjects()
+    private let settingsPresentationPending = NSHashTable<NSWindow>.weakObjects()
     private var observers: [NSObjectProtocol] = []
     private var activeOpenPanel: NSOpenPanel?
     private var fileDrops: [String: NativeFileDropRegistration] = [:]
 #if WEIBEI_ACCEPTANCE_CHECKS
     private var fileDropCheckBoard: NSPasteboard?
+    private weak var checkedFullScreenWorkspace: NSWindow?
+    private var checkedFullScreenEntered = false
+    private var checkedFullScreenExited = false
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
@@ -23,8 +28,18 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didEnterFullScreenNotification,
                      NSWindow.didExitFullScreenNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
-                guard let window = note.object as? NSWindow else { return }
-                self?.apply(to: window)
+                guard let self, let window = note.object as? NSWindow else { return }
+                if note.name == NSWindow.didBecomeKeyNotification,
+                   !self.settingsPresentationPending.contains(window) {
+                    self.settingsPresentationHandled.remove(window)
+                }
+#if WEIBEI_ACCEPTANCE_CHECKS
+                if window === self.checkedFullScreenWorkspace {
+                    if note.name == NSWindow.didEnterFullScreenNotification { self.checkedFullScreenEntered = true }
+                    if note.name == NSWindow.didExitFullScreenNotification { self.checkedFullScreenExited = true }
+                }
+#endif
+                self.apply(to: window)
             })
         }
         // A Catalyst scene can acquire its NSWindow after configure(), and a
@@ -96,25 +111,61 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         if window.collectionBehavior != behavior { window.collectionBehavior = behavior }
         if window.tabbingMode != .disallowed { window.tabbingMode = .disallowed }
         if window.toolbar?.isVisible == true { window.toolbar?.isVisible = false }
+        guard window.isVisible, !settingsPresentationHandled.contains(window) else { return }
+        settingsPresentationHandled.add(window)
+        guard NSApp.isActive, !window.isOnActiveSpace, fullScreenWorkspaceIsOnActiveSpace else { return }
+        // Catalyst can order a new scene on the ordinary desktop before this
+        // native utility policy is installed. Present it again after that scene
+        // transaction, once per activation; never front it on ordinary updates.
+        settingsPresentationPending.add(window)
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window else { return }
+            defer { self.settingsPresentationPending.remove(window) }
+            guard NSApp.isActive, window.isVisible, window.isKeyWindow, !window.isOnActiveSpace,
+                  self.fullScreenWorkspaceIsOnActiveSpace else { return }
+            self.configureSettingsWindow(window)
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    private var fullScreenWorkspaceIsOnActiveSpace: Bool {
+        NSApp.windows.contains {
+            $0.toolbar?.identifier == "weibei.workspace"
+                && $0.styleMask.contains(.fullScreen) && $0.isOnActiveSpace
+        }
     }
 
 #if WEIBEI_ACCEPTANCE_CHECKS
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool {
-        guard let window = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }) else { return false }
-        if window.styleMask.contains(.fullScreen) != enabled { window.toggleFullScreen(nil) }
+        guard let window = checkedFullScreenWorkspace
+            ?? NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }) else { return false }
+        checkedFullScreenWorkspace = window
+        if window.styleMask.contains(.fullScreen) != enabled {
+            checkedFullScreenEntered = false
+            checkedFullScreenExited = false
+            window.toggleFullScreen(nil)
+        }
         return true
     }
 
     @MainActor func fullScreenWindowStateForCheck() -> [String: Bool] {
-        guard let workspace = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }),
-              let settings = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.settings" }) else {
-            return ["workspace_found": NSApp.windows.contains { $0.toolbar?.identifier == "weibei.workspace" },
-                    "settings_found": NSApp.windows.contains { $0.toolbar?.identifier == "weibei.settings" }]
+        let workspace = checkedFullScreenWorkspace
+            ?? NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" })
+        let settings = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.settings" })
+        var state = ["workspace_found": workspace != nil, "settings_found": settings != nil,
+                     "app_active": NSApp.isActive,
+                     "workspace_entered_full_screen": checkedFullScreenEntered,
+                     "workspace_exited_full_screen": checkedFullScreenExited]
+        if let workspace {
+            state["workspace_full_screen"] = workspace.styleMask.contains(.fullScreen)
+            state["workspace_on_active_space"] = workspace.isOnActiveSpace
         }
-        return ["workspace_full_screen": workspace.styleMask.contains(.fullScreen),
-                "workspace_on_active_space": workspace.isOnActiveSpace,
-                "settings_full_screen": settings.styleMask.contains(.fullScreen),
-                "settings_on_active_space": settings.isOnActiveSpace]
+        if let settings {
+            state["settings_full_screen"] = settings.styleMask.contains(.fullScreen)
+            state["settings_on_active_space"] = settings.isOnActiveSpace
+            state["settings_visible"] = settings.isVisible
+        }
+        return state
     }
 
     @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]] {
