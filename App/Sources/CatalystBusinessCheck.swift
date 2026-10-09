@@ -859,7 +859,7 @@ enum CatalystBusinessCheck {
                      "activation_state": String(scene.activationState.rawValue),
                      "full_screen": String(scene.isFullScreen),
                      "allows_full_screen": String(describing: scene.sizeRestrictions?.allowsFullScreen),
-                     "toolbar": scene.titlebar?.toolbar?.identifier.rawValue ?? "",
+                     "toolbar": scene.titlebar?.toolbar.map { String(describing: $0.identifier) } ?? "",
                      "toolbar_identity": scene.titlebar?.toolbar.map { String(describing: ObjectIdentifier($0)) } ?? ""]
                 },
                 "motion_preference": store.motionPreference.rawValue,

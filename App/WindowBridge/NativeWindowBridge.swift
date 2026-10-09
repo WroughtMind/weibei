@@ -121,9 +121,9 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         NSApp.windows.map { window in
             ["class": NSStringFromClass(type(of: window)),
              "number": String(window.windowNumber),
-             "toolbar": window.toolbar?.identifier.rawValue ?? "",
+             "toolbar": window.toolbar.map { String(describing: $0.identifier) } ?? "",
              "toolbar_identity": window.toolbar.map { String(describing: ObjectIdentifier($0)) } ?? "",
-             "parent_toolbar": window.parent?.toolbar?.identifier.rawValue ?? "",
+             "parent_toolbar": window.parent?.toolbar.map { String(describing: $0.identifier) } ?? "",
              "collection_behavior": String(window.collectionBehavior.rawValue),
              "style_mask": String(window.styleMask.rawValue),
              "frame": NSStringFromRect(window.frame),
