@@ -1,6 +1,39 @@
 import SwiftUI
 import WeiBeiCore
 
+/// Measurement state belongs to the mounted Markdown view, independently of its position.
+struct NativeMarkdownMeasurement {
+    private var lastWidth: CGFloat?
+    private var cachedSize: CGSize?
+
+    mutating func invalidate() { cachedSize = nil }
+
+    mutating func sizeThatFits(
+        proposedWidth: CGFloat?,
+        viewWidth: CGFloat,
+        measure: (CGFloat) -> CGFloat
+    ) -> CGSize? {
+        // Minimum/infinite proposals negotiate flexibility; they are not new text widths.
+        if proposedWidth == 0 { return .zero }
+        let width: CGFloat
+        if let proposedWidth, proposedWidth.isFinite, proposedWidth > 0 {
+            width = proposedWidth
+            lastWidth = width
+        } else if let lastWidth {
+            width = lastWidth
+        } else if viewWidth.isFinite, viewWidth > 0 {
+            width = viewWidth
+            lastWidth = width
+        } else {
+            return nil
+        }
+        if let cachedSize, cachedSize.width == width { return cachedSize }
+        let size = CGSize(width: width, height: max(1, ceil(measure(width))))
+        cachedSize = size
+        return size
+    }
+}
+
 extension Notification.Name {
     /// 菜单 ⌘, → 主窗口里的 openWindow 桥(Commands 拿不到环境 action)。
     static let weibeiOpenSettings = Notification.Name("WeiBeiOpenSettings")

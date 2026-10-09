@@ -15,6 +15,11 @@ import WeiBeiCore
 // Theme lives only on the Interface page (no top-bar or settings-header palette).
 // Default landing section is always Chat.
 
+enum WeiBeiSettingsLayout {
+    static let minimumSize = CGSize(width: 860, height: 610)
+    static let initialSize = CGSize(width: 900, height: 720)
+}
+
 struct SettingsView: View {
     // Visible to `internal` so the Settings sub-views in Views/Settings/*.swift
     // (same-target extensions) can bind to them.
@@ -70,7 +75,7 @@ struct SettingsView: View {
         }
         // fullSizeContentView: the traffic lights float over this top inset.
         .padding(.top, 30)
-        .frame(minWidth: 860, minHeight: 610)
+        .frame(minWidth: WeiBeiSettingsLayout.minimumSize.width, minHeight: WeiBeiSettingsLayout.minimumSize.height)
         .overlay {
             if showFeedbackSheet {
                 ZStack {

@@ -282,9 +282,7 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
     var openLink: (URL) -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> MarkdownTextView {
-        let view = MarkdownTextView()
-        view.throttleInterval = nil
-        return view
+        context.coordinator.makeView()
     }
     func updateUIView(_ view: MarkdownTextView, context: Context) {
         view.linkHandler = { value, _, _ in
@@ -293,23 +291,63 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
             case let .string(value): if let url = URL(string: value) { openLink(url) }
             }
         }
-        let coordinator = context.coordinator
-        guard coordinator.markdown != markdown || coordinator.fontSize != fontSize || coordinator.appearance != appearanceMode else { return }
-        coordinator.markdown = markdown; coordinator.fontSize = fontSize; coordinator.appearance = appearanceMode
-        let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: appearanceMode)
-        let parsed = MarkdownParser().parse(markdown)
-        let content = MarkdownContent(parserResult: parsed, theme: theme)
-        view.setContentImmediately(content, theme: theme)
-        view.invalidateIntrinsicContentSize()
+        context.coordinator.update(view, markdown: markdown, fontSize: fontSize, appearance: appearanceMode)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context) -> CGSize? {
-        let width = max(1, proposal.width ?? uiView.bounds.width)
-        return CGSize(width: width, height: max(1, uiView.boundingSize(for: width).height))
+        context.coordinator.sizeThatFits(proposedWidth: proposal.width, view: uiView)
     }
-    final class Coordinator {
+    private final class MeasuringTextView: MarkdownTextView {
+        var onSizeInvalidation: (() -> Void)?
+        override func invalidateIntrinsicContentSize() {
+            super.invalidateIntrinsicContentSize()
+            onSizeInvalidation?()
+        }
+    }
+    @MainActor final class Coordinator {
+        var isMeasuring = false
+        var measurement = NativeMarkdownMeasurement()
         var markdown: String?
         var fontSize: CGFloat = 0
         var appearance: WeiBeiAppearanceMode?
+        #if WEIBEI_ACCEPTANCE_CHECKS
+        private(set) var measurementCount = 0
+        private(set) var contentApplyCount = 0
+        #endif
+
+        func makeView() -> MarkdownTextView {
+            let view = MeasuringTextView()
+            view.onSizeInvalidation = { [weak self] in
+                guard let self, !isMeasuring else { return }
+                measurement.invalidate()
+            }
+            view.throttleInterval = nil
+            return view
+        }
+
+        func update(_ view: MarkdownTextView, markdown: String, fontSize: CGFloat, appearance: WeiBeiAppearanceMode) {
+            guard self.markdown != markdown || self.fontSize != fontSize || self.appearance != appearance else { return }
+            measurement.invalidate()
+            self.markdown = markdown; self.fontSize = fontSize; self.appearance = appearance
+            let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: appearance)
+            let parsed = MarkdownParser().parse(markdown)
+            let content = MarkdownContent(parserResult: parsed, theme: theme)
+            #if WEIBEI_ACCEPTANCE_CHECKS
+            contentApplyCount += 1
+            #endif
+            view.setContentImmediately(content, theme: theme)
+            view.invalidateIntrinsicContentSize()
+        }
+
+        func sizeThatFits(proposedWidth: CGFloat?, view: MarkdownTextView) -> CGSize? {
+            isMeasuring = true
+            defer { isMeasuring = false }
+            return measurement.sizeThatFits(proposedWidth: proposedWidth, viewWidth: view.bounds.width) {
+                #if WEIBEI_ACCEPTANCE_CHECKS
+                measurementCount += 1
+                #endif
+                return view.boundingSize(for: $0).height
+            }
+        }
     }
 }
 

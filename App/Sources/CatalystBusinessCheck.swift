@@ -422,6 +422,8 @@ enum CatalystBusinessCheck {
                 }
             }
             try check("native_workspace_toolbar_controls", true)
+            result["floating_markdown_measurements"] = try verifyFloatingMarkdownMeasurements()
+            try check("floating_markdown_drag_measurements_cached", true)
             // This in-process check uses the candidate's own default library.
             // First-launch folder confirmation remains a separate UI check.
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
@@ -602,6 +604,8 @@ enum CatalystBusinessCheck {
             }
             try check("original_import_reader_and_editor", materials.count == 1 && notes.count == 1
                 && noteEditor.bounds.width > 100 && noteEditor.bounds.height > 100)
+            result["contextual_picker_layout"] = try await verifyContextualPickerAlignment(store, in: noteEditor.window!)
+            try check("material_and_note_pickers_align", true)
             store.noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "\n\n" + noteMarker)
             try await until("editor command acknowledged") { store.noteEditorCommand == nil && store.noteText.contains(noteMarker) }
             let captured = await store.freshActiveNoteEditorSnapshot()
@@ -632,6 +636,11 @@ enum CatalystBusinessCheck {
             try check("connection_profile_switch_back", store.activeAgentProfileID == activeConnection
                 && store.agentProviderID == .custom && store.agentAuthMethod == .apiKey
                 && store.agentBaseURL == endpoint && store.modelName == "catalyst-local-check")
+            guard let workspaceScene = conversation()?.view.window?.windowScene,
+                  CatalystDesktopWindow.shared.setWorkspaceFullScreenForCheck(true) else {
+                throw Failure("workspace full-screen check unavailable")
+            }
+            try await until("workspace enters full screen") { workspaceScene.isFullScreen }
             NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
             let settingsScene = {
                 UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -639,7 +648,8 @@ enum CatalystBusinessCheck {
             }
             try await until("connection cards in the real settings window") {
                 guard let window = settingsScene()?.windows.first(where: { !$0.isHidden }) else { return false }
-                return window.bounds.width >= 700 && window.bounds.height >= 600
+                return window.bounds.width >= WeiBeiSettingsLayout.minimumSize.width
+                    && window.bounds.height >= WeiBeiSettingsLayout.minimumSize.height
                     && !AgentAccountService.shared.isRefreshingModels
                     && AgentAccountService.shared.hasLoadedModels(provider: .custom)
                     && AgentAccountService.shared.liveModelIDs.contains("catalyst-local-check")
@@ -647,6 +657,14 @@ enum CatalystBusinessCheck {
             guard let scene = settingsScene(), let window = scene.windows.first(where: { !$0.isHidden }) else {
                 throw Failure("connection settings window disappeared")
             }
+            try await until("settings stays beside the full-screen workspace") {
+                let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
+                return state["workspace_full_screen"] == true && state["workspace_on_active_space"] == true
+                    && state["settings_full_screen"] == false && state["settings_on_active_space"] == true
+            }
+            try check("settings_window_stays_in_full_screen_space", scene.sizeRestrictions?.allowsFullScreen == false
+                && scene.sizeRestrictions?.minimumSize == WeiBeiSettingsLayout.minimumSize)
+            result["settings_full_screen"] = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
             let settingsSnapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
@@ -654,6 +672,8 @@ enum CatalystBusinessCheck {
             try check("connection_cards_settings_and_authenticated_models", true)
             UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil, errorHandler: nil)
             try await until("settings window closes") { settingsScene() == nil }
+            _ = CatalystDesktopWindow.shared.setWorkspaceFullScreenForCheck(false)
+            try await until("workspace returns to window mode") { !workspaceScene.isFullScreen }
             store.select(itemID: material.id)
             try await until("original composer mounted") {
                 AgentProviderReadiness.isConfigured(for: store)
@@ -871,6 +891,74 @@ enum CatalystBusinessCheck {
         }
     }
 
+    private static func verifyContextualPickerAlignment(_ store: WorkspaceStore, in window: UIWindow) async throws -> [String: Any] {
+        let materialID = store.selectedMaterialItem?.id
+        let noteID = store.activeNoteItemID
+        store.showContextualBrowser(.material)
+        store.showContextualBrowser(.note)
+        defer { store.materialPickerPresented = false; store.notePickerPresented = false }
+        var frames: [CGRect] = []
+        try await until("both picker search fields align below the toolbar") {
+            window.layoutIfNeeded()
+            let fields = descendants(window).compactMap { $0 as? UITextField }.filter {
+                $0.accessibilityLabel == store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags")
+                    && isVisible($0, in: window)
+            }
+            frames = fields.map { $0.convert($0.bounds, to: window) }.sorted { $0.minX < $1.minX }
+            return frames.count == 2 && abs(frames[0].minY - frames[1].minY) < 1
+                && frames.allSatisfy { $0.width <= 320 && $0.height <= 30 && $0.minY >= window.safeAreaInsets.top }
+        }
+        guard store.selectedMaterialItem?.id == materialID, store.activeNoteItemID == noteID else {
+            throw Failure("picker changed the current material or note")
+        }
+        let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("contextual-pickers.png"))
+        return ["search_frames": frames.map { String(describing: $0) }, "top_difference": abs(frames[0].minY - frames[1].minY)]
+    }
+
+    private static func verifyFloatingMarkdownMeasurements() throws -> [String: Any] {
+        let coordinator = CatalystMessageMarkdown.Coordinator()
+        let view = coordinator.makeView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 600)
+        let markdown = String(repeating: "浮窗长回答需要复用排版结果，拖动位置不应重新解析正文。**重要解释**保持完整。\n\n", count: 24)
+        let appearance = WeiBeiAppearanceMode.paper
+        coordinator.update(view, markdown: markdown, fontSize: 11, appearance: appearance)
+        guard coordinator.sizeThatFits(proposedWidth: 0, view: view) == .zero,
+              coordinator.measurementCount == 0,
+              let original = coordinator.sizeThatFits(proposedWidth: 320, view: view), original.height > 200 else {
+            throw Failure("floating markdown initial measurement")
+        }
+        for index in 0..<30 {
+            view.frame.origin = CGPoint(x: 20, y: CGFloat(index) * 3)
+            coordinator.update(view, markdown: markdown, fontSize: 11, appearance: appearance)
+            guard coordinator.sizeThatFits(proposedWidth: nil, view: view) == original,
+                  coordinator.sizeThatFits(proposedWidth: .infinity, view: view) == original,
+                  coordinator.sizeThatFits(proposedWidth: 320, view: view) == original else {
+                throw Failure("floating markdown changed while moving")
+            }
+        }
+        guard coordinator.measurementCount == 1, coordinator.contentApplyCount == 1,
+              let narrower = coordinator.sizeThatFits(proposedWidth: 240, view: view),
+              narrower.height > original.height, coordinator.measurementCount == 2 else {
+            throw Failure("floating markdown movement cache or width reflow")
+        }
+        coordinator.update(view, markdown: markdown + markdown, fontSize: 11, appearance: appearance)
+        guard let longer = coordinator.sizeThatFits(proposedWidth: 240, view: view), longer.height > narrower.height else {
+            throw Failure("floating markdown content invalidation")
+        }
+        coordinator.update(view, markdown: markdown + markdown, fontSize: 15, appearance: appearance)
+        guard let larger = coordinator.sizeThatFits(proposedWidth: 240, view: view), larger.height > longer.height,
+              coordinator.measurementCount == 4, coordinator.contentApplyCount == 3 else {
+            throw Failure("floating markdown font invalidation")
+        }
+        return ["position_updates": 30, "measurements_after_moving": 1, "content_applies_after_moving": 1,
+                "total_measurements": coordinator.measurementCount, "total_content_applies": coordinator.contentApplyCount,
+                "original_height": original.height, "narrower_height": narrower.height,
+                "longer_height": longer.height, "larger_font_height": larger.height]
+    }
+
     private static func verifySelectionChat(_ store: WorkspaceStore, material: StudyItem,
                                             mainComposer: AgentComposerTextEditor.ComposerTextView,
                                             mainConversation: ConversationController) async throws -> [String: Any] {
@@ -965,6 +1053,15 @@ enum CatalystBusinessCheck {
         }
         guard store.activeStudySessionID == mainID, mainComposer.text == mainDraft else { throw Failure("citation replaced the main conversation") }
         try capture("selection-discussion.png")
+        let originalAppearanceStyle = store.appearanceStyle
+        store.appearanceStyle = .mistGlass
+        try await until("floating conversation uses the frosted workspace theme") {
+            CatalystDesktopWindow.shared.materialWindowCount() > 0
+                && [.glassMist, .glassSlate].contains(store.appearanceMode)
+                && floatingComposer()?.window === window
+        }
+        try capture("selection-discussion-mist.png")
+        store.appearanceStyle = originalAppearanceStyle
         mainConversation.quoteText?("主会话引用片段")
         // A2: 引用追加到各自草稿末尾（前面空一行），不再替换已写的草稿。
         let mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"

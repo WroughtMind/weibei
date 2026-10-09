@@ -384,10 +384,10 @@ struct CatalystWeiBeiApp: App {
                 .weiBeiMotionScoped()
                 .environmentObject(AppDelegate.workspace)
                 .environmentObject(AppDelegate.updates)
-                .frame(minWidth: 700, minHeight: 600)
                 .background(CatalystWindowChrome(appearanceMode: AppDelegate.workspace.appearanceMode,
-                                                initialSize: CGSize(width: 900, height: 720),
-                                                minimumSize: CGSize(width: 700, height: 600)))
+                                                initialSize: WeiBeiSettingsLayout.initialSize,
+                                                minimumSize: WeiBeiSettingsLayout.minimumSize,
+                                                allowsFullScreen: false))
                 .background(SettingsSceneMarker())
                 .ignoresSafeArea(.container, edges: .top)
         }
@@ -424,12 +424,17 @@ private struct SettingsSceneMarker: UIViewRepresentable {
     func makeUIView(context: Context) -> Marker { Marker() }
     func updateUIView(_ view: Marker, context: Context) { view.tagScene() }
     final class Marker: UIView {
+        private let toolbar = NSToolbar(identifier: "weibei.settings")
         override func didMoveToWindow() { super.didMoveToWindow(); tagScene() }
         func tagScene() {
-            guard let session = window?.windowScene?.session else { return }
+            guard let scene = window?.windowScene else { return }
+            let session = scene.session
             var info = session.userInfo ?? [:]
             info["weibei-settings"] = true
             session.userInfo = info
+            // The native bridge recognizes this utility window before it is ordered front.
+            if scene.titlebar?.toolbar !== toolbar { scene.titlebar?.toolbar = toolbar }
+            CatalystDesktopWindow.configure(mode: AppDelegate.workspace.appearanceMode)
         }
     }
 }

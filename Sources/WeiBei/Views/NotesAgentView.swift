@@ -1325,6 +1325,8 @@ private enum AgentChatLayoutMetrics {
     static let wideSideGutter: CGFloat = 28
     static let composerHeight: CGFloat = 44
     static let composerFontSize: CGFloat = 15
+    static let floatingBodyFontSize: CGFloat = 11
+    static let floatingUserFontSize: CGFloat = 12
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
         // Immersive conversation only — document multi-pane keeps compact strip metrics.
@@ -2916,7 +2918,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .onPreferenceChange(FloatingPanelSizeKey.self) { size in
-            guard resizeSession == nil, size.width > 1, size.height > 1 else { return }
+            guard size.width > 1, size.height > 1, size != measuredPanelSize else { return }
             measuredPanelSize = size
             keepPanelOnScreen(panelHeight: size.height)
         }
@@ -2934,35 +2936,30 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
-    /// The answer is the text's own height. A fixed frame is only for a cap, a pin, or a drag.
-    @ViewBuilder
+    /// Keep one mounted scroll view when a drag starts or the answer reaches its cap.
     private var floatingAnswerFeed: some View {
-        if locksFloatingFeedHeight {
-            ScrollViewReader { proxy in
-                ScrollView(showsIndicators: false) {
-                    floatingAnswerStack
-                }
-                .frame(height: resolvedFloatingFeedHeight)
-                .onAppear {
-                    if store.selectionChatRevealMessageID != nil {
-                        revealFloatingMessage(using: proxy)
-                    } else {
-                        scrollFloatingFeedToEnd(using: proxy)
-                    }
-                }
-                .onChange(of: store.selectionChatRevealMessageID) { _, _ in
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                floatingAnswerStack
+            }
+            .frame(height: resolvedFloatingFeedHeight)
+            .scrollDisabled(!locksFloatingFeedHeight)
+            .onAppear {
+                if store.selectionChatRevealMessageID != nil {
                     revealFloatingMessage(using: proxy)
-                }
-                .onChange(of: floatingStreaming.text) { _, _ in
-                    scrollFloatingFeedToEnd(using: proxy)
-                }
-                .onChange(of: visibleFloatingMessages.count) { _, _ in
+                } else {
                     scrollFloatingFeedToEnd(using: proxy)
                 }
             }
-        } else {
-            floatingAnswerStack
-                .fixedSize(horizontal: false, vertical: true)
+            .onChange(of: store.selectionChatRevealMessageID) { _, _ in
+                revealFloatingMessage(using: proxy)
+            }
+            .onChange(of: floatingStreaming.text) { _, _ in
+                scrollFloatingFeedToEnd(using: proxy)
+            }
+            .onChange(of: visibleFloatingMessages.count) { _, _ in
+                scrollFloatingFeedToEnd(using: proxy)
+            }
         }
     }
 
@@ -3083,6 +3080,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func adoptMeasuredFeedHeight(_ height: CGFloat) {
+        guard height > 1, abs(height - measuredFeedContentHeight) > 1 else { return }
         // The list reports its height inside the layout pass. Applying it on the
         // next turn is what lets the panel frame actually change.
         DispatchQueue.main.async {
@@ -3091,7 +3089,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func applyMeasuredFeedHeight(_ height: CGFloat) {
-        guard resizeSession == nil, height > 1, abs(height - measuredFeedContentHeight) > 1 else { return }
+        guard height > 1, abs(height - measuredFeedContentHeight) > 1 else { return }
         if height + 8 >= SelectionFloatingAgentPlacement.maximumAutomaticContentHeight {
             feedExceededCap = true
         }
@@ -3427,24 +3425,47 @@ private struct FloatingSelectionMessageBubble: View {
     var text: String
     var isError = false
     var isStreaming = false
+    var showsThinking = false
+    var activityText: String?
 
     private var isUser: Bool {
         message.role == .user
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if isError {
-                Text(text)
-                    .weiBeiText(13)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .allowsHitTesting(false)
-            } else {
-                finalizedMessage
+        HStack(spacing: 0) {
+            if isUser { Spacer(minLength: 32) }
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 5) {
+                Text(isUser ? store.ui("你", "You") : store.ui("魏碑", "WeiBei"))
+                    .weiBeiText(10, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                ZStack(alignment: .topLeading) {
+                    if isError {
+                        Text(text)
+                            .weiBeiText(AgentChatLayoutMetrics.floatingBodyFontSize)
+                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .allowsHitTesting(false)
+                    } else {
+                        finalizedMessage
+                    }
+                    if showsThinking {
+                        AgentThinkingIndicator(activityText: activityText, compact: true)
+                            .padding(.vertical, 4)
+                    }
+                }
+                .padding(.horizontal, isUser ? 10 : 0)
+                .padding(.vertical, isUser ? 8 : 0)
+                .background {
+                    if isUser {
+                        RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
+                            .fill(WeiBeiTheme.paperInset.opacity(0.38))
+                    }
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .padding(.vertical, 3)
     }
 
@@ -3480,20 +3501,16 @@ private struct FloatingSelectionMessageRow: View {
         let text = (isStreaming && !streaming.text.isEmpty) ? streaming.text : store.agentDisplayText(for: message)
         let quoteAction: () -> Void = { onQuote(text) }
         // Keep the native body mounted while the first-token indicator is visible.
-        ZStack(alignment: .topLeading) {
-            FloatingSelectionMessageBubble(
-                message: message,
-                text: text,
-                isError: WorkspaceStore.isAgentFailureMessage(message.text),
-                isStreaming: isStreaming
-            )
-            if message.completionState == .generating && !message.toolActivities.contains(where: { $0.state == .running })
-                && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
-                    .id(message.id)
-                    .padding(.vertical, 4)
-            }
-        }
+        FloatingSelectionMessageBubble(
+            message: message,
+            text: text,
+            isError: WorkspaceStore.isAgentFailureMessage(message.text),
+            isStreaming: isStreaming,
+            showsThinking: message.completionState == .generating
+                && !message.toolActivities.contains(where: { $0.state == .running })
+                && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            activityText: streaming.activityText
+        )
         .contextMenu {
             Button(action: quoteAction) {
                 Label(store.ui("引用到输入框", "Quote into the input"), systemImage: "text.quote")
@@ -5005,14 +5022,14 @@ private struct AgentMessageMarkdownText: View {
 #endif
             } else {
                 Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
-                    .weiBeiText(compact ? 11 : 14.5)
+                    .weiBeiText(compact ? AgentChatLayoutMetrics.floatingUserFontSize : 14.5)
                     .lineSpacing(compact ? 4.2 : 4.5)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.disabled)
             }
         }
-        .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))
+        .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown))
         .popover(isPresented: Binding(
             get: { expandedSourceURL != nil },
             set: { if !$0 { expandedSourceURL = nil } }
@@ -5036,7 +5053,7 @@ private struct AgentMessageMarkdownText: View {
     }
 
     private var bodyFontSize: CGFloat {
-        (compact ? 11 : (isChatWideTypography ? 16 : 14)) * textScale
+        (compact ? AgentChatLayoutMetrics.floatingBodyFontSize : (isChatWideTypography ? 16 : 14)) * textScale
     }
 
     private var initialBodyHeight: CGFloat {
@@ -5163,9 +5180,8 @@ struct AgentThinkingIndicator: View {
 
     /// Same font bases and user text scale as the answer body.
     private static let chatWideFontSize: CGFloat = 16
-    private static let compactFontSize: CGFloat = 14
     private var baseFontSize: CGFloat {
-        chatWideTypography && !compact ? Self.chatWideFontSize : Self.compactFontSize
+        compact ? AgentChatLayoutMetrics.floatingBodyFontSize : (chatWideTypography ? Self.chatWideFontSize : 14)
     }
     /// Single source for measure + line box + AppKit painting. Drawing at a
     /// different size than the measured width is what made the orbit sit far

@@ -28,6 +28,19 @@ final class ToolbarCheckDelegate: NSObject, NSToolbarDelegate {
             print("\(index == 0 ? "main" : "popover"): mouseMoved=\(window.acceptsMouseMovedEvents), visible=\(window.isVisible)")
         }
         if windows.contains(where: { !$0.acceptsMouseMovedEvents }) { exit(1) }
+        // A settings scene is a utility in the current Space, never another full-screen document.
+        let settings = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 720),
+                                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        settings.collectionBehavior = [.primary, .fullScreenPrimary, .fullScreenAllowsTiling]
+        settings.toolbar = NSToolbar(identifier: "weibei.settings")
+        NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: settings)
+        let settingsBehavior: NSWindow.CollectionBehavior = [.auxiliary, .fullScreenAuxiliary, .fullScreenDisallowsTiling, .moveToActiveSpace]
+        guard settings.collectionBehavior == settingsBehavior, settings.tabbingMode == .disallowed,
+              settings.toolbar?.isVisible == false, !settings.isVisible else {
+            print("settings: FAILED utility window policy; collectionBehavior=\(settings.collectionBehavior.rawValue)")
+            exit(1)
+        }
+        print("settings: stays auxiliary, cannot enter full screen or join document tabs; visible=false")
         // Catalyst installs its toolbar after the bridge is first configured.
         let main = windows[0]
         let toolbar = NSToolbar(identifier: "weibei.workspace")

@@ -33,6 +33,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             guard let self, let window = note.object as? NSWindow else { return }
             self.updateFileDrops()
             self.updateToolbarBackground(in: window)
+            self.configureSettingsWindow(window)
             guard !window.acceptsMouseMovedEvents
                 || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
             self.apply(to: window)
@@ -47,6 +48,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         // Popovers are borderless windows too; their rows need mouse-move events.
         window.acceptsMouseMovedEvents = true
         updateToolbarBackground(in: window)
+        configureSettingsWindow(window)
         guard window.styleMask.contains(.titled), let content = window.contentView else { return }
         let glass = ["glassLight", "glassDark", "glassMist", "glassSlate"].contains(mode)
         window.isOpaque = !glass
@@ -85,6 +87,34 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         default: break
         }
     }
+    private func configureSettingsWindow(_ window: NSWindow) {
+        guard window.toolbar?.identifier == "weibei.settings" else { return }
+        var behavior = window.collectionBehavior
+        behavior.subtract([.primary, .canJoinAllApplications, .canJoinAllSpaces,
+                           .fullScreenPrimary, .fullScreenNone, .fullScreenAllowsTiling])
+        behavior.formUnion([.auxiliary, .fullScreenAuxiliary, .fullScreenDisallowsTiling, .moveToActiveSpace])
+        if window.collectionBehavior != behavior { window.collectionBehavior = behavior }
+        if window.tabbingMode != .disallowed { window.tabbingMode = .disallowed }
+        if window.toolbar?.isVisible == true { window.toolbar?.isVisible = false }
+    }
+
+#if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool {
+        guard let window = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }) else { return false }
+        if window.styleMask.contains(.fullScreen) != enabled { window.toggleFullScreen(nil) }
+        return true
+    }
+
+    @MainActor func fullScreenWindowStateForCheck() -> [String: Bool] {
+        guard let workspace = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }),
+              let settings = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.settings" }) else { return [:] }
+        return ["workspace_full_screen": workspace.styleMask.contains(.fullScreen),
+                "workspace_on_active_space": workspace.isOnActiveSpace,
+                "settings_full_screen": settings.styleMask.contains(.fullScreen),
+                "settings_on_active_space": settings.isOnActiveSpace]
+    }
+#endif
+
     private func updateToolbarBackground(in window: NSWindow) {
         let owner = window.toolbar?.identifier == "weibei.workspace" ? window : window.parent
         guard let owner, owner.toolbar?.identifier == "weibei.workspace" else { return }
