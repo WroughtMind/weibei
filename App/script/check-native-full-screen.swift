@@ -8,6 +8,20 @@ guard ProcessInfo.processInfo.environment["CI"] == "true",
     exit(2)
 }
 
+// An outer launch timeout must not leave this probe in front of the App check.
+if CommandLine.arguments[1] == "--terminate" {
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline {
+        let probes = NSRunningApplication.runningApplications(withBundleIdentifier: "com.wroughtmind.weibei.ci.nativefullscreen")
+            .filter { $0.processIdentifier != getpid() && !$0.isTerminated }
+        if probes.isEmpty { exit(0) }
+        probes.forEach { _ = $0.forceTerminate() }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    fputs("对照应用仍未退出，不能继续使用该桌面验收。\n", stderr)
+    exit(1)
+}
+
 @MainActor
 final class NativeFullScreenCheck: NSObject, NSApplicationDelegate {
     private let output: URL
@@ -43,7 +57,7 @@ final class NativeFullScreenCheck: NSObject, NSApplicationDelegate {
     }
 
     private func state() -> [String: Any] {
-        ["stage": stage, "main_thread": Thread.isMainThread,
+        ["stage": stage, "pid": getpid(), "main_thread": Thread.isMainThread,
          "run_loop_mode": RunLoop.current.currentMode?.rawValue ?? "nil",
          "app_active": NSApp.isActive, "visible": window.isVisible,
          "key": window.isKeyWindow, "on_active_space": window.isOnActiveSpace,

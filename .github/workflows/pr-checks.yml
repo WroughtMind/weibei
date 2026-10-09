@@ -207,10 +207,35 @@ jobs:
         # 只收集环境对照；后续真实 App 仍须完成全屏进出，原验收条件不变。
         continue-on-error: true
         run: |
-          swiftc App/script/check-native-full-screen.swift -o "$RUNNER_TEMP/check-native-full-screen"
-          python3 - "$RUNNER_TEMP/check-native-full-screen" "$PWD/App/Evidence/ci-native-full-screen.json" <<'PYTHON'
-          import subprocess, sys
-          subprocess.run(sys.argv[1:], check=True, timeout=65)
+          FULL_SCREEN_CONTROL_APP="$RUNNER_TEMP/WeiBeiNativeFullScreenCheck.app"
+          mkdir -p "$FULL_SCREEN_CONTROL_APP/Contents/MacOS"
+          swiftc App/script/check-native-full-screen.swift -o "$FULL_SCREEN_CONTROL_APP/Contents/MacOS/NativeFullScreenCheck"
+          mkdir -p "$RUNNER_TEMP/weibei-native-full-screen-evidence"
+          python3 - "$FULL_SCREEN_CONTROL_APP" "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-native-full-screen.json" <<'PYTHON'
+          import json, pathlib, plistlib, subprocess, sys
+          app = pathlib.Path(sys.argv[1])
+          with (app / 'Contents/Info.plist').open('wb') as file:
+              plistlib.dump({
+                  'CFBundleIdentifier': 'com.wroughtmind.weibei.ci.nativefullscreen',
+                  'CFBundleExecutable': 'NativeFullScreenCheck',
+                  'CFBundleName': '魏碑原生全屏对照',
+                  'CFBundlePackageType': 'APPL',
+                  'CFBundleVersion': '1',
+                  'CFBundleShortVersionString': '1.0',
+                  'NSPrincipalClass': 'NSApplication',
+                  'NSHighResolutionCapable': True,
+                  'LSUIElement': False,
+              }, file)
+          subprocess.run(['codesign', '--force', '--sign', '-', str(app)], check=True)
+          result_path = pathlib.Path(sys.argv[2])
+          result_path.unlink(missing_ok=True)
+          try:
+              subprocess.run(['open', '-n', '-W', str(app), '--args', str(result_path)], check=True, timeout=65)
+              result = json.loads(result_path.read_text())
+              assert result['status'] == 'passed', result
+          except Exception:
+              subprocess.run([str(app / 'Contents/MacOS/NativeFullScreenCheck'), '--terminate'], check=True, timeout=10)
+              raise
           PYTHON
 
       - name: 保留原生全屏对照失败的系统记录
@@ -220,17 +245,24 @@ jobs:
           NATIVE_FULLSCREEN_OUTCOME: ${{ steps.native_full_screen.outcome }}
         run: |
           [[ "$NATIVE_FULLSCREEN_OUTCOME" == failure ]] || exit 0
-          mkdir -p App/Evidence
-          /usr/bin/log show --last 2m --style compact --predicate 'process == "Dock" OR process == "WindowServer"' > App/Evidence/ci-native-full-screen-system.log
+          mkdir -p "$RUNNER_TEMP/weibei-native-full-screen-evidence"
+          /usr/bin/log show --last 2m --style compact --predicate 'process == "Dock" OR process == "WindowServer"' > "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-native-full-screen-system.log"
 
       - name: 立即保留原生全屏对照证据
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-full-screen-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_attempt }}
-          path: App/Evidence/ci-native-full-screen*
+          path: ${{ runner.temp }}/weibei-native-full-screen-evidence/
           retention-days: 2
           if-no-files-found: warn
+
+      - name: 确认原生对照应用已退出
+        if: always()
+        run: |
+          FULL_SCREEN_CONTROL_EXE="$RUNNER_TEMP/WeiBeiNativeFullScreenCheck.app/Contents/MacOS/NativeFullScreenCheck"
+          [[ -x "$FULL_SCREEN_CONTROL_EXE" ]] || exit 0
+          "$FULL_SCREEN_CONTROL_EXE" --terminate
 
       - name: 安装构建工具依赖
         id: dependencies
