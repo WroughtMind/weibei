@@ -636,6 +636,7 @@ enum CatalystBusinessCheck {
             try check("connection_profile_switch_back", store.activeAgentProfileID == activeConnection
                 && store.agentProviderID == .custom && store.agentAuthMethod == .apiKey
                 && store.agentBaseURL == endpoint && store.modelName == "catalyst-local-check")
+            result["workspace_before_full_screen"] = CatalystDesktopWindow.shared.fullScreenWindowDiagnosticsForCheck()
             guard let workspaceScene = conversation()?.view.window?.windowScene,
                   CatalystDesktopWindow.shared.setWorkspaceFullScreenForCheck(true) else {
                 throw Failure("workspace full-screen check unavailable")

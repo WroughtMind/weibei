@@ -170,7 +170,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
 
     @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]] {
         NSApp.windows.map { window in
-            ["class": NSStringFromClass(type(of: window)),
+            var state = ["class": NSStringFromClass(type(of: window)),
              "number": String(window.windowNumber),
              "toolbar": window.toolbar.map { String(describing: $0.identifier) } ?? "",
              "toolbar_identity": window.toolbar.map { String(describing: ObjectIdentifier($0)) } ?? "",
@@ -182,6 +182,15 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
              "key": String(window.isKeyWindow),
              "main": String(window.isMainWindow),
              "on_active_space": String(window.isOnActiveSpace)]
+            state["delegate"] = NativeFileDropDelegate.describe(window.delegate)
+            state["toolbar_visible"] = window.toolbar.map { String($0.isVisible) } ?? "nil"
+            state["toolbar_visibility_override"] = window.toolbar.flatMap {
+                toolbarVisibility.object(forKey: $0).map { String($0.boolValue) }
+            } ?? "nil"
+            if let delegate = window.delegate as? NativeFileDropDelegate {
+                state.merge(delegate.fullScreenDiagnostics) { _, new in new }
+            }
+            return state
         }
     }
 #endif
@@ -431,19 +440,68 @@ private final class NativeFileDropRegistration {
 }
 
 private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggingDestination {
+#if WEIBEI_ACCEPTANCE_CHECKS
+    weak var original: (any NSWindowDelegate)? {
+        didSet {
+            if original !== oldValue {
+                originalChanges.append(Self.describe(oldValue) + " -> " + Self.describe(original))
+                if originalChanges.count > 16 { originalChanges.removeFirst() }
+            }
+        }
+    }
+    private var originalChanges: [String] = []
+    private var fullScreenQueries: [String: String] = [:]
+    private var fullScreenForwards: [String: String] = [:]
+    static func describe(_ delegate: AnyObject?) -> String {
+        guard let delegate else { return "nil" }
+        return String(reflecting: type(of: delegate)) + " " + String(describing: ObjectIdentifier(delegate))
+    }
+    var fullScreenDiagnostics: [String: String] {
+        ["file_drop_original_delegate": Self.describe(original),
+         "file_drop_original_changes": originalChanges.joined(separator: "\n"),
+         "file_drop_full_screen_queries": fullScreenQueries.keys.sorted().map { $0 + ": " + fullScreenQueries[$0]! }.joined(separator: "\n"),
+         "file_drop_full_screen_forwards": fullScreenForwards.keys.sorted().map { $0 + ": " + fullScreenForwards[$0]! }.joined(separator: "\n")]
+    }
+#else
     weak var original: (any NSWindowDelegate)?
+#endif
     let targeted: @MainActor (Bool) -> Void
     let receive: @MainActor ([URL]) -> Void
     init(original: (any NSWindowDelegate)?, targeted: @MainActor @escaping (Bool) -> Void,
          receive: @MainActor @escaping ([URL]) -> Void) {
         self.original = original; self.targeted = targeted; self.receive = receive
         super.init()
+#if WEIBEI_ACCEPTANCE_CHECKS
+        originalChanges = [Self.describe(original)]
+#endif
     }
     override func responds(to selector: Selector!) -> Bool {
-        super.responds(to: selector) || original?.responds(to: selector) == true
+#if WEIBEI_ACCEPTANCE_CHECKS
+        let response = super.responds(to: selector) || original?.responds(to: selector) == true
+        if let selector {
+            let name = NSStringFromSelector(selector)
+            if name.contains("FullScreen") {
+                fullScreenQueries[name] = String(response) + " " + Self.describe(original)
+            }
+        }
+        return response
+#else
+        return super.responds(to: selector) || original?.responds(to: selector) == true
+#endif
     }
     override func forwardingTarget(for selector: Selector!) -> Any? {
-        original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
+#if WEIBEI_ACCEPTANCE_CHECKS
+        let target = original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
+        if let selector {
+            let name = NSStringFromSelector(selector)
+            if name.contains("FullScreen") {
+                fullScreenForwards[name] = target.map { Self.describe($0 as AnyObject) } ?? "nil"
+            }
+        }
+        return target
+#else
+        return original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
+#endif
     }
     static func fileURLs(from board: NSPasteboard) -> [URL] {
         (board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
