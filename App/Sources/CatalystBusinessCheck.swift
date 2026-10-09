@@ -922,7 +922,9 @@ enum CatalystBusinessCheck {
         let coordinator = CatalystMessageMarkdown.Coordinator()
         let view = coordinator.makeView()
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 600)
-        let markdown = String(repeating: "浮窗长回答需要复用排版结果，拖动位置不应重新解析正文。**重要解释**保持完整。\n\n", count: 24)
+        // Each paragraph must cross a different line count at 320 and 240 pt.
+        // A short two-line paragraph can keep the same height at both widths.
+        let markdown = String(repeating: "浮窗长回答需要复用排版结果，拖动位置不应重新解析正文。**重要解释**保持完整。当窗口只改变位置时，应保留同一段内容；只有可用宽度变化时，才按新宽度重新换行。\n\n", count: 24)
         let appearance = WeiBeiAppearanceMode.paper
         coordinator.update(view, markdown: markdown, fontSize: 11, appearance: appearance)
         guard coordinator.sizeThatFits(proposedWidth: 0, view: view) == .zero,
@@ -939,10 +941,14 @@ enum CatalystBusinessCheck {
                 throw Failure("floating markdown changed while moving")
             }
         }
-        guard coordinator.measurementCount == 1, coordinator.contentApplyCount == 1,
-              let narrower = coordinator.sizeThatFits(proposedWidth: 240, view: view),
+        let movedMeasurementCount = coordinator.measurementCount
+        let movedContentApplyCount = coordinator.contentApplyCount
+        guard movedMeasurementCount == 1, movedContentApplyCount == 1 else {
+            throw Failure("floating markdown movement: measurements=\(movedMeasurementCount), content_applies=\(movedContentApplyCount)")
+        }
+        guard let narrower = coordinator.sizeThatFits(proposedWidth: 240, view: view),
               narrower.height > original.height, coordinator.measurementCount == 2 else {
-            throw Failure("floating markdown movement cache or width reflow")
+            throw Failure("floating markdown width reflow: original=\(original), narrower=\(String(describing: coordinator.sizeThatFits(proposedWidth: 240, view: view))), measurements=\(coordinator.measurementCount)")
         }
         coordinator.update(view, markdown: markdown + markdown, fontSize: 11, appearance: appearance)
         guard let longer = coordinator.sizeThatFits(proposedWidth: 240, view: view), longer.height > narrower.height else {
@@ -953,7 +959,7 @@ enum CatalystBusinessCheck {
               coordinator.measurementCount == 4, coordinator.contentApplyCount == 3 else {
             throw Failure("floating markdown font invalidation")
         }
-        return ["position_updates": 30, "measurements_after_moving": 1, "content_applies_after_moving": 1,
+        return ["position_updates": 30, "measurements_after_moving": movedMeasurementCount, "content_applies_after_moving": movedContentApplyCount,
                 "total_measurements": coordinator.measurementCount, "total_content_applies": coordinator.contentApplyCount,
                 "original_height": original.height, "narrower_height": narrower.height,
                 "longer_height": longer.height, "larger_font_height": larger.height]
