@@ -51,13 +51,25 @@ struct SettingsPanel: View {
         }
         .frame(width: width, height: height)
         .foregroundStyle(WeiBeiTheme.ink)
-        .background(WeiBeiTheme.paper)
+        .background {
+            ZStack {
+                if store.appearanceMode.isGlass {
+                    // This panel sits above workspace content, so its material
+                    // must blur inside the window rather than behind the window.
+                    Rectangle().fill(.regularMaterial)
+                    Color(weiBeiNativeColor: WeiBeiNativePalette.glassBaseTint(for: store.appearanceMode))
+                } else {
+                    WeiBeiTheme.paper
+                }
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.65), lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(0.2), radius: 24, y: 8)
+        .preferredColorScheme(store.appearanceMode.colorScheme)
         .weiBeiOnExitCommand { store.settingsPresented = false }
 #if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
         .background(SettingsPanelViewportProbe())
@@ -165,16 +177,6 @@ struct SettingsView: View {
             }
         }
         .animation(WeiBeiMotion.panel, value: showFeedbackSheet)
-        .background {
-            // Same foreground sheet as the main window — Settings is the most
-            // text-dense glass surface and needs the shared legibility wash.
-            WeiBeiGlassForegroundSheet(mode: store.appearanceMode)
-                .ignoresSafeArea()
-        }
-        .background {
-            WeiBeiThemeBackdrop(mode: store.appearanceMode)
-                .ignoresSafeArea()
-        }
 #if targetEnvironment(macCatalyst)
         .background {
             if let id = recordingShortcutID {
@@ -183,7 +185,6 @@ struct SettingsView: View {
         }
 #endif
         .foregroundStyle(WeiBeiTheme.ink)
-        .preferredColorScheme(store.appearanceMode.colorScheme)
         .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
         .onAppear {
             // Always land on Chat: highest-frequency durable settings (provider / key / model).
