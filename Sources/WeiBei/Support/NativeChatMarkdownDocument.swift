@@ -29,6 +29,7 @@ struct NativeChatMarkdownStyle: Equatable, Sendable {
     var callout: String?
     var indent = 0
     var link: String?
+    var linkTitle: String?
 }
 
 struct NativeChatMarkdownRun: Equatable, Sendable {
@@ -171,9 +172,14 @@ enum NativeChatMarkdownParser {
                     token.style.heading = s.heading; token.style.quote = s.quote; token.style.indent = s.indent
                     token.style.callout = s.callout; token.style.strike = s.strike
                     if token.style.link == nil { token.style.link = s.link }
+                    if token.style.linkTitle == nil { token.style.linkTitle = s.linkTitle }
                     token.style.bold = token.style.bold || s.bold; token.style.italic = token.style.italic || s.italic
                     if !token.text.isEmpty { runs.append(token) }
-                } else { s.link = link.destination; children(node, s) }
+                } else {
+                    s.link = link.destination
+                    s.linkTitle = link.title
+                    children(node, s)
+                }
             case let image as Markdown.Image:
                 let src = image.source ?? ""
                 if src.hasPrefix("weibei-visualization:") { attachment(.visualization(id: String(src.dropFirst("weibei-visualization:".count))), s) }

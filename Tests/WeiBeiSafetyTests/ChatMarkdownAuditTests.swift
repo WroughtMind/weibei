@@ -117,4 +117,41 @@ final class ChatMarkdownAuditTests: XCTestCase {
         let partialCode = "```text\n[材料：未完成"
         XCTAssertEqual(AgentMessageMarkdownMemo().outputs(text: partialCode, sources: [], language: .chinese).finalized, partialCode)
     }
+
+    func testCitationPunctuationTetheringAndCircledGlyphs() {
+        let s1 = AgentReplySource(itemID: nil, kind: .material, title: "潜在结果框架", label: "[材料：框架1]", excerpt: "摘录1", pageIndex: 6)
+        let s2 = AgentReplySource(itemID: nil, kind: .material, title: "潜在结果框架", label: "[材料：框架2]", excerpt: "摘录2", pageIndex: 8)
+
+        // 1. 标点连带：逗号紧随引用时，逗号移至引用前，正文不被打断
+        let commaText = "只是把观测值写出来 [材料：框架1]，不依赖任何假设"
+        let commaPres = AgentReplySourceInlinePresentation(text: commaText, sources: [s1], language: .chinese)
+        XCTAssertTrue(commaPres.markdown.contains("只是把观测值写出来，[①]("))
+        XCTAssertTrue(commaPres.markdown.contains("潜在结果框架 · 第 7 页"))
+        XCTAssertFalse(commaPres.markdown.contains(" [材料：框架1]，"))
+
+        // 2. 标点连带：句号紧随引用时，句号移至引用前
+        let periodText = "同样无法同时观测到 [材料：框架2]。问题在于"
+        let periodPres = AgentReplySourceInlinePresentation(text: periodText, sources: [s2], language: .chinese)
+        XCTAssertTrue(periodPres.markdown.contains("同样无法同时观测到。[①]("))
+        XCTAssertTrue(periodPres.markdown.contains("潜在结果框架 · 第 9 页"))
+
+        // 3. 标点已在引用前时，保持连贯且不重复添加标点
+        let aheadText = "只是把观测值写出来，[材料：框架1] 不依赖任何假设"
+        let aheadPres = AgentReplySourceInlinePresentation(text: aheadText, sources: [s1], language: .chinese)
+        XCTAssertTrue(aheadPres.markdown.contains("只是把观测值写出来，[①]("))
+        XCTAssertFalse(aheadPres.markdown.contains("，，"))
+
+        // 4. 多来源依序编号，同来源复用编号
+        let multiText = "首引 [材料：框架1]，次引 [材料：框架2]，复引 [材料：框架1]。"
+        let multiPres = AgentReplySourceInlinePresentation(text: multiText, sources: [s1, s2], language: .chinese)
+        XCTAssertTrue(multiPres.markdown.contains("首引，[①]("))
+        XCTAssertTrue(multiPres.markdown.contains("次引，[②]("))
+        XCTAssertTrue(multiPres.markdown.contains("复引。[①]("))
+
+        // 5. 相邻来源分组折叠
+        let groupText = "依据 [材料：框架1]、[材料：框架2] 推导"
+        let groupPres = AgentReplySourceInlinePresentation(text: groupText, sources: [s1, s2], language: .chinese)
+        XCTAssertTrue(groupPres.markdown.contains("[①]("))
+        XCTAssertTrue(groupPres.markdown.contains("[+1]("))
+    }
 }
