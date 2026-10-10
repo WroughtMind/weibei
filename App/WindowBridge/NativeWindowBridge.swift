@@ -8,8 +8,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var mode = "paper"
     private var intensity = 1.0
     private let materials = NSMapTable<NSWindow, NSVisualEffectView>.weakToStrongObjects()
-    private let settingsPresentationHandled = NSHashTable<NSWindow>.weakObjects()
-    private let settingsPresentationPending = NSHashTable<NSWindow>.weakObjects()
     private var observers: [NSObjectProtocol] = []
     private var activeOpenPanel: NSOpenPanel?
     private var fileDrops: [String: NativeFileDropRegistration] = [:]
@@ -31,10 +29,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
                      NSWindow.didExitFullScreenNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 guard let self, let window = note.object as? NSWindow else { return }
-                if note.name == NSWindow.didBecomeKeyNotification,
-                   !self.settingsPresentationPending.contains(window) {
-                    self.settingsPresentationHandled.remove(window)
-                }
 #if WEIBEI_ACCEPTANCE_CHECKS
                 if note.name == NSWindow.didEnterFullScreenNotification || note.name == NSWindow.didExitFullScreenNotification {
                     self.fullScreenCheckNotifications.append(note.name.rawValue + " "
@@ -56,7 +50,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             guard let self, let window = note.object as? NSWindow else { return }
             self.updateFileDrops()
             self.updateToolbarBackground(in: window)
-            self.configureSettingsWindow(window)
             guard !window.acceptsMouseMovedEvents
                 || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
             self.apply(to: window)
@@ -71,7 +64,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         // Popovers are borderless windows too; their rows need mouse-move events.
         window.acceptsMouseMovedEvents = true
         updateToolbarBackground(in: window)
-        configureSettingsWindow(window)
         guard window.styleMask.contains(.titled), let content = window.contentView else { return }
         let glass = ["glassLight", "glassDark", "glassMist", "glassSlate"].contains(mode)
         window.isOpaque = !glass
@@ -110,39 +102,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         default: break
         }
     }
-    private func configureSettingsWindow(_ window: NSWindow) {
-        guard window.toolbar?.identifier == "weibei.settings" else { return }
-        var behavior = window.collectionBehavior
-        behavior.subtract([.primary, .canJoinAllApplications, .canJoinAllSpaces,
-                           .fullScreenPrimary, .fullScreenNone, .fullScreenAllowsTiling])
-        behavior.formUnion([.auxiliary, .fullScreenAuxiliary, .fullScreenDisallowsTiling, .moveToActiveSpace])
-        if window.collectionBehavior != behavior { window.collectionBehavior = behavior }
-        if window.tabbingMode != .disallowed { window.tabbingMode = .disallowed }
-        if window.toolbar?.isVisible == true { window.toolbar?.isVisible = false }
-        guard window.isVisible, !settingsPresentationHandled.contains(window) else { return }
-        settingsPresentationHandled.add(window)
-        guard NSApp.isActive, !window.isOnActiveSpace, fullScreenWorkspaceIsOnActiveSpace else { return }
-        // Catalyst can order a new scene on the ordinary desktop before this
-        // native utility policy is installed. Present it again after that scene
-        // transaction, once per activation; never front it on ordinary updates.
-        settingsPresentationPending.add(window)
-        DispatchQueue.main.async { [weak self, weak window] in
-            guard let self, let window else { return }
-            defer { self.settingsPresentationPending.remove(window) }
-            guard NSApp.isActive, window.isVisible, window.isKeyWindow, !window.isOnActiveSpace,
-                  self.fullScreenWorkspaceIsOnActiveSpace else { return }
-            self.configureSettingsWindow(window)
-            window.makeKeyAndOrderFront(nil)
-        }
-    }
-
-    private var fullScreenWorkspaceIsOnActiveSpace: Bool {
-        NSApp.windows.contains {
-            $0.toolbar?.identifier == "weibei.workspace"
-                && $0.styleMask.contains(.fullScreen) && $0.isOnActiveSpace
-        }
-    }
-
 #if WEIBEI_ACCEPTANCE_CHECKS
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool {
         guard let window = checkedFullScreenWorkspace
@@ -159,19 +118,13 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     @MainActor func fullScreenWindowStateForCheck() -> [String: Bool] {
         let workspace = checkedFullScreenWorkspace
             ?? NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" })
-        let settings = NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.settings" })
-        var state = ["workspace_found": workspace != nil, "settings_found": settings != nil,
+        var state = ["workspace_found": workspace != nil,
                      "app_active": NSApp.isActive,
                      "workspace_entered_full_screen": checkedFullScreenEntered,
                      "workspace_exited_full_screen": checkedFullScreenExited]
         if let workspace {
             state["workspace_full_screen"] = workspace.styleMask.contains(.fullScreen)
             state["workspace_on_active_space"] = workspace.isOnActiveSpace
-        }
-        if let settings {
-            state["settings_full_screen"] = settings.styleMask.contains(.fullScreen)
-            state["settings_on_active_space"] = settings.isOnActiveSpace
-            state["settings_visible"] = settings.isVisible
         }
         return state
     }

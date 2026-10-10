@@ -34,11 +34,6 @@ struct NativeMarkdownMeasurement {
     }
 }
 
-extension Notification.Name {
-    /// 菜单 ⌘, → 主窗口里的 openWindow 桥(Commands 拿不到环境 action)。
-    static let weibeiOpenSettings = Notification.Name("WeiBeiOpenSettings")
-}
-
 extension View {
     @ViewBuilder
     func weiBeiKeyboardShortcut(_ chord: AppShortcutChord?) -> some View {

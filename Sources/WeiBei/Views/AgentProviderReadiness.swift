@@ -91,7 +91,6 @@ enum AgentProviderReadiness {
 struct AgentUnconfiguredHint: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject private var oauth = AgentAccountService.shared
-    @Environment(\.openWindow) private var openSettingsWindow
 
     var body: some View {
         if !AgentProviderReadiness.isConfigured(for: store) {
@@ -120,7 +119,7 @@ struct AgentUnconfiguredHint: View {
             .fixedSize(horizontal: false, vertical: true)
 
             Button(store.ui("配置模型服务", "Configure Model Service")) {
-                openSettingsWindow(id: "weibei-settings")
+                store.settingsPresented = true
             }
             .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
         }

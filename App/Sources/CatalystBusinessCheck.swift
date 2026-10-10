@@ -646,41 +646,41 @@ enum CatalystBusinessCheck {
                 result["workspace_full_screen_transition"] = state
                 return workspaceScene.isFullScreen && state["workspace_entered_full_screen"] == true
             }
-            NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
-            let settingsScene = {
-                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-                    .first { ($0.session.userInfo?["weibei-settings"] as? Bool) == true }
+            let scenesBeforeSettings = Set(UIApplication.shared.connectedScenes.map { $0.session.persistentIdentifier })
+            guard let window = conversation()?.view.window else {
+                throw Failure("workspace window disappeared before opening settings")
             }
-            try await until("connection cards in the real settings window") {
-                guard let window = settingsScene()?.windows.first(where: { !$0.isHidden }) else { return false }
-                return window.bounds.width >= WeiBeiSettingsLayout.minimumSize.width
-                    && window.bounds.height >= WeiBeiSettingsLayout.minimumSize.height
+            let windowBoundsBeforeSettings = window.bounds
+            store.settingsPresented = true
+            try await until("connection cards inside the original workspace") {
+                descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
                     && !AgentAccountService.shared.isRefreshingModels
                     && AgentAccountService.shared.hasLoadedModels(provider: .custom)
                     && AgentAccountService.shared.liveModelIDs.contains("catalyst-local-check")
             }
-            guard let scene = settingsScene(), let window = scene.windows.first(where: { !$0.isHidden }) else {
-                throw Failure("connection settings window disappeared")
-            }
-            try await until("settings stays beside the full-screen workspace") {
-                let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
-                result["settings_full_screen"] = state
-                result["settings_native_windows"] = CatalystDesktopWindow.shared.fullScreenWindowDiagnosticsForCheck()
-                return state["workspace_full_screen"] == true && state["workspace_on_active_space"] == true
-                    && state["settings_full_screen"] == false && state["settings_on_active_space"] == true
-            }
-            try check("settings_window_stays_in_full_screen_space", scene.sizeRestrictions?.allowsFullScreen == false
-                && scene.sizeRestrictions?.minimumSize == WeiBeiSettingsLayout.minimumSize)
-            result["settings_full_screen"] = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
+            guard let panel = descendants(window).first(where: {
+                $0.accessibilityIdentifier == "settings-panel-viewport"
+            }) else { throw Failure("settings panel is not mounted in the workspace") }
+            let panelFrame = panel.convert(panel.bounds, to: window)
+            let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
+            result["settings_full_screen"] = state
+            result["settings_panel_frame"] = String(describing: panelFrame)
+            result["settings_native_windows"] = CatalystDesktopWindow.shared.fullScreenWindowDiagnosticsForCheck()
+            try check("settings_panel_stays_in_original_full_screen_window",
+                panel.window === window && panel.window?.windowScene === workspaceScene
+                    && Set(UIApplication.shared.connectedScenes.map { $0.session.persistentIdentifier }) == scenesBeforeSettings
+                    && window.bounds == windowBoundsBeforeSettings
+                    && panelFrame.width > 0 && panelFrame.height > 0 && window.bounds.contains(panelFrame)
+                    && state["workspace_full_screen"] == true && state["workspace_on_active_space"] == true)
             let settingsSnapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
             try settingsSnapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("connection-cards.png"))
             try check("connection_cards_settings_and_authenticated_models", true)
-            UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil, errorHandler: nil)
-            try await until("settings window closes") {
-                settingsScene() == nil
-                    && CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()["settings_visible"] != true
+            store.settingsPresented = false
+            try await until("settings panel closes without replacing the workspace") {
+                !descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
+                    && window.windowScene === workspaceScene
             }
             _ = CatalystDesktopWindow.shared.setWorkspaceFullScreenForCheck(false)
             try await until("workspace finishes returning to window mode") {
@@ -867,7 +867,6 @@ enum CatalystBusinessCheck {
                 "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
                 "window_scenes": UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.map { scene in
                     ["id": scene.session.persistentIdentifier,
-                     "settings": String(scene.session.userInfo?["weibei-settings"] as? Bool == true),
                      "activation_state": String(scene.activationState.rawValue),
                      "full_screen": String(scene.isFullScreen),
                      "allows_full_screen": String(describing: scene.sizeRestrictions?.allowsFullScreen),

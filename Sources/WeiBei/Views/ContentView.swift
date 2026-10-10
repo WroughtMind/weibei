@@ -151,6 +151,8 @@ struct ContentView: View {
                 AgentDocumentConfirmationOverlay()
             }
             .contentShape(Rectangle())
+            .allowsHitTesting(!store.settingsPresented)
+            .accessibilityHidden(store.settingsPresented)
 #if targetEnvironment(macCatalyst)
             .background {
                 WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted,
@@ -165,6 +167,17 @@ struct ContentView: View {
             .overlay {
                 if isFileDropTargeted { WeiBeiFileDropPrompt() }
             }
+            .overlay {
+                if store.settingsPresented {
+                    ZStack {
+                        Color.black.opacity(0.22)
+                            .ignoresSafeArea()
+                        SettingsPanel(availableSize: geometry.size)
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(WeiBeiMotion.panel, value: store.settingsPresented)
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
             .animation(WeiBeiMotion.panel, value: store.lastPersistState)
             .animation(WeiBeiMotion.panel, value: store.noteEditorCommandFailureMessage)
@@ -1240,7 +1253,6 @@ private struct UnifiedTopBarView: View {
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
-    @Environment(\.openWindow) private var openSettingsWindow
     @Environment(\.weiBeiTextScale) private var textScale
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
@@ -1259,9 +1271,6 @@ private struct UnifiedTopBarView: View {
             isVisible: !store.courseWorkspacePresented
         )
         .frame(height: 0)
-        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
-            showSettings()
-        }
         .overlay(alignment: .topTrailing) {
             if paneState.showDocumentSearch && shouldShowSearchAction {
                 let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1343,11 +1352,12 @@ private struct UnifiedTopBarView: View {
 
     private func toolbarAction(_ title: String, enabled: Bool = true, selected: Bool = false,
                                action: @escaping () -> Void) -> UIAction {
-        UIAction(title: title, attributes: enabled ? [] : [.disabled], state: selected ? .on : .off) { _ in action() }
+        UIAction(title: title, attributes: enabled && !store.settingsPresented ? [] : [.disabled], state: selected ? .on : .off) { _ in action() }
     }
 
     private func toolbarContent<Content: View>(_ content: Content) -> AnyView {
         AnyView(content
+            .disabled(store.settingsPresented)
             .foregroundStyle(secondaryText)
             .environmentObject(store)
             .environmentObject(updateService)
@@ -1603,7 +1613,7 @@ private struct UnifiedTopBarView: View {
 
             WorkspacePersistStatusDot()
 
-            // Full Settings window (agent keys, appearance, data) — not the old mini menu.
+            // Settings stay inside the current workspace in every window mode.
             topIconButton("gearshape", help: store.ui("打开设置", "Open Settings")) {
                 showSettings()
             }
@@ -1640,11 +1650,6 @@ private struct UnifiedTopBarView: View {
                 appeared = true
             }
         }
-        // ⌘, bridge: Commands cannot reach the openWindow environment action,
-        // so the menu item posts a notification and the live top bar opens it.
-        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
-            showSettings()
-        }
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
         .animation(WeiBeiMotion.panel, value: paneState.showReader)
@@ -1653,7 +1658,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private func showSettings() {
-        openSettingsWindow(id: "weibei-settings", value: "settings")
+        store.settingsPresented = true
     }
 
     private func toggleAppearance() {

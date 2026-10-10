@@ -730,6 +730,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .preferred
     @Published var interfaceTextScale: WeiBeiTypography.TextScale = .standard
+    @Published var settingsPresented = false
     @Published var courseWorkspacePresented = false
     @Published var courseWorkspaceCourseID: UUID?
     @Published var courseWorkspaceDestination: CourseWorkspaceDestination = .hub

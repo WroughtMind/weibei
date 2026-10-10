@@ -547,26 +547,22 @@ struct CatalystWindowChrome: UIViewRepresentable {
     let appearanceMode: WeiBeiAppearanceMode
     var initialSize = CGSize(width: 1240, height: 792)
     var minimumSize = CGSize(width: 520, height: 560)
-    var allowsFullScreen = true
     func makeUIView(context: Context) -> Probe {
         let view = Probe()
         view.initialSize = initialSize
         view.minimumSize = minimumSize
-        view.allowsFullScreen = allowsFullScreen
         view.isUserInteractionEnabled = false
         return view
     }
     func updateUIView(_ view: Probe, context: Context) {
         view.mode = appearanceMode
         view.minimumSize = minimumSize
-        view.allowsFullScreen = allowsFullScreen
         view.configure()
     }
     final class Probe: UIView {
         var mode: WeiBeiAppearanceMode = .paper
         var initialSize = CGSize.zero
         var minimumSize = CGSize(width: 520, height: 560)
-        var allowsFullScreen = true
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         func configure() {
             CatalystDesktopWindow.configure(mode: mode)
@@ -574,7 +570,7 @@ struct CatalystWindowChrome: UIViewRepresentable {
             scene.titlebar?.titleVisibility = .hidden
             scene.titlebar?.separatorStyle = .none
             scene.sizeRestrictions?.minimumSize = minimumSize
-            scene.sizeRestrictions?.allowsFullScreen = allowsFullScreen
+            scene.sizeRestrictions?.allowsFullScreen = true
             let initialSizeKey = "weibeiInitialWindowSizeApplied"
             if scene.session.userInfo?[initialSizeKey] as? Bool != true {
                 var info = scene.session.userInfo ?? [:]

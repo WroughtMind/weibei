@@ -3571,7 +3571,6 @@ private struct AgentMessageBubble: View {
 
 struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.openWindow) private var openSettingsWindow
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     var liveStreamingText: String? = nil
@@ -3977,11 +3976,7 @@ struct AgentBubble: View {
 
     private var failureSettingsButton: some View {
         Button(store.ui("去设置", "Open Settings")) {
-#if targetEnvironment(macCatalyst)
-            NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
-#else
-            openSettingsWindow(id: "weibei-settings")
-#endif
+            store.settingsPresented = true
         }
         .buttonStyle(WeiBeiTextActionButtonStyle())
     }
