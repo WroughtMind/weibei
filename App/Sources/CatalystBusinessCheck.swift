@@ -422,8 +422,6 @@ enum CatalystBusinessCheck {
                 }
             }
             try check("native_workspace_toolbar_controls", true)
-            result["floating_markdown_measurements"] = try verifyFloatingMarkdownMeasurements()
-            try check("floating_markdown_drag_measurements_cached", true)
             // This in-process check uses the candidate's own default library.
             // First-launch folder confirmation remains a separate UI check.
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
@@ -941,53 +939,6 @@ enum CatalystBusinessCheck {
         return ["search_frames": frames.map { String(describing: $0) }, "top_difference": abs(frames[0].minY - frames[1].minY)]
     }
 
-    private static func verifyFloatingMarkdownMeasurements() throws -> [String: Any] {
-        let coordinator = CatalystMessageMarkdown.Coordinator()
-        let view = coordinator.makeView()
-        view.frame = CGRect(x: 0, y: 0, width: 320, height: 600)
-        // Each paragraph must cross a different line count at 320 and 240 pt.
-        // A short two-line paragraph can keep the same height at both widths.
-        let markdown = String(repeating: "浮窗长回答需要复用排版结果，拖动位置不应重新解析正文。**重要解释**保持完整。当窗口只改变位置时，应保留同一段内容；只有可用宽度变化时，才按新宽度重新换行。\n\n", count: 24)
-        let appearance = WeiBeiAppearanceMode.paper
-        coordinator.update(view, markdown: markdown, fontSize: 11, appearance: appearance)
-        guard coordinator.sizeThatFits(proposedWidth: 0, view: view) == .zero,
-              coordinator.measurementCount == 0,
-              let original = coordinator.sizeThatFits(proposedWidth: 320, view: view), original.height > 200 else {
-            throw Failure("floating markdown initial measurement")
-        }
-        for index in 0..<30 {
-            view.frame.origin = CGPoint(x: 20, y: CGFloat(index) * 3)
-            coordinator.update(view, markdown: markdown, fontSize: 11, appearance: appearance)
-            guard coordinator.sizeThatFits(proposedWidth: nil, view: view) == original,
-                  coordinator.sizeThatFits(proposedWidth: .infinity, view: view) == original,
-                  coordinator.sizeThatFits(proposedWidth: 320, view: view) == original else {
-                throw Failure("floating markdown changed while moving")
-            }
-        }
-        let movedMeasurementCount = coordinator.measurementCount
-        let movedContentApplyCount = coordinator.contentApplyCount
-        guard movedMeasurementCount == 1, movedContentApplyCount == 1 else {
-            throw Failure("floating markdown movement: measurements=\(movedMeasurementCount), content_applies=\(movedContentApplyCount)")
-        }
-        guard let narrower = coordinator.sizeThatFits(proposedWidth: 240, view: view),
-              narrower.height > original.height, coordinator.measurementCount == 2 else {
-            throw Failure("floating markdown width reflow: original=\(original), narrower=\(String(describing: coordinator.sizeThatFits(proposedWidth: 240, view: view))), measurements=\(coordinator.measurementCount)")
-        }
-        coordinator.update(view, markdown: markdown + markdown, fontSize: 11, appearance: appearance)
-        guard let longer = coordinator.sizeThatFits(proposedWidth: 240, view: view), longer.height > narrower.height else {
-            throw Failure("floating markdown content invalidation")
-        }
-        coordinator.update(view, markdown: markdown + markdown, fontSize: 15, appearance: appearance)
-        guard let larger = coordinator.sizeThatFits(proposedWidth: 240, view: view), larger.height > longer.height,
-              coordinator.measurementCount == 4, coordinator.contentApplyCount == 3 else {
-            throw Failure("floating markdown font invalidation")
-        }
-        return ["position_updates": 30, "measurements_after_moving": movedMeasurementCount, "content_applies_after_moving": movedContentApplyCount,
-                "total_measurements": coordinator.measurementCount, "total_content_applies": coordinator.contentApplyCount,
-                "original_height": original.height, "narrower_height": narrower.height,
-                "longer_height": longer.height, "larger_font_height": larger.height]
-    }
-
     private static func verifySelectionChat(_ store: WorkspaceStore, material: StudyItem,
                                             mainComposer: AgentComposerTextEditor.ComposerTextView,
                                             mainConversation: ConversationController) async throws -> [String: Any] {
@@ -1097,12 +1048,12 @@ enum CatalystBusinessCheck {
         try await until("main quote appends to its own composer") {
             mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
         }
-        guard let floatingMessage = floatingMessage(messageID, in: window),
+        guard let floatingConversation = conversation(containing: messageID), floatingConversation.isFloatingConversation,
               let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
             throw Failure("floating message quote action unavailable")
         }
         let floatingQuoted = draft + "\n\n> " + quotedMessage.text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-        floatingMessage.onQuote()
+        floatingConversation.quote(quotedMessage.text)
         try await until("floating quote appends to its own composer") {
             floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
                 && mainComposer.text == mainQuoted
@@ -1155,12 +1106,16 @@ enum CatalystBusinessCheck {
                 diagnostic["stage"] = "floating_row_visibility"
                 guard isVisible(row, in: window) else { return false }
                 diagnostic["stage"] = "floating_body_missing"
-                guard let body = descendants(window).compactMap({ $0 as? MarkdownTextView }).first(where: {
-                    $0.window === window && $0.textLabelView.attributedText.string.contains(floatingBodyMarker)
+                guard let controller = conversation(containing: messageID), controller.isFloatingConversation,
+                      let message = controller.messages.first(where: { $0.id == messageID.uuidString }) else { return false }
+                let bodies = descendants(controller.view).compactMap { $0 as? BlockView }
+                    .filter { $0.record?.messageID == messageID.uuidString && $0.window === window }
+                guard let body = bodies.first(where: {
+                    $0.label.attributedText.string.contains(floatingBodyMarker)
                 }) else { return false }
                 body.layoutIfNeeded()
-                let text = body.textLabelView.attributedText
-                let mathImages = body.content.rendered.values.compactMap(\.image)
+                let text = body.label.attributedText
+                let mathImages = message.blocks.first?.content.rendered.values.compactMap(\.image) ?? []
                 let markerRange = (text.string as NSString).range(of: floatingBodyMarker)
                 let font = markerRange.location == NSNotFound ? nil
                     : text.attribute(.font, at: markerRange.location, effectiveRange: nil) as? UIFont
@@ -1180,11 +1135,14 @@ enum CatalystBusinessCheck {
                 diagnostic["stage"] = "floating_body_visibility"
                 guard fullyVisible(body, in: window) else { return false }
                 var mathAttachments = 0
-                text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, _, _ in
-                    if attributes[.litextAttachment] is TextLabel.Attachment,
-                       attributes[.litextLineDrawingAction] != nil { mathAttachments += 1 }
+                for paragraph in bodies {
+                    let paragraphText = paragraph.label.attributedText
+                    paragraphText.enumerateAttributes(in: NSRange(location: 0, length: paragraphText.length)) { attributes, _, _ in
+                        if attributes[.litextAttachment] is TextLabel.Attachment,
+                           attributes[.litextLineDrawingAction] != nil { mathAttachments += 1 }
+                    }
                 }
-                let measured = body.boundingSize(for: body.bounds.width)
+                let measured = body.label.intrinsicContentSize
                 let rowFrame = row.convert(row.bounds, to: window)
                 let bodyFrame = body.convert(body.bounds, to: window)
                 diagnostic["native_math_attachments"] = mathAttachments
@@ -1468,9 +1426,10 @@ enum CatalystBusinessCheck {
             .compactMap(\.rootViewController).flatMap(children).compactMap { $0 as? ConversationController }
             .first { controller in messageID.map { id in controller.messages.contains { $0.id == id.uuidString } } ?? true }
     }
-    private static func floatingMessage(_ id: UUID, in window: UIWindow) -> CatalystFloatingMessageCheckProbe.Probe? {
-        descendants(window).compactMap { $0 as? CatalystFloatingMessageCheckProbe.Probe }
-            .first { $0.messageID == id && $0.window === window }
+    private static func floatingMessage(_ id: UUID, in window: UIWindow) -> UIView? {
+        guard let controller = conversation(containing: id), controller.isFloatingConversation,
+              controller.view.window === window else { return nil }
+        return controller.collection
     }
     private static func isVisible(_ view: UIView, in window: UIWindow) -> Bool {
         guard view.window === window, view.bounds.width > 1, view.bounds.height > 1 else { return false }
@@ -1526,25 +1485,6 @@ enum CatalystBusinessCheck {
         // File addresses come from the native drag board. The provider
         // must not be asked to decode content as a file URL.
         preconditionFailure("Unexpected object loading in the file-drop receiver check")
-    }
-}
-
-/// Test-only observation of the real SwiftUI row and its production quote action.
-/// It does not replace rendering, scrolling, draft mutation, or focus handling.
-struct CatalystFloatingMessageCheckProbe: UIViewRepresentable {
-    let messageID: UUID
-    let onQuote: () -> Void
-    final class Probe: UIView {
-        var messageID: UUID?
-        var onQuote: () -> Void = {}
-    }
-    func makeUIView(context: Context) -> Probe { Probe() }
-    func updateUIView(_ view: Probe, context: Context) {
-        view.messageID = messageID
-        view.onQuote = onQuote
-    }
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: Probe, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? uiView.bounds.width, height: proposal.height ?? uiView.bounds.height)
     }
 }
 

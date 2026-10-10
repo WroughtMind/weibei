@@ -2576,6 +2576,7 @@ struct FloatingSelectionAgentView: View {
         height: SelectionFloatingAgentPlacement.initialPlacedPanelHeight
     )
     @State private var measuredFeedContentHeight: CGFloat = 0
+    @State private var feedHeightMeasurement = FloatingFeedHeightMeasurement()
     /// Stays on after the answer passes the cap, so a viewport measurement cannot shrink the panel back open.
     @State private var feedExceededCap = false
     /// Set when the user enlarges the answer area. The reply can still grow up to the cap.
@@ -2926,6 +2927,7 @@ struct FloatingSelectionAgentView: View {
             if !shown {
                 measuredFeedContentHeight = 0
                 feedExceededCap = false
+                feedHeightMeasurement.height = nil
             }
         }
         .overlay {
@@ -2936,8 +2938,34 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
-    /// Keep one mounted scroll view when a drag starts or the answer reaches its cap.
+    /// The desktop float shares the paragraph list used by the main conversation.
+    @ViewBuilder
     private var floatingAnswerFeed: some View {
+#if targetEnvironment(macCatalyst)
+        if let threadID = interaction.activeSelectionAskThreadID {
+            VStack(alignment: .leading, spacing: 0) {
+                CatalystConversationView(
+                    bodyWidth: panelWidth - 28,
+                    displayedMessages: visibleFloatingMessages,
+                    floatingThreadID: threadID,
+                    onContentHeight: adoptMeasuredFeedHeight,
+                    onFocusComposer: {
+                        draftFocused = true
+                        composerFocusTrigger &+= 1
+                    },
+                    onReadingMessage: { _ in }
+                )
+                .frame(height: resolvedFloatingFeedHeight)
+
+                if store.isFloatingChatRunning
+                    && !visibleFloatingMessages.contains(where: { $0.completionState == .generating }) {
+                    AgentLiveResponse(streaming: floatingStreaming, compact: true)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                }
+            }
+        }
+#else
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 floatingAnswerStack
@@ -2961,8 +2989,10 @@ struct FloatingSelectionAgentView: View {
                 scrollFloatingFeedToEnd(using: proxy)
             }
         }
+#endif
     }
 
+#if !targetEnvironment(macCatalyst)
     private var floatingAnswerStack: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(visibleFloatingMessages) { message in
@@ -3029,6 +3059,7 @@ struct FloatingSelectionAgentView: View {
         proxy.scrollTo(id, anchor: .center)
         store.selectionChatRevealMessageID = nil
     }
+#endif
 
     /// 问/记共用同一浮层,底部输入框按模式切换;两种草稿互不覆盖。
     @ViewBuilder private var composerField: some View {
@@ -3080,10 +3111,17 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func adoptMeasuredFeedHeight(_ height: CGFloat) {
-        guard height > 1, abs(height - measuredFeedContentHeight) > 1 else { return }
-        // The list reports its height inside the layout pass. Applying it on the
-        // next turn is what lets the panel frame actually change.
+        guard height.isFinite, height > 1 else { return }
+        // The gesture owns the viewport until release. Keep the latest content
+        // measurement without adding an asynchronous frame update for each width.
+        let measurement = feedHeightMeasurement
+        measurement.height = height
+        guard resizeSession == nil, !measurement.scheduled,
+              abs(height - measuredFeedContentHeight) > 1 else { return }
+        measurement.scheduled = true
         DispatchQueue.main.async {
+            measurement.scheduled = false
+            guard resizeSession == nil, let height = measurement.height else { return }
             applyMeasuredFeedHeight(height)
         }
     }
@@ -3225,15 +3263,21 @@ struct FloatingSelectionAgentView: View {
         var transaction = Transaction()
         transaction.animation = nil
         withTransaction(transaction) {
-            panelWidth = CGFloat(resized.size.width)
-            resizePreviewHeight = CGFloat(resized.size.height) - chrome
-            placedOrigin = CGPoint(x: resized.origin.x, y: resized.origin.y)
+            let width = CGFloat(resized.size.width)
+            let height = CGFloat(resized.size.height) - chrome
+            let origin = CGPoint(x: resized.origin.x, y: resized.origin.y)
+            if panelWidth != width { panelWidth = width }
+            if resizePreviewHeight != height { resizePreviewHeight = height }
+            if placedOrigin != origin { placedOrigin = origin }
         }
     }
 
     private func commitResize() {
         let preview = resizePreviewHeight
         let session = resizeSession
+        if let height = feedHeightMeasurement.height {
+            applyMeasuredFeedHeight(height)
+        }
         resizeSession = nil
         resizePreviewHeight = nil
         guard let preview, let session, abs(preview - session.feedHeight) > 1 else { return }
@@ -3338,6 +3382,7 @@ struct FloatingSelectionAgentView: View {
             x: min(max(8, origin.x), maxX),
             y: min(max(8, origin.y), maxY)
         )
+        guard placedOrigin != parked else { return }
         var transaction = Transaction()
         transaction.animation = nil
         withTransaction(transaction) {
@@ -3350,6 +3395,13 @@ private struct FloatingResizeSession {
     var origin: CGPoint
     var size: CGSize
     var feedHeight: CGFloat
+}
+
+/// UIKit can report several layouts in a turn. Buffer their latest height without
+/// publishing SwiftUI state from inside layout, then apply it once outside that pass.
+private final class FloatingFeedHeightMeasurement {
+    var height: CGFloat?
+    var scheduled = false
 }
 
 private struct FloatingPanelSizeKey: PreferenceKey {
@@ -3419,7 +3471,7 @@ private struct FloatingSelectionResizeHitRegion: View {
     }
 }
 
-private struct FloatingSelectionMessageBubble: View {
+struct FloatingSelectionMessageBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     var message: AgentMessage
     var text: String
@@ -3488,6 +3540,7 @@ private struct FloatingSelectionMessageBubble: View {
 /// completed flip keeps the markdown surface mounted at completion. The
 /// caller passes the live streaming state only for the generating row;
 /// completed rows receive `inertAgentStreamingState`, which never publishes.
+#if !targetEnvironment(macCatalyst)
 private struct FloatingSelectionMessageRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -3516,10 +3569,6 @@ private struct FloatingSelectionMessageRow: View {
                 Label(store.ui("引用到输入框", "Quote into the input"), systemImage: "text.quote")
             }
         }
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        .background(CatalystFloatingMessageCheckProbe(messageID: message.id, onQuote: quoteAction)
-            .allowsHitTesting(false).accessibilityHidden(true))
-#endif
         .onAppear { store.setAgentStreamingReduceMotion(reduceMotion, in: message.origin?.chatID) }
         .onDisappear {
             if streaming.isDisplaying(message.id) {
@@ -3531,6 +3580,7 @@ private struct FloatingSelectionMessageRow: View {
         }
     }
 }
+#endif
 
 /// Never publishes. Completed rows observe this instead of the live
 /// AgentStreamingState: @ObservedObject subscribes regardless of whether the
