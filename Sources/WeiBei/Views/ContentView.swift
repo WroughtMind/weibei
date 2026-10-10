@@ -1646,10 +1646,6 @@ private struct UnifiedTopBarView: View {
             }
             .animation(WeiBeiMotion.micro, value: store.appearanceMode.isDark)
 
-            WeiBeiUpdateControl()
-                .environmentObject(updateService)
-                .environmentObject(store)
-
             WorkspacePersistStatusDot()
 
             // Settings stay inside the current workspace in every window mode.
@@ -1786,10 +1782,17 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var leftPrimaryControls: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             libraryButton
 
             navigationButtons
+
+            if updateService.showsToolbarControl {
+                WeiBeiUpdateControl()
+                    .environmentObject(updateService)
+                    .environmentObject(store)
+                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
+            }
         }
     }
 
