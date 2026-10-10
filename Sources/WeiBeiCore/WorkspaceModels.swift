@@ -1661,8 +1661,11 @@ public struct AgentReplySourceInlinePresentation: Sendable {
         var groupIndex = 0
         let literals = sources.isEmpty ? [] : MarkdownLiteralRanges.ranges(in: text).compactMap { Range($0, in: text) }
 
+        var sourceIndexByID = [UUID: Int]()
+        var nextSourceNumber = 1
+
         while let match = Self.earliestSource(in: remaining, sources: sources, excluding: literals) {
-            rendered += remaining[..<match.range.lowerBound]
+            let prefix = remaining[..<match.range.lowerBound]
             var group = [match.source]
             remaining = remaining[match.range.upperBound...]
 
@@ -1672,17 +1675,33 @@ public struct AgentReplySourceInlinePresentation: Sendable {
                 remaining = remaining[next.range.upperBound...]
             }
 
+            let (cleanedPrefix, tetheredPunct) = Self.tetherPunctuation(prefix: prefix, remaining: &remaining)
+            rendered += cleanedPrefix
+            rendered += tetheredPunct
+
+            let sourceID = match.source.id
+            let citationNumber: Int
+            if let existing = sourceIndexByID[sourceID] {
+                citationNumber = existing
+            } else {
+                citationNumber = nextSourceNumber
+                sourceIndexByID[sourceID] = nextSourceNumber
+                nextSourceNumber += 1
+            }
+
             let directURL = "weibei-source://\(match.source.id.uuidString.lowercased())"
             direct[directURL] = match.source
-            rendered += Self.markdownLink(
-                Self.displayLabel(for: match.source, language: language),
-                url: directURL
-            )
+            let glyph = Self.circledGlyph(for: citationNumber)
+            let fullTitle = Self.tooltipLabel(for: match.source, language: language)
+            rendered += Self.markdownLink(glyph, url: directURL, title: fullTitle)
+
             if group.count > 1 {
                 let groupURL = "weibei-source-group://\(groupIndex)"
                 groupIndex += 1
-                additional[groupURL] = Array(group.dropFirst())
-                rendered += " " + Self.markdownLink("+\(group.count - 1)", url: groupURL)
+                let additionalSources = Array(group.dropFirst())
+                additional[groupURL] = additionalSources
+                let additionalTitle = additionalSources.map { Self.tooltipLabel(for: $0, language: language) }.joined(separator: "；")
+                rendered += " " + Self.markdownLink("+\(group.count - 1)", url: groupURL, title: additionalTitle)
             }
         }
         rendered += remaining
@@ -1706,6 +1725,51 @@ public struct AgentReplySourceInlinePresentation: Sendable {
 
     public func additionalSources(for urlString: String) -> [AgentReplySource] {
         additionalSourcesByURL[urlString] ?? []
+    }
+
+    private static let tetherablePunctuation = Set("，。、；：！？,.;:!?")
+
+    private static func tetherPunctuation(
+        prefix: Substring,
+        remaining: inout Substring
+    ) -> (cleanedPrefix: Substring, tetheredPunct: String) {
+        var trimmedPrefix = prefix
+        while let last = trimmedPrefix.last, last.isWhitespace {
+            trimmedPrefix = trimmedPrefix.dropLast()
+        }
+        if let last = trimmedPrefix.last, tetherablePunctuation.contains(last) {
+            return (trimmedPrefix, "")
+        }
+        var lookahead = remaining
+        while let first = lookahead.first, first.isWhitespace {
+            lookahead = lookahead.dropFirst()
+        }
+        if let first = lookahead.first, tetherablePunctuation.contains(first) {
+            lookahead = lookahead.dropFirst()
+            remaining = lookahead
+            return (trimmedPrefix, String(first))
+        }
+        return (prefix, "")
+    }
+
+    public static func circledGlyph(for index: Int) -> String {
+        switch index {
+        case 1...20:
+            if let scalar = UnicodeScalar(0x2460 + (index - 1)) {
+                return String(Character(scalar))
+            }
+        case 21...35:
+            if let scalar = UnicodeScalar(0x3251 + (index - 21)) {
+                return String(Character(scalar))
+            }
+        case 36...50:
+            if let scalar = UnicodeScalar(0x32B1 + (index - 36)) {
+                return String(Character(scalar))
+            }
+        default:
+            break
+        }
+        return "[\(index)]"
     }
 
     private static func earliestSource(
@@ -1732,25 +1796,29 @@ public struct AgentReplySourceInlinePresentation: Sendable {
         return text.unicodeScalars.allSatisfy(allowed.contains)
     }
 
-    private static func displayLabel(
+    private static func tooltipLabel(
         for source: AgentReplySource,
         language: WeiBeiInterfaceLanguage
     ) -> String {
-        let title = source.title.count > 18
-            ? String(source.title.prefix(16)) + "…"
-            : source.title
+        let title = source.title
         guard let position = source.positionLabel(language: language) else {
             return title
         }
         return "\(title) · \(position)"
     }
 
-    private static func markdownLink(_ label: String, url: String) -> String {
+    private static func markdownLink(_ label: String, url: String, title: String? = nil) -> String {
         let escaped = label
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "[", with: "\\[")
             .replacingOccurrences(of: "]", with: "\\]")
-        return "[ \(escaped) ](\(url))"
+        if let title, !title.isEmpty {
+            let escapedTitle = title
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            return "[\(escaped)](\(url) \"\(escapedTitle)\")"
+        }
+        return "[\(escaped)](\(url))"
     }
 }
 

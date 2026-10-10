@@ -4545,14 +4545,14 @@ private struct AgentReplySourceTagRow: View {
                                 .buttonStyle(.plain)
                                 if source.id != sources.last?.id {
                                     Rectangle()
-                                        .fill(WeiBeiTheme.hairline.opacity(0.42))
-                                        .frame(height: 1)
+                                        .fill(WeiBeiTheme.hairline.opacity(0.35))
+                                        .frame(height: 0.5)
                                 }
                             }
                         }
                     }
-                    .frame(width: 340, height: min(CGFloat(sources.count - 1) * 86, 360))
-                    .padding(.vertical, 6)
+                    .frame(width: 276, height: min(CGFloat(sources.count - 1) * 58, 320))
+                    .padding(.vertical, 4)
                 }
                 .accessibilityLabel(
                     Text(store.ui("展开另外 \(sources.count - 1) 个来源", "Expand \(sources.count - 1) more sources"))
@@ -4634,37 +4634,38 @@ private struct AgentReplySourceDetail: View {
     let source: AgentReplySource
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Image(systemName: source.kind.sourceSystemImage)
-                .weiBeiText(12, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(source.title)
-                        .weiBeiText(12, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.ink)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(source.title)
+                    .weiBeiText(11.5, weight: .semibold)
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .lineLimit(1)
+                if let position = source.positionLabel(language: store.interfaceLanguage) {
+                    Text("·")
+                        .weiBeiText(10, weight: .bold)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    Text(position)
+                        .weiBeiText(10.5, weight: .medium)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
-                    if let position = source.positionLabel(language: store.interfaceLanguage) {
-                        Text(position)
-                            .weiBeiText(10.5)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .lineLimit(1)
-                    }
                 }
-                Text(source.excerpt)
-                    .weiBeiText(12)
+                Spacer(minLength: 6)
+                Image(systemName: "arrow.up.right")
+                    .weiBeiText(9.5, weight: .semibold)
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.85))
+            }
+            let cleanExcerpt = source.excerpt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleanExcerpt.isEmpty {
+                Text(cleanExcerpt)
+                    .weiBeiText(11)
+                    .lineSpacing(2)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .lineLimit(3)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 4)
-            Image(systemName: "arrow.up.right")
-                .weiBeiText(9.5, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
     }
 }
@@ -5081,10 +5082,15 @@ private struct AgentMessageMarkdownText: View {
                         onActivateSource(source)
                     } label: { AgentReplySourceDetail(source: source) }
                     .buttonStyle(.plain)
+                    if source.id != expandedSources.last?.id {
+                        Rectangle()
+                            .fill(WeiBeiTheme.hairline.opacity(0.35))
+                            .frame(height: 0.5)
+                    }
                 }
             }
-            .frame(width: 340)
-            .padding(.vertical, 6)
+            .frame(width: 276)
+            .padding(.vertical, 4)
         }
         .onDisappear {
             imageHandler.invalidate()
