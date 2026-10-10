@@ -1312,7 +1312,7 @@ private final class AgentPaneWidthRelay {
 ///
 /// Critical: content width must always fit the measured pane. Never invent a floor larger
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
-private enum AgentChatLayoutMetrics {
+enum AgentChatLayoutMetrics {
     /// ChatGPT-like fixed comfortable column in every layout: narrow panes fill
     /// outright, wide windows cap at ChatGPT's measured column (~960pt, 65% of a
     /// 1470pt window) — user-calibrated against side-by-side screenshots.
