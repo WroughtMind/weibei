@@ -43,10 +43,9 @@ final class MessageCell: UICollectionViewCell {
         if view.superview !== contentView { contentView.addSubview(view) }
         view.frame = bounds
     }
-    func showHeader(_ message: LabMessage, showsWorkspaceAuthor: Bool = false, fontSize: CGFloat = 13) {
+    func showHeader(_ message: LabMessage) {
         unbind()
-        title.text = message.original == nil || showsWorkspaceAuthor ? message.author : nil
-        title.font = .systemFont(ofSize: fontSize, weight: .medium)
+        title.text = message.original == nil ? message.author : nil
         title.isHidden = false
     }
     func showActions(_ message: LabMessage, copy: @escaping () -> Void, quote: @escaping () -> Void,

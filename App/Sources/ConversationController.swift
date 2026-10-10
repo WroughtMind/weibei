@@ -15,7 +15,6 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     let fixtureMode: Bool
     var usesWorkspaceChrome = false
     var isFloatingConversation = false
-    var floatingLabelFontSize: CGFloat = 10
     var reduceMotion = false
     var reservesReplySpace = false
     var auxiliaryView: ((LabMessage) -> UIView)?
@@ -373,8 +372,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     func configure(_ cell: MessageCell, at path: IndexPath) {
         let message = messages[path.section]
         if path.item == 0 {
-            cell.showHeader(message, showsWorkspaceAuthor: isFloatingConversation,
-                            fontSize: isFloatingConversation ? floatingLabelFontSize : 13)
+            cell.showHeader(message)
         }
         else if path.item <= message.blocks.count {
             let block = message.blocks[path.item - 1]
@@ -399,15 +397,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private func itemHeight(at path: IndexPath) -> CGFloat {
         guard path.section < messages.count else { return 0 }
         let message = messages[path.section]
-        if path.item == 0 {
-            // User labels live inside their right-aligned bubble; assistant labels
-            // precede the paragraph list rather than rebuilding the answer in SwiftUI.
-            if isFloatingConversation, let original = message.original, original.role == .assistant,
-               !WorkspaceStore.isAgentFailureMessage(original.text) {
-                return ceil(UIFont.systemFont(ofSize: floatingLabelFontSize, weight: .medium).lineHeight) + 5
-            }
-            return usesWorkspaceChrome ? 0 : 30
-        }
+        if path.item == 0 { return usesWorkspaceChrome ? 0 : 30 }
         if path.item > message.blocks.count { return usesWorkspaceChrome ? message.auxiliaryHeight : 42 }
         return message.blocks[path.item - 1].height + store.theme.spacings.paragraph
     }

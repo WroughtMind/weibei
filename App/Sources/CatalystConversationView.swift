@@ -43,7 +43,6 @@ struct CatalystConversationView: View {
         func updateUIViewController(_ controller: ConversationController, context: Context) {
             controller.reduceMotion = reduceMotion
             controller.isFloatingConversation = floatingThreadID != nil
-            controller.floatingLabelFontSize = 10 * workspace.interfaceTextScale.multiplier
             controller.reservesReplySpace = floatingThreadID == nil
             controller.workspaceBodyWidth = bodyWidth
             controller.readingMessageChanged = onReadingMessage

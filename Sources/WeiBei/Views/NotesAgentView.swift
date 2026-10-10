@@ -3487,33 +3487,28 @@ struct FloatingSelectionMessageBubble: View {
     var body: some View {
         HStack(spacing: 0) {
             if isUser { Spacer(minLength: 32) }
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 5) {
-                Text(isUser ? store.ui("你", "You") : store.ui("魏碑", "WeiBei"))
-                    .weiBeiText(10, weight: .medium)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                ZStack(alignment: .topLeading) {
-                    if isError {
-                        Text(text)
-                            .weiBeiText(AgentChatLayoutMetrics.floatingBodyFontSize)
-                            .foregroundStyle(WeiBeiTheme.cinnabar)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .allowsHitTesting(false)
-                    } else {
-                        finalizedMessage
-                    }
-                    if showsThinking {
-                        AgentThinkingIndicator(activityText: activityText, compact: true)
-                            .padding(.vertical, 4)
-                    }
+            ZStack(alignment: .topLeading) {
+                if isError {
+                    Text(text)
+                        .weiBeiText(AgentChatLayoutMetrics.floatingBodyFontSize)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .allowsHitTesting(false)
+                } else {
+                    finalizedMessage
                 }
-                .padding(.horizontal, isUser ? 10 : 0)
-                .padding(.vertical, isUser ? 8 : 0)
-                .background {
-                    if isUser {
-                        RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
-                            .fill(WeiBeiTheme.paperInset.opacity(0.38))
-                    }
+                if showsThinking {
+                    AgentThinkingIndicator(activityText: activityText, compact: true)
+                        .padding(.vertical, 4)
+                }
+            }
+            .padding(.horizontal, isUser ? 10 : 0)
+            .padding(.vertical, isUser ? 8 : 0)
+            .background {
+                if isUser {
+                    RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
+                        .fill(WeiBeiTheme.paperInset.opacity(0.38))
                 }
             }
         }
