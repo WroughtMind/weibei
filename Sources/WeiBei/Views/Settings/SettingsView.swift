@@ -116,7 +116,6 @@ struct SettingsView: View {
     @State private var feedbackBody = ""
     @State private var feedbackBusy = false
     @State private var feedbackStatus: String?
-    @State private var showsFullUpdateNotes = false
     // 资料库位置迁移（计划 §4.1）。
     @State private var pendingMigrationDestination: URL?
     @State private var migrationErrorText: String?
@@ -848,20 +847,7 @@ struct SettingsView: View {
                         title: store.ui("新版本 \(availableUpdate.version)", "New Version \(availableUpdate.version)"),
                         detail: userFacingUpdateDetail(availableUpdate),
                         showsBottomDivider: false
-                    ) {
-                        if availableUpdate.releaseNotesLines.count > availableUpdate.summaryLines.count {
-                            Button {
-                                withAnimation(WeiBeiMotion.panel) {
-                                    showsFullUpdateNotes.toggle()
-                                }
-                            } label: {
-                                Text(showsFullUpdateNotes
-                                     ? store.ui("收起", "Collapse")
-                                     : store.ui("展开全文", "Show All"))
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                        }
-                    }
+                    ) {}
                 }
             }
 
@@ -881,7 +867,7 @@ struct SettingsView: View {
             }
 
             if case .failed = updateService.status {
-                Text(store.ui("更新失败，请重试。", "Update failed. Please try again."))
+                Text(updateService.errorDescription ?? store.ui("更新失败，请重试。", "Update failed. Please try again."))
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .padding(.horizontal, 4)
@@ -891,10 +877,7 @@ struct SettingsView: View {
 
     private var updateActionLabel: String {
         if updateService.availableUpdate != nil {
-            if case .failed = updateService.status {
-                return store.ui("重试安装", "Retry Install")
-            }
-            return store.ui("下载并安装", "Download and Install")
+            return updateService.actionLabel(english: store.interfaceLanguage == .english)
         }
         switch updateService.status {
         case .upToDate:
@@ -1047,9 +1030,9 @@ struct SettingsView: View {
     }
 
     private func userFacingUpdateDetail(_ update: WeiBeiAvailableUpdate) -> String {
-        let lines = showsFullUpdateNotes ? update.releaseNotesLines : update.summaryLines
+        let lines = update.releaseNotesLines.map(WeiBeiAvailableUpdate.displayText)
         return lines.isEmpty
-            ? store.ui("包含最新改进和修复。", "Includes the latest improvements and fixes.")
+            ? store.ui("暂无更新说明。", "Release notes are unavailable.")
             : lines.joined(separator: "\n")
     }
 

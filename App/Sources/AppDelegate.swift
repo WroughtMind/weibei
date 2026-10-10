@@ -33,7 +33,21 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             noteBackupRootURL: root.appendingPathComponent(NoteBackupRing.subdirectoryName),
             startsAtBlankEntries: true)
     }()
-    static let updates = WeiBeiUpdateService()
+    static let updates: WeiBeiUpdateService = {
+        let service = WeiBeiUpdateService()
+        service.prepareForInstallation = {
+            let store = Self.workspace
+            store.commitCurrentReaderLocation()
+            guard await store.freshActiveNoteEditorSnapshot() else { return false }
+            store.flushPendingNotePersistence(flushWorkspace: false)
+            guard await store.flushPendingWorkspaceSaveAsync() else { return false }
+            // A file conflict/write failure must not be mistaken for a saved note.
+            return !store.noteEditingSession.dirty
+                && store.noteEditingSession.saveStatus != .failed
+                && store.noteEditingSession.saveStatus != .externallyModified
+        }
+        return service
+    }()
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var saveTask: Task<Void, Never>?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -42,6 +56,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         WeiBeiTypography.registerBundledFonts()
         guard !Self.usesFixture else { return true }
         _ = Self.workspace
+        let defaults = UserDefaults.standard
+        if let pendingBuild = defaults.string(forKey: WeiBeiUpdateService.pendingInstallationBuildKey),
+           pendingBuild == Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+           let version = defaults.string(forKey: WeiBeiUpdateService.pendingInstallationVersionKey) {
+            Self.workspace.showTransientNoteStatus(Self.workspace.ui("已更新到 \(version)", "Updated to \(version)"))
+            defaults.removeObject(forKey: WeiBeiUpdateService.pendingInstallationBuildKey)
+            defaults.removeObject(forKey: WeiBeiUpdateService.pendingInstallationVersionKey)
+        }
         lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.saveWorkspace() }
         })

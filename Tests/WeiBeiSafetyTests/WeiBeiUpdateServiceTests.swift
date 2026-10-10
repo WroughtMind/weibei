@@ -1,32 +1,69 @@
 import XCTest
+import Combine
+import Sparkle
 @testable import WeiBei
 
 final class WeiBeiUpdateServiceTests: XCTestCase {
-    func testReleaseNotesSummaryKeepsLateCriticalSectionsAndFullText() {
-        let notes = """
-        <h2>本次更新</h2><ul><li>顶部栏显示下载入口</li><li>设置页共用更新状态</li><li>下载完成后自动安装</li><li>安装前保存工作区</li><li>失败后可以重试</li></ul>
-        <h2>破坏性变化</h2><ul><li>旧版快捷键不再占用编辑器</li><li>旧工具名停止注册</li></ul>
-        <h2>迁移</h2><ul><li>人工会话标题自动保留</li><li>旧快捷键配置会显示冲突</li></ul>
-        <h2>已知问题</h2><ul><li>首次展开可能稍慢</li><li>第二项已知问题仍会显示</li></ul>
-        """
+    func testNotesKeepHeadingsAndEveryLateChange() {
+        let details = (1...12).map { "<li>改动\($0)</li>" }.joined()
+        let notes = WeiBeiAvailableUpdate.releaseNotesLines(from:
+            "<h2>改进</h2><ul>\(details)</ul><h2>已知问题</h2><p>需要重新打开资料</p>")
+        XCTAssertEqual(notes.count, 15)
+        XCTAssertTrue(WeiBeiAvailableUpdate.isHeading(notes[0]))
+        XCTAssertTrue(WeiBeiAvailableUpdate.isHeading(notes[13]))
+        XCTAssertEqual(notes.last, "需要重新打开资料")
+    }
 
-        XCTAssertEqual(
-            WeiBeiAvailableUpdate.summaryLines(from: notes),
-            [
-                "破坏性变化：旧版快捷键不再占用编辑器",
-                "破坏性变化：旧工具名停止注册",
-                "迁移：人工会话标题自动保留",
-                "迁移：旧快捷键配置会显示冲突",
-                "已知问题：首次展开可能稍慢",
-                "已知问题：第二项已知问题仍会显示",
-            ]
-        )
-        let update = WeiBeiAvailableUpdate(
-            version: "1.2.3",
-            releaseNotesLines: WeiBeiAvailableUpdate.releaseNotesLines(from: notes),
-            informationOnly: false,
-            informationURL: nil
-        )
-        XCTAssertTrue(update.helpText.contains("已知问题：第二项已知问题仍会显示"))
+    @MainActor func testProgressUsesBytesAndHandlesMissingOrChangedLength() {
+        let service = WeiBeiUpdateService(startsUpdater: false)
+        service.showDownloadDidReceiveData(ofLength: 20)
+        XCTAssertNil(service.downloadProgress)
+        service.showDownloadDidReceiveExpectedContentLength(100)
+        XCTAssertEqual(service.downloadProgress, 0.2)
+        service.showDownloadDidReceiveData(ofLength: 30)
+        XCTAssertEqual(service.downloadProgress, 0.5)
+        service.showDownloadDidReceiveExpectedContentLength(200)
+        XCTAssertEqual(service.downloadProgress, 0.25)
+        service.showDownloadDidReceiveExpectedContentLength(10)
+        XCTAssertNil(service.downloadProgress)
+    }
+
+    @MainActor func testReadyWaitsForClickAndSuccessfulSaveBeforeRelaunch() async {
+        let update = WeiBeiAvailableUpdate(version: "1.2.3", releaseNotesLines: [],
+            informationOnly: false, informationURL: nil)
+        let service = WeiBeiUpdateService(startsUpdater: false, availableUpdate: update)
+        var saveCalls = 0
+        var canSave = false
+        service.prepareForInstallation = { saveCalls += 1; return canSave }
+        let ready = expectation(description: "Update prepared without restarting")
+        let observation = service.$status.sink { if $0 == .ready { ready.fulfill() } }
+        let installation = Task { await service.showReadyToInstallAndRelaunch() }
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertEqual(saveCalls, 0)
+        XCTAssertFalse(service.isBusy)
+        observation.cancel()
+
+        let failed = expectation(description: "Save failure blocks restarting")
+        let failureObservation = service.$status.sink { if $0 == .failed { failed.fulfill() } }
+        service.installAvailableUpdate()
+        await fulfillment(of: [failed], timeout: 2)
+        XCTAssertEqual(saveCalls, 1)
+        XCTAssertNotNil(service.errorDescription)
+        XCTAssertEqual(service.availableUpdate, update)
+        failureObservation.cancel()
+
+        canSave = true
+        service.installAvailableUpdate()
+        let choice = await installation.value
+        XCTAssertEqual(choice, .install)
+        XCTAssertEqual(saveCalls, 2)
+        XCTAssertEqual(service.status, .installing)
+    }
+
+    @MainActor func testCheckFailureIsNotReportedAsLatestVersion() async {
+        let service = WeiBeiUpdateService(startsUpdater: false)
+        await service.showUpdateNotFoundWithError(URLError(.notConnectedToInternet))
+        XCTAssertEqual(service.status, .failed)
+        XCTAssertNotNil(service.errorDescription)
     }
 }

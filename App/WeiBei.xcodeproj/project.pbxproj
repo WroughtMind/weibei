@@ -212,6 +212,7 @@
 		E3C57A914FAF086CBC2EE87E /* NativeToolSchemaValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B804330B9F87807BF475EB80 /* NativeToolSchemaValidation.swift */; };
 		E498931F372E542246CCF1E8 /* lanting-observe-kinds.png in Resources */ = {isa = PBXBuildFile; fileRef = A19EDFF7CF12F407B045AAFC /* lanting-observe-kinds.png */; };
 		E56FDBD0C5978CC30B934430 /* WorkspacePersistStatusDot.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E51498E496D5A61D998523 /* WorkspacePersistStatusDot.swift */; };
+		EAA3DEB378944BAE947BD215 /* WeiBeiUpdateControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA12C4B125CC4E2394E84785 /* WeiBeiUpdateControl.swift */; };
 		E60BC6DE707366A0549B937C /* NativeSessionTitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 433E5657BF2C1DCD29347D42 /* NativeSessionTitle.swift */; };
 		E7939285E4E0C9937364F5C3 /* AgentReplyMemoryUpdateTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 963BCB482D54E37E6DE3C842 /* AgentReplyMemoryUpdateTag.swift */; };
 		E818370843CF10A7F41BD707 /* AgentReplyProfileUpdateTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 672C78FE92DA58E70D7B494E /* AgentReplyProfileUpdateTag.swift */; };
@@ -472,6 +473,7 @@
 		CD62172095286419347BAD3C /* ReaderWebRemarkMarks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderWebRemarkMarks.swift; sourceTree = "<group>"; };
 		CFA8BD37F526A567FC7AF59A /* ConversationLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayout.swift; sourceTree = "<group>"; };
 		D1E51498E496D5A61D998523 /* WorkspacePersistStatusDot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePersistStatusDot.swift; sourceTree = "<group>"; };
+		FA12C4B125CC4E2394E84785 /* WeiBeiUpdateControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiUpdateControl.swift; sourceTree = "<group>"; };
 		D4DC97F117C4C9EF8A872EAA /* SelectionAnchorContentPoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionAnchorContentPoint.swift; sourceTree = "<group>"; };
 		D9660747C198993E15D3D640 /* NativeLLMAdapterFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLLMAdapterFactory.swift; sourceTree = "<group>"; };
 		DBE910F7A08873EDEB2E1769 /* DiagramView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagramView.swift; sourceTree = "<group>"; };
@@ -789,6 +791,7 @@
 				B215538091FA28517FF16935 /* StableDocumentWorkspace.swift */,
 				6B078F9A88BC6C5982B3722B /* WeiBeiSegmentedControl.swift */,
 				D1E51498E496D5A61D998523 /* WorkspacePersistStatusDot.swift */,
+				FA12C4B125CC4E2394E84785 /* WeiBeiUpdateControl.swift */,
 				A41AD505070D316B0402B46D /* Settings */,
 			);
 			path = Views;
@@ -1354,6 +1357,7 @@
 				2CD678E8BE84257E5938AAAD /* WorkspaceInteractionState.swift in Sources */,
 				E94B46A70080CB4FDC671F71 /* WorkspacePaneState.swift in Sources */,
 				E56FDBD0C5978CC30B934430 /* WorkspacePersistStatusDot.swift in Sources */,
+				EAA3DEB378944BAE947BD215 /* WeiBeiUpdateControl.swift in Sources */,
 				0D8AC2AC2806968EF9F4C86A /* WorkspaceStore+AppearancePreference.swift in Sources */,
 				BA6C858DA3558EC483AC6E6C /* WorkspaceStore+CourseContent.swift in Sources */,
 				C21F9B2F6453AD3F0A0A8FD7 /* WorkspaceStore+CourseLibrary.swift in Sources */,

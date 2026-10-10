@@ -34,7 +34,7 @@ import Foundation
         presentationToolbar: NSObject?,
         completion: @MainActor @escaping ([URL], NSError?) -> Void
     )
-    @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void)
+    @MainActor func observeUpdates(_ observer: @escaping (NSDictionary) -> Void)
     @MainActor func checkForUpdates()
-    @MainActor func installAvailableUpdate()
+    @MainActor func installAvailableUpdate(_ save: @escaping (@escaping (Bool) -> Void) -> Void)
 }
