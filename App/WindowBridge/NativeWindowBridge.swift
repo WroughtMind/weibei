@@ -204,7 +204,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     @MainActor func registerFileDrop(
         id: String, toolbar: NSObject,
         targeted: @MainActor @escaping (Bool) -> Void,
-        receive: @MainActor @escaping ([URL]) -> Void
+        receive: @MainActor @escaping ([URL], [URL], [URL], [String]) -> Void
     ) {
         guard let toolbar = toolbar as? NSToolbar else { return }
         unregisterFileDrop(id: id)
@@ -240,7 +240,12 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         return NativeFileDropDelegate.fileURLs(from: NSPasteboard(name: .drag))
     }
     @MainActor func currentDragContainsFilePromises() -> Bool {
-        let board = NSPasteboard(name: .drag)
+        let board: NSPasteboard
+#if WEIBEI_ACCEPTANCE_CHECKS
+        board = fileDropCheckBoard ?? NSPasteboard(name: .drag)
+#else
+        board = NSPasteboard(name: .drag)
+#endif
         return !(board.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil) ?? []).isEmpty
     }
 #if WEIBEI_ACCEPTANCE_CHECKS
@@ -360,16 +365,103 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 }
 
+/// Own one destination for the whole promised-file drag. AppKit delivers each
+/// file separately; wait for the named files before presenting a single review.
+@MainActor
+private final class NativeFileDropBatch {
+    private var objects: [Any]
+    private let receive: @MainActor ([URL], [URL], [URL], [String]) -> Void
+    private var files: [[URL]]
+    private var expected: [Int]
+    private var completed: [Int]
+    private var scopedURLs: [URL] = []
+    private var failures: [String] = []
+    private var directory: URL?
+    private var configured = false
+    private var delivered = false
+    private let queue = OperationQueue()
+
+    init(objects: [Any], receive: @MainActor @escaping ([URL], [URL], [URL], [String]) -> Void) {
+        self.objects = objects
+        self.receive = receive
+        files = Array(repeating: [], count: objects.count)
+        expected = Array(repeating: 0, count: objects.count)
+        completed = Array(repeating: 0, count: objects.count)
+        queue.qualityOfService = .userInitiated
+    }
+
+    func start() {
+        let hasPromises = objects.contains { $0 is NSFilePromiseReceiver }
+        if hasPromises {
+            do {
+                let owned = FileManager.default.temporaryDirectory.appendingPathComponent(
+                    "WeiBeiDroppedFiles-" + UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: owned, withIntermediateDirectories: false,
+                    attributes: [.posixPermissions: 0o700])
+                directory = owned
+            } catch { failures.append(error.localizedDescription) }
+        }
+        for (index, object) in objects.enumerated() {
+            if let promise = object as? NSFilePromiseReceiver {
+                guard let directory else { continue }
+                // A failed promise still has a reader callback, even if AppKit
+                // could not obtain a filename. fileTypes is not a file count.
+                expected[index] = 1
+                promise.receivePromisedFiles(atDestination: directory, options: [:], operationQueue: queue) { [self] url, error in
+                    let result: Result<URL, Error>
+                    if let error { result = .failure(error) }
+                    else {
+                        let parent = directory.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+                        let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+                        if url.isFileURL, resolved.path.hasPrefix(parent),
+                           FileManager.default.fileExists(atPath: resolved.path) {
+                            result = .success(url)
+                        } else { result = .failure(CocoaError(.fileReadNoPermission)) }
+                    }
+                    DispatchQueue.main.async { [self] in
+                        guard !delivered else { return }
+                        switch result {
+                        case .success(let url): files[index].append(url)
+                        case .failure(let error): failures.append(error.localizedDescription)
+                        }
+                        completed[index] += 1
+                        finishIfReady()
+                    }
+                }
+                expected[index] = promise.fileNames.isEmpty ? 1 : promise.fileNames.count
+            } else if let url = object as? URL, url.isFileURL {
+                files[index] = [url]
+                if url.startAccessingSecurityScopedResource() { scopedURLs.append(url) }
+            }
+        }
+        configured = true
+        finishIfReady()
+    }
+
+    private func finishIfReady() {
+        guard configured, !delivered,
+              expected.indices.allSatisfy({ completed[$0] >= expected[$0] }) else { return }
+        delivered = true
+        let ownsPromisedFiles = objects.indices.contains {
+            objects[$0] is NSFilePromiseReceiver && !files[$0].isEmpty
+        }
+        let retainedDirectories = ownsPromisedFiles ? directory.map { [$0] } ?? [] : []
+        if !ownsPromisedFiles, let directory { try? FileManager.default.removeItem(at: directory) }
+        objects.removeAll()
+        receive(files.flatMap { $0 }, scopedURLs, retainedDirectories, failures)
+    }
+}
+
 /// NSWindow forwards drag destination messages to its delegate. Preserve the
 /// existing delegate's window behavior while handling file drags at this level.
 private final class NativeFileDropRegistration {
     weak var toolbar: NSToolbar?
     let targeted: @MainActor (Bool) -> Void
-    let receive: @MainActor ([URL]) -> Void
+    let receive: @MainActor ([URL], [URL], [URL], [String]) -> Void
     private let destinations = NSMapTable<NSWindow, NativeFileDropDelegate>.weakToStrongObjects()
 
     init(toolbar: NSToolbar, targeted: @MainActor @escaping (Bool) -> Void,
-         receive: @MainActor @escaping ([URL]) -> Void) {
+         receive: @MainActor @escaping ([URL], [URL], [URL], [String]) -> Void) {
         self.toolbar = toolbar
         self.targeted = targeted
         self.receive = receive
@@ -392,7 +484,8 @@ private final class NativeFileDropRegistration {
                 destinations.setObject(delegate, forKey: window)
             }
             window.delegate = delegate
-            window.registerForDraggedTypes([.fileURL])
+            let promisedTypes = NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
+            window.registerForDraggedTypes([.fileURL] + promisedTypes)
         }
     }
     @MainActor func detach() {
@@ -423,15 +516,33 @@ private final class NativeFileDropRegistration {
         let roundTrip = loaded == urls
         board.clearContents()
         board.setString("pane-id", forType: .string)
-        let rejectsText = NativeFileDropDelegate.fileURLs(from: board).isEmpty
+        let rejectsText = NativeFileDropDelegate.fileObjects(from: board).isEmpty
+        board.clearContents()
+        let promiseSource = NativeFileDropCheckPromise()
+        board.writeObjects([NSFilePromiseProvider(fileType: "public.plain-text", delegate: promiseSource)])
+        let acceptsPromise = !NativeFileDropDelegate.fileObjects(from: board).isEmpty
         board.clearContents()
         board.writeObjects(urls as [NSURL])
         return ["registered_window": window.delegate === delegate,
                 "file_urls_preserved": roundTrip, "text_rejected": rejectsText,
-                "reattached_after_delegate_change": rebound]
+                "reattached_after_delegate_change": rebound,
+                "promised_file_recognized": acceptsPromise]
     }
 #endif
 }
+
+#if WEIBEI_ACCEPTANCE_CHECKS
+private final class NativeFileDropCheckPromise: NSObject, NSFilePromiseProviderDelegate {
+    func filePromiseProvider(_ provider: NSFilePromiseProvider, fileNameForType type: String) -> String {
+        "file-drop-check.txt"
+    }
+    func filePromiseProvider(_ provider: NSFilePromiseProvider, writePromiseTo url: URL,
+        completionHandler: @escaping (Error?) -> Void) {
+        // Classification must not request the source's bytes before a drop.
+        completionHandler(CocoaError(.fileWriteUnknown))
+    }
+}
+#endif
 
 private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggingDestination {
 #if WEIBEI_ACCEPTANCE_CHECKS
@@ -460,9 +571,9 @@ private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggi
     weak var original: (any NSWindowDelegate)?
 #endif
     let targeted: @MainActor (Bool) -> Void
-    let receive: @MainActor ([URL]) -> Void
+    let receive: @MainActor ([URL], [URL], [URL], [String]) -> Void
     init(original: (any NSWindowDelegate)?, targeted: @MainActor @escaping (Bool) -> Void,
-         receive: @MainActor @escaping ([URL]) -> Void) {
+         receive: @MainActor @escaping ([URL], [URL], [URL], [String]) -> Void) {
         self.original = original; self.targeted = targeted; self.receive = receive
         super.init()
 #if WEIBEI_ACCEPTANCE_CHECKS
@@ -500,23 +611,29 @@ private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggi
     static func fileURLs(from board: NSPasteboard) -> [URL] {
         (board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
     }
+    // Read one representation per item. A promised file may also publish an
+    // address; prefer its promised bytes rather than receiving it twice.
+    static func fileObjects(from board: NSPasteboard) -> [Any] {
+        board.readObjects(forClasses: [NSFilePromiseReceiver.self, NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]) ?? []
+    }
     func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
     func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        let accepted = !Self.fileURLs(from: sender.draggingPasteboard).isEmpty
+        let accepted = !Self.fileObjects(from: sender.draggingPasteboard).isEmpty
         targeted(accepted)
         return accepted ? .copy : []
     }
     func draggingExited(_ sender: (any NSDraggingInfo)?) { targeted(false) }
     func draggingEnded(_ sender: any NSDraggingInfo) { targeted(false) }
     func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        !Self.fileURLs(from: sender.draggingPasteboard).isEmpty
+        !Self.fileObjects(from: sender.draggingPasteboard).isEmpty
     }
     func performDragOperation(_ sender: any NSDraggingInfo) -> Bool { receiveDrop(from: sender.draggingPasteboard) }
     @MainActor func receiveDrop(from board: NSPasteboard) -> Bool {
         targeted(false)
-        let urls = Self.fileURLs(from: board)
-        guard !urls.isEmpty else { return false }
-        receive(urls)
+        let objects = Self.fileObjects(from: board)
+        guard !objects.isEmpty else { return false }
+        NativeFileDropBatch(objects: objects, receive: receive).start()
         return true
     }
 }

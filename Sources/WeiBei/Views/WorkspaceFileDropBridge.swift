@@ -8,7 +8,7 @@ import WeiBeiCore
 struct WorkspaceFileDropBridge: UIViewRepresentable {
     @Binding var isTargeted: Bool
     let receive: ([NSItemProvider], [URL]) -> Void
-    let receiveNative: ([URL]) -> Void
+    let receiveNative: (WeiBeiDroppedFileResult) -> Void
 
     func makeUIView(context: Context) -> Probe { Probe() }
     func updateUIView(_ view: Probe, context: Context) {
@@ -23,7 +23,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
         let registrationID = UUID().uuidString
         var isTargeted: Binding<Bool>?
         var receive: ([NSItemProvider], [URL]) -> Void = { _, _ in }
-        var receiveNative: ([URL]) -> Void = { _ in }
+        var receiveNative: (WeiBeiDroppedFileResult) -> Void = { $0.release() }
         private weak var registeredToolbar: NSToolbar?
         private var isRegistered = false
         private weak var dropView: UIView?
@@ -56,7 +56,12 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             isRegistered = true
             CatalystDesktopWindow.shared.registerFileDrop(id: registrationID, toolbar: toolbar,
                 targeted: { [weak self] value in self?.isTargeted?.wrappedValue = value },
-                receive: { [weak self] urls in self?.receiveNative(urls) })
+                receive: { [weak self] urls, scopes, directories, failures in
+                    let result = WeiBeiDroppedFileResult(urls: urls, securityScopedURLs: scopes,
+                        temporaryDirectories: directories, failures: failures)
+                    guard let self else { result.release(); return }
+                    self.receiveNative(result)
+                })
         }
         func detach() {
             dropView?.removeInteraction(fileDropInteraction)

@@ -70,6 +70,30 @@ final class DroppedFileURLsTests: XCTestCase {
         })
     }
 
+    func testInternalWorkspaceDragDoesNotClaimAnExternalTextFile() {
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+            visibility: .all) { completion in
+            completion(Data("讲义正文".utf8), nil); return nil
+        }
+        // This is the overlap that made generic String destinations eligible.
+        XCTAssertTrue(provider.canLoadObject(ofClass: NSString.self))
+        XCTAssertFalse(provider.hasItemConformingToTypeIdentifier(WeiBeiWorkspaceDrag.contentType.identifier))
+    }
+
+    func testInternalWorkspaceDragKeepsItsIdentityThroughSystemTransfer() async throws {
+        for payload in [WeiBeiWorkspaceDrag.course(UUID()), .item("note-id"), .relationMaterial("material-id")] {
+            let provider = NSItemProvider()
+            provider.register(payload)
+            let received: WeiBeiWorkspaceDrag = try await withCheckedThrowingContinuation { continuation in
+                provider.loadTransferable(type: WeiBeiWorkspaceDrag.self) { result in
+                    continuation.resume(with: result)
+                }
+            }
+            XCTAssertEqual(received, payload)
+        }
+    }
+
     func testTransferredFileUsesExportedBytesInsteadOfProtectedSourceAddress() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

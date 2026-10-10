@@ -156,7 +156,7 @@ struct ContentView: View {
 #if targetEnvironment(macCatalyst)
             .background {
                 WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted,
-                    receive: receiveTransferredFileDrop, receiveNative: receiveFileDropURLs)
+                    receive: receiveTransferredFileDrop, receiveNative: receiveNativeFileDrop)
                     .allowsHitTesting(false)
             }
 #else
@@ -234,8 +234,8 @@ struct ContentView: View {
         store.receiveTransferredFiles(providers, sourceURLs: urls,
             courseID: store.courseWorkspacePresented ? store.courseWorkspaceCourseID : nil)
     }
-    private func receiveFileDropURLs(_ urls: [URL]) {
-        store.receiveDroppedFileURLs(urls, courseID: store.courseWorkspacePresented
+    private func receiveNativeFileDrop(_ result: WeiBeiDroppedFileResult) {
+        store.receiveTransferredFileResult(result, courseID: store.courseWorkspacePresented
             ? store.courseWorkspaceCourseID : nil)
     }
 #endif

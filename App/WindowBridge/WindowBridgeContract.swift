@@ -14,7 +14,7 @@ import Foundation
     @MainActor func registerFileDrop(
         id: String, toolbar: NSObject,
         targeted: @MainActor @escaping (Bool) -> Void,
-        receive: @MainActor @escaping ([URL]) -> Void
+        receive: @MainActor @escaping ([URL], [URL], [URL], [String]) -> Void
     )
     @MainActor func unregisterFileDrop(id: String)
     @MainActor func currentDraggedFileURLs() -> [URL]

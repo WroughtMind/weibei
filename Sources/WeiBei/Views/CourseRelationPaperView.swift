@@ -1279,7 +1279,7 @@ private struct CourseRelationNodeDragModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if enabled {
-            content.draggable(itemID)
+            content.draggable(WeiBeiWorkspaceDrag.relationMaterial(itemID))
         } else {
             content
         }
@@ -1295,9 +1295,11 @@ private struct CourseRelationDropModifier: ViewModifier {
     func body(content: Content) -> some View {
         if enabled, node.kind == .note {
             content.dropDestination(
-                for: String.self,
+                for: WeiBeiWorkspaceDrag.self,
                 action: { materialIDs, _ in
-                    guard let materialID = materialIDs.first else { return false }
+                    guard let materialID = materialIDs.compactMap({ value -> String? in
+                        if case .relationMaterial(let id) = value { return id }; return nil
+                    }).first else { return false }
                     addLink(materialID, node.itemID)
                     return true
                 },

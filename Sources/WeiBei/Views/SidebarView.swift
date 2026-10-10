@@ -257,8 +257,8 @@ struct CourseSidebarList: View {
             )
         }
         .contextMenu { courseContextMenu(for: course) }
-        .draggable("course:\(course.id.uuidString)")
-        .dropDestination(for: String.self) { values, _ in
+        .draggable(WeiBeiWorkspaceDrag.course(course.id))
+        .dropDestination(for: WeiBeiWorkspaceDrag.self) { values, _ in
             guard let courseID = draggedCourseID(from: values) else { return false }
             store.moveCourse(courseID, before: course.id)
             return true
@@ -372,8 +372,8 @@ struct CourseSidebarList: View {
                 .contextMenu {
                     itemContextMenu(for: row, opensNotebook: opensNotebook)
                 }
-                .draggable("item:\(item.id)")
-                .dropDestination(for: String.self) { values, _ in
+                .draggable(WeiBeiWorkspaceDrag.item(item.id))
+                .dropDestination(for: WeiBeiWorkspaceDrag.self) { values, _ in
                     guard let itemID = draggedItemID(from: values) else { return false }
                     store.moveCourseItem(
                         itemID,
@@ -481,16 +481,12 @@ struct CourseSidebarList: View {
         model.interfaceLanguage.text(chinese, english)
     }
 
-    private func draggedCourseID(from values: [String]) -> UUID? {
-        values.first(where: { $0.hasPrefix("course:") }).flatMap {
-            UUID(uuidString: String($0.dropFirst("course:".count)))
-        }
+    private func draggedCourseID(from values: [WeiBeiWorkspaceDrag]) -> UUID? {
+        values.compactMap { if case .course(let id) = $0 { return id }; return nil }.first
     }
 
-    private func draggedItemID(from values: [String]) -> String? {
-        values.first(where: { $0.hasPrefix("item:") }).map {
-            String($0.dropFirst("item:".count))
-        }
+    private func draggedItemID(from values: [WeiBeiWorkspaceDrag]) -> String? {
+        values.compactMap { if case .item(let id) = $0 { return id }; return nil }.first
     }
 }
 
@@ -584,10 +580,10 @@ private struct SidebarCourseGroupHeader: View {
             }
         }
         .frame(height: 18)
-        .dropDestination(for: String.self) { values, _ in
-            guard let itemID = values.first(where: { $0.hasPrefix("item:") }).map({
-                String($0.dropFirst("item:".count))
-            }), let onDropItem else {
+        .dropDestination(for: WeiBeiWorkspaceDrag.self) { values, _ in
+            guard let itemID = values.compactMap({ value -> String? in
+                if case .item(let id) = value { return id }; return nil
+            }).first, let onDropItem else {
                 return false
             }
             onDropItem(itemID)
