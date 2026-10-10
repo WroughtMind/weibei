@@ -204,8 +204,8 @@ jobs:
 
       - name: 记录系统原生全屏对照
         id: native_full_screen
-        # 只收集环境对照；后续真实 App 仍须完成全屏进出，原验收条件不变。
-        continue-on-error: true
+        # 系统本身无法进出全屏时立即保留环境证据，避免继续编译后才重复超时。
+        # 后续真实 App 仍须独立完成全屏进出。
         run: |
           FULL_SCREEN_CONTROL_APP="$RUNNER_TEMP/WeiBeiNativeFullScreenCheck.app"
           mkdir -p "$FULL_SCREEN_CONTROL_APP/Contents/MacOS"
@@ -246,7 +246,14 @@ jobs:
         run: |
           [[ "$NATIVE_FULLSCREEN_OUTCOME" == failure ]] || exit 0
           mkdir -p "$RUNNER_TEMP/weibei-native-full-screen-evidence"
-          /usr/bin/log show --last 2m --style compact --predicate 'process == "Dock" OR process == "WindowServer"' > "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-native-full-screen-system.log"
+          ps -axo pid,ppid,stat,comm > "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-desktop-processes.log"
+          /usr/bin/log show --last 2m --style compact --predicate 'process == "Dock" OR process == "WindowServer" OR process == "WindowManager" OR process == "SystemUIServer" OR process == "iconservicesagent"' > "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-native-full-screen-system.log"
+          for process in Dock WindowManager SystemUIServer ControlCenter Finder; do
+            pid="$(pgrep -x "$process" || true)"
+            [[ -z "$pid" ]] || sample "$pid" 3 -file "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-$process-sample.log" &
+          done
+          wait
+          launchctl print "gui/$(id -u)/com.apple.iconservices.iconservicesagent" > "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-iconservices-state.log" 2>&1 || true
 
       - name: 立即保留原生全屏对照证据
         if: always()
