@@ -151,6 +151,8 @@ struct ContentView: View {
                 AgentDocumentConfirmationOverlay()
             }
             .contentShape(Rectangle())
+            .allowsHitTesting(!store.settingsPresented)
+            .accessibilityHidden(store.settingsPresented)
 #if targetEnvironment(macCatalyst)
             .background {
                 WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted,
@@ -165,6 +167,17 @@ struct ContentView: View {
             .overlay {
                 if isFileDropTargeted { WeiBeiFileDropPrompt() }
             }
+            .overlay {
+                if store.settingsPresented {
+                    ZStack {
+                        Color.black.opacity(0.22)
+                            .ignoresSafeArea()
+                        SettingsPanel(availableSize: geometry.size)
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(WeiBeiMotion.panel, value: store.settingsPresented)
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
             .animation(WeiBeiMotion.panel, value: store.lastPersistState)
             .animation(WeiBeiMotion.panel, value: store.noteEditorCommandFailureMessage)
@@ -390,14 +403,17 @@ private struct GlobalFloatingSelectionLayer: View {
                     canvasSize: canvasSize,
                     topInset: CGFloat(selectionTopInset)
                 )
-                // Center is derived from the parked top-left plus this layout pass's size,
-                // so growing the answer pushes the bottom down and does not pick a new side.
-                .alignmentGuide(.leading) { dimensions in
-                    dimensions.width / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).x
-                }
-                .alignmentGuide(.top) { dimensions in
-                    dimensions.height / 2 - floatingAgentPosition(size: CGSize(width: dimensions.width, height: dimensions.height)).y
-                }
+                .modifier(FloatingSelectionPositionModifier(
+                    placedOrigin: $placedOrigin,
+                    usesPlacedOrigin: usesPlacedOrigin,
+                    initialOrigin: initialOrigin,
+                    anchor: interaction.selectionAnchor.map {
+                        FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y))
+                    },
+                    canvasSize: canvasSize,
+                    topInset: selectionTopInset,
+                    prefersAbove: interaction.selectionAnchor?.prefersAbove == true
+                ))
                 .transition(.opacity)
             }
         }
@@ -442,23 +458,6 @@ private struct GlobalFloatingSelectionLayer: View {
         return CGPoint(x: point.x, y: point.y)
     }
 
-    private func floatingAgentPosition(size: CGSize) -> CGPoint {
-        if usesPlacedOrigin {
-            let origin = placedOrigin ?? initialOrigin
-            return CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
-        }
-        let point = SelectionFloatingAgentPlacement.position(
-            anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
-            canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
-            topInset: selectionTopInset,
-            surfaceHalfWidth: Double(size.width / 2),
-            measuredHalfHeight: Double(size.height / 2),
-            prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
-            prefersAnchorCenter: true
-        )
-        return CGPoint(x: point.x, y: point.y)
-    }
-
     private var selectionTopInset: Double {
 #if targetEnvironment(macCatalyst)
         // The native toolbar sits outside the workspace's content coordinates.
@@ -466,6 +465,55 @@ private struct GlobalFloatingSelectionLayer: View {
 #else
         Double(WeiBeiMetric.topBarHeight * textScale)
 #endif
+    }
+}
+
+/// Read motion in the display modifier, outside the conversation's layout inputs.
+private struct FloatingSelectionPositionModifier: ViewModifier {
+    @Binding var placedOrigin: CGPoint?
+    let usesPlacedOrigin: Bool
+    let initialOrigin: CGPoint
+    let anchor: FloatingAgentCoordinate?
+    let canvasSize: CGSize
+    let topInset: Double
+    let prefersAbove: Bool
+
+    func body(content: Content) -> some View {
+        content.modifier(FloatingSelectionPositionEffect(
+            origin: usesPlacedOrigin ? placedOrigin ?? initialOrigin : nil,
+            anchor: anchor,
+            canvasSize: canvasSize,
+            topInset: topInset,
+            prefersAbove: prefersAbove
+        ))
+    }
+}
+
+/// A translation changes where the panel is drawn, without proposing a new text layout.
+private struct FloatingSelectionPositionEffect: GeometryEffect {
+    let origin: CGPoint?
+    let anchor: FloatingAgentCoordinate?
+    let canvasSize: CGSize
+    let topInset: Double
+    let prefersAbove: Bool
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        let topLeft: CGPoint
+        if let origin {
+            topLeft = origin
+        } else {
+            let center = SelectionFloatingAgentPlacement.position(
+                anchor: anchor,
+                canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
+                topInset: topInset,
+                surfaceHalfWidth: Double(size.width / 2),
+                measuredHalfHeight: Double(size.height / 2),
+                prefersAbove: prefersAbove,
+                prefersAnchorCenter: true
+            )
+            topLeft = CGPoint(x: center.x - Double(size.width / 2), y: center.y - Double(size.height / 2))
+        }
+        return ProjectionTransform(CGAffineTransform(translationX: topLeft.x, y: topLeft.y))
     }
 }
 
@@ -1240,7 +1288,6 @@ private struct UnifiedTopBarView: View {
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
-    @Environment(\.openWindow) private var openSettingsWindow
     @Environment(\.weiBeiTextScale) private var textScale
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
@@ -1259,9 +1306,6 @@ private struct UnifiedTopBarView: View {
             isVisible: !store.courseWorkspacePresented
         )
         .frame(height: 0)
-        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
-            showSettings()
-        }
         .overlay(alignment: .topTrailing) {
             if paneState.showDocumentSearch && shouldShowSearchAction {
                 let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1343,11 +1387,12 @@ private struct UnifiedTopBarView: View {
 
     private func toolbarAction(_ title: String, enabled: Bool = true, selected: Bool = false,
                                action: @escaping () -> Void) -> UIAction {
-        UIAction(title: title, attributes: enabled ? [] : [.disabled], state: selected ? .on : .off) { _ in action() }
+        UIAction(title: title, attributes: enabled && !store.settingsPresented ? [] : [.disabled], state: selected ? .on : .off) { _ in action() }
     }
 
     private func toolbarContent<Content: View>(_ content: Content) -> AnyView {
         AnyView(content
+            .disabled(store.settingsPresented)
             .foregroundStyle(secondaryText)
             .environmentObject(store)
             .environmentObject(updateService)
@@ -1603,7 +1648,7 @@ private struct UnifiedTopBarView: View {
 
             WorkspacePersistStatusDot()
 
-            // Full Settings window (agent keys, appearance, data) — not the old mini menu.
+            // Settings stay inside the current workspace in every window mode.
             topIconButton("gearshape", help: store.ui("打开设置", "Open Settings")) {
                 showSettings()
             }
@@ -1640,11 +1685,6 @@ private struct UnifiedTopBarView: View {
                 appeared = true
             }
         }
-        // ⌘, bridge: Commands cannot reach the openWindow environment action,
-        // so the menu item posts a notification and the live top bar opens it.
-        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
-            showSettings()
-        }
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
         .animation(WeiBeiMotion.panel, value: paneState.showReader)
@@ -1653,7 +1693,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private func showSettings() {
-        openSettingsWindow(id: "weibei-settings", value: "settings")
+        store.settingsPresented = true
     }
 
     private func toggleAppearance() {

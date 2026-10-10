@@ -134,10 +134,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     override func validate(_ command: UICommand) {
         guard let value = command.propertyList as? String else { return }
         let enabled: Bool
-        if let id = AppShortcutID(rawValue: value) {
+        if value == "settings" {
+            enabled = true
+        } else if Self.workspace.settingsPresented {
+            enabled = false
+        } else if let id = AppShortcutID(rawValue: value) {
             enabled = Self.shortcutIsEnabled(id)
         } else {
-            return
+            enabled = true
         }
         if enabled {
             command.attributes.remove(.disabled)
@@ -149,8 +153,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     @objc private func performWorkspaceCommand(_ command: UICommand) {
         guard let value = command.propertyList as? String else { return }
         let store = Self.workspace
+        guard !store.settingsPresented || value == "settings" else { return }
         switch value {
-        case "settings": Self.openSettingsWindow()
+        case "settings": store.settingsPresented = true
         case "check-updates": Self.updates.checkForUpdates()
         case "help-feedback": Self.open(WeiBeiHelpLinks.feedback)
         case "help-website": Self.open(WeiBeiHelpLinks.website)
@@ -210,20 +215,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             store.dismissCourseWorkspace()
         }
         action()
-    }
-
-    private static func openSettingsWindow() {
-        if let scene = settingsScene {
-            UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil, errorHandler: nil)
-            return
-        }
-        NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
-    }
-
-    private static var settingsScene: UIWindowScene? {
-        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first {
-            ($0.session.userInfo?["weibei-settings"] as? Bool) == true
-        }
     }
 
     private static func open(_ url: URL) {
@@ -377,20 +368,6 @@ struct CatalystWeiBeiApp: App {
             workspaceContent
 #endif
         }
-        // Catalyst turns defaultSize into fixed native size constraints on macOS 27.
-        // CatalystWindowChrome requests the initial frame without restricting later resizing.
-        WindowGroup(id: "weibei-settings", for: String.self) { _ in
-            SettingsView()
-                .weiBeiMotionScoped()
-                .environmentObject(AppDelegate.workspace)
-                .environmentObject(AppDelegate.updates)
-                .frame(minWidth: 700, minHeight: 600)
-                .background(CatalystWindowChrome(appearanceMode: AppDelegate.workspace.appearanceMode,
-                                                initialSize: CGSize(width: 900, height: 720),
-                                                minimumSize: CGSize(width: 700, height: 600)))
-                .background(SettingsSceneMarker())
-                .ignoresSafeArea(.container, edges: .top)
-        }
     }
 
     private var workspaceContent: some View {
@@ -418,20 +395,6 @@ enum WeiBeiHelpLinks {
     static let feedback = WeiBeiFeedbackLink.newIssue
     static let website = URL(string: "https://wroughtmind.github.io/weibei/")!
     static let privacy = URL(string: "https://github.com/WroughtMind/weibei/blob/main/PRIVACY.md")!
-}
-
-private struct SettingsSceneMarker: UIViewRepresentable {
-    func makeUIView(context: Context) -> Marker { Marker() }
-    func updateUIView(_ view: Marker, context: Context) { view.tagScene() }
-    final class Marker: UIView {
-        override func didMoveToWindow() { super.didMoveToWindow(); tagScene() }
-        func tagScene() {
-            guard let session = window?.windowScene?.session else { return }
-            var info = session.userInfo ?? [:]
-            info["weibei-settings"] = true
-            session.userInfo = info
-        }
-    }
 }
 
 #if WEIBEI_ACCEPTANCE_CHECKS

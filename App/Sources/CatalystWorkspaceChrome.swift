@@ -570,6 +570,7 @@ struct CatalystWindowChrome: UIViewRepresentable {
             scene.titlebar?.titleVisibility = .hidden
             scene.titlebar?.separatorStyle = .none
             scene.sizeRestrictions?.minimumSize = minimumSize
+            scene.sizeRestrictions?.allowsFullScreen = true
             let initialSizeKey = "weibeiInitialWindowSizeApplied"
             if scene.session.userInfo?[initialSizeKey] as? Bool != true {
                 var info = scene.session.userInfo ?? [:]

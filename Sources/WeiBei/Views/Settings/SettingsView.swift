@@ -15,6 +15,81 @@ import WeiBeiCore
 // Theme lives only on the Interface page (no top-bar or settings-header palette).
 // Default landing section is always Chat.
 
+enum WeiBeiSettingsLayout {
+    static let initialSize = CGSize(width: 900, height: 720)
+}
+
+/// A fixed settings surface inside the workspace; it never creates a window or a Space.
+struct SettingsPanel: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let availableSize: CGSize
+
+    var body: some View {
+        // Keep the original size, allowing only enough room to stay inside a smaller workspace.
+        let width = min(WeiBeiSettingsLayout.initialSize.width, availableSize.width - 32)
+        let height = min(WeiBeiSettingsLayout.initialSize.height, availableSize.height - 32)
+        VStack(spacing: 0) {
+            HStack {
+                Text(store.ui("设置", "Settings"))
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Button { store.settingsPresented = false } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel(store.ui("关闭设置", "Close Settings"))
+                .accessibilityIdentifier("settings-panel-close")
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
+            Divider().overlay(WeiBeiTheme.hairline.opacity(0.55))
+            SettingsView()
+        }
+        .frame(width: width, height: height)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .background {
+            ZStack {
+                if store.appearanceMode.isGlass {
+                    // This panel sits above workspace content, so its material
+                    // must blur inside the window rather than behind the window.
+                    Rectangle().fill(.regularMaterial)
+                    Color(weiBeiNativeColor: WeiBeiNativePalette.glassBaseTint(for: store.appearanceMode))
+                } else {
+                    WeiBeiTheme.paper
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(WeiBeiTheme.hairline.opacity(0.65), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.2), radius: 24, y: 8)
+        .preferredColorScheme(store.appearanceMode.colorScheme)
+        .weiBeiOnExitCommand { store.settingsPresented = false }
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+        .background(SettingsPanelViewportProbe())
+#endif
+    }
+}
+
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+/// Exposes the actual mounted panel bounds to the native acceptance harness only.
+private struct SettingsPanelViewportProbe: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.accessibilityIdentifier = "settings-panel-viewport"
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) {}
+}
+#endif
+
 struct SettingsView: View {
     // Visible to `internal` so the Settings sub-views in Views/Settings/*.swift
     // (same-target extensions) can bind to them.
@@ -68,9 +143,6 @@ struct SettingsView: View {
                 .overlay(WeiBeiTheme.hairline.opacity(0.55))
             settingsDetail
         }
-        // fullSizeContentView: the traffic lights float over this top inset.
-        .padding(.top, 30)
-        .frame(minWidth: 860, minHeight: 610)
         .overlay {
             if showFeedbackSheet {
                 ZStack {
@@ -105,27 +177,14 @@ struct SettingsView: View {
             }
         }
         .animation(WeiBeiMotion.panel, value: showFeedbackSheet)
-        .background {
-            // Same foreground sheet as the main window — Settings is the most
-            // text-dense glass surface and needs the shared legibility wash.
-            WeiBeiGlassForegroundSheet(mode: store.appearanceMode)
-                .ignoresSafeArea()
-        }
-        .background {
-            WeiBeiThemeBackdrop(mode: store.appearanceMode)
-                .ignoresSafeArea()
-        }
 #if targetEnvironment(macCatalyst)
         .background {
             if let id = recordingShortcutID {
                 CatalystShortcutRecorder(onChord: { applyRecordedShortcut(id, chord: $0) }, onCancel: stopShortcutRecording)
             }
         }
-#else
-        .background(SettingsWindowPaper(appearanceMode: store.appearanceMode))
 #endif
         .foregroundStyle(WeiBeiTheme.ink)
-        .preferredColorScheme(store.appearanceMode.colorScheme)
         .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
         .onAppear {
             // Always land on Chat: highest-frequency durable settings (provider / key / model).
@@ -206,8 +265,7 @@ struct SettingsView: View {
 
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // No big "设置" masthead: the window is the settings window; the
-            // tabs start right below the floating traffic lights.
+            // The panel header owns the title and close action.
             VStack(spacing: 2) {
                 ForEach(SettingsSection.allCases) { section in
                     settingsSidebarButton(section)
@@ -522,12 +580,13 @@ struct SettingsView: View {
         return cloudNames.contains { path.contains($0) }
     }
 
-    /// Theme picker: 2×2 grid, one card per style pair — real mini-chrome
+    /// Theme picker: two columns when they fit, one in a narrow workspace.
+    /// One card per style pair — real mini-chrome
     /// previews split light/dark side by side. Tap picks the pair; the
     /// light/dark resolution comes from the 外观 preference above.
     private var themePicker: some View {
         LazyVGrid(
-            columns: [GridItem(.fixed(208), spacing: 12), GridItem(.fixed(208), spacing: 12)],
+            columns: [GridItem(.adaptive(minimum: 200), spacing: 12)],
             alignment: .leading,
             spacing: 12
         ) {
@@ -535,6 +594,7 @@ struct SettingsView: View {
                 stylePreviewCard(style)
             }
         }
+        .frame(maxWidth: 428, alignment: .leading)
         // Eight full mini-chrome previews repainting every scroll frame over a
         // transparent glass window janks hard — rasterize the whole grid once.
         .drawingGroup()
@@ -556,8 +616,8 @@ struct SettingsView: View {
                         WeiBeiThemeLayoutPreview(mode: style.darkMode)
                             .mask { HStack(spacing: 0) { Color.clear; Color.white } }
                     }
-                    .frame(width: 208, height: 130)
                     .frame(maxWidth: .infinity)
+                    .frame(height: 130)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1165,82 +1225,3 @@ private enum SettingsType {
     static let pill: Font = .system(size: 12, weight: .medium)
     static let menu: Font = .system(size: 13, weight: .semibold)
 }
-
-/// Paint the Settings window with the same paper as the workspace.
-/// Leave the system titlebar in place so traffic lights stay clear of「设置」.
-#if !targetEnvironment(macCatalyst)
-private struct SettingsWindowPaper: NSViewRepresentable {
-    var appearanceMode: WeiBeiAppearanceMode
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        context.coordinator.observe(view)
-        DispatchQueue.main.async { configure(view.window) }
-        return view
-    }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        configure(view.window)
-    }
-
-    func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
-        coordinator.stop()
-    }
-
-    /// SwiftUI reasserts its own titlebar chrome whenever the Settings window
-    /// is activated — a one-shot styleMask insert gets silently reverted. Re-
-    /// insert full-size content on every activation so the glass sheet reaches
-    /// the very top of the window.
-    @MainActor
-    final class Coordinator {
-        private var observer: NSObjectProtocol?
-
-        func observe(_ view: NSView) {
-            guard observer == nil else { return }
-            observer = NotificationCenter.default.addObserver(
-                forName: NSWindow.didBecomeKeyNotification,
-                object: nil,
-                queue: .main
-            ) { [weak view] note in
-                guard let window = note.object as? NSWindow,
-                      window === view?.window,
-                      !window.styleMask.contains(.fullSizeContentView) else { return }
-                window.styleMask.insert(.fullSizeContentView)
-            }
-        }
-
-        func stop() {
-            if let observer {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            observer = nil
-        }
-    }
-
-    private func configure(_ window: NSWindow?) {
-        guard let window else { return }
-        // Keep the window title ("设置") for the Window menu — the borderless
-        // chrome comes from .windowStyle(.hiddenTitleBar) on the scene.
-        window.titlebarAppearsTransparent = true
-        window.titlebarSeparatorStyle = .none
-        window.styleMask.insert(.fullSizeContentView)
-        window.toolbar = nil
-        window.isOpaque = !appearanceMode.isGlass
-        window.backgroundColor = appearanceMode.isGlass
-            ? .clear
-            : appearanceMode.windowBackground
-        // Flip through nil on light↔dark — assigning a same-name appearance
-        // directly leaves the system titlebar material stuck on the old tint.
-        let targetName: NSAppearance.Name = appearanceMode.isDark ? .darkAqua : .aqua
-        if window.appearance?.name != targetName {
-            window.appearance = nil
-            window.appearance = NSAppearance(named: targetName)
-        }
-        window.contentView?.wantsLayer = appearanceMode.isGlass
-        window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
-    }
-}
-
-#endif

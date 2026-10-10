@@ -602,6 +602,8 @@ enum CatalystBusinessCheck {
             }
             try check("original_import_reader_and_editor", materials.count == 1 && notes.count == 1
                 && noteEditor.bounds.width > 100 && noteEditor.bounds.height > 100)
+            result["contextual_picker_layout"] = try await verifyContextualPickerAlignment(store, in: noteEditor.window!)
+            try check("material_and_note_pickers_align", true)
             store.noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "\n\n" + noteMarker)
             try await until("editor command acknowledged") { store.noteEditorCommand == nil && store.noteText.contains(noteMarker) }
             let captured = await store.freshActiveNoteEditorSnapshot()
@@ -632,28 +634,58 @@ enum CatalystBusinessCheck {
             try check("connection_profile_switch_back", store.activeAgentProfileID == activeConnection
                 && store.agentProviderID == .custom && store.agentAuthMethod == .apiKey
                 && store.agentBaseURL == endpoint && store.modelName == "catalyst-local-check")
-            NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
-            let settingsScene = {
-                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-                    .first { ($0.session.userInfo?["weibei-settings"] as? Bool) == true }
+            result["workspace_before_full_screen"] = CatalystDesktopWindow.shared.fullScreenWindowDiagnosticsForCheck()
+            guard let workspaceScene = conversation()?.view.window?.windowScene,
+                  CatalystDesktopWindow.shared.setWorkspaceFullScreenForCheck(true) else {
+                throw Failure("workspace full-screen check unavailable")
             }
-            try await until("connection cards in the real settings window") {
-                guard let window = settingsScene()?.windows.first(where: { !$0.isHidden }) else { return false }
-                return window.bounds.width >= 700 && window.bounds.height >= 600
+            try await until("workspace finishes entering full screen") {
+                let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
+                result["workspace_full_screen_transition"] = state
+                return workspaceScene.isFullScreen && state["workspace_entered_full_screen"] == true
+            }
+            let scenesBeforeSettings = Set(UIApplication.shared.connectedScenes.map { $0.session.persistentIdentifier })
+            guard let window = conversation()?.view.window else {
+                throw Failure("workspace window disappeared before opening settings")
+            }
+            let windowBoundsBeforeSettings = window.bounds
+            store.settingsPresented = true
+            try await until("connection cards inside the original workspace") {
+                descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
                     && !AgentAccountService.shared.isRefreshingModels
                     && AgentAccountService.shared.hasLoadedModels(provider: .custom)
                     && AgentAccountService.shared.liveModelIDs.contains("catalyst-local-check")
             }
-            guard let scene = settingsScene(), let window = scene.windows.first(where: { !$0.isHidden }) else {
-                throw Failure("connection settings window disappeared")
-            }
+            guard let panel = descendants(window).first(where: {
+                $0.accessibilityIdentifier == "settings-panel-viewport"
+            }) else { throw Failure("settings panel is not mounted in the workspace") }
+            let panelFrame = panel.convert(panel.bounds, to: window)
+            let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
+            result["settings_full_screen"] = state
+            result["settings_panel_frame"] = String(describing: panelFrame)
+            result["settings_native_windows"] = CatalystDesktopWindow.shared.fullScreenWindowDiagnosticsForCheck()
+            try check("settings_panel_stays_in_original_full_screen_window",
+                panel.window === window && panel.window?.windowScene === workspaceScene
+                    && Set(UIApplication.shared.connectedScenes.map { $0.session.persistentIdentifier }) == scenesBeforeSettings
+                    && window.bounds == windowBoundsBeforeSettings
+                    && panelFrame.width > 0 && panelFrame.height > 0 && window.bounds.contains(panelFrame)
+                    && state["workspace_full_screen"] == true && state["workspace_on_active_space"] == true)
             let settingsSnapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
             try settingsSnapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("connection-cards.png"))
             try check("connection_cards_settings_and_authenticated_models", true)
-            UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil, errorHandler: nil)
-            try await until("settings window closes") { settingsScene() == nil }
+            store.settingsPresented = false
+            try await until("settings panel closes without replacing the workspace") {
+                !descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
+                    && window.windowScene === workspaceScene
+            }
+            _ = CatalystDesktopWindow.shared.setWorkspaceFullScreenForCheck(false)
+            try await until("workspace finishes returning to window mode") {
+                let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
+                result["workspace_full_screen_transition"] = state
+                return !workspaceScene.isFullScreen && state["workspace_exited_full_screen"] == true
+            }
             store.select(itemID: material.id)
             try await until("original composer mounted") {
                 AgentProviderReadiness.isConfigured(for: store)
@@ -831,6 +863,14 @@ enum CatalystBusinessCheck {
             result["failure_state"] = [
                 "application_state": UIApplication.shared.applicationState.rawValue,
                 "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
+                "window_scenes": UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.map { scene in
+                    ["id": scene.session.persistentIdentifier,
+                     "activation_state": String(scene.activationState.rawValue),
+                     "full_screen": String(scene.isFullScreen),
+                     "allows_full_screen": String(describing: scene.sizeRestrictions?.allowsFullScreen),
+                     "toolbar": scene.titlebar?.toolbar.map { String(describing: $0.identifier) } ?? "",
+                     "toolbar_identity": scene.titlebar?.toolbar.map { String(describing: ObjectIdentifier($0)) } ?? ""]
+                },
                 "motion_preference": store.motionPreference.rawValue,
                 "system_reduce_motion": UIAccessibility.isReduceMotionEnabled,
                 "agent_running": store.isAgentRunningInActiveChat,
@@ -844,6 +884,7 @@ enum CatalystBusinessCheck {
                     return state
                 }
             ]
+            result["failure_native_windows"] = CatalystDesktopWindow.shared.fullScreenWindowDiagnosticsForCheck()
             if let controller = conversation() {
                 let collection = controller.collection
                 result["conversation_state"] = [
@@ -869,6 +910,33 @@ enum CatalystBusinessCheck {
             store.showImportantOperationError("候选业务检查失败：\(error.localizedDescription)")
             if CommandLine.arguments.contains("--exit-after-check") { exit(1) }
         }
+    }
+
+    private static func verifyContextualPickerAlignment(_ store: WorkspaceStore, in window: UIWindow) async throws -> [String: Any] {
+        let materialID = store.selectedMaterialItem?.id
+        let noteID = store.activeNoteItemID
+        store.showContextualBrowser(.material)
+        store.showContextualBrowser(.note)
+        defer { store.materialPickerPresented = false; store.notePickerPresented = false }
+        var frames: [CGRect] = []
+        try await until("both picker search fields align below the toolbar") {
+            window.layoutIfNeeded()
+            let fields = descendants(window).compactMap { $0 as? UITextField }.filter {
+                $0.accessibilityLabel == store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags")
+                    && isVisible($0, in: window)
+            }
+            frames = fields.map { $0.convert($0.bounds, to: window) }.sorted { $0.minX < $1.minX }
+            return frames.count == 2 && abs(frames[0].minY - frames[1].minY) < 1
+                && frames.allSatisfy { $0.width <= 320 && $0.height <= 30 && $0.minY >= window.safeAreaInsets.top }
+        }
+        guard store.selectedMaterialItem?.id == materialID, store.activeNoteItemID == noteID else {
+            throw Failure("picker changed the current material or note")
+        }
+        let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("contextual-pickers.png"))
+        return ["search_frames": frames.map { String(describing: $0) }, "top_difference": abs(frames[0].minY - frames[1].minY)]
     }
 
     private static func verifySelectionChat(_ store: WorkspaceStore, material: StudyItem,
@@ -965,18 +1033,27 @@ enum CatalystBusinessCheck {
         }
         guard store.activeStudySessionID == mainID, mainComposer.text == mainDraft else { throw Failure("citation replaced the main conversation") }
         try capture("selection-discussion.png")
+        let originalAppearanceStyle = store.appearanceStyle
+        store.appearanceStyle = .mistGlass
+        try await until("floating conversation uses the frosted workspace theme") {
+            CatalystDesktopWindow.shared.materialWindowCount() > 0
+                && [.glassMist, .glassSlate].contains(store.appearanceMode)
+                && floatingComposer()?.window === window
+        }
+        try capture("selection-discussion-mist.png")
+        store.appearanceStyle = originalAppearanceStyle
         mainConversation.quoteText?("主会话引用片段")
         // A2: 引用追加到各自草稿末尾（前面空一行），不再替换已写的草稿。
         let mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
         try await until("main quote appends to its own composer") {
             mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
         }
-        guard let floatingMessage = floatingMessage(messageID, in: window),
+        guard let floatingConversation = conversation(containing: messageID), floatingConversation.isFloatingConversation,
               let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
             throw Failure("floating message quote action unavailable")
         }
         let floatingQuoted = draft + "\n\n> " + quotedMessage.text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-        floatingMessage.onQuote()
+        floatingConversation.quote(quotedMessage.text)
         try await until("floating quote appends to its own composer") {
             floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
                 && mainComposer.text == mainQuoted
@@ -1029,12 +1106,16 @@ enum CatalystBusinessCheck {
                 diagnostic["stage"] = "floating_row_visibility"
                 guard isVisible(row, in: window) else { return false }
                 diagnostic["stage"] = "floating_body_missing"
-                guard let body = descendants(window).compactMap({ $0 as? MarkdownTextView }).first(where: {
-                    $0.window === window && $0.textLabelView.attributedText.string.contains(floatingBodyMarker)
+                guard let controller = conversation(containing: messageID), controller.isFloatingConversation,
+                      let message = controller.messages.first(where: { $0.id == messageID.uuidString }) else { return false }
+                let bodies = descendants(controller.view).compactMap { $0 as? BlockView }
+                    .filter { $0.record?.messageID == messageID.uuidString && $0.window === window }
+                guard let body = bodies.first(where: {
+                    $0.label.attributedText.string.contains(floatingBodyMarker)
                 }) else { return false }
                 body.layoutIfNeeded()
-                let text = body.textLabelView.attributedText
-                let mathImages = body.content.rendered.values.compactMap(\.image)
+                let text = body.label.attributedText
+                let mathImages = message.blocks.first?.content.rendered.values.compactMap(\.image) ?? []
                 let markerRange = (text.string as NSString).range(of: floatingBodyMarker)
                 let font = markerRange.location == NSNotFound ? nil
                     : text.attribute(.font, at: markerRange.location, effectiveRange: nil) as? UIFont
@@ -1054,11 +1135,14 @@ enum CatalystBusinessCheck {
                 diagnostic["stage"] = "floating_body_visibility"
                 guard fullyVisible(body, in: window) else { return false }
                 var mathAttachments = 0
-                text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, _, _ in
-                    if attributes[.litextAttachment] is TextLabel.Attachment,
-                       attributes[.litextLineDrawingAction] != nil { mathAttachments += 1 }
+                for paragraph in bodies {
+                    let paragraphText = paragraph.label.attributedText
+                    paragraphText.enumerateAttributes(in: NSRange(location: 0, length: paragraphText.length)) { attributes, _, _ in
+                        if attributes[.litextAttachment] is TextLabel.Attachment,
+                           attributes[.litextLineDrawingAction] != nil { mathAttachments += 1 }
+                    }
                 }
-                let measured = body.boundingSize(for: body.bounds.width)
+                let measured = body.label.intrinsicContentSize
                 let rowFrame = row.convert(row.bounds, to: window)
                 let bodyFrame = body.convert(body.bounds, to: window)
                 diagnostic["native_math_attachments"] = mathAttachments
@@ -1342,9 +1426,10 @@ enum CatalystBusinessCheck {
             .compactMap(\.rootViewController).flatMap(children).compactMap { $0 as? ConversationController }
             .first { controller in messageID.map { id in controller.messages.contains { $0.id == id.uuidString } } ?? true }
     }
-    private static func floatingMessage(_ id: UUID, in window: UIWindow) -> CatalystFloatingMessageCheckProbe.Probe? {
-        descendants(window).compactMap { $0 as? CatalystFloatingMessageCheckProbe.Probe }
-            .first { $0.messageID == id && $0.window === window }
+    private static func floatingMessage(_ id: UUID, in window: UIWindow) -> UIView? {
+        guard let controller = conversation(containing: id), controller.isFloatingConversation,
+              controller.view.window === window else { return nil }
+        return controller.collection
     }
     private static func isVisible(_ view: UIView, in window: UIWindow) -> Bool {
         guard view.window === window, view.bounds.width > 1, view.bounds.height > 1 else { return false }
@@ -1400,25 +1485,6 @@ enum CatalystBusinessCheck {
         // File addresses come from the native drag board. The provider
         // must not be asked to decode content as a file URL.
         preconditionFailure("Unexpected object loading in the file-drop receiver check")
-    }
-}
-
-/// Test-only observation of the real SwiftUI row and its production quote action.
-/// It does not replace rendering, scrolling, draft mutation, or focus handling.
-struct CatalystFloatingMessageCheckProbe: UIViewRepresentable {
-    let messageID: UUID
-    let onQuote: () -> Void
-    final class Probe: UIView {
-        var messageID: UUID?
-        var onQuote: () -> Void = {}
-    }
-    func makeUIView(context: Context) -> Probe { Probe() }
-    func updateUIView(_ view: Probe, context: Context) {
-        view.messageID = messageID
-        view.onQuote = onQuote
-    }
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: Probe, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? uiView.bounds.width, height: proposal.height ?? uiView.bounds.height)
     }
 }
 

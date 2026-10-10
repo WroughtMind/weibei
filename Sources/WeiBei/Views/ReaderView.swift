@@ -286,7 +286,7 @@ struct ReaderView: View {
             VStack(spacing: 0) {
                 readerBody
 #if targetEnvironment(macCatalyst)
-                    .ignoresSafeArea(.container, edges: .top)
+                    .ignoresSafeArea(.container, edges: store.selectedMaterialItem == nil || store.materialPickerPresented ? [] : .top)
 #endif
             }
             // Collapsed split hosts have zero width; retain the last measured reader viewport.
