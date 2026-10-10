@@ -202,6 +202,23 @@ jobs:
           test "$(uname -m)" = "$WEIBEI_TARGET_ARCH"
           xcodebuild -version
 
+      - name: 解除英特尔云端图标服务死循环
+        run: |
+          # macOS 26 Intel 镜像的图标服务会因虚拟 GPU 崩溃，Dock 随之卡在同步回复。
+          # https://github.com/actions/runner-images/issues/14751
+          # 只处理隔离 CI 桌面上已确认崩溃的服务；真实全屏与 App 验收仍须通过。
+          test "$CI" = true
+          [[ "$WEIBEI_TARGET_ARCH" == x86_64 ]] || exit 0
+          mkdir -p "$RUNNER_TEMP/weibei-native-full-screen-evidence"
+          ICON_SERVICE="gui/$(id -u)/com.apple.iconservices.iconservicesagent"
+          launchctl print "$ICON_SERVICE" > "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-iconservices-before.log"
+          if grep -q 'last terminating signal = Abort trap: 6' "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-iconservices-before.log"; then
+            launchctl bootout "$ICON_SERVICE"
+            launchctl disable "$ICON_SERVICE"
+            killall Dock
+            echo '已解除云端图标服务死循环并重新启动 Dock；继续验证真实全屏进出。'
+          fi
+
       - name: 记录系统原生全屏对照
         id: native_full_screen
         # 系统本身无法进出全屏时立即保留环境证据，避免继续编译后才重复超时。
