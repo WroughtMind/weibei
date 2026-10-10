@@ -1020,8 +1020,7 @@ final class WorkspaceStore: ObservableObject {
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
         self.init(
             workspaceDirectory: folder,
-            noteBackupRootURL: folder.appendingPathComponent(NoteBackupRing.subdirectoryName, isDirectory: true),
-            startsAtBlankEntries: true
+            noteBackupRootURL: folder.appendingPathComponent(NoteBackupRing.subdirectoryName, isDirectory: true)
         )
     }
 
@@ -1107,11 +1106,9 @@ final class WorkspaceStore: ObservableObject {
         WeiBeiThemeRuntime.mode = appearanceMode
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
         let migratedImportedItemIdentities = migrateLegacyImportedItemIdentities()
-        // 空页启动（生产默认）时活跃选择随即被 resetPrimaryEntriesForLaunch 清空：
-        // 此刻求值恢复出来的笔记正文，其降级错误会弹到用户永远看不到的界面上，
-        // 形成「空白页+常驻误报横幅」。空页启动直接跳过这次求值。
-        if !startsAtBlankEntries,
-           resolvedImportedFileBookmarks || migratedImportedItemIdentities {
+        // load() 时资料库尚未绑定；等路径和书签恢复后重新读取当前笔记，
+        // 避免恢复了笔记选择却仍显示空白模板。显式空页启动不读取正文。
+        if !startsAtBlankEntries {
             noteText = noteText(for: activeNoteItem)
         }
         if startsAtBlankEntries {
