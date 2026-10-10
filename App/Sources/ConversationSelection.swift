@@ -116,6 +116,11 @@ final class ConversationSelection: NSObject, TextLabelViewDelegate, UIContextMen
                 actions.append(UIAction(title: CatalystInterfaceCopy.text("引用所选文字", "Quote selected text"), image: UIImage(systemName: "text.quote")) { _ in controller?.quote(self?.text() ?? "") })
             }
             actions.append(UIAction(title: CatalystInterfaceCopy.text("复制整条回答", "Copy the whole answer")) { _ in UIPasteboard.general.string = message.copyableMarkdown })
+            if controller?.isFloatingConversation == true {
+                actions.append(UIAction(title: CatalystInterfaceCopy.text("引用到输入框", "Quote into the input"), image: UIImage(systemName: "text.quote")) { _ in
+                    controller?.quote(message.original?.text ?? message.markdown)
+                })
+            }
             if let sources = message.original?.sources, !sources.isEmpty {
                 actions += sources.map { source in UIAction(title: source.label, image: UIImage(systemName: "book")) { _ in controller?.openSource?(source) } }
             } else if message.original == nil {

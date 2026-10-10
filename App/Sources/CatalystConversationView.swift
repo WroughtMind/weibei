@@ -32,6 +32,7 @@ struct CatalystConversationView: View {
         func makeUIViewController(context: Context) -> ConversationController {
             let controller = ConversationController(fixtureMode: false)
             controller.usesWorkspaceChrome = true
+            controller.isFloatingConversation = floatingThreadID != nil
             controller.openSource = { [weak workspace] in _ = workspace?.openAgentReplySource($0) }
             controller.readingMessageChanged = onReadingMessage
             controller.contentHeightChanged = onContentHeight
@@ -41,13 +42,16 @@ struct CatalystConversationView: View {
         }
         func updateUIViewController(_ controller: ConversationController, context: Context) {
             controller.reduceMotion = reduceMotion
+            controller.isFloatingConversation = floatingThreadID != nil
             controller.reservesReplySpace = floatingThreadID == nil
             controller.workspaceBodyWidth = bodyWidth
             controller.readingMessageChanged = onReadingMessage
             controller.contentHeightChanged = onContentHeight
             let coordinator = context.coordinator
             coordinator.wideTypography = wideTypography
-            let fontSize = (wideTypography ? 16.0 : 14.0) * workspace.interfaceTextScale.multiplier
+            let fontSize = (floatingThreadID != nil
+                ? AgentChatLayoutMetrics.floatingBodyFontSize
+                : (wideTypography ? 16.0 : 14.0)) * workspace.interfaceTextScale.multiplier
             var appearanceChanged = false
             if coordinator.fontSize != fontSize || coordinator.appearance != workspace.appearanceMode {
                 coordinator.fontSize = fontSize; coordinator.appearance = workspace.appearanceMode
@@ -87,10 +91,10 @@ struct CatalystConversationView: View {
             let reveal = floatingThreadID == nil ? nil : workspace.selectionChatRevealMessageID
             let revealChanged = coordinator.requestedMessageID != reveal
             coordinator.requestedMessageID = reveal
-            let changed = coordinator.needsSnapshot(workspace, streaming: streaming)
-            let changedFloating = coordinator.floatingMessages != displayedMessages || coordinator.floatingThreadID != floatingThreadID
-            coordinator.floatingMessages = displayedMessages; coordinator.floatingThreadID = floatingThreadID
-            guard changed || changedFloating || appearanceChanged || revealChanged else { return }
+            let changed = coordinator.needsSnapshot(streaming: streaming,
+                                                     sessionID: targetID, displayedMessages: displayedMessages)
+            coordinator.floatingThreadID = floatingThreadID
+            guard changed || appearanceChanged || revealChanged else { return }
             var session = workspace.activeStudySession ?? StudySession(id: Coordinator.emptyID, title: workspace.agentConversationSubtitle)
             session.id = floatingThreadID ?? session.id
             session.messages = displayedMessages ?? workspace.messages
@@ -126,10 +130,15 @@ struct CatalystConversationView: View {
         var floatingMessages: [AgentMessage]?
         var floatingThreadID: UUID?
         var auxiliaryHosts: [String: CatalystHostingView] = [:]
-        func needsSnapshot(_ store: WorkspaceStore, streaming: AgentStreamingState) -> Bool {
-            let changed = enqueuedRevision != messageRevision || enqueuedSessionID != store.activeStudySessionID
+        func needsSnapshot(streaming: AgentStreamingState,
+                           sessionID: UUID?, displayedMessages: [AgentMessage]?) -> Bool {
+            let messagesChanged = displayedMessages == nil
+                ? enqueuedRevision != messageRevision
+                : floatingMessages != displayedMessages
+            let changed = messagesChanged || enqueuedSessionID != sessionID
                 || enqueuedStreamingID != streaming.displayingMessageID || enqueuedStreamingText != streaming.text
-            enqueuedRevision = messageRevision; enqueuedSessionID = store.activeStudySessionID
+            enqueuedRevision = messageRevision; enqueuedSessionID = sessionID
+            floatingMessages = displayedMessages
             enqueuedStreamingID = streaming.displayingMessageID; enqueuedStreamingText = streaming.text
             return changed
         }
@@ -138,10 +147,13 @@ struct CatalystConversationView: View {
             messageSubscription = workspace.$messages.sink { [weak self] _ in self?.messageRevision += 1 }
             controller.auxiliaryView = { [weak self, weak workspace, weak controller] message in
                 guard let self, let workspace, let original = message.original else { return UIView() }
-                let root = CatalystMessageFooter(initial: original,
+                let sessionID = floatingThreadID ?? original.origin?.chatID
+                let root = CatalystMessageFooter(initial: original, sessionID: sessionID,
                     streaming: original.completionState == .generating
-                        ? workspace.streaming(in: original.origin?.chatID) : inertAgentStreamingState,
-                    wideTypography: wideTypography, onHeight: { [weak controller, weak message] height in
+                        ? workspace.streaming(in: sessionID) : inertAgentStreamingState,
+                    wideTypography: wideTypography, compact: floatingThreadID != nil,
+                    onQuote: { [weak controller] text in controller?.quote(text) },
+                    onHeight: { [weak controller, weak message] height in
                     // Geometry arrives during SwiftUI layout; resize the collection after that pass.
                     DispatchQueue.main.async {
                         guard let message else { return }
@@ -239,22 +251,52 @@ struct CatalystConversationView: View {
                 Task { @MainActor in await controller?.revealMessage(id) }
             }
         }
-        func stop() { messageSubscription = nil; auxiliaryHosts.removeAll(); worker?.cancel(); worker = nil; pending = nil; if let navigation { NotificationCenter.default.removeObserver(navigation) }; navigation = nil }
+        func stop() {
+            if let floatingThreadID { workspace?.landAgentStreamingDisplayImmediately(in: floatingThreadID) }
+            messageSubscription = nil; auxiliaryHosts.removeAll(); worker?.cancel(); worker = nil; pending = nil
+            if let navigation { NotificationCenter.default.removeObserver(navigation) }; navigation = nil
+        }
         deinit { if let navigation { NotificationCenter.default.removeObserver(navigation) } }
     }
 }
 
 private struct CatalystMessageFooter: View {
     @EnvironmentObject var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     let initial: AgentMessage
+    let sessionID: UUID?
     @ObservedObject var streaming: AgentStreamingState
     let wideTypography: Bool
+    let compact: Bool
+    let onQuote: (String) -> Void
     let onHeight: (CGFloat) -> Void
-    private var message: AgentMessage { streaming.applyingDisplayText(to: store.messages.first { $0.id == initial.id } ?? initial) }
+    private var message: AgentMessage {
+        let messages = compact ? store.conversationMessages(in: sessionID) : store.messages
+        return streaming.applyingDisplayText(to: messages.first { $0.id == initial.id } ?? initial)
+    }
     var body: some View {
         let text = (streaming.isDisplaying(message.id) && !streaming.text.isEmpty) ? streaming.text : message.text
         VStack(alignment: .leading, spacing: 8) {
-            if message.role == .user {
+            if compact {
+                if message.role == .user || WorkspaceStore.isAgentFailureMessage(message.text) {
+                    FloatingSelectionMessageBubble(
+                        message: message,
+                        text: text,
+                        isError: WorkspaceStore.isAgentFailureMessage(message.text)
+                    )
+                    .contextMenu {
+                        Button { onQuote(text) } label: {
+                            Label(store.ui("引用到输入框", "Quote into the input"), systemImage: "text.quote")
+                        }
+                    }
+                } else if message.completionState == .generating
+                    && !message.toolActivities.contains(where: { $0.state == .running })
+                    && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
+                } else {
+                    Color.clear.frame(height: 1)
+                }
+            } else if message.role == .user {
                 AgentBubble(message: message, isChatWideTypography: wideTypography)
             } else {
                 if message.completionState == .generating && !message.toolActivities.contains(where: { $0.state == .running }) && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -271,10 +313,16 @@ private struct CatalystMessageFooter: View {
                     .onChange(of: geometry.size.height) { _, height in onHeight(max(8, height)) }
             }
         }
+        .onAppear {
+            if compact { store.setAgentStreamingReduceMotion(reduceMotion, in: sessionID) }
+        }
+        .onChange(of: reduceMotion) { _, enabled in
+            if compact { store.setAgentStreamingReduceMotion(enabled, in: sessionID) }
+        }
     }
 }
 
-/// The floating selection surface uses the same upstream UIKit text implementation.
+/// Native Markdown for standalone rich-answer surfaces.
 struct CatalystMessageMarkdown: UIViewRepresentable {
     var markdown: String
     var fontSize: CGFloat
@@ -282,9 +330,7 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
     var openLink: (URL) -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> MarkdownTextView {
-        let view = MarkdownTextView()
-        view.throttleInterval = nil
-        return view
+        context.coordinator.makeView()
     }
     func updateUIView(_ view: MarkdownTextView, context: Context) {
         view.linkHandler = { value, _, _ in
@@ -293,23 +339,63 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
             case let .string(value): if let url = URL(string: value) { openLink(url) }
             }
         }
-        let coordinator = context.coordinator
-        guard coordinator.markdown != markdown || coordinator.fontSize != fontSize || coordinator.appearance != appearanceMode else { return }
-        coordinator.markdown = markdown; coordinator.fontSize = fontSize; coordinator.appearance = appearanceMode
-        let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: appearanceMode)
-        let parsed = MarkdownParser().parse(markdown)
-        let content = MarkdownContent(parserResult: parsed, theme: theme)
-        view.setContentImmediately(content, theme: theme)
-        view.invalidateIntrinsicContentSize()
+        context.coordinator.update(view, markdown: markdown, fontSize: fontSize, appearance: appearanceMode)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context) -> CGSize? {
-        let width = max(1, proposal.width ?? uiView.bounds.width)
-        return CGSize(width: width, height: max(1, uiView.boundingSize(for: width).height))
+        context.coordinator.sizeThatFits(proposedWidth: proposal.width, view: uiView)
     }
-    final class Coordinator {
+    private final class MeasuringTextView: MarkdownTextView {
+        var onSizeInvalidation: (() -> Void)?
+        override func invalidateIntrinsicContentSize() {
+            super.invalidateIntrinsicContentSize()
+            onSizeInvalidation?()
+        }
+    }
+    @MainActor final class Coordinator {
+        var isMeasuring = false
+        var measurement = NativeMarkdownMeasurement()
         var markdown: String?
         var fontSize: CGFloat = 0
         var appearance: WeiBeiAppearanceMode?
+        #if WEIBEI_ACCEPTANCE_CHECKS
+        private(set) var measurementCount = 0
+        private(set) var contentApplyCount = 0
+        #endif
+
+        func makeView() -> MarkdownTextView {
+            let view = MeasuringTextView()
+            view.onSizeInvalidation = { [weak self] in
+                guard let self, !isMeasuring else { return }
+                measurement.invalidate()
+            }
+            view.throttleInterval = nil
+            return view
+        }
+
+        func update(_ view: MarkdownTextView, markdown: String, fontSize: CGFloat, appearance: WeiBeiAppearanceMode) {
+            guard self.markdown != markdown || self.fontSize != fontSize || self.appearance != appearance else { return }
+            measurement.invalidate()
+            self.markdown = markdown; self.fontSize = fontSize; self.appearance = appearance
+            let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: appearance)
+            let parsed = MarkdownParser().parse(markdown)
+            let content = MarkdownContent(parserResult: parsed, theme: theme)
+            #if WEIBEI_ACCEPTANCE_CHECKS
+            contentApplyCount += 1
+            #endif
+            view.setContentImmediately(content, theme: theme)
+            view.invalidateIntrinsicContentSize()
+        }
+
+        func sizeThatFits(proposedWidth: CGFloat?, view: MarkdownTextView) -> CGSize? {
+            isMeasuring = true
+            defer { isMeasuring = false }
+            return measurement.sizeThatFits(proposedWidth: proposedWidth, viewWidth: view.bounds.width) {
+                #if WEIBEI_ACCEPTANCE_CHECKS
+                measurementCount += 1
+                #endif
+                return view.boundingSize(for: $0).height
+            }
+        }
     }
 }
 

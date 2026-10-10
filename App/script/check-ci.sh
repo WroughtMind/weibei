@@ -17,8 +17,10 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-failure.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion-mist.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/connection-cards.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/confirmed-import.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/contextual-pickers.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-rich-answer-11pt.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/floating-rich-diagnostic.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
@@ -75,6 +77,8 @@ business = verify(business_path, 'source', 'passed')
 required_business_checks = {
     'active_connection_profile_matches_configuration', 'connection_profile_switch_back',
     'connection_cards_settings_and_authenticated_models',
+    'settings_panel_stays_in_original_full_screen_window',
+    'material_and_note_pickers_align',
     'confirmed_import_review_copy_and_dismiss',
     'workspace_file_drop_receiver',
     'workspace_external_transfer_preserves_bytes_and_cleans_staging',

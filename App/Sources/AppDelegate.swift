@@ -33,7 +33,21 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             noteBackupRootURL: root.appendingPathComponent(NoteBackupRing.subdirectoryName),
             startsAtBlankEntries: true)
     }()
-    static let updates = WeiBeiUpdateService()
+    static let updates: WeiBeiUpdateService = {
+        let service = WeiBeiUpdateService()
+        service.prepareForInstallation = {
+            let store = AppDelegate.workspace
+            store.commitCurrentReaderLocation()
+            guard await store.freshActiveNoteEditorSnapshot() else { return false }
+            store.flushPendingNotePersistence(flushWorkspace: false)
+            guard await store.flushPendingWorkspaceSaveAsync() else { return false }
+            // A file conflict/write failure must not be mistaken for a saved note.
+            return !store.noteEditingSession.dirty
+                && store.noteEditingSession.saveStatus != .failed
+                && store.noteEditingSession.saveStatus != .externallyModified
+        }
+        return service
+    }()
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var saveTask: Task<Void, Never>?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -42,6 +56,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         WeiBeiTypography.registerBundledFonts()
         guard !Self.usesFixture else { return true }
         _ = Self.workspace
+        let defaults = UserDefaults.standard
+        if let pendingBuild = defaults.string(forKey: WeiBeiUpdateService.pendingInstallationBuildKey),
+           pendingBuild == Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+           let version = defaults.string(forKey: WeiBeiUpdateService.pendingInstallationVersionKey) {
+            Self.workspace.showTransientNoteStatus(Self.workspace.ui("已更新到 \(version)", "Updated to \(version)"))
+            defaults.removeObject(forKey: WeiBeiUpdateService.pendingInstallationBuildKey)
+            defaults.removeObject(forKey: WeiBeiUpdateService.pendingInstallationVersionKey)
+        }
         lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.saveWorkspace() }
         })
@@ -134,10 +156,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     override func validate(_ command: UICommand) {
         guard let value = command.propertyList as? String else { return }
         let enabled: Bool
-        if let id = AppShortcutID(rawValue: value) {
+        if value == "settings" {
+            enabled = true
+        } else if Self.workspace.settingsPresented {
+            enabled = false
+        } else if let id = AppShortcutID(rawValue: value) {
             enabled = Self.shortcutIsEnabled(id)
         } else {
-            return
+            enabled = true
         }
         if enabled {
             command.attributes.remove(.disabled)
@@ -149,8 +175,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     @objc private func performWorkspaceCommand(_ command: UICommand) {
         guard let value = command.propertyList as? String else { return }
         let store = Self.workspace
+        guard !store.settingsPresented || value == "settings" else { return }
         switch value {
-        case "settings": Self.openSettingsWindow()
+        case "settings": store.settingsPresented = true
         case "check-updates": Self.updates.checkForUpdates()
         case "help-feedback": Self.open(WeiBeiHelpLinks.feedback)
         case "help-website": Self.open(WeiBeiHelpLinks.website)
@@ -210,20 +237,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             store.dismissCourseWorkspace()
         }
         action()
-    }
-
-    private static func openSettingsWindow() {
-        if let scene = settingsScene {
-            UIApplication.shared.requestSceneSessionActivation(scene.session, userActivity: nil, options: nil, errorHandler: nil)
-            return
-        }
-        NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
-    }
-
-    private static var settingsScene: UIWindowScene? {
-        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first {
-            ($0.session.userInfo?["weibei-settings"] as? Bool) == true
-        }
     }
 
     private static func open(_ url: URL) {
@@ -377,20 +390,6 @@ struct CatalystWeiBeiApp: App {
             workspaceContent
 #endif
         }
-        // Catalyst turns defaultSize into fixed native size constraints on macOS 27.
-        // CatalystWindowChrome requests the initial frame without restricting later resizing.
-        WindowGroup(id: "weibei-settings", for: String.self) { _ in
-            SettingsView()
-                .weiBeiMotionScoped()
-                .environmentObject(AppDelegate.workspace)
-                .environmentObject(AppDelegate.updates)
-                .frame(minWidth: 700, minHeight: 600)
-                .background(CatalystWindowChrome(appearanceMode: AppDelegate.workspace.appearanceMode,
-                                                initialSize: CGSize(width: 900, height: 720),
-                                                minimumSize: CGSize(width: 700, height: 600)))
-                .background(SettingsSceneMarker())
-                .ignoresSafeArea(.container, edges: .top)
-        }
     }
 
     private var workspaceContent: some View {
@@ -418,20 +417,6 @@ enum WeiBeiHelpLinks {
     static let feedback = WeiBeiFeedbackLink.newIssue
     static let website = URL(string: "https://wroughtmind.github.io/weibei/")!
     static let privacy = URL(string: "https://github.com/WroughtMind/weibei/blob/main/PRIVACY.md")!
-}
-
-private struct SettingsSceneMarker: UIViewRepresentable {
-    func makeUIView(context: Context) -> Marker { Marker() }
-    func updateUIView(_ view: Marker, context: Context) { view.tagScene() }
-    final class Marker: UIView {
-        override func didMoveToWindow() { super.didMoveToWindow(); tagScene() }
-        func tagScene() {
-            guard let session = window?.windowScene?.session else { return }
-            var info = session.userInfo ?? [:]
-            info["weibei-settings"] = true
-            session.userInfo = info
-        }
-    }
 }
 
 #if WEIBEI_ACCEPTANCE_CHECKS

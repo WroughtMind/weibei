@@ -1312,7 +1312,7 @@ private final class AgentPaneWidthRelay {
 ///
 /// Critical: content width must always fit the measured pane. Never invent a floor larger
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
-private enum AgentChatLayoutMetrics {
+enum AgentChatLayoutMetrics {
     /// ChatGPT-like fixed comfortable column in every layout: narrow panes fill
     /// outright, wide windows cap at ChatGPT's measured column (~960pt, 65% of a
     /// 1470pt window) — user-calibrated against side-by-side screenshots.
@@ -1325,6 +1325,8 @@ private enum AgentChatLayoutMetrics {
     static let wideSideGutter: CGFloat = 28
     static let composerHeight: CGFloat = 44
     static let composerFontSize: CGFloat = 15
+    static let floatingBodyFontSize: CGFloat = 11
+    static let floatingUserFontSize: CGFloat = 12
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
         // Immersive conversation only — document multi-pane keeps compact strip metrics.
@@ -2574,6 +2576,7 @@ struct FloatingSelectionAgentView: View {
         height: SelectionFloatingAgentPlacement.initialPlacedPanelHeight
     )
     @State private var measuredFeedContentHeight: CGFloat = 0
+    @State private var feedHeightMeasurement = FloatingFeedHeightMeasurement()
     /// Stays on after the answer passes the cap, so a viewport measurement cannot shrink the panel back open.
     @State private var feedExceededCap = false
     /// Set when the user enlarges the answer area. The reply can still grow up to the cap.
@@ -2916,7 +2919,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .onPreferenceChange(FloatingPanelSizeKey.self) { size in
-            guard resizeSession == nil, size.width > 1, size.height > 1 else { return }
+            guard size.width > 1, size.height > 1, size != measuredPanelSize else { return }
             measuredPanelSize = size
             keepPanelOnScreen(panelHeight: size.height)
         }
@@ -2924,6 +2927,7 @@ struct FloatingSelectionAgentView: View {
             if !shown {
                 measuredFeedContentHeight = 0
                 feedExceededCap = false
+                feedHeightMeasurement.height = nil
             }
         }
         .overlay {
@@ -2934,38 +2938,61 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
-    /// The answer is the text's own height. A fixed frame is only for a cap, a pin, or a drag.
+    /// The desktop float shares the paragraph list used by the main conversation.
     @ViewBuilder
     private var floatingAnswerFeed: some View {
-        if locksFloatingFeedHeight {
-            ScrollViewReader { proxy in
-                ScrollView(showsIndicators: false) {
-                    floatingAnswerStack
-                }
+#if targetEnvironment(macCatalyst)
+        if let threadID = interaction.activeSelectionAskThreadID {
+            VStack(alignment: .leading, spacing: 0) {
+                CatalystConversationView(
+                    bodyWidth: panelWidth - 28,
+                    displayedMessages: visibleFloatingMessages,
+                    floatingThreadID: threadID,
+                    onContentHeight: adoptMeasuredFeedHeight,
+                    onFocusComposer: {
+                        draftFocused = true
+                        composerFocusTrigger &+= 1
+                    },
+                    onReadingMessage: { _ in }
+                )
                 .frame(height: resolvedFloatingFeedHeight)
-                .onAppear {
-                    if store.selectionChatRevealMessageID != nil {
-                        revealFloatingMessage(using: proxy)
-                    } else {
-                        scrollFloatingFeedToEnd(using: proxy)
-                    }
+
+                if store.isFloatingChatRunning
+                    && !visibleFloatingMessages.contains(where: { $0.completionState == .generating }) {
+                    AgentLiveResponse(streaming: floatingStreaming, compact: true)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
                 }
-                .onChange(of: store.selectionChatRevealMessageID) { _, _ in
+            }
+        }
+#else
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                floatingAnswerStack
+            }
+            .frame(height: resolvedFloatingFeedHeight)
+            .scrollDisabled(!locksFloatingFeedHeight)
+            .onAppear {
+                if store.selectionChatRevealMessageID != nil {
                     revealFloatingMessage(using: proxy)
-                }
-                .onChange(of: floatingStreaming.text) { _, _ in
-                    scrollFloatingFeedToEnd(using: proxy)
-                }
-                .onChange(of: visibleFloatingMessages.count) { _, _ in
+                } else {
                     scrollFloatingFeedToEnd(using: proxy)
                 }
             }
-        } else {
-            floatingAnswerStack
-                .fixedSize(horizontal: false, vertical: true)
+            .onChange(of: store.selectionChatRevealMessageID) { _, _ in
+                revealFloatingMessage(using: proxy)
+            }
+            .onChange(of: floatingStreaming.text) { _, _ in
+                scrollFloatingFeedToEnd(using: proxy)
+            }
+            .onChange(of: visibleFloatingMessages.count) { _, _ in
+                scrollFloatingFeedToEnd(using: proxy)
+            }
         }
+#endif
     }
 
+#if !targetEnvironment(macCatalyst)
     private var floatingAnswerStack: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(visibleFloatingMessages) { message in
@@ -3032,6 +3059,7 @@ struct FloatingSelectionAgentView: View {
         proxy.scrollTo(id, anchor: .center)
         store.selectionChatRevealMessageID = nil
     }
+#endif
 
     /// 问/记共用同一浮层,底部输入框按模式切换;两种草稿互不覆盖。
     @ViewBuilder private var composerField: some View {
@@ -3083,15 +3111,23 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func adoptMeasuredFeedHeight(_ height: CGFloat) {
-        // The list reports its height inside the layout pass. Applying it on the
-        // next turn is what lets the panel frame actually change.
+        guard height.isFinite, height > 1 else { return }
+        // The gesture owns the viewport until release. Keep the latest content
+        // measurement without adding an asynchronous frame update for each width.
+        let measurement = feedHeightMeasurement
+        measurement.height = height
+        guard resizeSession == nil, !measurement.scheduled,
+              abs(height - measuredFeedContentHeight) > 1 else { return }
+        measurement.scheduled = true
         DispatchQueue.main.async {
+            measurement.scheduled = false
+            guard resizeSession == nil, let height = measurement.height else { return }
             applyMeasuredFeedHeight(height)
         }
     }
 
     private func applyMeasuredFeedHeight(_ height: CGFloat) {
-        guard resizeSession == nil, height > 1, abs(height - measuredFeedContentHeight) > 1 else { return }
+        guard height > 1, abs(height - measuredFeedContentHeight) > 1 else { return }
         if height + 8 >= SelectionFloatingAgentPlacement.maximumAutomaticContentHeight {
             feedExceededCap = true
         }
@@ -3227,15 +3263,21 @@ struct FloatingSelectionAgentView: View {
         var transaction = Transaction()
         transaction.animation = nil
         withTransaction(transaction) {
-            panelWidth = CGFloat(resized.size.width)
-            resizePreviewHeight = CGFloat(resized.size.height) - chrome
-            placedOrigin = CGPoint(x: resized.origin.x, y: resized.origin.y)
+            let width = CGFloat(resized.size.width)
+            let height = CGFloat(resized.size.height) - chrome
+            let origin = CGPoint(x: resized.origin.x, y: resized.origin.y)
+            if panelWidth != width { panelWidth = width }
+            if resizePreviewHeight != height { resizePreviewHeight = height }
+            if placedOrigin != origin { placedOrigin = origin }
         }
     }
 
     private func commitResize() {
         let preview = resizePreviewHeight
         let session = resizeSession
+        if let height = feedHeightMeasurement.height {
+            applyMeasuredFeedHeight(height)
+        }
         resizeSession = nil
         resizePreviewHeight = nil
         guard let preview, let session, abs(preview - session.feedHeight) > 1 else { return }
@@ -3340,6 +3382,7 @@ struct FloatingSelectionAgentView: View {
             x: min(max(8, origin.x), maxX),
             y: min(max(8, origin.y), maxY)
         )
+        guard placedOrigin != parked else { return }
         var transaction = Transaction()
         transaction.animation = nil
         withTransaction(transaction) {
@@ -3352,6 +3395,13 @@ private struct FloatingResizeSession {
     var origin: CGPoint
     var size: CGSize
     var feedHeight: CGFloat
+}
+
+/// UIKit can report several layouts in a turn. Buffer their latest height without
+/// publishing SwiftUI state from inside layout, then apply it once outside that pass.
+private final class FloatingFeedHeightMeasurement {
+    var height: CGFloat?
+    var scheduled = false
 }
 
 private struct FloatingPanelSizeKey: PreferenceKey {
@@ -3421,30 +3471,48 @@ private struct FloatingSelectionResizeHitRegion: View {
     }
 }
 
-private struct FloatingSelectionMessageBubble: View {
+struct FloatingSelectionMessageBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     var message: AgentMessage
     var text: String
     var isError = false
     var isStreaming = false
+    var showsThinking = false
+    var activityText: String?
 
     private var isUser: Bool {
         message.role == .user
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if isError {
-                Text(text)
-                    .weiBeiText(13)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .allowsHitTesting(false)
-            } else {
-                finalizedMessage
+        HStack(spacing: 0) {
+            if isUser { Spacer(minLength: 32) }
+            ZStack(alignment: .topLeading) {
+                if isError {
+                    Text(text)
+                        .weiBeiText(AgentChatLayoutMetrics.floatingBodyFontSize)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .allowsHitTesting(false)
+                } else {
+                    finalizedMessage
+                }
+                if showsThinking {
+                    AgentThinkingIndicator(activityText: activityText, compact: true)
+                        .padding(.vertical, 4)
+                }
+            }
+            .padding(.horizontal, isUser ? 10 : 0)
+            .padding(.vertical, isUser ? 8 : 0)
+            .background {
+                if isUser {
+                    RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
+                        .fill(WeiBeiTheme.paperInset.opacity(0.38))
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .padding(.vertical, 3)
     }
 
@@ -3467,6 +3535,7 @@ private struct FloatingSelectionMessageBubble: View {
 /// completed flip keeps the markdown surface mounted at completion. The
 /// caller passes the live streaming state only for the generating row;
 /// completed rows receive `inertAgentStreamingState`, which never publishes.
+#if !targetEnvironment(macCatalyst)
 private struct FloatingSelectionMessageRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -3480,29 +3549,21 @@ private struct FloatingSelectionMessageRow: View {
         let text = (isStreaming && !streaming.text.isEmpty) ? streaming.text : store.agentDisplayText(for: message)
         let quoteAction: () -> Void = { onQuote(text) }
         // Keep the native body mounted while the first-token indicator is visible.
-        ZStack(alignment: .topLeading) {
-            FloatingSelectionMessageBubble(
-                message: message,
-                text: text,
-                isError: WorkspaceStore.isAgentFailureMessage(message.text),
-                isStreaming: isStreaming
-            )
-            if message.completionState == .generating && !message.toolActivities.contains(where: { $0.state == .running })
-                && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
-                    .id(message.id)
-                    .padding(.vertical, 4)
-            }
-        }
+        FloatingSelectionMessageBubble(
+            message: message,
+            text: text,
+            isError: WorkspaceStore.isAgentFailureMessage(message.text),
+            isStreaming: isStreaming,
+            showsThinking: message.completionState == .generating
+                && !message.toolActivities.contains(where: { $0.state == .running })
+                && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            activityText: streaming.activityText
+        )
         .contextMenu {
             Button(action: quoteAction) {
                 Label(store.ui("引用到输入框", "Quote into the input"), systemImage: "text.quote")
             }
         }
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        .background(CatalystFloatingMessageCheckProbe(messageID: message.id, onQuote: quoteAction)
-            .allowsHitTesting(false).accessibilityHidden(true))
-#endif
         .onAppear { store.setAgentStreamingReduceMotion(reduceMotion, in: message.origin?.chatID) }
         .onDisappear {
             if streaming.isDisplaying(message.id) {
@@ -3514,6 +3575,7 @@ private struct FloatingSelectionMessageRow: View {
         }
     }
 }
+#endif
 
 /// Never publishes. Completed rows observe this instead of the live
 /// AgentStreamingState: @ObservedObject subscribes regardless of whether the
@@ -3554,7 +3616,6 @@ private struct AgentMessageBubble: View {
 
 struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.openWindow) private var openSettingsWindow
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     var liveStreamingText: String? = nil
@@ -3960,11 +4021,7 @@ struct AgentBubble: View {
 
     private var failureSettingsButton: some View {
         Button(store.ui("去设置", "Open Settings")) {
-#if targetEnvironment(macCatalyst)
-            NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
-#else
-            openSettingsWindow(id: "weibei-settings")
-#endif
+            store.settingsPresented = true
         }
         .buttonStyle(WeiBeiTextActionButtonStyle())
     }
@@ -5005,14 +5062,14 @@ private struct AgentMessageMarkdownText: View {
 #endif
             } else {
                 Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
-                    .weiBeiText(compact ? 11 : 14.5)
+                    .weiBeiText(compact ? AgentChatLayoutMetrics.floatingUserFontSize : 14.5)
                     .lineSpacing(compact ? 4.2 : 4.5)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.disabled)
             }
         }
-        .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))
+        .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown))
         .popover(isPresented: Binding(
             get: { expandedSourceURL != nil },
             set: { if !$0 { expandedSourceURL = nil } }
@@ -5036,7 +5093,7 @@ private struct AgentMessageMarkdownText: View {
     }
 
     private var bodyFontSize: CGFloat {
-        (compact ? 11 : (isChatWideTypography ? 16 : 14)) * textScale
+        (compact ? AgentChatLayoutMetrics.floatingBodyFontSize : (isChatWideTypography ? 16 : 14)) * textScale
     }
 
     private var initialBodyHeight: CGFloat {
@@ -5163,9 +5220,8 @@ struct AgentThinkingIndicator: View {
 
     /// Same font bases and user text scale as the answer body.
     private static let chatWideFontSize: CGFloat = 16
-    private static let compactFontSize: CGFloat = 14
     private var baseFontSize: CGFloat {
-        chatWideTypography && !compact ? Self.chatWideFontSize : Self.compactFontSize
+        compact ? AgentChatLayoutMetrics.floatingBodyFontSize : (chatWideTypography ? Self.chatWideFontSize : 14)
     }
     /// Single source for measure + line box + AppKit painting. Drawing at a
     /// different size than the measured width is what made the orbit sit far

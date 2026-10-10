@@ -1959,16 +1959,21 @@ extension View {
     }
 
     func weibeiFloatingPanel(cornerRadius: CGFloat = 8, shadowOpacity: Double = 0.10) -> some View {
-        let isGlass = WeiBeiThemeRuntime.mode.isGlass
+        let mode = WeiBeiThemeRuntime.mode
+        let isGlass = mode.isGlass
         return self
             .foregroundColor(WeiBeiTheme.ink)
             .background {
                 ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(WeiBeiTheme.paperRaised.opacity(isGlass ? 0.58 : 0.985))
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(.ultraThinMaterial)
-                        .opacity(isGlass ? 0.24 : 0.015)
+                    if isGlass {
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .fill(mode == .glassMist || mode == .glassSlate ? Material.regular : Material.ultraThin)
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .fill(Color(weiBeiNativeColor: WeiBeiNativePalette.glassBaseTint(for: mode)))
+                    } else {
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .fill(WeiBeiTheme.paperRaised.opacity(0.985))
+                    }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))

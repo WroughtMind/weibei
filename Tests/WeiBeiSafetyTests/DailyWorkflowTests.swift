@@ -72,7 +72,7 @@ final class DailyWorkflowTests: XCTestCase {
         XCTAssertTrue(saved)
     }
 
-    func testBlankNoteSearchAndExplicitResume() throws {
+    func testBlankNoteSearchAndResumeAcrossLaunch() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("Workspace"), startsAtBlankEntries: true, startsCourseFileMaintenance: false)
@@ -117,5 +117,22 @@ final class DailyWorkflowTests: XCTestCase {
         XCTAssertEqual(reopened.activeNoteItem?.id, note.id)
         XCTAssertTrue(reopened.showNotes)
         XCTAssertTrue(reopened.agentRuns.isEmpty)
+
+        XCTAssertTrue(reopened.flushPendingWorkspaceSave())
+        let previousWorkspace = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"]
+        setenv("WEIBEI_WORKSPACE_DIR", root.appendingPathComponent("Workspace").path, 1)
+        defer {
+            if let previousWorkspace {
+                setenv("WEIBEI_WORKSPACE_DIR", previousWorkspace, 1)
+            } else {
+                unsetenv("WEIBEI_WORKSPACE_DIR")
+            }
+        }
+        let defaultLaunch = WorkspaceStore()
+        XCTAssertEqual(defaultLaunch.courseLibraryRootURL?.standardizedFileURL, library.standardizedFileURL)
+        XCTAssertEqual(defaultLaunch.activeNoteItem?.id, note.id)
+        XCTAssertTrue(defaultLaunch.showNotes)
+        XCTAssertTrue(defaultLaunch.noteText.contains("共同搜索命中词"))
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(note.url), encoding: .utf8), written)
     }
 }

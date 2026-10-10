@@ -13,6 +13,11 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var fileDrops: [String: NativeFileDropRegistration] = [:]
 #if WEIBEI_ACCEPTANCE_CHECKS
     private var fileDropCheckBoard: NSPasteboard?
+    private weak var checkedFullScreenWorkspace: NSWindow?
+    private var checkedFullScreenEntered = false
+    private var checkedFullScreenExited = false
+    private var fullScreenCheckNotifications: [String] = []
+    private var fullScreenCheckToolbarChanges: [String] = []
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
@@ -23,8 +28,20 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didEnterFullScreenNotification,
                      NSWindow.didExitFullScreenNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
-                guard let window = note.object as? NSWindow else { return }
-                self?.apply(to: window)
+                guard let self, let window = note.object as? NSWindow else { return }
+#if WEIBEI_ACCEPTANCE_CHECKS
+                if note.name == NSWindow.didEnterFullScreenNotification || note.name == NSWindow.didExitFullScreenNotification {
+                    self.fullScreenCheckNotifications.append(note.name.rawValue + " "
+                        + String(describing: ObjectIdentifier(window)) + " toolbar="
+                        + (window.toolbar.map { String(describing: $0.identifier) } ?? "nil"))
+                    if self.fullScreenCheckNotifications.count > 16 { self.fullScreenCheckNotifications.removeFirst() }
+                }
+                if window === self.checkedFullScreenWorkspace {
+                    if note.name == NSWindow.didEnterFullScreenNotification { self.checkedFullScreenEntered = true }
+                    if note.name == NSWindow.didExitFullScreenNotification { self.checkedFullScreenExited = true }
+                }
+#endif
+                self.apply(to: window)
             })
         }
         // A Catalyst scene can acquire its NSWindow after configure(), and a
@@ -85,6 +102,66 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         default: break
         }
     }
+#if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool {
+        guard let window = checkedFullScreenWorkspace
+            ?? NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }) else { return false }
+        checkedFullScreenWorkspace = window
+        if window.styleMask.contains(.fullScreen) != enabled {
+            checkedFullScreenEntered = false
+            checkedFullScreenExited = false
+            window.toggleFullScreen(nil)
+        }
+        return true
+    }
+
+    @MainActor func fullScreenWindowStateForCheck() -> [String: Bool] {
+        let workspace = checkedFullScreenWorkspace
+            ?? NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" })
+        var state = ["workspace_found": workspace != nil,
+                     "app_active": NSApp.isActive,
+                     "workspace_entered_full_screen": checkedFullScreenEntered,
+                     "workspace_exited_full_screen": checkedFullScreenExited]
+        if let workspace {
+            state["workspace_full_screen"] = workspace.styleMask.contains(.fullScreen)
+            state["workspace_on_active_space"] = workspace.isOnActiveSpace
+        }
+        return state
+    }
+
+    @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]] {
+        NSApp.windows.map { window in
+            var state = ["class": NSStringFromClass(type(of: window)),
+             "window_identity": String(describing: ObjectIdentifier(window)),
+             "number": String(window.windowNumber),
+             "toolbar": window.toolbar.map { String(describing: $0.identifier) } ?? "",
+             "toolbar_identity": window.toolbar.map { String(describing: ObjectIdentifier($0)) } ?? "",
+             "parent_toolbar": window.parent?.toolbar.map { String(describing: $0.identifier) } ?? "",
+             "collection_behavior": String(window.collectionBehavior.rawValue),
+             "style_mask": String(window.styleMask.rawValue),
+             "frame": NSStringFromRect(window.frame),
+             "visible": String(window.isVisible),
+             "main_thread": String(Thread.isMainThread),
+             "run_loop_mode": RunLoop.current.currentMode?.rawValue ?? "nil",
+             "key": String(window.isKeyWindow),
+             "main": String(window.isMainWindow),
+             "on_active_space": String(window.isOnActiveSpace)]
+            state["delegate"] = NativeFileDropDelegate.describe(window.delegate)
+            state["checked_workspace_identity"] = checkedFullScreenWorkspace.map { String(describing: ObjectIdentifier($0)) } ?? "nil"
+            state["full_screen_notifications"] = fullScreenCheckNotifications.joined(separator: "\n")
+            state["toolbar_visible"] = window.toolbar.map { String($0.isVisible) } ?? "nil"
+            state["toolbar_visibility_override"] = window.toolbar.flatMap {
+                toolbarVisibility.object(forKey: $0).map { String($0.boolValue) }
+            } ?? "nil"
+            state["toolbar_visibility_changes"] = fullScreenCheckToolbarChanges.joined(separator: "\n")
+            if let delegate = window.delegate as? NativeFileDropDelegate {
+                state.merge(delegate.fullScreenDiagnostics) { _, new in new }
+            }
+            return state
+        }
+    }
+#endif
+
     private func updateToolbarBackground(in window: NSWindow) {
         let owner = window.toolbar?.identifier == "weibei.workspace" ? window : window.parent
         guard let owner, owner.toolbar?.identifier == "weibei.workspace" else { return }
@@ -146,6 +223,12 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         for window in NSApp.windows {
             guard let toolbar = window.toolbar, let visible = toolbarVisibility.object(forKey: toolbar)?.boolValue,
                   toolbar.isVisible != visible else { continue }
+#if WEIBEI_ACCEPTANCE_CHECKS
+            fullScreenCheckToolbarChanges.append(String(describing: toolbar.identifier) + " "
+                + String(toolbar.isVisible) + " -> " + String(visible)
+                + " full_screen=" + String(window.styleMask.contains(.fullScreen)))
+            if fullScreenCheckToolbarChanges.count > 32 { fullScreenCheckToolbarChanges.removeFirst() }
+#endif
             toolbar.isVisible = visible
         }
         fileDrops.values.forEach { $0.attach() }
@@ -248,15 +331,32 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             code: code
         ))
     }
-    @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void) {
-        updateObservation = updateService.$status.combineLatest(updateService.$availableUpdate)
-            .sink { status, update in
-                observer(status.rawValue, update?.version, update?.releaseNotesLines ?? [],
-                    update?.informationOnly ?? false, update?.informationURL)
+    @MainActor func observeUpdates(_ observer: @escaping (NSDictionary) -> Void) {
+        updateObservation = updateService.$status.combineLatest(
+            updateService.$availableUpdate, updateService.$downloadProgress, updateService.$errorDescription
+        ).sink { status, update, progress, error in
+            var snapshot: [String: Any] = ["status": status.rawValue]
+            if let update {
+                snapshot["version"] = update.version
+                snapshot["notes"] = update.releaseNotesLines
+                snapshot["informationOnly"] = update.informationOnly
+                snapshot["informationURL"] = update.informationURL
+                snapshot["date"] = update.publishedDate
             }
+            snapshot["progress"] = progress
+            snapshot["error"] = error
+            observer(snapshot as NSDictionary)
+        }
     }
     @MainActor func checkForUpdates() { updateService.checkForUpdates() }
-    @MainActor func installAvailableUpdate() { updateService.installAvailableUpdate() }
+    @MainActor func installAvailableUpdate(_ save: @escaping (@escaping (Bool) -> Void) -> Void) {
+        updateService.prepareForInstallation = {
+            await withCheckedContinuation { continuation in
+                save { continuation.resume(returning: $0) }
+            }
+        }
+        updateService.installAvailableUpdate()
+    }
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 }
 
@@ -334,19 +434,68 @@ private final class NativeFileDropRegistration {
 }
 
 private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggingDestination {
+#if WEIBEI_ACCEPTANCE_CHECKS
+    weak var original: (any NSWindowDelegate)? {
+        didSet {
+            if original !== oldValue {
+                originalChanges.append(Self.describe(oldValue) + " -> " + Self.describe(original))
+                if originalChanges.count > 16 { originalChanges.removeFirst() }
+            }
+        }
+    }
+    private var originalChanges: [String] = []
+    private var fullScreenQueries: [String: String] = [:]
+    private var fullScreenForwards: [String: String] = [:]
+    static func describe(_ delegate: AnyObject?) -> String {
+        guard let delegate else { return "nil" }
+        return String(reflecting: type(of: delegate)) + " " + String(describing: ObjectIdentifier(delegate))
+    }
+    var fullScreenDiagnostics: [String: String] {
+        ["file_drop_original_delegate": Self.describe(original),
+         "file_drop_original_changes": originalChanges.joined(separator: "\n"),
+         "file_drop_full_screen_queries": fullScreenQueries.keys.sorted().map { $0 + ": " + fullScreenQueries[$0]! }.joined(separator: "\n"),
+         "file_drop_full_screen_forwards": fullScreenForwards.keys.sorted().map { $0 + ": " + fullScreenForwards[$0]! }.joined(separator: "\n")]
+    }
+#else
     weak var original: (any NSWindowDelegate)?
+#endif
     let targeted: @MainActor (Bool) -> Void
     let receive: @MainActor ([URL]) -> Void
     init(original: (any NSWindowDelegate)?, targeted: @MainActor @escaping (Bool) -> Void,
          receive: @MainActor @escaping ([URL]) -> Void) {
         self.original = original; self.targeted = targeted; self.receive = receive
         super.init()
+#if WEIBEI_ACCEPTANCE_CHECKS
+        originalChanges = [Self.describe(original)]
+#endif
     }
     override func responds(to selector: Selector!) -> Bool {
-        super.responds(to: selector) || original?.responds(to: selector) == true
+#if WEIBEI_ACCEPTANCE_CHECKS
+        let response = super.responds(to: selector) || original?.responds(to: selector) == true
+        if let selector {
+            let name = NSStringFromSelector(selector)
+            if name.contains("FullScreen") {
+                fullScreenQueries[name] = String(response) + " " + Self.describe(original)
+            }
+        }
+        return response
+#else
+        return super.responds(to: selector) || original?.responds(to: selector) == true
+#endif
     }
     override func forwardingTarget(for selector: Selector!) -> Any? {
-        original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
+#if WEIBEI_ACCEPTANCE_CHECKS
+        let target = original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
+        if let selector {
+            let name = NSStringFromSelector(selector)
+            if name.contains("FullScreen") {
+                fullScreenForwards[name] = target.map { Self.describe($0 as AnyObject) } ?? "nil"
+            }
+        }
+        return target
+#else
+        return original?.responds(to: selector) == true ? original : super.forwardingTarget(for: selector)
+#endif
     }
     static func fileURLs(from board: NSPasteboard) -> [URL] {
         (board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []

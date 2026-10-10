@@ -40,18 +40,27 @@ struct ContextualContentPicker: View {
         GeometryReader { geometry in
             let groups = groups
             let available = max(1, geometry.size.width - 40)
-            let columns = max(1, min(groups.count, Int((min(available, 1140) + 16) / 200)))
+            let columns = max(1, min(store.courses.count + 1, Int((min(available, 1140) + 16) / 200)))
             let width = min(available, CGFloat(columns) * 220 + CGFloat(columns - 1) * 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    WeiBeiSearchField(
-                        text: $search,
-                        prompt: store.ui("按名称、文件名或标签筛选", "Filter by title, filename or tag"),
-                        isFocused: $searchFocused,
-                        fontSize: 13,
-                        focusesOnAppear: kind == .note && store.notePickerPresented,
-                        chromeHeight: 32
-                    )
+                    HStack(spacing: 7) {
+                        Image(systemName: "magnifyingglass")
+                            .weiBeiText(12)
+                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        WeiBeiSearchField(
+                            text: $search,
+                            prompt: store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags"),
+                            isFocused: $searchFocused,
+                            fontSize: 12,
+                            focusesOnAppear: kind == .note && store.notePickerPresented,
+                            drawsChrome: false,
+                            chromeHeight: 28
+                        )
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(width: min(width, 320), height: 30)
+                    .background(WeiBeiTheme.paperInset.opacity(0.22), in: RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius))
                     .accessibilityIdentifier("contextual-content-filter")
                     globalActions
                     if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && groups.allSatisfy({ $0.items.isEmpty }) {
@@ -67,7 +76,8 @@ struct ContextualContentPicker: View {
                 .frame(width: width)
                 // Animate discrete reflow; ordinary live resizing must keep tracking the pointer.
                 .animation(reduceMotion ? nil : WeiBeiMotion.panel, value: columns)
-                .padding(.top, min(100, max(28, geometry.size.height * 0.12)))
+                // Both pickers start below the same return-control band, regardless of pane height.
+                .padding(.top, 48)
                 .padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
             }
@@ -155,11 +165,11 @@ struct ContextualContentPicker: View {
             Button(store.ui("新建课程", "New Course")) {
                 courseEntry = CourseProjectEntryPresentation(intent: .create)
             }
-            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+            .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28, neutralHoverWhenInactive: true, idleOpacity: 0))
             Button(kind == .note ? store.ui("导入笔记…", "Import Notes…") : store.ui("导入资料…", "Import Materials…")) {
                 importFiles(into: nil)
             }
-            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+            .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28, neutralHoverWhenInactive: true, idleOpacity: 0))
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)

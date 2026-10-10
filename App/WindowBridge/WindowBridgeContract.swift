@@ -22,6 +22,9 @@ import Foundation
 #if WEIBEI_ACCEPTANCE_CHECKS
     @MainActor func prepareFileDropCheck(id: String, urls: [URL]) -> [String: Bool]
     @MainActor func finishFileDropCheck()
+    @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool
+    @MainActor func fullScreenWindowStateForCheck() -> [String: Bool]
+    @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]]
 #endif
     @MainActor func presentOpenPanel(
         title: String,
@@ -32,7 +35,7 @@ import Foundation
         presentationToolbar: NSObject?,
         completion: @MainActor @escaping ([URL], NSError?) -> Void
     )
-    @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void)
+    @MainActor func observeUpdates(_ observer: @escaping (NSDictionary) -> Void)
     @MainActor func checkForUpdates()
-    @MainActor func installAvailableUpdate()
+    @MainActor func installAvailableUpdate(_ save: @escaping (@escaping (Bool) -> Void) -> Void)
 }

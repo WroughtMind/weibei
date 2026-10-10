@@ -14,6 +14,7 @@ enum CatalystInterfaceCopy {
 final class ConversationController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate, UITextViewDelegate {
     let fixtureMode: Bool
     var usesWorkspaceChrome = false
+    var isFloatingConversation = false
     var reduceMotion = false
     var reservesReplySpace = false
     var auxiliaryView: ((LabMessage) -> UIView)?
@@ -32,7 +33,6 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     var quoteText: ((String) -> Void)?
     var readingMessageChanged: ((UUID?) -> Void)?
     var contentHeightChanged: ((CGFloat) -> Void)?
-    private var reportedContentHeight: CGFloat = 0
     var submitQuestion: ((String) -> Bool)?
     var stopAnswer: (() -> Void)?
     var openSettings: (() -> Void)?
@@ -103,6 +103,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         collection.keyboardDismissMode = .none
         collection.accessibilityLabel = interfaceLanguage.text("会话消息列表", "Conversation messages")
         flow.itemHeight = { [weak self] path in self?.itemHeight(at: path) ?? 0 }
+        flow.onContentHeightChanged = { [weak self] height in self?.contentHeightChanged?(height) }
         flow.replyStartSection = { [weak self] in
             guard let self, reservesReplySpace else { return nil }
             return messages.lastIndex { $0.original?.role == .user }
@@ -190,16 +191,11 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let contentHeight = collection.contentSize.height
-        if abs(contentHeight - reportedContentHeight) > 1 {
-            reportedContentHeight = contentHeight
-            contentHeightChanged?(contentHeight)
-        }
         let width = view.bounds.width
         guard width > 0 else { return }
         // Keep the first message below the toolbar at rest. This is scrollable
         // content spacing: the viewport still reaches the shared pane fade.
-        let topInset = usesWorkspaceChrome ? view.safeAreaInsets.top : 0
+        let topInset = usesWorkspaceChrome && !isFloatingConversation ? view.safeAreaInsets.top : 0
         let topInsetChanged = flow.topInset != topInset
         if topInsetChanged { flow.topInset = topInset }
         let requestedWidth = usesWorkspaceChrome
@@ -375,7 +371,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
     func configure(_ cell: MessageCell, at path: IndexPath) {
         let message = messages[path.section]
-        if path.item == 0 { cell.showHeader(message) }
+        if path.item == 0 {
+            cell.showHeader(message)
+        }
         else if path.item <= message.blocks.count {
             let block = message.blocks[path.item - 1]
             let stale = block.width != bodyWidth
@@ -399,7 +397,6 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private func itemHeight(at path: IndexPath) -> CGFloat {
         guard path.section < messages.count else { return 0 }
         let message = messages[path.section]
-        // Workspace messages have no separate author header.
         if path.item == 0 { return usesWorkspaceChrome ? 0 : 30 }
         if path.item > message.blocks.count { return usesWorkspaceChrome ? message.auxiliaryHeight : 42 }
         return message.blocks[path.item - 1].height + store.theme.spacings.paragraph
@@ -551,6 +548,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
     private func formattedMarkdown(_ value: AgentMessage, memo: AgentMessageMarkdownMemo) -> String {
+        if isFloatingConversation, WorkspaceStore.isAgentFailureMessage(value.text) { return "" }
         // The original right-aligned user chip is hosted by the auxiliary row.
         guard value.role == .assistant else { return usesWorkspaceChrome ? "" : value.text }
         let text = AgentNativeMessageContent.markdown(text: value.text, blocks: value.contentBlocks, activities: value.toolActivities)
@@ -672,6 +670,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
     func revealMessage(_ id: UUID) async {
+        guard savedHistory.contains(where: { $0.id == id }) else { return }
         while !messages.contains(where: { $0.id == id.uuidString }), earlier > 0 {
             prependSavedHistory()
             await preparation?.value

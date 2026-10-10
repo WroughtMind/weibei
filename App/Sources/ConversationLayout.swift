@@ -11,6 +11,7 @@ final class ConversationLayout: UICollectionViewLayout {
     var itemWidth: CGFloat = 0
     var itemHeight: ((IndexPath) -> CGFloat)?
     var replyStartSection: (() -> Int?)?
+    var onContentHeightChanged: ((CGFloat) -> Void)?
 
     private struct Section {
         var minY: CGFloat
@@ -61,9 +62,13 @@ final class ConversationLayout: UICollectionViewLayout {
             sections[section].maxY = y
         }
         // Leave room below the latest question; a short reply grows in place.
-        contentHeight = y
+        var nextContentHeight = y
         if let section = replyStartSection?(), sections.indices.contains(section) {
-            contentHeight = max(y, sections[section].minY - topInset + collectionView.bounds.height)
+            nextContentHeight = max(y, sections[section].minY - topInset + collectionView.bounds.height)
+        }
+        if contentHeight != nextContentHeight {
+            contentHeight = nextContentHeight
+            onContentHeightChanged?(contentHeight)
         }
     }
 
