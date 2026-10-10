@@ -36,7 +36,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     static let updates: WeiBeiUpdateService = {
         let service = WeiBeiUpdateService()
         service.prepareForInstallation = {
-            let store = Self.workspace
+            let store = AppDelegate.workspace
             store.commitCurrentReaderLocation()
             guard await store.freshActiveNoteEditorSnapshot() else { return false }
             store.flushPendingNotePersistence(flushWorkspace: false)
