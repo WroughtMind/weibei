@@ -156,7 +156,7 @@ struct ContentView: View {
 #if targetEnvironment(macCatalyst)
             .background {
                 WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted,
-                    receive: receiveTransferredFileDrop, receiveNative: receiveFileDropURLs)
+                    receive: receiveTransferredFileDrop, receiveNative: receiveNativeFileDrop)
                     .allowsHitTesting(false)
             }
 #else
@@ -234,8 +234,8 @@ struct ContentView: View {
         store.receiveTransferredFiles(providers, sourceURLs: urls,
             courseID: store.courseWorkspacePresented ? store.courseWorkspaceCourseID : nil)
     }
-    private func receiveFileDropURLs(_ urls: [URL]) {
-        store.receiveDroppedFileURLs(urls, courseID: store.courseWorkspacePresented
+    private func receiveNativeFileDrop(_ result: WeiBeiDroppedFileResult) {
+        store.receiveTransferredFileResult(result, courseID: store.courseWorkspacePresented
             ? store.courseWorkspaceCourseID : nil)
     }
 #endif
@@ -2427,12 +2427,14 @@ enum WeiBeiDroppedFileURLs {
     /// retain an owned copy before the provider's completion handler returns.
     static func loadTransferredFiles(_ providers: [NSItemProvider], sourceURLs: [URL],
         completion: @escaping (WeiBeiDroppedFileResult) -> Void) -> Bool {
-        guard !providers.isEmpty, !sourceURLs.isEmpty else { return false }
+        guard !providers.isEmpty else { return false }
         let lock = NSLock()
         var results = Array(repeating: WeiBeiDroppedFileResult(), count: providers.count)
         let group = DispatchGroup()
         for (index, provider) in providers.enumerated() {
-            let metadata = sourceURLs.indices.contains(index) ? sourceURLs[index] : nil
+            // Promised files have no URL yet, so a mixed drag's URL list is
+            // sparse. Do not assign another provider's name or content type.
+            let metadata = sourceURLs.count == providers.count ? sourceURLs[index] : nil
             let preferredType = metadata.flatMap { UTType(filenameExtension: $0.pathExtension) }
             let contentType: String?
             if let preferredType, provider.hasItemConformingToTypeIdentifier(preferredType.identifier) {
@@ -2443,14 +2445,14 @@ enum WeiBeiDroppedFileURLs {
                     return type == .folder || type.conforms(to: .content) || type.conforms(to: .data)
                 }
             }
-            guard let contentType else {
+            guard contentType != nil || provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else {
                 lock.lock()
                 results[index].failures = [provider.suggestedName ?? "file representation unavailable"]
                 lock.unlock()
                 continue
             }
             group.enter()
-            provider.loadInPlaceFileRepresentation(forTypeIdentifier: contentType) { url, _, error in
+            let receive: (URL?, Error?) -> Void = { url, error in
                 var result = WeiBeiDroppedFileResult()
                 var directory: URL?
                 do {
@@ -2491,6 +2493,18 @@ enum WeiBeiDroppedFileURLs {
                 }
                 lock.lock(); results[index] = result; lock.unlock()
                 group.leave()
+            }
+            // Content and file-address representations are distinct source
+            // contracts. Prefer exported bytes; never retry a failed export
+            // against metadata from the source app's private directory.
+            if let contentType {
+                provider.loadInPlaceFileRepresentation(forTypeIdentifier: contentType) { url, _, error in
+                    receive(url, error)
+                }
+            } else {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                    receive(fileURL(from: item), error)
+                }
             }
         }
         group.notify(queue: .main) {

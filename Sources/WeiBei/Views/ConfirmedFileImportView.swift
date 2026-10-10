@@ -79,28 +79,21 @@ extension WorkspaceStore {
     func receiveTransferredFiles(_ providers: [NSItemProvider], sourceURLs: [URL], courseID: UUID? = nil) -> Bool {
         WeiBeiDroppedFileURLs.loadTransferredFiles(providers, sourceURLs: sourceURLs) { [weak self] result in
             guard let self else { result.release(); return }
-            if !result.urls.isEmpty {
-                self.prepareConfirmedFileImport(result.urls, courseID: courseID,
-                    temporaryDirectories: result.temporaryDirectories)
-            } else {
-                result.release()
-            }
-            if !result.failures.isEmpty {
-                self.importantOperationError = self.ui(
-                    "未能读取 \(result.failures.count) 个拖入文件，请重试。",
-                    "Could not receive \(result.failures.count) dropped file(s). Please try again."
-                )
-            }
+            self.receiveTransferredFileResult(result, courseID: courseID)
         }
     }
-    @discardableResult
-    func receiveDroppedFileURLs(_ urls: [URL], courseID: UUID? = nil) -> Bool {
-        let files = urls.filter { $0.isFileURL && !$0.path.isEmpty }
-        guard !files.isEmpty else { return false }
-        // Acquire access while the system's actual drop is still being handled.
-        let scoped = files.filter { $0.startAccessingSecurityScopedResource() }
-        prepareConfirmedFileImport(files, courseID: courseID, securityScopedURLs: scoped)
-        return true
+
+    func receiveTransferredFileResult(_ result: WeiBeiDroppedFileResult, courseID: UUID? = nil) {
+        if !result.urls.isEmpty {
+            prepareConfirmedFileImport(result.urls, courseID: courseID,
+                securityScopedURLs: result.securityScopedURLs, temporaryDirectories: result.temporaryDirectories)
+        } else { result.release() }
+        if !result.failures.isEmpty {
+            importantOperationError = ui(
+                "未能读取 \(result.failures.count) 个拖入文件，请重试。",
+                "Could not receive \(result.failures.count) dropped file(s). Please try again."
+            )
+        }
     }
     @discardableResult
     func receiveDroppedFiles(_ providers: [NSItemProvider], courseID: UUID? = nil, asNotes: Bool = false) -> Bool {

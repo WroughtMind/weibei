@@ -14,10 +14,11 @@ import Foundation
     @MainActor func registerFileDrop(
         id: String, toolbar: NSObject,
         targeted: @MainActor @escaping (Bool) -> Void,
-        receive: @MainActor @escaping ([URL]) -> Void
+        receive: @MainActor @escaping ([URL], [URL], [URL], [String]) -> Void
     )
     @MainActor func unregisterFileDrop(id: String)
     @MainActor func currentDraggedFileURLs() -> [URL]
+    @MainActor func currentDragContainsFilePromises() -> Bool
 #if WEIBEI_ACCEPTANCE_CHECKS
     @MainActor func prepareFileDropCheck(id: String, urls: [URL]) -> [String: Bool]
     @MainActor func finishFileDropCheck()

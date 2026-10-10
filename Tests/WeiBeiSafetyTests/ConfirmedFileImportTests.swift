@@ -67,9 +67,11 @@ final class ConfirmedFileImportTests: XCTestCase {
         let received = staging.appendingPathComponent(original.lastPathComponent)
         try FileManager.default.copyItem(at: original, to: received)
 
-        fixture.store.prepareConfirmedFileImport([received], temporaryDirectories: [staging])
+        fixture.store.receiveTransferredFileResult(WeiBeiDroppedFileResult(
+            urls: [received], temporaryDirectories: [staging], failures: ["另一份来源未能导出"]))
         waitForStage(.reviewing, in: fixture.store)
         XCTAssertTrue(fixture.store.importedItems.isEmpty)
+        XCTAssertNotNil(fixture.store.importantOperationError)
         fixture.store.dismissConfirmedFileImport()
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: staging.path))

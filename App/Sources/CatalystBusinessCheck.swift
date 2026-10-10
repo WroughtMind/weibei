@@ -498,7 +498,8 @@ enum CatalystBusinessCheck {
                     checks["drag_guidance_cleared"] = receiver.isTargeted?.wrappedValue == false
                     fileDropDiagnostics = checks
                     result["file_drop_state"] = checks
-                    try check("workspace_file_drop_receiver", checks.count == 11 && checks.values.allSatisfy { $0 })
+                    try check("workspace_file_drop_receiver", checks["registered_window"] == true
+                        && checks["promised_file_recognized"] == true && checks.values.allSatisfy { $0 })
                 } else {
                     guard store.receiveDroppedFiles([provider], asNotes: true) else {
                         throw Failure("note file-drop provider was rejected")
