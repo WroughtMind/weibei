@@ -1352,7 +1352,7 @@ private struct UnifiedTopBarView: View {
 
 #if targetEnvironment(macCatalyst)
     private var toolbarOverflowMenus: [UIMenu] {
-        var navigation = [
+        let navigation = [
             toolbarAction(store.ui("课程栏", "Course sidebar"), selected: libraryDrawer.isOpen, action: store.toggleLibrary),
             toolbarAction(store.ui("后退", "Back"), enabled: store.canNavigateBack) {
                 withAnimation(WeiBeiMotion.layout) { store.navigateBackInWorkspace() }
@@ -1361,16 +1361,16 @@ private struct UnifiedTopBarView: View {
                 withAnimation(WeiBeiMotion.layout) { store.navigateForwardInWorkspace() }
             }
         ]
-        if updateService.showsToolbarControl, updateService.availableUpdate != nil {
-            navigation.append(toolbarAction(store.ui("下载并安装魏碑更新", "Download and install the WeiBei update"),
-                enabled: !updateService.isBusy, action: updateService.installAvailableUpdate))
-        }
         let panes = [
             toolbarAction(store.ui("文稿", "Document"), selected: store.isPaneToggleActive(.reader), action: store.toggleReader),
             toolbarAction(store.ui("对话", "Chat"), selected: store.isPaneToggleActive(.agent), action: store.toggleAgent),
             toolbarAction(store.ui("笔记", "Notes"), selected: store.isPaneToggleActive(.notes), action: store.toggleNotes)
         ]
         var actions: [UIAction] = []
+        if updateService.showsToolbarControl {
+            actions.append(toolbarAction(updateService.actionLabel(english: store.interfaceLanguage == .english),
+                enabled: !updateService.isBusy, action: updateService.installAvailableUpdate))
+        }
         if shouldShowSearchAction {
             actions.append(toolbarAction(searchPrompt,
                 selected: paneState.showDocumentSearch, action: toggleReaderSearch))
@@ -1782,10 +1782,17 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var leftPrimaryControls: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             libraryButton
 
             navigationButtons
+
+            if updateService.showsToolbarControl {
+                WeiBeiUpdateControl()
+                    .environmentObject(updateService)
+                    .environmentObject(store)
+                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
+            }
         }
     }
 
@@ -1807,41 +1814,7 @@ private struct UnifiedTopBarView: View {
             }
             .weiBeiKeyboardShortcut(store.executableChord(for: .navigateForward))
             .disabled(!store.canNavigateForward)
-
-            if updateService.showsToolbarControl, let update = updateService.availableUpdate {
-                Button {
-                    updateService.installAvailableUpdate()
-                } label: {
-                    if updateService.isBusy {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else {
-                        Image(systemName: "arrow.down")
-                            .contentShape(Rectangle())
-                    }
-                }
-                .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 24))
-                .disabled(updateService.isBusy)
-                .accessibilityLabel(Text(store.ui("下载并安装魏碑更新", "Download and install the WeiBei update")))
-                .help(updateHelpText(update))
-                .transition(.opacity.combined(with: .scale(scale: 0.92)))
-            }
         }
-        .animation(WeiBeiMotion.panel, value: updateService.showsToolbarControl)
-    }
-
-    private func updateHelpText(_ update: WeiBeiAvailableUpdate) -> String {
-        var text = update.helpText
-        if update.releaseNotesLines.count > update.summaryLines.count {
-            text += "\n" + store.ui(
-                "完整更新说明可在“设置 > 关于”中展开。",
-                "Expand the full release notes in Settings > About."
-            )
-        }
-        if case .failed = updateService.status {
-            text += "\n" + store.ui("更新失败，点击重试。", "Update failed. Click to retry.")
-        }
-        return text
     }
 
     private var paneToggleCluster: some View {

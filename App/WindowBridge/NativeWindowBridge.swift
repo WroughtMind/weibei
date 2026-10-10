@@ -327,15 +327,32 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             code: code
         ))
     }
-    @MainActor func observeUpdates(_ observer: @escaping (String, String?, [String], Bool, URL?) -> Void) {
-        updateObservation = updateService.$status.combineLatest(updateService.$availableUpdate)
-            .sink { status, update in
-                observer(status.rawValue, update?.version, update?.releaseNotesLines ?? [],
-                    update?.informationOnly ?? false, update?.informationURL)
+    @MainActor func observeUpdates(_ observer: @escaping (NSDictionary) -> Void) {
+        updateObservation = updateService.$status.combineLatest(
+            updateService.$availableUpdate, updateService.$downloadProgress, updateService.$errorDescription
+        ).sink { status, update, progress, error in
+            var snapshot: [String: Any] = ["status": status.rawValue]
+            if let update {
+                snapshot["version"] = update.version
+                snapshot["notes"] = update.releaseNotesLines
+                snapshot["informationOnly"] = update.informationOnly
+                snapshot["informationURL"] = update.informationURL
+                snapshot["date"] = update.publishedDate
             }
+            snapshot["progress"] = progress
+            snapshot["error"] = error
+            observer(snapshot as NSDictionary)
+        }
     }
     @MainActor func checkForUpdates() { updateService.checkForUpdates() }
-    @MainActor func installAvailableUpdate() { updateService.installAvailableUpdate() }
+    @MainActor func installAvailableUpdate(_ save: @escaping (@escaping (Bool) -> Void) -> Void) {
+        updateService.prepareForInstallation = {
+            await withCheckedContinuation { continuation in
+                save { continuation.resume(returning: $0) }
+            }
+        }
+        updateService.installAvailableUpdate()
+    }
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 }
 

@@ -411,6 +411,8 @@ struct CourseWorkspaceHeader: View {
             .buttonStyle(.plain)
             .accessibilityLabel(Text(store.ui("关闭课程空间并返回工作台", "Close course space")))
 
+            WeiBeiUpdateControl()
+
             HStack(spacing: 8) {
                 hubTitleBlock
 
@@ -467,6 +469,7 @@ struct CourseWorkspaceHeader: View {
             }
             .weibeiInputSurface(active: searchFocused.wrappedValue, height: 30)
             .frame(width: isCompact ? 160 : 220)
+
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
