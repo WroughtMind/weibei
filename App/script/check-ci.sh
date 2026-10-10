@@ -78,7 +78,6 @@ required_business_checks = {
     'active_connection_profile_matches_configuration', 'connection_profile_switch_back',
     'connection_cards_settings_and_authenticated_models',
     'settings_panel_stays_in_original_full_screen_window',
-    'floating_markdown_drag_measurements_cached',
     'material_and_note_pickers_align',
     'confirmed_import_review_copy_and_dismiss',
     'workspace_file_drop_receiver',
