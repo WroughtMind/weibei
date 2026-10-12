@@ -30,7 +30,17 @@ enum NativeChatMarkdownAttributed {
             if s.code { attributes[.backgroundColor] = WeiBeiNativePalette.codePaper() }
             if s.highlight { attributes[.backgroundColor] = NSColor.systemYellow.withAlphaComponent(isDark ? 0.28 : 0.2) }
             if s.footnote { attributes[.foregroundColor] = WeiBeiNativePalette.secondaryInk(); attributes[.toolTip] = run.text }
-            if let link = s.link { attributes[.link] = link; attributes[.foregroundColor] = WeiBeiNativePalette.link() }
+            if let link = s.link {
+                attributes[.link] = link
+                if let title = s.linkTitle, !title.isEmpty { attributes[.toolTip] = title }
+                if link.hasPrefix("weibei-source:") || link.hasPrefix("weibei-source-group:") {
+                    attributes[.foregroundColor] = WeiBeiNativePalette.secondaryInk()
+                    attributes[.baselineOffset] = fontSize * 0.16
+                    attributes[.font] = NSFont.systemFont(ofSize: fontSize * 0.85, weight: .medium)
+                } else {
+                    attributes[.foregroundColor] = WeiBeiNativePalette.link()
+                }
+            }
             if let descriptor = run.attachment { attributes[.attachment] = attachment(descriptor) }
             result.append(NSAttributedString(string: run.text, attributes: attributes))
         }

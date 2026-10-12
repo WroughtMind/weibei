@@ -758,6 +758,8 @@ enum CatalystBusinessCheck {
                 && controller.messages.last!.blocks.first === originalFirstBlock)
             result["first_round_message_count"] = store.messages.count
             result["parse_count"] = controller.store.parseCount
+            try await verifyCitationPresentation(appearance: store.appearanceMode)
+            try check("native_citation_typography_and_hover_title", true)
             try check("original_source_navigation", store.openAgentReplySource(reply.sources[0]) && store.selectedItemID == material.id)
             if let imageBlock = controller.messages.last?.blocks.firstIndex(where: { $0.imageSources.contains(imageURL.absoluteString) }) {
                 controller.collection.scrollToItem(at: IndexPath(item: imageBlock + 1, section: controller.messages.count - 1), at: .centeredVertically, animated: false)
@@ -1213,6 +1215,91 @@ enum CatalystBusinessCheck {
             ancestor = current.superview
         }
         return true
+    }
+
+    private static func verifyCitationPresentation(appearance: WeiBeiAppearanceMode) async throws {
+        let source = AgentReplySource(itemID: nil, kind: .material, title: "引用教材", label: "[材料：A]", excerpt: "合成摘录", pageIndex: 6)
+        let presentation = AgentReplySourceInlinePresentation(text: "依据 " + source.label + "，继续推导。", sources: [source], language: .chinese)
+        let bodySize: CGFloat = 16
+        func citationLabel(in view: UIView) -> TextLabelView? {
+            guard !view.isHidden else { return nil }
+            if let label = view as? TextLabelView,
+               label.layoutRuns(matching: .link).contains(where: { SourceCitationPresentation.url(from: $0.attributes[.link]) != nil }) {
+                return label
+            }
+            for child in view.subviews {
+                if let label = citationLabel(in: child) { return label }
+            }
+            return nil
+        }
+        func verify(owner: UIView, label: TextLabelView, interaction: UIToolTipInteraction) throws {
+            guard let run = label.layoutRuns(matching: .link).first(where: { SourceCitationPresentation.url(from: $0.attributes[.link]) != nil }),
+                  let font = run.attributes[.font] as? UIFont,
+                  abs(font.pointSize - bodySize * 0.85) < 0.01,
+                  abs((run.attributes[.baselineOffset] as? CGFloat ?? 0) - bodySize * 0.16) < 0.01 else {
+                throw Failure("native citation did not receive its small raised typography")
+            }
+            let rect = label.convert(CGRect(x: run.rect.minX, y: label.bounds.height - run.rect.maxY,
+                                            width: run.rect.width, height: run.rect.height), to: owner)
+            let point = CGPoint(x: rect.midX, y: rect.midY)
+            guard let configuration = interaction.delegate?.toolTipInteraction?(interaction, configurationAt: point),
+                  configuration.toolTip == "引用教材 · 第 7 页", configuration.sourceRect?.contains(point) == true,
+                  interaction.delegate?.toolTipInteraction?(interaction, configurationAt: CGPoint(x: -1, y: -1)) == nil else {
+                throw Failure("native citation hover title did not match its glyph and source")
+            }
+        }
+        let contentStore = ContentStore()
+        _ = contentStore.setTheme(.weiBei(fontSize: bodySize, appearance: appearance))
+        for markdown in [presentation.markdown, "| 推导 |\n| --- |\n| " + presentation.markdown + " |"] {
+            let message = LabMessage(author: "魏碑", markdown: markdown)
+            guard await contentStore.prepare(message, width: 320), let block = message.blocks.first else {
+                throw Failure("citation fixture did not prepare")
+            }
+            let view = contentStore.view(for: block, width: 320)
+            view.layoutIfNeeded()
+            view.label.layoutIfNeeded()
+            guard let interaction = view.interactions.compactMap({ $0 as? UIToolTipInteraction }).first,
+                  let label = citationLabel(in: view) else {
+                throw Failure("conversation or table citation tooltip was not attached")
+            }
+            try verify(owner: view, label: label, interaction: interaction)
+        }
+        let coordinator = CatalystMessageMarkdown.Coordinator()
+        let standalone = coordinator.makeView()
+        coordinator.update(standalone, markdown: presentation.markdown, fontSize: bodySize, appearance: appearance)
+        standalone.frame = CGRect(x: 0, y: 0, width: 320, height: standalone.boundingSize(for: 320).height)
+        standalone.layoutIfNeeded()
+        standalone.textLabelView.layoutIfNeeded()
+        guard let standaloneInteraction = standalone.interactions.compactMap({ $0 as? UIToolTipInteraction }).first else {
+            throw Failure("standalone citation tooltip was not attached")
+        }
+        try verify(owner: standalone, label: standalone.textLabelView, interaction: standaloneInteraction)
+
+        let controller = ConversationController(fixtureMode: false)
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 320, height: 720)
+        let images = LabImages()
+        controller.setImages(images)
+        _ = controller.store.setTheme(.weiBei(fontSize: bodySize, appearance: appearance))
+        let imageSource = "lab-image://landscape"
+        let imageMessage = AgentMessage(role: .assistant, text: "依据 " + source.label + "，继续推导。 ![合成图](\(imageSource))", source: nil, sources: [source])
+        var session = StudySession(title: "引用与图片重绘")
+        session.messages = [imageMessage]
+        await controller.showSession(session)
+        guard let imageBlock = controller.messages.first?.blocks.first else {
+            throw Failure("image citation fixture did not prepare")
+        }
+        let imageView = controller.store.view(for: imageBlock, width: 320)
+        let measurements = controller.store.measureCount
+        NotificationCenter.default.post(name: LabImages.didLoad, object: images, userInfo: ["source": imageSource])
+        try await until("citation redraw after image readiness") { controller.store.measureCount > measurements }
+        imageView.layoutIfNeeded()
+        imageView.label.layoutIfNeeded()
+        guard let imageInteraction = imageView.interactions.compactMap({ $0 as? UIToolTipInteraction }).first,
+              let imageLabel = citationLabel(in: imageView) else {
+            throw Failure("image redraw lost its citation")
+        }
+        try verify(owner: imageView, label: imageLabel, interaction: imageInteraction)
     }
 
     private static func verifyDividerLanguage(_ controller: ConversationController, workspace: WorkspaceStore) async throws {

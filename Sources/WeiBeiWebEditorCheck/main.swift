@@ -293,7 +293,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         requestSnapshot { [weak self] snapshot in
             guard let self else { return }
             self.validate(snapshot.markdown)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.waitForInitialPreviews {
                 self.validateObsidianDecorations {
                     self.validateReadOnlyInkstoneDecorations {
                         self.validateSelectionAskMark {
@@ -303,6 +303,41 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private func waitForInitialPreviews(completion: @escaping () -> Void) {
+        let script = """
+        await new Promise((resolve, reject) => {
+          const observer = new MutationObserver(check);
+          function check() {
+            const error = document.querySelector('.weibei-mermaid-error, .weibei-math-invalid');
+            if (error) {
+              observer.disconnect();
+              reject(new Error(error.textContent || 'Initial preview failed'));
+              return;
+            }
+            const diagrams = Array.from(document.querySelectorAll('.weibei-mermaid-render'));
+            const math = Array.from(document.querySelectorAll('.weibei-math-preview'));
+            if (diagrams.length > 0 && diagrams.every(node => node.dataset.rendered === 'true' && node.querySelector('svg'))
+                && math.length > 0 && math.every(node => node.querySelector('.katex'))) {
+              observer.disconnect();
+              resolve();
+            }
+          }
+          observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+          check();
+        });
+        return true;
+        """
+        webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                completion()
+            case let .failure(error):
+                self.fail("initial preview rendering failed: \(error.localizedDescription)")
             }
         }
     }

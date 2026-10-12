@@ -30,9 +30,13 @@ final class BlockView: UIView, UITextViewDelegate {
     private let settledTextMask = CAShapeLayer()
     private var revealingText: [(range: NSRange, layer: CAShapeLayer, until: CFTimeInterval)] = []
     private var revealCleanup: DispatchWorkItem?
+    private lazy var citationTooltips = SourceCitationTooltips(view: self,
+        container: { [weak self] in self },
+        titles: { [weak self] in self?.record?.citationTitles ?? [:] })
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        _ = citationTooltips
         for child in [markdown, preparedLabel] { addSubview(child) }
         preparedLabel.isSelectable = true
         markdown.throttleInterval = nil

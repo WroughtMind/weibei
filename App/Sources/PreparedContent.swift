@@ -26,6 +26,75 @@ extension MarkdownTheme {
 }
 
 @MainActor
+enum SourceCitationPresentation {
+    static func url(from value: Any?) -> URL? {
+        let url = value as? URL ?? (value as? String).flatMap(URL.init(string:))
+        guard let url, ["weibei-source", "weibei-source-group"].contains(url.scheme) else { return nil }
+        return url
+    }
+
+    static func apply(to view: UIView, fontSize: CGFloat) {
+        if let label = view as? TextLabelView {
+            let original = label.attributedText
+            var text: NSMutableAttributedString?
+            original.enumerateAttribute(.link, in: NSRange(location: 0, length: original.length)) { value, range, _ in
+                guard url(from: value) != nil else { return }
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: fontSize * 0.85, weight: .medium),
+                    .baselineOffset: fontSize * 0.16,
+                    .foregroundColor: WeiBeiNativePalette.secondaryInk(),
+                ]
+                let current = original.attributes(at: range.location, effectiveRange: nil)
+                if (current[.font] as? UIFont)?.isEqual(attributes[.font]) == true,
+                   (current[.foregroundColor] as? UIColor)?.isEqual(attributes[.foregroundColor]) == true,
+                   current[.baselineOffset] as? CGFloat == fontSize * 0.16 { return }
+                if text == nil { text = NSMutableAttributedString(attributedString: original) }
+                text?.addAttributes(attributes, range: range)
+            }
+            if let text { label.attributedText = text }
+        }
+        view.subviews.forEach { apply(to: $0, fontSize: fontSize) }
+    }
+}
+
+@MainActor
+final class SourceCitationTooltips: NSObject, UIToolTipInteractionDelegate {
+    private let container: () -> UIView?
+    private let titles: () -> [String: String]
+
+    init(view: UIView, container: @escaping () -> UIView?, titles: @escaping () -> [String: String]) {
+        self.container = container
+        self.titles = titles
+        super.init()
+        let interaction = UIToolTipInteraction()
+        interaction.delegate = self
+        view.addInteraction(interaction)
+    }
+
+    func toolTipInteraction(_ interaction: UIToolTipInteraction, configurationAt point: CGPoint) -> UIToolTipConfiguration? {
+        guard let root = container(), let owner = interaction.view else { return nil }
+        let titles = titles()
+        func hit(_ view: UIView) -> UIToolTipConfiguration? {
+            guard !view.isHidden else { return nil }
+            if let label = view as? TextLabelView {
+                for run in label.layoutRuns(matching: .link) {
+                    guard let url = SourceCitationPresentation.url(from: run.attributes[.link]),
+                          let title = titles[url.absoluteString] else { continue }
+                    let rect = label.convert(CGRect(x: run.rect.minX, y: label.bounds.height - run.rect.maxY,
+                                                    width: run.rect.width, height: run.rect.height), to: owner)
+                    if rect.contains(point) { return UIToolTipConfiguration(toolTip: title, in: rect) }
+                }
+            }
+            for child in view.subviews {
+                if let configuration = hit(child) { return configuration }
+            }
+            return nil
+        }
+        return hit(root)
+    }
+}
+
+@MainActor
 final class PreparedBlock {
     let id: String
     let messageID: String
@@ -41,6 +110,7 @@ final class PreparedBlock {
     weak var renderedView: BlockView?
     var preparedText: NSAttributedString?
     var preparedLayout: TextLabel.Layout?
+    var citationTitles: [String: String] = [:]
     var imageSources: Set<String> = []
     enum Kind { case markdown, card(String), diagram(String), workspaceAttachment(String) }
 
@@ -104,9 +174,11 @@ final class ContentStore {
         let parsedAt = CACurrentMediaTime()
         preparationMS["parse_elapsed", default: 0] += (parsedAt - started) * 1000
         let preservesRendering = message.preparedTheme == themeRevision
+        let citationTitles = AgentReplySourceInlinePresentation.linkTitles(in: text)
         let rendered = parsed.renderedContent(theme: theme)
         message.blocks = parsed.document.enumerated().map { index, node in
             if preservesRendering, index < message.blocks.count, message.blocks[index].node == node {
+                message.blocks[index].citationTitles = citationTitles
                 return message.blocks[index]
             }
             var imageSources: Set<String> = []
@@ -136,6 +208,7 @@ final class ContentStore {
             let content = MarkdownContent(blocks: transformed, rendered: rendered, highlightMaps: highlights)
             let block = PreparedBlock(id: "\(message.id)/\(index)", messageID: message.id, node: node, content: content, fixtureCard: message.original == nil)
             block.imageSources = imageSources
+            block.citationTitles = citationTitles
             if index < message.blocks.count {
                 views[message.blocks[index].id]?.saveInteractionState()
                 block.draft = message.blocks[index].draft
