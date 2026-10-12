@@ -1608,13 +1608,19 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                                 .map { "\(type(of: $0)):\($0.frame):hidden=\($0.isHidden):alpha=\($0.alpha)" }
                             return "button=\(button.frame), hit=\(hit.map { String(describing: type(of: $0)) } ?? "nil"), ancestors=\(ancestors)"
                         }
-                        if let window = selectionProbe.view.window {
-                            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-                                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                        var screenshotFailure = ""
+                        do {
+                            try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
+                            if let window = selectionProbe.view.window {
+                                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                                }
+                                try image.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("selection-probe-failure.png"))
                             }
-                            try image.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("selection-probe-failure.png"))
+                        } catch {
+                            screenshotFailure = ", screenshotFailure=\(error.localizedDescription)"
                         }
-                        throw Failure(message: "松手后胶囊不可见：textMatches=\(selectionProbe.selection.text() == expected), frame=\(actions.frame), lastAttempt=\(actions.lastHitTestFailure), \(targets)")
+                        throw Failure(message: "松手后胶囊不可见：textMatches=\(selectionProbe.selection.text() == expected), frame=\(actions.frame), lastAttempt=\(actions.lastHitTestFailure), \(targets)\(screenshotFailure)")
                     }
                     try expect(selectionProbe.selection.text() == expected && !selectionProbe.selectionActions.isHidden,
                                "松手后起点、方向或胶囊状态不正确")
