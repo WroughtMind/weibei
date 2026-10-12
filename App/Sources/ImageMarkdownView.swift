@@ -59,13 +59,30 @@ final class LabImages {
     deinit { loader.invalidate() }
 }
 
-final class ImageMarkdownView: MarkdownTextView {
+class SourceCitationMarkdownView: MarkdownTextView {
+    override func setContentImmediately(_ content: MarkdownContent) {
+        super.setContentImmediately(content)
+        applySourceCitations()
+    }
+
+    func applySourceCitations() {
+        SourceCitationPresentation.apply(to: self, fontSize: theme.fonts.body.pointSize)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Table labels are attached as context views during upstream layout.
+        applySourceCitations()
+    }
+}
+
+final class ImageMarkdownView: SourceCitationMarkdownView {
     var containsImages = false
     var images = LabImages.shared {
-        didSet { if oldValue !== images { invalidateInlineDecoration() } }
+        didSet { if oldValue !== images { invalidateInlineDecoration(); applySourceCitations() } }
     }
     var contentWidth: CGFloat = 680 {
-        didSet { if containsImages && contentWidth != oldValue { invalidateInlineDecoration() } }
+        didSet { if containsImages && contentWidth != oldValue { invalidateInlineDecoration(); applySourceCitations() } }
     }
 
     override func decorate(inlineText text: NSAttributedString, theme: MarkdownTheme) -> NSAttributedString {

@@ -154,4 +154,36 @@ final class ChatMarkdownAuditTests: XCTestCase {
         XCTAssertTrue(groupPres.markdown.contains("[①]("))
         XCTAssertTrue(groupPres.markdown.contains("[+1]("))
     }
+
+    func testCitationTetheringPreservesLineAndParagraphBreaks() {
+        let source = AgentReplySource(itemID: nil, kind: .material, title: "教材", label: "[材料：A]", excerpt: "摘录")
+        for prefix in ["第一段。\n\n", "第一行。  \n", "第一行。\r\n"] {
+            let presentation = AgentReplySourceInlinePresentation(text: prefix + source.label + " 第二段", sources: [source], language: .chinese)
+            XCTAssertTrue(presentation.markdown.hasPrefix(prefix + "[①]("), presentation.markdown)
+        }
+        for separator in ["\n", "\n\n", "\r\n"] {
+            let presentation = AgentReplySourceInlinePresentation(text: "第一段 " + source.label + separator + "，第二段", sources: [source], language: .chinese)
+            XCTAssertTrue(presentation.markdown.hasSuffix(separator + "，第二段"), presentation.markdown)
+        }
+    }
+
+    func testCitationHoverTitlesPreserveSourceMetadataAndIgnoreCode() {
+        let source = AgentReplySource(itemID: nil, kind: .material, title: "教材 \"A\"", label: "[材料：A]", excerpt: "摘录", pageIndex: 6)
+        let presentation = AgentReplySourceInlinePresentation(text: source.label, sources: [source], language: .chinese)
+        let fake = "weibei-source://literal"
+        let titles = AgentReplySourceInlinePresentation.linkTitles(in: presentation.markdown + "\n\n`[①](\(fake) \"代码里的标题\")`")
+        XCTAssertEqual(titles["weibei-source://\(source.id.uuidString.lowercased())"], "教材 \"A\" · 第 7 页")
+        XCTAssertNil(titles[fake])
+    }
+
+    func testCitationTitleCannotCreateMarkdownImages() {
+        let title = "教材\n\n![图片](https:&#47;&#47;example.invalid&#47;probe.png)\n\n尾.pdf"
+        let source = AgentReplySource(itemID: nil, kind: .material, title: title, label: "[材料：A]", excerpt: "摘录")
+        let presentation = AgentReplySourceInlinePresentation(text: source.label, sources: [source], language: .chinese)
+        let document = NativeChatMarkdownParser.parse(presentation.markdown)
+        let url = "weibei-source://\(source.id.uuidString.lowercased())"
+        XCTAssertTrue(document.runs.allSatisfy { $0.attachment == nil })
+        XCTAssertTrue(document.runs.contains { $0.style.link == url })
+        XCTAssertEqual(AgentReplySourceInlinePresentation.linkTitles(in: presentation.markdown).count, 1)
+    }
 }

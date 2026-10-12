@@ -344,7 +344,7 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context) -> CGSize? {
         context.coordinator.sizeThatFits(proposedWidth: proposal.width, view: uiView)
     }
-    private final class MeasuringTextView: MarkdownTextView {
+    private final class MeasuringTextView: SourceCitationMarkdownView {
         var onSizeInvalidation: (() -> Void)?
         override func invalidateIntrinsicContentSize() {
             super.invalidateIntrinsicContentSize()
@@ -357,6 +357,8 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
         var markdown: String?
         var fontSize: CGFloat = 0
         var appearance: WeiBeiAppearanceMode?
+        var citationTitles: [String: String] = [:]
+        private var citationTooltips: SourceCitationTooltips?
         #if WEIBEI_ACCEPTANCE_CHECKS
         private(set) var measurementCount = 0
         private(set) var contentApplyCount = 0
@@ -369,6 +371,9 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
                 measurement.invalidate()
             }
             view.throttleInterval = nil
+            citationTooltips = SourceCitationTooltips(view: view,
+                container: { [weak view] in view },
+                titles: { [weak self] in self?.citationTitles ?? [:] })
             return view
         }
 
@@ -376,6 +381,7 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
             guard self.markdown != markdown || self.fontSize != fontSize || self.appearance != appearance else { return }
             measurement.invalidate()
             self.markdown = markdown; self.fontSize = fontSize; self.appearance = appearance
+            citationTitles = AgentReplySourceInlinePresentation.linkTitles(in: markdown)
             let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: appearance)
             let parsed = MarkdownParser().parse(markdown)
             let content = MarkdownContent(parserResult: parsed, theme: theme)

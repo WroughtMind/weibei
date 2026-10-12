@@ -75,6 +75,7 @@ verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')
 required_business_checks = {
+    'native_citation_typography_and_hover_title',
     'active_connection_profile_matches_configuration', 'connection_profile_switch_back',
     'connection_cards_settings_and_authenticated_models',
     'settings_panel_stays_in_original_full_screen_window',

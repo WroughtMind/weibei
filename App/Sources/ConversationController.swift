@@ -804,7 +804,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             for block in changes.values where messages.contains(where: { $0.blocks.contains(where: { $0 === block }) }) {
                 block.width = 0
                 let body = store.view(for: block, width: bodyWidth)
-                if case .markdown = block.kind { body.markdown.invalidateInlineDecoration() }
+                if case .markdown = block.kind {
+                    body.markdown.invalidateInlineDecoration()
+                    body.markdown.applySourceCitations()
+                }
                 block.height = body.measure(width: bodyWidth)
             }
             flow.invalidateLayout(); collection.layoutIfNeeded()

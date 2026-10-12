@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Markdown
 
 public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
     case chinese = "zh-Hans"
@@ -1727,6 +1728,21 @@ public struct AgentReplySourceInlinePresentation: Sendable {
         additionalSourcesByURL[urlString] ?? []
     }
 
+    public static func linkTitles(in markdown: String) -> [String: String] {
+        guard markdown.contains("weibei-source") else { return [:] }
+        var titles: [String: String] = [:]
+        func visit(_ node: any Markup) {
+            if let link = node as? Markdown.Link, let destination = link.destination,
+               let url = URL(string: destination), ["weibei-source", "weibei-source-group"].contains(url.scheme),
+               let title = link.title, !title.isEmpty {
+                titles[destination] = title
+            }
+            node.children.forEach(visit)
+        }
+        visit(Document(parsing: markdown))
+        return titles
+    }
+
     private static let tetherablePunctuation = Set("，。、；：！？,.;:!?")
 
     private static func tetherPunctuation(
@@ -1734,14 +1750,14 @@ public struct AgentReplySourceInlinePresentation: Sendable {
         remaining: inout Substring
     ) -> (cleanedPrefix: Substring, tetheredPunct: String) {
         var trimmedPrefix = prefix
-        while let last = trimmedPrefix.last, last.isWhitespace {
+        while let last = trimmedPrefix.last, last.isWhitespace, !last.isNewline {
             trimmedPrefix = trimmedPrefix.dropLast()
         }
         if let last = trimmedPrefix.last, tetherablePunctuation.contains(last) {
             return (trimmedPrefix, "")
         }
         var lookahead = remaining
-        while let first = lookahead.first, first.isWhitespace {
+        while let first = lookahead.first, first.isWhitespace, !first.isNewline {
             lookahead = lookahead.dropFirst()
         }
         if let first = lookahead.first, tetherablePunctuation.contains(first) {
@@ -1813,7 +1829,7 @@ public struct AgentReplySourceInlinePresentation: Sendable {
             .replacingOccurrences(of: "[", with: "\\[")
             .replacingOccurrences(of: "]", with: "\\]")
         if let title, !title.isEmpty {
-            let escapedTitle = title
+            let escapedTitle = title.split(whereSeparator: \.isNewline).joined(separator: " ")
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
             return "[\(escaped)](\(url) \"\(escapedTitle)\")"
