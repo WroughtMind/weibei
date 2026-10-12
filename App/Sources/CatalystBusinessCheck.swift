@@ -1064,14 +1064,20 @@ enum CatalystBusinessCheck {
             let bodies = controller.collection.indexPathsForVisibleItems.sorted().compactMap {
                 (controller.collection.cellForItem(at: $0) as? MessageCell)?.body
             }
-            guard let body = bodies.first(where: { $0.record?.preparedText != nil && $0.label.attributedText.length > 0 }),
+            let visible = controller.collection.bounds.insetBy(dx: 0, dy: 8)
+            guard let body = bodies.first(where: {
+                $0.record?.preparedText != nil && $0.label.attributedText.length > 0
+                    && visible.contains($0.label.convert($0.label.bounds, to: controller.collection))
+            }),
                   let block = body.record else { throw Failure("capsule quote has no visible paragraph") }
             let range = NSRange(location: 0, length: body.label.attributedText.length)
             let excerpt = body.copyText(range: range)
             controller.selection.select(from: .init(blockID: block.id, character: 0),
                                         to: .init(blockID: block.id, character: NSMaxRange(range)))
             controller.updateSelectionActions()
-            guard !excerpt.isEmpty, !controller.selectionActions.isHidden else { throw Failure("capsule quote is not visible") }
+            guard !excerpt.isEmpty, !controller.selectionActions.isHidden else {
+                throw Failure("capsule quote is not visible: floating=\(controller.isFloatingConversation), paragraph=\(body.label.convert(body.label.bounds, to: controller.collection)), viewport=\(visible), hit=\(controller.selectionActions.lastHitTestFailure)")
+            }
             return excerpt
         }
         func reachableCapsuleButton(_ button: UIButton) throws -> UIButton {
