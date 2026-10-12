@@ -125,6 +125,8 @@ final class ConversationSelectionActions: UIView {
         accessibilityIdentifier = "conversation-selection-actions"
         stack.axis = .horizontal
         stack.alignment = .center
+        stack.isLayoutMarginsRelativeArrangement = true
+        stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 3, leading: 4, bottom: 3, trailing: 4)
         addSubview(stack)
         for button in [copyButton, quoteButton] {
             button.configuration = .plain()
@@ -187,11 +189,13 @@ final class ConversationSelectionActions: UIView {
     }
     override var intrinsicContentSize: CGSize {
         let size = stack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
-        return CGSize(width: size.width + 8, height: size.height + 6)
+        return CGSize(width: ceil(size.width), height: ceil(size.height))
     }
     override func layoutSubviews() {
         super.layoutSubviews()
-        stack.frame = bounds.insetBy(dx: 4, dy: 3)
+        // Keep the event surface around the native button frames. Insets belong
+        // to the stack's content layout, not to its own hit-test bounds.
+        stack.frame = bounds
         layer.cornerRadius = bounds.height / 2
         layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
     }
