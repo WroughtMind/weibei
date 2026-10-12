@@ -930,8 +930,15 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         let x = min(max(viewport.minX, anchor.midX - size.width / 2), viewport.maxX - size.width)
         let above = anchor.minY - margin - size.height
         let below = anchor.maxY + margin
-        let y = above >= viewport.minY ? above : min(below, viewport.maxY - size.height)
-        selectionActions.frame = CGRect(origin: CGPoint(x: x, y: y), size: size)
+        let positions = [above, below, rects[0].minY - margin - size.height, rects[rects.count - 1].maxY + margin]
+        let candidates = positions.map { CGRect(origin: CGPoint(x: x, y: $0), size: size) }
+        let unobstructed = candidates.first { frame in
+            viewport.contains(frame) && !rects.contains(where: { $0.intersects(frame) })
+        }
+        // A selection can fill the viewport. Keep the actions reachable at its
+        // edge when there is no outside space, rather than moving over the input.
+        selectionActions.frame = unobstructed ?? CGRect(
+            origin: CGPoint(x: x, y: max(viewport.minY, min(above, viewport.maxY - size.height))), size: size)
         selectionActions.isHidden = false
         view.bringSubviewToFront(selectionActions)
     }
@@ -1659,6 +1666,13 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 selectionProbe.collection.layoutIfNeeded()
                 try expect(selectionProbe.selection.text() == reflowExcerpt && !probeBody.displayedSelectionRects.isEmpty,
                            "正文重新换行后选区或高亮丢失")
+                selectionProbe.selection.select(from: .init(blockID: probeMessage.blocks[0].id, character: 0),
+                                                to: .init(blockID: probeMessage.blocks[0].id, character: probeLabel.attributedText.length))
+                selectionProbe.updateSelectionActions()
+                let selectedRects = selectionProbe.selection.visibleSelectionRects(in: selectionProbe.view)
+                try expect(!selectionProbe.selectionActions.isHidden
+                    && !selectedRects.contains(where: { $0.intersects(selectionProbe.selectionActions.frame) }),
+                           "有空白空间时胶囊仍遮挡多行选中文字")
                 selectionProbe.selectionPress.pressed?(CGPoint(x: 1, y: 1), selectionProbe.collection)
                 selectionProbe.selectionPress.released?()
                 selectionProbe.updateSelectionActions()
