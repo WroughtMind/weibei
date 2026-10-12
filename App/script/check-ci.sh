@@ -18,6 +18,8 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion-mist.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-main.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-floating.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/connection-cards.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/confirmed-import.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/contextual-pickers.png" \

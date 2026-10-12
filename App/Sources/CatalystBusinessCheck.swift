@@ -1074,10 +1074,44 @@ enum CatalystBusinessCheck {
             guard !excerpt.isEmpty, !controller.selectionActions.isHidden else { throw Failure("capsule quote is not visible") }
             return excerpt
         }
+        func reachableCapsuleButton(_ button: UIButton) throws -> UIButton {
+            button.superview?.layoutIfNeeded()
+            let bounds = button.bounds.insetBy(dx: 1, dy: 1)
+            let points = [CGPoint(x: bounds.midX, y: bounds.midY),
+                          CGPoint(x: bounds.minX, y: bounds.minY), CGPoint(x: bounds.maxX, y: bounds.minY),
+                          CGPoint(x: bounds.minX, y: bounds.maxY), CGPoint(x: bounds.maxX, y: bounds.maxY)]
+            guard !bounds.isEmpty, points.allSatisfy({ point in
+                guard let hit = window.hitTest(button.convert(point, to: window), with: nil) else { return false }
+                return hit === button || hit.isDescendant(of: button)
+            }) else { throw Failure("selection capsule button is covered or outside its hit surface") }
+            return button
+        }
         let mainExcerpt = try selectVisibleParagraph(in: mainConversation)
+        let mainCopy = try reachableCapsuleButton(mainConversation.selectionActions.copyButton)
+        _ = try reachableCapsuleButton(mainConversation.selectionActions.quoteButton)
         try capture("selection-capsule-main.png")
+        mainCopy.sendActions(for: .touchUpInside)
+        guard UIPasteboard.general.string == mainExcerpt, mainConversation.selection.hasSelection,
+              mainComposer.text == mainQuoted, floatingComposer()?.text == draft else {
+            throw Failure("main capsule copy changed the selected text or either draft")
+        }
+        let capsuleWithFloatingPanel = mainConversation.selectionActions.frame
+        store.dismissFloatingSelectionAgent()
+        try await until("closing floating panel restores the main selection capsule") {
+            floatingComposer() == nil && mainConversation.selection.hasSelection
+                && !mainConversation.selectionActions.isHidden
+                && mainConversation.selectionActions.frame != capsuleWithFloatingPanel
+                && (try? reachableCapsuleButton(mainConversation.selectionActions.quoteButton)) != nil
+        }
+        guard store.openAgentReplySource(source) else { throw Failure("discussion citation did not reopen after capsule copy") }
+        try await until("reopening floating panel keeps the main capsule reachable and both drafts") {
+            floatingComposer()?.text == draft && mainComposer.text == mainQuoted
+                && !ConversationSelectionPanelProbe.PanelView.rectangles(in: mainConversation.view).isEmpty
+                && (try? reachableCapsuleButton(mainConversation.selectionActions.copyButton)) != nil
+                && (try? reachableCapsuleButton(mainConversation.selectionActions.quoteButton)) != nil
+        }
         mainQuoted += "> " + mainExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-        mainConversation.selectionActions.quoteButton.sendActions(for: .touchUpInside)
+        try reachableCapsuleButton(mainConversation.selectionActions.quoteButton).sendActions(for: .touchUpInside)
         try await until("main capsule quote appends without touching floating draft") {
             mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
                 && !mainConversation.selection.hasSelection && mainConversation.selectionActions.isHidden
@@ -1094,9 +1128,11 @@ enum CatalystBusinessCheck {
                 && mainComposer.text == mainQuoted && workspaceIsFullyVisible()
         }
         let floatingExcerpt = try selectVisibleParagraph(in: floatingConversation)
+        _ = try reachableCapsuleButton(floatingConversation.selectionActions.copyButton)
+        let floatingQuote = try reachableCapsuleButton(floatingConversation.selectionActions.quoteButton)
         try capture("selection-capsule-floating.png")
         let floatingCapsuleQuoted = floatingQuoted + "> " + floatingExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-        floatingConversation.selectionActions.quoteButton.sendActions(for: .touchUpInside)
+        floatingQuote.sendActions(for: .touchUpInside)
         try await until("floating capsule quote appends without touching main draft") {
             floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingCapsuleQuoted
                 && mainComposer.text == mainQuoted && !floatingConversation.selection.hasSelection

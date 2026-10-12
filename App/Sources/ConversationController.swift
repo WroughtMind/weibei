@@ -126,6 +126,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         selection.geometryChanged = { [weak self] in self?.updateSelectionActions() }
         selectionActions.copySelectedText = { [weak self] in self?.copySelection() }
         selectionActions.quoteSelectedText = { [weak self] in self?.quoteSelection() }
+        NotificationCenter.default.addObserver(self, selector: #selector(selectionPanelGeometryDidChange),
+            name: ConversationSelectionPanelProbe.PanelView.geometryDidChange, object: nil)
         toolbar.spacing = 16; toolbar.alignment = .center
         toolbar.addArrangedSubview(button("阅读区", symbol: "sidebar.left", action: { [weak self] in self?.toggleWorkspace?() }))
         let title = UILabel(); title.text = "对话"; title.font = .systemFont(ofSize: 18, weight: .semibold)
@@ -902,6 +904,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                                 textScale: selectionActionTextScale)
         updateSelectionActions()
     }
+    @objc private func selectionPanelGeometryDidChange() { updateSelectionActions() }
     func updateSelectionActions() {
         guard isViewLoaded, !selection.isInteracting, selection.hasSelection else {
             selectionActions.isHidden = true
@@ -930,17 +933,30 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         let x = min(max(viewport.minX, anchor.midX - size.width / 2), viewport.maxX - size.width)
         let above = anchor.minY - margin - size.height
         let below = anchor.maxY + margin
-        let positions = [above, below, rects[0].minY - margin - size.height, rects[rects.count - 1].maxY + margin]
-        let candidates = positions.map { CGRect(origin: CGPoint(x: x, y: $0), size: size) }
-        let unobstructed = candidates.first { frame in
-            viewport.contains(frame) && !rects.contains(where: { $0.intersects(frame) })
+        let obstacles = isFloatingConversation ? [] : ConversationSelectionPanelProbe.PanelView.rectangles(in: view)
+        var positions = [above, below, rects[0].minY - margin - size.height, rects[rects.count - 1].maxY + margin]
+        positions += obstacles.flatMap { [$0.minY - margin - size.height, $0.maxY + margin] }
+        positions += [viewport.minY, viewport.maxY - size.height]
+        var candidates = positions.map { CGRect(origin: CGPoint(x: x, y: $0), size: size) }
+        for obstacle in obstacles {
+            for side in [obstacle.minX - margin - size.width, obstacle.maxX + margin] {
+                candidates += positions.map { CGRect(origin: CGPoint(x: side, y: $0), size: size) }
+            }
         }
-        // A selection can fill the viewport. Keep the actions reachable at its
-        // edge when there is no outside space, rather than moving over the input.
-        selectionActions.frame = unobstructed ?? CGRect(
-            origin: CGPoint(x: x, y: max(viewport.minY, min(above, viewport.maxY - size.height))), size: size)
         selectionActions.isHidden = false
         view.bringSubviewToFront(selectionActions)
+        func reachable(_ frame: CGRect) -> Bool {
+            guard viewport.contains(frame), !obstacles.contains(where: { $0.intersects(frame) }) else { return false }
+            selectionActions.frame = frame
+            return selectionActions.buttonsAreReachable()
+        }
+        if candidates.first(where: { frame in
+            !rects.contains(where: { $0.intersects(frame) }) && reachable(frame)
+        }) != nil { return }
+        // When selected text fills the available surface, keep both buttons
+        // reachable within the conversation and outside any floating panel.
+        if candidates.first(where: reachable) != nil { return }
+        selectionActions.isHidden = true
     }
     func copySelection() {
         let text = selection.text()

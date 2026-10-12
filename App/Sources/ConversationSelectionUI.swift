@@ -1,5 +1,68 @@
 import UIKit
+import SwiftUI
 import WeiBeiCore
+
+/// Reports the complete SwiftUI floating panel, including its header and composer.
+/// Reading these native bounds also accounts for the panel's placement transform.
+struct ConversationSelectionPanelProbe: UIViewRepresentable {
+    let position: CGPoint?
+    func makeUIView(context: Context) -> PanelView { PanelView() }
+    func updateUIView(_ view: PanelView, context: Context) {
+        view.setNeedsLayout()
+        view.reportGeometry()
+    }
+    final class PanelView: UIView {
+        static let geometryDidChange = Notification.Name("WeiBeiConversationSelectionPanelGeometryChanged")
+        private static let panels = NSHashTable<PanelView>.weakObjects()
+        private weak var reportedWindow: UIWindow?
+        private var reportedFrame = CGRect.null
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            accessibilityIdentifier = "conversation-selection-panel-obstacle"
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            reportedWindow = nil
+            reportedFrame = .null
+            if window != nil {
+                Self.panels.add(self)
+                reportGeometry()
+            } else {
+                Self.panels.remove(self)
+                let name = Self.geometryDidChange
+                // Removal must still be reported if SwiftUI releases this probe
+                // before the next main-queue turn.
+                DispatchQueue.main.async { NotificationCenter.default.post(name: name, object: nil) }
+            }
+        }
+        override func layoutSubviews() { super.layoutSubviews(); reportGeometry() }
+        func reportGeometry() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let frame = window.map { self.convert(self.bounds, to: $0) } ?? .null
+                guard reportedWindow !== window || reportedFrame != frame else { return }
+                reportedWindow = window
+                reportedFrame = frame
+                NotificationCenter.default.post(name: Self.geometryDidChange, object: self)
+            }
+        }
+        static func rectangles(in view: UIView) -> [CGRect] {
+            guard let window = view.window else { return [] }
+            return panels.allObjects.compactMap { panel in
+                guard panel.window === window else { return nil }
+                var ancestor: UIView? = panel
+                while let current = ancestor {
+                    if current.isHidden || current.alpha == 0 { return nil }
+                    ancestor = current.superview
+                }
+                let frame = panel.convert(panel.bounds, to: view)
+                return frame.isEmpty || frame.isNull ? nil : frame
+            }
+        }
+    }
+}
 
 /// Observes primary presses without claiming the gesture or cancelling delivery
 /// to the text, links, scroll views, or interactive attachments underneath.
@@ -131,6 +194,21 @@ final class ConversationSelectionActions: UIView {
         stack.frame = bounds.insetBy(dx: 4, dy: 3)
         layer.cornerRadius = bounds.height / 2
         layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+    }
+    func buttonsAreReachable() -> Bool {
+        guard let window else { return false }
+        layoutIfNeeded()
+        return [copyButton, quoteButton].allSatisfy { button in
+            let bounds = button.bounds.insetBy(dx: 1, dy: 1)
+            guard !bounds.isEmpty else { return false }
+            let points = [CGPoint(x: bounds.midX, y: bounds.midY),
+                          CGPoint(x: bounds.minX, y: bounds.minY), CGPoint(x: bounds.maxX, y: bounds.minY),
+                          CGPoint(x: bounds.minX, y: bounds.maxY), CGPoint(x: bounds.maxX, y: bounds.maxY)]
+            return points.allSatisfy { point in
+                guard let hit = window.hitTest(button.convert(point, to: window), with: nil) else { return false }
+                return hit === button || hit.isDescendant(of: button)
+            }
+        }
     }
     @objc private func hover(_ gesture: UIHoverGestureRecognizer) {
         guard let button = gesture.view as? UIButton else { return }

@@ -2606,6 +2606,12 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
+#if targetEnvironment(macCatalyst)
+        .background {
+            ConversationSelectionPanelProbe(position: placedOrigin)
+                .allowsHitTesting(false)
+        }
+#endif
         .onChange(of: interaction.selectionContext) { previous, next in
             let sameContent = previous?.text == next?.text
                 && previous?.source == next?.source
