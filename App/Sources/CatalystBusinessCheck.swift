@@ -1047,9 +1047,32 @@ enum CatalystBusinessCheck {
         store.appearanceStyle = originalAppearanceStyle
         mainConversation.quoteText?("主会话引用片段")
         // A2: 引用追加到各自草稿末尾（前面空一行），不再替换已写的草稿。
-        let mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
+        var mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
         try await until("main quote appends to its own composer") {
             mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
+        }
+        func selectVisibleParagraph(in controller: ConversationController) throws -> String {
+            controller.collection.layoutIfNeeded()
+            let bodies = controller.collection.indexPathsForVisibleItems.sorted().compactMap {
+                (controller.collection.cellForItem(at: $0) as? MessageCell)?.body
+            }
+            guard let body = bodies.first(where: { $0.record?.preparedText != nil && $0.label.attributedText.length > 0 }),
+                  let block = body.record else { throw Failure("capsule quote has no visible paragraph") }
+            let range = NSRange(location: 0, length: body.label.attributedText.length)
+            let excerpt = body.copyText(range: range)
+            controller.selection.select(from: .init(blockID: block.id, character: 0),
+                                        to: .init(blockID: block.id, character: NSMaxRange(range)))
+            controller.updateSelectionActions()
+            guard !excerpt.isEmpty, !controller.selectionActions.isHidden else { throw Failure("capsule quote is not visible") }
+            return excerpt
+        }
+        let mainExcerpt = try selectVisibleParagraph(in: mainConversation)
+        try capture("selection-capsule-main.png")
+        mainQuoted += "> " + mainExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
+        mainConversation.selectionActions.quoteButton.sendActions(for: .touchUpInside)
+        try await until("main capsule quote appends without touching floating draft") {
+            mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
+                && !mainConversation.selection.hasSelection && mainConversation.selectionActions.isHidden
         }
         guard let floatingConversation = conversation(containing: messageID), floatingConversation.isFloatingConversation,
               let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
@@ -1060,6 +1083,15 @@ enum CatalystBusinessCheck {
         try await until("floating quote appends to its own composer") {
             floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
                 && mainComposer.text == mainQuoted
+        }
+        let floatingExcerpt = try selectVisibleParagraph(in: floatingConversation)
+        try capture("selection-capsule-floating.png")
+        let floatingCapsuleQuoted = floatingQuoted + "> " + floatingExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
+        floatingConversation.selectionActions.quoteButton.sendActions(for: .touchUpInside)
+        try await until("floating capsule quote appends without touching main draft") {
+            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingCapsuleQuoted
+                && mainComposer.text == mainQuoted && !floatingConversation.selection.hasSelection
+                && floatingConversation.selectionActions.isHidden
         }
         store.dismissFloatingSelectionAgent()
         store.clearSelectionAttachments()

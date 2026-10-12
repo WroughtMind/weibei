@@ -42,6 +42,7 @@ struct CatalystConversationView: View {
         }
         func updateUIViewController(_ controller: ConversationController, context: Context) {
             controller.reduceMotion = reduceMotion
+            controller.selectionActionTextScale = workspace.interfaceTextScale.multiplier
             controller.isFloatingConversation = floatingThreadID != nil
             controller.reservesReplySpace = floatingThreadID == nil
             controller.workspaceBodyWidth = bodyWidth

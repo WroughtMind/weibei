@@ -22,6 +22,14 @@ final class BlockView: UIView, UITextViewDelegate {
     var onSaveNote: ((String) -> Void)?
     private var geometry: TextLabel.Layout?
     private let selectionOverlay = CAShapeLayer()
+    private let attachmentSelectionOverlay = CAShapeLayer()
+    private enum SelectionDisplay {
+        case body(NSRange)
+        case attachment(Int, NSRange)
+    }
+    private var displayedSelection: SelectionDisplay?
+    private var attachmentGeometry: (label: TextLabelView, text: NSAttributedString, layout: TextLabel.Layout)?
+    private(set) var isRestoringInteractionState = false
     private var lastWidth: CGFloat = 0
     private var lastHeight: CGFloat = 0
     private var displayedText = ""
@@ -39,6 +47,7 @@ final class BlockView: UIView, UITextViewDelegate {
         _ = citationTooltips
         for child in [markdown, preparedLabel] { addSubview(child) }
         preparedLabel.isSelectable = true
+        preparedLabel.delegate = markdown
         markdown.throttleInterval = nil
         markdown.linkHandler = { [weak self] payload, _, _ in
             switch payload {
@@ -50,6 +59,8 @@ final class BlockView: UIView, UITextViewDelegate {
         selectionOverlay.zPosition = 20
         selectionOverlay.actions = ["path": NSNull()]
         layer.addSublayer(selectionOverlay)
+        attachmentSelectionOverlay.zPosition = 20
+        attachmentSelectionOverlay.actions = ["path": NSNull()]
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
@@ -75,8 +86,13 @@ final class BlockView: UIView, UITextViewDelegate {
         markdown.containsImages = !block.imageSources.isEmpty
         workspaceContent?.removeFromSuperview(); workspaceContent = nil
         geometry = nil
+        attachmentGeometry = nil
         lastWidth = 0
+        displayedSelection = nil
         selectionOverlay.path = nil
+        attachmentSelectionOverlay.removeFromSuperlayer()
+        selectionOverlay.fillColor = theme.colors.selectionBackground?.cgColor
+        attachmentSelectionOverlay.fillColor = theme.colors.selectionBackground?.cgColor
         for child in subviews { child.isHidden = true }
         switch block.kind {
         case .markdown:
@@ -102,7 +118,7 @@ final class BlockView: UIView, UITextViewDelegate {
             }
             if let text = block.preparedText {
                 preparedLabel.attributedText = text
-                preparedLabel.selectionBackgroundColor = theme.colors.selectionBackground
+                preparedLabel.selectionBackgroundColor = .clear
                 preparedLabel.isHidden = false
             } else { markdown.isHidden = false }
         case let .workspaceAttachment(identifier):
@@ -258,6 +274,11 @@ final class BlockView: UIView, UITextViewDelegate {
         case .diagram: diagram?.frame = bounds
         case .workspaceAttachment: workspaceContent?.frame = bounds
         }
+        if displayedSelection != nil {
+            label.layoutIfNeeded()
+            markdown.layoutIfNeeded()
+            updateSelectionOverlay()
+        }
     }
 
     func installSize(width: CGFloat, height: CGFloat) {
@@ -292,6 +313,8 @@ final class BlockView: UIView, UITextViewDelegate {
     }
     func restoreInteractionState() {
         guard let record else { return }
+        isRestoringInteractionState = true
+        defer { isRestoringInteractionState = false }
         markdown.layoutIfNeeded()
         for (view, offset) in zip(scrollViews(in: markdown), record.horizontalOffsets) {
             view.contentOffset.x = offset
@@ -336,27 +359,92 @@ final class BlockView: UIView, UITextViewDelegate {
         return CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
     }
     func displaySelection(_ range: NSRange?) {
+        displayedSelection = range.flatMap { $0.length > 0 ? .body($0) : nil }
+        updateSelectionOverlay()
+    }
+    func displayAttachmentSelection(at index: Int, range: NSRange) {
+        displayedSelection = .attachment(index, range)
+        updateSelectionOverlay()
+    }
+    private func selectedLabelAndRange() -> (TextLabelView, NSRange)? {
+        guard let displayedSelection else { return nil }
+        switch displayedSelection {
+        case let .body(range): return (label, range)
+        case let .attachment(index, range):
+            let labels = attachmentLabels
+            guard labels.indices.contains(index) else { return nil }
+            return (labels[index], range)
+        }
+    }
+    private func selectionGeometry(for selectedLabel: TextLabelView) -> TextLabel.Layout {
+        if selectedLabel === label { return textGeometry() }
+        if attachmentGeometry?.label !== selectedLabel
+            || attachmentGeometry?.text.isEqual(to: selectedLabel.attributedText) != true {
+            attachmentGeometry = (selectedLabel, selectedLabel.attributedText,
+                                  TextLabel.Layout(attributedString: selectedLabel.attributedText))
+        }
+        attachmentGeometry!.layout.containerSize = selectedLabel.bounds.size
+        return attachmentGeometry!.layout
+    }
+    private func selectionRects(in selectedLabel: TextLabelView, range: NSRange) -> [CGRect] {
+        let length = selectedLabel.attributedText.length
+        guard range.location >= 0, range.location < length, range.length > 0 else { return [] }
+        let safeRange = NSRange(location: range.location, length: min(range.length, length - range.location))
+        return selectionGeometry(for: selectedLabel).rects(for: safeRange).map {
+            CGRect(x: $0.minX, y: selectedLabel.bounds.height - $0.maxY, width: $0.width, height: $0.height)
+        }
+    }
+    var displayedSelectionRects: [CGRect] {
+        guard let (selectedLabel, range) = selectedLabelAndRange() else { return [] }
+        var clip = bounds
+        var ancestor = selectedLabel.superview
+        while let view = ancestor, view !== self {
+            if view.clipsToBounds { clip = clip.intersection(view.convert(view.bounds, to: self)) }
+            ancestor = view.superview
+        }
+        return selectionRects(in: selectedLabel, range: range).compactMap {
+            let visible = selectedLabel.convert($0, to: self).intersection(clip)
+            return visible.isEmpty || visible.isNull ? nil : visible
+        }
+    }
+    private func updateSelectionOverlay() {
+        selectionOverlay.path = nil
+        attachmentSelectionOverlay.path = nil
+        attachmentSelectionOverlay.removeFromSuperlayer()
+        guard let (selectedLabel, range) = selectedLabelAndRange() else { return }
+        finishTextReveal()
+        let rects = selectionRects(in: selectedLabel, range: range)
         let path = CGMutablePath()
-        if let range, range.length > 0 {
-            finishTextReveal()
-            for rect in textGeometry().rects(for: range) {
-                path.addRect(CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height))
+        for rect in rects { path.addRect(rect) }
+        if selectedLabel === label {
+            let bodyPath = CGMutablePath()
+            for rect in rects { bodyPath.addRect(selectedLabel.convert(rect, to: self)) }
+            selectionOverlay.path = bodyPath
+        } else {
+            // An attachment highlight lives with its label so horizontal scrolling
+            // moves and clips it with the code, instead of leaving a mark over the pane.
+            attachmentSelectionOverlay.path = path
+            selectedLabel.layer.addSublayer(attachmentSelectionOverlay)
+        }
+    }
+    static func plainText(in label: TextLabelView, range: NSRange? = nil) -> String {
+        let length = label.attributedText.length
+        let requested = range ?? NSRange(location: 0, length: length)
+        guard requested.location >= 0, requested.location <= length, requested.length > 0 else { return "" }
+        let safeRange = NSRange(location: requested.location, length: min(requested.length, length - requested.location))
+        let result = NSMutableAttributedString(attributedString: label.attributedText.attributedSubstring(from: safeRange))
+        result.enumerateAttribute(.litextAttachment, in: NSRange(location: 0, length: result.length), options: .reverse) { value, range, _ in
+            if let attachment = value as? TextLabel.Attachment {
+                result.replaceCharacters(in: range, with: attachment.attributedStringRepresentation())
             }
         }
-        selectionOverlay.path = path
+        return result.string
     }
     func copyText(range: NSRange? = nil) -> String {
         guard let record else { return "" }
         switch record.kind {
         case .markdown:
-            let label = self.label
-            let old = label.selectionRange
-            let delegate = label.delegate
-            label.delegate = nil
-            defer { label.selectionRange = old; label.delegate = delegate }
-            label.selectionRange = range ?? NSRange(location: 0, length: label.attributedText.length)
-            let text = label.selectedPlainText() ?? ""
-            return text
+            return Self.plainText(in: label, range: range)
         case let .card(source): return record.draft.isEmpty ? source : record.draft
         case let .diagram(source): return source
         case let .workspaceAttachment(identifier): return identifier.hasPrefix("activity/") ? "" : CatalystInterfaceCopy.text("[互动内容]", "[interactive content]")
