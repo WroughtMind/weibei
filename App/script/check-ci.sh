@@ -13,6 +13,9 @@ mkdir -p App/Evidence
 save_evidence() {
   kill "$server_pid" 2>/dev/null || true
   for file in "$CHECK_DIR/server.log" "$CHECK_DIR/requests.jsonl" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/latest.json" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/window.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-probe-failure.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-check.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-failure.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \

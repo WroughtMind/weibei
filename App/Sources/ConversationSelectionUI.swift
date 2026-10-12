@@ -195,6 +195,9 @@ final class ConversationSelectionActions: UIView {
         layer.cornerRadius = bounds.height / 2
         layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
     }
+    #if WEIBEI_ACCEPTANCE_CHECKS
+    var lastHitTestFailure = ""
+    #endif
     func buttonsAreReachable() -> Bool {
         guard let window else { return false }
         layoutIfNeeded()
@@ -205,8 +208,15 @@ final class ConversationSelectionActions: UIView {
                           CGPoint(x: bounds.minX, y: bounds.minY), CGPoint(x: bounds.maxX, y: bounds.minY),
                           CGPoint(x: bounds.minX, y: bounds.maxY), CGPoint(x: bounds.maxX, y: bounds.maxY)]
             return points.allSatisfy { point in
-                guard let hit = window.hitTest(button.convert(point, to: window), with: nil) else { return false }
-                return hit === button || hit.isDescendant(of: button)
+                let location = button.convert(point, to: window)
+                let hit = window.hitTest(location, with: nil)
+                let reachable = hit === button || hit?.isDescendant(of: button) == true
+                #if WEIBEI_ACCEPTANCE_CHECKS
+                if !reachable {
+                    lastHitTestFailure = "button=\(button.accessibilityIdentifier ?? ""), bounds=\(button.bounds), point=\(location), hit=\(hit.map { String(describing: type(of: $0)) } ?? "nil"), window=\(window.bounds), windowHidden=\(window.isHidden), windowInteractive=\(window.isUserInteractionEnabled)"
+                }
+                #endif
+                return reachable
             }
         }
     }

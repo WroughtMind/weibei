@@ -945,6 +945,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         }
         selectionActions.isHidden = false
         view.bringSubviewToFront(selectionActions)
+        #if WEIBEI_ACCEPTANCE_CHECKS
+        selectionActions.lastHitTestFailure = ""
+        #endif
         func reachable(_ frame: CGRect) -> Bool {
             guard viewport.contains(frame), !obstacles.contains(where: { $0.intersects(frame) }) else { return false }
             selectionActions.frame = frame
@@ -1581,7 +1584,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     guard let rect = probeBody.rect(for: character) else { throw Failure(message: "选区事件检查缺少文字位置") }
                     return CGPoint(x: rect.minX + 0.1, y: rect.midY)
                 }
-                @MainActor func drag(from start: Int, to finish: Int) throws {
+                @MainActor func drag(from start: Int, to finish: Int) async throws {
                     let startPoint = try selectionPoint(for: start)
                     let endPoint = try selectionPoint(for: finish)
                     selectionProbe.selectionPress.pressed?(probeBody.convert(startPoint, to: selectionProbe.collection), probeLabel)
@@ -1592,6 +1595,27 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     selectionProbe.selectionPress.released?()
                     selectionProbe.updateSelectionActions()
                     let expected = probeBody.copyText(range: NSRange(location: min(start, finish), length: abs(finish - start)))
+                    let deadline = ContinuousClock.now + .seconds(10)
+                    while selectionProbe.selectionActions.isHidden, ContinuousClock.now < deadline {
+                        try await Task.sleep(for: .milliseconds(40))
+                    }
+                    if selectionProbe.selectionActions.isHidden {
+                        let actions = selectionProbe.selectionActions
+                        let targets = [actions.copyButton, actions.quoteButton].map { button -> String in
+                            let point = CGPoint(x: button.bounds.midX, y: button.bounds.midY)
+                            let hit = button.window?.hitTest(button.convert(point, to: button.window), with: nil)
+                            let ancestors = sequence(first: button as UIView, next: { $0.superview })
+                                .map { "\(type(of: $0)):\($0.frame):hidden=\($0.isHidden):alpha=\($0.alpha)" }
+                            return "button=\(button.frame), hit=\(hit.map { String(describing: type(of: $0)) } ?? "nil"), ancestors=\(ancestors)"
+                        }
+                        if let window = selectionProbe.view.window {
+                            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                            }
+                            try image.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("selection-probe-failure.png"))
+                        }
+                        throw Failure(message: "松手后胶囊不可见：textMatches=\(selectionProbe.selection.text() == expected), frame=\(actions.frame), lastAttempt=\(actions.lastHitTestFailure), \(targets)")
+                    }
                     try expect(selectionProbe.selection.text() == expected && !selectionProbe.selectionActions.isHidden,
                                "松手后起点、方向或胶囊状态不正确")
                 }
@@ -1619,9 +1643,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 selectionProbe.updateSelectionActions()
                 try expect(selectionProbe.selection.text() == probeBody.copyText(range: wordRange),
                            "双击选词被轻微抖动覆盖")
-                try drag(from: 3, to: 11)
-                try drag(from: 22, to: 30)
-                try drag(from: 30, to: 12)
+                try await drag(from: 3, to: 11)
+                try await drag(from: 22, to: 30)
+                try await drag(from: 30, to: 12)
                 let collapsedStart = try selectionPoint(for: 18)
                 selectionProbe.selectionPress.pressed?(probeBody.convert(collapsedStart, to: selectionProbe.collection), probeLabel)
                 probeLabel.selectionRange = NSRange(location: 18, length: 0)
@@ -1633,7 +1657,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 selectionProbe.updateSelectionActions()
                 try expect(!selectionProbe.selection.hasSelection && selectionProbe.selectionActions.isHidden
                     && probeBody.displayedSelectionRects.isEmpty, "拖回起点后遗留旧选区或胶囊")
-                try drag(from: 30, to: 12)
+                try await drag(from: 30, to: 12)
                 let excerpt = selectionProbe.selection.text()
                 let localRange = probeLabel.selectionRange
                 selectionProbe.selectionActions.copyButton.sendActions(for: .touchUpInside)
@@ -1675,7 +1699,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     + crossExcerpt.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n") + "\n\n"
                     && !selectionProbe.selection.hasSelection && selectionProbe.selectionActions.isHidden,
                            "胶囊引用覆盖草稿或没有完成选区收起")
-                try drag(from: 4, to: 18)
+                try await drag(from: 4, to: 18)
                 let reflowExcerpt = selectionProbe.selection.text()
                 selectionProbe.maximumBodyWidth = selectionProbe.bodyWidth / 2
                 selectionProbe.view.setNeedsLayout(); selectionProbe.view.layoutIfNeeded()
