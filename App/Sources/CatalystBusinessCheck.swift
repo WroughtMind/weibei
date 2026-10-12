@@ -957,6 +957,13 @@ enum CatalystBusinessCheck {
         func floatingComposer() -> AgentComposerTextEditor.ComposerTextView? {
             descendants(window).compactMap { $0 as? AgentComposerTextEditor.ComposerTextView }.first { $0 !== mainComposer }
         }
+        func workspaceIsFullyVisible() -> Bool {
+            window.layoutIfNeeded()
+            guard let content = window.rootViewController?.view,
+                  let split = descendants(content).compactMap({ $0 as? StableDocumentSplitView }).first else { return false }
+            return content.bounds.contains(split.convert(split.bounds, to: content))
+                && content.bounds.contains(mainComposer.convert(mainComposer.bounds, to: content))
+        }
         func capture(_ name: String, label: String? = nil) throws {
             guard let content = window.rootViewController?.view,
                   let split = descendants(content).compactMap({ $0 as? StableDocumentSplitView }).first,
@@ -1050,6 +1057,7 @@ enum CatalystBusinessCheck {
         var mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
         try await until("main quote appends to its own composer") {
             mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
+                && workspaceIsFullyVisible()
         }
         func selectVisibleParagraph(in controller: ConversationController) throws -> String {
             controller.collection.layoutIfNeeded()
@@ -1073,6 +1081,7 @@ enum CatalystBusinessCheck {
         try await until("main capsule quote appends without touching floating draft") {
             mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
                 && !mainConversation.selection.hasSelection && mainConversation.selectionActions.isHidden
+                && workspaceIsFullyVisible()
         }
         guard let floatingConversation = conversation(containing: messageID), floatingConversation.isFloatingConversation,
               let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
@@ -1082,7 +1091,7 @@ enum CatalystBusinessCheck {
         floatingConversation.quote(quotedMessage.text)
         try await until("floating quote appends to its own composer") {
             floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
-                && mainComposer.text == mainQuoted
+                && mainComposer.text == mainQuoted && workspaceIsFullyVisible()
         }
         let floatingExcerpt = try selectVisibleParagraph(in: floatingConversation)
         try capture("selection-capsule-floating.png")
@@ -1091,7 +1100,7 @@ enum CatalystBusinessCheck {
         try await until("floating capsule quote appends without touching main draft") {
             floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingCapsuleQuoted
                 && mainComposer.text == mainQuoted && !floatingConversation.selection.hasSelection
-                && floatingConversation.selectionActions.isHidden
+                && floatingConversation.selectionActions.isHidden && workspaceIsFullyVisible()
         }
         store.dismissFloatingSelectionAgent()
         store.clearSelectionAttachments()
