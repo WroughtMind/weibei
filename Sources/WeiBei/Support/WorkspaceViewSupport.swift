@@ -1,5 +1,19 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import WeiBeiCore
+
+/// Internal workspace gestures must not advertise plain text: an external
+/// text document belongs to the window's file import receiver.
+enum WeiBeiWorkspaceDrag: Codable, Equatable, Sendable, Transferable {
+    case course(UUID)
+    case item(String)
+    case relationMaterial(String)
+
+    static let contentType = UTType(exportedAs: "com.changfenhuang.weibei.workspace-drag", conformingTo: .data)
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: contentType)
+    }
+}
 
 /// Measurement state belongs to the mounted Markdown view, independently of its position.
 struct NativeMarkdownMeasurement {

@@ -8,7 +8,7 @@ import WeiBeiCore
 struct WorkspaceFileDropBridge: UIViewRepresentable {
     @Binding var isTargeted: Bool
     let receive: ([NSItemProvider], [URL]) -> Void
-    let receiveNative: ([URL]) -> Void
+    let receiveNative: (WeiBeiDroppedFileResult) -> Void
 
     func makeUIView(context: Context) -> Probe { Probe() }
     func updateUIView(_ view: Probe, context: Context) {
@@ -23,7 +23,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
         let registrationID = UUID().uuidString
         var isTargeted: Binding<Bool>?
         var receive: ([NSItemProvider], [URL]) -> Void = { _, _ in }
-        var receiveNative: ([URL]) -> Void = { _ in }
+        var receiveNative: (WeiBeiDroppedFileResult) -> Void = { $0.release() }
         private weak var registeredToolbar: NSToolbar?
         private var isRegistered = false
         private weak var dropView: UIView?
@@ -56,7 +56,12 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             isRegistered = true
             CatalystDesktopWindow.shared.registerFileDrop(id: registrationID, toolbar: toolbar,
                 targeted: { [weak self] value in self?.isTargeted?.wrappedValue = value },
-                receive: { [weak self] urls in self?.receiveNative(urls) })
+                receive: { [weak self] urls, scopes, directories, failures in
+                    let result = WeiBeiDroppedFileResult(urls: urls, securityScopedURLs: scopes,
+                        temporaryDirectories: directories, failures: failures)
+                    guard let self else { result.release(); return }
+                    self.receiveNative(result)
+                })
         }
         func detach() {
             dropView?.removeInteraction(fileDropInteraction)
@@ -70,7 +75,8 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             // Catalyst advertises a file's content type (e.g. plain text), not
             // fileURL. Classify the actual external drag pasteboard instead.
             let accepts = session.localDragSession == nil && !session.items.isEmpty
-                && !CatalystDesktopWindow.shared.currentDraggedFileURLs().isEmpty
+                && (!CatalystDesktopWindow.shared.currentDraggedFileURLs().isEmpty
+                    || CatalystDesktopWindow.shared.currentDragContainsFilePromises())
             return accepts
         }
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnter session: UIDropSession) {
@@ -85,7 +91,7 @@ struct WorkspaceFileDropBridge: UIViewRepresentable {
             isTargeted?.wrappedValue = false
             guard session.localDragSession == nil else { return }
             let urls = CatalystDesktopWindow.shared.currentDraggedFileURLs()
-            guard !urls.isEmpty else { return }
+            guard !urls.isEmpty || CatalystDesktopWindow.shared.currentDragContainsFilePromises() else { return }
             receive(session.items.map(\.itemProvider), urls)
         }
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidExit session: UIDropSession) { isTargeted?.wrappedValue = false }

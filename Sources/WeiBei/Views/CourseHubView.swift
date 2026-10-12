@@ -21,8 +21,6 @@ struct CourseHubView: View {
     @State private var isSearching = false
     @State private var searchAvailability: CourseDocumentIndexAvailability = .ready
     @State private var searchRetryToken = 0
-    @State private var isMaterialDropTargeted = false
-    @State private var isNoteDropTargeted = false
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
 
     private var courseID: UUID? { store.courseWorkspaceCourseID }
@@ -322,29 +320,6 @@ struct CourseHubView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WeiBeiTheme.paper)
-        .onDrop(of: [.fileURL], isTargeted: $isMaterialDropTargeted) { providers in
-            handleDrop(providers, asNotes: false)
-        }
-        .overlay {
-            if isMaterialDropTargeted || isNoteDropTargeted {
-                Label(
-                    isNoteDropTargeted
-                        ? store.ui("松开以导入笔记", "Drop to import notes")
-                        : store.ui("松开以导入资料", "Drop to import"),
-                    systemImage: "tray.and.arrow.down"
-                )
-                    .weiBeiText(14, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
-                    .weibeiEtchedCapsuleBackground(
-                        fill: WeiBeiTheme.paperRaised.opacity(0.94),
-                        stroke: WeiBeiTheme.cinnabar.opacity(0.32),
-                        contactShadow: true
-                    )
-                    .allowsHitTesting(false)
-            }
-        }
     }
 
     @ViewBuilder
@@ -407,7 +382,6 @@ struct CourseHubView: View {
                 }
             } else {
                 CourseHubStartReadingRow(
-                    isDropTargeted: isMaterialDropTargeted,
                     importMaterials: importMaterials,
                     title: store.ui(
                         "还没有可继续阅读的文稿",
@@ -656,9 +630,6 @@ struct CourseHubView: View {
 
             Button(store.ui("导入笔记", "Import notes"), action: importNotes)
                 .buttonStyle(WeiBeiTextActionButtonStyle())
-                .onDrop(of: [.fileURL], isTargeted: $isNoteDropTargeted) { providers in
-                    handleDrop(providers, asNotes: true)
-                }
 
             Button(store.ui("新建笔记", "New note"), action: createNote)
                 .buttonStyle(WeiBeiTextActionButtonStyle())
@@ -774,12 +745,6 @@ struct CourseHubView: View {
         selectedSessionID = hit.result.kind == .chat ? hit.result.sessionID : selectedSessionID
         store.openGlobalSearchHit(hit, query: cleanedSearch)
     }
-
-    private func handleDrop(_ providers: [NSItemProvider], asNotes: Bool) -> Bool {
-        guard let courseID else { return false }
-        return store.receiveDroppedFiles(providers, courseID: courseID, asNotes: asNotes)
-    }
-
     // MARK: - Display helpers
 
     private func ensureMaterialSelection() {
@@ -1004,7 +969,6 @@ private struct CourseHubContinueActionButtonStyle: ButtonStyle {
 }
 
 private struct CourseHubStartReadingRow: View {
-    let isDropTargeted: Bool
     let importMaterials: () -> Void
     let title: String
     let detail: String
@@ -1035,9 +999,7 @@ private struct CourseHubStartReadingRow: View {
         .padding(.vertical, 20)
         .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
         .background(
-            isDropTargeted
-                ? WeiBeiTheme.cinnabarSoft.opacity(0.42)
-                : WeiBeiTheme.paperRaised.opacity(0.32),
+            WeiBeiTheme.paperRaised.opacity(0.32),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
     }
