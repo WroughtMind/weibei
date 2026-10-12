@@ -1582,8 +1582,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 var jitter: (CGPoint, CGPoint)?
                 for character in 1..<probeLabel.attributedText.length {
                     guard let rect = probeBody.rect(for: character) else { continue }
-                    let before = CGPoint(x: rect.minX - 0.5, y: rect.midY)
-                    let after = CGPoint(x: rect.minX + 0.5, y: rect.midY)
+                    let before = CGPoint(x: rect.midX - 0.5, y: rect.midY)
+                    let after = CGPoint(x: rect.midX + 0.5, y: rect.midY)
                     if probeBody.character(at: before) != probeBody.character(at: after) {
                         jitter = (before, after); break
                     }
