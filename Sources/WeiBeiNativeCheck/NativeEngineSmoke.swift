@@ -311,8 +311,8 @@ enum NativeEngineSmoke {
             model: model
         )
         let text = reply.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard reply.backend == .native, !text.isEmpty else {
-            throw NSError(domain: "WeiBei.NativeSmoke", code: 7, userInfo: [NSLocalizedDescriptionKey: "\(label) plain QA was empty"])
+        guard reply.backend == .native, text == "4" else {
+            throw NSError(domain: "WeiBei.NativeSmoke", code: 7, userInfo: [NSLocalizedDescriptionKey: "\(label) plain QA did not answer the arithmetic question correctly"])
         }
         print("\(label) plain-qa prefix=\(text.prefix(40)) tools=\(reply.toolTrace.joined(separator: ","))")
     }
@@ -364,7 +364,7 @@ enum NativeEngineSmoke {
             model: model,
             adapter: adapter,
             ledgerRoot: root,
-            systemPromptText: "you are webi",
+            systemPromptText: try AgentResources.bundled().systemPrompt,
             hostToolHandler: nil
         )
         let request = StudyAgentRequest(
@@ -500,7 +500,7 @@ enum NativeEngineSmoke {
             model: model,
             adapter: adapter,
             ledgerRoot: root,
-            systemPromptText: "you are webi",
+            systemPromptText: try AgentResources.bundled().systemPrompt,
             hostToolHandler: host
         )
         return try await runtime.respond(
