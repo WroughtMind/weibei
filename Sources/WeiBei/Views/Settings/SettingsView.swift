@@ -196,8 +196,7 @@ struct SettingsView: View {
             refreshActiveModelCatalog()
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { note in
-            store.shutdownAgentRuntime()
-            guard note.userInfo?["provider"] as? String == activeCredentialProviderID else {
+            guard store.handleAgentCredentialChange(providerID: note.userInfo?["provider"] as? String) else {
                 return
             }
             if note.userInfo?["type"] as? String == AgentCredentialType.apiKey.rawValue {

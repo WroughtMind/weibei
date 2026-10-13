@@ -9492,6 +9492,9 @@ final class WorkspaceStore: ObservableObject {
         run.selectionThreadID = selectionAskThreads.first(where: { $0.id == target.sessionID })?.id
         run.courseID = target.courseID
         run.authMethod = agentAuthMethod
+        run.credentialProviderID = (try? AgentProviderEndpoint(
+            provider: agentProviderID, baseURL: agentBaseURL
+        ))?.credentialProviderID
         run.baseURL = agentBaseURL
         run.modelName = selectedModel
         agentRuns[target.sessionID] = run
