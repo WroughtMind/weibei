@@ -308,7 +308,7 @@ html[data-scene="4"] body::after { visibility: visible; }
 .download-summary-caption { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); font-size: 10px; }
 .download-summary i { font: 14px/1 Georgia, serif; transition: transform .25s ease; }
 .download-control[open] .download-summary i { transform: rotate(180deg); }
-.download-summary:focus-visible, .download-paper :is(button, a):focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; }
+.download-summary:focus-visible, .download-paper :is(button, a, summary):focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; }
 .download-control[open] { width: min(580px, 76vw); bottom: -10%; padding: 8px 26px 22px; }
 .download-control[open]::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(17deg, #796a5005 0 .4px, transparent .8px 5px), repeating-linear-gradient(97deg, #fff9ed33 0 .4px, transparent .8px 3px), var(--paper-light); box-shadow: inset 0 0 12px #b9a48044; clip-path: polygon(1% 1.5%, 15% .4%, 38% 1%, 62% .2%, 83% 1%, 99% .5%, 99.5% 26%, 99% 52%, 100% 76%, 99% 98%, 78% 99%, 54% 98.5%, 31% 100%, 1% 98%, .4% 72%, 1% 48%, 0 23%); }
 .download-control[open] .download-summary { position: relative; height: auto; min-height: 44px; padding: 5px 20px 10px; background: none; }
@@ -321,8 +321,21 @@ html[data-scene="4"] body::after { visibility: visible; }
 .primary-download { display: flex; align-items: center; justify-content: center; justify-self: center; flex-wrap: wrap; gap: 10px; min-height: 44px; padding: 10px 24px; border-radius: 4px; color: var(--paper-light); background: var(--vermilion); font-size: 15px; letter-spacing: .025em; }
 .primary-download:hover { background: #a32e1d; }
 .download-chip { padding-left: 12px; border-left: 1px solid #f7eddb55; font-size: 11px; }
-.download-homebrew { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 3px; font-size: 12px; }
-.download-homebrew > span:last-child { color: var(--ink-soft); font-size: 11px; }
+.download-install { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; }
+.download-install p { margin: 0; }
+.download-install-title { font-weight: 600; }
+.download-install-help { color: var(--ink-soft); font-size: 11px; line-height: 1.6; }
+.download-command { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 3px; }
+.download-command code { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; user-select: text; }
+.download-command button { flex: none; align-self: stretch; padding: 6px; border: 0; border-radius: 3px; color: var(--vermilion); background: transparent; font: inherit; cursor: pointer; }
+.download-command button:hover { background: #c13e2810; }
+.download-command button:active { background: #c13e2820; }
+.download-command button:disabled { opacity: .5; cursor: not-allowed; }
+.download-installed > summary { padding: 5px 0; color: var(--ink-soft); cursor: pointer; }
+.download-installed > summary:hover { color: var(--vermilion); }
+.download-installed > summary:active { color: #a32e1d; }
+.download-installed[open] > .download-install-help { margin: 6px 0 10px; }
+.download-copy-status { color: var(--vermilion); line-height: 1.6; }
 .release-map, .download-act .mascot-four { transition: transform .4s var(--ease-smooth-out); }
 .release-layer:has(.download-control[open]) .release-map { transform: translateY(-8%) scale(.9); }
 .release-layer:has(.download-control[open]) .mascot-four { transform: translate(-50%, -44%) scale(.74); }
@@ -475,10 +488,12 @@ html[data-scene="4"] body::after { visibility: visible; }
   .download-summary { height: 86px; }
   .download-title { font-size: 15px; }
   .download-control[open] { bottom: -8%; width: 92vw; padding: 6px 16px 18px; }
-  .download-paper { gap: 12px; }
+  /* 在屏幕内为导航、面板标题和底部留出空间，长安装说明在面板内滚动。 */
+  .download-paper { gap: 12px; max-height: calc(100dvh - 180px); overflow-y: auto; overscroll-behavior: contain; }
   .download-options { gap: 16px; }
   .download-options button { min-height: 44px; }
-  .download-homebrew { flex-wrap: wrap; gap: 5px; }
+  .download-command { flex-direction: column; align-items: stretch; gap: 5px; }
+  .download-command button { min-height: 44px; }
   .release-layer:has(.download-control[open]) .release-webi { left: 3%; bottom: 43%; }
   .release-layer:has(.download-control[open]) .release-feedback { right: 3%; bottom: 43%; }
   .release-layer:has(.download-control[open]) .release-map { transform: translateY(-3%) scale(.94); }
