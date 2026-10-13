@@ -104,6 +104,9 @@ enum NativeEvalCLI {
     private static func runItems(
         _ items: [[String: Any]], model: String, effort: String, adapter: NativeLLMAdapter, outputRoot: URL
     ) async throws {
+        // The ledger's workspace must exist before it resolves macOS path aliases.
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+        let outputRoot = outputRoot.resolvingSymlinksInPath()
         let resources = try AgentResources.bundled()
         let liveStores = NativeLiveStores(
             skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL)

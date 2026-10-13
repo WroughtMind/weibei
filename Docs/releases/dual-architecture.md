@@ -28,7 +28,7 @@ App 内的 `WeiBeiArchitecture` 和 `SUFeedURL` 会绑定当前包的真实架�
 
 ## 正式发布工作流
 
-在 GitHub Actions 中手动运行“魏碑双架构正式发布”，输入与 `VERSION`、`package.json` 和 `Docs/update-summaries/v<version>.md` 一致的版本号。默认只构建并验证两种架构及更新签名，候选资产保存在 Actions，不创建 Tag 或 Release；可以从待合并分支验证仓库密钥。获得正式发布授权后，从 `main` 运行并勾选 `publish`，才会公开版本。
+在 GitHub Actions 中手动运行“魏碑双架构正式发布”，输入与 `VERSION`、`package.json` 和 `Docs/update-summaries/v<version>.md` 一致的版本号。默认构建并验证两种架构及更新签名，然后汇总完整候选集合，保存在 Actions 的 `release-ready` 产物中，不创建 Tag 或 Release；可以从待合并分支验证仓库密钥。获得正式发布授权后，从 `main` 运行并勾选 `publish`，才会公开版本。
 
 当前发布路线固定使用 ad-hoc 签名，不需要付费 Apple 开发者账号，也不执行 Apple 公证。发布说明和 Cask 必须保留首次启动指引。
 
@@ -43,6 +43,10 @@ Sparkle 密钥与 Apple 公证无关。首次公开发布前生成一次正式�
 
 正式密钥保存在开发机系统钥匙串的 `WroughtMind/weibei` 账户中；使用 Sparkle 的 `generate_keys --account WroughtMind/weibei -p` 核对公钥，`-x <文件>` 导出，`-f <文件>` 从备份恢复。私钥 Secret 必须是导出文件整体再次 Base64 编码后的内容。早期开发版内的测试公钥没有对应的正式私钥，需要手动安装一次采用正式公钥的版本，后续版本始终沿用这套密钥。
 
-仓库应配置受保护的 `production-release` Environment。两个架构先并行完成最终 App 启动、签名结构、DMG、架构、dSYM 和 appcast 验证，再进入该环境的发布 job；发布 job 下载并重新核对两个 DMG 的哈希和 appcast 指向，打包双架构调试符号，生成双架构 Cask，先创建草稿 Release，全部资产上传成功后才将其公开并标记为 latest。
+仓库应配置受保护的 `production-release` Environment。两个架构先并行完成最终 App 启动、签名结构、DMG、架构、dSYM 和 appcast 验证，再进入该环境的发布 job；候选汇总 job 下载并重新核对两个 DMG 的哈希和 appcast 指向，打包双架构调试符号，生成双架构 Cask，并加入 `Docs/releases/v<version>.md` 的完整发布正文。它同时生成 `candidate.json`，记录版本、构建号、源码提交、工作流与各文件 SHA-256。公开 job 下载这份完整集合、逐文件复核后才创建草稿 Release，全部资产上传成功后将其公开并标记为 latest。
 
 本流程不会由普通 PR 自动创建 Tag 或 Release。明确勾选 `publish` 执行才代表发布授权；仅运行验证或合并代码不等于授权发布。
+
+每个架构的安装盘、更新清单、调试符号和体积记录从同一目录上传，下载后保持同一层级。`release-ready` 还包含 `release-notes.md`、`candidate.json` 与两种架构体积记录；这些用于发布前复核，公开资产仍以上方清单为准。候选验证运行也执行完整汇总步骤，避免公开时才首次检查文件装配。
+
+两个架构还会在隔离 CI 中调用 Sparkle 自带的命令行更新器，把构建号设为 0 的候选副本更新为最终安装盘中的应用，并重新验证签名、版本和主程序字节。测试副本保留正式公钥；本地更新清单仅修改下载地址，再用正式密钥签名，安装盘字节不变。更新证据 `update-verification-<arch>.json` 与候选哈希对应，另检查修改过的安装盘和清单被验签拒绝。这证明更新引擎的下载和替换链路，不冒充应用内按钮的人机操作。

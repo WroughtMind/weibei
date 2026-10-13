@@ -37,7 +37,7 @@ def condition(expression, context):
     return bool(expression_value(expression, context))
 
 
-def selected(scopes, full=False, event='pull_request', jobs=JOBS):
+def selected(scopes, full=False, event='pull_request', jobs=JOBS, publish=False):
     results, active_steps, pending = {}, {}, dict(jobs)
     while pending:
         for key, job in list(pending.items()):
@@ -47,7 +47,7 @@ def selected(scopes, full=False, event='pull_request', jobs=JOBS):
             if any(dep not in results for dep in dependencies):
                 continue
             context = {
-                'github': {'event_name': event}, 'inputs': {'full_suite': full},
+                'github': {'event_name': event}, 'inputs': {'full_suite': full, 'publish': publish},
                 'needs': {dep: {'result': results[dep], 'outputs': scopes} for dep in dependencies},
             }
             expr = job.get('if', True)
@@ -175,6 +175,9 @@ release_inputs = release.get('on', release.get(True, {}))['workflow_dispatch']['
 assert release_inputs['publish']['default'] is False
 source_gate = next(step for step in release['jobs']['authorize']['steps'] if step.get('id') == 'source')
 for publish in [False, True]:
+    release_jobs, _ = selected({}, event='workflow_dispatch', jobs=release['jobs'], publish=publish)
+    assert {'authorize', 'build', 'prepare'} <= release_jobs, '不公开时也必须生成完整候选集合'
+    assert ('publish' in release_jobs) == publish, '候选验证不得公开版本'
     assert condition(release['jobs']['publish']['if'], {'inputs': {'publish': publish}}) == publish
     for ref in ['refs/heads/main', 'refs/heads/codex/signing-check']:
         env = {**os.environ, 'PUBLISH_RELEASE': str(publish).lower(), 'RELEASE_REF': ref}

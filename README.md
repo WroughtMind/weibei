@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Swift-5.9-A44735?style=flat-square" alt="Swift 5.9">
   <a href="LICENSE"><img src="https://img.shields.io/badge/code-MIT-35332F?style=flat-square" alt="源代码采用 MIT 许可"></a>
   <br>
-  <sub>开发中，暂无正式安装包 · 支持 Apple 芯片与 Intel · 可从源码运行</sub>
+  <sub>支持 Apple 芯片与 Intel · 安装包以发布页为准 · 可从源码运行</sub>
 </p>
 
 <!-- WEIBEI_VISUAL:workspace:START -->
@@ -92,7 +92,19 @@
 
 ## 开始使用
 
-目前请从源码运行。需要 **macOS 14 及以上**和 **完整 Xcode 26、Node.js 22 及以上**，首次构建需要联网获取依赖。
+需要 **macOS 14 及以上**。已公开的安装包列在 [GitHub Releases](https://github.com/WroughtMind/weibei/releases)：苹果芯片选择 `arm64`，英特尔选择 `x86_64`。下载后打开安装盘，把“魏碑”拖进“应用程序”。发布页尚无安装包时，表示候选仍在准备。
+
+安装包未经 Apple 公证。首次打开提示无法验证开发者时，请先确认下载来源与校验值，再按[首次安装说明](Docs/releases/v0.0.1.md#下载与安装)处理。
+
+1. 导入自己的资料文件夹，作为一门课程打开。
+2. 选一份资料阅读，在旁边写笔记，试试全文搜索。
+3. 需要 AI 时，在设置中连接模型，再选中文字提问、点击引用回看原文，或审阅一份笔记提案。
+
+大文件和扫描件会按实际情况显示部分索引状态。首版 **0.0.1** 的功能与使用边界见[发布说明](Docs/releases/v0.0.1.md)。
+
+### 从源码运行
+
+需要 **完整 Xcode 26、Node.js 22 及以上**，首次构建需要联网获取依赖。
 
 ```bash
 git clone https://github.com/WroughtMind/weibei.git
@@ -102,12 +114,6 @@ npm ci
 ```
 
 脚本通过唯一的 Catalyst 工程构建并打开魏碑。本机默认使用已有的 Apple Development 签名；无开发身份时可用 `WEIBEI_SIGNING_IDENTITY=-` 生成未公证候选。详见[应用构建说明](App/README.md)。
-
-1. 导入自己的资料文件夹，作为一门课程打开。
-2. 选一份资料阅读，在旁边写笔记，试试全文搜索。
-3. 需要 AI 时，在设置中连接模型，再选中文字提问、点击引用回看原文，或审阅一份笔记提案。
-
-大文件和扫描件会按实际情况显示部分索引状态。目前没有正式发布计划，下一个正式版本号为 **0.0.1**，详见[发布说明](Docs/releases/README.md)。
 
 ## 参与开发
 
