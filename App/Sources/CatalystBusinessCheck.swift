@@ -1101,12 +1101,14 @@ enum CatalystBusinessCheck {
               mainComposer.text == mainQuoted, floatingComposer()?.text == draft else {
             throw Failure("main capsule copy changed the selected text or either draft")
         }
-        let capsuleWithFloatingPanel = mainConversation.selectionActions.frame
         store.dismissFloatingSelectionAgent()
         try await until("closing floating panel restores the main selection capsule") {
-            floatingComposer() == nil && mainConversation.selection.hasSelection
+            floatingComposer() == nil
+                && ConversationSelectionPanelProbe.PanelView.rectangles(in: mainConversation.view).isEmpty
+                && mainConversation.selection.text() == mainExcerpt
+                && mainComposer.text == mainQuoted && store.composerDraft(for: threadID) == draft
                 && !mainConversation.selectionActions.isHidden
-                && mainConversation.selectionActions.frame != capsuleWithFloatingPanel
+                && (try? reachableCapsuleButton(mainConversation.selectionActions.copyButton)) != nil
                 && (try? reachableCapsuleButton(mainConversation.selectionActions.quoteButton)) != nil
         }
         guard store.openAgentReplySource(source) else { throw Failure("discussion citation did not reopen after capsule copy") }
