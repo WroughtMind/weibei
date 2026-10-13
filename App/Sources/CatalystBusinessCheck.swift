@@ -416,10 +416,14 @@ enum CatalystBusinessCheck {
                 UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.contains { scene in
                     let items = scene.titlebar?.toolbar?.items.compactMap { $0 as? NSUIViewToolbarItem } ?? []
                     return items.count == 3 && items.allSatisfy {
-                        guard let host = $0.uiView.next as? UIHostingController<AnyView>,
-                              host.parent is CatalystTopBar.Controller,
-                              host.sizingOptions.contains(.intrinsicContentSize) else { return false }
-                        $0.uiView.layoutIfNeeded()
+                        guard let host = $0.uiView as? CatalystTopBar.HostingView else { return false }
+                        host.layoutIfNeeded()
+                        var responder = host.next
+                        while let value = responder, !(value is UIViewController) { responder = value.next }
+                        guard let parent = responder as? UIViewController,
+                              host.controller.parent === parent,
+                              host.controller.view.superview === host,
+                              host.controller.sizingOptions.contains(.intrinsicContentSize) else { return false }
                         let contentSize = $0.uiView.intrinsicContentSize
                         return $0.isEnabled && $0.uiView.isUserInteractionEnabled
                             && $0.uiView.window != nil && !$0.uiView.bounds.isEmpty
