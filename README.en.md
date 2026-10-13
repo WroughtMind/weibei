@@ -92,7 +92,13 @@ Choose your model: built-in profiles include OpenAI, Anthropic, Google, DeepSeek
 
 ## Get started
 
-You need **macOS 14 or later**. Public installers appear on [GitHub Releases](https://github.com/WroughtMind/weibei/releases): choose `arm64` for Apple silicon or `x86_64` for Intel. Open the disk image and drag WeiBei into Applications. If the release page has no installer yet, the candidate is still being prepared.
+You need **macOS 14 or later**. Public installers appear on [GitHub Releases](https://github.com/WroughtMind/weibei/releases): choose `arm64` for Apple silicon or `x86_64` for Intel. Open the disk image and drag WeiBei into Applications.
+
+Or use the [Homebrew tap](https://github.com/taekchef/homebrew-tap), which selects the matching architecture:
+
+```bash
+brew install --cask taekchef/tap/weibei
+```
 
 The app is not Apple-notarized. If macOS cannot verify the developer on first launch, confirm the download source and checksum, then follow the [installation instructions](Docs/releases/v0.0.1.md#下载与安装).
 
