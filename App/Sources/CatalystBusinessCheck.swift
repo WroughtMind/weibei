@@ -410,12 +410,22 @@ enum CatalystBusinessCheck {
             try check("original_update_service_through_native_bridge", AppDelegate.updates.status != .failed)
             // Verify that all three control groups live in native toolbar items,
             // rather than being drawn underneath the window's titlebar hit region.
+            // Also require controller containment and bounds covering the full
+            // content. This checks hosting geometry, not real mouse delivery.
             try await until("native workspace toolbar controls") {
                 UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.contains { scene in
                     let items = scene.titlebar?.toolbar?.items.compactMap { $0 as? NSUIViewToolbarItem } ?? []
                     return items.count == 3 && items.allSatisfy {
-                        $0.isEnabled && $0.uiView.isUserInteractionEnabled
+                        guard let host = $0.uiView.next as? UIHostingController<AnyView>,
+                              host.parent is CatalystTopBar.Controller,
+                              host.sizingOptions.contains(.intrinsicContentSize) else { return false }
+                        $0.uiView.layoutIfNeeded()
+                        let contentSize = $0.uiView.intrinsicContentSize
+                        return $0.isEnabled && $0.uiView.isUserInteractionEnabled
                             && $0.uiView.window != nil && !$0.uiView.bounds.isEmpty
+                            && contentSize.width > 0 && contentSize.height > 0
+                            && $0.uiView.bounds.width + 1 >= contentSize.width
+                            && $0.uiView.bounds.height + 1 >= contentSize.height
                             && !$0.label.isEmpty
                             && (($0.itemMenuFormRepresentation as? UIMenu)?.children.contains { $0 is UIAction } == true)
                     }

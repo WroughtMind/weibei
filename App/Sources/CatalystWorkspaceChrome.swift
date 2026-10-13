@@ -29,13 +29,13 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         controller.update([leading, center, trailing], menus: overflowMenus, isVisible: isVisible)
     }
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
-        controller.detach()
+        controller.tearDown()
     }
 
     final class Controller: UIViewController, NSToolbarDelegate {
         private let identifiers = ["weibei.navigation", "weibei.panes", "weibei.actions"].map { NSToolbarItem.Identifier($0) }
         private let hosts = (0..<3).map { _ in
-            UIHostingConfiguration { AnyView(EmptyView()) }.margins(.all, 0).makeContentView()
+            UIHostingController(rootView: AnyView(EmptyView()))
         }
         private let toolbar = NSToolbar(identifier: "weibei.workspace")
         private var menus = (0..<3).map { _ in UIMenu(children: []) }
@@ -51,7 +51,16 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             toolbar.allowsUserCustomization = false
             toolbar.centeredItemIdentifiers = [identifiers[1]]
             for host in hosts {
-                host.backgroundColor = .clear
+                // Toolbar content needs controller containment for command and
+                // presentation routing, plus its complete intrinsic hit bounds.
+                addChild(host)
+                host.sizingOptions = .intrinsicContentSize
+                host.view.backgroundColor = .clear
+                for axis in [NSLayoutConstraint.Axis.horizontal, .vertical] {
+                    host.view.setContentHuggingPriority(.required, for: axis)
+                    host.view.setContentCompressionResistancePriority(.required, for: axis)
+                }
+                host.didMove(toParent: self)
             }
         }
 
@@ -59,8 +68,9 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             loadViewIfNeeded()
             self.menus = menus
             for (host, content) in zip(hosts, contents) {
-                host.configuration = UIHostingConfiguration { content }.margins(.all, 0)
-                host.invalidateIntrinsicContentSize()
+                host.rootView = AnyView(content.fixedSize(horizontal: true, vertical: true))
+                host.view.invalidateIntrinsicContentSize()
+                host.view.setNeedsLayout()
             }
             for item in toolbar.items {
                 guard let index = identifiers.firstIndex(of: item.itemIdentifier) else { continue }
@@ -87,6 +97,16 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             scene = nil
         }
 
+        func tearDown() {
+            detach()
+            toolbar.delegate = nil
+            for host in hosts where host.parent === self {
+                host.willMove(toParent: nil)
+                host.view.removeFromSuperview()
+                host.removeFromParent()
+            }
+        }
+
         func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
             identifiers + [.flexibleSpace]
         }
@@ -96,7 +116,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                      willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
             guard let index = identifiers.firstIndex(of: identifier) else { return nil }
-            let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: hosts[index])
+            let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: hosts[index].view)
             // The hosted SwiftUI buttons own their individual enabled states.
             // This container has no target/action for AppKit to validate.
             item.autovalidates = false

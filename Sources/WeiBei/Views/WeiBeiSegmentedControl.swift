@@ -1,4 +1,5 @@
 import SwiftUI
+import WeiBeiCore
 
 /// Pane switches share the toolbar's transparent surface. Selection stays on
 /// the cinnabar icon; only pointer hover adds a transient, translucent highlight.
@@ -61,7 +62,10 @@ struct WeiBeiSegmentedControl: View {
     // MARK: Segments
 
     private func segmentButton(_ segment: Segment, index: Int) -> some View {
-        Button(action: segment.action) {
+        Button {
+            WeiBeiLog.workspace.notice("code=toolbar_action control=\(segment.id, privacy: .public) source=button")
+            segment.action()
+        } label: {
             Image(systemName: segment.systemImage)
                 .weiBeiText(13, weight: .semibold)
                 .foregroundStyle(iconColor(for: segment, at: index))
