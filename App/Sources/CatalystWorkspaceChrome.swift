@@ -131,9 +131,12 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             self.index = index
             controller = UIHostingController(rootView: AnyView(content.fixedSize(horizontal: true, vertical: true)))
             super.init(frame: .zero)
-            backgroundColor = .clear
+            // Match the workspace root's nonzero Catalyst pointer surface in
+            // transparent icon gaps, without adding visible toolbar chrome.
+            let pointerSurface = UIColor(white: 0, alpha: 1.0 / 255)
+            backgroundColor = pointerSurface
             controller.sizingOptions = .intrinsicContentSize
-            controller.view.backgroundColor = .clear
+            controller.view.backgroundColor = pointerSurface
             controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             for axis in [NSLayoutConstraint.Axis.horizontal, .vertical] {
                 setContentHuggingPriority(.required, for: axis)

@@ -127,6 +127,15 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
                        "view_frame_in_window": NSStringFromRect(view.convert(view.bounds, to: nil)),
                        "location_in_window": NSStringFromPoint(location),
                        "window_number": String(window.windowNumber)]
+        // NSView hitTest takes a point in its superview's coordinates. Include
+        // the frame hierarchy because a titlebar interceptor can precede UIKit.
+        if let root = window.contentView?.superview {
+            let rootPoint = root.superview?.convert(location, from: nil) ?? location
+            let hit = root.hitTest(rootPoint)
+            receipt["native_hit_type"] = hit.map { NSStringFromClass(type(of: $0)) } ?? "nil"
+            receipt["native_hit_in_item"] = String(hit.map { $0 === view || $0.isDescendant(of: view) } ?? false)
+            receipt["native_hit_frame_in_window"] = hit.map { NSStringFromRect($0.convert($0.bounds, to: nil)) } ?? "nil"
+        }
         let timestamp = ProcessInfo.processInfo.systemUptime
         let eventNumber = toolbarClickCheckEventNumber
         toolbarClickCheckEventNumber &+= 2

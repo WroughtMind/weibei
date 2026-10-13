@@ -374,18 +374,30 @@ enum CatalystBusinessCheck {
             try write("running")
             if !value { throw Failure(name) }
         }
-        func clickToolbar(_ itemIdentifier: String, reader: Bool = false) throws {
+        func clickToolbar(_ itemIdentifier: String, xFraction: Double? = nil) throws {
             guard let toolbar = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                 .compactMap({ $0.titlebar?.toolbar }).first(where: { $0.identifier == "weibei.workspace" }),
                   let item = toolbar.items.compactMap({ $0 as? NSUIViewToolbarItem })
                     .first(where: { $0.itemIdentifier.rawValue == itemIdentifier }),
                   item.uiView.bounds.width > 0 else { throw Failure("toolbar pointer target unavailable") }
-            // Reader is centered in the first of three equal pane segments.
-            // Settings is the last 24pt icon, including the user's text scale.
-            let xFraction = reader ? 1.0 / 6.0
-                : Double(1 - 12 * store.interfaceTextScale.multiplier / item.uiView.bounds.width)
-            let receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
-                itemIdentifier: itemIdentifier, xFraction: xFraction, yFraction: 0.5)
+            // Pane targets pass their actual equal-segment centers. Library is
+            // the first 24pt icon; settings is the last, both at the active scale.
+            let iconCenterFraction = Double(12 * store.interfaceTextScale.multiplier / item.uiView.bounds.width)
+            let targetFraction = xFraction ?? (itemIdentifier == "weibei.navigation" ? iconCenterFraction : 1 - iconCenterFraction)
+            let settingsWasPresented = store.settingsPresented
+            var receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
+                itemIdentifier: itemIdentifier, xFraction: targetFraction, yFraction: 0.5)
+            receipt["settings_presented_before"] = String(settingsWasPresented)
+            if let window = item.uiView.window {
+                let point = CGPoint(x: item.uiView.bounds.minX + item.uiView.bounds.width * CGFloat(targetFraction),
+                                    y: item.uiView.bounds.midY)
+                let windowPoint = item.uiView.convert(point, to: window)
+                let hit = window.hitTest(windowPoint, with: nil)
+                receipt["ui_view_bounds"] = String(describing: item.uiView.bounds)
+                receipt["ui_point_in_window"] = String(describing: windowPoint)
+                receipt["ui_hit_type"] = hit.map { String(reflecting: type(of: $0)) } ?? "nil"
+                receipt["ui_hit_in_host"] = String(hit.map { $0 === item.uiView || $0.isDescendant(of: item.uiView) } ?? false)
+            }
             var receipts = result["toolbar_pointer_events"] as? [[String: String]] ?? []
             receipts.append(receipt)
             result["toolbar_pointer_events"] = receipts
@@ -456,18 +468,28 @@ enum CatalystBusinessCheck {
             // This in-process check uses the candidate's own default library.
             // First-launch folder confirmation remains a separate UI check.
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
-            let readerWasVisible = store.showReader
-            try clickToolbar("weibei.panes", reader: true)
-            try await until("reader changes after native pointer click") { store.showReader != readerWasVisible }
-            try clickToolbar("weibei.panes", reader: true)
-            try await until("reader restores after native pointer click") { store.showReader == readerWasVisible }
-            try check("native_toolbar_reader_pointer_toggle", true)
+            let paneTargets: [(WorkspacePaneRole, Double)] = [(.reader, 1.0 / 6.0), (.agent, 3.0 / 6.0), (.notes, 5.0 / 6.0)]
+            for (role, fraction) in paneTargets {
+                let wasVisible = store.isPaneVisible(role)
+                try clickToolbar("weibei.panes", xFraction: fraction)
+                try await until("\(role.rawValue) changes after native pointer click") { store.isPaneVisible(role) != wasVisible }
+                try clickToolbar("weibei.panes", xFraction: fraction)
+                try await until("\(role.rawValue) restores after native pointer click") { store.isPaneVisible(role) == wasVisible }
+                try check("native_toolbar_\(role.rawValue)_pointer_toggle", true)
+            }
+            let libraryWasOpen = store.showLibrary
+            try clickToolbar("weibei.navigation")
+            try await until("library changes after native pointer click") { store.showLibrary != libraryWasOpen }
+            try clickToolbar("weibei.navigation")
+            try await until("library restores after native pointer click") { store.showLibrary == libraryWasOpen }
+            try check("native_toolbar_library_pointer_toggle", true)
             try clickToolbar("weibei.actions")
             try await until("settings opens after native pointer click") {
                 store.settingsPresented && UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
                     .flatMap(\.windows).flatMap(descendants).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
             }
             try check("native_toolbar_settings_pointer_open", true)
+            result["settings_pointer_observed"] = store.settingsPresented
             // Fixture cleanup only; opening settings above must come from events.
             store.settingsPresented = false
             try await until("settings closes after pointer-check cleanup") {
@@ -710,6 +732,7 @@ enum CatalystBusinessCheck {
                 $0.accessibilityIdentifier == "settings-panel-viewport"
             }) else { throw Failure("settings panel is not mounted in the workspace") }
             try check("native_toolbar_full_screen_settings_pointer_open", true)
+            result["settings_full_screen_pointer_observed"] = store.settingsPresented
             let panelFrame = panel.convert(panel.bounds, to: window)
             let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
             result["settings_full_screen"] = state
@@ -915,6 +938,7 @@ enum CatalystBusinessCheck {
             ]
             result["failure_state"] = [
                 "application_state": UIApplication.shared.applicationState.rawValue,
+                "settings_presented": store.settingsPresented,
                 "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
                 "window_scenes": UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.map { scene in
                     ["id": scene.session.persistentIdentifier,

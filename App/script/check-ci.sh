@@ -101,6 +101,8 @@ required_business_checks = {
     'reopen_original_note_and_session_files', 'mac_idiom_and_isolated_storage',
     'original_update_service_through_native_bridge', 'native_workspace_toolbar_controls',
     'native_toolbar_reader_pointer_toggle', 'native_toolbar_settings_pointer_open',
+    'native_toolbar_agent_pointer_toggle', 'native_toolbar_notes_pointer_toggle',
+    'native_toolbar_library_pointer_toggle',
     'native_toolbar_full_screen_settings_pointer_open',
     'signed_native_window_material', 'original_import_reader_and_editor',
     'original_editor_snapshot_and_note_write_gate', 'signed_bounded_pdf_worker',
