@@ -15,6 +15,24 @@ const downloadTitle = document.querySelector('[data-download-title]');
 const downloadLabel = document.querySelector('[data-download-label]');
 const downloadControl = document.querySelector('[data-download-control]');
 const downloadOptions = [...document.querySelectorAll('[data-download-target]')];
+const copyStatus = document.querySelector('[data-copy-status]');
+document.querySelectorAll('[data-copy-command]').forEach(button => button.addEventListener('click', async () => {
+  const english = document.documentElement.lang === 'en';
+  const command = button.closest('.download-command').querySelector('code').textContent.trim();
+  button.disabled = true;
+  copyStatus.hidden = true;
+  try {
+    await navigator.clipboard.writeText(command);
+    button.textContent = english ? 'Copied' : '已复制';
+    copyStatus.textContent = english ? 'Command copied. Paste it into Terminal to run.' : '命令已复制，可粘贴到「终端」运行。';
+  } catch {
+    button.textContent = english ? 'Copy command' : '复制命令';
+    copyStatus.textContent = english ? 'Could not copy. Select and copy the command manually.' : '复制失败，请手动选择并复制上方命令。';
+  } finally {
+    button.disabled = false;
+    copyStatus.hidden = false;
+  }
+}));
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const mobileLayout = matchMedia('(max-width: 760px)');
 let activeMode = 0;

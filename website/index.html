@@ -175,9 +175,24 @@
               <span data-download-title data-en="View releases">查看发布版本</span>
               <span class="download-chip" data-download-label>Apple 芯片</span>
             </a>
-            <div class="download-homebrew">
-              <span>Homebrew</span>
-              <span><code>brew install --cask taekchef/tap/weibei</code></span>
+            <div class="download-install">
+              <p class="download-install-title" data-en="Install with Homebrew & allow first launch">Homebrew 安装并允许首次打开</p>
+              <p class="download-install-help" data-en="Run only if you trust the source. This removes WeiBei’s download quarantine mark to bypass its first-open check; it does not notarize the app with Apple.">仅在信任来源时运行。命令会移除魏碑的下载隔离标记，跳过相应的首次打开检查；不代表通过 Apple 公证。</p>
+              <p class="download-install-help" data-en="With Homebrew installed, paste this command into Terminal.">已安装 Homebrew 的用户，可复制到「终端」运行。</p>
+              <div class="download-command">
+                <code>brew install --cask taekchef/tap/weibei &amp;&amp;
+xattr -dr com.apple.quarantine "/Applications/魏碑.app"</code>
+                <button type="button" data-copy-command data-en="Copy command">复制命令</button>
+              </div>
+              <details class="download-installed">
+                <summary data-en="Already installed? Allow first launch only">已经安装？只处理首次打开</summary>
+                <p class="download-install-help" data-en="After dragging WeiBei into Applications, run:">已将魏碑拖入「应用程序」后，运行：</p>
+                <div class="download-command">
+                  <code>xattr -dr com.apple.quarantine "/Applications/魏碑.app"</code>
+                  <button type="button" data-copy-command data-en="Copy command">复制命令</button>
+                </div>
+              </details>
+              <p class="download-copy-status" data-copy-status role="status" hidden></p>
             </div>
           </div>
         </details>
