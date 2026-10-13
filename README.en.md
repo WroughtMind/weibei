@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Swift-5.9-A44735?style=flat-square" alt="Swift 5.9">
   <a href="LICENSE"><img src="https://img.shields.io/badge/code-MIT-35332F?style=flat-square" alt="Source code under the MIT License"></a>
   <br>
-  <sub>In development, no official installer yet · Apple silicon and Intel · Build from source</sub>
+  <sub>Apple silicon and Intel · Installers on the release page · Build from source</sub>
 </p>
 
 <!-- WEIBEI_VISUAL:workspace:START -->
@@ -92,7 +92,19 @@ Choose your model: built-in profiles include OpenAI, Anthropic, Google, DeepSeek
 
 ## Get started
 
-For now, build from source. You need **macOS 14 or later** and **full Xcode 26 and Node.js 22 or later**. The first build needs a network connection to fetch dependencies.
+You need **macOS 14 or later**. Public installers appear on [GitHub Releases](https://github.com/WroughtMind/weibei/releases): choose `arm64` for Apple silicon or `x86_64` for Intel. Open the disk image and drag WeiBei into Applications. If the release page has no installer yet, the candidate is still being prepared.
+
+The app is not Apple-notarized. If macOS cannot verify the developer on first launch, confirm the download source and checksum, then follow the [installation instructions](Docs/releases/v0.0.1.md#下载与安装).
+
+1. Import a folder of your own material as a course.
+2. Open a document, write notes alongside it, and try full-text search.
+3. When you want AI, connect a model in Settings. Select text to ask a question, follow a citation back to the source, or review a note proposal.
+
+Large files and scans may be reported as partially indexed. See the [0.0.1 release notes](Docs/releases/v0.0.1.md) for the first release's features and limitations.
+
+### Build from source
+
+You need **full Xcode 26 and Node.js 22 or later**. The first build needs a network connection to fetch dependencies.
 
 ```bash
 git clone https://github.com/WroughtMind/weibei.git
@@ -102,12 +114,6 @@ npm ci
 ```
 
 The script builds and opens WeiBei through the single Catalyst project. Local builds use an existing Apple Development identity by default; `WEIBEI_SIGNING_IDENTITY=-` creates an unnotarized candidate without one. See the [application build guide](App/README.md).
-
-1. Import a folder of your own material as a course.
-2. Open a document, write notes alongside it, and try full-text search.
-3. When you want AI, connect a model in Settings. Select text to ask a question, follow a citation back to the source, or review a note proposal.
-
-Large files and scans may be reported as partially indexed. There is no release scheduled; the next official version will be **0.0.1**. See the [release status](Docs/releases/README.md).
 
 ## Contribute
 
