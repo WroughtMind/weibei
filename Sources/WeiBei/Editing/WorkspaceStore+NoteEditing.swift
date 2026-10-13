@@ -52,6 +52,10 @@ extension WorkspaceStore {
             snapshot.revision
         )
         if let conflict = noteEditorRecoveryConflictsByItemID[snapshot.documentID] {
+            // Conflict snapshots are still user edits. Keep the workspace draft
+            // aligned with the newer recovery checkpoint without writing over disk.
+            setNoteDraft(snapshot.markdown, for: snapshot.documentID)
+            save()
             noteEditorRecoveryConflictsByItemID[snapshot.documentID] = NoteEditorRecoveryConflict(
                 diskMarkdown: conflict.diskMarkdown,
                 checkpoint: NoteRecoveryCheckpoint(
@@ -294,7 +298,9 @@ extension WorkspaceStore {
                 initialRevision: checkpoint.metadata.revision
             )
             restoreNoteEditorCheckpoint(checkpoint)
-            flushPendingNotePersistence(for: documentID)
+            await flushPendingNotePersistenceAsync(for: documentID)
+            guard activeNoteEditorDocumentID == documentID,
+                  noteEditingSession.documentID == documentID else { return }
             noteEditorCommand = NoteEditorCommand(
                 kind: .reloadDocument,
                 markdown: checkpoint.markdown

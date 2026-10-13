@@ -3037,7 +3037,7 @@ final class WorkspaceStore: ObservableObject {
         // Never flushPendingNotePersistence() here: the default overload also
         // calls flushPendingWorkspaceSave(), which RunLoop-spins on MainActor
         // and surfaces the 60s "文件操作超过 60 秒未完成" banner.
-        flushPendingNotePersistence(flushWorkspace: false)
+        await flushPendingNotePersistenceAsync(flushWorkspace: false)
         if case .courseOwned = target.storage {
             while let task = courseNoteWriteTasksByItemID[target.id] {
                 await task.value
