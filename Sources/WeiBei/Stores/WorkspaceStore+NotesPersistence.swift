@@ -908,8 +908,8 @@ extension WorkspaceStore {
             checkpointIsPersisted: false
         )
         do {
-            // Enqueue this checkpoint before yielding to workspace persistence.
-            // Snapshot updates during that await must be the later recovery write.
+            // Submit this checkpoint before awaiting workspace persistence, so
+            // that workspace saving does not delay the initial recovery request.
             _ = try await noteRecoveryStore.store(
                 documentID: itemID,
                 baseFileDigest: baseDigest,
