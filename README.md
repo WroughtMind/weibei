@@ -92,7 +92,13 @@
 
 ## 开始使用
 
-需要 **macOS 14 及以上**。已公开的安装包列在 [GitHub Releases](https://github.com/WroughtMind/weibei/releases)：苹果芯片选择 `arm64`，英特尔选择 `x86_64`。下载后打开安装盘，把“魏碑”拖进“应用程序”。发布页尚无安装包时，表示候选仍在准备。
+需要 **macOS 14 及以上**。已公开的安装包列在 [GitHub Releases](https://github.com/WroughtMind/weibei/releases)：苹果芯片选择 `arm64`，英特尔选择 `x86_64`。下载后打开安装盘，把“魏碑”拖进“应用程序”。
+
+也可以通过 [Homebrew 安装渠道](https://github.com/taekchef/homebrew-tap)安装，自动选择对应芯片：
+
+```bash
+brew install --cask taekchef/tap/weibei
+```
 
 安装包未经 Apple 公证。首次打开提示无法验证开发者时，请先确认下载来源与校验值，再按[首次安装说明](Docs/releases/v0.0.1.md#下载与安装)处理。
 
