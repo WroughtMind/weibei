@@ -29,6 +29,9 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-rich-answer-11pt.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/floating-rich-diagnostic.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/toolbar-navigation.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/toolbar-panes.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/toolbar-actions.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
     [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
   done
@@ -104,6 +107,7 @@ required_business_checks = {
     'native_toolbar_agent_pointer_toggle', 'native_toolbar_notes_pointer_toggle',
     'native_toolbar_library_pointer_toggle',
     'native_toolbar_appearance_pointer_toggle',
+    'native_toolbar_render_snapshots',
     'native_toolbar_full_screen_settings_pointer_open',
     'signed_native_window_material', 'original_import_reader_and_editor',
     'original_editor_snapshot_and_note_write_gate', 'signed_bounded_pdf_worker',
@@ -125,7 +129,7 @@ assert business['floating_rich_answer']['body_font_size_pt'] == 11, business
 assert business['floating_rich_answer']['math_images'] == 2, business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
-for filename in ['selection-composers.png', 'selection-discussion.png', 'selection-capsule-main.png', 'selection-capsule-floating.png', 'connection-cards.png', 'confirmed-import.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png']:
+for filename in ['selection-composers.png', 'selection-discussion.png', 'selection-capsule-main.png', 'selection-capsule-floating.png', 'connection-cards.png', 'confirmed-import.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png', 'toolbar-navigation.png', 'toolbar-panes.png', 'toolbar-actions.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
 print(f"{len(conversation['checks'])} 项会话检查与 {len(business['checks'])} 项原业务保存重开检查通过；含选区胶囊、浮窗 11pt 公式与图示、原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。")
 

@@ -381,8 +381,8 @@ enum CatalystBusinessCheck {
                     .first(where: { $0.itemIdentifier.rawValue == itemIdentifier }),
                   item.uiView.bounds.width > 0 else { throw Failure("toolbar pointer target unavailable") }
             // Pane targets pass their actual equal-segment centers. Library is
-            // the first 24pt icon, as is appearance; settings is the last.
-            let iconCenterFraction = Double(12 * store.interfaceTextScale.multiplier / item.uiView.bounds.width)
+            // the first shared 34pt control, as is appearance; settings is last.
+            let iconCenterFraction = Double(WeiBeiTopBarButton.width * 0.5 * store.interfaceTextScale.multiplier / item.uiView.bounds.width)
             let targetFraction = xFraction ?? ((itemIdentifier == "weibei.navigation" || firstIcon) ? iconCenterFraction : 1 - iconCenterFraction)
             let settingsWasPresented = store.settingsPresented
             var receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
@@ -402,6 +402,32 @@ enum CatalystBusinessCheck {
             receipts.append(receipt)
             result["toolbar_pointer_events"] = receipts
             guard receipt["queued"] == "true" else { throw Failure("toolbar pointer events were not queued") }
+        }
+        func captureToolbarSnapshots() throws {
+            guard let toolbar = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+                .compactMap({ $0.titlebar?.toolbar }).first(where: { $0.identifier == "weibei.workspace" }) else {
+                throw Failure("toolbar snapshot source unavailable")
+            }
+            let items = toolbar.items.compactMap { $0 as? NSUIViewToolbarItem }
+            guard items.count == 3 else { throw Failure("toolbar snapshot groups unavailable") }
+            var snapshots: [[String: String]] = []
+            for item in items {
+                let host = item.uiView
+                guard host.window != nil, !host.bounds.isEmpty else { throw Failure("toolbar snapshot host unavailable") }
+                host.layoutIfNeeded()
+                var rendered = false
+                let image = UIGraphicsImageRenderer(bounds: host.bounds).image { _ in
+                    rendered = host.drawHierarchy(in: host.bounds, afterScreenUpdates: true)
+                }
+                guard rendered, let data = image.pngData() else { throw Failure("toolbar snapshot rendering incomplete") }
+                let file = item.itemIdentifier.rawValue.replacingOccurrences(of: "weibei.", with: "toolbar-") + ".png"
+                try data.write(to: LabMetrics.directory.appendingPathComponent(file))
+                snapshots.append(["item": item.itemIdentifier.rawValue, "file": file,
+                                  "ui_view_bounds": String(describing: host.bounds)])
+            }
+            result["toolbar_render_snapshots"] = snapshots
+            result["toolbar_snapshot_scope"] = "attached NSUIViewToolbarItem UIView hierarchy; excludes native window chrome"
+            try check("native_toolbar_render_snapshots", true)
         }
         do {
             if let previous = try? Data(contentsOf: resultURL),
@@ -492,6 +518,7 @@ enum CatalystBusinessCheck {
             try check("native_toolbar_appearance_pointer_toggle", true)
             // Restore a possible system preference only after both event actions.
             store.appearancePreference = originalAppearancePreference
+            try captureToolbarSnapshots()
             try clickToolbar("weibei.actions")
             try await until("settings opens after native pointer click") {
                 store.settingsPresented && UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }

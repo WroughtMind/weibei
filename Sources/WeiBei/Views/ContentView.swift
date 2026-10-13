@@ -1888,17 +1888,8 @@ private struct UnifiedTopBarView: View {
 
     private func topIconButton(_ systemName: String, help: String, active: Bool = false, actionID: String? = nil,
                                action: @escaping () -> Void) -> some View {
-        Button {
-            WeiBeiLog.workspace.notice("code=toolbar_action control=\(actionID ?? systemName, privacy: .public) source=button")
-            action()
-        } label: {
-            Image(systemName: systemName)
-                .frame(width: 24 * textScale, height: 24 * textScale)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(WeiBeiIconButtonStyle(active: active, size: 24))
-        .accessibilityLabel(Text(help))
-        .help(help)
+        WeiBeiTopBarButton(id: actionID ?? systemName, systemImage: systemName, help: help,
+                          isSelected: active, action: action)
     }
 }
 
