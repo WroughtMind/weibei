@@ -82,6 +82,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         }
 
         func tearDown() {
+            (viewIfLoaded as? Probe)?.changed = nil
             detach()
             toolbar.delegate = nil
             hosts.allObjects.forEach { $0.tearDown() }

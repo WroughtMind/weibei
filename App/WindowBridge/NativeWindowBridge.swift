@@ -18,6 +18,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var checkedFullScreenExited = false
     private var fullScreenCheckNotifications: [String] = []
     private var fullScreenCheckToolbarChanges: [String] = []
+    private var toolbarClickCheckEventNumber = 1
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
@@ -103,6 +104,51 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
     }
 #if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
+                                           xFraction: Double, yFraction: Double) -> [String: String] {
+        guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
+              let toolbar = toolbar as? NSToolbar, toolbar.identifier == "weibei.workspace",
+              xFraction.isFinite, yFraction.isFinite,
+              (0...1).contains(xFraction), (0...1).contains(yFraction),
+              toolbar.isVisible,
+              let workspace = NSApp.windows.first(where: { $0.toolbar === toolbar }),
+              workspace.isVisible, workspace.isOnActiveSpace,
+              let item = toolbar.items.first(where: { $0.itemIdentifier.rawValue == itemIdentifier }),
+              item.isEnabled, let view = item.view,
+              !view.isHiddenOrHasHiddenAncestor, !view.bounds.isEmpty,
+              let window = view.window, window.isVisible else {
+            return ["queued": "false", "failure": "isolated_visible_toolbar_target_unavailable"]
+        }
+        let point = NSPoint(x: view.bounds.minX + view.bounds.width * CGFloat(xFraction),
+                            y: view.bounds.minY + view.bounds.height * CGFloat(yFraction))
+        let location = view.convert(point, to: nil)
+        var receipt = ["queued": "false", "item": itemIdentifier,
+                       "view_bounds": NSStringFromRect(view.bounds),
+                       "view_frame_in_window": NSStringFromRect(view.convert(view.bounds, to: nil)),
+                       "location_in_window": NSStringFromPoint(location),
+                       "window_number": String(window.windowNumber)]
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        let eventNumber = toolbarClickCheckEventNumber
+        toolbarClickCheckEventNumber &+= 2
+        guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: location,
+                  modifierFlags: [], timestamp: timestamp, windowNumber: window.windowNumber,
+                  context: nil, eventNumber: eventNumber, clickCount: 1, pressure: 1),
+              let up = NSEvent.mouseEvent(with: .leftMouseUp, location: location,
+                  modifierFlags: [], timestamp: timestamp + 0.01, windowNumber: window.windowNumber,
+                  context: nil, eventNumber: eventNumber + 1, clickCount: 1, pressure: 0) else {
+            receipt["failure"] = "mouse_event_creation_failed"
+            return receipt
+        }
+        // The check App owns an isolated CI desktop. Posting both events lets
+        // normal dispatch and any AppKit tracking loop receive the matching up.
+        workspace.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        NSApp.postEvent(down, atStart: false)
+        NSApp.postEvent(up, atStart: false)
+        receipt["queued"] = "true"
+        return receipt
+    }
+
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool {
         guard let window = checkedFullScreenWorkspace
             ?? NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }) else { return false }
