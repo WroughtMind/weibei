@@ -11559,7 +11559,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func refreshCourseOwnedNoteMetadataAfterWrite(
+    func refreshCourseOwnedNoteMetadataAfterWrite(
         itemID: String,
         markdown: String,
         url: URL
