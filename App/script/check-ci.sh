@@ -103,6 +103,7 @@ required_business_checks = {
     'native_toolbar_reader_pointer_toggle', 'native_toolbar_settings_pointer_open',
     'native_toolbar_agent_pointer_toggle', 'native_toolbar_notes_pointer_toggle',
     'native_toolbar_library_pointer_toggle',
+    'native_toolbar_appearance_pointer_toggle',
     'native_toolbar_full_screen_settings_pointer_open',
     'signed_native_window_material', 'original_import_reader_and_editor',
     'original_editor_snapshot_and_note_write_gate', 'signed_bounded_pdf_worker',

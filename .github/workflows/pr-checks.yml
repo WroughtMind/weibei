@@ -348,9 +348,12 @@ jobs:
           /usr/bin/log show --last 2m --style compact --predicate 'process == "Dock" OR process == "WindowServer"' > App/Evidence/ci-full-screen-system.log
 
       - name: 保留原生顶栏点击记录
-        if: always() && (steps.acceptance.outcome == 'success' || steps.acceptance.outcome == 'failure')
+        if: always()
         continue-on-error: true
+        env:
+          ACCEPTANCE_OUTCOME: ${{ steps.acceptance.outcome }}
         run: |
+          [[ "$ACCEPTANCE_OUTCOME" == success || "$ACCEPTANCE_OUTCOME" == failure ]] || exit 0
           /usr/bin/log show --start "$(cat .build/ci-acceptance-start.txt)" --style compact --predicate 'subsystem == "com.changfenhuang.weibei" AND category == "workspace" AND eventMessage CONTAINS "code=toolbar_action"' > App/Evidence/ci-toolbar-actions.log
 
       - name: 保留候选和检查证据

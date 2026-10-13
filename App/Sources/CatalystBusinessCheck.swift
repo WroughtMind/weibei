@@ -374,16 +374,16 @@ enum CatalystBusinessCheck {
             try write("running")
             if !value { throw Failure(name) }
         }
-        func clickToolbar(_ itemIdentifier: String, xFraction: Double? = nil) throws {
+        func clickToolbar(_ itemIdentifier: String, xFraction: Double? = nil, firstIcon: Bool = false) throws {
             guard let toolbar = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                 .compactMap({ $0.titlebar?.toolbar }).first(where: { $0.identifier == "weibei.workspace" }),
                   let item = toolbar.items.compactMap({ $0 as? NSUIViewToolbarItem })
                     .first(where: { $0.itemIdentifier.rawValue == itemIdentifier }),
                   item.uiView.bounds.width > 0 else { throw Failure("toolbar pointer target unavailable") }
             // Pane targets pass their actual equal-segment centers. Library is
-            // the first 24pt icon; settings is the last, both at the active scale.
+            // the first 24pt icon, as is appearance; settings is the last.
             let iconCenterFraction = Double(12 * store.interfaceTextScale.multiplier / item.uiView.bounds.width)
-            let targetFraction = xFraction ?? (itemIdentifier == "weibei.navigation" ? iconCenterFraction : 1 - iconCenterFraction)
+            let targetFraction = xFraction ?? ((itemIdentifier == "weibei.navigation" || firstIcon) ? iconCenterFraction : 1 - iconCenterFraction)
             let settingsWasPresented = store.settingsPresented
             var receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
                 itemIdentifier: itemIdentifier, xFraction: targetFraction, yFraction: 0.5)
@@ -483,6 +483,15 @@ enum CatalystBusinessCheck {
             try clickToolbar("weibei.navigation")
             try await until("library restores after native pointer click") { store.showLibrary == libraryWasOpen }
             try check("native_toolbar_library_pointer_toggle", true)
+            let appearanceWasDark = store.appearanceMode.isDark
+            let originalAppearancePreference = store.appearancePreference
+            try clickToolbar("weibei.actions", firstIcon: true)
+            try await until("appearance changes after native pointer click") { store.appearanceMode.isDark != appearanceWasDark }
+            try clickToolbar("weibei.actions", firstIcon: true)
+            try await until("appearance restores after native pointer click") { store.appearanceMode.isDark == appearanceWasDark }
+            try check("native_toolbar_appearance_pointer_toggle", true)
+            // Restore a possible system preference only after both event actions.
+            store.appearancePreference = originalAppearancePreference
             try clickToolbar("weibei.actions")
             try await until("settings opens after native pointer click") {
                 store.settingsPresented && UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
