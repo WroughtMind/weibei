@@ -957,6 +957,13 @@ enum CatalystBusinessCheck {
         func floatingComposer() -> AgentComposerTextEditor.ComposerTextView? {
             descendants(window).compactMap { $0 as? AgentComposerTextEditor.ComposerTextView }.first { $0 !== mainComposer }
         }
+        func workspaceIsFullyVisible() -> Bool {
+            window.layoutIfNeeded()
+            guard let content = window.rootViewController?.view,
+                  let split = descendants(content).compactMap({ $0 as? StableDocumentSplitView }).first else { return false }
+            return content.bounds.contains(split.convert(split.bounds, to: content))
+                && content.bounds.contains(mainComposer.convert(mainComposer.bounds, to: content))
+        }
         func capture(_ name: String, label: String? = nil) throws {
             guard let content = window.rootViewController?.view,
                   let split = descendants(content).compactMap({ $0 as? StableDocumentSplitView }).first,
@@ -1047,9 +1054,76 @@ enum CatalystBusinessCheck {
         store.appearanceStyle = originalAppearanceStyle
         mainConversation.quoteText?("主会话引用片段")
         // A2: 引用追加到各自草稿末尾（前面空一行），不再替换已写的草稿。
-        let mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
+        var mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
         try await until("main quote appends to its own composer") {
             mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
+                && workspaceIsFullyVisible()
+        }
+        func selectVisibleParagraph(in controller: ConversationController) throws -> String {
+            controller.collection.layoutIfNeeded()
+            let bodies = controller.collection.indexPathsForVisibleItems.sorted().compactMap {
+                (controller.collection.cellForItem(at: $0) as? MessageCell)?.body
+            }
+            let visible = controller.collection.bounds.insetBy(dx: 0, dy: 8)
+            guard let body = bodies.first(where: {
+                $0.record?.preparedText != nil && $0.label.attributedText.length > 0
+                    && visible.contains($0.label.convert($0.label.bounds, to: controller.collection))
+            }),
+                  let block = body.record else { throw Failure("capsule quote has no visible paragraph") }
+            let range = NSRange(location: 0, length: body.label.attributedText.length)
+            let excerpt = body.copyText(range: range)
+            controller.selection.select(from: .init(blockID: block.id, character: 0),
+                                        to: .init(blockID: block.id, character: NSMaxRange(range)))
+            controller.updateSelectionActions()
+            guard !excerpt.isEmpty, !controller.selectionActions.isHidden else {
+                throw Failure("capsule quote is not visible: floating=\(controller.isFloatingConversation), paragraph=\(body.label.convert(body.label.bounds, to: controller.collection)), viewport=\(visible), hit=\(controller.selectionActions.lastHitTestFailure)")
+            }
+            return excerpt
+        }
+        func reachableCapsuleButton(_ button: UIButton) throws -> UIButton {
+            button.superview?.layoutIfNeeded()
+            let bounds = button.bounds.insetBy(dx: 1, dy: 1)
+            let points = [CGPoint(x: bounds.midX, y: bounds.midY),
+                          CGPoint(x: bounds.minX, y: bounds.minY), CGPoint(x: bounds.maxX, y: bounds.minY),
+                          CGPoint(x: bounds.minX, y: bounds.maxY), CGPoint(x: bounds.maxX, y: bounds.maxY)]
+            guard !bounds.isEmpty, points.allSatisfy({ point in
+                guard let hit = window.hitTest(button.convert(point, to: window), with: nil) else { return false }
+                return hit === button || hit.isDescendant(of: button)
+            }) else { throw Failure("selection capsule button is covered or outside its hit surface") }
+            return button
+        }
+        let mainExcerpt = try selectVisibleParagraph(in: mainConversation)
+        let mainCopy = try reachableCapsuleButton(mainConversation.selectionActions.copyButton)
+        _ = try reachableCapsuleButton(mainConversation.selectionActions.quoteButton)
+        try capture("selection-capsule-main.png")
+        mainCopy.sendActions(for: .touchUpInside)
+        guard UIPasteboard.general.string == mainExcerpt, mainConversation.selection.hasSelection,
+              mainComposer.text == mainQuoted, floatingComposer()?.text == draft else {
+            throw Failure("main capsule copy changed the selected text or either draft")
+        }
+        store.dismissFloatingSelectionAgent()
+        try await until("closing floating panel restores the main selection capsule") {
+            floatingComposer() == nil
+                && ConversationSelectionPanelProbe.PanelView.rectangles(in: mainConversation.view).isEmpty
+                && mainConversation.selection.text() == mainExcerpt
+                && mainComposer.text == mainQuoted && store.composerDraft(for: threadID) == draft
+                && !mainConversation.selectionActions.isHidden
+                && (try? reachableCapsuleButton(mainConversation.selectionActions.copyButton)) != nil
+                && (try? reachableCapsuleButton(mainConversation.selectionActions.quoteButton)) != nil
+        }
+        guard store.openAgentReplySource(source) else { throw Failure("discussion citation did not reopen after capsule copy") }
+        try await until("reopening floating panel keeps the main capsule reachable and both drafts") {
+            floatingComposer()?.text == draft && mainComposer.text == mainQuoted
+                && !ConversationSelectionPanelProbe.PanelView.rectangles(in: mainConversation.view).isEmpty
+                && (try? reachableCapsuleButton(mainConversation.selectionActions.copyButton)) != nil
+                && (try? reachableCapsuleButton(mainConversation.selectionActions.quoteButton)) != nil
+        }
+        mainQuoted += "> " + mainExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
+        try reachableCapsuleButton(mainConversation.selectionActions.quoteButton).sendActions(for: .touchUpInside)
+        try await until("main capsule quote appends without touching floating draft") {
+            mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
+                && !mainConversation.selection.hasSelection && mainConversation.selectionActions.isHidden
+                && workspaceIsFullyVisible()
         }
         guard let floatingConversation = conversation(containing: messageID), floatingConversation.isFloatingConversation,
               let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
@@ -1059,7 +1133,18 @@ enum CatalystBusinessCheck {
         floatingConversation.quote(quotedMessage.text)
         try await until("floating quote appends to its own composer") {
             floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
-                && mainComposer.text == mainQuoted
+                && mainComposer.text == mainQuoted && workspaceIsFullyVisible()
+        }
+        let floatingExcerpt = try selectVisibleParagraph(in: floatingConversation)
+        _ = try reachableCapsuleButton(floatingConversation.selectionActions.copyButton)
+        let floatingQuote = try reachableCapsuleButton(floatingConversation.selectionActions.quoteButton)
+        try capture("selection-capsule-floating.png")
+        let floatingCapsuleQuoted = floatingQuoted + "> " + floatingExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
+        floatingQuote.sendActions(for: .touchUpInside)
+        try await until("floating capsule quote appends without touching main draft") {
+            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingCapsuleQuoted
+                && mainComposer.text == mainQuoted && !floatingConversation.selection.hasSelection
+                && floatingConversation.selectionActions.isHidden && workspaceIsFullyVisible()
         }
         store.dismissFloatingSelectionAgent()
         store.clearSelectionAttachments()

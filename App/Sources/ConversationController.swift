@@ -25,6 +25,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             latest.accessibilityLabel = interfaceLanguage.text("回到最新消息", "Jump to latest")
             if isViewLoaded {
                 collection.accessibilityLabel = interfaceLanguage.text("会话消息列表", "Conversation messages")
+                updateSelectionActionsAppearance()
             }
         }
     }
@@ -73,6 +74,11 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     var toggleWorkspace: (() -> Void)?
     var saveNote: ((String) -> Void)?
     lazy var selection = ConversationSelection(controller: self)
+    let selectionActions = ConversationSelectionActions()
+    private let selectionPress = ConversationSelectionPressObserver()
+    var selectionActionTextScale: CGFloat = 1 {
+        didSet { if isViewLoaded, selectionActionTextScale != oldValue { updateSelectionActionsAppearance() } }
+    }
     let metrics = LabMetrics()
     private var pendingChanges: [String: PreparedBlock] = [:]
     private var changeScheduled = false
@@ -108,7 +114,20 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             guard let self, reservesReplySpace else { return nil }
             return messages.lastIndex { $0.original?.role == .user }
         }
-        for child in [toolbar, status, collection, input, send, latest] { view.addSubview(child) }
+        for child in [toolbar, status, collection, input, send, latest, selectionActions] { view.addSubview(child) }
+        selectionPress.pressed = { [weak self] point, target in self?.selection.beginInteraction(at: point, hitView: target) }
+        selectionPress.moved = { [weak self] point in self?.selection.moveInteraction(at: point) }
+        selectionPress.released = { [weak self] in self?.selection.endInteraction() }
+        collection.addGestureRecognizer(selectionPress)
+        selection.changed = { [weak self] in
+            self?.selectionActions.setCopied(false)
+            self?.updateSelectionActions()
+        }
+        selection.geometryChanged = { [weak self] in self?.updateSelectionActions() }
+        selectionActions.copySelectedText = { [weak self] in self?.copySelection() }
+        selectionActions.quoteSelectedText = { [weak self] in self?.quoteSelection() }
+        NotificationCenter.default.addObserver(self, selector: #selector(selectionPanelGeometryDidChange),
+            name: ConversationSelectionPanelProbe.PanelView.geometryDidChange, object: nil)
         toolbar.spacing = 16; toolbar.alignment = .center
         toolbar.addArrangedSubview(button("阅读区", symbol: "sidebar.left", action: { [weak self] in self?.toggleWorkspace?() }))
         let title = UILabel(); title.text = "对话"; title.font = .systemFont(ofSize: 18, weight: .semibold)
@@ -251,6 +270,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             scheduleWidthConvergence()
         }
         laidOutWidth = width
+        updateSelectionActions()
     }
 
     /// Paragraphs within one viewport height around the visible area at the current
@@ -405,7 +425,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         (cell as? MessageCell)?.body?.saveInteractionState()
     }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard scrollView === collection, !layoutTransaction else { return }
+        guard scrollView === collection else { return }
+        updateSelectionActions()
+        guard !layoutTransaction else { return }
         followsLatest = distanceToBottom < 32
         latest.isHidden = followsLatest
         if usesWorkspaceChrome {
@@ -621,6 +643,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         latest.backgroundColor = WeiBeiNativePalette.paperRaised(for: appearance)
         latest.layer.borderColor = WeiBeiNativePalette.hairline(for: appearance).withAlphaComponent(0.6).cgColor
         latest.layer.shadowColor = ink.cgColor
+        updateSelectionActionsAppearance()
     }
 
     func updateSavedHistory(_ values: [AgentMessage]) {
@@ -667,6 +690,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         UIView.performWithoutAnimation { collection.deleteSections(removed) }
         collection.layoutIfNeeded()
         if let anchor { restore(anchor) }
+        selection.reconcileWithMessages()
     }
 
     func revealMessage(_ id: UUID) async {
@@ -875,6 +899,81 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         input.text += (input.text.isEmpty ? "" : "\n\n") + text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n") + "\n\n"
         input.becomeFirstResponder()
     }
+    private func updateSelectionActionsAppearance() {
+        selectionActions.update(appearance: jumpToLatestAppearance, language: interfaceLanguage,
+                                textScale: selectionActionTextScale)
+        updateSelectionActions()
+    }
+    @objc private func selectionPanelGeometryDidChange() { updateSelectionActions() }
+    func updateSelectionActions() {
+        guard isViewLoaded, !selection.isInteracting, selection.hasSelection else {
+            selectionActions.isHidden = true
+            return
+        }
+        var viewport = collection.convert(collection.bounds, to: view).intersection(view.bounds)
+        viewport.origin.y = max(viewport.minY, view.safeAreaInsets.top)
+        viewport.size.height = max(0, collection.frame.maxY - viewport.minY - view.safeAreaInsets.bottom)
+        let margin: CGFloat = 8
+        viewport = viewport.insetBy(dx: margin, dy: margin)
+        let rects = selection.visibleSelectionRects(in: view).compactMap { rect -> CGRect? in
+            let visible = rect.intersection(viewport)
+            return visible.isNull || visible.isEmpty ? nil : visible
+        }.sorted {
+            abs($0.minY - $1.minY) < 1 ? $0.minX < $1.minX : $0.minY < $1.minY
+        }
+        guard let anchor = selection.prefersFirstRect ? rects.first : rects.last else {
+            selectionActions.isHidden = true
+            return
+        }
+        let size = selectionActions.intrinsicContentSize
+        guard viewport.width >= size.width, viewport.height >= size.height else {
+            selectionActions.isHidden = true
+            return
+        }
+        let x = min(max(viewport.minX, anchor.midX - size.width / 2), viewport.maxX - size.width)
+        let above = anchor.minY - margin - size.height
+        let below = anchor.maxY + margin
+        let obstacles = isFloatingConversation ? [] : ConversationSelectionPanelProbe.PanelView.rectangles(in: view)
+        var positions = [above, below, rects[0].minY - margin - size.height, rects[rects.count - 1].maxY + margin]
+        positions += obstacles.flatMap { [$0.minY - margin - size.height, $0.maxY + margin] }
+        positions += [viewport.minY, viewport.maxY - size.height]
+        var candidates = positions.map { CGRect(origin: CGPoint(x: x, y: $0), size: size) }
+        for obstacle in obstacles {
+            for side in [obstacle.minX - margin - size.width, obstacle.maxX + margin] {
+                candidates += positions.map { CGRect(origin: CGPoint(x: side, y: $0), size: size) }
+            }
+        }
+        selectionActions.isHidden = false
+        view.bringSubviewToFront(selectionActions)
+        #if WEIBEI_ACCEPTANCE_CHECKS
+        selectionActions.lastHitTestFailure = ""
+        #endif
+        func reachable(_ frame: CGRect) -> Bool {
+            guard viewport.contains(frame), !obstacles.contains(where: { $0.intersects(frame) }) else { return false }
+            selectionActions.frame = frame
+            return selectionActions.buttonsAreReachable()
+        }
+        if candidates.first(where: { frame in
+            !rects.contains(where: { $0.intersects(frame) }) && reachable(frame)
+        }) != nil { return }
+        // When selected text fills the available surface, keep both buttons
+        // reachable within the conversation and outside any floating panel.
+        if candidates.first(where: reachable) != nil { return }
+        selectionActions.isHidden = true
+    }
+    func copySelection() {
+        let text = selection.text()
+        guard !text.isEmpty else { return }
+        UIPasteboard.general.string = text
+        selectionActions.setCopied(true)
+        updateSelectionActions()
+    }
+    func quoteSelection() {
+        let text = selection.text()
+        guard !text.isEmpty else { return }
+        quote(text)
+        selection.clear()
+    }
     func open(_ url: URL) {
 #if WEIBEI_ACCEPTANCE_CHECKS
         if url.scheme == "weibei-note", fixtureMode { openWorkspace?(1); return }
@@ -895,7 +994,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         return super.canPerformAction(action, withSender: sender)
     }
     override func copy(_ sender: Any?) {
-        if selection.hasSelection { UIPasteboard.general.string = selection.text() }
+        if selection.hasSelection { copySelection() }
     }
     @objc private func focusInput() { input.becomeFirstResponder() }
     private func button(_ title: String, symbol: String, action: @escaping () -> Void) -> UIButton {
@@ -1459,6 +1558,217 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
                 try expect(selection.text() == selected, "视图复用后跨段选区丢失")
                 metrics.checks["cross_paragraph_copy_survives_reuse"] = "passed"
+                // Use the production press callbacks and real Litext selection
+                // setters; select(from:to:) alone misses collapsed presses.
+                let selectionProbe = ConversationController()
+                addChild(selectionProbe)
+                selectionProbe.view.frame = view.bounds
+                view.addSubview(selectionProbe.view)
+                selectionProbe.didMove(toParent: self)
+                defer {
+                    selectionProbe.willMove(toParent: nil)
+                    selectionProbe.view.removeFromSuperview()
+                    selectionProbe.removeFromParent()
+                }
+                selectionProbe.view.layoutIfNeeded()
+                let probeMessage = LabMessage(author: "选区事件检查", markdown:
+                    "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\nSecond paragraph for a continuous selection.")
+                selectionProbe.messages = [probeMessage]
+                _ = await selectionProbe.store.prepare(probeMessage, width: selectionProbe.bodyWidth)
+                selectionProbe.collection.reloadData()
+                selectionProbe.collection.layoutIfNeeded()
+                let probeBody = selectionProbe.store.view(for: probeMessage.blocks[0], width: selectionProbe.bodyWidth)
+                let probeLabel = probeBody.label
+                try expect(probeLabel.becomeFirstResponder(), "选区事件检查没有正文焦点")
+                @MainActor func selectionPoint(for character: Int) throws -> CGPoint {
+                    guard let rect = probeBody.rect(for: character) else { throw Failure(message: "选区事件检查缺少文字位置") }
+                    return CGPoint(x: rect.minX + 0.1, y: rect.midY)
+                }
+                @MainActor func drag(from start: Int, to finish: Int) async throws {
+                    let startPoint = try selectionPoint(for: start)
+                    let endPoint = try selectionPoint(for: finish)
+                    selectionProbe.selectionPress.pressed?(probeBody.convert(startPoint, to: selectionProbe.collection), probeLabel)
+                    probeLabel.selectionRange = NSRange(location: start, length: 0)
+                    probeLabel.selectionRange = NSRange(location: min(start, finish), length: abs(finish - start))
+                    selectionProbe.selectionPress.moved?(probeBody.convert(endPoint, to: selectionProbe.collection))
+                    try expect(selectionProbe.selectionActions.isHidden, "拖动时胶囊提前出现")
+                    selectionProbe.selectionPress.released?()
+                    selectionProbe.updateSelectionActions()
+                    let expected = probeBody.copyText(range: NSRange(location: min(start, finish), length: abs(finish - start)))
+                    let deadline = ContinuousClock.now + .seconds(10)
+                    while selectionProbe.selectionActions.isHidden, ContinuousClock.now < deadline {
+                        try await Task.sleep(for: .milliseconds(40))
+                    }
+                    if selectionProbe.selectionActions.isHidden {
+                        let actions = selectionProbe.selectionActions
+                        let targets = [actions.copyButton, actions.quoteButton].map { button -> String in
+                            let point = CGPoint(x: button.bounds.midX, y: button.bounds.midY)
+                            let hit = button.window?.hitTest(button.convert(point, to: button.window), with: nil)
+                            let ancestors = sequence(first: button as UIView, next: { $0.superview })
+                                .map { "\(type(of: $0)):\($0.frame):hidden=\($0.isHidden):alpha=\($0.alpha)" }
+                            return "button=\(button.frame), hit=\(hit.map { String(describing: type(of: $0)) } ?? "nil"), ancestors=\(ancestors)"
+                        }
+                        var screenshotFailure = ""
+                        do {
+                            try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
+                            if let window = selectionProbe.view.window {
+                                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                                }
+                                try image.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("selection-probe-failure.png"))
+                            }
+                        } catch {
+                            screenshotFailure = ", screenshotFailure=\(error.localizedDescription)"
+                        }
+                        throw Failure(message: "松手后胶囊不可见：textMatches=\(selectionProbe.selection.text() == expected), frame=\(actions.frame), lastAttempt=\(actions.lastHitTestFailure), \(targets)\(screenshotFailure)")
+                    }
+                    try expect(selectionProbe.selection.text() == expected && !selectionProbe.selectionActions.isHidden,
+                               "松手后起点、方向或胶囊状态不正确")
+                }
+                var jitter: (CGPoint, CGPoint)?
+                for character in 1..<probeLabel.attributedText.length {
+                    guard let rect = probeBody.rect(for: character) else { continue }
+                    let before = CGPoint(x: rect.midX - 0.5, y: rect.midY)
+                    let after = CGPoint(x: rect.midX + 0.5, y: rect.midY)
+                    if probeBody.character(at: before) != probeBody.character(at: after) {
+                        jitter = (before, after); break
+                    }
+                }
+                guard let jitter else { throw Failure(message: "点击抖动检查缺少字符边界") }
+                selectionProbe.selectionPress.pressed?(probeBody.convert(jitter.0, to: selectionProbe.collection), probeLabel)
+                selectionProbe.selectionPress.moved?(probeBody.convert(jitter.1, to: selectionProbe.collection))
+                selectionProbe.selectionPress.released?()
+                selectionProbe.updateSelectionActions()
+                try expect(!selectionProbe.selection.hasSelection && selectionProbe.selectionActions.isHidden,
+                           "轻微单击抖动被误判为选字")
+                selectionProbe.selectionPress.pressed?(probeBody.convert(jitter.0, to: selectionProbe.collection), probeLabel)
+                let wordRange = NSRange(location: 3, length: 8)
+                probeLabel.selectionRange = wordRange
+                selectionProbe.selectionPress.moved?(probeBody.convert(jitter.1, to: selectionProbe.collection))
+                selectionProbe.selectionPress.released?()
+                selectionProbe.updateSelectionActions()
+                try expect(selectionProbe.selection.text() == probeBody.copyText(range: wordRange),
+                           "双击选词被轻微抖动覆盖")
+                try await drag(from: 3, to: 11)
+                try await drag(from: 22, to: 30)
+                try await drag(from: 30, to: 12)
+                let collapsedStart = try selectionPoint(for: 18)
+                selectionProbe.selectionPress.pressed?(probeBody.convert(collapsedStart, to: selectionProbe.collection), probeLabel)
+                probeLabel.selectionRange = NSRange(location: 18, length: 0)
+                selectionProbe.selectionPress.moved?(probeBody.convert(try selectionPoint(for: 27), to: selectionProbe.collection))
+                probeLabel.selectionRange = NSRange(location: 18, length: 9)
+                probeLabel.selectionRange = nil
+                selectionProbe.selectionPress.moved?(probeBody.convert(collapsedStart, to: selectionProbe.collection))
+                selectionProbe.selectionPress.released?()
+                selectionProbe.updateSelectionActions()
+                try expect(!selectionProbe.selection.hasSelection && selectionProbe.selectionActions.isHidden
+                    && probeBody.displayedSelectionRects.isEmpty, "拖回起点后遗留旧选区或胶囊")
+                try await drag(from: 30, to: 12)
+                let excerpt = selectionProbe.selection.text()
+                let localRange = probeLabel.selectionRange
+                selectionProbe.selectionActions.copyButton.sendActions(for: .touchUpInside)
+                try expect(UIPasteboard.general.string == excerpt && selectionProbe.selection.text() == excerpt
+                    && probeLabel.selectionRange == localRange && !selectionProbe.selectionActions.isHidden,
+                           "胶囊复制丢失选区或复制了别的内容")
+                // A detached label's live selection must survive read-only copying.
+                let otherLabel = TextLabelView(attributedText: NSAttributedString(string: "another selected passage",
+                    attributes: [.font: UIFont.systemFont(ofSize: 14)]))
+                otherLabel.isSelectable = true
+                otherLabel.frame = CGRect(x: 0, y: 0, width: 300, height: 40)
+                otherLabel.layoutIfNeeded()
+                otherLabel.selectionRange = NSRange(location: 2, length: 7)
+                let otherRange = otherLabel.selectionRange
+                try expect(selectionProbe.selection.text() == excerpt && otherLabel.selectionRange == otherRange,
+                           "复制通知别的文字控件取消了选区")
+                let secondProbeBody = selectionProbe.store.view(for: probeMessage.blocks[1], width: selectionProbe.bodyWidth)
+                guard let paragraphStart = secondProbeBody.rect(for: 0) else {
+                    throw Failure(message: "跨段起点没有文字位置")
+                }
+                let secondStart = CGPoint(x: paragraphStart.minX + 0.1, y: paragraphStart.midY)
+                selectionProbe.selectionPress.pressed?(secondProbeBody.convert(secondStart, to: selectionProbe.collection), secondProbeBody.label)
+                secondProbeBody.label.selectionRange = nil
+                selectionProbe.selectionPress.moved?(probeBody.convert(try selectionPoint(for: 5), to: selectionProbe.collection))
+                selectionProbe.selectionPress.released?()
+                selectionProbe.updateSelectionActions()
+                try expect(selectionProbe.selection.hasSelection && !probeBody.displayedSelectionRects.isEmpty
+                    && !selectionProbe.selectionActions.isHidden, "局部选区为空时漏掉了反向跨段拖动")
+                selectionProbe.selection.select(from: .init(blockID: probeMessage.blocks[0].id, character: 5),
+                                                to: .init(blockID: probeMessage.blocks[1].id, character: 9))
+                let crossExcerpt = selectionProbe.selection.text()
+                let expectedCross = probeBody.copyText(range: NSRange(location: 5, length: probeLabel.attributedText.length - 5))
+                    + "\n\n" + secondProbeBody.copyText(range: NSRange(location: 0, length: 9))
+                try expect(crossExcerpt == expectedCross && otherLabel.selectionRange == otherRange,
+                           "跨段复制没有保持内容和其他控件的选区")
+                selectionProbe.input.text = "已经写好的草稿"
+                selectionProbe.selectionActions.quoteButton.sendActions(for: .touchUpInside)
+                try expect(selectionProbe.input.text == "已经写好的草稿\n\n"
+                    + crossExcerpt.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n") + "\n\n"
+                    && !selectionProbe.selection.hasSelection && selectionProbe.selectionActions.isHidden,
+                           "胶囊引用覆盖草稿或没有完成选区收起")
+                try await drag(from: 4, to: 18)
+                let reflowExcerpt = selectionProbe.selection.text()
+                selectionProbe.maximumBodyWidth = selectionProbe.bodyWidth / 2
+                selectionProbe.view.setNeedsLayout(); selectionProbe.view.layoutIfNeeded()
+                selectionProbe.collection.layoutIfNeeded()
+                try expect(selectionProbe.selection.text() == reflowExcerpt && !probeBody.displayedSelectionRects.isEmpty,
+                           "正文重新换行后选区或高亮丢失")
+                selectionProbe.selection.select(from: .init(blockID: probeMessage.blocks[0].id, character: 0),
+                                                to: .init(blockID: probeMessage.blocks[0].id, character: probeLabel.attributedText.length))
+                selectionProbe.updateSelectionActions()
+                let selectedRects = selectionProbe.selection.visibleSelectionRects(in: selectionProbe.view)
+                try expect(!selectionProbe.selectionActions.isHidden
+                    && !selectedRects.contains(where: { $0.intersects(selectionProbe.selectionActions.frame) }),
+                           "有空白空间时胶囊仍遮挡多行选中文字")
+                selectionProbe.selectionPress.pressed?(CGPoint(x: 1, y: 1), selectionProbe.collection)
+                selectionProbe.selectionPress.released?()
+                selectionProbe.updateSelectionActions()
+                try expect(!selectionProbe.selection.hasSelection && selectionProbe.selectionActions.isHidden
+                    && probeBody.displayedSelectionRects.isEmpty, "点击空白后遗留选区、胶囊或高亮")
+                let linkURL = URL(string: "https://example.com/selection-check")!
+                let linkMessage = LabMessage(author: "选区链接与代码检查", markdown:
+                    "[普通正文链接](\(linkURL.absoluteString))\n\n```swift\nlet quoted = 42\n```")
+                selectionProbe.messages = [linkMessage]
+                _ = await selectionProbe.store.prepare(linkMessage, width: selectionProbe.bodyWidth)
+                selectionProbe.collection.reloadData(); selectionProbe.collection.layoutIfNeeded()
+                let linkBody = selectionProbe.store.view(for: linkMessage.blocks[0], width: selectionProbe.bodyWidth)
+                let linkLayout = TextLabel.Layout(attributedString: linkBody.label.attributedText)
+                linkLayout.containerSize = linkBody.label.bounds.size
+                _ = linkLayout.sizeThatFits(linkBody.label.bounds.size)
+                linkLayout.updateHighlightRegions()
+                guard let linkRegion = linkLayout.highlightRegions.first(where: { $0.kind == .link }) else {
+                    throw Failure(message: "普通正文链接没有高亮点击区域")
+                }
+                var openedLink: URL?
+                linkBody.onLink = { openedLink = $0 }
+                selectionProbe.selection.textLabelView(linkBody.label, didTapHighlightRegion: linkRegion, at: .zero)
+                try expect(linkBody.record?.preparedText != nil && openedLink == linkURL,
+                           "预排版正文链接没有转发到原始点击处理")
+                let codeProbeBody = selectionProbe.store.view(for: linkMessage.blocks[1], width: selectionProbe.bodyWidth)
+                guard let codeProbeLabel = codeProbeBody.attachmentLabels.first else { throw Failure(message: "代码选区没有文字控件") }
+                selectionProbe.selectionPress.pressed?(codeProbeLabel.convert(.zero, to: selectionProbe.collection), codeProbeLabel)
+                codeProbeLabel.selectionRange = NSRange(location: 4, length: 6)
+                selectionProbe.selectionPress.released?()
+                selectionProbe.updateSelectionActions()
+                try expect(selectionProbe.selection.text() == "quoted" && !selectionProbe.selectionActions.isHidden
+                    && !codeProbeBody.displayedSelectionRects.isEmpty, "代码选字没有接入胶囊或高亮")
+                selectionProbe.selectionActions.copyButton.sendActions(for: .touchUpInside)
+                try expect(UIPasteboard.general.string == "quoted" && selectionProbe.selection.hasSelection,
+                           "代码胶囊没有复制所选文字或丢失选区")
+                selectionProbe.selectionPress.pressed?(codeProbeLabel.convert(.zero, to: selectionProbe.collection), codeProbeLabel)
+                codeProbeLabel.selectionRange = NSRange(location: 4, length: 6)
+                codeProbeLabel.selectionRange = nil
+                selectionProbe.selectionPress.released?()
+                selectionProbe.updateSelectionActions()
+                try expect(!selectionProbe.selection.hasSelection && selectionProbe.selectionActions.isHidden,
+                           "代码拖回空选区后遗留胶囊")
+                selectionProbe.selectionPress.pressed?(codeProbeLabel.convert(.zero, to: selectionProbe.collection), codeProbeLabel)
+                codeProbeLabel.selectionRange = NSRange(location: 4, length: 6)
+                selectionProbe.selectionPress.released?()
+                selectionProbe.removeMessages(except: [])
+                try expect(!selectionProbe.selection.hasSelection && selectionProbe.selectionActions.isHidden,
+                           "移除所选消息后遗留胶囊")
+                selectionProbe.view.removeFromSuperview()
+                metrics.checks["selection_primary_press_reverse_and_capsule"] = "passed"
                 guard let card = blocks.first(where: { if case .card = $0.kind { return true }; return false }) else {
                     throw Failure(message: "未找到摘记卡")
                 }
@@ -1542,7 +1852,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 await withCheckedContinuation { continuation in sampleScroll { continuation.resume() } }
                 metrics.checks["single_long_answer_complete_and_revisitable"] = "passed"
                 selection.clear()
-                status.text = "14 项必要行为检查通过 · 桌面手感仍需单独体验"
+                status.text = "\(metrics.checks.count) 项必要行为检查通过 · 桌面手感仍需单独体验"
             } catch {
                 metrics.checks["failure"] = error.localizedDescription
                 status.text = "行为检查未通过：\(error.localizedDescription)"
@@ -1557,7 +1867,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
             }
             catch { status.text = "检查记录写入失败：\(error.localizedDescription)" }
-            completed?(metrics.checks["failure"] == nil && metrics.checks.count == 14)
+            completed?(metrics.checks["failure"] == nil)
         }
     }
 #endif

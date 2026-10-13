@@ -13,11 +13,16 @@ mkdir -p App/Evidence
 save_evidence() {
   kill "$server_pid" 2>/dev/null || true
   for file in "$CHECK_DIR/server.log" "$CHECK_DIR/requests.jsonl" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/latest.json" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/window.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-probe-failure.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-check.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/business-failure.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-composers.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion-mist.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-main.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-floating.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/connection-cards.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/confirmed-import.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/contextual-pickers.png" \
@@ -65,7 +70,17 @@ def verify(path, source_key, status=None):
 
 launch('--self-check')
 conversation = verify(support / 'Results/latest.json', 'source_revision')
-assert conversation['idiom'] == 'mac' and len(conversation['checks']) == 14, conversation
+required_conversation_checks = {
+    'empty_conversation_scroll_does_not_load_history', 'hover_strip_attachment_preserves_input',
+    'prepend_preserves_reading_text', 'resize_preserves_reading_paragraph',
+    'drag_reflows_visible_only_then_converges', 'closing_conversation_releases_width_worker',
+    'stream_keeps_unchanged_blocks_and_tail', 'replay_stop_complete_and_history_reading',
+    'image_arrival_preserves_reading_text', 'cross_paragraph_copy_survives_reuse',
+    'selection_primary_press_reverse_and_capsule', 'card_draft_and_fold_persist',
+    'code_highlight_selection_and_scroll_persist', 'math_image_and_diagram_resources',
+    'single_long_answer_complete_and_revisitable',
+}
+assert conversation['idiom'] == 'mac' and required_conversation_checks <= conversation['checks'].keys(), conversation
 for filename in ['latest.json', 'window.png', 'diagram.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-conversation-' + filename))
 
@@ -105,9 +120,9 @@ assert business['floating_rich_answer']['body_font_size_pt'] == 11, business
 assert business['floating_rich_answer']['math_images'] == 2, business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
-for filename in ['selection-composers.png', 'selection-discussion.png', 'connection-cards.png', 'confirmed-import.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png']:
+for filename in ['selection-composers.png', 'selection-discussion.png', 'selection-capsule-main.png', 'selection-capsule-floating.png', 'connection-cards.png', 'confirmed-import.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
-print(f"14 项会话检查与 {len(business['checks'])} 项原业务保存重开检查通过；含浮窗 11pt 公式与图示、原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。")
+print(f"{len(conversation['checks'])} 项会话检查与 {len(business['checks'])} 项原业务保存重开检查通过；含选区胶囊、浮窗 11pt 公式与图示、原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。")
 
 with tempfile.TemporaryDirectory(prefix='weibei-quit-check-') as scratch:
     helper = str(Path(scratch) / 'quit')
