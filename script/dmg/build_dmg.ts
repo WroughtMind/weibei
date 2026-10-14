@@ -53,6 +53,11 @@ async function main() {
       contents: [
         { x: 145, y: 270, type: "file", path: appPath, name: "魏碑.app" },
         { x: 565, y: 270, type: "link", path: "/Applications", name: "Applications" },
+        // Finder can show hidden files. Keep installation resources below the
+        // initial window instead of letting Finder place them over the guide.
+        { x: 145, y: 620, type: "position", path: ".background" },
+        { x: 355, y: 620, type: "position", path: ".DS_Store" },
+        { x: 565, y: 620, type: "position", path: ".VolumeIcon.icns" },
       ],
     },
   });
