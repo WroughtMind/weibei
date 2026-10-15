@@ -1877,8 +1877,8 @@ enum CatalystBusinessCheck {
         try onboardingSnapshot("onboarding-chat-ready", window: window)
     }
 
-    private static func accessibilityElement(_ id: String) async throws -> [String: String]? {
-        let response = try await onboardingUICommand("query", id: id)
+    private static func accessibilityElement(_ id: String, forInteraction: Bool = false) async throws -> [String: String]? {
+        let response = try await onboardingUICommand(forInteraction ? "ready" : "query", id: id)
         let element = response["element"] as? [String: String]
         lastOnboardingUIElement = element ?? ["id": id, "exists": "false"]
         return element
@@ -1896,7 +1896,7 @@ enum CatalystBusinessCheck {
 
     private static func waitForOnboardingControl(_ id: String) async throws {
         try await until("enabled and hittable control: " + id) {
-            let element = try await accessibilityElement(id)
+            let element = try await accessibilityElement(id, forInteraction: true)
             return element?["enabled"] == "true" && element?["hittable"] == "true"
         }
     }

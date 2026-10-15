@@ -45,15 +45,20 @@ final class OnboardingUITests: XCTestCase {
             let element = matches.firstMatch
             var response: [String: Any] = ["token": token]
             switch action {
-            case "query":
-                if element.exists {
+            case "query", "ready":
+                // One snapshot keeps observation atomic when a banner or form
+                // disappears between requests. Live attribute reads can fail
+                // after an earlier `exists` returned true.
+                let snapshots = matchingSnapshots(in: try app.snapshot(), identifier: id)
+                if let snapshot = snapshots.first {
                     // Secure/text field contents must never enter diagnostics.
-                    let text = element.elementType == .staticText ? element.value as? String : nil
-                    response["element"] = ["id": id, "label": text ?? element.label,
-                                           "enabled": String(element.isEnabled),
-                                           "hittable": String(element.isHittable),
-                                           "frame": String(describing: element.frame),
-                                           "matches": String(matches.count)]
+                    let text = snapshot.elementType == .staticText ? snapshot.value as? String : nil
+                    var state = ["id": id, "label": text ?? snapshot.label,
+                                 "enabled": String(snapshot.isEnabled),
+                                 "frame": String(describing: snapshot.frame),
+                                 "matches": String(snapshots.count)]
+                    if action == "ready" { state["hittable"] = String(element.isHittable) }
+                    response["element"] = state
                 }
             case "press", "fill":
                 guard element.exists, element.isEnabled, element.isHittable else {
@@ -76,5 +81,11 @@ final class OnboardingUITests: XCTestCase {
             try JSONSerialization.data(withJSONObject: response).write(to: responseURL, options: .atomic)
         }
         XCTAssertEqual(app.state, .notRunning, "The acceptance App did not finish its checks")
+    }
+
+    @MainActor
+    private func matchingSnapshots(in root: any XCUIElementSnapshot, identifier: String) -> [any XCUIElementSnapshot] {
+        (root.identifier == identifier ? [root] : [])
+            + root.children.flatMap { matchingSnapshots(in: $0, identifier: identifier) }
     }
 }
