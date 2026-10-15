@@ -18,6 +18,10 @@ final class CourseFileWatchSession: @unchecked Sendable {
     private var stopped = false
     private let debounceInterval: DispatchTimeInterval = .milliseconds(300)
     private let onDebouncedEvent: @Sendable () -> Void
+#if DEBUG
+    /// Deterministically exercise a stop/pause after source creation but before registration.
+    var beforeSourceRegistrationForSelfCheck: (() -> Void)?
+#endif
 
     var watchedDirectoryCount: Int {
         lock.lock()
@@ -136,11 +140,17 @@ final class CourseFileWatchSession: @unchecked Sendable {
         source.setCancelHandler {
             Darwin.close(capturedFD)
         }
+#if DEBUG
+        beforeSourceRegistrationForSelfCheck?()
+#endif
 
         lock.lock()
         if stopped || pauseCount > 0 || sources[path] != nil {
             lock.unlock()
             source.cancel()
+            // A newly created source is suspended. Cancellation alone cannot
+            // run its cleanup handler or make its final release safe.
+            source.resume()
             return
         }
         sources[path] = source
