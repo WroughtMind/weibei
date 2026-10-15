@@ -103,47 +103,68 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
     }
 #if WEIBEI_ACCEPTANCE_CHECKS
-    // Catalyst's SwiftUI controls are exposed to the Mac accessibility tree,
-    // not necessarily to UIView.accessibilityElementCount(). Use the same
-    // public actions assistive technology uses on the actual mounted controls.
-    @MainActor private func onboardingElementsForCheck() -> [any NSAccessibilityProtocol] {
+    // Catalyst vends Objective-C accessibility proxies that need not adopt
+    // the complete Swift protocol. Traverse the mounted content view as well:
+    // NSWindow's accessibility children can contain only its title bar.
+    @MainActor private func onboardingElementsForCheck() -> [NSObject] {
         var visited = Set<ObjectIdentifier>()
-        var elements: [any NSAccessibilityProtocol] = []
-        func visit(_ object: AnyObject) {
-            guard visited.insert(ObjectIdentifier(object)).inserted,
-                  let element = object as? any NSAccessibilityProtocol,
-                  !element.isAccessibilityHidden() else { return }
-            elements.append(element)
-            for child in element.accessibilityChildren() ?? [] { visit(child as AnyObject) }
+        var elements: [NSObject] = []
+        func visit(_ object: NSObject) {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return }
+            if let view = object as? NSView, view.isHiddenOrHasHiddenAncestor { return }
+            elements.append(object)
+            if let children = onboardingValue(object, .children) as? [Any] {
+                children.compactMap { $0 as? NSObject }.forEach(visit)
+            }
+            if let view = object as? NSView { view.subviews.forEach(visit) }
         }
-        for window in NSApp.windows where window.isVisible { visit(window) }
+        for window in NSApp.windows where window.isVisible {
+            visit(window)
+            if let content = window.contentView { visit(content) }
+        }
         return elements
+    }
+
+    @MainActor private func onboardingValue(_ object: NSObject, _ attribute: NSAccessibility.Attribute) -> Any? {
+        guard object.responds(to: #selector(NSObject.accessibilityAttributeNames)),
+              object.responds(to: #selector(NSObject.accessibilityAttributeValue(_:))),
+              object.accessibilityAttributeNames().contains(attribute) else { return nil }
+        return object.accessibilityAttributeValue(attribute)
     }
 
     @MainActor func onboardingControlsForCheck() -> [[String: String]] {
         onboardingElementsForCheck().map { element in
-            let role = element.accessibilityRole()
-            // Static text exposes its displayed content as AXValue on macOS.
-            // Never record text-field values (in particular credential fields).
-            let text = role == .staticText ? element.accessibilityValue() as? String : nil
-            return ["id": element.accessibilityIdentifier() ?? "",
-             "label": text ?? element.accessibilityLabel() ?? "",
-             "role": role?.rawValue ?? "",
-             "enabled": String(element.isAccessibilityEnabled()),
-             "frame": NSStringFromRect(element.accessibilityFrame())]
+            let role = onboardingValue(element, .role) as? String ?? ""
+            // Never record text-field values, in particular credential fields.
+            let text = role == NSAccessibility.Role.staticText.rawValue
+                ? onboardingValue(element, .value) as? String : nil
+            return ["id": onboardingValue(element, .identifier) as? String ?? "",
+                    "label": text ?? onboardingValue(element, .description) as? String
+                        ?? onboardingValue(element, .title) as? String ?? "",
+                    "role": role,
+                    "type": NSStringFromClass(type(of: element)),
+                    "enabled": String(onboardingValue(element, .enabled) as? Bool == true)]
         }
     }
 
     @MainActor func activateOnboardingControlForCheck(_ id: String) -> Bool {
-        guard let element = onboardingElementsForCheck().first(where: { $0.accessibilityIdentifier() == id }),
-              element.isAccessibilityEnabled() else { return false }
-        return element.accessibilityPerformPress()
+        guard let element = onboardingElementsForCheck().first(where: { onboardingValue($0, .identifier) as? String == id }),
+              onboardingValue(element, .enabled) as? Bool == true,
+              element.responds(to: #selector(NSObject.accessibilityActionNames)),
+              element.responds(to: #selector(NSObject.accessibilityPerformAction(_:))),
+              element.accessibilityActionNames().contains(.press) else { return false }
+        element.accessibilityPerformAction(.press)
+        return true
     }
 
     @MainActor func setOnboardingControlForCheck(_ id: String, value: String) -> Bool {
-        guard let element = onboardingElementsForCheck().first(where: { $0.accessibilityIdentifier() == id }),
-              element.isAccessibilityEnabled() else { return false }
-        element.setAccessibilityValue(value)
+        guard let element = onboardingElementsForCheck().first(where: { onboardingValue($0, .identifier) as? String == id }),
+              onboardingValue(element, .enabled) as? Bool == true,
+              element.responds(to: #selector(NSObject.accessibilityIsAttributeSettable(_:))),
+              element.responds(to: #selector(NSObject.accessibilitySetValue(_:forAttribute:))),
+              element.accessibilityAttributeNames().contains(.value),
+              element.accessibilityIsAttributeSettable(.value) else { return false }
+        element.accessibilitySetValue(value, forAttribute: .value)
         return true
     }
 
