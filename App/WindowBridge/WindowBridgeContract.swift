@@ -25,6 +25,8 @@ import Foundation
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool
     @MainActor func fullScreenWindowStateForCheck() -> [String: Bool]
     @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]]
+    @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
+                                           xFraction: Double, yFraction: Double) -> [String: String]
 #endif
     @MainActor func presentOpenPanel(
         title: String,
