@@ -2164,6 +2164,7 @@ struct AgentPaneView: View {
             .padding(.top, 4)
             .padding(.bottom, 12)
             .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
         .background(WeiBeiTheme.paper)

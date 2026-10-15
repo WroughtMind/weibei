@@ -942,10 +942,13 @@ enum CatalystBusinessCheck {
             result["connection_state"] = [
                 "provider": store.agentProviderID.rawValue,
                 "auth_method": store.agentAuthMethod.rawValue,
+                "configured": String(AgentProviderReadiness.isConfigured(for: store)),
+                "ready_to_chat": String(AgentProviderReadiness.isReadyToChat(for: store)),
                 "model_list_failure": String(describing: AgentAccountService.shared.modelListFailure),
                 "live_models": AgentAccountService.shared.liveModelIDs.joined(separator: ","),
                 "is_refreshing": String(AgentAccountService.shared.isRefreshingModels)
             ]
+            result["connection_setup_finish"] = AgentConnectionSetupView.checkLastFinishState ?? ["phase": "action_not_received"]
             let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
             let sheetProbes = CatalystIndependentSheetSizingProbe.Probe.checkInstances.allObjects
             let sheetProbeStates: [[String: String]] = sheetProbes.map { probe in
@@ -1852,6 +1855,9 @@ enum CatalystBusinessCheck {
         try await activate("connection-setup-enter-model")
         try await until("manual model field") { try await accessibilityElement("connection-setup-manual-model") != nil }
         try await enter("catalyst-local-check", in: "connection-setup-manual-model")
+        guard descendants(window).compactMap({ $0 as? UITextField }).contains(where: { $0.text == "catalyst-local-check" }) else {
+            throw Failure("model ID input changed capitalization or spelling")
+        }
         var committedProvider: String?
         var committedType: String?
         let credentialChanges = NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange).sink { notice in
@@ -1861,8 +1867,8 @@ enum CatalystBusinessCheck {
         defer { credentialChanges.cancel() }
         try await activate("connection-setup-use-model")
         try await until("connection commits and returns to the question") {
-            let setup = try await accessibilityElement("agent-connection-setup")
-            return AgentProviderReadiness.isReadyToChat(for: store) && setup == nil
+            let closeButton = try await accessibilityElement("connection-setup-close")
+            return AgentProviderReadiness.isReadyToChat(for: store) && closeButton == nil
         }
         guard committedProvider == credentialID, committedType == AgentCredentialType.apiKey.rawValue else {
             throw Failure("committed connection did not identify its credential change")

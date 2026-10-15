@@ -4,6 +4,9 @@ import WeiBeiCore
 /// 聊天与设置共用的连接表单。输入保留到连接完成；浏览器取消不会留下空配置。
 @MainActor
 struct AgentConnectionSetupView: View {
+#if WEIBEI_ACCEPTANCE_CHECKS
+    private(set) static var checkLastFinishState: [String: String]?
+#endif
     @EnvironmentObject private var store: WorkspaceStore
     @ObservedObject private var accounts = AgentAccountService.shared
     // 表单的模型名单独立于设置卡片和其他聊天窗口的刷新。
@@ -78,6 +81,10 @@ struct AgentConnectionSetupView: View {
                 credentials
             }
         }
+        .autocorrectionDisabled(true)
+#if os(iOS)
+        .textInputAutocapitalization(.never)
+#endif
         .foregroundStyle(WeiBeiTheme.ink)
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -195,6 +202,7 @@ struct AgentConnectionSetupView: View {
                         .accessibilityIdentifier("connection-setup-manual-model")
                         .onSubmit { finish(profile, model: manualModel) }
                     Button(store.ui("使用", "Use")) { finish(profile, model: manualModel) }
+                        .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                         .disabled(manualModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityIdentifier("connection-setup-use-model")
                 }
@@ -312,6 +320,15 @@ struct AgentConnectionSetupView: View {
 
     private func finish(_ profile: AgentCredentialProfile, model: String) {
         let cleaned = model.trimmingCharacters(in: .whitespacesAndNewlines)
+#if WEIBEI_ACCEPTANCE_CHECKS
+        Self.checkLastFinishState = [
+            "phase": "action_received", "has_model": String(!cleaned.isEmpty),
+            "already_finishing": String(isFinishing),
+            "connection_unchanged": String(originatingConnectionKey == activeConnectionKey),
+            "pending_profile": String(pendingProfile != nil),
+            "profile_registered": String(store.agentCredentialProfiles.contains { $0.id == profile.id })
+        ]
+#endif
         guard !cleaned.isEmpty, !isFinishing else { return }
         guard originatingConnectionKey == activeConnectionKey else { cancel(); return }
         isFinishing = true
@@ -323,17 +340,26 @@ struct AgentConnectionSetupView: View {
             store.selectAgentCredentialProfile(profile.id)
             store.updateModelName(cleaned)
             onConnected()
+#if WEIBEI_ACCEPTANCE_CHECKS
+            Self.checkLastFinishState?["phase"] = "on_connected_called"
+#endif
             return
         }
         let credentialProviderID: String
         do {
             // 模型确认与凭据提交是同一步；失败或收起表单都保留原连接。
             credentialProviderID = try modelCatalog.commitCredential(for: profile)
+#if WEIBEI_ACCEPTANCE_CHECKS
+            Self.checkLastFinishState?["phase"] = "credential_committed"
+#endif
             if !store.agentCredentialProfiles.contains(where: { $0.id == profile.id }) {
                 try store.createAgentConnection(id: profile.id, provider: profile.provider,
                                                 authMethod: profile.authMethod, baseURL: profile.baseURL)
             }
         } catch {
+#if WEIBEI_ACCEPTANCE_CHECKS
+            Self.checkLastFinishState?["phase"] = "save_failed"
+#endif
             isFinishing = false
             errorText = store.ui("连接未保存，请重试。输入的内容仍保留。", "The connection was not saved. Please retry; your input is still here.")
             return
@@ -341,6 +367,9 @@ struct AgentConnectionSetupView: View {
         store.selectAgentCredentialProfile(profile.id)
         store.setAgentAuthMethod(profile.authMethod)
         store.updateModelName(cleaned)
+#if WEIBEI_ACCEPTANCE_CHECKS
+        Self.checkLastFinishState?["phase"] = "model_saved"
+#endif
         // Publish only after the profile exists, so a new custom endpoint is known.
         if profile.authMethod == .subscription {
             store.completeAgentSubscriptionLogin(provider: profile.provider, profileID: profile.id)
@@ -349,6 +378,9 @@ struct AgentConnectionSetupView: View {
                 userInfo: ["provider": credentialProviderID, "type": AgentCredentialType.apiKey.rawValue])
         }
         onConnected()
+#if WEIBEI_ACCEPTANCE_CHECKS
+        Self.checkLastFinishState?["phase"] = "on_connected_called"
+#endif
     }
 
     private func cancel() {
