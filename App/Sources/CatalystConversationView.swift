@@ -296,6 +296,9 @@ private struct CatalystMessageFooter: View {
                     AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
                 } else {
                     Color.clear.frame(height: 1)
+                    if AgentConnectionRecoveryView.isRelevant(message.failureKind) {
+                        AgentConnectionRecoveryView(failureKind: message.failureKind)
+                    }
                 }
             } else if message.role == .user {
                 AgentBubble(message: message, isChatWideTypography: wideTypography)

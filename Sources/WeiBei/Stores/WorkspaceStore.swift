@@ -317,6 +317,8 @@ final class WorkspaceStore: ObservableObject {
     var courseLibraryUnavailableReason: String?
     /// 资料库迁移进行中：写回、3 秒对账、课程笔记加载全部挂起（计划 §4.2）。
     @Published var libraryMigrationInFlight = false
+    @Published var libraryLocationPickerPresented = false
+    @Published var libraryPlacementInFlight = false
     /// 外部文件缺席灰态（计划 §5 阶段2）：首缺席记时间，两个对账周期仍缺席才移除条目。
     var fileMissingSinceByItemID: [String: Date] = [:]
     @Published var courseItemMemberships: [CourseItemMembership] = [] {
@@ -5925,12 +5927,14 @@ final class WorkspaceStore: ObservableObject {
     /// the active profile. Validate before changing profiles or saving a key.
     @discardableResult
     func createAgentConnection(
+        id: UUID = UUID(),
         provider: AgentProviderID,
         authMethod: AgentAuthMethod,
         baseURL: String
     ) throws -> UUID {
         let endpoint = try AgentProviderEndpoint(provider: provider, baseURL: baseURL)
         let profile = AgentCredentialProfile(
+            id: id,
             name: ui("配置 \(agentCredentialProfiles.count + 1)", "Profile \(agentCredentialProfiles.count + 1)"),
             provider: provider,
             authMethod: authMethod,

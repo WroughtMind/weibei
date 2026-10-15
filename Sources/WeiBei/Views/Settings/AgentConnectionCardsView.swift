@@ -15,12 +15,6 @@ struct AgentConnectionCardsView: View {
     @ObservedObject private var oauthService = AgentAccountService.shared
 
     @State private var addingCard = false
-    @State private var addServiceIndex = 0
-    @State private var addKeyDraft = ""
-    @State private var addBaseURLDraft = ""
-    @State private var addEndpointError: String?
-    @State private var addUsesSubscription = false
-    @State private var showAddBaseURL = false
     @State private var keyEditProfileID: UUID?
     @State private var subscriptionDetailProfileID: UUID?
     @State private var keyDraft = ""
@@ -33,20 +27,6 @@ struct AgentConnectionCardsView: View {
     @State private var endpointError: String?
 
     private var probingProfileID: UUID? { probeState.probingProfileID }
-
-    /// 账号登录的服务排在前面。只支持订阅的（如 Codex）以前被 apiKey 过滤掉了。
-    private var addServices: [AgentProviderID] {
-        let available = AgentProviderID.allCases.filter(oauthService.isAvailable)
-        let subscription = available.filter { authTypes(for: $0).contains(.oauth) }
-        let rest = available.filter { !authTypes(for: $0).contains(.oauth) }
-        return subscription + rest
-    }
-
-    private var currentAddService: AgentProviderID? {
-        let services = addServices
-        guard addServiceIndex < services.count else { return services.first }
-        return services[addServiceIndex]
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -411,17 +391,9 @@ struct AgentConnectionCardsView: View {
     @ViewBuilder
     private var addTile: some View {
         if addingCard {
-            addForm
+            AgentConnectionSetupView(onConnected: { addingCard = false }, onCancel: { addingCard = false })
         } else {
             Button {
-                addServiceIndex = 0
-                addKeyDraft = ""
-                addBaseURLDraft = ""
-                addEndpointError = nil
-                showAddBaseURL = false
-                if let first = addServices.first {
-                    addUsesSubscription = prefersSubscription(first)
-                }
                 addingCard = true
             } label: {
                 HStack(spacing: 7) {
@@ -441,147 +413,6 @@ struct AgentConnectionCardsView: View {
                     .strokeBorder(WeiBeiTheme.hairline.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
             )
         }
-    }
-
-    private var addForm: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(store.ui("添加连接", "Add Connection"))
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.ink)
-                Spacer(minLength: 12)
-                Button { closeAdd() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            modalSelect(currentAddService?.label(language: store.interfaceLanguage) ?? "—") {
-                ForEach(addServices, id: \.self) { provider in
-                    Button(provider.label(language: store.interfaceLanguage)) {
-                        if let index = addServices.firstIndex(of: provider) {
-                            addServiceIndex = index
-                            addBaseURLDraft = ""
-                            addEndpointError = nil
-                            showAddBaseURL = provider.showsBaseURLField
-                            addUsesSubscription = prefersSubscription(provider)
-                        }
-                    }
-                }
-            }
-
-            if let service = currentAddService, supportsBothAuthMethods(service) {
-                modalSelect(addUsesSubscription
-                    ? store.ui("账号登录", "Account sign-in")
-                    : store.ui("API 密钥", "API Key")) {
-                    Button(store.ui("账号登录", "Account sign-in")) { addUsesSubscription = true }
-                    Button(store.ui("API 密钥", "API Key")) { addUsesSubscription = false }
-                }
-            }
-
-            if !addingWithSubscription {
-                SecureField(
-                    "",
-                    text: $addKeyDraft,
-                    prompt: Text(store.ui("粘贴 API Key", "Paste API key"))
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
-                )
-                .textFieldStyle(.plain)
-                .weiBeiText(13)
-                .foregroundColor(WeiBeiTheme.ink)
-                .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, minHeight: 38)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(WeiBeiTheme.paper))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(WeiBeiTheme.hairline.opacity(0.85), lineWidth: 1)
-                )
-                .onSubmit { commitAdd() }
-            }
-
-            if let service = currentAddService, service.showsBaseURLField || showAddBaseURL {
-                TextField(
-                    "",
-                    text: $addBaseURLDraft,
-                    prompt: Text(store.ui("服务地址", "Base URL"))
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
-                )
-                .textFieldStyle(.plain)
-                .weiBeiText(13)
-                .foregroundColor(WeiBeiTheme.ink)
-                .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, minHeight: 38)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(WeiBeiTheme.paper))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(WeiBeiTheme.hairline.opacity(0.85), lineWidth: 1)
-                )
-            }
-
-            if let addEndpointError {
-                Text(addEndpointError)
-                    .font(ConnType.detail)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-            }
-
-            HStack {
-                Spacer()
-                Button(store.ui("取消", "Cancel")) { closeAdd() }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                Button(addingWithSubscription
-                    ? store.ui("浏览器登录", "Sign in with browser")
-                    : store.ui("连接", "Connect")) {
-                    commitAdd()
-                }
-                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
-                .disabled(
-                    oauthService.isLoggingIn
-                        || (!addingWithSubscription && addKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                )
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.paperRaised)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
-        )
-    }
-
-    private func closeAdd() {
-        addingCard = false
-        addKeyDraft = ""
-        addEndpointError = nil
-    }
-
-    private func modalSelect<MenuContent: View>(_ title: String, @ViewBuilder content: () -> MenuContent) -> some View {
-        Menu {
-            content()
-        } label: {
-            HStack {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .bold))
-            }
-            .foregroundStyle(WeiBeiTheme.ink)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(WeiBeiTheme.paper))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(WeiBeiTheme.hairline.opacity(0.85), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: 片段
@@ -778,49 +609,6 @@ struct AgentConnectionCardsView: View {
         keyDraft = ""
     }
 
-    private func commitAdd() {
-        guard let service = currentAddService, !oauthService.isLoggingIn else { return }
-        let previousProfiles = store.agentCredentialProfiles
-        let previousActiveID = store.activeAgentProfileID
-        let subscription = addingWithSubscription
-        let key = addKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard subscription || !key.isEmpty else { return }
-        do {
-            try store.createAgentConnection(
-                provider: service,
-                authMethod: subscription ? .subscription : .apiKey,
-                baseURL: addBaseURLDraft
-            )
-        } catch {
-            addEndpointError = store.ui(
-                "请先填写有效的服务地址。连接和密钥尚未保存。",
-                "Enter a valid service URL first. The connection and API key have not been saved."
-            )
-            return
-        }
-        addEndpointError = nil
-        if subscription {
-            let profileID = store.activeAgentProfileID
-            startSubscriptionLogin(service, profileID: profileID)
-            subscriptionDetailProfileID = profileID
-        } else {
-            guard oauthService.startAPIKeyLogin(key, provider: service, baseURL: store.agentBaseURL) else {
-                store.agentCredentialProfiles = previousProfiles
-                AgentCredentialProfileStore.saveProfiles(previousProfiles)
-                store.selectAgentCredentialProfile(previousActiveID)
-                if let error = oauthService.lastError {
-                    addEndpointError = store.ui(error.chinese, error.english)
-                } else {
-                    addEndpointError = store.ui("密钥未保存，请重试。", "The key was not saved. Try again.")
-                }
-                return
-            }
-        }
-        addingCard = false
-        addKeyDraft = ""
-        addBaseURLDraft = ""
-    }
-
     private func beginSubscriptionLogin(_ profile: AgentCredentialProfile) {
         guard !oauthService.isLoggingIn else { return }
         if profile.id != store.activeAgentProfileID {
@@ -852,26 +640,6 @@ struct AgentConnectionCardsView: View {
     private func supportsBothAuthMethods(_ provider: AgentProviderID) -> Bool {
         let types = authTypes(for: provider)
         return types.contains(.oauth) && types.contains(.apiKey)
-    }
-
-    /// 只支持订阅，或两种都支持且还没有密钥时，默认走账号登录。和旧设置页同一条规则。
-    private func prefersSubscription(_ provider: AgentProviderID) -> Bool {
-        let types = authTypes(for: provider)
-        guard types.contains(.oauth) else { return false }
-        if !types.contains(.apiKey) { return true }
-        let hasKey = oauthService.isConfigured(
-            providerID: provider.credentialProviderID,
-            type: .apiKey
-        )
-        return provider.kind == .subscription || !hasKey
-    }
-
-    private var addingWithSubscription: Bool {
-        guard let service = currentAddService else { return false }
-        let types = authTypes(for: service)
-        if types.contains(.oauth), !types.contains(.apiKey) { return true }
-        if supportsBothAuthMethods(service) { return addUsesSubscription }
-        return false
     }
 
     private func method(for profile: AgentCredentialProfile) -> AgentAuthMethod {

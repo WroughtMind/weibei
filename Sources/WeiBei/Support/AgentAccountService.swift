@@ -6,7 +6,7 @@ import WeiBeiCore
 import os
 
 /// Agent 账号与模型目录服务。
-/// 目录为服务商实时名单（失败时回退默认 ID；选择器永远允许手输任意 ID）；凭据走 NativeAgentCredentialStore；
+/// 目录来自服务商实时名单，选择器允许手输模型 ID；凭据走 NativeAgentCredentialStore；
 /// OpenAI 订阅登录走 NativeOpenAIOAuth 浏览器流程。
 @MainActor
 final class AgentAccountService: ObservableObject {
@@ -72,12 +72,57 @@ final class AgentAccountService: ObservableObject {
         var reasoningLevels: [String: [String]]
     }
     private let modelCatalogLoader: ((AgentProviderID, String) async throws -> ModelCatalog)?
+    private let credentialStoreOverride: NativeAgentCredentialStore?
+    private let removesCredentialStoreOnDeinit: Bool
 
-    init(modelCatalogLoader: ((AgentProviderID, String) async throws -> ModelCatalog)? = nil) {
+    init(credentialStore: NativeAgentCredentialStore? = nil,
+         removesCredentialStoreOnDeinit: Bool = false,
+         modelCatalogLoader: ((AgentProviderID, String) async throws -> ModelCatalog)? = nil) {
+        self.credentialStoreOverride = credentialStore
+        self.removesCredentialStoreOnDeinit = removesCredentialStoreOnDeinit
         self.modelCatalogLoader = modelCatalogLoader
         reloadCredentialSnapshot()
     }
 
+    /// 新连接在选定模型前只使用自己的临时凭据，取消不会覆盖正在使用的连接。
+    static func connectionDraft() -> AgentAccountService {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiConnection-\(UUID().uuidString)", isDirectory: true)
+        return AgentAccountService(
+            credentialStore: NativeAgentCredentialStore(fileURL: directory.appendingPathComponent("credentials.json")),
+            removesCredentialStoreOnDeinit: true
+        )
+    }
+
+    deinit {
+        if removesCredentialStoreOnDeinit, let credentialStoreOverride {
+            try? FileManager.default.removeItem(at: credentialStoreOverride.fileURL.deletingLastPathComponent())
+        }
+    }
+
+    func connectionCredentialStore() throws -> NativeAgentCredentialStore {
+        if let credentialStoreOverride {
+            if removesCredentialStoreOnDeinit {
+                try FileManager.default.createDirectory(at: credentialStoreOverride.fileURL.deletingLastPathComponent(),
+                                                       withIntermediateDirectories: true,
+                                                       attributes: [.posixPermissions: 0o700])
+            }
+            return credentialStoreOverride
+        }
+        return try NativeAgentCredentialStore.defaultStore()
+    }
+
+    func commitCredential(for profile: AgentCredentialProfile, to destination: NativeAgentCredentialStore? = nil) throws {
+        let endpoint = try AgentProviderEndpoint(provider: profile.provider, baseURL: profile.baseURL)
+        guard let record = try connectionCredentialStore().load()[endpoint.credentialProviderID] else {
+            throw ModelListFailure.missingCredential
+        }
+        try (destination ?? NativeAgentCredentialStore.defaultStore()).upsert(record)
+        if destination == nil {
+            Self.shared.refreshCatalog()
+            NotificationCenter.default.post(name: .weiBeiAgentCredentialsDidChange, object: nil)
+        }
+    }
 
     /// The same endpoint-scoped lookup used when sending; cards must not inspect another gateway's key.
     static func connectionAPIKey(provider: AgentProviderID, baseURL: String,
@@ -89,7 +134,7 @@ final class AgentAccountService: ObservableObject {
     }
 
     func connectionAPIKey(provider: AgentProviderID, baseURL: String) -> String? {
-        guard let credentialStore = try? NativeAgentCredentialStore.defaultStore() else { return nil }
+        guard let credentialStore = try? connectionCredentialStore() else { return nil }
         return Self.connectionAPIKey(provider: provider, baseURL: baseURL, credentialStore: credentialStore)
     }
 
@@ -98,7 +143,8 @@ final class AgentAccountService: ObservableObject {
     }
 
     /// 打开设置或更换服务/密钥后，向服务商拉取可用模型。和测活走同一次鉴权请求。
-    func refreshModels(provider: AgentProviderID, baseURL: String, authMethod: AgentAuthMethod) {
+    func refreshModels(provider: AgentProviderID, baseURL: String, authMethod: AgentAuthMethod,
+                       credentialStore: NativeAgentCredentialStore? = nil) {
         let generation = beginModelRequest(for: provider, baseURL: baseURL, authMethod: authMethod)
         liveReasoningLevels = [:]
         modelListFailure = nil
@@ -108,7 +154,8 @@ final class AgentAccountService: ObservableObject {
                 provider: provider,
                 baseURL: baseURL,
                 authMethod: authMethod,
-                generation: generation
+                generation: generation,
+                credentialStore: credentialStore
             )
             self.publish(result, generation: generation)
         }
@@ -254,7 +301,7 @@ final class AgentAccountService: ObservableObject {
     }
 
     func isConfigured(providerID: String, type: AgentCredentialType? = nil) -> Bool {
-        guard let records = try? NativeAgentCredentialStore.defaultStore().load(),
+        guard let records = try? connectionCredentialStore().load(),
               let record = records[providerID] else { return false }
         switch type {
         case .apiKey:
@@ -274,6 +321,7 @@ final class AgentAccountService: ObservableObject {
         _ provider: AgentProviderID,
         language: WeiBeiInterfaceLanguage,
         targetProfileID: UUID,
+        credentialStore: NativeAgentCredentialStore? = nil,
         onSuccess: @escaping @MainActor (AgentProviderID, UUID) -> Void
     ) {
         guard NativeProviderOAuth.supports(provider) else {
@@ -298,7 +346,7 @@ final class AgentAccountService: ObservableObject {
         loginTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let store = try NativeAgentCredentialStore.defaultStore()
+                let store = try credentialStore ?? self.connectionCredentialStore()
                 let record = try await NativeProviderOAuth.login(
                     provider: provider,
                     store: store,
@@ -322,13 +370,15 @@ final class AgentAccountService: ObservableObject {
                 self.authorizationURL = nil
                 self.isLoggingIn = false
                 self.statusMessage = nil
-                self.reloadCredentialSnapshot()
+                if credentialStore == nil { self.reloadCredentialSnapshot() }
                 onSuccess(provider, targetProfileID)
-                NotificationCenter.default.post(
-                    name: .weiBeiAgentOAuthDidSucceed,
-                    object: nil,
-                    userInfo: ["provider": record.provider, "profileID": targetProfileID]
-                )
+                if credentialStore == nil {
+                    NotificationCenter.default.post(
+                        name: .weiBeiAgentOAuthDidSucceed,
+                        object: nil,
+                        userInfo: ["provider": record.provider, "profileID": targetProfileID]
+                    )
+                }
                 self.loginID = nil
                 self.loginTargetProfileID = nil
                 self.loginTask = nil
@@ -380,7 +430,7 @@ final class AgentAccountService: ObservableObject {
             return false
         }
         do {
-            let store = try credentialStore ?? NativeAgentCredentialStore.defaultStore()
+            let store = try credentialStore ?? connectionCredentialStore()
             try store.upsert(NativeAgentCredentialRecord(
                 provider: endpoint.credentialProviderID,
                 apiKey: cleaned,
@@ -392,14 +442,13 @@ final class AgentAccountService: ObservableObject {
             ))
             lastError = nil
             reloadCredentialSnapshot(from: store)
-            NotificationCenter.default.post(
-                name: .weiBeiAgentCredentialsDidChange,
-                object: nil,
-                userInfo: [
-                    "provider": endpoint.credentialProviderID,
-                    "type": AgentCredentialType.apiKey.rawValue,
-                ]
-            )
+            if credentialStoreOverride == nil {
+                NotificationCenter.default.post(
+                    name: .weiBeiAgentCredentialsDidChange,
+                    object: nil,
+                    userInfo: ["provider": endpoint.credentialProviderID, "type": AgentCredentialType.apiKey.rawValue]
+                )
+            }
             return true
         } catch {
             logFailure("agent_api_key_save_failed", providerID: endpoint.credentialProviderID, error: error)
@@ -414,7 +463,7 @@ final class AgentAccountService: ObservableObject {
 
     func logoutCredential(providerID: String) {
         do {
-            try NativeAgentCredentialStore.defaultStore().remove(provider: providerID)
+            try connectionCredentialStore().remove(provider: providerID)
             lastError = nil
             reloadCredentialSnapshot()
             NotificationCenter.default.post(
@@ -441,7 +490,7 @@ final class AgentAccountService: ObservableObject {
     }
 
     private func reloadCredentialSnapshot(from suppliedStore: NativeAgentCredentialStore? = nil) {
-        guard let store = try? suppliedStore ?? NativeAgentCredentialStore.defaultStore(),
+        guard let store = try? suppliedStore ?? connectionCredentialStore(),
               let records = try? store.load() else { return }
         catalog = CatalogInfo(credentials: records.values.map { record in
             CredentialInfo(
@@ -457,7 +506,8 @@ final class AgentAccountService: ObservableObject {
         provider: AgentProviderID,
         baseURL: String,
         authMethod: AgentAuthMethod,
-        generation: Int
+        generation: Int,
+        credentialStore suppliedStore: NativeAgentCredentialStore? = nil
     ) async -> Result<Int, ModelListFailure> {
         if let modelCatalogLoader {
             do {
@@ -476,7 +526,8 @@ final class AgentAccountService: ObservableObject {
         let resolved = endpoint.flatMap {
             NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: $0)
         } ?? NativeProviderRouting.route(provider).baseURL
-        let records = (try? NativeAgentCredentialStore.defaultStore().load()) ?? [:]
+        guard let credentialStore = try? suppliedStore ?? connectionCredentialStore() else { return .failure(.missingCredential) }
+        let records = (try? credentialStore.load()) ?? [:]
         let record = records[endpoint?.credentialProviderID ?? provider.credentialProviderID]
         let hasCredential = record?.apiKey?.isEmpty == false || record?.accessToken?.isEmpty == false
         let strategy = NativeProviderRouting.modelListStrategy(
@@ -495,7 +546,7 @@ final class AgentAccountService: ObservableObject {
             let ids: [String]
             var reasoningLevels: [String: [String]] = [:]
             if provider == .openaiCodex {
-                let fresh = try await NativeOpenAIOAuth.ensureFreshAccessToken()
+                let fresh = try await NativeOpenAIOAuth.ensureFreshAccessToken(in: credentialStore)
                 let token = fresh.accessToken ?? ""
                 let accountID = fresh.accountID ?? ""
                 let service = AgentModelListService.shared
@@ -507,7 +558,8 @@ final class AgentAccountService: ObservableObject {
                 let key = try await NativeLLMAdapterFactory.resolveCredential(
                     provider: provider,
                     endpoint: endpoint,
-                    authMethod: authMethod
+                    authMethod: authMethod,
+                    store: credentialStore
                 ) ?? ""
                 let modelService = NativeProviderOAuth.supports(provider)
                     ? AgentModelListService(session: NativeProviderOAuth.networkSession) : .shared
@@ -553,7 +605,7 @@ final class AgentAccountService: ObservableObject {
     }
 
     private func credentialAvailability(providerID: String, type: AgentCredentialType? = nil) -> Bool? {
-        guard let records = try? NativeAgentCredentialStore.defaultStore().load() else { return nil }
+        guard let records = try? connectionCredentialStore().load() else { return nil }
         guard let record = records[providerID] else { return false }
         switch type {
         case .apiKey:

@@ -432,10 +432,10 @@ struct SettingsView: View {
         settingsGroup(store.ui("资料库", "Library")) {
             settingsRow(
                 title: store.ui("位置", "Location"),
-                detail: store.courseLibraryRootPath ?? CourseLibraryLayout.defaultRootURL().path,
+                detail: store.courseLibraryRootPath ?? store.ui("尚未建立", "Not created yet"),
                 showsBottomDivider: false
             ) {
-                Button(store.ui("更改…", "Change…")) {
+                Button(store.needsInitialLibrarySetup ? store.ui("建立…", "Create…") : store.ui("更改…", "Change…")) {
                     pickMigrationDestination()
                 }
                 .disabled(isMigratingLibrary)
@@ -448,8 +448,8 @@ struct SettingsView: View {
                     ProgressView()
                         .progressViewStyle(.linear)
                     Text(store.ui(
-                        "正在迁移资料库，请勿操作魏碑…",
-                        "Migrating the library. Please do not use WeiBei during the move…"
+                        "正在设置资料库位置…",
+                        "Setting up the library location…"
                     ))
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -473,16 +473,16 @@ struct SettingsView: View {
                     .padding(.bottom, 12)
             }
         }
-        .disabled(isMigratingLibrary)
+        .disabled(isMigratingLibrary || store.libraryLocationBusy)
     }
 
     @ViewBuilder
     private func migrationConfirmation(_ destination: URL) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(store.ui(
-                "从 \(store.courseLibraryRootPath ?? "—") 迁移到 \(destination.path)",
-                "Move from \(store.courseLibraryRootPath ?? "—") to \(destination.path)"
-            ))
+            Text(store.needsInitialLibrarySetup
+                ? store.ui("在 \(destination.path) 建立资料库", "Create a library at \(destination.path)")
+                : store.ui("从 \(store.courseLibraryRootPath ?? "—") 迁移到 \(destination.path)",
+                           "Move from \(store.courseLibraryRootPath ?? "—") to \(destination.path)"))
             .font(SettingsType.detail)
             .foregroundStyle(WeiBeiTheme.ink)
             .fixedSize(horizontal: false, vertical: true)
@@ -496,7 +496,7 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 10) {
-                Button(store.ui("开始迁移", "Start Migration")) {
+                Button(store.needsInitialLibrarySetup ? store.ui("建立资料库", "Create Library") : store.ui("开始迁移", "Start Migration")) {
                     confirmMigration(to: destination)
                 }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
@@ -516,32 +516,23 @@ struct SettingsView: View {
     private func pickMigrationDestinationWithPicker() async {
         migrationErrorText = nil
         migrationSuccessText = nil
-#if targetEnvironment(macCatalyst)
-        guard let url = await WorkspaceFileDialog.pick(title: store.ui("选择资料库位置", "Choose Library Location"), types: [.folder], multiple: false).first else { return }
-#else
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = store.ui("选择", "Choose")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-#endif
+        guard let url = await LibraryPlacementPicker.selectLocation(for: store) else { return }
         pendingMigrationDestination = url.standardizedFileURL
     }
 
     private func confirmMigration(to destination: URL) {
+        guard !store.libraryLocationBusy else { return }
+        let isInitialSetup = store.needsInitialLibrarySetup
         pendingMigrationDestination = nil
         isMigratingLibrary = true
         migrationErrorText = nil
         migrationSuccessText = nil
         Task { @MainActor in
             do {
-                let result = try await store.migrateLibrary(to: destination)
-                migrationSuccessText = store.ui(
-                    "已迁移到 \(result.destination.path)",
-                    "Moved to \(result.destination.path)"
-                )
+                let placedRoot = try await store.placeLibrary(at: destination)
+                migrationSuccessText = isInitialSetup
+                    ? store.ui("资料库已建立在 \(placedRoot.path)", "Library created at \(placedRoot.path)")
+                    : store.ui("已迁移到 \(placedRoot.path)", "Moved to \(placedRoot.path)")
             } catch CourseProjectRootError.destinationIsLibrary {
                 migrationErrorText = store.ui(
                     "所选位置已经是一个魏碑资料库，请选择其他位置。",
@@ -553,7 +544,9 @@ struct SettingsView: View {
                     operation: "settings_library_migration",
                     path: destination
                 )
-                migrationErrorText = Self.libraryMigrationFailureText(store: store, error: error)
+                migrationErrorText = isInitialSetup
+                    ? store.librarySetupFailureMessage(error)
+                    : Self.libraryMigrationFailureText(store: store, error: error)
             }
             isMigratingLibrary = false
         }

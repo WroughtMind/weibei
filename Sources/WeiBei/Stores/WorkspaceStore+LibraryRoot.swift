@@ -3,33 +3,29 @@ import WeiBeiCore
 
 @MainActor
 extension WorkspaceStore {
+    var needsInitialLibrarySetup: Bool {
+        courseLibraryRootPath == nil && courseLibraryRootIdentity == nil
+            && courseLibraryRootBookmarkData == nil && courseLibraryRootURL == nil
+    }
+
+    var libraryLocationBusy: Bool {
+        libraryLocationPickerPresented || libraryPlacementInFlight || libraryMigrationInFlight
+    }
+
     /// 只有「从未配置过资料库」的全新安装才自动建默认库。
     /// 曾经配置过（path / identity / bookmark 任一在场）的原库暂时连不上时，
     /// 这里必须保持静默：不新建默认库、不改绑，交给缺席保护与重连流程
     /// （`restoreCourseProjectRoots` 已把原因写进 `courseLibraryUnavailableReason`），
     /// 否则外置盘拔掉再启动就会静默换库，用户会以为课程文件丢了。
     func bootstrapDefaultLibraryIfNeeded() {
-        guard courseLibraryRootPath == nil,
-              courseLibraryRootIdentity == nil,
-              courseLibraryRootBookmarkData == nil,
-              courseLibraryRootURL == nil else { return }
+        guard needsInitialLibrarySetup, !libraryLocationBusy else { return }
+        libraryPlacementInFlight = true
+        defer { libraryPlacementInFlight = false }
         let root = CourseLibraryLayout.defaultRootURL()
         do {
-            try FileManager.default.createDirectory(
-                at: root.appendingPathComponent(
-                    CourseLibraryLayout.commonMaterialsDirectoryName,
-                    isDirectory: true
-                ),
-                withIntermediateDirectories: true
-            )
-            try FileManager.default.createDirectory(
-                at: root.appendingPathComponent(
-                    CourseLibraryLayout.commonNotesDirectoryName,
-                    isDirectory: true
-                ),
-                withIntermediateDirectories: true
-            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             try configureCourseLibrary(at: root)
+            dismissLibrarySetupFailure()
         } catch {
             recordCourseLibraryUIFailure(
                 error,
@@ -38,25 +34,59 @@ extension WorkspaceStore {
             )
             showImportantOperationError(
                 ImportantOperationNotice.defaultLibraryBootstrapFailed,
-                message: ui(
-                    "魏碑资料库未能建立；没有移动或覆盖现有内容。请到 系统设置 › 隐私与安全性 › 文件与文件夹 检查魏碑的访问权限，然后重试。",
-                    "The WeiBei Library could not be created. Nothing was moved or overwritten. Check WeiBei's access under System Settings › Privacy & Security › Files and Folders, then retry."
-                )
+                message: librarySetupFailureMessage(error)
             )
         }
     }
 
     /// 建库失败横幅上的「重试」：只在仍未配置时重试，成功后横幅自然消失。
     func retryBootstrapDefaultLibrary() {
-        guard courseLibraryRootPath == nil,
-              courseLibraryRootIdentity == nil,
-              courseLibraryRootBookmarkData == nil,
-              courseLibraryRootURL == nil else {
-            dismissImportantOperationError()
+        guard needsInitialLibrarySetup else {
+            if courseLibraryRootURL != nil { dismissLibrarySetupFailure() }
             return
         }
-        dismissImportantOperationError()
         bootstrapDefaultLibraryIfNeeded()
+    }
+
+    /// 首次建库失败可以直接另选位置；已有但缺席的库仍走重连，不能被新库替代。
+    @discardableResult
+    func placeLibrary(at selectedURL: URL) async throws -> URL {
+        guard !libraryPlacementInFlight, !libraryMigrationInFlight else {
+            throw CourseProjectRootError.libraryOperationInProgress
+        }
+        libraryPlacementInFlight = true
+        defer { libraryPlacementInFlight = false }
+        let placedRoot: URL
+        if courseLibraryRootURL != nil {
+            placedRoot = try await migrateLibrary(to: selectedURL).destination
+        } else {
+            guard needsInitialLibrarySetup else { throw CourseProjectRootError.unavailableLibrary }
+            let scoped = selectedURL.startAccessingSecurityScopedResource()
+            defer { if scoped { selectedURL.stopAccessingSecurityScopedResource() } }
+            let selected = try CourseProjectPathPolicy.existingDirectory(selectedURL)
+            let destination = try resolveMigrationDestinationFolder(selected)
+            try validateLibraryRoot(destination)
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            try await configureCourseLibraryAsync(at: destination)
+            placedRoot = destination
+        }
+        dismissLibrarySetupFailure()
+        return placedRoot
+    }
+
+    func librarySetupFailureMessage(_ error: Error) -> String {
+        let reason = (error as? CourseProjectRootError)?.userFacingDescription(language: interfaceLanguage)
+            ?? error.localizedDescription
+        return ui(
+            "资料库尚未建立。原因：\(reason) 可以重试，或选择其他位置。",
+            "The library has not been created. Reason: \(reason) Retry or choose another location."
+        )
+    }
+
+    private func dismissLibrarySetupFailure() {
+        if importantOperationNotice == .defaultLibraryBootstrapFailed {
+            dismissImportantOperationError()
+        }
     }
 
     func copyExternalFileIntoLibrary(

@@ -76,11 +76,46 @@ enum AgentProviderReadiness {
             && oauth.isLinked(store.agentProviderID)
     }
 
-    /// 当前选中的模型服务是否已可对话。
+    static func isReadyToChat(for store: WorkspaceStore) -> Bool {
+        isConfigured(for: store) && !store.modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 当前选中的模型服务是否已保存所需凭据。
     static func isConfigured(for store: WorkspaceStore) -> Bool {
         effectiveAuthMethod(for: store) == .subscription
             ? isSubscriptionLinked(for: store)
             : hasActiveAPICredential(for: store)
+    }
+}
+
+/// 普通聊天和浮动聊天共用的失败恢复入口。
+struct AgentConnectionRecoveryView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let failureKind: AgentFailureKind?
+    @State private var showsSetup = false
+
+    static func isRelevant(_ failure: AgentFailureKind?) -> Bool {
+        failure == .unauthorized || failure == .insufficientQuota || failure == .modelUnavailable
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(failureKind == .modelUnavailable
+                   ? store.ui("更换模型", "Change Model") : store.ui("重新连接", "Reconnect")) {
+                showsSetup = true
+            }
+            .buttonStyle(WeiBeiTextActionButtonStyle())
+            if showsSetup {
+                AgentConnectionSetupView(
+                    existingProfileID: failureKind == .modelUnavailable && AgentProviderReadiness.isConfigured(for: store)
+                        ? store.activeAgentProfileID : nil,
+                    replacementProfileID: store.activeAgentProfileID,
+                    provider: store.agentProviderID, authMethod: store.agentAuthMethod, baseURL: store.agentBaseURL,
+                    onConnected: { showsSetup = false }, onCancel: { showsSetup = false }
+                )
+                .frame(maxWidth: 460, alignment: .leading)
+            }
+        }
     }
 }
 
@@ -91,11 +126,19 @@ enum AgentProviderReadiness {
 struct AgentUnconfiguredHint: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject private var oauth = AgentAccountService.shared
+    @State private var showsConnectionSetup = false
 
     var body: some View {
-        if !AgentProviderReadiness.isConfigured(for: store) {
-            hintRow
-                .transition(.opacity)
+        if showsConnectionSetup {
+            AgentConnectionSetupView(
+                existingProfileID: AgentProviderReadiness.isConfigured(for: store) ? store.activeAgentProfileID : nil,
+                replacementProfileID: store.activeAgentProfileID,
+                onConnected: { showsConnectionSetup = false },
+                onCancel: { showsConnectionSetup = false }
+            )
+            .frame(maxWidth: 460, alignment: .leading)
+        } else if !AgentProviderReadiness.isReadyToChat(for: store) {
+            hintRow.transition(.opacity)
         }
     }
 
@@ -105,22 +148,25 @@ struct AgentUnconfiguredHint: View {
                 Image(systemName: "key.horizontal")
                     .weiBeiText(12, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
-                Text(store.ui("还没有连接模型服务", "No model service connected yet"))
+                Text(AgentProviderReadiness.isConfigured(for: store)
+                    ? store.ui("选择模型后即可提问", "Choose a model to start chatting")
+                    : store.ui("还没有连接模型服务", "No model service connected yet"))
                     .weiBeiText(12.5, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.ink)
             }
 
-            Text(store.ui(
-                "连接后才能发送问题。可以使用账号登录或 API Key。",
-                "Connect a service before sending. You can sign in with your account or use an API key."
-            ))
+            Text(AgentProviderReadiness.isConfigured(for: store)
+                ? store.ui("在这里选择要用的模型，写好的问题会保留。", "Choose your model here. Your question stays in place.")
+                : store.ui("在这里完成账号登录或填写 API Key，写好的问题会保留。", "Sign in or enter an API key here. Your question stays in place."))
             .weiBeiText(11.5)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .fixedSize(horizontal: false, vertical: true)
 
-            Button(store.ui("配置模型服务", "Configure Model Service")) {
-                store.settingsPresented = true
+            Button(AgentProviderReadiness.isConfigured(for: store)
+                   ? store.ui("选择模型", "Choose Model") : store.ui("连接模型服务", "Connect Model Service")) {
+                showsConnectionSetup = true
             }
+            .accessibilityIdentifier("agent-connect-inline")
             .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
         }
         .padding(.horizontal, 14)

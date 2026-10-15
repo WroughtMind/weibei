@@ -3495,12 +3495,18 @@ struct FloatingSelectionMessageBubble: View {
             if isUser { Spacer(minLength: 32) }
             ZStack(alignment: .topLeading) {
                 if isError {
-                    Text(text)
-                        .weiBeiText(AgentChatLayoutMetrics.floatingBodyFontSize)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .allowsHitTesting(false)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(text)
+                            .weiBeiText(AgentChatLayoutMetrics.floatingBodyFontSize)
+                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .allowsHitTesting(false)
+                        if AgentConnectionRecoveryView.isRelevant(message.failureKind)
+                            || !AgentProviderReadiness.isReadyToChat(for: store) {
+                            AgentConnectionRecoveryView(failureKind: message.failureKind)
+                        }
+                    }
                 } else {
                     finalizedMessage
                 }
@@ -3523,17 +3529,22 @@ struct FloatingSelectionMessageBubble: View {
     }
 
     private var finalizedMessage: some View {
-        AgentMessageMarkdownText(
-            text: isUser ? text : AgentNativeMessageContent.markdown(text: text, blocks: message.contentBlocks, activities: message.toolActivities),
-            rendersRichMarkdown: !isUser,
-            compact: true,
-            isChatWideTypography: false,
-            messageID: message.id,
-            sources: message.sources,
-            onActivateSource: { _ = store.openAgentReplySource($0) },
-            isStreaming: isStreaming,
-            contentBlocks: message.contentBlocks
-        )
+        VStack(alignment: .leading, spacing: 8) {
+            AgentMessageMarkdownText(
+                text: isUser ? text : AgentNativeMessageContent.markdown(text: text, blocks: message.contentBlocks, activities: message.toolActivities),
+                rendersRichMarkdown: !isUser,
+                compact: true,
+                isChatWideTypography: false,
+                messageID: message.id,
+                sources: message.sources,
+                onActivateSource: { _ = store.openAgentReplySource($0) },
+                isStreaming: isStreaming,
+                contentBlocks: message.contentBlocks
+            )
+            if !isUser, AgentConnectionRecoveryView.isRelevant(message.failureKind) {
+                AgentConnectionRecoveryView(failureKind: message.failureKind)
+            }
+        }
     }
 }
 
@@ -3889,9 +3900,6 @@ struct AgentBubble: View {
                             .weiBeiText(10.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                     }
-                    if offersFailureSettings {
-                        failureSettingsButton
-                    }
                     if store.canRetryAgentRequest(
                         question: message.retryQuestion,
                         failureKind: message.failureKind,
@@ -3932,9 +3940,6 @@ struct AgentBubble: View {
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    if offersFailureSettings || !AgentProviderReadiness.isConfigured(for: store) {
-                        failureSettingsButton
-                    }
                 }
                 .padding(.top, 2)
             } else if message.id == store.lastUsableAgentAnswerID,
@@ -3954,6 +3959,10 @@ struct AgentBubble: View {
                     }
                 }
                 .padding(.top, 2)
+            }
+            if AgentConnectionRecoveryView.isRelevant(message.failureKind)
+                || (isFailureMessage && !AgentProviderReadiness.isReadyToChat(for: store)) {
+                AgentConnectionRecoveryView(failureKind: message.failureKind)
             }
         }
         .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.memoryUpdate)
@@ -4021,16 +4030,6 @@ struct AgentBubble: View {
         return kind.partialFailureNotice(language: language, receivedText: received)
     }
 
-    private var offersFailureSettings: Bool {
-        message.failureKind == .unauthorized || message.failureKind == .insufficientQuota
-    }
-
-    private var failureSettingsButton: some View {
-        Button(store.ui("去设置", "Open Settings")) {
-            store.settingsPresented = true
-        }
-        .buttonStyle(WeiBeiTextActionButtonStyle())
-    }
 }
 
 // MARK: - Agent citation tags (materials / learning / selection)

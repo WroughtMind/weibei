@@ -28,7 +28,8 @@ struct EmptyWorkspaceLauncherView: View {
     private var liveAppearanceMode: WeiBeiAppearanceMode { store.appearanceMode }
 
     private var requiresLibraryPlacement: Bool {
-        !libraryPlacementConfirmed && store.courses.isEmpty && store.importedItems.isEmpty
+        store.needsInitialLibrarySetup
+            || (!libraryPlacementConfirmed && store.courses.isEmpty && store.importedItems.isEmpty)
     }
 
     var body: some View {
@@ -340,7 +341,7 @@ private struct EmptyWorkspaceEntryRow: View {
     }
 
     private func confirmPlacement() {
-        libraryPlacementConfirmed = true
+        if store.courseLibraryRootURL != nil, !store.libraryLocationBusy { libraryPlacementConfirmed = true }
     }
 
     private var entryDivider: some View {
@@ -591,19 +592,20 @@ private struct LibraryPlacementNoticeCard: View {
     /// 确认过一次就不再出现；偏好走 UserDefaults，不进冻结的 WorkspaceStore。
     @AppStorage("weibei.libraryPlacementConfirmed") private var confirmed = false
 
-    @State private var isRelocating = false
-    @State private var relocationErrorText: String?
-
     private var libraryPath: String {
         store.courseLibraryRootPath ?? CourseLibraryLayout.defaultRootURL().path
     }
 
     var body: some View {
         VStack(spacing: 9) {
-            Text(store.ui(
-                "课程资料库文件夹已安放在这里，可现在更换，之后随时能在设置里改。",
-                "Your course library folder is already here. You can move it now, or later in Settings."
-            ))
+            Text(store.courseLibraryRootURL != nil
+                ? store.ui("课程资料库已安放在这里，之后随时可以更换位置。",
+                           "Your library is ready here. You can change its location later.")
+                : store.needsInitialLibrarySetup
+                    ? store.ui("资料库尚未建立。可以重试，或选择其他位置。",
+                               "Your library has not been created. Retry or choose another location.")
+                    : store.ui("原资料库暂时无法访问，请重新连接。",
+                               "Your existing library is unavailable. Reconnect it to continue."))
             .weiBeiText(12)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .multilineTextAlignment(.center)
@@ -631,28 +633,30 @@ private struct LibraryPlacementNoticeCard: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-            if let relocationErrorText {
-                Text(relocationErrorText)
-                    .weiBeiText(11)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if isRelocating {
+            if store.libraryLocationBusy {
                 ProgressView()
                     .progressViewStyle(.linear)
             } else {
                 HStack(spacing: 10) {
-                    Button(store.ui("换个位置…", "Choose Another Location…")) {
-                        relocateLibrary()
+                    if store.courseLibraryRootURL != nil || store.needsInitialLibrarySetup {
+                        Button(store.ui("换个位置…", "Choose Another Location…")) {
+                            Task {
+                                if await LibraryPlacementPicker.choose(for: store) { confirmed = true }
+                            }
+                        }
+                        .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
                     }
-                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
 
-                    Button(store.ui("就用这里", "Use This Folder")) {
-                        confirmed = true
+                    if store.courseLibraryRootURL != nil {
+                        Button(store.ui("就用这里", "Use This Folder")) { confirmed = true }
+                            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+                    } else if store.needsInitialLibrarySetup {
+                        Button(store.ui("重试建立", "Retry Creation")) { store.retryBootstrapDefaultLibrary() }
+                            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+                    } else {
+                        Button(store.ui("重新连接", "Reconnect")) { _ = store.restoreCourseProjectRoots() }
+                            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                     }
-                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 }
             }
         }
@@ -674,12 +678,18 @@ private struct LibraryPlacementNoticeCard: View {
         .accessibilityIdentifier("library-placement-notice")
     }
 
-    private func relocateLibrary() { Task { await relocateLibraryWithPicker() } }
+}
 
-    private func relocateLibraryWithPicker() async {
-        relocationErrorText = nil
+@MainActor
+enum LibraryPlacementPicker {
+    static func selectLocation(for store: WorkspaceStore) async -> URL? {
+        guard !store.libraryLocationBusy else { return nil }
+        store.libraryLocationPickerPresented = true
+        defer { store.libraryLocationPickerPresented = false }
 #if targetEnvironment(macCatalyst)
-        guard let url = await WorkspaceFileDialog.pick(title: store.ui("选择资料库位置", "Choose Library Location"), types: [.folder], multiple: false).first else { return }
+        return await WorkspaceFileDialog.pick(
+            title: store.ui("选择资料库位置", "Choose Library Location"), types: [.folder], multiple: false
+        ).first
 #else
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -687,32 +697,31 @@ private struct LibraryPlacementNoticeCard: View {
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = store.ui("选择", "Choose")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
 #endif
-        isRelocating = true
-        Task { @MainActor in
-            do {
-                _ = try await store.migrateLibrary(to: url.standardizedFileURL)
-                confirmed = true
-            } catch CourseProjectRootError.destinationIsLibrary {
-                relocationErrorText = store.ui(
-                    "所选位置已经是一个魏碑资料库，请选择其他位置。",
-                    "That location is already a WeiBei library. Choose a different location."
-                )
-            } catch {
-                store.recordCourseLibraryUIFailure(
-                    error,
-                    operation: "first_run_library_migration",
-                    path: url
-                )
-                let reason = (error as? CourseProjectRootError)?.errorDescription
+    }
+
+    static func choose(for store: WorkspaceStore) async -> Bool {
+        guard let url = await selectLocation(for: store) else { return false }
+        do {
+            try await store.placeLibrary(at: url.standardizedFileURL)
+            UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
+            return true
+        } catch {
+            store.recordCourseLibraryUIFailure(error, operation: "place_library", path: url)
+            if store.needsInitialLibrarySetup {
+                store.showImportantOperationError(.defaultLibraryBootstrapFailed,
+                                                   message: store.librarySetupFailureMessage(error))
+            } else {
+                let reason = (error as? CourseProjectRootError)?.userFacingDescription(language: store.interfaceLanguage)
                     ?? error.localizedDescription
-                relocationErrorText = store.ui(
-                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用所选位置。原因：\(reason) 可以重试，也可以稍后在设置中更换。",
-                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the selected location. Reason: \(error.localizedDescription) You can retry or change it later in Settings."
-                )
+                store.showImportantOperationError(store.ui(
+                    "资料库位置未能确认。原因：\(reason)",
+                    "The library location could not be confirmed. Reason: \(reason)"
+                ))
             }
-            isRelocating = false
+            return false
         }
     }
 }

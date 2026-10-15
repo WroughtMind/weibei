@@ -941,15 +941,15 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
             )
         case .unauthorized:
             return language.text(
-                "请到设置中重新登录，或重新保存 API Key。",
-                "Sign in again in Settings, or save the API key again."
+                "请在当前对话中点「重新连接」，重新登录或填写 API Key。",
+                "Choose Reconnect in this conversation to sign in again or enter an API key."
             )
         case .rateLimited:
             return language.text("请稍后再试，或更换模型或服务商。", "Wait a moment, or switch model or service.")
         case .insufficientQuota:
-            return language.text("请点「去设置」查看额度或更换服务商。", "Choose Go to Settings to check the quota or switch provider.")
+            return language.text("请到服务商账户查看额度，或在当前对话中点「重新连接」更换服务商。", "Check your quota with the provider, or choose Reconnect in this conversation to switch providers.")
         case .modelUnavailable:
-            return language.text("请到设置中检查所选模型是否可用。", "Check in Settings whether the selected model is available.")
+            return language.text("请在当前对话中点「更换模型」，选择可用模型后重试。", "Choose Change Model in this conversation, select an available model, then retry.")
         case .serverError:
             return language.text("服务端异常，请稍后重试。", "The server had an error. Try again shortly.")
         case .timedOut:
