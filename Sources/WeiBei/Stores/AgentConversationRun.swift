@@ -7,6 +7,8 @@ final class AgentConversationRun {
     var courseID: UUID?
     var selectionThreadID: UUID?
     var authMethod: AgentAuthMethod?
+    /// Credential identity captured at submission, including custom gateway scope.
+    var credentialProviderID: String?
     var baseURL = ""
     var modelName = ""
     var runtime: NativeStudyAgentRuntime?

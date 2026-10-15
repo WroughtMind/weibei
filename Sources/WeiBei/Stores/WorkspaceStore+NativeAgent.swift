@@ -33,6 +33,36 @@ enum AgentVisualizationActionRejection: Equatable {
 
 @MainActor
 extension WorkspaceStore {
+    /// Returns whether the current settings catalog needs refreshing. A change
+    /// to another connection must still stop any background request using it.
+    @discardableResult
+    func handleAgentCredentialChange(providerID: String?) -> Bool {
+        guard let providerID = providerID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !providerID.isEmpty else {
+            // An unidentified credential change cannot safely leave old-key requests running.
+            shutdownAgentRuntime()
+            return true
+        }
+        let affectsCurrent = providerID == AgentProviderReadiness.activeCredentialProviderID(for: self)
+        let runs = Array(agentRuns.values)
+        let isKnown = affectsCurrent
+            || AgentProviderID.allCases.contains { $0.credentialProviderID == providerID }
+            || runs.contains { $0.credentialProviderID == providerID }
+            || agentCredentialProfiles.contains {
+                (try? AgentProviderEndpoint(provider: $0.provider, baseURL: $0.baseURL))?.credentialProviderID == providerID
+            }
+        guard isKnown else {
+            shutdownAgentRuntime()
+            return true
+        }
+        for run in runs {
+            let runProviderID = run.credentialProviderID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard runProviderID == providerID || runProviderID?.isEmpty != false else { continue }
+            if let chatID = run.chatID { cancelAgentRequest(in: chatID) }
+        }
+        return affectsCurrent
+    }
+
     func submitAgentVisualizationAction(_ action: String, payloadJSON: String) -> AgentVisualizationActionRejection? {
         let action = action.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !action.isEmpty else {
@@ -207,6 +237,7 @@ extension WorkspaceStore {
             provider: selectedProvider,
             baseURL: agentRun.baseURL
         )
+        agentRun.credentialProviderID = endpoint.credentialProviderID
         let model = try Self.explicitAgentModel(
             agentRun.modelName,
             language: interfaceLanguage
