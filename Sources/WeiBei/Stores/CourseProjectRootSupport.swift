@@ -5740,6 +5740,7 @@ enum CourseProjectRootError: LocalizedError {
     case nonFileURL
     case missingLibrary
     case unavailableLibrary
+    case libraryOperationInProgress
     case rootMustNotExist
     case rootMustExist
     case rootMustBeDirectory
@@ -5780,6 +5781,8 @@ enum CourseProjectRootError: LocalizedError {
             return language.text("请先配置课程资料库。", "Set up a course library first.")
         case .unavailableLibrary:
             return language.text("课程资料库当前不可访问。", "The course library is not accessible right now.")
+        case .libraryOperationInProgress:
+            return language.text("资料库正在处理上一次操作，请稍候。", "The previous library operation is still running. Please wait.")
         case .rootMustNotExist:
             return language.text(
                 "新建课程的位置已经存在。请换一个课程名，或先在 Finder 中整理资料库里的文件夹。",

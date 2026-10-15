@@ -246,6 +246,47 @@ final class AgentConnectionCreationTests: XCTestCase {
     }
 
     @MainActor
+    func testDraftCredentialsLeaveExistingKeyUntouchedUntilModelConfirmation() throws {
+        let fixture = try XCTUnwrap(storeFixture)
+        let existing = NativeAgentCredentialStore(fileURL: fixture.root.appendingPathComponent("existing-credentials.json"))
+        let profile = AgentCredentialProfile(name: "Existing", provider: .openai, modelName: "chosen-model")
+        try existing.upsert(NativeAgentCredentialRecord(provider: profile.provider.credentialProviderID,
+                                                        apiKey: "synthetic-original-key"))
+        var draft: AgentAccountService? = AgentAccountService.connectionDraft()
+        let temporaryStore = try XCTUnwrap(draft).connectionCredentialStore()
+        XCTAssertTrue(try XCTUnwrap(draft).startAPIKeyLogin("synthetic-unconfirmed-key", provider: .openai))
+        XCTAssertEqual(try existing.load()[profile.provider.credentialProviderID]?.apiKey, "synthetic-original-key")
+        draft = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporaryStore.fileURL.deletingLastPathComponent().path))
+        XCTAssertEqual(try existing.load()[profile.provider.credentialProviderID]?.apiKey, "synthetic-original-key")
+
+        let confirmed = AgentAccountService.connectionDraft()
+        XCTAssertTrue(confirmed.startAPIKeyLogin("synthetic-confirmed-key", provider: .openai))
+        try confirmed.commitCredential(for: profile, to: existing)
+        XCTAssertEqual(try existing.load()[profile.provider.credentialProviderID]?.apiKey, "synthetic-confirmed-key")
+        XCTAssertEqual(try existing.posixPermissions(), 0o600)
+    }
+
+    @MainActor
+    func testChoosingAConnectionAndModelPreservesTheCurrentQuestion() throws {
+        let store = try XCTUnwrap(storeFixture).store
+        let session = try XCTUnwrap(store.createStudySession(courseID: nil))
+        let question = "这是连接前已经写好的问题\n还有第二行。"
+        store.replaceComposerDraft(question, for: session.id)
+        let connectionID = UUID()
+
+        try store.createAgentConnection(id: connectionID, provider: .openaiCodex,
+                                        authMethod: .subscription, baseURL: "")
+        XCTAssertTrue(store.completeAgentSubscriptionLogin(provider: .openaiCodex, profileID: connectionID))
+        store.updateModelName("chosen-model")
+
+        XCTAssertEqual(store.activeAgentProfileID, connectionID)
+        XCTAssertEqual(store.modelName, "chosen-model")
+        XCTAssertEqual(store.composerDraft(for: session.id), question)
+        XCTAssertFalse(store.settingsPresented)
+    }
+
+    @MainActor
     func testLoginCompletionPersistsWithoutSettingsAndKeepsTheCurrentCardsRunAlive() throws {
         let store = try XCTUnwrap(storeFixture).store
         let target = try store.createAgentConnection(provider: .xai, authMethod: .apiKey, baseURL: "")
@@ -257,6 +298,7 @@ final class AgentConnectionCreationTests: XCTestCase {
         defer { currentTask.cancel() }
         let currentRun = AgentConversationRun(chatID: currentRunID)
         currentRun.agentRequestTask = currentTask
+        currentRun.credentialProviderID = AgentProviderID.openai.credentialProviderID
         store.agentRuns[currentRunID] = currentRun
 
         XCTAssertTrue(store.completeAgentSubscriptionLogin(provider: .xai, profileID: target))
@@ -289,6 +331,47 @@ final class AgentConnectionCreationTests: XCTestCase {
         XCTAssertFalse(store.agentCredentialProfiles.contains(where: { $0.id == deleted }))
         XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == changed })?.provider, .anthropic)
         XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == changed })?.authMethod, .apiKey)
+    }
+
+    @MainActor
+    func testCredentialNotificationStopsOnlyMatchingRunsWithSettingsClosed() async throws {
+        let store = try XCTUnwrap(storeFixture).store
+        XCTAssertFalse(store.settingsPresented)
+        let currentCredential = AgentProviderReadiness.activeCredentialProviderID(for: store)
+        let current = pendingRun(in: store, credentialProviderID: currentCredential)
+        let other = pendingRun(in: store, credentialProviderID: AgentProviderID.openai.credentialProviderID)
+        defer { current.task.cancel(); other.task.cancel() }
+
+        NotificationCenter.default.post(name: .weiBeiAgentCredentialsDidChange, object: nil,
+            userInfo: ["provider": currentCredential, "type": AgentCredentialType.apiKey.rawValue])
+
+        XCTAssertTrue(current.task.isCancelled)
+        XCTAssertFalse(other.task.isCancelled)
+        await store.waitForAgentRequestsToStop()
+        XCTAssertFalse(store.isAgentRunning(in: current.id))
+        XCTAssertTrue(store.isAgentRunning(in: other.id))
+        store.cancelAllAgentRequests()
+        await store.waitForAgentRequestsToStop()
+    }
+
+    @MainActor
+    func testSelectingNewOAuthConnectionKeepsOtherProvidersRunAlive() async throws {
+        let store = try XCTUnwrap(storeFixture).store
+        let originalCredential = AgentProviderReadiness.activeCredentialProviderID(for: store)
+        let original = pendingRun(in: store, credentialProviderID: originalCredential)
+        let target = try store.createAgentConnection(provider: .openaiCodex, authMethod: .subscription, baseURL: "")
+        let targetRun = pendingRun(in: store, credentialProviderID: AgentProviderID.openaiCodex.credentialProviderID)
+        defer { original.task.cancel(); targetRun.task.cancel() }
+
+        XCTAssertTrue(store.completeAgentSubscriptionLogin(provider: .openaiCodex, profileID: target))
+
+        XCTAssertFalse(original.task.isCancelled)
+        XCTAssertTrue(targetRun.task.isCancelled)
+        await store.waitForAgentRequestsToStop()
+        XCTAssertTrue(store.isAgentRunning(in: original.id))
+        XCTAssertFalse(store.isAgentRunning(in: targetRun.id))
+        store.cancelAllAgentRequests()
+        await store.waitForAgentRequestsToStop()
     }
 
     @MainActor

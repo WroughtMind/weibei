@@ -3,4 +3,8 @@ dist/
 *.xcuserstate
 xcuserdata/
 Evidence/ci*.json
+Evidence/ci*.jsonl
 Evidence/ci*.png
+Evidence/ci*.log
+Evidence/ci*.ips
+Evidence/ci-onboarding-ui.xcresult/

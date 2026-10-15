@@ -1,6 +1,7 @@
 #if WEIBEI_ACCEPTANCE_CHECKS
 import UIKit
 import SwiftUI
+import Combine
 import WebKit
 import WeiBeiCore
 import MarkdownView
@@ -12,6 +13,7 @@ import Litext
 enum CatalystBusinessCheck {
     private static var started = false
     private static var fileDropDiagnostics: [String: Any] = [:]
+    private static var lastOnboardingUIElement: [String: String] = [:]
     private struct Failure: LocalizedError {
         let errorDescription: String?
         init(_ description: String) { errorDescription = description }
@@ -491,8 +493,8 @@ enum CatalystBusinessCheck {
                 }
             }
             try check("native_workspace_toolbar_controls", true)
-            // This in-process check uses the candidate's own default library.
-            // First-launch folder confirmation remains a separate UI check.
+            try await verifyLibraryOnboarding(store)
+            try check("library_onboarding_failure_retry_picker_cancel_and_recovery", true)
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
             let paneTargets: [(WorkspacePaneRole, Double)] = [(.reader, 1.0 / 6.0), (.agent, 3.0 / 6.0), (.notes, 5.0 / 6.0)]
             for (role, fraction) in paneTargets {
@@ -730,8 +732,8 @@ enum CatalystBusinessCheck {
             try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
             let imageURL = attachmentDirectory.appendingPathComponent("candidate-image.png")
             try Data(contentsOf: Bundle.main.url(forResource: "landscape", withExtension: "png")!).write(to: imageURL, options: .atomic)
-            store.setAgentProviderID(.custom); store.updateAgentBaseURL(endpoint); store.updateModelName("catalyst-local-check")
-            AgentAccountService.shared.startAPIKeyLogin("catalyst-test-only", provider: .custom, baseURL: endpoint)
+            try await verifyConnectionOnboarding(store, endpoint: endpoint)
+            try check("chat_inline_connection_cancel_retry_models_and_draft", true)
             let activeConnection = store.activeAgentProfileID
             try check("active_connection_profile_matches_configuration", store.agentCredentialProfiles.contains {
                 $0.id == activeConnection && $0.provider == .custom && $0.authMethod == .apiKey
@@ -928,13 +930,25 @@ enum CatalystBusinessCheck {
             if CommandLine.arguments.contains("--exit-after-check") { exit(0) }
         } catch {
             result["failure"] = error.localizedDescription
+            result["onboarding_ui_state"] = lastOnboardingUIElement
+            result["library_state"] = [
+                "root": store.courseLibraryRootURL?.absoluteString ?? "nil",
+                "needs_initial_setup": String(store.needsInitialLibrarySetup),
+                "busy": String(store.libraryLocationBusy),
+                "notice": String(describing: store.importantOperationNotice),
+                "error": store.importantOperationError ?? "nil",
+                "placement_confirmed": String(UserDefaults.standard.bool(forKey: "weibei.libraryPlacementConfirmed"))
+            ]
             result["connection_state"] = [
                 "provider": store.agentProviderID.rawValue,
                 "auth_method": store.agentAuthMethod.rawValue,
+                "configured": String(AgentProviderReadiness.isConfigured(for: store)),
+                "ready_to_chat": String(AgentProviderReadiness.isReadyToChat(for: store)),
                 "model_list_failure": String(describing: AgentAccountService.shared.modelListFailure),
                 "live_models": AgentAccountService.shared.liveModelIDs.joined(separator: ","),
                 "is_refreshing": String(AgentAccountService.shared.isRefreshingModels)
             ]
+            result["connection_setup_finish"] = AgentConnectionSetupView.checkLastFinishState ?? ["phase": "action_not_received"]
             let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
             let sheetProbes = CatalystIndependentSheetSizingProbe.Probe.checkInstances.allObjects
             let sheetProbeStates: [[String: String]] = sheetProbes.map { probe in
@@ -973,6 +987,7 @@ enum CatalystBusinessCheck {
                 "sheet_probes": sheetProbeStates
             ]
             result["failure_state"] = [
+                "exit_after_check_requested": CommandLine.arguments.contains("--exit-after-check"),
                 "application_state": UIApplication.shared.applicationState.rawValue,
                 "settings_presented": store.settingsPresented,
                 "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
@@ -1707,9 +1722,226 @@ enum CatalystBusinessCheck {
         return measured
     }
 
-    private static func until(_ description: String, seconds: Double = 20, _ ready: () async -> Bool) async throws {
+    /// Drive the mounted production controls through the Xcode UI test runner
+    /// and the real document-picker delegate. The only fixtures are the selected
+    /// folder and HTTP service; this does not claim physical mouse or live OAuth acceptance.
+    private static func verifyLibraryOnboarding(_ store: WorkspaceStore) async throws {
+        guard let window = WorkspaceFileDialog.presenter?.view.window else { throw Failure("onboarding window missing") }
+        let originalOverride = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"]
+        let fixture = store.workspaceDirectory.deletingLastPathComponent().appendingPathComponent("Onboarding", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)
+        setenv("WEIBEI_WORKSPACE_DIR", fixture.appendingPathComponent("State").path, 1)
+        defer {
+            if let originalOverride { setenv("WEIBEI_WORKSPACE_DIR", originalOverride, 1) }
+            else { unsetenv("WEIBEI_WORKSPACE_DIR") }
+        }
+        let blocked = CourseLibraryLayout.defaultRootURL()
+        let original = Data("Existing file must survive failed library creation.".utf8)
+        try original.write(to: blocked)
+        // The acceptance App owns an empty, isolated library. Reproduce a fresh
+        // install whose default folder is occupied, without deleting that library.
+        store.courseLibraryRootURL = nil
+        store.courseLibraryRootPath = nil
+        store.courseLibraryRootIdentity = nil
+        store.courseLibraryRootBookmarkData = nil
+        UserDefaults.standard.set(false, forKey: "weibei.libraryPlacementConfirmed")
+        store.bootstrapDefaultLibraryIfNeeded()
+        try await until("failed library creation shown on the launch screen") {
+            let retry = try await accessibilityElement("library-placement-retry")
+            let choose = try await accessibilityElement("library-placement-choose")
+            return retry != nil && choose != nil
+        }
+        guard store.needsInitialLibrarySetup, store.importantOperationNotice == .defaultLibraryBootstrapFailed,
+              try await accessibilityElement("library-placement-confirm") == nil else {
+            throw Failure("failed library was presented as ready")
+        }
+        try onboardingSnapshot("onboarding-library-failure", window: window)
+        try await activate("library-placement-retry")
+        guard store.needsInitialLibrarySetup, store.importantOperationNotice == .defaultLibraryBootstrapFailed,
+              try Data(contentsOf: blocked) == original else { throw Failure("failed retry discarded the library error or file") }
+        try await activate("library-placement-choose")
+        try await until("library location picker") { (WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker).map { $0.view.window != nil && !$0.isBeingPresented } == true }
+        guard let cancelled = WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker else { throw Failure("picker disappeared") }
+        cancelled.documentPickerWasCancelled(cancelled)
+        try await until("cancelled library picker releases busy state") { !store.libraryLocationBusy }
+        guard store.needsInitialLibrarySetup, store.importantOperationNotice == .defaultLibraryBootstrapFailed else {
+            throw Failure("cancelling the library picker lost recovery state")
+        }
+        let selected = fixture.appendingPathComponent("Selected", isDirectory: true)
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true)
+        let retained = selected.appendingPathComponent("keep.txt")
+        try original.write(to: retained)
+        try await activate("library-placement-choose")
+        try await until("library location picker reopens") { (WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker).map { $0.view.window != nil && !$0.isBeingPresented } == true }
+        guard let picker = WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker else { throw Failure("picker disappeared") }
+        picker.documentPicker(picker, didPickDocumentsAt: [selected])
+        let expected = selected.appendingPathComponent(CourseLibraryLayout.defaultFolderName, isDirectory: true)
+        try await until("chosen library saved and recovery notice dismissed") {
+            let notice = try await accessibilityElement("library-placement-notice")
+            return store.courseLibraryRootURL.map { CourseProjectPathPolicy.isSame($0, expected) } == true
+                && !store.libraryLocationBusy
+                && store.importantOperationNotice == nil && store.importantOperationError == nil
+                && notice == nil
+        }
+        guard try Data(contentsOf: blocked) == original, try Data(contentsOf: retained) == original,
+              FileManager.default.fileExists(atPath: expected.appendingPathComponent(CourseLibraryLayout.commonNotesDirectoryName).path),
+              !store.settingsPresented else { throw Failure("library recovery changed existing files or opened settings") }
+        try onboardingSnapshot("onboarding-library-recovered", window: window)
+    }
+
+    private static func verifyConnectionOnboarding(_ store: WorkspaceStore, endpoint: String) async throws {
+        guard let window = conversation()?.view.window else { throw Failure("chat onboarding window missing") }
+        store.setAgentProviderID(.custom)
+        store.updateAgentBaseURL(endpoint)
+        store.updateModelName("")
+        let profileID = store.activeAgentProfileID
+        let profileCount = store.agentCredentialProfiles.count
+        let credentialID = try AgentProviderEndpoint(provider: .custom, baseURL: endpoint).credentialProviderID
+        let credentials = try NativeAgentCredentialStore.defaultStore()
+        guard try credentials.load()[credentialID] == nil else { throw Failure("first-chat fixture already has credentials") }
+        try await until("unconnected chat and original composer") {
+            try await accessibilityElement("agent-connect-inline") != nil
+                && descendants(window).contains { $0 is AgentComposerTextEditor.ComposerTextView }
+        }
+        let composer = descendants(window).compactMap { $0 as? AgentComposerTextEditor.ComposerTextView }.first!
+        let draft = "连接完成后继续回答这个问题：中文 café。"
+        composer.text = draft
+        composer.delegate?.textViewDidChange?(composer)
+        try await until("onboarding question draft published") { store.pendingComposerDraft == draft }
+        try onboardingSnapshot("onboarding-chat-entry", window: window)
+        try await activate("agent-connect-inline")
+        try await until("inline credentials form opens") { try await accessibilityElement("connection-setup-connect") != nil }
+        guard !store.settingsPresented else { throw Failure("first chat redirected to settings") }
+        try onboardingSnapshot("onboarding-chat-credentials", window: window)
+        try await activate("connection-setup-close")
+        try await until("inline connection closes") { try await accessibilityElement("agent-connect-inline") != nil }
+        guard descendants(window).compactMap({ $0 as? AgentComposerTextEditor.ComposerTextView }).first?.text == draft,
+              store.pendingComposerDraft == draft,
+              try credentials.load()[credentialID] == nil, store.activeAgentProfileID == profileID else {
+            throw Failure("closing setup changed the question or connection")
+        }
+        try await activate("agent-connect-inline")
+        try await until("credentials form reopens") { try await accessibilityElement("connection-setup-key") != nil }
+        try await enter("rejected-test-key", in: "connection-setup-key")
+        try await activate("connection-setup-connect")
+        try await until("authentication failure remains in chat") { try await accessibilityElement("connection-setup-model-message") != nil }
+        // This is the error contract: a 401 must tell the user to correct the
+        // credentials, rather than reporting an empty catalog or network failure.
+        guard try await accessibilityElement("connection-setup-model-message")?["label"]?
+                .contains(store.ui("未接受这组凭据", "did not accept these credentials")) == true,
+              try credentials.load()[credentialID] == nil,
+              store.agentCredentialProfiles.count == profileCount else { throw Failure("rejected credentials were committed") }
+        try onboardingSnapshot("onboarding-chat-rejected", window: window)
+        try await activate("connection-setup-change")
+        try await until("failed credentials remain editable") { try await accessibilityElement("connection-setup-key") != nil }
+        guard descendants(window).compactMap({ $0 as? UITextField }).contains(where: { $0.isSecureTextEntry && $0.text == "rejected-test-key" }),
+              descendants(window).compactMap({ $0 as? UITextField }).contains(where: { !$0.isSecureTextEntry && $0.text == endpoint }) else {
+            throw Failure("retry discarded entered credentials or endpoint")
+        }
+        try await enter("catalyst-test-only", in: "connection-setup-key")
+        try await activate("connection-setup-connect")
+        try await until("authenticated model list appears inline") { try await accessibilityElement("connection-setup-model") != nil }
+        try onboardingSnapshot("onboarding-chat-models", window: window)
+        try await activate("connection-setup-close")
+        try await until("cancelling model selection closes setup") { try await accessibilityElement("agent-connect-inline") != nil }
+        guard try credentials.load()[credentialID] == nil, store.agentCredentialProfiles.count == profileCount else {
+            throw Failure("cancelling model choice saved a partial connection")
+        }
+        try await activate("agent-connect-inline")
+        try await until("credentials form opens again") { try await accessibilityElement("connection-setup-key") != nil }
+        try await enter("catalyst-test-only", in: "connection-setup-key")
+        try await activate("connection-setup-connect")
+        try await until("model list reloads") { try await accessibilityElement("connection-setup-model") != nil }
+        try await activate("connection-setup-enter-model")
+        try await until("manual model field") { try await accessibilityElement("connection-setup-manual-model") != nil }
+        try await enter("catalyst-local-check", in: "connection-setup-manual-model")
+        guard descendants(window).compactMap({ $0 as? UITextField }).contains(where: { $0.text == "catalyst-local-check" }) else {
+            throw Failure("model ID input changed capitalization or spelling")
+        }
+        var committedProvider: String?
+        var committedType: String?
+        let credentialChanges = NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange).sink { notice in
+            committedProvider = notice.userInfo?["provider"] as? String
+            committedType = notice.userInfo?["type"] as? String
+        }
+        defer { credentialChanges.cancel() }
+        try await activate("connection-setup-use-model")
+        try await until("connection commits and returns to the question") {
+            let closeButton = try await accessibilityElement("connection-setup-close")
+            return AgentProviderReadiness.isReadyToChat(for: store) && closeButton == nil
+        }
+        guard committedProvider == credentialID, committedType == AgentCredentialType.apiKey.rawValue else {
+            throw Failure("committed connection did not identify its credential change")
+        }
+        guard store.modelName == "catalyst-local-check", store.activeAgentProfileID == profileID,
+              store.agentCredentialProfiles.count == profileCount,
+              try credentials.load()[credentialID]?.apiKey == "catalyst-test-only",
+              descendants(window).compactMap({ $0 as? AgentComposerTextEditor.ComposerTextView }).first?.text == draft,
+              store.pendingComposerDraft == draft, !store.settingsPresented else {
+            throw Failure("inline connection did not preserve the question or active connection")
+        }
+        try onboardingSnapshot("onboarding-chat-ready", window: window)
+    }
+
+    private static func accessibilityElement(_ id: String, forInteraction: Bool = false) async throws -> [String: String]? {
+        let response = try await onboardingUICommand(forInteraction ? "ready" : "query", id: id)
+        let element = response["element"] as? [String: String]
+        lastOnboardingUIElement = element ?? ["id": id, "exists": "false",
+                                              "visible_controls": response["visible_controls"] as? String ?? ""]
+        return element
+    }
+
+    private static func activate(_ id: String) async throws {
+        try await waitForOnboardingControl(id)
+        _ = try await onboardingUICommand("press", id: id)
+    }
+
+    private static func enter(_ value: String, in id: String) async throws {
+        try await waitForOnboardingControl(id)
+        _ = try await onboardingUICommand("fill", id: id, value: value)
+    }
+
+    private static func waitForOnboardingControl(_ id: String) async throws {
+        try await until("enabled and hittable control: " + id) {
+            let element = try await accessibilityElement(id, forInteraction: true)
+            return element?["enabled"] == "true" && element?["hittable"] == "true"
+        }
+    }
+
+    private static func onboardingUICommand(_ action: String, id: String, value: String? = nil) async throws -> [String: Any] {
+        let token = UUID().uuidString
+        var request = ["token": token, "action": action, "id": id]
+        request["value"] = value
+        guard let path = ProcessInfo.processInfo.environment["WEIBEI_ONBOARDING_UI_DIRECTORY"], !path.isEmpty else {
+            throw Failure("Xcode UI driver directory missing")
+        }
+        let channel = URL(fileURLWithPath: path, isDirectory: true)
+        let responseURL = channel.appendingPathComponent("onboarding-ui-response.json")
+        try JSONSerialization.data(withJSONObject: request).write(
+            to: channel.appendingPathComponent("onboarding-ui-request.json"), options: .atomic)
+        var response: [String: Any]?
+        try await until("Xcode UI driver response: " + action + " " + id) {
+            guard let data = try? Data(contentsOf: responseURL),
+                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  result["token"] as? String == token else { return false }
+            response = result
+            return true
+        }
+        return response ?? [:]
+    }
+
+    private static func onboardingSnapshot(_ name: String, window: UIWindow) throws {
+        window.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        guard let data = image.pngData() else { throw Failure("onboarding screenshot unavailable") }
+        try data.write(to: LabMetrics.directory.appendingPathComponent(name + ".png"))
+    }
+
+    private static func until(_ description: String, seconds: Double = 20, _ ready: () async throws -> Bool) async throws {
         let deadline = ContinuousClock.now + .milliseconds(Int64(seconds * 1000))
-        while !(await ready()) {
+        while !(try await ready()) {
             if ContinuousClock.now >= deadline { throw Failure("timeout: " + description) }
             try await Task.sleep(for: .milliseconds(40))
         }

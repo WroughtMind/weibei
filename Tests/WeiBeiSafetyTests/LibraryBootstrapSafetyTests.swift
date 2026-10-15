@@ -119,6 +119,79 @@ final class LibraryBootstrapSafetyTests: XCTestCase {
         }
     }
 
+    func testFailedBootstrapCanCreateAtChosenLocationWithoutReplacingFiles() throws {
+        let base = makeTempRoot("weibei-bootstrap-recovery")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let workspace = base.appendingPathComponent("workspace", isDirectory: true)
+        let blockedRoot = CourseLibraryLayout.defaultRootURL(workspaceDirectory: workspace.path)
+        let original = Data("原位置已有文件，不能覆盖".utf8)
+        try original.write(to: blockedRoot)
+        let store = try makeStore(workspace: workspace)
+        withIsolatedWorkspaceOverride(workspace) { store.bootstrapDefaultLibraryIfNeeded() }
+        XCTAssertTrue(store.needsInitialLibrarySetup)
+        XCTAssertEqual(store.importantOperationNotice, .defaultLibraryBootstrapFailed)
+
+        let selected = base.appendingPathComponent("选择的位置", isDirectory: true)
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true)
+        let unrelated = selected.appendingPathComponent("保留.txt")
+        try original.write(to: unrelated)
+        try store.waitForCourseFileOperation { try await store.placeLibrary(at: selected) }
+        let expected = selected.appendingPathComponent(CourseLibraryLayout.defaultFolderName)
+        XCTAssertEqual(store.courseLibraryRootURL?.standardizedFileURL, expected.standardizedFileURL)
+        XCTAssertFalse(store.needsInitialLibrarySetup)
+        XCTAssertNil(store.importantOperationNotice)
+        XCTAssertNil(store.importantOperationError)
+        XCTAssertEqual(try Data(contentsOf: blockedRoot), original)
+        XCTAssertEqual(try Data(contentsOf: unrelated), original)
+        for directory in [CourseLibraryLayout.commonMaterialsDirectoryName, CourseLibraryLayout.commonNotesDirectoryName] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: expected.appendingPathComponent(directory).path))
+        }
+        let reopened = try makeStore(workspace: workspace)
+        XCTAssertEqual(reopened.courseLibraryRootURL?.standardizedFileURL, expected.standardizedFileURL)
+    }
+
+    func testUnusableChosenLocationDoesNotBindOrReplaceExistingContent() throws {
+        let base = makeTempRoot("weibei-bootstrap-choice-failure")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = try makeStore(workspace: base.appendingPathComponent("workspace"))
+        let selected = base.appendingPathComponent("选择的位置", isDirectory: true)
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true)
+        let blocked = selected.appendingPathComponent(CourseLibraryLayout.defaultFolderName)
+        let original = Data("已有同名文件".utf8)
+        try original.write(to: blocked)
+        XCTAssertThrowsError(try store.waitForCourseFileOperation { try await store.placeLibrary(at: selected) })
+        XCTAssertTrue(store.needsInitialLibrarySetup)
+        XCTAssertNil(store.courseLibraryRootURL)
+        XCTAssertEqual(try Data(contentsOf: blocked), original)
+
+        // 排除同名文件冲突后，同一入口可以直接重试。
+        try FileManager.default.removeItem(at: blocked)
+        try store.waitForCourseFileOperation { try await store.placeLibrary(at: selected) }
+        XCTAssertEqual(store.courseLibraryRootURL?.standardizedFileURL, selected.standardizedFileURL)
+    }
+
+    func testRetryDefaultCreationClearsFailureOnlyAfterTheLibraryIsSaved() throws {
+        let base = makeTempRoot("weibei-bootstrap-retry")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let workspace = base.appendingPathComponent("workspace")
+        let blockedRoot = CourseLibraryLayout.defaultRootURL(workspaceDirectory: workspace.path)
+        try Data("同名文件".utf8).write(to: blockedRoot)
+        let store = try makeStore(workspace: workspace)
+        withIsolatedWorkspaceOverride(workspace) { store.retryBootstrapDefaultLibrary() }
+        XCTAssertEqual(store.importantOperationNotice, .defaultLibraryBootstrapFailed)
+        withIsolatedWorkspaceOverride(workspace) { store.retryBootstrapDefaultLibrary() }
+        XCTAssertEqual(store.importantOperationNotice, .defaultLibraryBootstrapFailed)
+        XCTAssertTrue(store.needsInitialLibrarySetup)
+
+        try FileManager.default.removeItem(at: blockedRoot)
+        withIsolatedWorkspaceOverride(workspace) { store.retryBootstrapDefaultLibrary() }
+        XCTAssertNil(store.importantOperationNotice)
+        XCTAssertNil(store.importantOperationError)
+        XCTAssertEqual(store.courseLibraryRootURL?.standardizedFileURL, blockedRoot.standardizedFileURL)
+        XCTAssertEqual(try makeStore(workspace: workspace).courseLibraryRootURL?.standardizedFileURL,
+                       blockedRoot.standardizedFileURL)
+    }
+
     func testTemporarilyMissingLibraryIsNotReboundAndReconnectsWhenBack() throws {
         let base = makeTempRoot("weibei-missing-library")
         defer { try? FileManager.default.removeItem(at: base) }
@@ -165,6 +238,14 @@ final class LibraryBootstrapSafetyTests: XCTestCase {
             "原库暂时不可用时不得静默新建默认库"
         )
         XCTAssertNotNil(reopened.importantOperationError, "导入失败必须如实可见")
+
+        let replacement = base.appendingPathComponent("不能替代原库", isDirectory: true)
+        try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try reopened.waitForCourseFileOperation { try await reopened.placeLibrary(at: replacement) })
+        XCTAssertEqual(reopened.courseLibraryRootPath, configuredPath)
+        XCTAssertEqual(reopened.courseLibraryRootIdentity, configuredIdentity)
+        XCTAssertEqual(reopened.courseLibraryRootBookmarkData, configuredBookmark)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: replacement.path).isEmpty)
 
         // 原库恢复：走既有重连流程接回，不需要重新选库。
         try FileManager.default.moveItem(at: hiddenElsewhere, to: library)

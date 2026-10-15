@@ -29,6 +29,7 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-rich-answer-11pt.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/floating-rich-diagnostic.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/"onboarding-*.png \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/toolbar-navigation.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/toolbar-panes.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/toolbar-actions.png" \
@@ -88,11 +89,27 @@ for filename in ['latest.json', 'window.png', 'diagram.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-conversation-' + filename))
 
 business_path = support / 'Workspace/business-check.json'
-launch('--exit-after-check')
+# Xcode's UI testing service drives real SwiftUI controls from another process.
+# The App keeps the file, credential and recovery assertions in the same checks.
+ui_log = evidence / 'ci-onboarding-ui.log'
+with ui_log.open('w') as log:
+    ui_result = subprocess.run([
+        'xcodebuild', '-project', 'App/UITests/WeiBeiOnboardingUI.xcodeproj', '-scheme', 'WeiBeiOnboardingUITests',
+        '-destination', 'platform=macOS,arch=' + os.environ['WEIBEI_TARGET_ARCH'],
+        '-derivedDataPath', '.build/onboarding-ui-' + os.environ['WEIBEI_TARGET_ARCH'],
+        '-resultBundlePath', str(evidence / 'ci-onboarding-ui.xcresult'),
+        '-parallel-testing-enabled', 'NO',
+        'WEIBEI_CHECK_APP_PATH=' + app, 'test',
+    ], stdout=log, stderr=subprocess.STDOUT)
+if ui_result.returncode:
+    print(ui_log.read_text()[-16000:])
+ui_result.check_returncode()
 verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')
 required_business_checks = {
+    'library_onboarding_failure_retry_picker_cancel_and_recovery',
+    'chat_inline_connection_cancel_retry_models_and_draft',
     'native_citation_typography_and_hover_title',
     'active_connection_profile_matches_configuration', 'connection_profile_switch_back',
     'connection_cards_settings_and_authenticated_models',
@@ -129,7 +146,7 @@ assert business['floating_rich_answer']['body_font_size_pt'] == 11, business
 assert business['floating_rich_answer']['math_images'] == 2, business
 shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
-for filename in ['selection-composers.png', 'selection-discussion.png', 'selection-capsule-main.png', 'selection-capsule-floating.png', 'connection-cards.png', 'confirmed-import.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png', 'toolbar-navigation.png', 'toolbar-panes.png', 'toolbar-actions.png']:
+for filename in ['onboarding-library-failure.png', 'onboarding-library-recovered.png', 'onboarding-chat-credentials.png', 'onboarding-chat-rejected.png', 'onboarding-chat-models.png', 'onboarding-chat-ready.png', 'selection-composers.png', 'selection-discussion.png', 'selection-capsule-main.png', 'selection-capsule-floating.png', 'connection-cards.png', 'confirmed-import.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png', 'toolbar-navigation.png', 'toolbar-panes.png', 'toolbar-actions.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
 print(f"{len(conversation['checks'])} 项会话检查与 {len(business['checks'])} 项原业务保存重开检查通过；含选区胶囊、浮窗 11pt 公式与图示、原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。")
 

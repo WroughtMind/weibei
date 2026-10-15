@@ -651,6 +651,15 @@ private struct WorkspaceStatusBanner: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(Text(store.ui("重试建立默认资料库", "Retry creating the default library")))
+                    .disabled(store.libraryLocationBusy)
+                    Button(store.ui("选择位置…", "Choose Location…")) {
+                        Task { await LibraryPlacementPicker.choose(for: store) }
+                    }
+                    .buttonStyle(.plain)
+                    .weiBeiText(12, weight: .semibold)
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .accessibilityIdentifier("library-bootstrap-choose-location")
+                    .disabled(store.libraryLocationBusy)
                 }
                 Button {
                     store.dismissImportantOperationError()
