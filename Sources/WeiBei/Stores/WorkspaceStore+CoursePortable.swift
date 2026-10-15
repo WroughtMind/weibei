@@ -272,7 +272,7 @@ extension WorkspaceStore {
             )
             self.lastCourseNoteReadRanOnMainThread = read.ranOnMainThread
             // S2：写回改为同步原子写（主线程可接受）；读路径仍走后台 worker。
-            self.persistCourseOwnedNote(markdown, itemID: itemID)
+            await self.persistNoteAsync(markdown, for: item)
             self.lastCourseNoteWriteRanOnMainThread = true
             return (!read.ranOnMainThread, true)
         }

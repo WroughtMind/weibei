@@ -335,6 +335,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var noteEditorRecoveryConflictsByItemID: [String: NoteEditorRecoveryConflict] = [:]
     var noteEditorConflictProbeDocumentID: String?
     var latestNoteEditorSnapshot: (documentID: String, digest: String, baseDigest: String, revision: UInt64)?
+    var noteEditorRecoveryRequestIDs: [String: UUID] = [:]
+    var noteEditorSnapshotPersistenceTasks: [String: (id: UUID, task: Task<Void, Never>)] = [:]
     let noteRecoveryStore = NoteRecoveryStore()
     lazy var noteEditingSession = NoteEditingSession(
         documentID: "",
@@ -1016,6 +1018,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static let legacySelectionAskThreadsDefaultsKey = "weibei.selectionAskThreads.v1"
+    private var credentialChangeObservation: AnyCancellable?
 
     convenience init() {
         let folder = Self.workspaceRootDirectory()
@@ -1156,6 +1159,12 @@ final class WorkspaceStore: ObservableObject {
                 self?.startCourseFileMaintenance()
             }
         }
+        // Credential writers publish on MainActor. Keep request invalidation
+        // alive for inline chat and floating chat, even with settings closed.
+        credentialChangeObservation = NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)
+            .sink { [weak self] notice in
+                self?.handleAgentCredentialChange(providerID: notice.userInfo?["provider"] as? String)
+            }
     }
 
     isolated deinit {
@@ -3039,7 +3048,7 @@ final class WorkspaceStore: ObservableObject {
         // Never flushPendingNotePersistence() here: the default overload also
         // calls flushPendingWorkspaceSave(), which RunLoop-spins on MainActor
         // and surfaces the 60s "文件操作超过 60 秒未完成" banner.
-        flushPendingNotePersistence(flushWorkspace: false)
+        await flushPendingNotePersistenceAsync(flushWorkspace: false)
         if case .courseOwned = target.storage {
             while let task = courseNoteWriteTasksByItemID[target.id] {
                 await task.value
@@ -3726,10 +3735,20 @@ final class WorkspaceStore: ObservableObject {
         armNoteSelectionWatchdog()
         let sourceDocumentID = noteEditingSession.documentID
         _ = noteEditingSession.requestSnapshot { [weak self] result in
-            self?.finishPendingNoteSelectionSnapshot(
-                result,
-                sourceDocumentID: sourceDocumentID
-            )
+            guard let self else { return }
+            if case .success(let snapshot) = result {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.waitForNoteEditorSnapshotPersistence(documentID: snapshot.documentID)
+                    // Saving now yields. A receipt from a replaced editor must
+                    // not complete or fail a later document's selection.
+                    guard self.noteEditingSession.documentID == snapshot.documentID,
+                          self.noteEditingSession.documentGeneration == snapshot.documentGeneration else { return }
+                    self.finishPendingNoteSelectionSnapshot(result, sourceDocumentID: sourceDocumentID)
+                }
+            } else {
+                self.finishPendingNoteSelectionSnapshot(result, sourceDocumentID: sourceDocumentID)
+            }
         }
     }
 
@@ -3795,6 +3814,11 @@ final class WorkspaceStore: ObservableObject {
             guard snapshot.documentID == sourceDocumentID,
                   noteEditingSession.documentID == sourceDocumentID else {
                 failPendingNoteSelection(.documentChanged)
+                return
+            }
+            guard !hasUnresolvedContentCommand(for: sourceDocumentID) else {
+                noteSelectionTransitionState = .saving
+                armNoteSelectionWatchdog()
                 return
             }
             if snapshot.revision < noteEditingSession.currentRevision {
@@ -5873,14 +5897,13 @@ final class WorkspaceStore: ObservableObject {
         provider: AgentProviderID,
         profileID: UUID
     ) -> Bool {
-        guard agentCredentialProfiles.contains(where: {
+        guard let profile = agentCredentialProfiles.first(where: {
             $0.id == profileID && $0.provider == provider
-        }) else { return false }
-        if activeAgentProfileID == profileID {
-            shutdownAgentRuntime()
-        }
+        }), let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: profile.baseURL) else { return false }
         guard setAgentAuthMethod(.subscription, for: profileID) else { return false }
         recordAgentAuthenticationSuccess(provider: provider, authMethod: .subscription)
+        NotificationCenter.default.post(name: .weiBeiAgentCredentialsDidChange, object: nil,
+            userInfo: ["provider": endpoint.credentialProviderID, "type": AgentCredentialType.oauth.rawValue])
         return true
     }
 
@@ -9496,6 +9519,9 @@ final class WorkspaceStore: ObservableObject {
         run.selectionThreadID = selectionAskThreads.first(where: { $0.id == target.sessionID })?.id
         run.courseID = target.courseID
         run.authMethod = agentAuthMethod
+        run.credentialProviderID = (try? AgentProviderEndpoint(
+            provider: agentProviderID, baseURL: agentBaseURL
+        ))?.credentialProviderID
         run.baseURL = agentBaseURL
         run.modelName = selectedModel
         agentRuns[target.sessionID] = run
@@ -11563,7 +11589,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func refreshCourseOwnedNoteMetadataAfterWrite(
+    func refreshCourseOwnedNoteMetadataAfterWrite(
         itemID: String,
         markdown: String,
         url: URL

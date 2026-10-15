@@ -112,7 +112,8 @@ final class AgentAccountService: ObservableObject {
         return try NativeAgentCredentialStore.defaultStore()
     }
 
-    func commitCredential(for profile: AgentCredentialProfile, to destination: NativeAgentCredentialStore? = nil) throws {
+    @discardableResult
+    func commitCredential(for profile: AgentCredentialProfile, to destination: NativeAgentCredentialStore? = nil) throws -> String {
         let endpoint = try AgentProviderEndpoint(provider: profile.provider, baseURL: profile.baseURL)
         guard let record = try connectionCredentialStore().load()[endpoint.credentialProviderID] else {
             throw ModelListFailure.missingCredential
@@ -120,8 +121,9 @@ final class AgentAccountService: ObservableObject {
         try (destination ?? NativeAgentCredentialStore.defaultStore()).upsert(record)
         if destination == nil {
             Self.shared.refreshCatalog()
-            NotificationCenter.default.post(name: .weiBeiAgentCredentialsDidChange, object: nil)
         }
+        // The caller publishes the change after its connection profile is committed.
+        return endpoint.credentialProviderID
     }
 
     /// The same endpoint-scoped lookup used when sending; cards must not inspect another gateway's key.

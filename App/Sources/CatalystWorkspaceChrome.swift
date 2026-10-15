@@ -29,14 +29,13 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         controller.update([leading, center, trailing], menus: overflowMenus, isVisible: isVisible)
     }
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
-        controller.detach()
+        controller.tearDown()
     }
 
     final class Controller: UIViewController, NSToolbarDelegate {
         private let identifiers = ["weibei.navigation", "weibei.panes", "weibei.actions"].map { NSToolbarItem.Identifier($0) }
-        private let hosts = (0..<3).map { _ in
-            UIHostingConfiguration { AnyView(EmptyView()) }.margins(.all, 0).makeContentView()
-        }
+        private var contents = Array(repeating: AnyView(EmptyView()), count: 3)
+        private let hosts = NSHashTable<HostingView>.weakObjects()
         private let toolbar = NSToolbar(identifier: "weibei.workspace")
         private var menus = (0..<3).map { _ in UIMenu(children: []) }
         private weak var scene: UIWindowScene?
@@ -50,18 +49,13 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             toolbar.displayMode = .iconOnly
             toolbar.allowsUserCustomization = false
             toolbar.centeredItemIdentifiers = [identifiers[1]]
-            for host in hosts {
-                host.backgroundColor = .clear
-            }
         }
 
         func update(_ contents: [AnyView], menus: [UIMenu], isVisible: Bool) {
             loadViewIfNeeded()
             self.menus = menus
-            for (host, content) in zip(hosts, contents) {
-                host.configuration = UIHostingConfiguration { content }.margins(.all, 0)
-                host.invalidateIntrinsicContentSize()
-            }
+            self.contents = contents
+            for host in hosts.allObjects { host.update(contents[host.index]) }
             for item in toolbar.items {
                 guard let index = identifiers.firstIndex(of: item.itemIdentifier) else { continue }
                 item.label = menus[index].title
@@ -87,6 +81,14 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             scene = nil
         }
 
+        func tearDown() {
+            (viewIfLoaded as? Probe)?.changed = nil
+            detach()
+            toolbar.delegate = nil
+            hosts.allObjects.forEach { $0.tearDown() }
+            hosts.removeAllObjects()
+        }
+
         func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
             identifiers + [.flexibleSpace]
         }
@@ -96,7 +98,11 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                      willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
             guard let index = identifiers.firstIndex(of: identifier) else { return nil }
-            let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: hosts[index])
+            // AppKit may request another instance of an identifier. Each item
+            // needs its own UIView; never move a previous item's host into it.
+            let host = HostingView(index: index, content: contents[index])
+            hosts.add(host)
+            let item = NSUIViewToolbarItem(itemIdentifier: identifier, uiView: host)
             // The hosted SwiftUI buttons own their individual enabled states.
             // This container has no target/action for AppKit to validate.
             item.autovalidates = false
@@ -111,6 +117,97 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         private final class Probe: UIView {
             var changed: (() -> Void)?
             override func didMoveToWindow() { super.didMoveToWindow(); changed?() }
+        }
+    }
+
+    /// NSUIViewToolbarItem supplies its own UIKit container controller. Follow
+    /// that actual view hierarchy instead of parenting to the zero-height probe.
+    final class HostingView: UIView {
+        let index: Int
+        let controller: UIHostingController<AnyView>
+        private var isActive = true
+
+        init(index: Int, content: AnyView) {
+            self.index = index
+            controller = UIHostingController(rootView: AnyView(content.fixedSize(horizontal: true, vertical: true)))
+            super.init(frame: .zero)
+            // Match the workspace root's nonzero Catalyst pointer surface in
+            // transparent icon gaps, without adding visible toolbar chrome.
+            let pointerSurface = UIColor(white: 0, alpha: 1.0 / 255)
+            backgroundColor = pointerSurface
+            // AppKit already positions this item inside the native toolbar.
+            // Inheriting its container's safe area moves the icons outside the hit region.
+            controller.safeAreaRegions = []
+            controller.sizingOptions = .intrinsicContentSize
+            controller.view.backgroundColor = pointerSurface
+            controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            for axis in [NSLayoutConstraint.Axis.horizontal, .vertical] {
+                setContentHuggingPriority(.required, for: axis)
+                setContentCompressionResistancePriority(.required, for: axis)
+            }
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override var intrinsicContentSize: CGSize { controller.view.intrinsicContentSize }
+        override func sizeThatFits(_ size: CGSize) -> CGSize { controller.sizeThatFits(in: size) }
+
+        func update(_ content: AnyView) {
+            controller.rootView = AnyView(content.fixedSize(horizontal: true, vertical: true))
+            controller.view.invalidateIntrinsicContentSize()
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+
+        override func willMove(toSuperview newSuperview: UIView?) {
+            // Remove the old controller's root before UIKit validates the new
+            // subtree. Reattach only after the real toolbar parent is available.
+            if superview !== newSuperview { detachController() }
+            super.willMove(toSuperview: newSuperview)
+        }
+        override func didMoveToSuperview() {
+            super.didMoveToSuperview()
+            attachControllerIfReady()
+        }
+        override func willMove(toWindow newWindow: UIWindow?) {
+            // Full screen can move an ancestor without changing this superview.
+            if window !== newWindow { detachController() }
+            super.willMove(toWindow: newWindow)
+        }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil { detachController() }
+            else { attachControllerIfReady() }
+        }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            attachControllerIfReady()
+            controller.view.frame = bounds
+        }
+
+        func tearDown() {
+            isActive = false
+            detachController()
+        }
+
+        private func attachControllerIfReady() {
+            guard isActive, window != nil else { return }
+            // The wrapper itself can be the native container's root view; its
+            // next responder then identifies the owner before its superview does.
+            var responder = next
+            while let value = responder, !(value is UIViewController) { responder = value.next }
+            guard let parent = responder as? UIViewController,
+                  controller.parent !== parent else { return }
+            detachController()
+            parent.addChild(controller)
+            controller.view.frame = bounds
+            addSubview(controller.view)
+            controller.didMove(toParent: parent)
+        }
+
+        private func detachController() {
+            if controller.parent != nil { controller.willMove(toParent: nil) }
+            controller.view.removeFromSuperview()
+            if controller.parent != nil { controller.removeFromParent() }
         }
     }
 }

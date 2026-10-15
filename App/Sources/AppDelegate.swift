@@ -39,7 +39,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let store = AppDelegate.workspace
             store.commitCurrentReaderLocation()
             guard await store.freshActiveNoteEditorSnapshot() else { return false }
-            store.flushPendingNotePersistence(flushWorkspace: false)
+            await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             guard await store.flushPendingWorkspaceSaveAsync() else { return false }
             // A file conflict/write failure must not be mistaken for a saved note.
             return !store.noteEditingSession.dirty
@@ -51,6 +51,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var saveTask: Task<Void, Never>?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var saveAttemptID: UUID?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         WeiBeiTypography.registerBundledFonts()
@@ -321,34 +322,48 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func saveWorkspace() {
         guard !Self.usesFixture else { return }
         guard saveTask == nil else { return }
+        // A failed save retains its assertion until reactivation. If another
+        // inactive save starts first, retire that assertion before replacing it.
+        finishBackgroundSave()
+        let attemptID = UUID()
+        saveAttemptID = attemptID
         Self.workspace.commitCurrentReaderLocation()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "保存魏碑工作台") { [weak self] in
             MainActor.assumeIsolated {
-                self?.saveTask?.cancel()
-                _ = Self.workspace.flushPendingWorkspaceSave()
-                self?.finishBackgroundSave()
+                guard let self, self.saveAttemptID == attemptID else { return }
+                self.saveTask?.cancel()
+                // Expiration means the assertion must end now. Any remaining
+                // persistence is best effort and owns no background assertion.
+                self.finishBackgroundSave(attemptID: attemptID)
+                Task { @MainActor in
+                    _ = await Self.workspace.flushPendingWorkspaceSaveAsync()
+                }
             }
         }
         saveTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let store = Self.workspace
             let captured = await store.freshActiveNoteEditorSnapshot()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, saveAttemptID == attemptID else { return }
             guard captured else {
                 store.showImportantOperationError(store.ui("笔记最新内容尚未安全保存，请保持窗口打开并重试。", "The latest note is not safely saved. Keep the window open and retry."))
-                reopenAfterSaveFailure()
+                reopenAfterSaveFailure(attemptID: attemptID)
                 return
             }
-            store.flushPendingNotePersistence(flushWorkspace: false)
-            guard await store.flushPendingWorkspaceSaveAsync() else {
-                reopenAfterSaveFailure()
+            await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
+            guard !Task.isCancelled, saveAttemptID == attemptID else { return }
+            let saved = await store.flushPendingWorkspaceSaveAsync()
+            guard !Task.isCancelled, saveAttemptID == attemptID else { return }
+            guard saved else {
+                reopenAfterSaveFailure(attemptID: attemptID)
                 return
             }
-            finishBackgroundSave()
+            finishBackgroundSave(attemptID: attemptID)
         }
     }
 
-    private func reopenAfterSaveFailure() {
+    private func reopenAfterSaveFailure(attemptID: UUID) {
+        guard saveAttemptID == attemptID else { return }
         saveTask = nil
         UIApplication.shared.requestSceneSessionActivation(UIApplication.shared.openSessions.first, userActivity: nil, options: nil) { error in
             WeiBeiLog.noteRepair.error("code=catalyst_save_reopen_failed reason=\(error.localizedDescription, privacy: .private)")
@@ -359,8 +374,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         if saveTask == nil { finishBackgroundSave() }
         Task { await Self.workspace.reconcileActiveNoteEditorWithBackingFile() }
     }
-    private func finishBackgroundSave() {
+    private func finishBackgroundSave(attemptID: UUID? = nil) {
+        if let attemptID, saveAttemptID != attemptID { return }
         saveTask = nil
+        saveAttemptID = nil
         if backgroundTask != .invalid {
             UIApplication.shared.endBackgroundTask(backgroundTask)
             backgroundTask = .invalid

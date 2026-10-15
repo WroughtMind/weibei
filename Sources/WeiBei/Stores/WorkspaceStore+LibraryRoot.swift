@@ -344,7 +344,7 @@ extension WorkspaceStore {
 
         // MainActor async 上下文禁止默认重载（内部会 flushPendingWorkspaceSave()
         // RunLoop 自旋，等待另一个 MainActor Task 会死锁）；改用异步落盘。
-        flushPendingNotePersistence(flushWorkspace: false)
+        await flushPendingNotePersistenceAsync(flushWorkspace: false)
         guard await persistWorkspaceNow() else {
             throw CourseProjectRootError.workspaceSaveFailed
         }
@@ -437,7 +437,7 @@ extension WorkspaceStore {
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
         libraryMigrationInFlight = false
-        flushPendingNotePersistence(flushWorkspace: false)
+        await flushPendingNotePersistenceAsync(flushWorkspace: false)
         guard await persistWorkspaceNow() else {
             if sameVolume {
                 try fileManager.moveItem(at: canonicalDestination, to: libraryRoot)

@@ -298,6 +298,7 @@ final class AgentConnectionCreationTests: XCTestCase {
         defer { currentTask.cancel() }
         let currentRun = AgentConversationRun(chatID: currentRunID)
         currentRun.agentRequestTask = currentTask
+        currentRun.credentialProviderID = AgentProviderID.openai.credentialProviderID
         store.agentRuns[currentRunID] = currentRun
 
         XCTAssertTrue(store.completeAgentSubscriptionLogin(provider: .xai, profileID: target))
@@ -330,5 +331,162 @@ final class AgentConnectionCreationTests: XCTestCase {
         XCTAssertFalse(store.agentCredentialProfiles.contains(where: { $0.id == deleted }))
         XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == changed })?.provider, .anthropic)
         XCTAssertEqual(store.agentCredentialProfiles.first(where: { $0.id == changed })?.authMethod, .apiKey)
+    }
+
+    @MainActor
+    func testCredentialNotificationStopsOnlyMatchingRunsWithSettingsClosed() async throws {
+        let store = try XCTUnwrap(storeFixture).store
+        XCTAssertFalse(store.settingsPresented)
+        let currentCredential = AgentProviderReadiness.activeCredentialProviderID(for: store)
+        let current = pendingRun(in: store, credentialProviderID: currentCredential)
+        let other = pendingRun(in: store, credentialProviderID: AgentProviderID.openai.credentialProviderID)
+        defer { current.task.cancel(); other.task.cancel() }
+
+        NotificationCenter.default.post(name: .weiBeiAgentCredentialsDidChange, object: nil,
+            userInfo: ["provider": currentCredential, "type": AgentCredentialType.apiKey.rawValue])
+
+        XCTAssertTrue(current.task.isCancelled)
+        XCTAssertFalse(other.task.isCancelled)
+        await store.waitForAgentRequestsToStop()
+        XCTAssertFalse(store.isAgentRunning(in: current.id))
+        XCTAssertTrue(store.isAgentRunning(in: other.id))
+        store.cancelAllAgentRequests()
+        await store.waitForAgentRequestsToStop()
+    }
+
+    @MainActor
+    func testSelectingNewOAuthConnectionKeepsOtherProvidersRunAlive() async throws {
+        let store = try XCTUnwrap(storeFixture).store
+        let originalCredential = AgentProviderReadiness.activeCredentialProviderID(for: store)
+        let original = pendingRun(in: store, credentialProviderID: originalCredential)
+        let target = try store.createAgentConnection(provider: .openaiCodex, authMethod: .subscription, baseURL: "")
+        let targetRun = pendingRun(in: store, credentialProviderID: AgentProviderID.openaiCodex.credentialProviderID)
+        defer { original.task.cancel(); targetRun.task.cancel() }
+
+        XCTAssertTrue(store.completeAgentSubscriptionLogin(provider: .openaiCodex, profileID: target))
+
+        XCTAssertFalse(original.task.isCancelled)
+        XCTAssertTrue(targetRun.task.isCancelled)
+        await store.waitForAgentRequestsToStop()
+        XCTAssertTrue(store.isAgentRunning(in: original.id))
+        XCTAssertFalse(store.isAgentRunning(in: targetRun.id))
+        store.cancelAllAgentRequests()
+        await store.waitForAgentRequestsToStop()
+    }
+
+    @MainActor
+    func testOtherCredentialChangeStopsOnlyItsBackgroundRun() async throws {
+        let store = try XCTUnwrap(storeFixture).store
+        let currentCredential = AgentProviderReadiness.activeCredentialProviderID(for: store)
+        let changedCredential = try AgentProviderEndpoint(
+            provider: .custom, baseURL: "https://other-gateway.example.test/v1"
+        ).credentialProviderID
+        XCTAssertNotEqual(currentCredential, changedCredential)
+        let current = pendingRun(in: store, credentialProviderID: currentCredential)
+        let background = pendingRun(in: store, credentialProviderID: changedCredential)
+        defer { current.task.cancel(); background.task.cancel() }
+
+        XCTAssertFalse(store.handleAgentCredentialChange(providerID: changedCredential))
+
+        XCTAssertFalse(current.task.isCancelled)
+        XCTAssertTrue(background.task.isCancelled)
+        await store.waitForAgentRequestsToStop()
+        XCTAssertTrue(store.isAgentRunning(in: current.id))
+        XCTAssertFalse(store.isAgentRunning(in: background.id))
+        store.cancelAllAgentRequests()
+        await store.waitForAgentRequestsToStop()
+    }
+
+    @MainActor
+    func testCurrentCredentialChangeKeepsOtherProvidersRunAlive() async throws {
+        let store = try XCTUnwrap(storeFixture).store
+        let currentCredential = AgentProviderReadiness.activeCredentialProviderID(for: store)
+        let current = pendingRun(in: store, credentialProviderID: currentCredential)
+        let background = pendingRun(in: store, credentialProviderID: AgentProviderID.openai.credentialProviderID)
+        defer { current.task.cancel(); background.task.cancel() }
+
+        XCTAssertTrue(store.handleAgentCredentialChange(providerID: currentCredential))
+
+        XCTAssertTrue(current.task.isCancelled)
+        XCTAssertFalse(background.task.isCancelled)
+        await store.waitForAgentRequestsToStop()
+        XCTAssertFalse(store.isAgentRunning(in: current.id))
+        XCTAssertTrue(store.isAgentRunning(in: background.id))
+        store.cancelAllAgentRequests()
+        await store.waitForAgentRequestsToStop()
+    }
+
+    @MainActor
+    func testUnidentifiedCredentialChangeDoesNotKeepOldKeyRequestsAlive() async throws {
+        let store = try XCTUnwrap(storeFixture).store
+        for providerID in [nil, " \n", "unrecognized-credential-identity"] as [String?] {
+            let run = pendingRun(in: store,
+                credentialProviderID: AgentProviderReadiness.activeCredentialProviderID(for: store))
+            defer { run.task.cancel() }
+
+            XCTAssertTrue(store.handleAgentCredentialChange(providerID: providerID))
+            XCTAssertTrue(run.task.isCancelled)
+            await store.waitForAgentRequestsToStop()
+            XCTAssertFalse(store.isAgentRunning(in: run.id))
+        }
+    }
+
+    @MainActor
+    func testRunWithUnknownCredentialIsStoppedConservatively() async throws {
+        let store = try XCTUnwrap(storeFixture).store
+        let known = pendingRun(in: store,
+            credentialProviderID: AgentProviderReadiness.activeCredentialProviderID(for: store))
+        let unknown = pendingRun(in: store, credentialProviderID: " \n")
+        defer { known.task.cancel(); unknown.task.cancel() }
+
+        XCTAssertFalse(store.handleAgentCredentialChange(providerID: AgentProviderID.openai.credentialProviderID))
+        XCTAssertFalse(known.task.isCancelled)
+        XCTAssertTrue(unknown.task.isCancelled)
+        await store.waitForAgentRequestsToStop()
+        store.cancelAllAgentRequests()
+        await store.waitForAgentRequestsToStop()
+    }
+
+    @MainActor
+    func testSubmittedRunKeepsItsCredentialIdentityAfterConnectionSwitch() async throws {
+        let store = try XCTUnwrap(storeFixture).store
+        let originalCredential = AgentProviderReadiness.activeCredentialProviderID(for: store)
+        store.modelName = "test-model"
+        let started = expectation(description: "The submitted request reached its synthetic responder")
+        store.selfCheckAgentResponder = { _ in
+            started.fulfill()
+            try await Task.sleep(nanoseconds: 60_000_000_000)
+            return StudyAgentReply(text: "Synthetic response", backend: .native)
+        }
+        defer { store.selfCheckAgentResponder = nil; store.cancelAllAgentRequests() }
+        let session = try XCTUnwrap(store.createStudySession(courseID: nil))
+        store.agentDraft = "Synthetic credential isolation question"
+        XCTAssertNil(store.askAgent())
+        let run = try XCTUnwrap(store.agentRuns[session.id])
+        let task = try XCTUnwrap(run.agentRequestTask)
+        XCTAssertEqual(run.credentialProviderID, originalCredential)
+        await fulfillment(of: [started], timeout: 8)
+
+        try store.createAgentConnection(provider: .custom, authMethod: .apiKey,
+            baseURL: "https://new-gateway.example.test/v1")
+
+        XCTAssertNotEqual(AgentProviderReadiness.activeCredentialProviderID(for: store), originalCredential)
+        XCTAssertEqual(run.credentialProviderID, originalCredential)
+        XCTAssertFalse(store.handleAgentCredentialChange(providerID: originalCredential))
+        XCTAssertTrue(task.isCancelled)
+        await store.waitForAgentRequestsToStop()
+        XCTAssertFalse(store.isAgentRunning(in: session.id))
+    }
+
+    @MainActor
+    private func pendingRun(in store: WorkspaceStore, credentialProviderID: String?)
+        -> (id: UUID, task: Task<Void, Never>) {
+        let id = UUID()
+        let task = Task<Void, Never> { try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        let run = AgentConversationRun(chatID: id)
+        run.credentialProviderID = credentialProviderID
+        run.agentRequestTask = task
+        store.agentRuns[id] = run
+        return (id, task)
     }
 }

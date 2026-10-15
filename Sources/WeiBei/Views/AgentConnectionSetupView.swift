@@ -324,9 +324,10 @@ struct AgentConnectionSetupView: View {
             onConnected()
             return
         }
+        let credentialProviderID: String
         do {
             // 模型确认与凭据提交是同一步；失败或收起表单都保留原连接。
-            try modelCatalog.commitCredential(for: profile)
+            credentialProviderID = try modelCatalog.commitCredential(for: profile)
             if !store.agentCredentialProfiles.contains(where: { $0.id == profile.id }) {
                 try store.createAgentConnection(id: profile.id, provider: profile.provider,
                                                 authMethod: profile.authMethod, baseURL: profile.baseURL)
@@ -338,10 +339,14 @@ struct AgentConnectionSetupView: View {
         }
         store.selectAgentCredentialProfile(profile.id)
         store.setAgentAuthMethod(profile.authMethod)
+        store.updateModelName(cleaned)
+        // Publish only after the profile exists, so a new custom endpoint is known.
         if profile.authMethod == .subscription {
             store.completeAgentSubscriptionLogin(provider: profile.provider, profileID: profile.id)
+        } else {
+            NotificationCenter.default.post(name: .weiBeiAgentCredentialsDidChange, object: nil,
+                userInfo: ["provider": credentialProviderID, "type": AgentCredentialType.apiKey.rawValue])
         }
-        store.updateModelName(cleaned)
         onConnected()
     }
 

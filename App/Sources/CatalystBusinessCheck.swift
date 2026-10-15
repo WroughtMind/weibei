@@ -1,6 +1,7 @@
 #if WEIBEI_ACCEPTANCE_CHECKS
 import UIKit
 import SwiftUI
+import Combine
 import WebKit
 import WeiBeiCore
 import MarkdownView
@@ -361,7 +362,7 @@ enum CatalystBusinessCheck {
             "source_dirty": Bundle.main.object(forInfoDictionaryKey: "WeiBeiSourceDirty") as? Bool ?? true,
             "bundle_id": Bundle.main.bundleIdentifier ?? "", "platform": "Mac Catalyst",
             "configuration": "Release", "transport": "original client against isolated local SSE fixture; no live model claim",
-            "ui_evidence": "in-process behavior checks, not mouse/IME acceptance", "checks": [String: String]()
+            "ui_evidence": "in-process behavior checks; toolbar also receives local AppKit mouse events, not physical mouse/IME acceptance", "checks": [String: String]()
         ]
         var checks: [String: String] = [:]
         func write(_ status: String) throws {
@@ -373,6 +374,61 @@ enum CatalystBusinessCheck {
             checks[name] = value ? "passed" : "failed"
             try write("running")
             if !value { throw Failure(name) }
+        }
+        func clickToolbar(_ itemIdentifier: String, xFraction: Double? = nil, firstIcon: Bool = false) throws {
+            guard let toolbar = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+                .compactMap({ $0.titlebar?.toolbar }).first(where: { $0.identifier == "weibei.workspace" }),
+                  let item = toolbar.items.compactMap({ $0 as? NSUIViewToolbarItem })
+                    .first(where: { $0.itemIdentifier.rawValue == itemIdentifier }),
+                  item.uiView.bounds.width > 0 else { throw Failure("toolbar pointer target unavailable") }
+            // Pane targets pass their actual equal-segment centers. Library is
+            // the first shared 34pt control, as is appearance; settings is last.
+            let iconCenterFraction = Double(WeiBeiTopBarButton.width * 0.5 * store.interfaceTextScale.multiplier / item.uiView.bounds.width)
+            let targetFraction = xFraction ?? ((itemIdentifier == "weibei.navigation" || firstIcon) ? iconCenterFraction : 1 - iconCenterFraction)
+            let settingsWasPresented = store.settingsPresented
+            var receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
+                itemIdentifier: itemIdentifier, xFraction: targetFraction, yFraction: 0.5)
+            receipt["settings_presented_before"] = String(settingsWasPresented)
+            if let window = item.uiView.window {
+                let point = CGPoint(x: item.uiView.bounds.minX + item.uiView.bounds.width * CGFloat(targetFraction),
+                                    y: item.uiView.bounds.midY)
+                let windowPoint = item.uiView.convert(point, to: window)
+                let hit = window.hitTest(windowPoint, with: nil)
+                receipt["ui_view_bounds"] = String(describing: item.uiView.bounds)
+                receipt["ui_point_in_window"] = String(describing: windowPoint)
+                receipt["ui_hit_type"] = hit.map { String(reflecting: type(of: $0)) } ?? "nil"
+                receipt["ui_hit_in_host"] = String(hit.map { $0 === item.uiView || $0.isDescendant(of: item.uiView) } ?? false)
+            }
+            var receipts = result["toolbar_pointer_events"] as? [[String: String]] ?? []
+            receipts.append(receipt)
+            result["toolbar_pointer_events"] = receipts
+            guard receipt["queued"] == "true" else { throw Failure("toolbar pointer events were not queued") }
+        }
+        func captureToolbarSnapshots() throws {
+            guard let toolbar = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+                .compactMap({ $0.titlebar?.toolbar }).first(where: { $0.identifier == "weibei.workspace" }) else {
+                throw Failure("toolbar snapshot source unavailable")
+            }
+            let items = toolbar.items.compactMap { $0 as? NSUIViewToolbarItem }
+            guard items.count == 3 else { throw Failure("toolbar snapshot groups unavailable") }
+            var snapshots: [[String: String]] = []
+            for item in items {
+                let host = item.uiView
+                guard host.window != nil, !host.bounds.isEmpty else { throw Failure("toolbar snapshot host unavailable") }
+                host.layoutIfNeeded()
+                var rendered = false
+                let image = UIGraphicsImageRenderer(bounds: host.bounds).image { _ in
+                    rendered = host.drawHierarchy(in: host.bounds, afterScreenUpdates: true)
+                }
+                guard rendered, let data = image.pngData() else { throw Failure("toolbar snapshot rendering incomplete") }
+                let file = item.itemIdentifier.rawValue.replacingOccurrences(of: "weibei.", with: "toolbar-") + ".png"
+                try data.write(to: LabMetrics.directory.appendingPathComponent(file))
+                snapshots.append(["item": item.itemIdentifier.rawValue, "file": file,
+                                  "ui_view_bounds": String(describing: host.bounds)])
+            }
+            result["toolbar_render_snapshots"] = snapshots
+            result["toolbar_snapshot_scope"] = "attached NSUIViewToolbarItem UIView hierarchy; excludes native window chrome"
+            try check("native_toolbar_render_snapshots", true)
         }
         do {
             if let previous = try? Data(contentsOf: resultURL),
@@ -410,12 +466,26 @@ enum CatalystBusinessCheck {
             try check("original_update_service_through_native_bridge", AppDelegate.updates.status != .failed)
             // Verify that all three control groups live in native toolbar items,
             // rather than being drawn underneath the window's titlebar hit region.
+            // Also require controller containment and bounds covering the full
+            // content. This checks hosting geometry, not real mouse delivery.
             try await until("native workspace toolbar controls") {
                 UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.contains { scene in
                     let items = scene.titlebar?.toolbar?.items.compactMap { $0 as? NSUIViewToolbarItem } ?? []
                     return items.count == 3 && items.allSatisfy {
-                        $0.isEnabled && $0.uiView.isUserInteractionEnabled
+                        guard let host = $0.uiView as? CatalystTopBar.HostingView else { return false }
+                        host.layoutIfNeeded()
+                        var responder = host.next
+                        while let value = responder, !(value is UIViewController) { responder = value.next }
+                        guard let parent = responder as? UIViewController,
+                              host.controller.parent === parent,
+                              host.controller.view.superview === host,
+                              host.controller.sizingOptions.contains(.intrinsicContentSize) else { return false }
+                        let contentSize = $0.uiView.intrinsicContentSize
+                        return $0.isEnabled && $0.uiView.isUserInteractionEnabled
                             && $0.uiView.window != nil && !$0.uiView.bounds.isEmpty
+                            && contentSize.width > 0 && contentSize.height > 0
+                            && $0.uiView.bounds.width + 1 >= contentSize.width
+                            && $0.uiView.bounds.height + 1 >= contentSize.height
                             && !$0.label.isEmpty
                             && (($0.itemMenuFormRepresentation as? UIMenu)?.children.contains { $0 is UIAction } == true)
                     }
@@ -425,6 +495,44 @@ enum CatalystBusinessCheck {
             try await verifyLibraryOnboarding(store)
             try check("library_onboarding_failure_retry_picker_cancel_and_recovery", true)
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
+            let paneTargets: [(WorkspacePaneRole, Double)] = [(.reader, 1.0 / 6.0), (.agent, 3.0 / 6.0), (.notes, 5.0 / 6.0)]
+            for (role, fraction) in paneTargets {
+                let wasVisible = store.isPaneVisible(role)
+                try clickToolbar("weibei.panes", xFraction: fraction)
+                try await until("\(role.rawValue) changes after native pointer click") { store.isPaneVisible(role) != wasVisible }
+                try clickToolbar("weibei.panes", xFraction: fraction)
+                try await until("\(role.rawValue) restores after native pointer click") { store.isPaneVisible(role) == wasVisible }
+                try check("native_toolbar_\(role.rawValue)_pointer_toggle", true)
+            }
+            let libraryWasOpen = store.showLibrary
+            try clickToolbar("weibei.navigation")
+            try await until("library changes after native pointer click") { store.showLibrary != libraryWasOpen }
+            try clickToolbar("weibei.navigation")
+            try await until("library restores after native pointer click") { store.showLibrary == libraryWasOpen }
+            try check("native_toolbar_library_pointer_toggle", true)
+            let appearanceWasDark = store.appearanceMode.isDark
+            let originalAppearancePreference = store.appearancePreference
+            try clickToolbar("weibei.actions", firstIcon: true)
+            try await until("appearance changes after native pointer click") { store.appearanceMode.isDark != appearanceWasDark }
+            try clickToolbar("weibei.actions", firstIcon: true)
+            try await until("appearance restores after native pointer click") { store.appearanceMode.isDark == appearanceWasDark }
+            try check("native_toolbar_appearance_pointer_toggle", true)
+            // Restore a possible system preference only after both event actions.
+            store.appearancePreference = originalAppearancePreference
+            try captureToolbarSnapshots()
+            try clickToolbar("weibei.actions")
+            try await until("settings opens after native pointer click") {
+                store.settingsPresented && UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                    .flatMap(\.windows).flatMap(descendants).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
+            }
+            try check("native_toolbar_settings_pointer_open", true)
+            result["settings_pointer_observed"] = store.settingsPresented
+            // Fixture cleanup only; opening settings above must come from events.
+            store.settingsPresented = false
+            try await until("settings closes after pointer-check cleanup") {
+                !UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                    .flatMap(\.windows).flatMap(descendants).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
+            }
             let originalStyle = store.appearanceStyle
             store.appearanceStyle = .clearGlass
             try await until("native window material") {
@@ -608,7 +716,7 @@ enum CatalystBusinessCheck {
             store.noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "\n\n" + noteMarker)
             try await until("editor command acknowledged") { store.noteEditorCommand == nil && store.noteText.contains(noteMarker) }
             let captured = await store.freshActiveNoteEditorSnapshot()
-            store.flushPendingNotePersistence(flushWorkspace: false)
+            await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             try check("original_editor_snapshot_and_note_write_gate", captured && (try String(contentsOf: persistedNote, encoding: .utf8)).contains(noteMarker))
 
             let pdfURL = inputs.appendingPathComponent("bounded-worker.pdf")
@@ -650,9 +758,9 @@ enum CatalystBusinessCheck {
                 throw Failure("workspace window disappeared before opening settings")
             }
             let windowBoundsBeforeSettings = window.bounds
-            store.settingsPresented = true
+            try clickToolbar("weibei.actions")
             try await until("connection cards inside the original workspace") {
-                descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
+                store.settingsPresented && descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
                     && !AgentAccountService.shared.isRefreshingModels
                     && AgentAccountService.shared.hasLoadedModels(provider: .custom)
                     && AgentAccountService.shared.liveModelIDs.contains("catalyst-local-check")
@@ -660,6 +768,8 @@ enum CatalystBusinessCheck {
             guard let panel = descendants(window).first(where: {
                 $0.accessibilityIdentifier == "settings-panel-viewport"
             }) else { throw Failure("settings panel is not mounted in the workspace") }
+            try check("native_toolbar_full_screen_settings_pointer_open", true)
+            result["settings_full_screen_pointer_observed"] = store.settingsPresented
             let panelFrame = panel.convert(panel.bounds, to: window)
             let state = CatalystDesktopWindow.shared.fullScreenWindowStateForCheck()
             result["settings_full_screen"] = state
@@ -782,7 +892,7 @@ enum CatalystBusinessCheck {
             store.applyLastAgentAnswerToNote()
             try await until("original answer saved into note") { store.noteEditorCommand == nil && store.noteText.contains(finalMarker) }
             _ = await store.freshActiveNoteEditorSnapshot()
-            store.flushPendingNotePersistence(flushWorkspace: false)
+            await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             try check("original_answer_to_note", (try String(contentsOf: persistedNote, encoding: .utf8)).contains(finalMarker))
 
             result["floating_rich_answer"] = try await verifySelectionChat(store, material: material, mainComposer: composer, mainConversation: controller)
@@ -865,6 +975,7 @@ enum CatalystBusinessCheck {
             ]
             result["failure_state"] = [
                 "application_state": UIApplication.shared.applicationState.rawValue,
+                "settings_presented": store.settingsPresented,
                 "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
                 "window_scenes": UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.map { scene in
                     ["id": scene.session.persistentIdentifier,
@@ -932,6 +1043,42 @@ enum CatalystBusinessCheck {
             return frames.count == 2 && abs(frames[0].minY - frames[1].minY) < 1
                 && frames.allSatisfy { $0.width <= 320 && $0.height <= 30 && $0.minY >= window.safeAreaInsets.top }
         }
+        let framesBeforeSettings = frames
+        let paneHosts = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
+            .filter { isVisible($0, in: window) }
+        let hostingControllers = paneHosts.flatMap { descendants($0).compactMap { $0 as? CatalystHostingView } }
+        let hostIDs = hostingControllers.map { ObjectIdentifier($0.controller) }
+        func paneSafeAreasMatchWindow() -> Bool {
+            !hostingControllers.isEmpty && hostingControllers.allSatisfy { host in
+                let frame = host.convert(host.bounds, to: window)
+                let expectedTop = max(0, window.safeAreaInsets.top - frame.minY)
+                return abs(host.controller.view.safeAreaInsets.top - expectedTop) < 1
+            }
+        }
+        guard paneSafeAreasMatchWindow() else {
+            throw Failure("picker pane lost the native title-bar safe area before opening settings")
+        }
+        store.settingsPresented = true
+        defer { store.settingsPresented = false }
+        try await until("settings mounted over the pickers") {
+            descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
+        }
+        store.settingsPresented = false
+        try await until("settings closes without moving the picker content") {
+            guard !descendants(window).contains(where: { $0.accessibilityIdentifier == "settings-panel-viewport" }) else { return false }
+            let currentFields = descendants(window).compactMap { $0 as? UITextField }.filter {
+                $0.accessibilityLabel == store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags")
+                    && isVisible($0, in: window)
+            }
+            frames = currentFields.map { $0.convert($0.bounds, to: window) }.sorted { $0.minX < $1.minX }
+            let currentHostIDs = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
+                .filter { isVisible($0, in: window) }
+                .flatMap { descendants($0).compactMap { $0 as? CatalystHostingView } }
+                .map { ObjectIdentifier($0.controller) }
+            return frames.count == framesBeforeSettings.count
+                && zip(frames, framesBeforeSettings).allSatisfy { abs($0.minY - $1.minY) < 1 }
+                && currentHostIDs == hostIDs && paneSafeAreasMatchWindow()
+        }
         guard store.selectedMaterialItem?.id == materialID, store.activeNoteItemID == noteID else {
             throw Failure("picker changed the current material or note")
         }
@@ -939,7 +1086,10 @@ enum CatalystBusinessCheck {
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("contextual-pickers.png"))
-        return ["search_frames": frames.map { String(describing: $0) }, "top_difference": abs(frames[0].minY - frames[1].minY)]
+        return ["search_frames": frames.map { String(describing: $0) },
+                "search_frames_before_settings": framesBeforeSettings.map { String(describing: $0) },
+                "settings_preserved_pane_geometry": true,
+                "top_difference": abs(frames[0].minY - frames[1].minY)]
     }
 
     private static func verifySelectionChat(_ store: WorkspaceStore, material: StudyItem,
@@ -1689,10 +1839,20 @@ enum CatalystBusinessCheck {
         try await activate("connection-setup-enter-model")
         try await until("manual model field") { try await accessibilityElement("connection-setup-manual-model") != nil }
         try await enter("catalyst-local-check", in: "connection-setup-manual-model")
+        var committedProvider: String?
+        var committedType: String?
+        let credentialChanges = NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange).sink { notice in
+            committedProvider = notice.userInfo?["provider"] as? String
+            committedType = notice.userInfo?["type"] as? String
+        }
+        defer { credentialChanges.cancel() }
         try await activate("connection-setup-use-model")
         try await until("connection commits and returns to the question") {
             let setup = try await accessibilityElement("agent-connection-setup")
             return AgentProviderReadiness.isReadyToChat(for: store) && setup == nil
+        }
+        guard committedProvider == credentialID, committedType == AgentCredentialType.apiKey.rawValue else {
+            throw Failure("committed connection did not identify its credential change")
         }
         guard store.modelName == "catalyst-local-check", store.activeAgentProfileID == profileID,
               store.agentCredentialProfiles.count == profileCount,

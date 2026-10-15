@@ -38,11 +38,15 @@ struct ContentView: View {
                     UnifiedTopBarView(
                         isImmersiveLayout: isImmersiveLayout,
                         isFullScreen: windowIsFullScreen,
+                        contentTopInset: geometry.safeAreaInsets.top,
                         searchFocused: $topSearchFocused
                     )
 
                     if store.isCourseLibraryRootVolatile {
                         CourseLibraryVolatilityBanner()
+#if targetEnvironment(macCatalyst)
+                            .padding(.top, geometry.safeAreaInsets.top)
+#endif
                     }
 
                     ZStack(alignment: .top) {
@@ -116,6 +120,9 @@ struct ContentView: View {
                         CourseWorkspaceView()
                     }
                     .frame(width: geometry.size.width, height: geometry.size.height)
+#if targetEnvironment(macCatalyst)
+                    .padding(.top, geometry.safeAreaInsets.top)
+#endif
                     .transition(.opacity.combined(with: .scale(scale: 0.995, anchor: .top)))
                     .zIndex(100)
                 }
@@ -130,7 +137,7 @@ struct ContentView: View {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 #if targetEnvironment(macCatalyst)
-                        .padding(.top, 10)
+                        .padding(.top, geometry.safeAreaInsets.top + 10)
 #else
                         .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
 #endif
@@ -154,6 +161,10 @@ struct ContentView: View {
             .allowsHitTesting(!store.settingsPresented)
             .accessibilityHidden(store.settingsPresented)
 #if targetEnvironment(macCatalyst)
+            // The hit-testing container must share the panes' full-window bounds.
+            // Otherwise dismissing settings transiently moves hosted panes below
+            // the title bar and leaves their controllers with a stale safe area.
+            .ignoresSafeArea(.container, edges: .top)
             .background {
                 WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted,
                     receive: receiveTransferredFileDrop, receiveNative: receiveNativeFileDrop)
@@ -1300,6 +1311,7 @@ private struct UnifiedTopBarView: View {
     @Environment(\.weiBeiTextScale) private var textScale
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
+    let contentTopInset: CGFloat
     var searchFocused: FocusState<Bool>.Binding
     @State private var appeared = false
     @State private var readerSearchKeyboardFocusRequest = 0
@@ -1345,7 +1357,7 @@ private struct UnifiedTopBarView: View {
                 .overlay { shape.stroke(searchClusterStroke, lineWidth: 1) }
                 .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.36 : 0.16), radius: 16, y: 8)
                 .padding(.trailing, 12)
-                .padding(.top, 5)
+                .padding(.top, contentTopInset + 5)
             }
         }
         .zIndex(10)
@@ -1362,41 +1374,44 @@ private struct UnifiedTopBarView: View {
 #if targetEnvironment(macCatalyst)
     private var toolbarOverflowMenus: [UIMenu] {
         let navigation = [
-            toolbarAction(store.ui("课程栏", "Course sidebar"), selected: libraryDrawer.isOpen, action: store.toggleLibrary),
-            toolbarAction(store.ui("后退", "Back"), enabled: store.canNavigateBack) {
+            toolbarAction(store.ui("课程栏", "Course sidebar"), id: "library", selected: libraryDrawer.isOpen, action: store.toggleLibrary),
+            toolbarAction(store.ui("后退", "Back"), id: "back", enabled: store.canNavigateBack) {
                 withAnimation(WeiBeiMotion.layout) { store.navigateBackInWorkspace() }
             },
-            toolbarAction(store.ui("前进", "Forward"), enabled: store.canNavigateForward) {
+            toolbarAction(store.ui("前进", "Forward"), id: "forward", enabled: store.canNavigateForward) {
                 withAnimation(WeiBeiMotion.layout) { store.navigateForwardInWorkspace() }
             }
         ]
         let panes = [
-            toolbarAction(store.ui("文稿", "Document"), selected: store.isPaneToggleActive(.reader), action: store.toggleReader),
-            toolbarAction(store.ui("对话", "Chat"), selected: store.isPaneToggleActive(.agent), action: store.toggleAgent),
-            toolbarAction(store.ui("笔记", "Notes"), selected: store.isPaneToggleActive(.notes), action: store.toggleNotes)
+            toolbarAction(store.ui("文稿", "Document"), id: "reader", selected: store.isPaneToggleActive(.reader), action: store.toggleReader),
+            toolbarAction(store.ui("对话", "Chat"), id: "agent", selected: store.isPaneToggleActive(.agent), action: store.toggleAgent),
+            toolbarAction(store.ui("笔记", "Notes"), id: "notes", selected: store.isPaneToggleActive(.notes), action: store.toggleNotes)
         ]
         var actions: [UIAction] = []
         if updateService.showsToolbarControl {
             actions.append(toolbarAction(updateService.actionLabel(english: store.interfaceLanguage == .english),
-                enabled: !updateService.isBusy, action: updateService.installAvailableUpdate))
+                id: "update", enabled: !updateService.isBusy, action: updateService.installAvailableUpdate))
         }
         if shouldShowSearchAction {
             actions.append(toolbarAction(searchPrompt,
-                selected: paneState.showDocumentSearch, action: toggleReaderSearch))
+                id: "search", selected: paneState.showDocumentSearch, action: toggleReaderSearch))
         }
-        actions.append(toolbarAction(store.ui("切换深浅外观", "Toggle Light / Dark"), action: toggleAppearance))
+        actions.append(toolbarAction(store.ui("切换深浅外观", "Toggle Light / Dark"), id: "appearance", action: toggleAppearance))
         if store.lastPersistState == .failed {
-            actions.append(toolbarAction(store.ui("重试保存", "Retry save")) { _ = store.retryWorkspaceSave() })
+            actions.append(toolbarAction(store.ui("重试保存", "Retry save"), id: "retry-save") { _ = store.retryWorkspaceSave() })
         }
-        actions.append(toolbarAction(store.ui("打开设置", "Open Settings"), action: showSettings))
+        actions.append(toolbarAction(store.ui("打开设置", "Open Settings"), id: "settings", action: showSettings))
         return [UIMenu(title: store.ui("导航", "Navigation"), children: navigation),
                 UIMenu(title: store.ui("面板", "Panes"), children: panes),
                 UIMenu(title: store.ui("操作", "Actions"), children: actions)]
     }
 
-    private func toolbarAction(_ title: String, enabled: Bool = true, selected: Bool = false,
+    private func toolbarAction(_ title: String, id: String, enabled: Bool = true, selected: Bool = false,
                                action: @escaping () -> Void) -> UIAction {
-        UIAction(title: title, attributes: enabled && !store.settingsPresented ? [] : [.disabled], state: selected ? .on : .off) { _ in action() }
+        UIAction(title: title, attributes: enabled && !store.settingsPresented ? [] : [.disabled], state: selected ? .on : .off) { _ in
+            WeiBeiLog.workspace.notice("code=toolbar_action control=\(id, privacy: .public) source=overflow")
+            action()
+        }
     }
 
     private func toolbarContent<Content: View>(_ content: Content) -> AnyView {
@@ -1649,7 +1664,8 @@ private struct UnifiedTopBarView: View {
             // preference. Command palette stays reachable on ⌘K.
             topIconButton(
                 store.appearanceMode.isDark ? "sun.max" : "moon.stars",
-                help: store.ui("切换深浅外观", "Toggle Light / Dark")
+                help: store.ui("切换深浅外观", "Toggle Light / Dark"),
+                actionID: "appearance"
             ) {
                 toggleAppearance()
             }
@@ -1658,7 +1674,7 @@ private struct UnifiedTopBarView: View {
             WorkspacePersistStatusDot()
 
             // Settings stay inside the current workspace in every window mode.
-            topIconButton("gearshape", help: store.ui("打开设置", "Open Settings")) {
+            topIconButton("gearshape", help: store.ui("打开设置", "Open Settings"), actionID: "settings") {
                 showSettings()
             }
 
@@ -1808,7 +1824,7 @@ private struct UnifiedTopBarView: View {
     @ViewBuilder
     private var navigationButtons: some View {
         HStack(spacing: 3) {
-            topIconButton("arrow.left", help: store.ui("后退", "Back")) {
+            topIconButton("arrow.left", help: store.ui("后退", "Back"), actionID: "back") {
                 withAnimation(WeiBeiMotion.layout) {
                     store.navigateBackInWorkspace()
                 }
@@ -1816,7 +1832,7 @@ private struct UnifiedTopBarView: View {
             .weiBeiKeyboardShortcut(store.executableChord(for: .navigateBack))
             .disabled(!store.canNavigateBack)
 
-            topIconButton("arrow.right", help: store.ui("前进", "Forward")) {
+            topIconButton("arrow.right", help: store.ui("前进", "Forward"), actionID: "forward") {
                 withAnimation(WeiBeiMotion.layout) {
                     store.navigateForwardInWorkspace()
                 }
@@ -1867,7 +1883,8 @@ private struct UnifiedTopBarView: View {
         topIconButton(
             "sidebar.left",
             help: libraryDrawer.isOpen ? store.ui("收起课程栏", "Hide course sidebar") : store.ui("打开课程栏", "Show course sidebar"),
-            active: libraryDrawer.isOpen
+            active: libraryDrawer.isOpen,
+            actionID: "library"
         ) {
             store.toggleLibrary()
         }
@@ -1875,7 +1892,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var searchButton: some View {
-        topIconButton("magnifyingglass", help: searchPrompt, active: paneState.showDocumentSearch) {
+        topIconButton("magnifyingglass", help: searchPrompt, active: paneState.showDocumentSearch, actionID: "search") {
             toggleReaderSearch()
         }
     }
@@ -1890,15 +1907,10 @@ private struct UnifiedTopBarView: View {
         }
     }
 
-    private func topIconButton(_ systemName: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .frame(width: 24 * textScale, height: 24 * textScale)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(WeiBeiIconButtonStyle(active: active, size: 24))
-        .accessibilityLabel(Text(help))
-        .help(help)
+    private func topIconButton(_ systemName: String, help: String, active: Bool = false, actionID: String? = nil,
+                               action: @escaping () -> Void) -> some View {
+        WeiBeiTopBarButton(id: actionID ?? systemName, systemImage: systemName, help: help,
+                          isSelected: active, action: action)
     }
 }
 
