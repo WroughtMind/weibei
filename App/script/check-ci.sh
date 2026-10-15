@@ -30,6 +30,7 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/floating-rich-diagnostic.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/"onboarding-*.png \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/onboarding-ui-response.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
     [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
   done
@@ -86,7 +87,20 @@ for filename in ['latest.json', 'window.png', 'diagram.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-conversation-' + filename))
 
 business_path = support / 'Workspace/business-check.json'
-launch('--exit-after-check')
+# Xcode's UI testing service drives real SwiftUI controls from another process.
+# The App keeps the file, credential and recovery assertions in the same checks.
+ui_log = evidence / 'ci-onboarding-ui.log'
+with ui_log.open('w') as log:
+    ui_result = subprocess.run([
+        'xcodebuild', '-project', 'App/UITests/WeiBeiOnboardingUI.xcodeproj', '-scheme', 'WeiBeiOnboardingUITests',
+        '-destination', 'platform=macOS,arch=' + os.environ['WEIBEI_TARGET_ARCH'],
+        '-derivedDataPath', '.build/onboarding-ui-' + os.environ['WEIBEI_TARGET_ARCH'],
+        '-parallel-testing-enabled', 'NO',
+        'WEIBEI_CHECK_APP_PATH=' + app, 'WEIBEI_CHECK_SUPPORT_PATH=' + str(support), 'test',
+    ], stdout=log, stderr=subprocess.STDOUT)
+if ui_result.returncode:
+    print(ui_log.read_text()[-16000:])
+ui_result.check_returncode()
 verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')

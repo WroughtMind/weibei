@@ -25,9 +25,6 @@ import Foundation
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool
     @MainActor func fullScreenWindowStateForCheck() -> [String: Bool]
     @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]]
-    @MainActor func onboardingControlsForCheck() -> [[String: String]]
-    @MainActor func activateOnboardingControlForCheck(_ id: String) -> Bool
-    @MainActor func setOnboardingControlForCheck(_ id: String, value: String) -> Bool
 #endif
     @MainActor func presentOpenPanel(
         title: String,
