@@ -888,6 +888,7 @@ enum CatalystBusinessCheck {
                 }
             ]
             result["failure_native_windows"] = CatalystDesktopWindow.shared.fullScreenWindowDiagnosticsForCheck()
+            result["onboarding_controls"] = CatalystDesktopWindow.shared.onboardingControlsForCheck()
             if let controller = conversation() {
                 let collection = controller.collection
                 result["conversation_state"] = [
@@ -1583,19 +1584,19 @@ enum CatalystBusinessCheck {
         UserDefaults.standard.set(false, forKey: "weibei.libraryPlacementConfirmed")
         store.bootstrapDefaultLibraryIfNeeded()
         try await until("failed library creation shown on the launch screen") {
-            accessibilityElement("library-placement-retry", in: window) != nil
-                && accessibilityElement("library-placement-choose", in: window) != nil
+            accessibilityElement("library-placement-retry") != nil
+                && accessibilityElement("library-placement-choose") != nil
         }
         guard store.needsInitialLibrarySetup, store.importantOperationNotice == .defaultLibraryBootstrapFailed,
-              accessibilityElement("library-placement-confirm", in: window) == nil else {
+              accessibilityElement("library-placement-confirm") == nil else {
             throw Failure("failed library was presented as ready")
         }
         try onboardingSnapshot("onboarding-library-failure", window: window)
-        try await activate("library-placement-retry", in: window)
+        try await activate("library-placement-retry")
         guard store.needsInitialLibrarySetup, store.importantOperationNotice == .defaultLibraryBootstrapFailed,
               try Data(contentsOf: blocked) == original else { throw Failure("failed retry discarded the library error or file") }
-        try await activate("library-placement-choose", in: window)
-        try await until("library location picker") { WorkspaceFileDialog.presenter is WorkspaceFileDialog.Picker }
+        try await activate("library-placement-choose")
+        try await until("library location picker") { (WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker).map { $0.view.window != nil && !$0.isBeingPresented } == true }
         guard let cancelled = WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker else { throw Failure("picker disappeared") }
         cancelled.documentPickerWasCancelled(cancelled)
         try await until("cancelled library picker releases busy state") { !store.libraryLocationBusy }
@@ -1606,15 +1607,15 @@ enum CatalystBusinessCheck {
         try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true)
         let retained = selected.appendingPathComponent("keep.txt")
         try original.write(to: retained)
-        try await activate("library-placement-choose", in: window)
-        try await until("library location picker reopens") { WorkspaceFileDialog.presenter is WorkspaceFileDialog.Picker }
+        try await activate("library-placement-choose")
+        try await until("library location picker reopens") { (WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker).map { $0.view.window != nil && !$0.isBeingPresented } == true }
         guard let picker = WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker else { throw Failure("picker disappeared") }
         picker.documentPicker(picker, didPickDocumentsAt: [selected])
         let expected = selected.appendingPathComponent(CourseLibraryLayout.defaultFolderName).standardizedFileURL
         try await until("chosen library saved and recovery notice dismissed") {
             store.courseLibraryRootURL?.standardizedFileURL == expected && !store.libraryLocationBusy
                 && store.importantOperationNotice == nil && store.importantOperationError == nil
-                && accessibilityElement("library-placement-notice", in: window) == nil
+                && accessibilityElement("library-placement-notice") == nil
         }
         guard try Data(contentsOf: blocked) == original, try Data(contentsOf: retained) == original,
               FileManager.default.fileExists(atPath: expected.appendingPathComponent(CourseLibraryLayout.commonNotesDirectoryName).path),
@@ -1633,7 +1634,7 @@ enum CatalystBusinessCheck {
         let credentials = try NativeAgentCredentialStore.defaultStore()
         guard try credentials.load()[credentialID] == nil else { throw Failure("first-chat fixture already has credentials") }
         try await until("unconnected chat and original composer") {
-            accessibilityElement("agent-connect-inline", in: window) != nil
+            accessibilityElement("agent-connect-inline") != nil
                 && descendants(window).contains { $0 is AgentComposerTextEditor.ComposerTextView }
         }
         let composer = descendants(window).compactMap { $0 as? AgentComposerTextEditor.ComposerTextView }.first!
@@ -1641,56 +1642,56 @@ enum CatalystBusinessCheck {
         composer.text = draft
         composer.delegate?.textViewDidChange?(composer)
         try await until("onboarding question draft published") { store.pendingComposerDraft == draft }
-        try await activate("agent-connect-inline", in: window)
-        try await until("inline credentials form opens") { accessibilityElement("connection-setup-connect", in: window) != nil }
+        try await activate("agent-connect-inline")
+        try await until("inline credentials form opens") { accessibilityElement("connection-setup-connect") != nil }
         guard !store.settingsPresented else { throw Failure("first chat redirected to settings") }
         try onboardingSnapshot("onboarding-chat-credentials", window: window)
-        try await activate("connection-setup-close", in: window)
-        try await until("inline connection closes") { accessibilityElement("agent-connect-inline", in: window) != nil }
+        try await activate("connection-setup-close")
+        try await until("inline connection closes") { accessibilityElement("agent-connect-inline") != nil }
         guard descendants(window).compactMap({ $0 as? AgentComposerTextEditor.ComposerTextView }).first?.text == draft,
               store.pendingComposerDraft == draft,
               try credentials.load()[credentialID] == nil, store.activeAgentProfileID == profileID else {
             throw Failure("closing setup changed the question or connection")
         }
-        try await activate("agent-connect-inline", in: window)
-        try await until("credentials form reopens") { accessibilityElement("connection-setup-key", in: window) != nil }
-        try enter("rejected-test-key", in: "connection-setup-key", window: window)
-        try await activate("connection-setup-connect", in: window)
-        try await until("authentication failure remains in chat") { accessibilityElement("connection-setup-model-message", in: window) != nil }
+        try await activate("agent-connect-inline")
+        try await until("credentials form reopens") { accessibilityElement("connection-setup-key") != nil }
+        try enter("rejected-test-key", in: "connection-setup-key")
+        try await activate("connection-setup-connect")
+        try await until("authentication failure remains in chat") { accessibilityElement("connection-setup-model-message") != nil }
         // This is the error contract: a 401 must tell the user to correct the
         // credentials, rather than reporting an empty catalog or network failure.
-        guard accessibilityElement("connection-setup-model-message", in: window)?.accessibilityLabel?
+        guard accessibilityElement("connection-setup-model-message")?["label"]?
                 .contains(store.ui("未接受这组凭据", "did not accept these credentials")) == true,
               try credentials.load()[credentialID] == nil,
               store.agentCredentialProfiles.count == profileCount else { throw Failure("rejected credentials were committed") }
         try onboardingSnapshot("onboarding-chat-rejected", window: window)
-        try await activate("connection-setup-change", in: window)
-        try await until("failed credentials remain editable") { accessibilityElement("connection-setup-key", in: window) != nil }
-        guard try textField("connection-setup-key", in: window).text == "rejected-test-key",
-              try textField("connection-setup-endpoint", in: window).text == endpoint else {
+        try await activate("connection-setup-change")
+        try await until("failed credentials remain editable") { accessibilityElement("connection-setup-key") != nil }
+        guard descendants(window).compactMap({ $0 as? UITextField }).contains(where: { $0.isSecureTextEntry && $0.text == "rejected-test-key" }),
+              descendants(window).compactMap({ $0 as? UITextField }).contains(where: { !$0.isSecureTextEntry && $0.text == endpoint }) else {
             throw Failure("retry discarded entered credentials or endpoint")
         }
-        try enter("catalyst-test-only", in: "connection-setup-key", window: window)
-        try await activate("connection-setup-connect", in: window)
-        try await until("authenticated model list appears inline") { accessibilityElement("connection-setup-model", in: window) != nil }
+        try enter("catalyst-test-only", in: "connection-setup-key")
+        try await activate("connection-setup-connect")
+        try await until("authenticated model list appears inline") { accessibilityElement("connection-setup-model") != nil }
         try onboardingSnapshot("onboarding-chat-models", window: window)
-        try await activate("connection-setup-close", in: window)
-        try await until("cancelling model selection closes setup") { accessibilityElement("agent-connect-inline", in: window) != nil }
+        try await activate("connection-setup-close")
+        try await until("cancelling model selection closes setup") { accessibilityElement("agent-connect-inline") != nil }
         guard try credentials.load()[credentialID] == nil, store.agentCredentialProfiles.count == profileCount else {
             throw Failure("cancelling model choice saved a partial connection")
         }
-        try await activate("agent-connect-inline", in: window)
-        try await until("credentials form opens again") { accessibilityElement("connection-setup-key", in: window) != nil }
-        try enter("catalyst-test-only", in: "connection-setup-key", window: window)
-        try await activate("connection-setup-connect", in: window)
-        try await until("model list reloads") { accessibilityElement("connection-setup-model", in: window) != nil }
-        try await activate("connection-setup-enter-model", in: window)
-        try await until("manual model field") { accessibilityElement("connection-setup-manual-model", in: window) != nil }
-        try enter("catalyst-local-check", in: "connection-setup-manual-model", window: window)
-        try await activate("connection-setup-use-model", in: window)
+        try await activate("agent-connect-inline")
+        try await until("credentials form opens again") { accessibilityElement("connection-setup-key") != nil }
+        try enter("catalyst-test-only", in: "connection-setup-key")
+        try await activate("connection-setup-connect")
+        try await until("model list reloads") { accessibilityElement("connection-setup-model") != nil }
+        try await activate("connection-setup-enter-model")
+        try await until("manual model field") { accessibilityElement("connection-setup-manual-model") != nil }
+        try enter("catalyst-local-check", in: "connection-setup-manual-model")
+        try await activate("connection-setup-use-model")
         try await until("connection commits and returns to the question") {
             AgentProviderReadiness.isReadyToChat(for: store)
-                && accessibilityElement("agent-connection-setup", in: window) == nil
+                && accessibilityElement("agent-connection-setup") == nil
         }
         guard store.modelName == "catalyst-local-check", store.activeAgentProfileID == profileID,
               store.agentCredentialProfiles.count == profileCount,
@@ -1702,48 +1703,23 @@ enum CatalystBusinessCheck {
         try onboardingSnapshot("onboarding-chat-ready", window: window)
     }
 
-    private static func accessibilityElement(_ id: String, in root: NSObject) -> NSObject? {
-        var visited = Set<ObjectIdentifier>()
-        func find(_ object: NSObject) -> NSObject? {
-            guard visited.insert(ObjectIdentifier(object)).inserted else { return nil }
-            if (object as? UIAccessibilityIdentification)?.accessibilityIdentifier == id { return object }
-            let count = object.accessibilityElementCount()
-            if count != NSNotFound && count > 0 {
-                for index in 0..<count {
-                    if let child = object.accessibilityElement(at: index) as? NSObject, let match = find(child) { return match }
-                }
-            }
-            for child in (object as? UIView)?.subviews ?? [] {
-                if let match = find(child) { return match }
-            }
-            return nil
-        }
-        return find(root)
+    private static func accessibilityElement(_ id: String) -> [String: String]? {
+        CatalystDesktopWindow.shared.onboardingControlsForCheck().first { $0["id"] == id }
     }
 
-    private static func activate(_ id: String, in window: UIWindow) async throws {
+    private static func activate(_ id: String) async throws {
         try await until("enabled control: " + id) {
-            guard let element = accessibilityElement(id, in: window) else { return false }
-            return !element.accessibilityTraits.contains(.notEnabled)
+            accessibilityElement(id)?["enabled"] == "true"
         }
-        guard let element = accessibilityElement(id, in: window), !element.accessibilityTraits.contains(.notEnabled),
-              element.accessibilityActivate() else { throw Failure("cannot activate mounted control: " + id) }
+        guard CatalystDesktopWindow.shared.activateOnboardingControlForCheck(id) else {
+            throw Failure("cannot activate mounted control: " + id)
+        }
     }
 
-    private static func textField(_ id: String, in window: UIWindow) throws -> UITextField {
-        guard let element = accessibilityElement(id, in: window) else { throw Failure("field missing: " + id) }
-        if let field = element as? UITextField { return field }
-        let fields = descendants(window).compactMap { $0 as? UITextField }.filter {
-            isVisible($0, in: window) && $0.accessibilityFrame.intersects(element.accessibilityFrame)
+    private static func enter(_ value: String, in id: String) throws {
+        guard CatalystDesktopWindow.shared.setOnboardingControlForCheck(id, value: value) else {
+            throw Failure("cannot edit mounted control: " + id)
         }
-        guard fields.count == 1, let field = fields.first else { throw Failure("mounted text field not found: " + id) }
-        return field
-    }
-
-    private static func enter(_ value: String, in id: String, window: UIWindow) throws {
-        let field = try textField(id, in: window)
-        field.text = value
-        field.sendActions(for: .editingChanged)
     }
 
     private static func onboardingSnapshot(_ name: String, window: UIWindow) throws {

@@ -103,6 +103,50 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
     }
 #if WEIBEI_ACCEPTANCE_CHECKS
+    // Catalyst's SwiftUI controls are exposed to the Mac accessibility tree,
+    // not necessarily to UIView.accessibilityElementCount(). Use the same
+    // public actions assistive technology uses on the actual mounted controls.
+    @MainActor private func onboardingElementsForCheck() -> [any NSAccessibilityProtocol] {
+        var visited = Set<ObjectIdentifier>()
+        var elements: [any NSAccessibilityProtocol] = []
+        func visit(_ object: AnyObject) {
+            guard visited.insert(ObjectIdentifier(object)).inserted,
+                  let element = object as? any NSAccessibilityProtocol,
+                  !element.isAccessibilityHidden() else { return }
+            elements.append(element)
+            for child in element.accessibilityChildren() ?? [] { visit(child as AnyObject) }
+        }
+        for window in NSApp.windows where window.isVisible { visit(window) }
+        return elements
+    }
+
+    @MainActor func onboardingControlsForCheck() -> [[String: String]] {
+        onboardingElementsForCheck().map { element in
+            let role = element.accessibilityRole()
+            // Static text exposes its displayed content as AXValue on macOS.
+            // Never record text-field values (in particular credential fields).
+            let text = role == .staticText ? element.accessibilityValue() as? String : nil
+            return ["id": element.accessibilityIdentifier() ?? "",
+             "label": text ?? element.accessibilityLabel() ?? "",
+             "role": role?.rawValue ?? "",
+             "enabled": String(element.isAccessibilityEnabled()),
+             "frame": NSStringFromRect(element.accessibilityFrame())]
+        }
+    }
+
+    @MainActor func activateOnboardingControlForCheck(_ id: String) -> Bool {
+        guard let element = onboardingElementsForCheck().first(where: { $0.accessibilityIdentifier() == id }),
+              element.isAccessibilityEnabled() else { return false }
+        return element.accessibilityPerformPress()
+    }
+
+    @MainActor func setOnboardingControlForCheck(_ id: String, value: String) -> Bool {
+        guard let element = onboardingElementsForCheck().first(where: { $0.accessibilityIdentifier() == id }),
+              element.isAccessibilityEnabled() else { return false }
+        element.setAccessibilityValue(value)
+        return true
+    }
+
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool {
         guard let window = checkedFullScreenWorkspace
             ?? NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }) else { return false }
