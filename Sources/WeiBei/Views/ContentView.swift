@@ -38,11 +38,15 @@ struct ContentView: View {
                     UnifiedTopBarView(
                         isImmersiveLayout: isImmersiveLayout,
                         isFullScreen: windowIsFullScreen,
+                        contentTopInset: geometry.safeAreaInsets.top,
                         searchFocused: $topSearchFocused
                     )
 
                     if store.isCourseLibraryRootVolatile {
                         CourseLibraryVolatilityBanner()
+#if targetEnvironment(macCatalyst)
+                            .padding(.top, geometry.safeAreaInsets.top)
+#endif
                     }
 
                     ZStack(alignment: .top) {
@@ -116,6 +120,9 @@ struct ContentView: View {
                         CourseWorkspaceView()
                     }
                     .frame(width: geometry.size.width, height: geometry.size.height)
+#if targetEnvironment(macCatalyst)
+                    .padding(.top, geometry.safeAreaInsets.top)
+#endif
                     .transition(.opacity.combined(with: .scale(scale: 0.995, anchor: .top)))
                     .zIndex(100)
                 }
@@ -130,7 +137,7 @@ struct ContentView: View {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 #if targetEnvironment(macCatalyst)
-                        .padding(.top, 10)
+                        .padding(.top, geometry.safeAreaInsets.top + 10)
 #else
                         .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
 #endif
@@ -154,6 +161,10 @@ struct ContentView: View {
             .allowsHitTesting(!store.settingsPresented)
             .accessibilityHidden(store.settingsPresented)
 #if targetEnvironment(macCatalyst)
+            // The hit-testing container must share the panes' full-window bounds.
+            // Otherwise dismissing settings transiently moves hosted panes below
+            // the title bar and leaves their controllers with a stale safe area.
+            .ignoresSafeArea(.container, edges: .top)
             .background {
                 WorkspaceFileDropBridge(isTargeted: $isFileDropTargeted,
                     receive: receiveTransferredFileDrop, receiveNative: receiveNativeFileDrop)
@@ -1291,6 +1302,7 @@ private struct UnifiedTopBarView: View {
     @Environment(\.weiBeiTextScale) private var textScale
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
+    let contentTopInset: CGFloat
     var searchFocused: FocusState<Bool>.Binding
     @State private var appeared = false
     @State private var readerSearchKeyboardFocusRequest = 0
@@ -1336,7 +1348,7 @@ private struct UnifiedTopBarView: View {
                 .overlay { shape.stroke(searchClusterStroke, lineWidth: 1) }
                 .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.36 : 0.16), radius: 16, y: 8)
                 .padding(.trailing, 12)
-                .padding(.top, 5)
+                .padding(.top, contentTopInset + 5)
             }
         }
         .zIndex(10)

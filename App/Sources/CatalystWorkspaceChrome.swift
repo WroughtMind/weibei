@@ -135,6 +135,9 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             // transparent icon gaps, without adding visible toolbar chrome.
             let pointerSurface = UIColor(white: 0, alpha: 1.0 / 255)
             backgroundColor = pointerSurface
+            // AppKit already positions this item inside the native toolbar.
+            // Inheriting its container's safe area moves the icons outside the hit region.
+            controller.safeAreaRegions = []
             controller.sizingOptions = .intrinsicContentSize
             controller.view.backgroundColor = pointerSurface
             controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]

@@ -1042,6 +1042,42 @@ enum CatalystBusinessCheck {
             return frames.count == 2 && abs(frames[0].minY - frames[1].minY) < 1
                 && frames.allSatisfy { $0.width <= 320 && $0.height <= 30 && $0.minY >= window.safeAreaInsets.top }
         }
+        let framesBeforeSettings = frames
+        let paneHosts = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
+            .filter { isVisible($0, in: window) }
+        let hostingControllers = paneHosts.flatMap { descendants($0).compactMap { $0 as? CatalystHostingView } }
+        let hostIDs = hostingControllers.map { ObjectIdentifier($0.controller) }
+        func paneSafeAreasMatchWindow() -> Bool {
+            !hostingControllers.isEmpty && hostingControllers.allSatisfy { host in
+                let frame = host.convert(host.bounds, to: window)
+                let expectedTop = max(0, window.safeAreaInsets.top - frame.minY)
+                return abs(host.controller.view.safeAreaInsets.top - expectedTop) < 1
+            }
+        }
+        guard paneSafeAreasMatchWindow() else {
+            throw Failure("picker pane lost the native title-bar safe area before opening settings")
+        }
+        store.settingsPresented = true
+        defer { store.settingsPresented = false }
+        try await until("settings mounted over the pickers") {
+            descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
+        }
+        store.settingsPresented = false
+        try await until("settings closes without moving the picker content") {
+            guard !descendants(window).contains(where: { $0.accessibilityIdentifier == "settings-panel-viewport" }) else { return false }
+            let currentFields = descendants(window).compactMap { $0 as? UITextField }.filter {
+                $0.accessibilityLabel == store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags")
+                    && isVisible($0, in: window)
+            }
+            frames = currentFields.map { $0.convert($0.bounds, to: window) }.sorted { $0.minX < $1.minX }
+            let currentHostIDs = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
+                .filter { isVisible($0, in: window) }
+                .flatMap { descendants($0).compactMap { $0 as? CatalystHostingView } }
+                .map { ObjectIdentifier($0.controller) }
+            return frames.count == framesBeforeSettings.count
+                && zip(frames, framesBeforeSettings).allSatisfy { abs($0.minY - $1.minY) < 1 }
+                && currentHostIDs == hostIDs && paneSafeAreasMatchWindow()
+        }
         guard store.selectedMaterialItem?.id == materialID, store.activeNoteItemID == noteID else {
             throw Failure("picker changed the current material or note")
         }
@@ -1049,7 +1085,10 @@ enum CatalystBusinessCheck {
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("contextual-pickers.png"))
-        return ["search_frames": frames.map { String(describing: $0) }, "top_difference": abs(frames[0].minY - frames[1].minY)]
+        return ["search_frames": frames.map { String(describing: $0) },
+                "search_frames_before_settings": framesBeforeSettings.map { String(describing: $0) },
+                "settings_preserved_pane_geometry": true,
+                "top_difference": abs(frames[0].minY - frames[1].minY)]
     }
 
     private static func verifySelectionChat(_ store: WorkspaceStore, material: StudyItem,
