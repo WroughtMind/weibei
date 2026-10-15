@@ -39,7 +39,8 @@ extension WorkspaceStore {
             : .externallyModified
     }
 
-    func acceptNoteEditorSnapshot(_ snapshot: NoteEditorSnapshotReadyEvent) {
+    @discardableResult
+    func acceptNoteEditorSnapshot(_ snapshot: NoteEditorSnapshotReadyEvent) -> Task<Void, Never> {
         let digest = Self.noteContentDigest(Data(snapshot.markdown.utf8))
         let baseDigest = noteEditorRecoveryConflictsByItemID[snapshot.documentID]?.checkpoint.metadata.baseFileDigest
             ?? latestNoteEditorSnapshot.flatMap {
@@ -52,6 +53,10 @@ extension WorkspaceStore {
             snapshot.revision
         )
         if let conflict = noteEditorRecoveryConflictsByItemID[snapshot.documentID] {
+            // Conflict snapshots are still user edits. Keep the workspace draft
+            // aligned with the newer recovery checkpoint without writing over disk.
+            setNoteDraft(snapshot.markdown, for: snapshot.documentID)
+            save()
             noteEditorRecoveryConflictsByItemID[snapshot.documentID] = NoteEditorRecoveryConflict(
                 diskMarkdown: conflict.diskMarkdown,
                 checkpoint: NoteRecoveryCheckpoint(
@@ -67,8 +72,16 @@ extension WorkspaceStore {
                 )
             )
         }
-        Task { @MainActor [weak self] in
+        let recoveryRequestID = UUID()
+        noteEditorRecoveryRequestIDs[snapshot.documentID] = recoveryRequestID
+        let recoveryTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if noteEditorRecoveryRequestIDs[snapshot.documentID] == recoveryRequestID {
+                    noteEditorRecoveryRequestIDs.removeValue(forKey: snapshot.documentID)
+                }
+            }
+            guard noteEditorRecoveryRequestIDs[snapshot.documentID] == recoveryRequestID else { return }
             do {
                 let checkpoint = try await noteRecoveryStore.store(
                     documentID: snapshot.documentID,
@@ -76,6 +89,7 @@ extension WorkspaceStore {
                     revision: snapshot.revision,
                     markdown: snapshot.markdown
                 )
+                guard noteEditorRecoveryRequestIDs[snapshot.documentID] == recoveryRequestID else { return }
                 if let current = noteEditorRecoveryConflictsByItemID[snapshot.documentID],
                    current.checkpoint.metadata.revision == snapshot.revision,
                    current.checkpoint.metadata.checkpointDigest == digest {
@@ -86,6 +100,9 @@ extension WorkspaceStore {
                     )
                 }
             } catch {
+                // Ownership is per document, even after the editor switches to
+                // another note. An old recovery result cannot replace a new one.
+                guard noteEditorRecoveryRequestIDs[snapshot.documentID] == recoveryRequestID else { return }
                 if let url = item(withID: snapshot.documentID)?.url,
                    Self.noteContentDigest(at: url) == digest { return }
                 noteEditingSession.markSaveFailed(documentID: snapshot.documentID)
@@ -102,17 +119,45 @@ extension WorkspaceStore {
                 showImportantOperationError(message)
             }
         }
-        if noteEditorRecoveryConflictsByItemID[snapshot.documentID] != nil
-            || noteEditorConflictProbeDocumentID == snapshot.documentID { return }
-        if snapshot.documentID.hasPrefix("draft:") {
-            updateNote(snapshot.markdown)
-        } else {
-            updateNote(snapshot.markdown, for: snapshot.documentID)
-            flushPendingNotePersistence(for: snapshot.documentID)
+        let shouldPersistNote = noteEditorRecoveryConflictsByItemID[snapshot.documentID] == nil
+            && noteEditorConflictProbeDocumentID != snapshot.documentID
+        if shouldPersistNote {
+            if snapshot.documentID.hasPrefix("draft:") {
+                updateNote(snapshot.markdown)
+            } else {
+                // Retain the accepted text before yielding, including when the
+                // editor switches documents before the async write starts.
+                updateNote(snapshot.markdown, for: snapshot.documentID)
+            }
+        }
+        let persistenceTask = Task { @MainActor [weak self] in
+            guard let self else { await recoveryTask.value; return }
+            defer {
+                if noteEditorSnapshotPersistenceTasks[snapshot.documentID]?.id == recoveryRequestID {
+                    noteEditorSnapshotPersistenceTasks.removeValue(forKey: snapshot.documentID)
+                }
+            }
+            if shouldPersistNote, !snapshot.documentID.hasPrefix("draft:") {
+                await flushPendingNotePersistenceAsync(for: snapshot.documentID)
+            }
+            // Recovery writes run independently, so a slow workspace receipt
+            // cannot postpone the checkpoint. Lifecycle callers await both.
+            await recoveryTask.value
+        }
+        noteEditorSnapshotPersistenceTasks[snapshot.documentID] = (recoveryRequestID, persistenceTask)
+        return persistenceTask
+    }
+
+    func waitForNoteEditorSnapshotPersistence(documentID: String) async {
+        // Another accepted snapshot can replace this task while we await it.
+        // Wait for that newer receipt too, rather than returning after an old save.
+        while let pending = noteEditorSnapshotPersistenceTasks[documentID] {
+            await pending.task.value
         }
     }
 
     func freshActiveNoteEditorSnapshot() async -> Bool {
+        let documentID = noteEditingSession.documentID
         if noteEditingSession.dirty {
             do {
                 _ = try await noteEditingSession.snapshot()
@@ -120,6 +165,7 @@ extension WorkspaceStore {
                 return false
             }
         }
+        await waitForNoteEditorSnapshotPersistence(documentID: documentID)
         return await waitForBlankNoteMaterialization()
     }
 
@@ -289,12 +335,20 @@ extension WorkspaceStore {
                 checkpoint.metadata.baseFileDigest,
                 checkpoint.metadata.revision
             )
-            noteEditingSession.replaceDocument(
+            let generation = noteEditingSession.replaceDocument(
                 with: documentID,
                 initialRevision: checkpoint.metadata.revision
             )
             restoreNoteEditorCheckpoint(checkpoint)
-            flushPendingNotePersistence(for: documentID)
+            await flushPendingNotePersistenceAsync(for: documentID)
+            guard activeNoteEditorDocumentID == documentID,
+                  noteEditingSession.documentID == documentID,
+                  noteEditingSession.documentGeneration == generation,
+                  noteEditingSession.currentRevision == checkpoint.metadata.revision,
+                  latestNoteEditorSnapshot?.documentID == documentID,
+                  latestNoteEditorSnapshot?.revision == checkpoint.metadata.revision,
+                  latestNoteEditorSnapshot?.digest == checkpoint.metadata.checkpointDigest,
+                  noteText == checkpoint.markdown else { return }
             noteEditorCommand = NoteEditorCommand(
                 kind: .reloadDocument,
                 markdown: checkpoint.markdown

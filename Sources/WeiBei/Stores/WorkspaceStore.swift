@@ -333,6 +333,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var noteEditorRecoveryConflictsByItemID: [String: NoteEditorRecoveryConflict] = [:]
     var noteEditorConflictProbeDocumentID: String?
     var latestNoteEditorSnapshot: (documentID: String, digest: String, baseDigest: String, revision: UInt64)?
+    var noteEditorRecoveryRequestIDs: [String: UUID] = [:]
+    var noteEditorSnapshotPersistenceTasks: [String: (id: UUID, task: Task<Void, Never>)] = [:]
     let noteRecoveryStore = NoteRecoveryStore()
     lazy var noteEditingSession = NoteEditingSession(
         documentID: "",
@@ -3037,7 +3039,7 @@ final class WorkspaceStore: ObservableObject {
         // Never flushPendingNotePersistence() here: the default overload also
         // calls flushPendingWorkspaceSave(), which RunLoop-spins on MainActor
         // and surfaces the 60s "文件操作超过 60 秒未完成" banner.
-        flushPendingNotePersistence(flushWorkspace: false)
+        await flushPendingNotePersistenceAsync(flushWorkspace: false)
         if case .courseOwned = target.storage {
             while let task = courseNoteWriteTasksByItemID[target.id] {
                 await task.value
@@ -11559,7 +11561,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func refreshCourseOwnedNoteMetadataAfterWrite(
+    func refreshCourseOwnedNoteMetadataAfterWrite(
         itemID: String,
         markdown: String,
         url: URL

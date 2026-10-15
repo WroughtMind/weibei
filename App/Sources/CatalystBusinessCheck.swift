@@ -715,7 +715,7 @@ enum CatalystBusinessCheck {
             store.noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "\n\n" + noteMarker)
             try await until("editor command acknowledged") { store.noteEditorCommand == nil && store.noteText.contains(noteMarker) }
             let captured = await store.freshActiveNoteEditorSnapshot()
-            store.flushPendingNotePersistence(flushWorkspace: false)
+            await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             try check("original_editor_snapshot_and_note_write_gate", captured && (try String(contentsOf: persistedNote, encoding: .utf8)).contains(noteMarker))
 
             let pdfURL = inputs.appendingPathComponent("bounded-worker.pdf")
@@ -891,7 +891,7 @@ enum CatalystBusinessCheck {
             store.applyLastAgentAnswerToNote()
             try await until("original answer saved into note") { store.noteEditorCommand == nil && store.noteText.contains(finalMarker) }
             _ = await store.freshActiveNoteEditorSnapshot()
-            store.flushPendingNotePersistence(flushWorkspace: false)
+            await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             try check("original_answer_to_note", (try String(contentsOf: persistedNote, encoding: .utf8)).contains(finalMarker))
 
             result["floating_rich_answer"] = try await verifySelectionChat(store, material: material, mainComposer: composer, mainConversation: controller)

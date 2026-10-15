@@ -24,6 +24,14 @@ enum NoteWriteGateError: LocalizedError {
     }
 }
 
+private enum NoteMarkdownWriteOutcome {
+    case written
+    case heldForConflict
+    case unavailable
+    case externalChange
+    case failed(Error, backupFailed: Bool)
+}
+
 @MainActor
 extension WorkspaceStore {
     func quotedReferenceBlock(text: String, sourceTitle: String) -> String {
@@ -130,8 +138,8 @@ extension WorkspaceStore {
             return
         }
 
-        flushPendingNotePersistence(for: itemID)
-        persistCurrentNote()
+        await flushPendingNotePersistenceAsync(for: itemID)
+        await persistCurrentNoteAsync()
         guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
         let resolution = resolveTrackedImportedFile(at: index)
         guard let oldURL = resolution.url else {
@@ -559,6 +567,15 @@ extension WorkspaceStore {
         }
     }
 
+    func persistCurrentNoteAsync() async {
+        guard !libraryMigrationInFlight, let item = activeNoteItem else { return }
+        if pendingNotePersistenceByItemID[item.id] != nil {
+            await flushPendingNotePersistenceAsync(for: item.id)
+        } else if notesByItemID[item.id] != nil, item.editsBackingMarkdownFile {
+            await persistNoteAsync(noteText, for: item)
+        }
+    }
+
     func flushPendingNotePersistence() {
         flushPendingNotePersistence(flushWorkspace: true)
     }
@@ -575,6 +592,19 @@ extension WorkspaceStore {
         }
     }
 
+    func flushPendingNotePersistenceAsync(flushWorkspace: Bool = true) async {
+        let itemIDs = Array(pendingNotePersistenceByItemID.keys)
+        for itemID in itemIDs {
+            await flushPendingNotePersistenceAsync(for: itemID)
+        }
+        studyProgressSaveTask?.cancel()
+        studyProgressSaveTask = nil
+        syncActiveStudySession()
+        if flushWorkspace {
+            _ = await flushPendingWorkspaceSaveAsync()
+        }
+    }
+
     func scheduleNotePersistence(_ markdown: String, for item: StudyItem) {
         pendingNotePersistenceByItemID[item.id] = PendingNotePersistence(item: item, markdown: markdown)
         pendingNotePersistenceTasks[item.id]?.cancel()
@@ -583,7 +613,7 @@ extension WorkspaceStore {
         pendingNotePersistenceTasks[itemID] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay)
             guard !Task.isCancelled else { return }
-            self?.flushPendingNotePersistence(for: itemID)
+            await self?.flushPendingNotePersistenceAsync(for: itemID)
         }
     }
 
@@ -595,6 +625,14 @@ extension WorkspaceStore {
             persistNote(pending.markdown, for: pending.item)
             save()
         }
+    }
+
+    func flushPendingNotePersistenceAsync(for itemID: String) async {
+        guard !libraryMigrationInFlight else { return }
+        cancelPendingNotePersistence(for: itemID)
+        guard let pending = pendingNotePersistenceByItemID.removeValue(forKey: itemID) else { return }
+        await persistNoteAsync(pending.markdown, for: pending.item)
+        save()
     }
 
     func cancelPendingNotePersistence(for itemID: String) {
@@ -611,11 +649,38 @@ extension WorkspaceStore {
         itemID: String,
         url: URL
     ) -> Bool {
+        let outcome = attemptNoteMarkdownWrite(markdown, itemID: itemID, url: url)
+        switch outcome {
+        case .written: return true
+        case .heldForConflict: return false
+        default:
+            // Only legacy synchronous callers use the run-loop bridge. Autosave
+            // and other async callers await the same safety receipt directly.
+            return (try? waitForCourseFileOperation {
+                await self.completeNoteMarkdownWrite(outcome, markdown: markdown, itemID: itemID, url: url)
+            }) ?? false
+        }
+    }
+
+    func writeNoteMarkdownTripleAsync(
+        _ markdown: String,
+        itemID: String,
+        url: URL
+    ) async -> Bool {
+        let outcome = attemptNoteMarkdownWrite(markdown, itemID: itemID, url: url)
+        return await completeNoteMarkdownWrite(outcome, markdown: markdown, itemID: itemID, url: url)
+    }
+
+    private func attemptNoteMarkdownWrite(
+        _ markdown: String,
+        itemID: String,
+        url: URL
+    ) -> NoteMarkdownWriteOutcome {
         if noteEditorRecoveryConflictsByItemID[itemID] != nil {
             setNoteDraft(markdown, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             noteEditingSession.markExternallyModified(documentID: itemID)
-            return false
+            return .heldForConflict
         }
         // 备份判定只用「上次自写」基线，不受 reconcile/load 刷写的磁盘观察值影响。
         let lastSelfDigest = lastSelfWrittenNoteDigestsByItemID[itemID]
@@ -629,23 +694,7 @@ extension WorkspaceStore {
                     rootURL: noteBackupRootURL
                 )
             } catch {
-                setNoteDraft(markdown, for: itemID)
-                pendingNoteWritesByItemID.removeValue(forKey: itemID)
-                noteEditingSession.markSaveFailed(documentID: itemID)
-                let draftPersisted = flushPendingWorkspaceSave()
-                WeiBeiLog.noteRepair.error(
-                    "code=note_backup_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
-                )
-                showImportantOperationError(.noteWriteSafetyHold(fileName: url.lastPathComponent), message: draftPersisted
-                    ? ui(
-                        "无法安全备份“\(url.lastPathComponent)”的外部版本，魏碑已停止覆盖。待写内容已保存在魏碑中，请重试。",
-                        "Could not safely back up the external version of \(url.lastPathComponent), so WeiBei stopped overwriting it. Unsaved content is stored in WeiBei; please retry."
-                    )
-                    : ui(
-                        "无法安全备份“\(url.lastPathComponent)”的外部版本，魏碑已停止覆盖。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
-                        "Could not safely back up the external version of \(url.lastPathComponent), so WeiBei stopped overwriting it. Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
-                    ))
-                return false
+                return .failed(error, backupFailed: true)
             }
         }
         if noteBackingContentDigestsByItemID[itemID] == nil,
@@ -660,40 +709,88 @@ extension WorkspaceStore {
                 expectedBaseline: noteBackingContentDigestsByItemID[itemID]
             )
         } catch NoteWriteGateError.writeRefusedKeepContent {
-            retainUnreachableNoteDraft(markdown, itemID: itemID)
-            return false
+            return .unavailable
         } catch NoteWriteGateError.diskChangedAdoptDisk {
-            retainExternalModificationConflict(
-                markdown,
-                itemID: itemID,
-                url: url
-            )
-            return false
+            return .externalChange
         } catch {
-            setNoteDraft(markdown, for: itemID)
-            pendingNoteWritesByItemID.removeValue(forKey: itemID)
-            noteEditingSession.markSaveFailed(documentID: itemID)
-            let draftPersisted = flushPendingWorkspaceSave()
-            WeiBeiLog.noteRepair.error(
-                "code=note_write_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
-            )
-            showImportantOperationError(.noteWriteSafetyHold(fileName: url.lastPathComponent), message: draftPersisted
-                ? ui(
-                    "无法写入“\(url.lastPathComponent)”。待写内容已保存在魏碑中，请重试。",
-                    "Could not write \(url.lastPathComponent). Unsaved content is kept in WeiBei; please retry."
-                )
-                : ui(
-                    "无法写入“\(url.lastPathComponent)”。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
-                    "Could not write \(url.lastPathComponent). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
-                ))
-            return false
+            return .failed(error, backupFailed: false)
         }
         setNoteDraft(nil, for: itemID)
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
         setNoteFileError(nil, for: itemID)
         noteEditorDidPersist(markdown, documentID: itemID)
         scheduleOrphanAttachmentGC(afterPersistingNoteAt: url, markdown: markdown)
-        return true
+        return .written
+    }
+
+    private func completeNoteMarkdownWrite(
+        _ outcome: NoteMarkdownWriteOutcome,
+        markdown: String,
+        itemID: String,
+        url: URL
+    ) async -> Bool {
+        switch outcome {
+        case .written:
+            return true
+        case .heldForConflict:
+            return false
+        case .unavailable:
+            await retainUnreachableNoteDraftAsync(markdown, itemID: itemID)
+        case .externalChange:
+            await retainExternalModificationConflictAsync(markdown, itemID: itemID, url: url)
+        case .failed(let error, let backupFailed):
+            guard let draftPersisted = await persistFailedNoteDraft(markdown, itemID: itemID) else { return false }
+            let message: String
+            if backupFailed {
+                WeiBeiLog.noteRepair.error(
+                    "code=note_backup_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                )
+                message = draftPersisted
+                    ? ui(
+                        "无法安全备份“\(url.lastPathComponent)”的外部版本，魏碑已停止覆盖。待写内容已保存在魏碑中，请重试。",
+                        "Could not safely back up the external version of \(url.lastPathComponent), so WeiBei stopped overwriting it. Unsaved content is stored in WeiBei; please retry."
+                    )
+                    : ui(
+                        "无法安全备份“\(url.lastPathComponent)”的外部版本，魏碑已停止覆盖。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
+                        "Could not safely back up the external version of \(url.lastPathComponent), so WeiBei stopped overwriting it. Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
+                    )
+            } else {
+                WeiBeiLog.noteRepair.error(
+                    "code=note_write_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                )
+                message = draftPersisted
+                    ? ui(
+                        "无法写入“\(url.lastPathComponent)”。待写内容已保存在魏碑中，请重试。",
+                        "Could not write \(url.lastPathComponent). Unsaved content is kept in WeiBei; please retry."
+                    )
+                    : ui(
+                        "无法写入“\(url.lastPathComponent)”。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
+                        "Could not write \(url.lastPathComponent). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
+                    )
+            }
+            setNoteFileError(message, for: itemID)
+            showImportantOperationError(.noteWriteSafetyHold(fileName: url.lastPathComponent), message: message)
+        }
+        return false
+    }
+
+    /// A nil receipt means a newer edit or successful retry superseded this
+    /// failure while its recovery draft was being written. Background notes
+    /// still keep their own errors when the user switches to another note.
+    private func persistFailedNoteDraft(_ markdown: String, itemID: String) async -> Bool? {
+        setNoteDraft(markdown, for: itemID)
+        pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        noteEditingSession.markSaveFailed(documentID: itemID)
+        let wasActiveDocument = noteEditingSession.documentID == itemID
+        let generation = noteEditingSession.documentGeneration
+        let revision = noteEditingSession.currentRevision
+        let persisted = await flushPendingWorkspaceSaveAsync()
+        guard notesByItemID[itemID] == markdown else { return nil }
+        if wasActiveDocument, noteEditingSession.documentID == itemID {
+            guard noteEditingSession.documentGeneration == generation,
+                  noteEditingSession.currentRevision == revision else { return nil }
+        }
+        return persisted
     }
 
     /// 笔记成功写盘后，按全库 markdown 引用回收附件目录里的孤儿图。
@@ -768,14 +865,23 @@ extension WorkspaceStore {
         itemID: String,
         url: URL
     ) {
+        _ = try? waitForCourseFileOperation {
+            await self.retainExternalModificationConflictAsync(markdown, itemID: itemID, url: url)
+        }
+    }
+
+    private func retainExternalModificationConflictAsync(
+        _ markdown: String,
+        itemID: String,
+        url: URL
+    ) async {
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
         setNoteDraft(markdown, for: itemID)
-        let draftPersisted = flushPendingWorkspaceSave()
         let diskMarkdown: String
         do {
             diskMarkdown = try String(contentsOf: url, encoding: .utf8)
         } catch {
-            noteEditingSession.markSaveFailed(documentID: itemID)
+            guard let draftPersisted = await persistFailedNoteDraft(markdown, itemID: itemID) else { return }
             WeiBeiLog.noteRepair.error(
                 "code=note_conflict_reread_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
             )
@@ -812,27 +918,37 @@ extension WorkspaceStore {
             ),
             markdown: markdown
         )
-        var checkpointIsPersisted = false
+        // Publish the conflict before awaiting disk receipts. Later snapshots
+        // can update this checkpoint while saving; never replace their newer text.
+        noteEditorRecoveryConflictsByItemID[itemID] = NoteEditorRecoveryConflict(
+            diskMarkdown: diskMarkdown,
+            checkpoint: checkpoint,
+            checkpointIsPersisted: false
+        )
         do {
-            _ = try waitForCourseFileOperation {
-                try await self.noteRecoveryStore.store(
-                    documentID: itemID,
-                    baseFileDigest: baseDigest,
-                    revision: revision,
-                    markdown: markdown
+            // Submit this checkpoint before awaiting workspace persistence, so
+            // that workspace saving does not delay the initial recovery request.
+            _ = try await noteRecoveryStore.store(
+                documentID: itemID,
+                baseFileDigest: baseDigest,
+                revision: revision,
+                markdown: markdown
+            )
+            if let current = noteEditorRecoveryConflictsByItemID[itemID],
+               current.checkpoint.metadata.revision == revision,
+               current.checkpoint.metadata.checkpointDigest == checkpoint.metadata.checkpointDigest {
+                noteEditorRecoveryConflictsByItemID[itemID] = NoteEditorRecoveryConflict(
+                    diskMarkdown: current.diskMarkdown,
+                    checkpoint: current.checkpoint,
+                    checkpointIsPersisted: true
                 )
             }
-            checkpointIsPersisted = true
         } catch {
             WeiBeiLog.noteRepair.error(
                 "code=note_recovery_store_failed document=\(itemID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
             )
         }
-        noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
-            diskMarkdown: diskMarkdown,
-            checkpoint: checkpoint,
-            checkpointIsPersisted: checkpointIsPersisted
-        )
+        _ = await flushPendingWorkspaceSaveAsync()
     }
 
     /// 全仓唯一笔记写盘闸门（计划 §5 阶段1）：所有写路径必须经此函数。
@@ -904,12 +1020,18 @@ extension WorkspaceStore {
         _ markdown: String,
         itemID: String
     ) {
-        setNoteDraft(markdown, for: itemID)
-        pendingNoteWritesByItemID.removeValue(forKey: itemID)
-        noteEditingSession.markSaveFailed(documentID: itemID)
+        _ = try? waitForCourseFileOperation {
+            await self.retainUnreachableNoteDraftAsync(markdown, itemID: itemID)
+        }
+    }
+
+    private func retainUnreachableNoteDraftAsync(
+        _ markdown: String,
+        itemID: String
+    ) async {
         let fileName = item(withID: itemID)?.url?.lastPathComponent
             ?? ui("这份笔记", "this note")
-        let draftPersisted = flushPendingWorkspaceSave()
+        guard let draftPersisted = await persistFailedNoteDraft(markdown, itemID: itemID) else { return }
         let message = draftPersisted
             ? ui(
                 "无法确认“\(fileName)”的磁盘内容，已暂停写入。待写内容已保存在魏碑中，请重试。",
@@ -957,6 +1079,59 @@ extension WorkspaceStore {
             return
         }
         setNoteDraft(markdown, for: noteItemID)
+    }
+
+    func persistNoteAsync(_ markdown: String, for item: StudyItem) async {
+        let noteItemID = item.id
+        guard item.editsBackingMarkdownFile else {
+            setNoteDraft(markdown, for: noteItemID)
+            return
+        }
+        guard let index = importedItems.firstIndex(where: { $0.id == noteItemID }) else {
+            await retainUnreachableNoteDraftAsync(markdown, itemID: noteItemID)
+            save()
+            return
+        }
+        if case .courseOwned = importedItems[index].storage {
+            await persistCourseOwnedNoteAsync(markdown, itemID: noteItemID)
+            return
+        }
+        let resolution = resolveTrackedImportedFile(at: index)
+        guard let url = resolution.url else {
+            await retainUnreachableNoteDraftAsync(markdown, itemID: noteItemID)
+            save()
+            return
+        }
+        if noteBackingContentDigestsByItemID[noteItemID] == nil,
+           let digest = importedItems[index].contentDigest {
+            noteBackingContentDigestsByItemID[noteItemID] = digest
+        }
+        if await writeNoteMarkdownTripleAsync(markdown, itemID: noteItemID, url: url),
+           let current = importedItems.first(where: { $0.id == noteItemID }) {
+            let refreshedItem = refreshImportedFileTracking(itemID: noteItemID, url: url) ?? current
+            courseDocumentSearchIndex.schedule([refreshedItem])
+            synchronizeNoteFileNameWithHeading(itemID: noteItemID, markdown: markdown, currentURL: url)
+        }
+        save()
+    }
+
+    private func persistCourseOwnedNoteAsync(_ markdown: String, itemID: String) async {
+        guard let item = importedItems.first(where: { $0.id == itemID }),
+              item.isNotebookNote,
+              case .courseOwned = item.storage,
+              let url = item.url else {
+            await retainUnreachableNoteDraftAsync(markdown, itemID: itemID)
+            save()
+            return
+        }
+        if noteBackingContentDigestsByItemID[itemID] == nil, let digest = item.contentDigest {
+            noteBackingContentDigestsByItemID[itemID] = digest
+        }
+        if await writeNoteMarkdownTripleAsync(markdown, itemID: itemID, url: url) {
+            refreshCourseOwnedNoteMetadataAfterWrite(itemID: itemID, markdown: markdown, url: url)
+            lastCourseNoteWriteRanOnMainThread = true
+        }
+        save()
     }
 }
 

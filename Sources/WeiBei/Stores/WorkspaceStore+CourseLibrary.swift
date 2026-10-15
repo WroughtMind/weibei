@@ -5132,7 +5132,7 @@ extension WorkspaceStore {
             }.map(\.itemID)
         )
         for itemID in noteItemIDs {
-            flushPendingNotePersistence(for: itemID)
+            await flushPendingNotePersistenceAsync(for: itemID)
         }
         for itemID in noteItemIDs {
             while let task = courseNoteWriteTasksByItemID[itemID] {
@@ -6104,7 +6104,7 @@ extension WorkspaceStore {
                 itemIDs: [itemID]
             )
         }
-        flushPendingNotePersistence(for: itemID)
+        await flushPendingNotePersistenceAsync(for: itemID)
         while let task = courseNoteWriteTasksByItemID[itemID] {
             await task.value
         }
