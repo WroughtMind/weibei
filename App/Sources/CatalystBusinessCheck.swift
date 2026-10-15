@@ -929,6 +929,14 @@ enum CatalystBusinessCheck {
             if CommandLine.arguments.contains("--exit-after-check") { exit(0) }
         } catch {
             result["failure"] = error.localizedDescription
+            result["library_state"] = [
+                "root": store.courseLibraryRootURL?.absoluteString ?? "nil",
+                "needs_initial_setup": String(store.needsInitialLibrarySetup),
+                "busy": String(store.libraryLocationBusy),
+                "notice": String(describing: store.importantOperationNotice),
+                "error": store.importantOperationError ?? "nil",
+                "placement_confirmed": String(UserDefaults.standard.bool(forKey: "weibei.libraryPlacementConfirmed"))
+            ]
             result["connection_state"] = [
                 "provider": store.agentProviderID.rawValue,
                 "auth_method": store.agentAuthMethod.rawValue,
@@ -974,6 +982,7 @@ enum CatalystBusinessCheck {
                 "sheet_probes": sheetProbeStates
             ]
             result["failure_state"] = [
+                "exit_after_check_requested": CommandLine.arguments.contains("--exit-after-check"),
                 "application_state": UIApplication.shared.applicationState.rawValue,
                 "settings_presented": store.settingsPresented,
                 "scene_states": UIApplication.shared.connectedScenes.map { $0.activationState.rawValue },
@@ -1761,10 +1770,11 @@ enum CatalystBusinessCheck {
         try await until("library location picker reopens") { (WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker).map { $0.view.window != nil && !$0.isBeingPresented } == true }
         guard let picker = WorkspaceFileDialog.presenter as? WorkspaceFileDialog.Picker else { throw Failure("picker disappeared") }
         picker.documentPicker(picker, didPickDocumentsAt: [selected])
-        let expected = selected.appendingPathComponent(CourseLibraryLayout.defaultFolderName).standardizedFileURL
+        let expected = selected.appendingPathComponent(CourseLibraryLayout.defaultFolderName, isDirectory: true)
         try await until("chosen library saved and recovery notice dismissed") {
             let notice = try await accessibilityElement("library-placement-notice")
-            return store.courseLibraryRootURL?.standardizedFileURL == expected && !store.libraryLocationBusy
+            return store.courseLibraryRootURL.map { CourseProjectPathPolicy.isSame($0, expected) } == true
+                && !store.libraryLocationBusy
                 && store.importantOperationNotice == nil && store.importantOperationError == nil
                 && notice == nil
         }

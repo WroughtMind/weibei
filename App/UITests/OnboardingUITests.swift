@@ -5,7 +5,7 @@ import XCTest
 /// store, files and credentials; this runner only queries, clicks and types.
 final class OnboardingUITests: XCTestCase {
     @MainActor
-    func testFirstUseInTheActualApp() throws {
+    func testFirstUseInTheActualApp() async throws {
         continueAfterFailure = false
         let configuration = Bundle(for: Self.self)
         let appPath = try XCTUnwrap(configuration.object(forInfoDictionaryKey: "WeiBeiCheckAppPath") as? String)
@@ -31,7 +31,9 @@ final class OnboardingUITests: XCTestCase {
                   let request = try JSONSerialization.jsonObject(with: data) as? [String: String],
                   let token = request["token"], token != handled,
                   let action = request["action"], let id = request["id"] else {
-                Thread.sleep(forTimeInterval: 0.05)
+                // Application state updates arrive asynchronously. Yield the
+                // main actor so a completed App cannot remain cached as running.
+                try await Task.sleep(for: .milliseconds(50))
                 continue
             }
             handled = token
