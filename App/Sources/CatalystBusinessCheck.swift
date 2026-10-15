@@ -1657,7 +1657,11 @@ enum CatalystBusinessCheck {
         try enter("rejected-test-key", in: "connection-setup-key", window: window)
         try await activate("connection-setup-connect", in: window)
         try await until("authentication failure remains in chat") { accessibilityElement("connection-setup-model-message", in: window) != nil }
-        guard try credentials.load()[credentialID] == nil,
+        // This is the error contract: a 401 must tell the user to correct the
+        // credentials, rather than reporting an empty catalog or network failure.
+        guard accessibilityElement("connection-setup-model-message", in: window)?.accessibilityLabel?
+                .contains(store.ui("未接受这组凭据", "did not accept these credentials")) == true,
+              try credentials.load()[credentialID] == nil,
               store.agentCredentialProfiles.count == profileCount else { throw Failure("rejected credentials were committed") }
         try onboardingSnapshot("onboarding-chat-rejected", window: window)
         try await activate("connection-setup-change", in: window)
