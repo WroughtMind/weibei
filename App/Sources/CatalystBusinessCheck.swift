@@ -1564,7 +1564,7 @@ enum CatalystBusinessCheck {
     private static func verifyLibraryOnboarding(_ store: WorkspaceStore) async throws {
         guard let window = WorkspaceFileDialog.presenter?.view.window else { throw Failure("onboarding window missing") }
         let originalOverride = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"]
-        let fixture = store.workspaceDirectory.appendingPathComponent("Onboarding", isDirectory: true)
+        let fixture = store.workspaceDirectory.deletingLastPathComponent().appendingPathComponent("Onboarding", isDirectory: true)
         try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)
         setenv("WEIBEI_WORKSPACE_DIR", fixture.appendingPathComponent("State").path, 1)
         defer {
@@ -1647,7 +1647,8 @@ enum CatalystBusinessCheck {
         try onboardingSnapshot("onboarding-chat-credentials", window: window)
         try await activate("connection-setup-close", in: window)
         try await until("inline connection closes") { accessibilityElement("agent-connect-inline", in: window) != nil }
-        guard composer.text == draft, store.pendingComposerDraft == draft,
+        guard descendants(window).compactMap({ $0 as? AgentComposerTextEditor.ComposerTextView }).first?.text == draft,
+              store.pendingComposerDraft == draft,
               try credentials.load()[credentialID] == nil, store.activeAgentProfileID == profileID else {
             throw Failure("closing setup changed the question or connection")
         }
@@ -1690,7 +1691,8 @@ enum CatalystBusinessCheck {
         guard store.modelName == "catalyst-local-check", store.activeAgentProfileID == profileID,
               store.agentCredentialProfiles.count == profileCount,
               try credentials.load()[credentialID]?.apiKey == "catalyst-test-only",
-              composer.text == draft, store.pendingComposerDraft == draft, !store.settingsPresented else {
+              descendants(window).compactMap({ $0 as? AgentComposerTextEditor.ComposerTextView }).first?.text == draft,
+              store.pendingComposerDraft == draft, !store.settingsPresented else {
             throw Failure("inline connection did not preserve the question or active connection")
         }
         try onboardingSnapshot("onboarding-chat-ready", window: window)
