@@ -222,6 +222,60 @@ final class NoteAutosaveResponsivenessTests: XCTestCase {
         }
     }
 
+    func testNoteSelectionContinuesAfterFirstSnapshotIsSaved() throws {
+        let note = try fixture()
+        defer { try? FileManager.default.removeItem(at: note.root) }
+        var snapshotsDelivered = 0
+        var applied = false
+        let token = bindEditorSnapshot(in: note.store, markdown: "切换前的最后编辑") {
+            snapshotsDelivered += 1
+            XCTAssertFalse(note.store.canRetryPendingNoteSelection,
+                           "保存尚在进行时不能把第一次切换误判为失败")
+        }
+        defer { note.store.noteEditingSession.unbindSnapshotRequestHandler(token) }
+
+        try note.store.waitForCourseFileOperation {
+            note.store.requestNoteSelectionTransition(to: "next-note") { applied = true }
+            let deadline = Date().addingTimeInterval(3)
+            while !applied && !note.store.canRetryPendingNoteSelection, Date() < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            await note.store.waitForNoteEditorSnapshotPersistence(documentID: note.item.id)
+            XCTAssertTrue(applied, "首份快照保存完成就应继续切换，无需定时重试")
+            XCTAssertEqual(snapshotsDelivered, 1)
+            XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "切换前的最后编辑")
+            XCTAssertFalse(note.store.noteEditingSession.dirty)
+        }
+    }
+
+    func testNoteSelectionStaysOnCurrentNoteWhenSnapshotWriteFails() throws {
+        let note = try fixture(notebookWriter: { _, _ in throw CocoaError(.fileWriteNoPermission) })
+        defer { try? FileManager.default.removeItem(at: note.root) }
+        var applied = false
+        let token = bindEditorSnapshot(in: note.store, markdown: "切换失败也要保留的正文") {
+            XCTAssertFalse(note.store.canRetryPendingNoteSelection,
+                           "应等真实保存结果，不能提前判失败")
+        }
+        defer { note.store.noteEditingSession.unbindSnapshotRequestHandler(token) }
+
+        try note.store.waitForCourseFileOperation {
+            note.store.requestNoteSelectionTransition(to: "next-note") { applied = true }
+            let deadline = Date().addingTimeInterval(3)
+            while !note.store.canRetryPendingNoteSelection, Date() < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            await note.store.waitForNoteEditorSnapshotPersistence(documentID: note.item.id)
+            XCTAssertFalse(applied)
+            XCTAssertTrue(note.store.canRetryPendingNoteSelection)
+            XCTAssertEqual(note.store.noteEditingSession.documentID, note.item.id)
+            XCTAssertEqual(note.store.noteEditingSession.saveStatus, .failed)
+            XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "磁盘基线")
+            let persisted = try JSONDecoder().decode(PersistedWorkspace.self,
+                from: Data(contentsOf: note.store.storageURL))
+            XCTAssertEqual(persisted.notesByItemID[note.item.id], "切换失败也要保留的正文")
+        }
+    }
+
     func testEarlierAutosaveFailureDoesNotReturnAfterSameRevisionRetry() throws {
         try assertEarlierAutosaveFailureDoesNotReturn(retryRevision: 1, retryMarkdown: "第一版保存失败的正文")
     }

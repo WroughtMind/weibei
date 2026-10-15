@@ -3726,10 +3726,20 @@ final class WorkspaceStore: ObservableObject {
         armNoteSelectionWatchdog()
         let sourceDocumentID = noteEditingSession.documentID
         _ = noteEditingSession.requestSnapshot { [weak self] result in
-            self?.finishPendingNoteSelectionSnapshot(
-                result,
-                sourceDocumentID: sourceDocumentID
-            )
+            guard let self else { return }
+            if case .success(let snapshot) = result {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.waitForNoteEditorSnapshotPersistence(documentID: snapshot.documentID)
+                    // Saving now yields. A receipt from a replaced editor must
+                    // not complete or fail a later document's selection.
+                    guard self.noteEditingSession.documentID == snapshot.documentID,
+                          self.noteEditingSession.documentGeneration == snapshot.documentGeneration else { return }
+                    self.finishPendingNoteSelectionSnapshot(result, sourceDocumentID: sourceDocumentID)
+                }
+            } else {
+                self.finishPendingNoteSelectionSnapshot(result, sourceDocumentID: sourceDocumentID)
+            }
         }
     }
 
@@ -3795,6 +3805,11 @@ final class WorkspaceStore: ObservableObject {
             guard snapshot.documentID == sourceDocumentID,
                   noteEditingSession.documentID == sourceDocumentID else {
                 failPendingNoteSelection(.documentChanged)
+                return
+            }
+            guard !hasUnresolvedContentCommand(for: sourceDocumentID) else {
+                noteSelectionTransitionState = .saving
+                armNoteSelectionWatchdog()
                 return
             }
             if snapshot.revision < noteEditingSession.currentRevision {
