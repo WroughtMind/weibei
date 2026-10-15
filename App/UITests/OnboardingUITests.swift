@@ -50,7 +50,8 @@ final class OnboardingUITests: XCTestCase {
                 // One snapshot keeps observation atomic when a banner or form
                 // disappears between requests. Live attribute reads can fail
                 // after an earlier `exists` returned true.
-                let snapshots = matchingSnapshots(in: try app.snapshot(), identifier: id)
+                let root = try app.snapshot()
+                let snapshots = matchingSnapshots(in: root, identifier: id)
                 if let snapshot = snapshots.first {
                     // Secure/text field contents must never enter diagnostics.
                     let text = snapshot.elementType == .staticText ? snapshot.value as? String : nil
@@ -69,6 +70,8 @@ final class OnboardingUITests: XCTestCase {
                         }
                     }
                     response["element"] = state
+                } else {
+                    response["visible_controls"] = identifiedControls(in: root).joined(separator: "\n")
                 }
             case "press", "fill":
                 guard element.exists, element.isEnabled, element.isHittable else {
@@ -97,5 +100,12 @@ final class OnboardingUITests: XCTestCase {
     private func matchingSnapshots(in root: any XCUIElementSnapshot, identifier: String) -> [any XCUIElementSnapshot] {
         (root.identifier == identifier ? [root] : [])
             + root.children.flatMap { matchingSnapshots(in: $0, identifier: identifier) }
+    }
+
+    @MainActor
+    private func identifiedControls(in root: any XCUIElementSnapshot) -> [String] {
+        // Keep only control identifiers and geometry, never labels or field values.
+        (root.identifier.isEmpty ? [] : ["\(root.identifier): \(root.elementType) \(root.frame)"])
+            + root.children.flatMap { identifiedControls(in: $0) }
     }
 }

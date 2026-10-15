@@ -92,6 +92,7 @@ struct AgentConnectionSetupView: View {
         .onChange(of: activeConnectionKey) { _, _ in
             if !isFinishing { cancel() }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-connection-setup")
     }
 

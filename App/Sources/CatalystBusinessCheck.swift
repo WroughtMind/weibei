@@ -1880,7 +1880,8 @@ enum CatalystBusinessCheck {
     private static func accessibilityElement(_ id: String, forInteraction: Bool = false) async throws -> [String: String]? {
         let response = try await onboardingUICommand(forInteraction ? "ready" : "query", id: id)
         let element = response["element"] as? [String: String]
-        lastOnboardingUIElement = element ?? ["id": id, "exists": "false"]
+        lastOnboardingUIElement = element ?? ["id": id, "exists": "false",
+                                              "visible_controls": response["visible_controls"] as? String ?? ""]
         return element
     }
 
