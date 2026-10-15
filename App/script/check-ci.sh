@@ -97,6 +97,7 @@ with ui_log.open('w') as log:
         'xcodebuild', '-project', 'App/UITests/WeiBeiOnboardingUI.xcodeproj', '-scheme', 'WeiBeiOnboardingUITests',
         '-destination', 'platform=macOS,arch=' + os.environ['WEIBEI_TARGET_ARCH'],
         '-derivedDataPath', '.build/onboarding-ui-' + os.environ['WEIBEI_TARGET_ARCH'],
+        '-resultBundlePath', str(evidence / 'ci-onboarding-ui.xcresult'),
         '-parallel-testing-enabled', 'NO',
         'WEIBEI_CHECK_APP_PATH=' + app, 'test',
     ], stdout=log, stderr=subprocess.STDOUT)

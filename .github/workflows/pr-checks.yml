@@ -296,6 +296,31 @@ jobs:
           "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
           echo "$RUNNER_TEMP/weibei-editor-fonts/bin" >> "$GITHUB_PATH"
 
+      - name: 在当前架构的真实 Catalyst 进程检查会话
+        id: acceptance
+        run: |
+          mkdir -p .build
+          date '+%Y-%m-%d %H:%M:%S' > .build/ci-acceptance-start.txt
+          ./App/script/check-ci.sh
+
+      - name: 保留真实应用全屏失败的系统记录
+        if: always()
+        continue-on-error: true
+        env:
+          ACCEPTANCE_OUTCOME: ${{ steps.acceptance.outcome }}
+        run: |
+          [[ "$ACCEPTANCE_OUTCOME" == failure ]] || exit 0
+          /usr/bin/log show --last 2m --style compact --predicate 'process == "Dock" OR process == "WindowServer"' > App/Evidence/ci-full-screen-system.log
+
+      - name: 保留原生顶栏点击记录
+        if: always()
+        continue-on-error: true
+        env:
+          ACCEPTANCE_OUTCOME: ${{ steps.acceptance.outcome }}
+        run: |
+          [[ "$ACCEPTANCE_OUTCOME" == success || "$ACCEPTANCE_OUTCOME" == failure ]] || exit 0
+          /usr/bin/log show --start "$(cat .build/ci-acceptance-start.txt)" --style compact --predicate 'subsystem == "com.changfenhuang.weibei" AND category == "workspace" AND eventMessage CONTAINS "code=toolbar_action"' > App/Evidence/ci-toolbar-actions.log
+
       - name: 通过唯一入口构建正式 Catalyst 应用
         id: compile
         run: ./script/build_and_run.sh package
@@ -332,30 +357,6 @@ jobs:
           ./script/build_release_dmg.sh --arch "$WEIBEI_TARGET_ARCH"
           python3 script/check_package_size_policy.py "dist/release/$WEIBEI_TARGET_ARCH/魏碑.app"
 
-      - name: 在当前架构的真实 Catalyst 进程检查会话
-        id: acceptance
-        run: |
-          date '+%Y-%m-%d %H:%M:%S' > .build/ci-acceptance-start.txt
-          ./App/script/check-ci.sh
-
-      - name: 保留真实应用全屏失败的系统记录
-        if: always()
-        continue-on-error: true
-        env:
-          ACCEPTANCE_OUTCOME: ${{ steps.acceptance.outcome }}
-        run: |
-          [[ "$ACCEPTANCE_OUTCOME" == failure ]] || exit 0
-          /usr/bin/log show --last 2m --style compact --predicate 'process == "Dock" OR process == "WindowServer"' > App/Evidence/ci-full-screen-system.log
-
-      - name: 保留原生顶栏点击记录
-        if: always()
-        continue-on-error: true
-        env:
-          ACCEPTANCE_OUTCOME: ${{ steps.acceptance.outcome }}
-        run: |
-          [[ "$ACCEPTANCE_OUTCOME" == success || "$ACCEPTANCE_OUTCOME" == failure ]] || exit 0
-          /usr/bin/log show --start "$(cat .build/ci-acceptance-start.txt)" --style compact --predicate 'subsystem == "com.changfenhuang.weibei" AND category == "workspace" AND eventMessage CONTAINS "code=toolbar_action"' > App/Evidence/ci-toolbar-actions.log
-
       - name: 保留候选和检查证据
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -370,6 +371,7 @@ jobs:
             App/Evidence/ci*.png
             App/Evidence/ci*.log
             App/Evidence/ci*.ips
+            App/Evidence/ci-onboarding-ui.xcresult
             .build/ci-launch-console.log
             .build/catalyst-${{ matrix.arch }}/build.log
           retention-days: 2

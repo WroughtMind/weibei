@@ -13,6 +13,7 @@ import Litext
 enum CatalystBusinessCheck {
     private static var started = false
     private static var fileDropDiagnostics: [String: Any] = [:]
+    private static var lastOnboardingUIElement: [String: String] = [:]
     private struct Failure: LocalizedError {
         let errorDescription: String?
         init(_ description: String) { errorDescription = description }
@@ -929,6 +930,7 @@ enum CatalystBusinessCheck {
             if CommandLine.arguments.contains("--exit-after-check") { exit(0) }
         } catch {
             result["failure"] = error.localizedDescription
+            result["onboarding_ui_state"] = lastOnboardingUIElement
             result["library_state"] = [
                 "root": store.courseLibraryRootURL?.absoluteString ?? "nil",
                 "needs_initial_setup": String(store.needsInitialLibrarySetup),
@@ -1803,6 +1805,7 @@ enum CatalystBusinessCheck {
         composer.text = draft
         composer.delegate?.textViewDidChange?(composer)
         try await until("onboarding question draft published") { store.pendingComposerDraft == draft }
+        try onboardingSnapshot("onboarding-chat-entry", window: window)
         try await activate("agent-connect-inline")
         try await until("inline credentials form opens") { try await accessibilityElement("connection-setup-connect") != nil }
         guard !store.settingsPresented else { throw Failure("first chat redirected to settings") }
@@ -1876,18 +1879,26 @@ enum CatalystBusinessCheck {
 
     private static func accessibilityElement(_ id: String) async throws -> [String: String]? {
         let response = try await onboardingUICommand("query", id: id)
-        return response["element"] as? [String: String]
+        let element = response["element"] as? [String: String]
+        lastOnboardingUIElement = element ?? ["id": id, "exists": "false"]
+        return element
     }
 
     private static func activate(_ id: String) async throws {
-        try await until("enabled control: " + id) {
-            try await accessibilityElement(id)?["enabled"] == "true"
-        }
+        try await waitForOnboardingControl(id)
         _ = try await onboardingUICommand("press", id: id)
     }
 
     private static func enter(_ value: String, in id: String) async throws {
+        try await waitForOnboardingControl(id)
         _ = try await onboardingUICommand("fill", id: id, value: value)
+    }
+
+    private static func waitForOnboardingControl(_ id: String) async throws {
+        try await until("enabled and hittable control: " + id) {
+            let element = try await accessibilityElement(id)
+            return element?["enabled"] == "true" && element?["hittable"] == "true"
+        }
     }
 
     private static func onboardingUICommand(_ action: String, id: String, value: String? = nil) async throws -> [String: Any] {

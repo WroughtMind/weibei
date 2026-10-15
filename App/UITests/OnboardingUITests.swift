@@ -4,6 +4,10 @@ import XCTest
 /// service. Product assertions stay in CatalystBusinessCheck, beside the real
 /// store, files and credentials; this runner only queries, clicks and types.
 final class OnboardingUITests: XCTestCase {
+    private struct DriverFailure: LocalizedError {
+        let errorDescription: String?
+    }
+
     @MainActor
     func testFirstUseInTheActualApp() async throws {
         continueAfterFailure = false
@@ -37,7 +41,8 @@ final class OnboardingUITests: XCTestCase {
                 continue
             }
             handled = token
-            let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
+            let matches = app.descendants(matching: .any).matching(identifier: id)
+            let element = matches.firstMatch
             var response: [String: Any] = ["token": token]
             switch action {
             case "query":
@@ -46,12 +51,19 @@ final class OnboardingUITests: XCTestCase {
                     let text = element.elementType == .staticText ? element.value as? String : nil
                     response["element"] = ["id": id, "label": text ?? element.label,
                                            "enabled": String(element.isEnabled),
-                                           "hittable": String(element.isHittable)]
+                                           "hittable": String(element.isHittable),
+                                           "frame": String(describing: element.frame),
+                                           "matches": String(matches.count)]
                 }
             case "press", "fill":
-                XCTAssertTrue(element.exists, "Missing mounted control: \(id)")
-                XCTAssertTrue(element.isEnabled, "Disabled mounted control: \(id)")
-                XCTAssertTrue(element.isHittable, "Unreachable mounted control: \(id)")
+                guard element.exists, element.isEnabled, element.isHittable else {
+                    let screenshot = XCTAttachment(screenshot: app.screenshot())
+                    screenshot.name = "Unreachable control: " + id
+                    screenshot.lifetime = .keepAlways
+                    add(screenshot)
+                    let frame = element.exists ? String(describing: element.frame) : "missing"
+                    throw DriverFailure(errorDescription: "Unreachable mounted control: \(id), frame=\(frame), matches=\(matches.count)")
+                }
                 element.click()
                 if action == "fill" {
                     let value = try XCTUnwrap(request["value"])
@@ -59,7 +71,7 @@ final class OnboardingUITests: XCTestCase {
                     element.typeText(value)
                 }
             default:
-                XCTFail("Unknown UI operation: \(action)")
+                throw DriverFailure(errorDescription: "Unknown UI operation: \(action)")
             }
             try JSONSerialization.data(withJSONObject: response).write(to: responseURL, options: .atomic)
         }
