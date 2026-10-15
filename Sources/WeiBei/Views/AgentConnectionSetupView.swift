@@ -69,6 +69,7 @@ struct AgentConnectionSetupView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(store.ui("收起连接", "Close connection setup"))
+                .accessibilityIdentifier("connection-setup-close")
             }
 
             if let profile {
@@ -183,15 +184,18 @@ struct AgentConnectionSetupView: View {
             if let message = modelListMessage {
                 Text(message)
                     .weiBeiText(11.5).foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .accessibilityIdentifier("connection-setup-model-message")
             }
             if let errorText { failureText(errorText) }
             if showsManualModel {
                 HStack {
                     TextField(store.ui("模型 ID", "Model ID"), text: $manualModel)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("connection-setup-manual-model")
                         .onSubmit { finish(profile, model: manualModel) }
                     Button(store.ui("使用", "Use")) { finish(profile, model: manualModel) }
                         .disabled(manualModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("connection-setup-use-model")
                 }
             }
             HStack {
@@ -199,6 +203,7 @@ struct AgentConnectionSetupView: View {
                     .disabled(modelCatalog.isRefreshingModels)
                 if !showsManualModel {
                     Button(store.ui("手动输入模型 ID", "Enter model ID")) { showsManualModel = true }
+                        .accessibilityIdentifier("connection-setup-enter-model")
                 }
                 Spacer()
                 Button(store.ui("更改连接", "Change connection")) {
@@ -212,6 +217,7 @@ struct AgentConnectionSetupView: View {
                     showsManualModel = false
                     errorText = nil
                 }
+                .accessibilityIdentifier("connection-setup-change")
             }
             .buttonStyle(WeiBeiTextActionButtonStyle())
             .weiBeiText(11.5)

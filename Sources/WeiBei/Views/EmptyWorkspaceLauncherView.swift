@@ -645,14 +645,17 @@ private struct LibraryPlacementNoticeCard: View {
                             }
                         }
                         .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+                        .accessibilityIdentifier("library-placement-choose")
                     }
 
                     if store.courseLibraryRootURL != nil {
                         Button(store.ui("就用这里", "Use This Folder")) { confirmed = true }
                             .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+                            .accessibilityIdentifier("library-placement-confirm")
                     } else if store.needsInitialLibrarySetup {
                         Button(store.ui("重试建立", "Retry Creation")) { store.retryBootstrapDefaultLibrary() }
                             .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+                            .accessibilityIdentifier("library-placement-retry")
                     } else {
                         Button(store.ui("重新连接", "Reconnect")) { _ = store.restoreCourseProjectRoots() }
                             .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))

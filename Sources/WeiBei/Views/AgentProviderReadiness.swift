@@ -133,6 +133,7 @@ struct AgentUnconfiguredHint: View {
             AgentConnectionSetupView(
                 existingProfileID: AgentProviderReadiness.isConfigured(for: store) ? store.activeAgentProfileID : nil,
                 replacementProfileID: store.activeAgentProfileID,
+                provider: store.agentProviderID, authMethod: store.agentAuthMethod, baseURL: store.agentBaseURL,
                 onConnected: { showsConnectionSetup = false },
                 onCancel: { showsConnectionSetup = false }
             )
