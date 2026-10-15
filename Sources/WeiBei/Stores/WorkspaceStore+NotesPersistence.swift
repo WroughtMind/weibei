@@ -739,15 +739,13 @@ extension WorkspaceStore {
         case .externalChange:
             await retainExternalModificationConflictAsync(markdown, itemID: itemID, url: url)
         case .failed(let error, let backupFailed):
-            setNoteDraft(markdown, for: itemID)
-            pendingNoteWritesByItemID.removeValue(forKey: itemID)
-            noteEditingSession.markSaveFailed(documentID: itemID)
-            let draftPersisted = await flushPendingWorkspaceSaveAsync()
+            guard let draftPersisted = await persistFailedNoteDraft(markdown, itemID: itemID) else { return false }
+            let message: String
             if backupFailed {
                 WeiBeiLog.noteRepair.error(
                     "code=note_backup_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
-                showImportantOperationError(.noteWriteSafetyHold(fileName: url.lastPathComponent), message: draftPersisted
+                message = draftPersisted
                     ? ui(
                         "无法安全备份“\(url.lastPathComponent)”的外部版本，魏碑已停止覆盖。待写内容已保存在魏碑中，请重试。",
                         "Could not safely back up the external version of \(url.lastPathComponent), so WeiBei stopped overwriting it. Unsaved content is stored in WeiBei; please retry."
@@ -755,12 +753,12 @@ extension WorkspaceStore {
                     : ui(
                         "无法安全备份“\(url.lastPathComponent)”的外部版本，魏碑已停止覆盖。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                         "Could not safely back up the external version of \(url.lastPathComponent), so WeiBei stopped overwriting it. Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
-                    ))
+                    )
             } else {
                 WeiBeiLog.noteRepair.error(
                     "code=note_write_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
-                showImportantOperationError(.noteWriteSafetyHold(fileName: url.lastPathComponent), message: draftPersisted
+                message = draftPersisted
                     ? ui(
                         "无法写入“\(url.lastPathComponent)”。待写内容已保存在魏碑中，请重试。",
                         "Could not write \(url.lastPathComponent). Unsaved content is kept in WeiBei; please retry."
@@ -768,10 +766,31 @@ extension WorkspaceStore {
                     : ui(
                         "无法写入“\(url.lastPathComponent)”。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
                         "Could not write \(url.lastPathComponent). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
-                    ))
+                    )
             }
+            setNoteFileError(message, for: itemID)
+            showImportantOperationError(.noteWriteSafetyHold(fileName: url.lastPathComponent), message: message)
         }
         return false
+    }
+
+    /// A nil receipt means a newer edit or successful retry superseded this
+    /// failure while its recovery draft was being written. Background notes
+    /// still keep their own errors when the user switches to another note.
+    private func persistFailedNoteDraft(_ markdown: String, itemID: String) async -> Bool? {
+        setNoteDraft(markdown, for: itemID)
+        pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        noteEditingSession.markSaveFailed(documentID: itemID)
+        let wasActiveDocument = noteEditingSession.documentID == itemID
+        let generation = noteEditingSession.documentGeneration
+        let revision = noteEditingSession.currentRevision
+        let persisted = await flushPendingWorkspaceSaveAsync()
+        guard notesByItemID[itemID] == markdown else { return nil }
+        if wasActiveDocument, noteEditingSession.documentID == itemID {
+            guard noteEditingSession.documentGeneration == generation,
+                  noteEditingSession.currentRevision == revision else { return nil }
+        }
+        return persisted
     }
 
     /// 笔记成功写盘后，按全库 markdown 引用回收附件目录里的孤儿图。
@@ -862,8 +881,7 @@ extension WorkspaceStore {
         do {
             diskMarkdown = try String(contentsOf: url, encoding: .utf8)
         } catch {
-            noteEditingSession.markSaveFailed(documentID: itemID)
-            let draftPersisted = await flushPendingWorkspaceSaveAsync()
+            guard let draftPersisted = await persistFailedNoteDraft(markdown, itemID: itemID) else { return }
             WeiBeiLog.noteRepair.error(
                 "code=note_conflict_reread_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
             )
@@ -1011,12 +1029,9 @@ extension WorkspaceStore {
         _ markdown: String,
         itemID: String
     ) async {
-        setNoteDraft(markdown, for: itemID)
-        pendingNoteWritesByItemID.removeValue(forKey: itemID)
-        noteEditingSession.markSaveFailed(documentID: itemID)
         let fileName = item(withID: itemID)?.url?.lastPathComponent
             ?? ui("这份笔记", "this note")
-        let draftPersisted = await flushPendingWorkspaceSaveAsync()
+        guard let draftPersisted = await persistFailedNoteDraft(markdown, itemID: itemID) else { return }
         let message = draftPersisted
             ? ui(
                 "无法确认“\(fileName)”的磁盘内容，已暂停写入。待写内容已保存在魏碑中，请重试。",
