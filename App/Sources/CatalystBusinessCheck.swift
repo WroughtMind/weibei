@@ -1724,9 +1724,13 @@ enum CatalystBusinessCheck {
         let token = UUID().uuidString
         var request = ["token": token, "action": action, "id": id]
         request["value"] = value
-        let responseURL = LabMetrics.directory.appendingPathComponent("onboarding-ui-response.json")
+        guard let path = ProcessInfo.processInfo.environment["WEIBEI_ONBOARDING_UI_DIRECTORY"], !path.isEmpty else {
+            throw Failure("Xcode UI driver directory missing")
+        }
+        let channel = URL(fileURLWithPath: path, isDirectory: true)
+        let responseURL = channel.appendingPathComponent("onboarding-ui-response.json")
         try JSONSerialization.data(withJSONObject: request).write(
-            to: LabMetrics.directory.appendingPathComponent("onboarding-ui-request.json"), options: .atomic)
+            to: channel.appendingPathComponent("onboarding-ui-request.json"), options: .atomic)
         var response: [String: Any]?
         try await until("Xcode UI driver response: " + action + " " + id) {
             guard let data = try? Data(contentsOf: responseURL),

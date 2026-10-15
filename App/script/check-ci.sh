@@ -30,7 +30,6 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/floating-rich-diagnostic.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/reasoning-composer.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/"onboarding-*.png \
-    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/onboarding-ui-response.json" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Workspace/quit-save.json"; do
     [[ ! -f "$file" ]] || cp "$file" "App/Evidence/ci-$(basename "$file")"
   done
@@ -96,7 +95,7 @@ with ui_log.open('w') as log:
         '-destination', 'platform=macOS,arch=' + os.environ['WEIBEI_TARGET_ARCH'],
         '-derivedDataPath', '.build/onboarding-ui-' + os.environ['WEIBEI_TARGET_ARCH'],
         '-parallel-testing-enabled', 'NO',
-        'WEIBEI_CHECK_APP_PATH=' + app, 'WEIBEI_CHECK_SUPPORT_PATH=' + str(support), 'test',
+        'WEIBEI_CHECK_APP_PATH=' + app, 'test',
     ], stdout=log, stderr=subprocess.STDOUT)
 if ui_result.returncode:
     print(ui_log.read_text()[-16000:])

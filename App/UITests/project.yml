@@ -15,6 +15,5 @@ targets:
       path: Info.plist
       properties:
         WeiBeiCheckAppPath: $(WEIBEI_CHECK_APP_PATH)
-        WeiBeiCheckSupportPath: $(WEIBEI_CHECK_SUPPORT_PATH)
     scheme:
       testTargets: [WeiBeiOnboardingUITests]

@@ -20,7 +20,5 @@
 	<string>1</string>
 	<key>WeiBeiCheckAppPath</key>
 	<string>$(WEIBEI_CHECK_APP_PATH)</string>
-	<key>WeiBeiCheckSupportPath</key>
-	<string>$(WEIBEI_CHECK_SUPPORT_PATH)</string>
 </dict>
 </plist>

@@ -9,18 +9,19 @@ final class OnboardingUITests: XCTestCase {
         continueAfterFailure = false
         let configuration = Bundle(for: Self.self)
         let appPath = try XCTUnwrap(configuration.object(forInfoDictionaryKey: "WeiBeiCheckAppPath") as? String)
-        let supportPath = try XCTUnwrap(configuration.object(forInfoDictionaryKey: "WeiBeiCheckSupportPath") as? String)
         XCTAssertFalse(appPath.isEmpty)
-        XCTAssertFalse(supportPath.isEmpty)
-        let results = URL(fileURLWithPath: supportPath).appendingPathComponent("Results")
-        let requestURL = results.appendingPathComponent("onboarding-ui-request.json")
-        let responseURL = results.appendingPathComponent("onboarding-ui-response.json")
-        for url in [requestURL, responseURL] where FileManager.default.fileExists(atPath: url.path) {
-            try FileManager.default.removeItem(at: url)
-        }
+        // Xcode sandboxes its UI runner. Use the runner's own temporary folder,
+        // rather than asking it to write into the acceptance App's data folder.
+        let channel = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiOnboardingUI-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: channel, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: channel) }
+        let requestURL = channel.appendingPathComponent("onboarding-ui-request.json")
+        let responseURL = channel.appendingPathComponent("onboarding-ui-response.json")
 
         let app = XCUIApplication(url: URL(fileURLWithPath: appPath))
         app.launchArguments = ["--exit-after-check"]
+        app.launchEnvironment["WEIBEI_ONBOARDING_UI_DIRECTORY"] = channel.path
         app.launch()
         defer { if app.state != .notRunning { app.terminate() } }
         let deadline = Date().addingTimeInterval(360) // Same bound as the existing CI app launch.
