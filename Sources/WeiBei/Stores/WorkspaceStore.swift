@@ -334,6 +334,7 @@ final class WorkspaceStore: ObservableObject {
     var noteEditorConflictProbeDocumentID: String?
     var latestNoteEditorSnapshot: (documentID: String, digest: String, baseDigest: String, revision: UInt64)?
     var noteEditorRecoveryRequestIDs: [String: UUID] = [:]
+    var noteEditorSnapshotPersistenceTasks: [String: (id: UUID, task: Task<Void, Never>)] = [:]
     let noteRecoveryStore = NoteRecoveryStore()
     lazy var noteEditingSession = NoteEditingSession(
         documentID: "",

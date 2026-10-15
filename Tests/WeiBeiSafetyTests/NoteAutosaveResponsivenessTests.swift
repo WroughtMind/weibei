@@ -115,6 +115,113 @@ final class NoteAutosaveResponsivenessTests: XCTestCase {
         try assertEarlierAutosaveFailureDoesNotReturn(retryRevision: 2, retryMarkdown: "第二版已成功保存的正文")
     }
 
+    /// Exercise the same request/receive callback as RichMarkdownEditorView,
+    /// from a MainActor task where a synchronous run-loop bridge cannot progress.
+    private func bindEditorSnapshot(
+        in store: WorkspaceStore,
+        markdown: String,
+        onDelivered: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        store.noteEditingSession.bindSnapshotRequestHandler { request in
+            Task { @MainActor in
+                let started = Date()
+                XCTAssertTrue(store.noteEditingSession.receive(NoteEditorSnapshotReadyEvent(
+                    requestID: request.requestID ?? request.commandID,
+                    documentID: request.documentID,
+                    documentGeneration: request.documentGeneration,
+                    revision: request.minimumRevision ?? 0,
+                    markdown: markdown
+                )))
+                XCTAssertLessThan(Date().timeIntervalSince(started), 2,
+                                  "编辑器快照回调不能同步等待另一个主线程保存任务")
+                onDelivered()
+            }
+        }
+    }
+
+    func testEditorSnapshotConflictReturnsPromptlyAndRetainsBothVersions() throws {
+        let note = try fixture()
+        defer { try? FileManager.default.removeItem(at: note.root) }
+        try "外部修改".write(to: note.url, atomically: true, encoding: .utf8)
+        let token = bindEditorSnapshot(in: note.store, markdown: "编辑器里的新正文")
+        defer { note.store.noteEditingSession.unbindSnapshotRequestHandler(token) }
+
+        try note.store.waitForCourseFileOperation {
+            let captured = await note.store.freshActiveNoteEditorSnapshot()
+            XCTAssertTrue(captured)
+            XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "外部修改")
+            XCTAssertEqual(note.store.notesByItemID[note.item.id], "编辑器里的新正文")
+            XCTAssertTrue(note.store.noteEditingSession.dirty)
+            XCTAssertEqual(note.store.noteEditingSession.saveStatus, .externallyModified)
+            XCTAssertTrue(note.store.noteEditorRecoveryConflict?.checkpointIsPersisted == true)
+            let recovered = try await note.store.noteRecoveryStore.load(documentID: note.item.id)
+            XCTAssertEqual(recovered?.markdown, "编辑器里的新正文")
+        }
+    }
+
+    func testEditorSnapshotFailureKeepsUIResponsiveAndLifecycleWaitsForDurability() throws {
+        let gate = AutosaveWorkspaceWriterGate()
+        let note = try fixture(
+            notebookWriter: { _, _ in throw CocoaError(.fileWriteNoPermission) },
+            workspaceWriter: { data, url in try gate.write(data, to: url) }
+        )
+        defer { gate.release(); try? FileManager.default.removeItem(at: note.root) }
+        var callbackReturned = false
+        let token = bindEditorSnapshot(in: note.store, markdown: "写入失败也不能丢的正文") {
+            callbackReturned = true
+        }
+        defer { note.store.noteEditingSession.unbindSnapshotRequestHandler(token) }
+        gate.arm()
+
+        try note.store.waitForCourseFileOperation {
+            var lifecycleFinished = false
+            let lifecycle = Task { @MainActor in
+                let captured = await note.store.freshActiveNoteEditorSnapshot()
+                lifecycleFinished = true
+                return captured
+            }
+            let deadline = Date().addingTimeInterval(3)
+            while !(gate.entered && callbackReturned), Date() < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertTrue(callbackReturned)
+            XCTAssertTrue(gate.entered)
+            XCTAssertFalse(lifecycleFinished, "退出等操作必须等到失败草稿的持久化完成")
+            // The independent recovery checkpoint must remain available even
+            // while the workspace write is deliberately blocked.
+            var recovered = try await note.store.noteRecoveryStore.load(documentID: note.item.id)
+            while recovered?.markdown != "写入失败也不能丢的正文", Date() < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+                recovered = try await note.store.noteRecoveryStore.load(documentID: note.item.id)
+            }
+            XCTAssertEqual(recovered?.markdown, "写入失败也不能丢的正文")
+            gate.release()
+            let captured = await lifecycle.value
+            XCTAssertTrue(captured)
+            XCTAssertTrue(note.store.noteEditingSession.dirty)
+            XCTAssertEqual(note.store.noteEditingSession.saveStatus, .failed)
+            XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "磁盘基线")
+            let persisted = try JSONDecoder().decode(PersistedWorkspace.self,
+                from: Data(contentsOf: note.store.storageURL))
+            XCTAssertEqual(persisted.notesByItemID[note.item.id], "写入失败也不能丢的正文")
+        }
+    }
+
+    func testFreshEditorSnapshotWaitsForSuccessfulMarkdownWrite() throws {
+        let note = try fixture()
+        defer { try? FileManager.default.removeItem(at: note.root) }
+        let token = bindEditorSnapshot(in: note.store, markdown: "退出前的最后编辑")
+        defer { note.store.noteEditingSession.unbindSnapshotRequestHandler(token) }
+
+        try note.store.waitForCourseFileOperation {
+            let captured = await note.store.freshActiveNoteEditorSnapshot()
+            XCTAssertTrue(captured)
+            XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "退出前的最后编辑")
+            XCTAssertFalse(note.store.noteEditingSession.dirty)
+            XCTAssertEqual(note.store.noteEditingSession.saveStatus, .writtenToFile)
+        }
+    }
+
     func testEarlierAutosaveFailureDoesNotReturnAfterSameRevisionRetry() throws {
         try assertEarlierAutosaveFailureDoesNotReturn(retryRevision: 1, retryMarkdown: "第一版保存失败的正文")
     }
@@ -147,8 +254,8 @@ final class NoteAutosaveResponsivenessTests: XCTestCase {
         }
         try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: recoveryDirectory.path)
 
-        // Both Markdown writes finish before the recovery tasks can resume on
-        // the main actor. Only this new test document's recovery path is blocked.
+        // Queue both snapshots before their asynchronous persistence can run.
+        // Only this new test document's recovery path is blocked.
         var recoveries: [Task<Void, Never>] = []
         for revision in UInt64(1)...2 {
             note.store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
@@ -165,7 +272,6 @@ final class NoteAutosaveResponsivenessTests: XCTestCase {
                 markdown: "已写入的第\(revision)版正文"
             )))
         }
-        XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "已写入的第2版正文")
         if switchDocument {
             note.store.activeNotebookItemID = other.id
             note.store.noteEditingSession.replaceDocument(with: other.id)
@@ -183,6 +289,7 @@ final class NoteAutosaveResponsivenessTests: XCTestCase {
         try note.store.waitForCourseFileOperation {
             for recovery in recoveries { await recovery.value }
         }
+        XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "已写入的第2版正文")
         XCTAssertEqual(note.store.noteEditingSession.saveStatus, .writtenToFile)
         XCTAssertFalse(note.store.noteEditingSession.dirty)
         XCTAssertNil(note.store.noteOperationErrorsByItemID[note.item.id])
@@ -223,13 +330,14 @@ final class NoteAutosaveResponsivenessTests: XCTestCase {
                 revision: retryRevision,
                 dirty: true
             ))
-            note.store.acceptNoteEditorSnapshot(NoteEditorSnapshotReadyEvent(
+            let retry = note.store.acceptNoteEditorSnapshot(NoteEditorSnapshotReadyEvent(
                 requestID: "successful-retry-while-old-failure-awaits",
                 documentID: note.item.id,
                 documentGeneration: note.store.noteEditingSession.documentGeneration,
                 revision: retryRevision,
                 markdown: retryMarkdown
             ))
+            await retry.value
             XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), retryMarkdown)
             XCTAssertEqual(note.store.noteEditingSession.saveStatus, .writtenToFile)
             XCTAssertFalse(note.store.noteEditingSession.dirty)
@@ -286,13 +394,14 @@ final class NoteAutosaveResponsivenessTests: XCTestCase {
                 revision: 4,
                 dirty: true
             ))
-            note.store.acceptNoteEditorSnapshot(NoteEditorSnapshotReadyEvent(
+            let newerSave = note.store.acceptNoteEditorSnapshot(NoteEditorSnapshotReadyEvent(
                 requestID: "new-edit-during-checkpoint-restore",
                 documentID: note.item.id,
                 documentGeneration: note.store.noteEditingSession.documentGeneration,
                 revision: 4,
                 markdown: "恢复等待期间继续写的新正文"
             ))
+            await newerSave.value
             XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "恢复等待期间继续写的新正文")
             gate.release()
             await recovery.value

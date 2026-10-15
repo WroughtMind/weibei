@@ -119,18 +119,45 @@ extension WorkspaceStore {
                 showImportantOperationError(message)
             }
         }
-        if noteEditorRecoveryConflictsByItemID[snapshot.documentID] != nil
-            || noteEditorConflictProbeDocumentID == snapshot.documentID { return recoveryTask }
-        if snapshot.documentID.hasPrefix("draft:") {
-            updateNote(snapshot.markdown)
-        } else {
-            updateNote(snapshot.markdown, for: snapshot.documentID)
-            flushPendingNotePersistence(for: snapshot.documentID)
+        let shouldPersistNote = noteEditorRecoveryConflictsByItemID[snapshot.documentID] == nil
+            && noteEditorConflictProbeDocumentID != snapshot.documentID
+        if shouldPersistNote {
+            if snapshot.documentID.hasPrefix("draft:") {
+                updateNote(snapshot.markdown)
+            } else {
+                // Retain the accepted text before yielding, including when the
+                // editor switches documents before the async write starts.
+                updateNote(snapshot.markdown, for: snapshot.documentID)
+            }
         }
-        return recoveryTask
+        let persistenceTask = Task { @MainActor [weak self] in
+            guard let self else { await recoveryTask.value; return }
+            defer {
+                if noteEditorSnapshotPersistenceTasks[snapshot.documentID]?.id == recoveryRequestID {
+                    noteEditorSnapshotPersistenceTasks.removeValue(forKey: snapshot.documentID)
+                }
+            }
+            if shouldPersistNote, !snapshot.documentID.hasPrefix("draft:") {
+                await flushPendingNotePersistenceAsync(for: snapshot.documentID)
+            }
+            // Recovery writes run independently, so a slow workspace receipt
+            // cannot postpone the checkpoint. Lifecycle callers await both.
+            await recoveryTask.value
+        }
+        noteEditorSnapshotPersistenceTasks[snapshot.documentID] = (recoveryRequestID, persistenceTask)
+        return persistenceTask
+    }
+
+    func waitForNoteEditorSnapshotPersistence(documentID: String) async {
+        // Another accepted snapshot can replace this task while we await it.
+        // Wait for that newer receipt too, rather than returning after an old save.
+        while let pending = noteEditorSnapshotPersistenceTasks[documentID] {
+            await pending.task.value
+        }
     }
 
     func freshActiveNoteEditorSnapshot() async -> Bool {
+        let documentID = noteEditingSession.documentID
         if noteEditingSession.dirty {
             do {
                 _ = try await noteEditingSession.snapshot()
@@ -138,6 +165,7 @@ extension WorkspaceStore {
                 return false
             }
         }
+        await waitForNoteEditorSnapshotPersistence(documentID: documentID)
         return await waitForBlankNoteMaterialization()
     }
 
