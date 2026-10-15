@@ -7,8 +7,10 @@ struct AccessibilityFrameProbe: UIViewRepresentable {
     let identifier: String
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
-        view.isAccessibilityElement = true
-        view.accessibilityLabel = "weibei pane frame anchor"
+        // In-process geometry checks use the identifier, not an accessible
+        // control. This transparent marker must not intercept either hit test.
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = false
         return view
     }
     func updateUIView(_ view: UIView, context: Context) { view.accessibilityIdentifier = identifier }

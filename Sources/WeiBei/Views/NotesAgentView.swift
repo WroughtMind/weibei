@@ -356,11 +356,6 @@ struct NotePaneView: View {
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(WeiBeiTheme.paper)
-        .overlay(alignment: .topLeading) {
-            AccessibilityFrameProbe(identifier: "stable-document-slot-reader")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .allowsHitTesting(false)
-        }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
         // Note chrome follows opacity. The editor web view is hidden separately.
         .opacity(store.notePickerPresented ? 0 : 1)
@@ -1702,11 +1697,6 @@ struct AgentPaneView: View {
         // Same opaque paper as notes/reader — clear background lets
         // isMovableByWindowBackground steal header drags as window moves.
         .background(WeiBeiTheme.paper)
-        .overlay(alignment: .topLeading) {
-            AccessibilityFrameProbe(identifier: "stable-document-slot-agent")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .allowsHitTesting(false)
-        }
         .onChange(of: paneState.focusRequest) { _, _ in
             draftFocused = paneState.focusedPane == .agent && !interaction.keepFloatingSelectionForAnswer
         }

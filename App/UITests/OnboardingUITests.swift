@@ -30,6 +30,7 @@ final class OnboardingUITests: XCTestCase {
         defer { if app.state != .notRunning { app.terminate() } }
         let deadline = Date().addingTimeInterval(360) // Same bound as the existing CI app launch.
         var handled: String?
+        var recordedUnreachable = Set<String>()
         while app.state != .notRunning, Date() < deadline {
             guard let data = try? Data(contentsOf: requestURL),
                   let request = try JSONSerialization.jsonObject(with: data) as? [String: String],
@@ -57,7 +58,16 @@ final class OnboardingUITests: XCTestCase {
                                  "enabled": String(snapshot.isEnabled),
                                  "frame": String(describing: snapshot.frame),
                                  "matches": String(snapshots.count)]
-                    if action == "ready" { state["hittable"] = String(element.isHittable) }
+                    if action == "ready" {
+                        let hittable = element.isHittable
+                        state["hittable"] = String(hittable)
+                        if !hittable, recordedUnreachable.insert(id).inserted {
+                            let screenshot = XCTAttachment(screenshot: app.screenshot())
+                            screenshot.name = "Waiting for control: " + id
+                            screenshot.lifetime = .keepAlways
+                            add(screenshot)
+                        }
+                    }
                     response["element"] = state
                 }
             case "press", "fill":
