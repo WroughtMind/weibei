@@ -109,8 +109,10 @@ final class ConversationSelectionPressObserver: UIGestureRecognizer {
 final class ConversationSelectionActions: UIView {
     let copyButton = UIButton(type: .system)
     let quoteButton = UIButton(type: .system)
+    private let material = UIVisualEffectView()
     private let stack = UIStackView()
     private let separator = UIView()
+    private var buttonSizeConstraints: [NSLayoutConstraint] = []
     private var appearance: WeiBeiAppearanceMode = .paper
     private var language: WeiBeiInterfaceLanguage = .chinese
     private var textScale: CGFloat = 1
@@ -122,7 +124,12 @@ final class ConversationSelectionActions: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isHidden = true
+        isOpaque = false
         accessibilityIdentifier = "conversation-selection-actions"
+        material.isUserInteractionEnabled = false
+        material.accessibilityElementsHidden = true
+        material.clipsToBounds = true
+        addSubview(material)
         stack.axis = .horizontal
         stack.alignment = .center
         stack.isLayoutMarginsRelativeArrangement = true
@@ -132,8 +139,12 @@ final class ConversationSelectionActions: UIView {
             button.configuration = .plain()
             button.configurationUpdateHandler = { [weak self] button in self?.style(button) }
             button.isPointerInteractionEnabled = true
+            button.addInteraction(UIToolTipInteraction())
             button.addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hover(_:))))
+            buttonSizeConstraints += [button.widthAnchor.constraint(equalToConstant: 28),
+                                      button.heightAnchor.constraint(equalToConstant: 28)]
         }
+        NSLayoutConstraint.activate(buttonSizeConstraints)
         copyButton.accessibilityIdentifier = "conversation-selection-copy"
         quoteButton.accessibilityIdentifier = "conversation-selection-quote"
         copyButton.addAction(UIAction { [weak self] _ in self?.copySelectedText?() }, for: .touchUpInside)
@@ -143,7 +154,7 @@ final class ConversationSelectionActions: UIView {
         stack.addArrangedSubview(quoteButton)
         separator.widthAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale).isActive = true
         separator.heightAnchor.constraint(equalToConstant: 14).isActive = true
-        layer.borderWidth = 1 / UIScreen.main.scale
+        material.layer.borderWidth = 1 / UIScreen.main.scale
         layer.shadowOpacity = 0.12
         layer.shadowRadius = 5
         layer.shadowOffset = CGSize(width: 0, height: 2)
@@ -155,10 +166,23 @@ final class ConversationSelectionActions: UIView {
         self.appearance = appearance
         self.language = language
         self.textScale = textScale
-        backgroundColor = WeiBeiNativePalette.paperRaised(for: appearance)
-        layer.borderColor = WeiBeiNativePalette.hairline(for: appearance).cgColor
+        // Match the app's floating panels: a tint alone is transparent paint,
+        // while glass needs a native backdrop underneath it.
+        if appearance.isGlass {
+            let frosted = appearance == .glassMist || appearance == .glassSlate
+            let style: UIBlurEffect.Style = frosted
+                ? (appearance.isDark ? .systemMaterialDark : .systemMaterialLight)
+                : (appearance.isDark ? .systemUltraThinMaterialDark : .systemUltraThinMaterialLight)
+            material.effect = UIBlurEffect(style: style)
+            material.contentView.backgroundColor = WeiBeiNativePalette.glassBaseTint(for: appearance)
+        } else {
+            material.effect = nil
+            material.contentView.backgroundColor = WeiBeiNativePalette.paperRaised(for: appearance)
+        }
+        material.layer.borderColor = WeiBeiNativePalette.hairline(for: appearance).cgColor
         layer.shadowColor = WeiBeiNativePalette.ink(for: appearance).cgColor
         separator.backgroundColor = WeiBeiNativePalette.hairline(for: appearance)
+        for constraint in buttonSizeConstraints { constraint.constant = 28 * textScale }
         for button in [copyButton, quoteButton] { style(button) }
         invalidateIntrinsicContentSize()
     }
@@ -173,21 +197,37 @@ final class ConversationSelectionActions: UIView {
             ? language.text(copied ? "已复制" : "复制", copied ? "Copied" : "Copy")
             : language.text("引用", "Quote")
         var configuration = button.configuration ?? .plain()
-        configuration.attributedTitle = AttributedString(title, attributes: AttributeContainer([
-            .font: UIFont.systemFont(ofSize: 12 * textScale, weight: .medium)
-        ]))
+        configuration.buttonSize = .small
+        configuration.title = nil
+        configuration.attributedTitle = nil
         configuration.image = UIImage(systemName: isCopy ? (copied ? "checkmark" : "doc.on.doc") : "text.quote",
-                                      withConfiguration: UIImage.SymbolConfiguration(pointSize: 11 * textScale))
-        configuration.imagePadding = 5
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 9, bottom: 5, trailing: 9)
-        configuration.baseForegroundColor = WeiBeiNativePalette.ink(for: appearance)
-        configuration.background.backgroundColor = button.isHighlighted || hovered.contains(ObjectIdentifier(button))
-            ? WeiBeiNativePalette.paperInset(for: appearance) : .clear
+                                      withConfiguration: UIImage.SymbolConfiguration(pointSize: 13 * textScale))?
+            .withRenderingMode(.alwaysTemplate)
+        configuration.imagePadding = 0
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
+        let ink = WeiBeiNativePalette.ink(for: appearance)
+        button.tintColor = ink
+        configuration.baseForegroundColor = ink
+        configuration.imageColorTransformer = UIConfigurationColorTransformer { _ in ink }
+        configuration.background.backgroundColor = button.isHighlighted ? ink.withAlphaComponent(0.16)
+            : hovered.contains(ObjectIdentifier(button)) ? WeiBeiNativePalette.paperInset(for: appearance) : .clear
         configuration.background.cornerRadius = 10
         button.configuration = configuration
         button.accessibilityLabel = title
+        button.interactions.compactMap { $0 as? UIToolTipInteraction }.first?.defaultToolTip = title
     }
     override var intrinsicContentSize: CGSize {
+        // Catalyst lays out the alignment rect, while hit testing uses the full
+        // native button frame. Include its decoration outside the alignment rect.
+        let insets = [copyButton, quoteButton].map { $0.alignmentRectInsets }
+        let top = max(0, insets.map(\.top).max() ?? 0)
+        let bottom = max(0, insets.map(\.bottom).max() ?? 0)
+        let left = max(0, insets.map(\.left).max() ?? 0)
+        let right = max(0, insets.map(\.right).max() ?? 0)
+        stack.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: 3 + top, leading: 4 + left, bottom: 3 + bottom, trailing: 4 + right)
+        stack.setCustomSpacing(right, after: copyButton)
+        stack.setCustomSpacing(left, after: separator)
         let size = stack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
         return CGSize(width: ceil(size.width), height: ceil(size.height))
     }
@@ -196,6 +236,8 @@ final class ConversationSelectionActions: UIView {
         // Keep the event surface around the native button frames. Insets belong
         // to the stack's content layout, not to its own hit-test bounds.
         stack.frame = bounds
+        material.frame = bounds
+        material.layer.cornerRadius = bounds.height / 2
         layer.cornerRadius = bounds.height / 2
         layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
     }
