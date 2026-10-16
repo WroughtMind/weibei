@@ -197,6 +197,7 @@ final class ConversationSelectionActions: UIView {
             ? language.text(copied ? "已复制" : "复制", copied ? "Copied" : "Copy")
             : language.text("引用", "Quote")
         var configuration = button.configuration ?? .plain()
+        configuration.buttonSize = .small
         configuration.title = nil
         configuration.attributedTitle = nil
         configuration.image = UIImage(systemName: isCopy ? (copied ? "checkmark" : "doc.on.doc") : "text.quote",
@@ -216,6 +217,17 @@ final class ConversationSelectionActions: UIView {
         button.interactions.compactMap { $0 as? UIToolTipInteraction }.first?.defaultToolTip = title
     }
     override var intrinsicContentSize: CGSize {
+        // Catalyst lays out the alignment rect, while hit testing uses the full
+        // native button frame. Include its decoration outside the alignment rect.
+        let insets = [copyButton, quoteButton].map { $0.alignmentRectInsets }
+        let top = max(0, insets.map(\.top).max() ?? 0)
+        let bottom = max(0, insets.map(\.bottom).max() ?? 0)
+        let left = max(0, insets.map(\.left).max() ?? 0)
+        let right = max(0, insets.map(\.right).max() ?? 0)
+        stack.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: 3 + top, leading: 4 + left, bottom: 3 + bottom, trailing: 4 + right)
+        stack.setCustomSpacing(right, after: copyButton)
+        stack.setCustomSpacing(left, after: separator)
         let size = stack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
         return CGSize(width: ceil(size.width), height: ceil(size.height))
     }
