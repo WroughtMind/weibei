@@ -304,7 +304,7 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testFailedRequestRestoresQuotesWithTheQuestionButDoesNotChangeANewDraft() async throws {
+    func testFailedRequestRestoresQuotesWithTheQuestionButDoesNotChangeANewDraft() throws {
         for writesNewDraft in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: root) }
@@ -319,7 +319,12 @@ final class SelectionExperienceTests: XCTestCase {
                 throw URLError(.cannotConnectToHost)
             }
             store.submitAgentDraft(sessionID: sessionID)
-            await store.agentRuns[sessionID]?.agentRequestTask?.value
+            let done = expectation(description: "failed quoted request restored")
+            Task { @MainActor in
+                await store.agentRuns[sessionID]?.agentRequestTask?.value
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 10)
             XCTAssertEqual(store.composerDraft(for: sessionID), writesNewDraft ? "我正在写另一条问题" : "解释引用")
             XCTAssertEqual(store.conversationQuotes(in: sessionID).map(\.text), writesNewDraft ? [] : ["请求中的引用"])
         }

@@ -1355,6 +1355,17 @@ enum CatalystBusinessCheck {
             return try await accessibilityElement("conversation-quote-\(quote.id.uuidString)") != nil
         }
         try capture("selection-quote-main.png")
+        guard let mainQuote = store.conversationQuotes(in: mainID).last, mainQuote.messageID != nil else {
+            throw Failure("main quote lost its message anchor")
+        }
+        try await activate("conversation-quote-\(mainQuote.id.uuidString)")
+        try await until("quote preview offers its source") {
+            try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") != nil
+        }
+        try await activate("conversation-quote-source-\(mainQuote.id.uuidString)")
+        try await until("returning to the quoted message closes the preview") {
+            try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") == nil
+        }
         guard let floatingConversation = conversation(containing: messageID), floatingConversation.isFloatingConversation,
               let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
             throw Failure("floating message quote action unavailable")
@@ -1383,6 +1394,13 @@ enum CatalystBusinessCheck {
             return try await accessibilityElement("conversation-quote-\(quote.id.uuidString)") != nil
         }
         try capture("selection-quote-floating.png")
+        guard let floatingPill = store.conversationQuotes(in: threadID).last else { throw Failure("floating quote unavailable") }
+        try await activate("conversation-quote-remove-\(floatingPill.id.uuidString)")
+        try await until("removing a floating quote preserves both drafts and main quotes") {
+            !store.conversationQuotes(in: threadID).contains(where: { $0.id == floatingPill.id })
+                && store.conversationQuotes(in: mainID).contains(where: { $0.id == mainQuote.id })
+                && mainComposer.text == mainQuoted && floatingComposer()?.text == floatingQuoted
+        }
         store.dismissFloatingSelectionAgent()
         store.clearSelectionAttachments()
         store.removeConversationQuotes(Set(store.conversationQuotes(in: mainID).map(\.id)), in: mainID)

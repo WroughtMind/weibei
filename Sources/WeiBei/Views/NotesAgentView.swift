@@ -2394,6 +2394,7 @@ private struct ConversationQuotePill: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("conversation-quote-\(quote.id.uuidString)")
             .accessibilityLabel(store.ui("预览引用：", "Preview quote: ") + quote.text)
             .popover(isPresented: $previewing, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -2407,6 +2408,7 @@ private struct ConversationQuotePill: View {
                                 userInfo: ["sessionID": sessionID])
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
+                        .accessibilityIdentifier("conversation-quote-source-\(quote.id.uuidString)")
                     }
                 }
                 .padding(12).frame(width: 320, alignment: .leading)
@@ -2416,6 +2418,7 @@ private struct ConversationQuotePill: View {
                 Image(systemName: "xmark").weiBeiText(9, weight: .semibold)
             }
             .buttonStyle(WeiBeiIconButtonStyle(size: 20))
+            .accessibilityIdentifier("conversation-quote-remove-\(quote.id.uuidString)")
             .accessibilityLabel(store.ui("移除引用", "Remove quote"))
         }
         .weiBeiText(12)
@@ -2424,7 +2427,6 @@ private struct ConversationQuotePill: View {
         .weibeiEtchedBackground(fill: WeiBeiTheme.paperInset.opacity(hovering ? 0.64 : 0.34),
             stroke: WeiBeiTheme.hairline.opacity(hovering ? 0.72 : 0.42), cornerRadius: 8)
         .onHover { hovering = $0 }
-        .accessibilityIdentifier("conversation-quote-\(quote.id.uuidString)")
     }
 }
 
