@@ -12,7 +12,7 @@ test('asset check detects drift without rewriting the source manifest', () => {
     mkdirSync(join(root, 'assets'));
     writeFileSync(join(root, 'VERSION'), '1.0.0\n');
     writeFileSync(join(root, 'assets/probe.ttf'), 'font-proof');
-    const args = ['--experimental-strip-types', fileURLToPath(new URL('./build-manifest.ts', import.meta.url)), root];
+    const args = [fileURLToPath(new URL('./build-manifest.mjs', import.meta.url)), root];
     execFileSync(process.execPath, args, { stdio: 'pipe' });
     execFileSync(process.execPath, [...args, '--check'], { stdio: 'pipe' });
     const manifest = join(root, 'assets/asset-manifest.json');

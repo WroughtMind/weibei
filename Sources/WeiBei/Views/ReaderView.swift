@@ -3376,6 +3376,11 @@ struct WebReaderRepresentable: ReaderRepresentable {
             controller.add(context.coordinator, name: name)
         }
         controller.addUserScript(WKUserScript(
+            source: ReaderMarpControls.styleScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        controller.addUserScript(WKUserScript(
             source: Self.selectionRuntimeScript + Self.selectionScript + Self.readerRemarkMarksScript,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
@@ -3387,6 +3392,11 @@ struct WebReaderRepresentable: ReaderRepresentable {
         ))
         controller.addUserScript(WKUserScript(
             source: Self.contentRailScript(language: interfaceLanguage),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        controller.addUserScript(WKUserScript(
+            source: ReaderMarpControls.script(isEnglish: interfaceLanguage == .english),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         ))
@@ -4069,6 +4079,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             view.evaluateJavaScript("""
             (() => {
               const language = \(Self.json(language));
+              window.WeiBeiMarpControls?.setLanguage(language);
               if (window.WeiBeiOffice?.setLanguage) window.WeiBeiOffice.setLanguage(language);
               else window.WeiBeiContentRail?.setLanguage?.(language);
             })();
