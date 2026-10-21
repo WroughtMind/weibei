@@ -2141,6 +2141,7 @@ struct AgentPaneView: View {
                     AgentSelectionAttachmentPill()
                         .transition(WeiBeiTransition.floating)
                 }
+                ConversationQuoteTray(sessionID: store.activeStudySessionID)
 
                 ComposerView(
                     prompt: agentPrompt,
@@ -2351,6 +2352,79 @@ private struct AgentPaneWidthKey: PreferenceKey {
         if next > 1 {
             value = next
         }
+    }
+}
+
+private struct ConversationQuoteTray: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
+    let sessionID: UUID?
+
+    var body: some View {
+        if let sessionID, !store.conversationQuotes(in: sessionID).isEmpty {
+            let quotes = store.conversationQuotes(in: sessionID)
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(quotes) { quote in
+                        ConversationQuotePill(quote: quote, sessionID: sessionID)
+                    }
+                }
+            }
+            .frame(height: min(CGFloat(quotes.count) * 34 * textScale, 102 * textScale))
+        }
+    }
+}
+
+private struct ConversationQuotePill: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let quote: ConversationQuoteAttachment
+    let sessionID: UUID
+    @State private var hovering = false
+    @State private var previewing = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button { previewing.toggle() } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "text.quote").foregroundStyle(WeiBeiTheme.cinnabar)
+                    Text(quote.text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " "))
+                        .lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(store.ui("预览引用：", "Preview quote: ") + quote.text)
+            .popover(isPresented: $previewing, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(store.ui("对话引用", "Conversation quote")).weiBeiText(12, weight: .medium)
+                    ScrollView { Text(quote.text).weiBeiText(12).frame(maxWidth: .infinity, alignment: .leading) }
+                        .frame(maxHeight: 220)
+                    if let messageID = quote.messageID {
+                        Button(store.ui("返回原消息", "Go to original message")) {
+                            previewing = false
+                            NotificationCenter.default.post(name: .weiBeiScrollAgentToMessage, object: messageID,
+                                userInfo: ["sessionID": sessionID])
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                }
+                .padding(12).frame(width: 320, alignment: .leading)
+                .background(WeiBeiTheme.paperRaised)
+            }
+            Button { store.removeConversationQuotes([quote.id], in: sessionID) } label: {
+                Image(systemName: "xmark").weiBeiText(9, weight: .semibold)
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 20))
+            .accessibilityLabel(store.ui("移除引用", "Remove quote"))
+        }
+        .weiBeiText(12)
+        .foregroundStyle(WeiBeiTheme.secondaryInk)
+        .padding(.leading, 10).padding(.trailing, 5).padding(.vertical, 4)
+        .weibeiEtchedBackground(fill: WeiBeiTheme.paperInset.opacity(hovering ? 0.64 : 0.34),
+            stroke: WeiBeiTheme.hairline.opacity(hovering ? 0.72 : 0.42), cornerRadius: 8)
+        .onHover { hovering = $0 }
+        .accessibilityIdentifier("conversation-quote-\(quote.id.uuidString)")
     }
 }
 
@@ -3079,6 +3153,7 @@ struct FloatingSelectionAgentView: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 AgentUnconfiguredHint(store: store)
+                ConversationQuoteTray(sessionID: interaction.activeSelectionAskThreadID)
             ComposerView(
                 prompt: showsFloatingFeed
                     ? store.ui("再问一点…", "Ask a follow-up…")

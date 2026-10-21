@@ -1275,11 +1275,11 @@ enum CatalystBusinessCheck {
         }
         try capture("selection-discussion-mist.png")
         store.appearanceStyle = originalAppearanceStyle
-        mainConversation.quoteText?("主会话引用片段")
-        // A2: 引用追加到各自草稿末尾（前面空一行），不再替换已写的草稿。
-        var mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
-        try await until("main quote appends to its own composer") {
-            mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
+        mainConversation.quoteText?("主会话引用片段", nil)
+        let mainQuoted = mainDraft
+        try await until("main quote appears above its composer without changing either draft") {
+            store.conversationQuotes(in: mainID).map(\.text) == ["主会话引用片段"]
+                && mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
                 && workspaceIsFullyVisible()
         }
         func selectVisibleParagraph(in controller: ConversationController) throws -> String {
@@ -1320,10 +1320,12 @@ enum CatalystBusinessCheck {
         _ = try reachableCapsuleButton(mainConversation.selectionActions.quoteButton)
         try capture("selection-capsule-main.png")
         mainCopy.sendActions(for: .touchUpInside)
-        guard UIPasteboard.general.string == mainExcerpt, mainConversation.selection.hasSelection,
+        guard UIPasteboard.general.string == mainExcerpt, !mainConversation.selection.hasSelection,
+              mainConversation.selectionActions.isHidden, store.transientNoteStatus == store.ui("已复制", "Copied"),
               mainComposer.text == mainQuoted, floatingComposer()?.text == draft else {
             throw Failure("main capsule copy changed the selected text or either draft")
         }
+        _ = try selectVisibleParagraph(in: mainConversation)
         store.dismissFloatingSelectionAgent()
         try await until("closing floating panel restores the main selection capsule") {
             floatingComposer() == nil
@@ -1341,36 +1343,50 @@ enum CatalystBusinessCheck {
                 && (try? reachableCapsuleButton(mainConversation.selectionActions.copyButton)) != nil
                 && (try? reachableCapsuleButton(mainConversation.selectionActions.quoteButton)) != nil
         }
-        mainQuoted += "> " + mainExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
         try reachableCapsuleButton(mainConversation.selectionActions.quoteButton).sendActions(for: .touchUpInside)
-        try await until("main capsule quote appends without touching floating draft") {
-            mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
+        try await until("main capsule attaches a quote without touching either draft") {
+            store.conversationQuotes(in: mainID).contains(where: { $0.text == mainExcerpt && $0.messageID != nil })
+                && mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
                 && !mainConversation.selection.hasSelection && mainConversation.selectionActions.isHidden
                 && workspaceIsFullyVisible()
         }
+        try await until("main quote pill is visible") {
+            guard let quote = store.conversationQuotes(in: mainID).last else { return false }
+            return try await accessibilityElement("conversation-quote-\(quote.id.uuidString)") != nil
+        }
+        try capture("selection-quote-main.png")
         guard let floatingConversation = conversation(containing: messageID), floatingConversation.isFloatingConversation,
               let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
             throw Failure("floating message quote action unavailable")
         }
-        let floatingQuoted = draft + "\n\n> " + quotedMessage.text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-        floatingConversation.quote(quotedMessage.text)
-        try await until("floating quote appends to its own composer") {
-            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
+        let floatingQuoted = draft
+        floatingConversation.quote(quotedMessage.text, messageID: quotedMessage.id)
+        try await until("floating quote attaches to its own composer") {
+            store.conversationQuotes(in: threadID).contains(where: { $0.text == quotedMessage.text && $0.messageID == quotedMessage.id })
+                && floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
                 && mainComposer.text == mainQuoted && workspaceIsFullyVisible()
         }
         let floatingExcerpt = try selectVisibleParagraph(in: floatingConversation)
         _ = try reachableCapsuleButton(floatingConversation.selectionActions.copyButton)
         let floatingQuote = try reachableCapsuleButton(floatingConversation.selectionActions.quoteButton)
         try capture("selection-capsule-floating.png")
-        let floatingCapsuleQuoted = floatingQuoted + "> " + floatingExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
+        let floatingCapsuleQuoted = floatingQuoted
         floatingQuote.sendActions(for: .touchUpInside)
-        try await until("floating capsule quote appends without touching main draft") {
-            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingCapsuleQuoted
+        try await until("floating capsule attaches a quote without touching main draft") {
+            store.conversationQuotes(in: threadID).contains(where: { $0.text == floatingExcerpt && $0.messageID != nil })
+                && floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingCapsuleQuoted
                 && mainComposer.text == mainQuoted && !floatingConversation.selection.hasSelection
                 && floatingConversation.selectionActions.isHidden && workspaceIsFullyVisible()
         }
+        try await until("floating quote pill is visible") {
+            guard let quote = store.conversationQuotes(in: threadID).last else { return false }
+            return try await accessibilityElement("conversation-quote-\(quote.id.uuidString)") != nil
+        }
+        try capture("selection-quote-floating.png")
         store.dismissFloatingSelectionAgent()
         store.clearSelectionAttachments()
+        store.removeConversationQuotes(Set(store.conversationQuotes(in: mainID).map(\.id)), in: mainID)
+        store.removeConversationQuotes(Set(store.conversationQuotes(in: threadID).map(\.id)), in: threadID)
         // Exercise the real composer with a documented model, using only the isolated fixture endpoint.
         let provider = store.agentProviderID
         let model = store.modelName

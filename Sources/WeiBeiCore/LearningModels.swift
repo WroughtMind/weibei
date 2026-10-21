@@ -240,8 +240,19 @@ public struct StudyFlowState: Codable, Hashable, Sendable {
     }
 }
 
+public struct ConversationQuoteAttachment: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public let text: String
+    public let messageID: UUID?
+
+    public init(id: UUID = UUID(), text: String, messageID: UUID?) {
+        self.id = id; self.text = text; self.messageID = messageID
+    }
+}
+
 public struct StudySession: Identifiable, Codable, Hashable, Sendable {
     public var draft: String = ""
+    public var composerQuotes: [ConversationQuoteAttachment] = []
     public var id: UUID
     public var title: String
     public var titleSetByUser: Bool
@@ -333,6 +344,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         case updatedAt
         case messageCount
         case draft
+        case composerQuotes
     }
 
     public init(from decoder: Decoder) throws {
@@ -351,6 +363,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
         draft = try values.decodeIfPresent(String.self, forKey: .draft) ?? ""
+        composerQuotes = try values.decodeIfPresent([ConversationQuoteAttachment].self, forKey: .composerQuotes) ?? []
         messageCount = try values.decodeIfPresent(Int.self, forKey: .messageCount)
             ?? messages.count
     }
@@ -361,6 +374,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         try values.encode(title, forKey: .title)
         try values.encode(titleSetByUser, forKey: .titleSetByUser)
         try values.encode(draft, forKey: .draft)
+        if !composerQuotes.isEmpty { try values.encode(composerQuotes, forKey: .composerQuotes) }
         try values.encode(messages, forKey: .messages)
         try values.encode(summary, forKey: .summary)
         try values.encode(relatedCourseIDs, forKey: .relatedCourseIDs)
