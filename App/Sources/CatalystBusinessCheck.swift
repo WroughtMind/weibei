@@ -1345,10 +1345,27 @@ enum CatalystBusinessCheck {
         }
         try reachableCapsuleButton(mainConversation.selectionActions.quoteButton).sendActions(for: .touchUpInside)
         try await until("main capsule attaches a quote without touching either draft") {
-            store.conversationQuotes(in: mainID).contains(where: { $0.text == mainExcerpt && $0.messageID != nil })
+            let ready = store.conversationQuotes(in: mainID).contains(where: { $0.text == mainExcerpt && $0.messageID != nil })
                 && mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
                 && !mainConversation.selection.hasSelection && mainConversation.selectionActions.isHidden
                 && workspaceIsFullyVisible()
+            if !ready {
+                let state: [String: Any] = [
+                    "expected_excerpt": mainExcerpt,
+                    "quotes": store.conversationQuotes(in: mainID).map { ["text": $0.text, "message_id": $0.messageID?.uuidString ?? ""] },
+                    "main_first_responder": mainComposer.isFirstResponder,
+                    "main_draft": mainComposer.text ?? "", "expected_main_draft": mainQuoted,
+                    "floating_draft": floatingComposer()?.text ?? "", "expected_floating_draft": draft,
+                    "has_selection": mainConversation.selection.hasSelection,
+                    "actions_hidden": mainConversation.selectionActions.isHidden,
+                    "workspace_visible": workspaceIsFullyVisible(),
+                    "main_composer_frame": NSStringFromCGRect(mainComposer.convert(mainComposer.bounds, to: window)),
+                    "main_composer_attached": mainComposer.window === window,
+                ]
+                try JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: LabMetrics.directory.appendingPathComponent("selection-quote-state.json"))
+            }
+            return ready
         }
         try await until("main quote pill is visible") {
             guard let quote = store.conversationQuotes(in: mainID).last else { return false }
