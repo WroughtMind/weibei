@@ -293,7 +293,8 @@ jobs:
           [[ -x "$FULL_SCREEN_CONTROL_EXE" ]] || exit 0
           "$FULL_SCREEN_CONTROL_EXE" --terminate
 
-      - uses: ./.github/actions/catalyst-cache
+      - id: catalyst_cache
+        uses: ./.github/actions/catalyst-cache
         with:
           arch: ${{ matrix.arch }}
 
@@ -388,6 +389,14 @@ jobs:
             .build/timings/
           retention-days: 2
           if-no-files-found: error
+
+      - name: 检查失败时保留编译中间结果
+        id: failed_cache
+        if: ${{ !cancelled() && failure() && steps.catalyst_cache.outcome == 'success' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ steps.catalyst_cache.outputs.key }}
+          path: ${{ steps.catalyst_cache.outputs.paths }}
 
   # 保留分支保护要求的名称；分类失败或应用检查失败不能被跳过伪装成成功。
   fast-check:

@@ -41,7 +41,8 @@ jobs:
         run: |
           case "$WEIBEI_TARGET_ARCH" in arm64|x86_64) ;; *) exit 2 ;; esac
           case "$SCENARIO" in picker|conversation|business) ;; *) exit 2 ;; esac
-      - uses: ./.github/actions/catalyst-cache
+      - id: catalyst_cache
+        uses: ./.github/actions/catalyst-cache
         with:
           arch: ${{ inputs.arch }}
       - name: 准备隔离原生环境
@@ -67,3 +68,10 @@ jobs:
             .build/catalyst-*/dependencies.log
           if-no-files-found: error
           retention-days: 2
+      - name: 诊断失败时保留编译中间结果
+        id: failed_cache
+        if: ${{ !cancelled() && failure() && steps.catalyst_cache.outcome == 'success' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ steps.catalyst_cache.outputs.key }}
+          path: ${{ steps.catalyst_cache.outputs.paths }}

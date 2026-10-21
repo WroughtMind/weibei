@@ -26,7 +26,8 @@ def expression_value(expression, context):
             result = result[part]
         return repr(result)
     expression = re.sub(r'\b(?:github|needs|steps|inputs)(?:\.[\w-]+)+', value, expression)
-    expression = expression.replace('always()', 'True').replace('cancelled()', 'False')
+    expression = expression.replace('always()', 'True').replace('cancelled()', repr(context.get('cancelled', False)))
+    expression = expression.replace('failure()', repr(context.get('failure', False)))
     expression = expression.replace('&&', ' and ').replace('||', ' or ')
     expression = re.sub(r'!(?!=)', ' not ', expression)
     expression = re.sub(r"'[^']*'|\btrue\b|\bfalse\b", lambda m: {'true': 'True', 'false': 'False'}.get(m[0], m[0]), expression)
@@ -49,6 +50,7 @@ def selected(scopes, full=False, event='pull_request', jobs=JOBS, publish=False,
             context = {
                 'github': {'event_name': event}, 'inputs': {'full_suite': full, 'publish': publish, 'candidate_run': candidate_run, 'diagnostic_scenario': diagnostic},
                 'needs': {dep: {'result': results[dep], 'outputs': scopes} for dep in dependencies},
+                'steps': {step['id']: {'outcome': 'success'} for step in job.get('steps', []) if 'id' in step},
             }
             expr = job.get('if', True)
             deps_ok = all(results[dep] == 'success' for dep in dependencies)
@@ -178,6 +180,17 @@ for failed_job in [None, *gate['needs']]:
 # 发布流程成功后刷新官网，失败/取消/非主线不能触发部署。
 trigger = PAGES.get('on', PAGES.get(True, {}))['workflow_run']
 release = yaml.safe_load((ROOT / '.github/workflows/release.yml').read_text())
+diagnose = yaml.safe_load((ROOT / '.github/workflows/diagnose.yml').read_text())
+# UI 或签名验证失败仍能保存编译结果；取消运行和未成功初始化缓存时不能写缓存。
+for job in [JOBS['catalyst-check'], release['jobs']['build'], diagnose['jobs']['diagnose']]:
+    save_cache = next(step for step in job['steps'] if step.get('id') == 'failed_cache')
+    for failed, cancelled, restored, expected in [
+        (True, False, 'success', True), (False, False, 'success', False),
+        (True, True, 'success', False), (True, False, 'failure', False),
+        (True, False, 'skipped', False),
+    ]:
+        context = {'failure': failed, 'cancelled': cancelled, 'steps': {'catalyst_cache': {'outcome': restored}}}
+        assert condition(save_cache['if'], context) == expected, '失败缓存保存条件不符'
 # 验证安装包不能意外公开；真正发布仍然只接受主线。
 release_inputs = release.get('on', release.get(True, {}))['workflow_dispatch']['inputs']
 assert release_inputs['publish']['default'] is False
