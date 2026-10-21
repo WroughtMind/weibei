@@ -1359,7 +1359,7 @@ enum CatalystBusinessCheck {
                     "has_selection": mainConversation.selection.hasSelection,
                     "actions_hidden": mainConversation.selectionActions.isHidden,
                     "workspace_visible": workspaceIsFullyVisible(),
-                    "main_composer_frame": NSStringFromCGRect(mainComposer.convert(mainComposer.bounds, to: window)),
+                    "main_composer_frame": String(describing: mainComposer.convert(mainComposer.bounds, to: window)),
                     "main_composer_attached": mainComposer.window === window,
                 ]
                 try JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys])
