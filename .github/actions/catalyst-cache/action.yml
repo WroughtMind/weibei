@@ -20,5 +20,7 @@ runs:
           .build/catalyst-packages
           .build/catalyst-*/Build/Intermediates.noindex
           .build/catalyst-*/ModuleCache.noindex
-        key: ${{ steps.identity.outputs.prefix }}${{ github.sha }}
-        restore-keys: ${{ steps.identity.outputs.prefix }}
+        key: ${{ steps.identity.outputs.prefix }}${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          ${{ steps.identity.outputs.prefix }}${{ github.job }}-
+          ${{ steps.identity.outputs.prefix }}

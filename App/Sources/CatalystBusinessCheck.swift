@@ -435,6 +435,8 @@ enum CatalystBusinessCheck {
             try check("native_toolbar_render_snapshots", true)
         }
         do {
+            // Focused business checks must not depend on a preceding conversation run.
+            try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
             if let previous = try? Data(contentsOf: resultURL),
                let saved = try JSONSerialization.jsonObject(with: previous) as? [String: Any],
                saved["status"] as? String == "awaiting_reopen" {
