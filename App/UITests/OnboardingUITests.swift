@@ -73,7 +73,7 @@ final class OnboardingUITests: XCTestCase {
                 } else {
                     response["visible_controls"] = identifiedControls(in: root).joined(separator: "\n")
                 }
-            case "press", "fill":
+            case "press", "fill", "hover":
                 guard element.exists, element.isEnabled, element.isHittable else {
                     let screenshot = XCTAttachment(screenshot: app.screenshot())
                     screenshot.name = "Unreachable control: " + id
@@ -82,7 +82,8 @@ final class OnboardingUITests: XCTestCase {
                     let frame = element.exists ? String(describing: element.frame) : "missing"
                     throw DriverFailure(errorDescription: "Unreachable mounted control: \(id), frame=\(frame), matches=\(matches.count)")
                 }
-                element.click()
+                if action == "hover" { element.hover() }
+                else { element.click() }
                 if action == "fill" {
                     let value = try XCTUnwrap(request["value"])
                     element.typeKey("a", modifierFlags: .command)

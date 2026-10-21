@@ -1319,12 +1319,19 @@ enum CatalystBusinessCheck {
         let mainCopy = try reachableCapsuleButton(mainConversation.selectionActions.copyButton)
         _ = try reachableCapsuleButton(mainConversation.selectionActions.quoteButton)
         try capture("selection-capsule-main.png")
-        mainCopy.sendActions(for: .touchUpInside)
+        try await waitForOnboardingControl("conversation-selection-copy")
+        _ = try await onboardingUICommand("hover", id: "conversation-selection-copy")
+        try await until("selection copy shows pointer hover feedback") {
+            !mainCopy.isHighlighted && (mainCopy.backgroundColor?.cgColor.alpha ?? 0) > 0
+        }
+        try capture("selection-capsule-hover.png")
+        try await activate("conversation-selection-copy")
         guard UIPasteboard.general.string == mainExcerpt, !mainConversation.selection.hasSelection,
               mainConversation.selectionActions.isHidden, store.transientNoteStatus == store.ui("已复制", "Copied"),
               mainComposer.text == mainQuoted, floatingComposer()?.text == draft else {
             throw Failure("main capsule copy changed the selected text or either draft")
         }
+        try capture("selection-copy-feedback.png")
         _ = try selectVisibleParagraph(in: mainConversation)
         store.dismissFloatingSelectionAgent()
         try await until("closing floating panel restores the main selection capsule") {
@@ -1343,7 +1350,8 @@ enum CatalystBusinessCheck {
                 && (try? reachableCapsuleButton(mainConversation.selectionActions.copyButton)) != nil
                 && (try? reachableCapsuleButton(mainConversation.selectionActions.quoteButton)) != nil
         }
-        try reachableCapsuleButton(mainConversation.selectionActions.quoteButton).sendActions(for: .touchUpInside)
+        _ = try reachableCapsuleButton(mainConversation.selectionActions.quoteButton)
+        try await activate("conversation-selection-quote")
         try await until("main capsule attaches a quote without touching either draft") {
             let ready = store.conversationQuotes(in: mainID).contains(where: { $0.text == mainExcerpt && $0.messageID != nil })
                 && mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
@@ -1396,10 +1404,10 @@ enum CatalystBusinessCheck {
         }
         let floatingExcerpt = try selectVisibleParagraph(in: floatingConversation)
         _ = try reachableCapsuleButton(floatingConversation.selectionActions.copyButton)
-        let floatingQuote = try reachableCapsuleButton(floatingConversation.selectionActions.quoteButton)
+        _ = try reachableCapsuleButton(floatingConversation.selectionActions.quoteButton)
         try capture("selection-capsule-floating.png")
         let floatingCapsuleQuoted = floatingQuoted
-        floatingQuote.sendActions(for: .touchUpInside)
+        try await activate("conversation-selection-quote")
         try await until("floating capsule attaches a quote without touching main draft") {
             store.conversationQuotes(in: threadID).contains(where: { $0.text == floatingExcerpt && $0.messageID != nil })
                 && floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingCapsuleQuoted
