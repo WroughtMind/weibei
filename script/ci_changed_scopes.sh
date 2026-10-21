@@ -17,7 +17,7 @@ classify_path() {
     website/*|.github/workflows/pages.yml|script/check_website.sh)
       website=true
       return ;;
-    .github/workflows/pr-checks.yml|script/ci_changed_scopes.sh|script/check_ci_routing.py)
+    .github/workflows/pr-checks.yml|script/ci_changed_scopes.sh|script/ci_metadata.py|script/check_ci_routing.py|script/test_release_flow.py)
       return ;;
   esac
 
@@ -54,7 +54,7 @@ classify_path() {
   esac
 
   case "$path" in
-    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|App/project.yml|App/WeiBei.xcodeproj/*|App/Config/*|App/Resources/*|App/script/*|script/verify_app_launch.sh|script/verify_update_installation.py|script/package_size.py|script/check_package_size_policy.py|script/build_number.py|script/check_build_number.py|script/check_build_info.swift|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
+    VERSION|.github/actions/*|.github/workflows/diagnose.yml|script/ci_cache_key.py|script/timed_run.py|script/verify_built_app.py|script/release.py|script/release_candidate.py|script/verify_public_release.py|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|App/project.yml|App/WeiBei.xcodeproj/*|App/Config/*|App/Resources/*|App/script/*|script/verify_app_launch.sh|script/verify_update_installation.py|script/package_size.py|script/check_package_size_policy.py|script/build_number.py|script/check_build_number.py|script/check_build_info.swift|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
@@ -122,6 +122,11 @@ if (( $# != 2 )); then
 fi
 
 while IFS= read -r -d '' path; do
+  if [[ "$path" == package.json || "$path" == package-lock.json ]] &&
+    python3 "$(dirname "${BASH_SOURCE[0]}")/ci_metadata.py" "$1" "$2" "$path"; then
+    release=true
+    continue
+  fi
   classify_path "$path"
 done < <(git diff --name-only -z "$1" "$2")
 

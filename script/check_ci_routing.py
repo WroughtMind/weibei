@@ -37,7 +37,7 @@ def condition(expression, context):
     return bool(expression_value(expression, context))
 
 
-def selected(scopes, full=False, event='pull_request', jobs=JOBS, publish=False):
+def selected(scopes, full=False, event='pull_request', jobs=JOBS, publish=False, candidate_run='', diagnostic=''):
     results, active_steps, pending = {}, {}, dict(jobs)
     while pending:
         for key, job in list(pending.items()):
@@ -47,7 +47,7 @@ def selected(scopes, full=False, event='pull_request', jobs=JOBS, publish=False)
             if any(dep not in results for dep in dependencies):
                 continue
             context = {
-                'github': {'event_name': event}, 'inputs': {'full_suite': full, 'publish': publish},
+                'github': {'event_name': event}, 'inputs': {'full_suite': full, 'publish': publish, 'candidate_run': candidate_run, 'diagnostic_scenario': diagnostic},
                 'needs': {dep: {'result': results[dep], 'outputs': scopes} for dep in dependencies},
             }
             expr = job.get('if', True)
@@ -91,6 +91,9 @@ with tempfile.TemporaryDirectory() as directory:
         ('字体原件', ['DesignSystem/assets/fonts/Mplus1p-Light.ttf'], {'app-check', 'catalyst-check'}),
         ('字体生成工具', ['script/convert_editor_fonts.py'], {'app-check', 'catalyst-check'}),
         ('字体工具依赖', ['script/editor-font-requirements.txt'], {'app-check', 'catalyst-check'}),
+        ('缓存输入', ['.github/actions/catalyst-cache/action.yml', 'script/ci_cache_key.py'], {'catalyst-check'}),
+        ('发布接力', ['script/release.py', 'script/release_candidate.py'], {'catalyst-check'}),
+        ('定向诊断入口', ['.github/workflows/diagnose.yml'], {'catalyst-check'}),
         ('安装包声明', ['PRIVACY.md'], {'catalyst-check'}),
         ('打包脚本', ['script/build_release_dmg.sh'], {'catalyst-check'}),
         ('安装包体积政策回归', ['script/check_package_size_policy.py'], {'catalyst-check'}),
@@ -126,9 +129,14 @@ with tempfile.TemporaryDirectory() as directory:
             require_steps(jobs, steps, 'catalyst-check', {'dependencies', 'package'})
         if label == '官网':
             manual_jobs, manual_steps = selected(scopes, True, 'workflow_dispatch')
-            assert manual_jobs == set(JOBS), '手动完整检查必须保留全部验证'
+            assert manual_jobs == set(JOBS) - {'diagnostic'}, '手动完整检查必须保留全部验证'
             require_steps(manual_jobs, manual_steps, 'app-check', {'compile', 'core', 'dev', 'dependencies', 'editor', 'safety'})
         print(f'{label}: 任务与必要步骤正确')
+
+# 定向诊断只运行选择的架构/场景，不覆盖 PR 门禁或启动完整检查。
+for scenario in ('picker', 'conversation', 'business'):
+    diagnostic_jobs, _ = selected({}, event='workflow_dispatch', diagnostic=scenario)
+    assert diagnostic_jobs == {'diagnostic'}
 
 # 确认测试本身能识别“任务启动了，但实际编译被条件关闭”。
 mutated = copy.deepcopy(JOBS)
@@ -155,8 +163,8 @@ assert 'push' not in WORKFLOW.get('on', WORKFLOW.get(True, {}))
 gate = JOBS['fast-check']
 for event, name in [('pull_request', '快速编译与核心自检'), ('workflow_dispatch', '手动检查汇总')]:
     assert expression_value(gate['name'], {'github': {'event_name': event}}) == name, '手动结果不得覆盖 PR 合并门槛'
-assert condition(gate['if'], {})
-assert set(gate['needs']) == set(JOBS) - {'fast-check'}
+assert condition(gate['if'], {'github': {'event_name': 'pull_request'}, 'inputs': {'diagnostic_scenario': ''}})
+assert set(gate['needs']) == set(JOBS) - {'fast-check', 'diagnostic'}
 outputs = dict.fromkeys(['code', 'agent', 'editor', 'data_safety', 'release', 'tools', 'website'], 'true')
 for failed_job in [None, *gate['needs']]:
     for outcome in (['success'] if failed_job is None else ['failure', 'cancelled', 'skipped']):
@@ -180,9 +188,13 @@ for publish in [False, True]:
     assert ('publish' in release_jobs) == publish, '候选验证不得公开版本'
     assert condition(release['jobs']['publish']['if'], {'inputs': {'publish': publish}}) == publish
     for ref in ['refs/heads/main', 'refs/heads/codex/signing-check']:
-        env = {**os.environ, 'PUBLISH_RELEASE': str(publish).lower(), 'RELEASE_REF': ref}
+        env = {**os.environ, 'PUBLISH_RELEASE': str(publish).lower(), 'RELEASE_REF': ref, 'EXPECTED_SOURCE': '', 'CURRENT_SOURCE': 'a' * 40, 'CANDIDATE_RUN': ''}
         run = subprocess.run(['bash', '-e', '-c', source_gate['run']], env=env, capture_output=True)
         assert (run.returncode == 0) == (not publish or ref == 'refs/heads/main')
+for publish in (False, True):
+    reused_jobs, _ = selected({}, event='workflow_dispatch', jobs=release['jobs'], publish=publish, candidate_run='123')
+    assert reused_jobs == ({'authorize', 'prepare', 'publish'} if publish else {'authorize', 'prepare'}), '复用候选不得再次编译'
+
 assert trigger['workflows'] == [release['name']] and trigger['types'] == ['completed']
 for outcome, branch, expected in [('success', 'main', True), ('failure', 'main', False), ('cancelled', 'main', False), ('success', 'feature', False)]:
     context = {'github': {'event_name': 'workflow_run', 'event': {'workflow_run': {'conclusion': outcome, 'head_branch': branch}}}}

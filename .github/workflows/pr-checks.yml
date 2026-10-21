@@ -11,16 +11,34 @@ on:
         required: false
         type: boolean
         default: false
+      diagnostic_scenario:
+        description: "只诊断 picker、conversation 或 business；留空运行正常检查"
+        required: false
+        type: string
+        default: ""
+      diagnostic_arch:
+        description: "定向诊断的原生架构"
+        type: choice
+        options: [arm64, x86_64]
+        default: arm64
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.diagnostic_scenario || 'checks' }}
   cancel-in-progress: true
 
 jobs:
+  diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnostic_scenario != ''
+    uses: ./.github/workflows/diagnose.yml
+    with:
+      arch: ${{ inputs.diagnostic_arch }}
+      scenario: ${{ inputs.diagnostic_scenario }}
+
   scope:
+    if: github.event_name != 'workflow_dispatch' || inputs.diagnostic_scenario == ''
     name: 判断改动范围
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -63,6 +81,7 @@ jobs:
           python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
           python3 script/check_ci_routing.py
           python3 script/check_build_number.py
+          python3 -m unittest discover -s script -p 'test_release_flow.py' -v
           for file in script/*.sh DesignSystem/scripts/*.sh; do bash -n "$file"; done
 
   website-check:
@@ -203,21 +222,7 @@ jobs:
           xcodebuild -version
 
       - name: 解除英特尔云端图标服务死循环
-        run: |
-          # macOS 26 Intel 镜像的图标服务会因虚拟 GPU 崩溃，Dock 随之卡在同步回复。
-          # https://github.com/actions/runner-images/issues/14751
-          # 只处理隔离 CI 桌面上已确认崩溃的服务；真实全屏与 App 验收仍须通过。
-          test "$CI" = true
-          [[ "$WEIBEI_TARGET_ARCH" == x86_64 ]] || exit 0
-          mkdir -p "$RUNNER_TEMP/weibei-native-full-screen-evidence"
-          ICON_SERVICE="gui/$(id -u)/com.apple.iconservices.iconservicesagent"
-          launchctl print "$ICON_SERVICE" > "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-iconservices-before.log"
-          if grep -q 'last terminating signal = Abort trap: 6' "$RUNNER_TEMP/weibei-native-full-screen-evidence/ci-iconservices-before.log"; then
-            launchctl bootout "$ICON_SERVICE"
-            launchctl disable "$ICON_SERVICE"
-            killall Dock
-            echo '已解除云端图标服务死循环并重新启动 Dock；继续验证真实全屏进出。'
-          fi
+        run: bash App/script/prepare-ci-desktop.sh
 
       - name: 记录系统原生全屏对照
         id: native_full_screen
@@ -288,6 +293,10 @@ jobs:
           [[ -x "$FULL_SCREEN_CONTROL_EXE" ]] || exit 0
           "$FULL_SCREEN_CONTROL_EXE" --terminate
 
+      - uses: ./.github/actions/catalyst-cache
+        with:
+          arch: ${{ matrix.arch }}
+
       - name: 安装构建工具依赖
         id: dependencies
         run: |
@@ -354,7 +363,7 @@ jobs:
         id: package
         if: needs.scope.outputs.release == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: |
-          ./script/build_release_dmg.sh --arch "$WEIBEI_TARGET_ARCH"
+          python3 script/timed_run.py --name assemble-dmg --record ".build/timings/$WEIBEI_TARGET_ARCH-release.jsonl" -- ./script/build_release_dmg.sh --arch "$WEIBEI_TARGET_ARCH"
           python3 script/check_package_size_policy.py "dist/release/$WEIBEI_TARGET_ARCH/魏碑.app"
 
       - name: 保留候选和检查证据
@@ -373,7 +382,9 @@ jobs:
             App/Evidence/ci*.ips
             App/Evidence/ci-onboarding-ui.xcresult
             .build/ci-launch-console.log
-            .build/catalyst-${{ matrix.arch }}/build.log
+            .build/catalyst-*/build.log
+            .build/catalyst-*/dependencies.log
+            .build/timings/
           retention-days: 2
           if-no-files-found: error
 
@@ -382,7 +393,7 @@ jobs:
     # 手动局部检查不能以同名结果覆盖 PR 的必需合并检查。
     name: ${{ github.event_name == 'pull_request' && '快速编译与核心自检' || '手动检查汇总' }}
     needs: [scope, website-check, tools-check, app-check, catalyst-check]
-    if: always()
+    if: always() && (github.event_name != 'workflow_dispatch' || inputs.diagnostic_scenario == '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

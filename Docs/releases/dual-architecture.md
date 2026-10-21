@@ -26,6 +26,34 @@ App 内的 `WeiBeiArchitecture` 和 `SUFeedURL` 会绑定当前包的真实架�
 
 解压后 App 的逻辑字节数与 DMG 下载字节数分别记录在 `dist/package-<arch>.json`；字体、公式、图表和图片资源完整保留。
 
+`package.json` 和 `package-lock.json` 仅根版本字段变化时，只进入发布链路检查；依赖、脚本或其他字段变化仍按完整影响范围检查。识别失败时按完整范围处理。验收包与正式包分别编译，安装盘只装配已经构建和验证的正式 App：
+
+```bash
+./script/build_and_run.sh package
+./script/build_release_dmg.sh --arch arm64
+```
+
+架构必须与构建环境一致；Intel 使用 `WEIBEI_TARGET_ARCH=x86_64`。`make release` 顺序调用这两个入口。单独运行安装盘脚本不会再次编译，缺少 App，或源码、版本、构建号、架构、公钥、更新地址及验收标记不符时直接失败。
+
+### 定向诊断
+
+失败时使用“魏碑定向诊断”，选原生架构和 `picker`、`conversation` 或 `business`。选择界面诊断复用真实的引导、导入与界面建立步骤，记录聚焦前后的位置、高度、安全区及控制器证据，随后结束；不会继续跑无关的保存重开流程。失败时仍上传已取得的截图与 JSON。完整 PR 门禁保持原有检查。
+
+在诊断工作流尚未进入主线的分支，也可以通过已有 PR 工作流转发：
+
+```bash
+gh workflow run pr-checks.yml --ref codex/example \
+  -f diagnostic_arch=arm64 -f diagnostic_scenario=picker
+```
+
+该入口只启动诊断，不发布同名的 PR 必需检查结果；修复后仍须让当前 PR 提交的必要检查通过。
+
+### 构建耗时与缓存
+
+编辑器资源、GenUI 资源、依赖解析、原生编译、DMG 装配和更新安装分别记录到 `.build/timings/*.jsonl`。编译输出实时保留，Xcode 输出 `Build Timing Summary`，失败也写入退出码与耗时。工作流会上传这些文件。
+
+缓存键包含 macOS、Xcode、SDK、架构、去掉根版本号的 Node 依赖清单、Swift 锁文件、项目配置、构建脚本与依赖补丁。正式和验收编译中间目录分别保存，最终 App 每次重新装配、裁剪并签名；缓存不替代产物检查。以实际恢复日志和阶段时间判断收益，不把缓存配置存在当成已经提速。
+
 ## 正式发布工作流
 
 在 GitHub Actions 中手动运行“魏碑双架构正式发布”，输入与 `VERSION`、`package.json` 和 `Docs/update-summaries/v<version>.md` 一致的版本号。默认构建并验证两种架构及更新签名，然后汇总完整候选集合，保存在 Actions 的 `release-ready` 产物中，不创建 Tag 或 Release；可以从待合并分支验证仓库密钥。获得正式发布授权后，从 `main` 运行并勾选 `publish`，才会公开版本。
@@ -46,6 +74,41 @@ Sparkle 密钥与 Apple 公证无关。首次公开发布前生成一次正式�
 仓库应配置受保护的 `production-release` Environment。两个架构先并行完成最终 App 启动、签名结构、DMG、架构、dSYM 和 appcast 验证，再进入该环境的发布 job；候选汇总 job 下载并重新核对两个 DMG 的哈希和 appcast 指向，打包双架构调试符号，生成双架构 Cask，并加入 `Docs/releases/v<version>.md` 的完整发布正文。它同时生成 `candidate.json`，记录版本、构建号、源码提交、工作流与各文件 SHA-256。公开 job 下载这份完整集合、逐文件复核后才创建草稿 Release，全部资产上传成功后将其公开并标记为 latest。
 
 本流程不会由普通 PR 自动创建 Tag 或 Release。明确勾选 `publish` 执行才代表发布授权；仅运行验证或合并代码不等于授权发布。
+
+### 已授权发布的连续执行入口
+
+必要代码审查和实际交互证据复核与 CI 并行完成后，使用已复核的确切 PR 提交调用接力脚本。该命令会合并、公开版本并同步 Homebrew，必须已有本次发布授权；`--publish` 是执行这些外部写入的显式开关：
+
+```bash
+python3 script/release.py --pr 123 --reviewed-head <40位PR提交SHA> \
+  --version 0.0.3 --publish
+```
+
+脚本等待当前提交的检查，通过仓库合并限制后使用 `--match-head-commit` 合入；再固定合并后的源码触发发布。PR 变更、落后主线、未解决评审、失败检查或发布前主线推进都会停止。不能用该参数替代尚未完成的代码和体验判断。
+
+状态和回执写入 `dist/release-flow-<PR>/`，包含检查完成、复核确认、可继续时间、合并、候选完成、公开和渠道完成时间。中断后用同一命令继续：已有合并和同一请求的工作流会被识别，不再创建新的发布。失败的构建可在 Actions 中重跑失败任务；已有完整候选而公开步骤失败时，加 `--candidate-run <原候选运行编号>` 继续。
+
+发布末尾并行核对公开资产、官网双架构下载入口和 Homebrew 原生安装回执。Tap 更新只使用该候选中的 Cask，并校验两种架构实际安装的版本、源码、构建号和严格签名。所有渠道通过才记录发布完成；清理本地产物另行进行。
+
+### 复用已验证候选
+
+在相同源码提交上，给发布工作流传 `candidate_run`，即可跳过两个编译任务并下载原 `release-ready`。验证原运行属于发布工作流、候选汇总成功、两种架构及签名和安装回执齐全、每个文件哈希匹配，再进入公开步骤。`expected_source` 可固定目标提交，避免 ref 移动。候选保留 14 天；过期或输入变化时重新构建。
+
+```bash
+gh workflow run release.yml --ref main -f version=0.0.3 \
+  -f expected_source=<候选源码SHA> -f candidate_run=<原候选运行编号> -f publish=true
+```
+
+公开阶段仍受 `production-release` 环境保护。已有公开资产只允许确认相同字节，不覆盖；草稿可继续上传。候选版本和构建号必须晚于已经交付的上一版本。PR 验收包不能作为候选来源；分支合并生成新提交后，也不能复用旧提交的候选。
+
+只读复核现有公开版本时，可下载 `release-ready` 后执行：
+
+```bash
+python3 script/verify_public_release.py <候选目录> --version 0.0.3 \
+  --source <候选源码SHA> --output dist/public-verification.json
+```
+
+它会下载公开的九项资产和三份 latest 更新清单，与候选哈希、正文、实际标签提交及 latest 状态比较。
 
 每个架构的安装盘、更新清单、调试符号和体积记录从同一目录上传，下载后保持同一层级。`release-ready` 还包含 `release-notes.md`、`candidate.json` 与两种架构体积记录；这些用于发布前复核，公开资产仍以上方清单为准。候选验证运行也执行完整汇总步骤，避免公开时才首次检查文件装配。
 
