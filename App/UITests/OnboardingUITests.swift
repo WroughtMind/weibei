@@ -62,6 +62,10 @@ final class OnboardingUITests: XCTestCase {
                     if action == "ready" {
                         let hittable = element.isHittable
                         state["hittable"] = String(hittable)
+                        if !hittable {
+                            let center = CGPoint(x: snapshot.frame.midX, y: snapshot.frame.midY)
+                            state["overlapping_controls"] = identifiedControls(in: root, containing: center).joined(separator: "\n")
+                        }
                         if !hittable, recordedUnreachable.insert(id).inserted {
                             let screenshot = XCTAttachment(screenshot: app.screenshot())
                             screenshot.name = "Waiting for control: " + id
@@ -104,9 +108,10 @@ final class OnboardingUITests: XCTestCase {
     }
 
     @MainActor
-    private func identifiedControls(in root: any XCUIElementSnapshot) -> [String] {
+    private func identifiedControls(in root: any XCUIElementSnapshot, containing point: CGPoint? = nil) -> [String] {
         // Keep only control identifiers and geometry, never labels or field values.
-        (root.identifier.isEmpty ? [] : ["\(root.identifier): \(root.elementType) \(root.frame)"])
-            + root.children.flatMap { identifiedControls(in: $0) }
+        (root.identifier.isEmpty || point.map({ !root.frame.contains($0) }) == true
+            ? [] : ["\(root.identifier): \(root.elementType) \(root.frame)"])
+            + root.children.flatMap { identifiedControls(in: $0, containing: point) }
     }
 }

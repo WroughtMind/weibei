@@ -1007,7 +1007,9 @@ enum CatalystBusinessCheck {
                 "stream_text_count": store.agentStreaming.text.count,
                 "messages": store.messages.map { ["role": $0.role.rawValue, "state": $0.completionState.rawValue, "text_count": String($0.text.count)] },
                 "views": windows.flatMap(descendants).map { view in
-                    var state = ["type": String(reflecting: type(of: view)), "frame": String(describing: view.frame), "hidden": String(view.isHidden)]
+                    var state = ["type": String(reflecting: type(of: view)), "frame": String(describing: view.frame), "hidden": String(view.isHidden),
+                                 "frame_in_window": String(describing: view.convert(view.bounds, to: view.window)),
+                                 "clips": String(view.clipsToBounds), "interactive": String(view.isUserInteractionEnabled)]
                     if #available(iOS 26.0, *), let scroll = view as? UIScrollView {
                         state["top_edge_hidden"] = String(scroll.topEdgeEffect.isHidden)
                     }
