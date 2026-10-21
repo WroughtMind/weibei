@@ -9,8 +9,8 @@ extension WorkspaceStore {
 
     @discardableResult
     func addConversationQuote(_ text: String, messageID: UUID?, in sessionID: UUID) -> Bool {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let index = studySessions.firstIndex(where: { $0.id == sessionID }) else { return false }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let index = studySessions.firstIndex(where: { $0.id == sessionID }) else { return false }
         if let messageID, !conversationMessages(in: sessionID).contains(where: { $0.id == messageID }) { return false }
         guard !conversationQuotes(in: sessionID).contains(where: { $0.text == text && $0.messageID == messageID }) else { return true }
         studySessions[index].composerQuotes.append(

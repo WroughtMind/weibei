@@ -222,6 +222,20 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
+    func testConversationQuotePreservesCodeIndentationAndParagraphBoundaries() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let sessionID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
+        let code = "    if effect:\n        return direct + indirect\n"
+        let message = AgentMessage(role: .assistant, text: code, source: nil)
+        store.appendAgentMessage(message)
+        XCTAssertTrue(store.addConversationQuote(code, messageID: message.id, in: sessionID))
+        XCTAssertEqual(store.conversationQuotes(in: sessionID).first?.text, code)
+        XCTAssertEqual(store.conversationQuotes(in: sessionID).first?.messageID, message.id)
+    }
+
+    @MainActor
     func testConversationQuotesKeepDraftsAndStayInTheirOwnSession() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

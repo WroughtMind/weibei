@@ -2401,7 +2401,8 @@ private struct ConversationQuotePill: View {
                     Text(store.ui("对话引用", "Conversation quote")).weiBeiText(12, weight: .medium)
                     ScrollView { Text(quote.text).weiBeiText(12).frame(maxWidth: .infinity, alignment: .leading) }
                         .frame(maxHeight: 220)
-                    if let messageID = quote.messageID {
+                    if let messageID = quote.messageID,
+                       store.conversationMessages(in: sessionID).contains(where: { $0.id == messageID }) {
                         Button(store.ui("返回原消息", "Go to original message")) {
                             previewing = false
                             NotificationCenter.default.post(name: .weiBeiScrollAgentToMessage, object: messageID,
