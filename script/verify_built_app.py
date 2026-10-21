@@ -13,6 +13,7 @@ def verify(info, architecture, version, build_number, source, public_key):
         "CFBundleIdentifier": "com.changfenhuang.weibei",
         "CFBundleShortVersionString": version, "CFBundleVersion": build_number,
         "WeiBeiGitCommit": source, "WeiBeiArchitecture": architecture,
+        "WeiBeiBuildConfiguration": "Release",
         "WeiBeiSourceDirty": False, "WeiBeiAcceptanceChecks": False,
         "SUPublicEDKey": public_key,
         "SUFeedURL": f"https://github.com/WroughtMind/weibei/releases/latest/download/appcast-{architecture}.xml",

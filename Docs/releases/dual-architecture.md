@@ -26,7 +26,7 @@ App 内的 `WeiBeiArchitecture` 和 `SUFeedURL` 会绑定当前包的真实架�
 
 解压后 App 的逻辑字节数与 DMG 下载字节数分别记录在 `dist/package-<arch>.json`；字体、公式、图表和图片资源完整保留。
 
-`package.json` 和 `package-lock.json` 仅根版本字段变化时，只进入发布链路检查；依赖、脚本或其他字段变化仍按完整影响范围检查。识别失败时按完整范围处理。验收包与正式包分别编译，安装盘只装配已经构建和验证的正式 App：
+`package.json` 和 `package-lock.json` 仅根版本字段变化时，只进入发布链路检查；依赖、脚本或其他字段变化仍按完整影响范围检查。识别失败时按完整范围处理。验收包与正式包分别编译，安装盘只装配已经构建和验证、编译配置为 Release 的正式 App，Debug 包会在装配前被拒绝：
 
 ```bash
 ./script/build_and_run.sh package

@@ -73,14 +73,14 @@ class ManifestRouting(unittest.TestCase):
 class PrebuiltApp(unittest.TestCase):
     def test_reject_wrong_source_architecture_configuration_and_update_identity(self):
         info = {"CFBundleIdentifier": "com.changfenhuang.weibei", "CFBundleShortVersionString": VERSION,
-                "CFBundleVersion": BUILD, "WeiBeiGitCommit": SOURCE, "WeiBeiArchitecture": "arm64",
+                "CFBundleVersion": BUILD, "WeiBeiGitCommit": SOURCE, "WeiBeiArchitecture": "arm64", "WeiBeiBuildConfiguration": "Release",
                 "WeiBeiSourceDirty": False, "WeiBeiAcceptanceChecks": False, "SUPublicEDKey": "public-key",
                 "SUFeedURL": "https://github.com/WroughtMind/weibei/releases/latest/download/appcast-arm64.xml"}
         verify_built_app.verify(info, "arm64", VERSION, BUILD, SOURCE, "public-key")
         for key, value in {"CFBundleIdentifier": "com.test.acceptance", "CFBundleShortVersionString": "0.0.2",
                            "CFBundleVersion": "20261020.1200.00", "WeiBeiGitCommit": "b" * 40,
                            "WeiBeiArchitecture": "x86_64", "WeiBeiSourceDirty": True,
-                           "WeiBeiAcceptanceChecks": True, "SUPublicEDKey": "wrong", "SUFeedURL": "wrong"}.items():
+                           "WeiBeiAcceptanceChecks": True, "WeiBeiBuildConfiguration": "Debug", "SUPublicEDKey": "wrong", "SUFeedURL": "wrong"}.items():
             with self.subTest(key=key), self.assertRaises(ValueError):
                 verify_built_app.verify({**info, key: value}, "arm64", VERSION, BUILD, SOURCE, "public-key")
         with self.assertRaises(ValueError):
