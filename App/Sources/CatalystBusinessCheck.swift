@@ -13,6 +13,7 @@ import Litext
 enum CatalystBusinessCheck {
     private static var started = false
     private static var fileDropDiagnostics: [String: Any] = [:]
+    private static var contextualPickerDiagnostics: [String: Any] = [:]
     private static var lastOnboardingUIElement: [String: String] = [:]
     private struct Failure: LocalizedError {
         let errorDescription: String?
@@ -980,6 +981,7 @@ enum CatalystBusinessCheck {
                 return state
             }
             result["file_drop_state"] = fileDropDiagnostics
+            result["contextual_picker_layout"] = contextualPickerDiagnostics
             result["confirmed_import_state"] = [
                 "stage": store.confirmedFileImport.map { String(describing: $0.stage) } ?? "dismissed",
                 "destination_error": store.confirmedFileImport?.destinationError ?? "",
@@ -1047,6 +1049,35 @@ enum CatalystBusinessCheck {
         store.showContextualBrowser(.note)
         defer { store.materialPickerPresented = false; store.notePickerPresented = false }
         var frames: [CGRect] = []
+        func searchFields() -> [UITextField] {
+            descendants(window).compactMap { $0 as? UITextField }.filter {
+                $0.accessibilityLabel == store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags")
+                    && isVisible($0, in: window)
+            }.sorted { $0.convert($0.bounds, to: window).minX < $1.convert($1.bounds, to: window).minX }
+        }
+        func layoutState() -> [String: Any] {
+            let fields: [[String: String]] = searchFields().map { field in
+                ["window_frame": String(describing: field.convert(field.bounds, to: window)),
+                 "bounds": String(describing: field.bounds),
+                 "intrinsic_size": String(describing: field.intrinsicContentSize),
+                 "font": String(describing: field.font),
+                 "first_responder": String(field.isFirstResponder),
+                 "parent_frame": String(describing: field.superview.map { $0.convert($0.bounds, to: window) }),
+                 "parent_identifier": field.superview?.accessibilityIdentifier ?? ""]
+            }
+            let hosts: [[String: String]] = descendants(window)
+                .compactMap { $0 as? PersistentPaneHost.Container }.filter { isVisible($0, in: window) }
+                .flatMap { descendants($0).compactMap { $0 as? CatalystHostingView } }.map { host in
+                    let frame = host.convert(host.bounds, to: window)
+                    return ["controller": String(describing: ObjectIdentifier(host.controller)),
+                            "window_frame": String(describing: frame),
+                            "safe_area": String(describing: host.controller.view.safeAreaInsets),
+                            "expected_top": String(describing: max(0, window.safeAreaInsets.top - frame.minY))]
+                }
+            return ["fields": fields, "hosts": hosts,
+                    "window_bounds": String(describing: window.bounds),
+                    "window_safe_area": String(describing: window.safeAreaInsets)]
+        }
         try await until("both picker search fields align below the toolbar") {
             window.layoutIfNeeded()
             let fields = descendants(window).compactMap { $0 as? UITextField }.filter {
@@ -1058,6 +1089,7 @@ enum CatalystBusinessCheck {
                 && frames.allSatisfy { $0.width <= 320 && $0.height <= 30 && $0.minY >= window.safeAreaInsets.top }
         }
         let framesBeforeSettings = frames
+        contextualPickerDiagnostics["before_settings"] = layoutState()
         let paneHosts = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
             .filter { isVisible($0, in: window) }
         let hostingControllers = paneHosts.flatMap { descendants($0).compactMap { $0 as? CatalystHostingView } }
@@ -1072,14 +1104,34 @@ enum CatalystBusinessCheck {
         guard paneSafeAreasMatchWindow() else {
             throw Failure("picker pane lost the native title-bar safe area before opening settings")
         }
+        // Exercise the real asynchronous focus transition before settings can
+        // dismiss it. The original geometry baseline must survive both states.
+        try await until("note picker search focus preserves field geometry") {
+            window.layoutIfNeeded()
+            let focusedFields = searchFields()
+            let focusedFrames = focusedFields.map { $0.convert($0.bounds, to: window) }
+            contextualPickerDiagnostics["focused_before_settings"] = layoutState()
+            return focusedFields.last?.isFirstResponder == true
+                && focusedFrames.count == framesBeforeSettings.count
+                && zip(focusedFrames, framesBeforeSettings).allSatisfy {
+                    abs($0.minY - $1.minY) < 1 && abs($0.height - $1.height) < 1
+                }
+        }
         store.settingsPresented = true
         defer { store.settingsPresented = false }
         try await until("settings mounted over the pickers") {
             descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
         }
+        contextualPickerDiagnostics["settings_mounted"] = layoutState()
         store.settingsPresented = false
         try await until("settings closes without moving the picker content") {
-            guard !descendants(window).contains(where: { $0.accessibilityIdentifier == "settings-panel-viewport" }) else { return false }
+            let settingsClosed = !descendants(window).contains(where: { $0.accessibilityIdentifier == "settings-panel-viewport" })
+            contextualPickerDiagnostics["after_settings"] = layoutState()
+            contextualPickerDiagnostics["settings_closed"] = settingsClosed
+            guard settingsClosed else { return false }
+            if contextualPickerDiagnostics["first_after_settings"] == nil {
+                contextualPickerDiagnostics["first_after_settings"] = contextualPickerDiagnostics["after_settings"]
+            }
             let currentFields = descendants(window).compactMap { $0 as? UITextField }.filter {
                 $0.accessibilityLabel == store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags")
                     && isVisible($0, in: window)
@@ -1089,9 +1141,15 @@ enum CatalystBusinessCheck {
                 .filter { isVisible($0, in: window) }
                 .flatMap { descendants($0).compactMap { $0 as? CatalystHostingView } }
                 .map { ObjectIdentifier($0.controller) }
-            return frames.count == framesBeforeSettings.count
-                && zip(frames, framesBeforeSettings).allSatisfy { abs($0.minY - $1.minY) < 1 }
-                && currentHostIDs == hostIDs && paneSafeAreasMatchWindow()
+            let fieldCountMatches = frames.count == framesBeforeSettings.count
+            let positionsMatch = zip(frames, framesBeforeSettings).allSatisfy {
+                abs($0.minY - $1.minY) < 1 && abs($0.height - $1.height) < 1
+            }
+            let hostsMatch = currentHostIDs == hostIDs
+            let safeAreasMatch = paneSafeAreasMatchWindow()
+            contextualPickerDiagnostics["checks"] = ["field_count": fieldCountMatches,
+                "positions": positionsMatch, "controllers": hostsMatch, "safe_areas": safeAreasMatch]
+            return fieldCountMatches && positionsMatch && hostsMatch && safeAreasMatch
         }
         guard store.selectedMaterialItem?.id == materialID, store.activeNoteItemID == noteID else {
             throw Failure("picker changed the current material or note")
@@ -1102,6 +1160,7 @@ enum CatalystBusinessCheck {
         try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("contextual-pickers.png"))
         return ["search_frames": frames.map { String(describing: $0) },
                 "search_frames_before_settings": framesBeforeSettings.map { String(describing: $0) },
+                "layout_diagnostics": contextualPickerDiagnostics,
                 "settings_preserved_pane_geometry": true,
                 "top_difference": abs(frames[0].minY - frames[1].minY)]
     }

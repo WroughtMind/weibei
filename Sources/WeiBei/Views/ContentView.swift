@@ -789,6 +789,7 @@ struct WeiBeiPlainTextField: UIViewRepresentable {
     @Binding var text: String
     var prompt: String
     var fontSize: CGFloat
+    var controlHeight: CGFloat
     var isFocused: Binding<Bool>
     var focusRequest: Int
     var focusesOnAppear: Bool
@@ -836,20 +837,13 @@ struct WeiBeiPlainTextField: UIViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: WeiBeiSearchTextField, context: Context) -> CGSize? {
-        let intrinsicHeight = uiView.intrinsicContentSize.height
-        let fittedHeight = intrinsicHeight.isFinite && intrinsicHeight > 0
-            ? intrinsicHeight
-            : uiView.sizeThatFits(
-                CGSize(
-                    width: proposal.width ?? UIView.layoutFittingCompressedSize.width,
-                    height: UIView.layoutFittingCompressedSize.height
-                )
-            ).height
+        // Catalyst changes the field's intrinsic text height when editing starts.
+        // Keep the native field in the search surface's existing height so focus
+        // cannot move it; larger fonts can still grow the minimum-height surface.
+        let lineHeight = ceil(Self.font(size: fontSize, brandLanguage: brandLanguage).lineHeight)
         return CGSize(
             width: proposal.width ?? 160,
-            height: fittedHeight.isFinite && fittedHeight > 0
-                ? fittedHeight
-                : max(fontSize + 8, 22)
+            height: max(controlHeight, lineHeight)
         )
     }
 
@@ -1046,6 +1040,7 @@ struct WeiBeiSearchField: View {
             text: $text,
             prompt: prompt,
             fontSize: fontSize,
+            controlHeight: chromeHeight,
             isFocused: isFocused,
             focusRequest: focusRequest,
             focusesOnAppear: focusesOnAppear,

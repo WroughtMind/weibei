@@ -100,13 +100,13 @@ Or use the [Homebrew tap](https://github.com/taekchef/homebrew-tap), which selec
 brew install --cask taekchef/tap/weibei
 ```
 
-The app is not Apple-notarized. If macOS cannot verify the developer on first launch, confirm the download source and checksum, then follow the [installation instructions](Docs/releases/v0.0.1.md#下载与安装).
+The app is not Apple-notarized. If macOS cannot verify the developer on first launch, confirm the download source and checksum, then follow the [installation instructions](Docs/releases/v0.0.2.md#下载与安装).
 
 1. Import a folder of your own material as a course.
 2. Open a document, write notes alongside it, and try full-text search.
 3. When you want AI, connect a model in Settings. Select text to ask a question, follow a citation back to the source, or review a note proposal.
 
-Large files and scans may be reported as partially indexed. See the [0.0.1 release notes](Docs/releases/v0.0.1.md) for the first release's features and limitations.
+Large files and scans may be reported as partially indexed. See the [0.0.2 release notes](Docs/releases/v0.0.2.md) for changes, installation options, and limitations.
 
 ### Build from source
 
