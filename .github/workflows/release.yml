@@ -369,7 +369,7 @@ jobs:
           retention-days: 14
 
   publish:
-    if: inputs.publish
+    if: ${{ !cancelled() && inputs.publish && needs.authorize.result == 'success' && needs.prepare.result == 'success' }}
     name: 公开已经验证的双架构候选
     needs: [authorize, prepare]
     runs-on: macos-26

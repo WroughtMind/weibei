@@ -41,6 +41,8 @@ def pr_ready(pr, reviewed_head):
     finished = all(c.get("status", "COMPLETED") == "COMPLETED" and c.get("state") != "PENDING" for c in checks)
     if pr["mergeStateStatus"] in ("DIRTY", "BEHIND") or (finished and pr["mergeStateStatus"] == "BLOCKED"):
         raise ValueError("PR requires conflict resolution, a main update or a repository approval")
+    if finished and not any(c.get("name") == "快速编译与核心自检" and c.get("conclusion") == "SUCCESS" for c in checks):
+        raise ValueError("required PR aggregate check is missing or did not succeed")
     return (pr["mergeStateStatus"] == "CLEAN" and
             all(c.get("status", "COMPLETED") == "COMPLETED" and
                 c.get("conclusion", c.get("state")) in ("SUCCESS", "SKIPPED", "NEUTRAL") for c in checks) and
@@ -67,6 +69,15 @@ def matching_runs(repository, workflow, **filters):
     for key, value in filters.items():
         arguments += ["--" + key, value]
     return json.loads(gh(*arguments))
+
+
+def request_runs(request_id, source):
+    # A moving main must not hide the failed run behind an old-commit filter.
+    runs = [run for run in matching_runs(REPOSITORY, "release.yml", event="workflow_dispatch")
+            if run["displayTitle"].endswith("release-request-" + request_id)]
+    if any(run["headSha"] != source for run in runs):
+        raise ValueError("main advanced before dispatch; the request ran at another source")
+    return runs
 
 
 def sync_tap(root, record, stop):
@@ -198,9 +209,7 @@ def main():
     if args.candidate_run and args.candidate_run != state.get("candidate_run"):
         verify_run(args.candidate_run, source)
         save("resume from verified candidate", candidate_run=args.candidate_run, request_id=str(uuid.uuid4()))
-    title = "release-request-" + state["request_id"]
-    runs = [run for run in matching_runs(REPOSITORY, "release.yml", commit=source, event="workflow_dispatch")
-            if title in run["displayTitle"]]
+    runs = request_runs(state["request_id"], source)
     if not runs:
         main_source = json.loads(gh("api", f"repos/{REPOSITORY}/commits/main"))["sha"]
         if main_source != source:
@@ -213,8 +222,7 @@ def main():
         gh(*command)
         while not runs:
             time.sleep(5)
-            runs = [run for run in matching_runs(REPOSITORY, "release.yml", commit=source, event="workflow_dispatch")
-                    if title in run["displayTitle"]]
+            runs = request_runs(state["request_id"], source)
     run_id = runs[0]["databaseId"]
     save("release workflow selected", workflow_run=run_id)
     run = wait_run(REPOSITORY, run_id)

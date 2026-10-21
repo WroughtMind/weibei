@@ -211,6 +211,13 @@ class CandidateBoundaries(unittest.TestCase):
 
 
 class ReleaseHandoff(unittest.TestCase):
+    def test_main_race_is_found_and_rejected_instead_of_waiting_forever(self):
+        run = {"displayTitle": "魏碑 / release-request-test", "headSha": "b" * 40}
+        with patch.object(release, "matching_runs", return_value=[run]), self.assertRaisesRegex(ValueError, "main advanced"):
+            release.request_runs("test", SOURCE)
+        with patch.object(release, "matching_runs", return_value=[run]):
+            self.assertEqual(release.request_runs("different-request", SOURCE), [])
+
     def test_exact_head_required_success_and_in_progress_behavior(self):
         pr = {"headRefOid": SOURCE, "baseRefName": "main", "state": "OPEN", "isDraft": False,
               "reviewDecision": "", "mergeStateStatus": "CLEAN", "statusCheckRollup": [
@@ -227,6 +234,10 @@ class ReleaseHandoff(unittest.TestCase):
         altered["statusCheckRollup"][0].update(status="IN_PROGRESS", conclusion="")
         altered["mergeStateStatus"] = "BLOCKED"
         self.assertFalse(release.pr_ready(altered, SOURCE))
+        altered = copy.deepcopy(pr)
+        altered["statusCheckRollup"][0]["conclusion"] = "SKIPPED"
+        with self.assertRaises(ValueError):
+            release.pr_ready(altered, SOURCE)
         for key, value in (("isDraft", True), ("reviewDecision", "CHANGES_REQUESTED"), ("mergeStateStatus", "BEHIND")):
             with self.assertRaises(ValueError):
                 release.pr_ready({**pr, key: value}, SOURCE)

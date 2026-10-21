@@ -186,7 +186,7 @@ for publish in [False, True]:
     release_jobs, _ = selected({}, event='workflow_dispatch', jobs=release['jobs'], publish=publish)
     assert {'authorize', 'build', 'prepare'} <= release_jobs, '不公开时也必须生成完整候选集合'
     assert ('publish' in release_jobs) == publish, '候选验证不得公开版本'
-    assert condition(release['jobs']['publish']['if'], {'inputs': {'publish': publish}}) == publish
+    assert condition(release['jobs']['publish']['if'], {'inputs': {'publish': publish}, 'needs': {'authorize': {'result': 'success'}, 'prepare': {'result': 'success'}}}) == publish
     for ref in ['refs/heads/main', 'refs/heads/codex/signing-check']:
         env = {**os.environ, 'PUBLISH_RELEASE': str(publish).lower(), 'RELEASE_REF': ref, 'EXPECTED_SOURCE': '', 'CURRENT_SOURCE': 'a' * 40, 'CANDIDATE_RUN': ''}
         run = subprocess.run(['bash', '-e', '-c', source_gate['run']], env=env, capture_output=True)
@@ -196,6 +196,11 @@ for publish in (False, True):
     assert reused_jobs == ({'authorize', 'prepare', 'publish'} if publish else {'authorize', 'prepare'}), '复用候选不得再次编译'
 
 assert trigger['workflows'] == [release['name']] and trigger['types'] == ['completed']
+for failed in ('authorize', 'prepare'):
+    for outcome in ('failure', 'cancelled', 'skipped'):
+        needs = {'authorize': {'result': 'success'}, 'prepare': {'result': 'success'}}
+        needs[failed]['result'] = outcome
+        assert not condition(release['jobs']['publish']['if'], {'inputs': {'publish': True}, 'needs': needs})
 for outcome, branch, expected in [('success', 'main', True), ('failure', 'main', False), ('cancelled', 'main', False), ('success', 'feature', False)]:
     context = {'github': {'event_name': 'workflow_run', 'event': {'workflow_run': {'conclusion': outcome, 'head_branch': branch}}}}
     assert condition(PAGES['jobs']['build']['if'], context) == expected
