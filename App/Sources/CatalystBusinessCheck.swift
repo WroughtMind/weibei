@@ -1104,6 +1104,13 @@ enum CatalystBusinessCheck {
         guard paneSafeAreasMatchWindow() else {
             throw Failure("picker pane lost the native title-bar safe area before opening settings")
         }
+        // Exercise the real asynchronous focus transition before settings can
+        // dismiss it. The original geometry baseline must survive both states.
+        try await until("note picker search receives keyboard focus") {
+            searchFields().last?.isFirstResponder == true
+        }
+        window.layoutIfNeeded()
+        contextualPickerDiagnostics["focused_before_settings"] = layoutState()
         store.settingsPresented = true
         defer { store.settingsPresented = false }
         try await until("settings mounted over the pickers") {
@@ -1114,11 +1121,11 @@ enum CatalystBusinessCheck {
         try await until("settings closes without moving the picker content") {
             let settingsClosed = !descendants(window).contains(where: { $0.accessibilityIdentifier == "settings-panel-viewport" })
             contextualPickerDiagnostics["after_settings"] = layoutState()
+            contextualPickerDiagnostics["settings_closed"] = settingsClosed
+            guard settingsClosed else { return false }
             if contextualPickerDiagnostics["first_after_settings"] == nil {
                 contextualPickerDiagnostics["first_after_settings"] = contextualPickerDiagnostics["after_settings"]
             }
-            contextualPickerDiagnostics["settings_closed"] = settingsClosed
-            guard settingsClosed else { return false }
             let currentFields = descendants(window).compactMap { $0 as? UITextField }.filter {
                 $0.accessibilityLabel == store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags")
                     && isVisible($0, in: window)
