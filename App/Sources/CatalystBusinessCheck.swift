@@ -1106,11 +1106,17 @@ enum CatalystBusinessCheck {
         }
         // Exercise the real asynchronous focus transition before settings can
         // dismiss it. The original geometry baseline must survive both states.
-        try await until("note picker search receives keyboard focus") {
-            searchFields().last?.isFirstResponder == true
+        try await until("note picker search focus preserves field geometry") {
+            window.layoutIfNeeded()
+            let focusedFields = searchFields()
+            let focusedFrames = focusedFields.map { $0.convert($0.bounds, to: window) }
+            contextualPickerDiagnostics["focused_before_settings"] = layoutState()
+            return focusedFields.last?.isFirstResponder == true
+                && focusedFrames.count == framesBeforeSettings.count
+                && zip(focusedFrames, framesBeforeSettings).allSatisfy {
+                    abs($0.minY - $1.minY) < 1 && abs($0.height - $1.height) < 1
+                }
         }
-        window.layoutIfNeeded()
-        contextualPickerDiagnostics["focused_before_settings"] = layoutState()
         store.settingsPresented = true
         defer { store.settingsPresented = false }
         try await until("settings mounted over the pickers") {
@@ -1136,7 +1142,9 @@ enum CatalystBusinessCheck {
                 .flatMap { descendants($0).compactMap { $0 as? CatalystHostingView } }
                 .map { ObjectIdentifier($0.controller) }
             let fieldCountMatches = frames.count == framesBeforeSettings.count
-            let positionsMatch = zip(frames, framesBeforeSettings).allSatisfy { abs($0.minY - $1.minY) < 1 }
+            let positionsMatch = zip(frames, framesBeforeSettings).allSatisfy {
+                abs($0.minY - $1.minY) < 1 && abs($0.height - $1.height) < 1
+            }
             let hostsMatch = currentHostIDs == hostIDs
             let safeAreasMatch = paneSafeAreasMatchWindow()
             contextualPickerDiagnostics["checks"] = ["field_count": fieldCountMatches,
