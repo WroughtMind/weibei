@@ -112,7 +112,7 @@ final class ConversationSelectionActionButton: UIButton {
     private let symbol = UIImageView()
     private let label = UILabel()
     private var ink = UIColor.label
-    private(set) var isHovered = false
+    private var pointerInside = false
     override var isHighlighted: Bool { didSet { refreshBackground() } }
     override var alignmentRectInsets: UIEdgeInsets { .zero }
 
@@ -148,11 +148,11 @@ final class ConversationSelectionActionButton: UIButton {
         label.frame = CGRect(x: 25 * scale, y: 0, width: bounds.width - 30 * scale, height: bounds.height)
     }
     func setHovered(_ value: Bool) {
-        isHovered = value
+        pointerInside = value
         refreshBackground()
     }
     private func refreshBackground() {
-        backgroundColor = ink.withAlphaComponent(isHighlighted ? 0.18 : isHovered ? 0.10 : 0)
+        backgroundColor = ink.withAlphaComponent(isHighlighted ? 0.18 : pointerInside ? 0.10 : 0)
     }
     @objc private func hover(_ gesture: UIHoverGestureRecognizer) {
         setHovered(gesture.state == .began || gesture.state == .changed)
