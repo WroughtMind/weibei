@@ -2630,9 +2630,6 @@ private struct FloatingSelectionPreview: View {
 }
 
 struct FloatingSelectionAgentView: View {
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-    @ObservedObject private var hitDiagnostic = FloatingSelectionHitDiagnostic.shared
-#endif
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
@@ -2676,15 +2673,12 @@ struct FloatingSelectionAgentView: View {
                 promptBody
             }
         }
-        .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius,
-                             allowsDecorationHitTesting: allowsDecorationHitTesting)
+        .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
 #if targetEnvironment(macCatalyst)
         .background {
-            if hitDiagnosticStage & 2 == 0 {
-                ConversationSelectionPanelProbe(position: placedOrigin)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
+            ConversationSelectionPanelProbe(position: placedOrigin)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
 #endif
         .onChange(of: interaction.selectionContext) { previous, next in
@@ -2759,18 +2753,6 @@ struct FloatingSelectionAgentView: View {
 
     private var showsExpandedBody: Bool {
         expanded || interaction.keepFloatingSelectionForAnswer
-    }
-
-    private var allowsDecorationHitTesting: Bool {
-        hitDiagnosticStage & 4 == 0
-    }
-
-    private var hitDiagnosticStage: Int {
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        hitDiagnostic.stage
-#else
-        0
-#endif
     }
 
     private var promptBody: some View {
@@ -3024,9 +3006,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .overlay {
-            if hitDiagnosticStage & 1 == 0 {
-                floatingResizeBorder
-            }
+            floatingResizeBorder
         }
         .onAppear {
             draftFocused = true
@@ -3289,44 +3269,42 @@ struct FloatingSelectionAgentView: View {
     private var floatingResizeBorder: some View {
         let thickness: CGFloat = 6
         let headerClearance: CGFloat = 46
-        return ZStack {
-            FloatingSelectionResizeHitRegion(edge: .top, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
-                .frame(height: thickness)
-                .padding(.horizontal, 10)
-                .frame(maxHeight: .infinity, alignment: .top)
-            FloatingSelectionResizeHitRegion(edge: .bottom, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
-                .frame(height: thickness)
-                .padding(.horizontal, 10)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-            FloatingSelectionResizeHitRegion(edge: .leading, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
-                .frame(width: thickness)
-                .padding(.top, headerClearance)
-                .padding(.bottom, thickness)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            FloatingSelectionResizeHitRegion(edge: .trailing, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
-                .frame(width: thickness)
-                .padding(.top, headerClearance)
-                .padding(.bottom, thickness)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-
-            FloatingSelectionResizeHitRegion(edge: .topLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 10, height: 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            FloatingSelectionResizeHitRegion(edge: .topTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 10, height: 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-            FloatingSelectionResizeHitRegion(edge: .bottomLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 10, height: 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-            FloatingSelectionResizeHitRegion(edge: .bottomTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 10, height: 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        }
-        .contentShape(.interaction, FloatingSelectionResizeOutline(
-            thickness: thickness, headerClearance: headerClearance, cornerSize: 10))
-        // The eight edge regions handle pointer resizing. Exposing their union
-        // as one accessibility element covers every control inside the panel.
-        .accessibilityHidden(true)
+        // The base passes through the panel interior. Each overlay has only
+        // its actual edge bounds, so it cannot claim the conversation's AX hit.
+        return Color.clear
+            .allowsHitTesting(false)
+            .overlay(alignment: .top) {
+                FloatingSelectionResizeHitRegion(edge: .top, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
+                    .frame(height: thickness).padding(.horizontal, 10)
+            }
+            .overlay(alignment: .bottom) {
+                FloatingSelectionResizeHitRegion(edge: .bottom, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
+                    .frame(height: thickness).padding(.horizontal, 10)
+            }
+            .overlay(alignment: .leading) {
+                FloatingSelectionResizeHitRegion(edge: .leading, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
+                    .frame(width: thickness).padding(.top, headerClearance).padding(.bottom, thickness)
+            }
+            .overlay(alignment: .trailing) {
+                FloatingSelectionResizeHitRegion(edge: .trailing, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
+                    .frame(width: thickness).padding(.top, headerClearance).padding(.bottom, thickness)
+            }
+            .overlay(alignment: .topLeading) {
+                FloatingSelectionResizeHitRegion(edge: .topLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                    .frame(width: 10, height: 10)
+            }
+            .overlay(alignment: .topTrailing) {
+                FloatingSelectionResizeHitRegion(edge: .topTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                    .frame(width: 10, height: 10)
+            }
+            .overlay(alignment: .bottomLeading) {
+                FloatingSelectionResizeHitRegion(edge: .bottomLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                    .frame(width: 10, height: 10)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                FloatingSelectionResizeHitRegion(edge: .bottomTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                    .frame(width: 10, height: 10)
+            }
     }
 
     private func resizeFloatingAgent(edge: FloatingAgentResizeEdge, value: DragGesture.Value?) {
@@ -3524,29 +3502,6 @@ private struct FloatingSelectionFeedHeightKey: PreferenceKey {
     }
 }
 
-private struct FloatingSelectionResizeOutline: Shape {
-    let thickness: CGFloat
-    let headerClearance: CGFloat
-    let cornerSize: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.addRect(CGRect(x: rect.minX + cornerSize, y: rect.minY,
-                            width: max(0, rect.width - 2 * cornerSize), height: thickness))
-        path.addRect(CGRect(x: rect.minX + cornerSize, y: rect.maxY - thickness,
-                            width: max(0, rect.width - 2 * cornerSize), height: thickness))
-        let sideHeight = max(0, rect.height - headerClearance - thickness)
-        path.addRect(CGRect(x: rect.minX, y: rect.minY + headerClearance, width: thickness, height: sideHeight))
-        path.addRect(CGRect(x: rect.maxX - thickness, y: rect.minY + headerClearance, width: thickness, height: sideHeight))
-        for x in [rect.minX, rect.maxX - cornerSize] {
-            for y in [rect.minY, rect.maxY - cornerSize] {
-                path.addRect(CGRect(x: x, y: y, width: cornerSize, height: cornerSize))
-            }
-        }
-        return path
-    }
-}
-
 private struct FloatingSelectionResizeHitRegion: View {
     let edge: FloatingAgentResizeEdge
 #if targetEnvironment(macCatalyst)
@@ -3578,6 +3533,7 @@ private struct FloatingSelectionResizeHitRegion: View {
                 }
             }
             .onDisappear(perform: popCursorIfNeeded)
+            .accessibilityHidden(true)
     }
 
     private func popCursorIfNeeded() {

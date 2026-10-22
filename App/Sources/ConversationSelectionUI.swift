@@ -2,15 +2,6 @@ import UIKit
 import SwiftUI
 import WeiBeiCore
 
-#if WEIBEI_ACCEPTANCE_CHECKS
-@MainActor
-final class FloatingSelectionHitDiagnostic: ObservableObject {
-    static let shared = FloatingSelectionHitDiagnostic()
-    @Published var stage = 0
-    var events: [[String: String]] = []
-}
-#endif
-
 /// Reports the complete SwiftUI floating panel, including its header and composer.
 /// Reading these native bounds also accounts for the panel's placement transform.
 struct ConversationSelectionPanelProbe: UIViewRepresentable {
@@ -136,17 +127,6 @@ final class ConversationSelectionActionButton: UIButton {
         isPointerInteractionEnabled = true
         addInteraction(UIToolTipInteraction())
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hover(_:))))
-#if WEIBEI_ACCEPTANCE_CHECKS
-        for (event, name): (UIControl.Event, String) in [(.touchDown, "down"), (.touchUpInside, "inside"),
-                                                       (.touchUpOutside, "outside"), (.touchCancel, "cancel")] {
-            addAction(UIAction { [weak self] _ in
-                guard let self else { return }
-                FloatingSelectionHitDiagnostic.shared.events.append([
-                    "event": name, "button": accessibilityIdentifier ?? "",
-                    "frame": String(describing: convert(bounds, to: window))])
-            }, for: event)
-        }
-#endif
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 

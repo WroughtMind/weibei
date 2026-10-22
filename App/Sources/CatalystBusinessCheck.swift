@@ -1256,7 +1256,7 @@ enum CatalystBusinessCheck {
         guard let richReply = store.conversationMessages(in: threadID).last, richReply.role == .assistant else {
             throw Failure("floating rich answer unavailable")
         }
-        let richEvidence = try await verifyFloatingRichAnswer(messageID: richReply.id, in: window)
+        var richEvidence = try await verifyFloatingRichAnswer(messageID: richReply.id, in: window)
         try capture("selection-rich-answer-11pt.png", label: "Floating selection answer · 11 pt · native inline/display math + rendered diagram")
         let draft = "浮窗草稿：这一句再展开说明。"
         composer.text = draft
@@ -1314,30 +1314,8 @@ enum CatalystBusinessCheck {
             }
             return excerpt
         }
-        var pointerSnapshots: [String: [String: Any]] = [:]
         func reachableCapsuleButton(_ button: UIButton) throws -> UIButton {
             button.superview?.layoutIfNeeded()
-            let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
-            var hit = window.hitTest(center, with: nil)
-            var chain: [String] = []
-            while let current = hit {
-                chain.append(String(reflecting: type(of: current)) + " id=" + (current.accessibilityIdentifier ?? "")
-                    + " frame=" + String(describing: current.convert(current.bounds, to: window)))
-                hit = current.superview
-            }
-            var snapshot: [String: Any] = ["ui_window_point": String(describing: center),
-                                          "ui_window_bounds": String(describing: window.bounds),
-                                          "ui_button_ax_frame": String(describing: button.accessibilityFrame),
-                                          "ui_hit_chain": chain]
-            if let toolbar = window.windowScene?.titlebar?.toolbar {
-                snapshot["native"] = CatalystDesktopWindow.shared.pointerHitTestForCheck(toolbar: toolbar,
-                    xFraction: Double((center.x - window.bounds.minX) / window.bounds.width),
-                    yFraction: Double((center.y - window.bounds.minY) / window.bounds.height))
-            }
-            let key = (button.isDescendant(of: mainConversation.view) ? "main_" : "floating_") + (button.accessibilityIdentifier ?? "") + "_stage_\(FloatingSelectionHitDiagnostic.shared.stage)"
-            pointerSnapshots[key] = snapshot
-            try JSONSerialization.data(withJSONObject: pointerSnapshots, options: [.prettyPrinted, .sortedKeys])
-                .write(to: LabMetrics.directory.appendingPathComponent("selection-pointer-hit.json"))
             let bounds = button.bounds.insetBy(dx: 1, dy: 1)
             let points = [CGPoint(x: bounds.midX, y: bounds.midY),
                           CGPoint(x: bounds.minX, y: bounds.minY), CGPoint(x: bounds.maxX, y: bounds.minY),
@@ -1432,55 +1410,22 @@ enum CatalystBusinessCheck {
                 && floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
                 && mainComposer.text == mainQuoted && workspaceIsFullyVisible()
         }
+        guard let wholeQuote = store.conversationQuotes(in: threadID).last else {
+            throw Failure("floating footer quote is missing")
+        }
+        // Its new row changes panel placement. Wait for the real mounted pill
+        // before selecting text, just as a person would see the settled layout.
+        try await waitForOnboardingControl("conversation-quote-\(wholeQuote.id.uuidString)")
         let floatingExcerpt = try selectVisibleParagraph(in: floatingConversation)
         _ = try reachableCapsuleButton(floatingConversation.selectionActions.copyButton)
         _ = try reachableCapsuleButton(floatingConversation.selectionActions.quoteButton)
+        try await waitForOnboardingControl("conversation-selection-quote")
+        _ = try await onboardingUICommand("hover", id: "conversation-selection-quote")
+        try await until("floating quote shows pointer hover feedback") {
+            (floatingConversation.selectionActions.quoteButton.backgroundColor?.cgColor.alpha ?? 0) > 0
+        }
         try capture("selection-capsule-floating.png")
         let floatingCapsuleQuoted = floatingQuoted
-        if try await accessibilityElement("conversation-selection-quote", forInteraction: true)?["hittable"] != "true" {
-            let diagnostic = FloatingSelectionHitDiagnostic.shared
-            for stage in 0...7 {
-                diagnostic.stage = stage
-                // Let SwiftUI commit this diagnostic-only layer change before
-                // comparing identical real pointer operations in each variant.
-                try await Task.sleep(for: .milliseconds(250))
-                window.layoutIfNeeded()
-                guard let candidate = conversation(containing: messageID) else {
-                    throw Failure("floating diagnostic lost its conversation")
-                }
-                let excerpt = try selectVisibleParagraph(in: candidate)
-                _ = try reachableCapsuleButton(candidate.selectionActions.quoteButton)
-                let ready = try await accessibilityElement("conversation-selection-quote", forInteraction: true) ?? [:]
-                let existingIDs = Set(store.conversationQuotes(in: threadID).map(\.id))
-                diagnostic.events.removeAll()
-                if ready["hittable"] == "true" {
-                    try await activate("conversation-selection-quote")
-                } else {
-                    _ = try await onboardingUICommand("press-coordinate-diagnostic", id: "conversation-selection-quote")
-                }
-                var delivered = false
-                do {
-                    try await until("floating coordinate baseline receives its quote", seconds: 3) {
-                        store.conversationQuotes(in: threadID).contains(where: { $0.text == excerpt && $0.messageID != nil })
-                            && !candidate.selection.hasSelection && candidate.selectionActions.isHidden
-                    }
-                    delivered = true
-                } catch { }
-                pointerSnapshots["stage_\(stage)_pointer_baseline"] = [
-                    "hittable": ready["hittable"] ?? "missing", "pointer_delivered": delivered,
-                    "button_events": diagnostic.events,
-                    "resize_present": stage & 1 == 0, "probe_present": stage & 2 == 0,
-                    "decoration_hit_testing": stage & 4 == 0,
-                    "drafts_preserved": mainComposer.text == mainQuoted && floatingComposer()?.text == floatingQuoted]
-                try JSONSerialization.data(withJSONObject: pointerSnapshots, options: [.prettyPrinted, .sortedKeys])
-                    .write(to: LabMetrics.directory.appendingPathComponent("selection-pointer-hit.json"))
-                try capture("selection-quote-floating-stage-\(stage).png")
-                let added = Set(store.conversationQuotes(in: threadID).map(\.id)).subtracting(existingIDs)
-                store.removeConversationQuotes(added, in: threadID)
-            }
-            diagnostic.stage = 0
-            throw Failure("floating hit-test layer comparison completed; accessibility gate remains failed")
-        }
         try await activate("conversation-selection-quote")
         try await until("floating capsule attaches a quote without touching main draft") {
             store.conversationQuotes(in: threadID).contains(where: { $0.text == floatingExcerpt && $0.messageID != nil })
@@ -1500,6 +1445,48 @@ enum CatalystBusinessCheck {
                 && store.conversationQuotes(in: mainID).contains(where: { $0.id == mainQuote.id })
                 && mainComposer.text == mainQuoted && floatingComposer()?.text == floatingQuoted
         }
+        func panelFrame() throws -> CGRect {
+            guard let frame = ConversationSelectionPanelProbe.PanelView.rectangles(in: window).first else {
+                throw Failure("floating panel geometry is unavailable")
+            }
+            return frame
+        }
+        func dragPanel(from point: CGPoint, by delta: CGSize) async throws {
+            let coordinates = [point.x, point.y, delta.width, delta.height]
+                .map { String(Double($0)) }.joined(separator: ",")
+            _ = try await onboardingUICommand("drag-window-point", id: "SceneWindow", value: coordinates)
+        }
+        let beforeSide = try panelFrame()
+        try await dragPanel(from: CGPoint(x: beforeSide.maxX - 3, y: beforeSide.midY),
+                            by: CGSize(width: 24, height: 0))
+        try await until("floating side still resizes with the real pointer") {
+            abs(try panelFrame().width - beforeSide.width - 24) < 2
+        }
+        let beforeCorner = try panelFrame()
+        try await dragPanel(from: CGPoint(x: beforeCorner.maxX - 5, y: beforeCorner.minY + 5),
+                            by: CGSize(width: 16, height: -12))
+        try await until("floating corner still resizes with the real pointer") {
+            let frame = try panelFrame()
+            return abs(frame.width - beforeCorner.width - 16) < 2
+                && abs(frame.height - beforeCorner.height - 12) < 2
+                && abs(frame.minY - beforeCorner.minY + 12) < 2
+        }
+        let beforeMove = try panelFrame()
+        try await dragPanel(from: CGPoint(x: beforeMove.midX, y: beforeMove.minY + 22),
+                            by: CGSize(width: -24, height: -16))
+        try await until("floating header still moves with the real pointer") {
+            let frame = try panelFrame()
+            return abs(frame.minX - beforeMove.minX + 24) < 2
+                && abs(frame.minY - beforeMove.minY + 16) < 2
+        }
+        guard mainComposer.text == mainQuoted, floatingComposer()?.text == floatingQuoted,
+              store.conversationQuotes(in: mainID).contains(where: { $0.id == mainQuote.id }) else {
+            throw Failure("floating pointer resize or move changed drafts or the main quote")
+        }
+        richEvidence["quote_capsule_and_remove_pointer"] = "passed"
+        richEvidence["quote_preview_and_source_pointer"] = "passed"
+        richEvidence["floating_side_corner_and_header_pointer"] = "passed"
+        try capture("selection-quote-floating-resize.png")
         store.dismissFloatingSelectionAgent()
         try await until("closing the floating panel leaves main quote pills visible") {
             floatingComposer() == nil

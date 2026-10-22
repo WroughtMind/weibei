@@ -27,7 +27,6 @@ import Foundation
     @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]]
     @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
                                            xFraction: Double, yFraction: Double) -> [String: String]
-    @MainActor func pointerHitTestForCheck(toolbar: NSObject, xFraction: Double, yFraction: Double) -> [String: String]
 #endif
     @MainActor func presentOpenPanel(
         title: String,

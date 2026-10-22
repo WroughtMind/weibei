@@ -70,11 +70,6 @@ final class OnboardingUITests: XCTestCase {
                     if action == "ready" {
                         let hittable = element.isHittable
                         state["hittable"] = String(hittable)
-                        state["ancestor_path"] = ancestorPath(in: root, identifier: id)?.joined(separator: "\n") ?? ""
-                        if !hittable {
-                            let center = CGPoint(x: snapshot.frame.midX, y: snapshot.frame.midY)
-                            state["overlapping_controls"] = identifiedControls(in: root, containing: center).joined(separator: "\n")
-                        }
                         if !hittable, recordedUnreachable.insert(id).inserted {
                             let screenshot = XCTAttachment(screenshot: app.screenshot())
                             screenshot.name = "Waiting for control: " + id
@@ -86,13 +81,22 @@ final class OnboardingUITests: XCTestCase {
                 } else {
                     response["visible_controls"] = identifiedControls(in: root).joined(separator: "\n")
                 }
-            case "press-coordinate-diagnostic":
-                guard element.exists, element.isEnabled, !element.frame.isEmpty else {
-                    throw DriverFailure(errorDescription: "Coordinate baseline has no mounted target: " + id)
+            case "drag-window-point":
+                let values = (request["value"] ?? "").split(separator: ",").compactMap { Double($0) }
+                guard element.exists, element.elementType == .window,
+                      values.count == 4, values.allSatisfy(\.isFinite) else {
+                    throw DriverFailure(errorDescription: "Window drag has no valid target or coordinates")
                 }
-                // Diagnostic only: measure real pointer delivery independently
-                // of accessibility hit testing. The App still fails that gate.
-                element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+                let bounds = CGRect(origin: .zero, size: element.frame.size)
+                let startPoint = CGPoint(x: values[0], y: values[1])
+                let endPoint = CGPoint(x: values[0] + values[2], y: values[1] + values[3])
+                guard bounds.contains(startPoint), bounds.contains(endPoint) else {
+                    throw DriverFailure(errorDescription: "Window drag left the test window")
+                }
+                let origin = element.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: startPoint.x, dy: startPoint.y))
+                let end = origin.withOffset(CGVector(dx: endPoint.x, dy: endPoint.y))
+                start.press(forDuration: 0.1, thenDragTo: end)
             case "press", "fill", "hover":
                 guard element.exists, element.isEnabled, element.isHittable else {
                     let screenshot = XCTAttachment(screenshot: app.screenshot())
@@ -132,20 +136,9 @@ final class OnboardingUITests: XCTestCase {
     }
 
     @MainActor
-    private func ancestorPath(in root: any XCUIElementSnapshot, identifier: String) -> [String]? {
-        let entry = "\(root.identifier): \(root.elementType) \(root.frame)"
-        if root.identifier == identifier { return [entry] }
-        for child in root.children {
-            if let path = ancestorPath(in: child, identifier: identifier) { return [entry] + path }
-        }
-        return nil
-    }
-
-    @MainActor
-    private func identifiedControls(in root: any XCUIElementSnapshot, containing point: CGPoint? = nil) -> [String] {
+    private func identifiedControls(in root: any XCUIElementSnapshot) -> [String] {
         // Keep only control identifiers and geometry, never labels or field values.
-        (root.identifier.isEmpty || point.map({ !root.frame.contains($0) }) == true
-            ? [] : ["\(root.identifier): \(root.elementType) \(root.frame)"])
-            + root.children.flatMap { identifiedControls(in: $0, containing: point) }
+        (root.identifier.isEmpty ? [] : ["\(root.identifier): \(root.elementType) \(root.frame)"])
+            + root.children.flatMap { identifiedControls(in: $0) }
     }
 }

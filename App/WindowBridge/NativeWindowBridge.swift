@@ -104,57 +104,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
     }
 #if WEIBEI_ACCEPTANCE_CHECKS
-    @MainActor func pointerHitTestForCheck(toolbar: NSObject, xFraction: Double, yFraction: Double) -> [String: String] {
-        guard let toolbar = toolbar as? NSToolbar,
-              let window = NSApp.windows.first(where: { $0.toolbar === toolbar }),
-              let content = window.contentView,
-              xFraction.isFinite, yFraction.isFinite,
-              (0...1).contains(xFraction), (0...1).contains(yFraction) else { return ["failure": "window_unavailable"] }
-        let point = NSPoint(x: content.bounds.minX + CGFloat(xFraction) * content.bounds.width,
-                            y: content.isFlipped ? content.bounds.minY + CGFloat(yFraction) * content.bounds.height
-                                : content.bounds.maxY - CGFloat(yFraction) * content.bounds.height)
-        let location = content.convert(point, to: nil)
-        let screenPoint = window.convertPoint(toScreen: location)
-        var result = ["window_frame": NSStringFromRect(window.frame),
-                      "content_bounds": NSStringFromRect(content.bounds),
-                      "content_frame_in_window": NSStringFromRect(content.convert(content.bounds, to: nil)),
-                      "screen_frame": window.screen.map { NSStringFromRect($0.frame) } ?? "nil",
-                      "content_flipped": String(content.isFlipped),
-                      "window_point": NSStringFromPoint(location), "screen_point": NSStringFromPoint(screenPoint)]
-        if let root = content.superview {
-            let rootPoint = root.superview?.convert(location, from: nil) ?? location
-            var view = root.hitTest(rootPoint)
-            var chain: [String] = []
-            while let current = view {
-                chain.append(NSStringFromClass(type(of: current)) + " id=" + (current.identifier?.rawValue ?? "")
-                    + " frame=" + NSStringFromRect(current.convert(current.bounds, to: nil)))
-                view = current.superview
-            }
-            result["native_hit_chain"] = chain.joined(separator: "\n")
-        }
-        func accessibilityChain(_ hit: Any?) -> String {
-            var object = hit as? NSObject
-            var seen = Set<ObjectIdentifier>()
-            var chain: [String] = []
-            while let current = object, seen.insert(ObjectIdentifier(current)).inserted {
-                // Attribute access also handles Catalyst's Objective-C AX proxies.
-                // Keep identifiers and geometry only, never labels or field values.
-                let identifier = current.accessibilityAttributeValue(.identifier) as? String ?? ""
-                let role = current.accessibilityAttributeValue(.role) as? String ?? ""
-                let frame = (current as? NSAccessibilityProtocol).map { NSStringFromRect($0.accessibilityFrame()) } ?? "unknown"
-                let position = String(describing: current.accessibilityAttributeValue(.position))
-                let size = String(describing: current.accessibilityAttributeValue(.size))
-                chain.append(NSStringFromClass(type(of: current)) + " id=" + identifier + " role=" + role + " frame=" + frame
-                    + " position=" + position + " size=" + size)
-                object = current.accessibilityAttributeValue(.parent) as? NSObject
-            }
-            return chain.joined(separator: "\n")
-        }
-        result["window_ax_hit_chain"] = accessibilityChain(window.accessibilityHitTest(screenPoint))
-        result["content_ax_hit_chain"] = accessibilityChain(content.accessibilityHitTest(screenPoint))
-        return result
-    }
-
     @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
                                            xFraction: Double, yFraction: Double) -> [String: String] {
         guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
