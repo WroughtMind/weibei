@@ -1,0 +1,53 @@
+name: Catalyst 冷编译基准
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: 对比的旧提交
+        required: true
+        type: string
+      arch:
+        description: 原生架构
+        type: choice
+        options: [x86_64, arm64]
+        default: x86_64
+permissions:
+  contents: read
+concurrency:
+  group: compile-benchmark-${{ github.ref }}-${{ inputs.arch }}
+  cancel-in-progress: true
+jobs:
+  benchmark:
+    name: 同机无缓存 Release 对比
+    runs-on: ${{ inputs.arch == 'arm64' && 'macos-26' || 'macos-26-intel' }}
+    timeout-minutes: 75
+    env:
+      WEIBEI_TARGET_ARCH: ${{ inputs.arch || 'x86_64' }}
+      TOOLCHAINS: com.apple.dt.toolchain.XcodeDefault
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          path: candidate
+          fetch-depth: 0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          path: baseline
+          ref: ${{ inputs.baseline }}
+          fetch-depth: 0
+      - name: 准备原生环境
+        run: |
+          test "$(uname -m)" = "$WEIBEI_TARGET_ARCH"
+          bash candidate/App/script/prepare-ci-desktop.sh
+          python3 -m venv "$RUNNER_TEMP/benchmark-fonts"
+          "$RUNNER_TEMP/benchmark-fonts/bin/pip" install -r candidate/script/editor-font-requirements.txt
+          echo "$RUNNER_TEMP/benchmark-fonts/bin" >> "$GITHUB_PATH"
+      - name: 依次冷编译并验证两个正式 App
+        run: python3 candidate/script/benchmark_catalyst.py baseline candidate "$RUNNER_TEMP/compile-benchmark"
+      - name: 保存同机对比与完整编译日志
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: compile-benchmark-${{ env.WEIBEI_TARGET_ARCH }}-${{ github.sha }}
+          path: ${{ runner.temp }}/compile-benchmark/
+          retention-days: 14
+          if-no-files-found: error

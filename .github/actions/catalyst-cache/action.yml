@@ -14,6 +14,11 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: 固定编译工具链
+      shell: bash
+      # Metal can mount between builds and change SDK_STAT_CACHE_PATH, forcing
+      # all Swift dependencies to rebuild. This app compiles with Xcode's tools.
+      run: echo 'TOOLCHAINS=com.apple.dt.toolchain.XcodeDefault' >> "$GITHUB_ENV"
     - id: identity
       shell: bash
       env:

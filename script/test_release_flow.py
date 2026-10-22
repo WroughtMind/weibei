@@ -54,7 +54,7 @@ class ManifestRouting(unittest.TestCase):
                 mutation()
                 write()
                 after = commit()
-                self.assertEqual(scopes(before, after), {"code", "agent", "editor", "release", "tools"})
+                self.assertEqual(scopes(before, after), {"code", "agent", "editor", "release", "acceptance", "tools"})
             before = git("rev-parse", "HEAD")
             (root / "package.json").write_text("invalid json")
             self.assertIn("code", scopes(before, commit()))
