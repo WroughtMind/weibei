@@ -24,6 +24,14 @@ final class OnboardingUITests: XCTestCase {
         let responseURL = channel.appendingPathComponent("onboarding-ui-response.json")
 
         let app = XCUIApplication(url: URL(fileURLWithPath: appPath))
+        let autoFillMonitor = addUIInterruptionMonitor(withDescription: "Password AutoFill") { _ in
+            // The window can arrive after the immediate post-click check below.
+            let autoFill = app.windows["SafariPlatformSupportAutoCompleteWindow"]
+            guard autoFill.exists else { return false }
+            autoFill.typeKey(.escape, modifierFlags: [])
+            return !autoFill.exists
+        }
+        defer { removeUIInterruptionMonitor(autoFillMonitor) }
         app.launchArguments = ["--exit-after-check"]
         app.launchEnvironment["WEIBEI_ONBOARDING_UI_DIRECTORY"] = channel.path
         app.launch()

@@ -19,7 +19,7 @@ struct ConversationSelectionPanelProbe: UIViewRepresentable {
         override init(frame: CGRect) {
             super.init(frame: frame)
             isUserInteractionEnabled = false
-            accessibilityIdentifier = "conversation-selection-panel-obstacle"
+            accessibilityElementsHidden = true
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
         override func didMoveToWindow() {

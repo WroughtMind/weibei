@@ -2678,6 +2678,7 @@ struct FloatingSelectionAgentView: View {
         .background {
             ConversationSelectionPanelProbe(position: placedOrigin)
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
 #endif
         .onChange(of: interaction.selectionContext) { previous, next in
@@ -3301,9 +3302,9 @@ struct FloatingSelectionAgentView: View {
                 .frame(width: 10, height: 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(store.ui("拖动边框调整浮窗大小", "Drag the border to resize")))
-        .accessibilityIdentifier("selection-float-resize-border")
+        // The eight edge regions handle pointer resizing. Exposing their union
+        // as one accessibility element covers every control inside the panel.
+        .accessibilityHidden(true)
     }
 
     private func resizeFloatingAgent(edge: FloatingAgentResizeEdge, value: DragGesture.Value?) {
