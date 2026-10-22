@@ -56,6 +56,8 @@ gh workflow run pr-checks.yml --ref codex/example \
 
 ## 正式发布工作流
 
+准备或修订发版说明时，先按仓库内的 [Release Changelog 规范](../../.agents/skills/release-changelog/SKILL.md) 核对版本区间与 PR，随后同步 `Docs/releases/v<version>.md` 和 `Docs/update-summaries/v<version>.md`。正文按“功能 / 改进 / 修复”归类，每项标明对应 PR；下载与安装信息留在下载区，应用内摘要只保留变更内容。
+
 在 GitHub Actions 中手动运行“魏碑双架构正式发布”，输入与 `VERSION`、`package.json` 和 `Docs/update-summaries/v<version>.md` 一致的版本号。默认构建并验证两种架构及更新签名，然后汇总完整候选集合，保存在 Actions 的 `release-ready` 产物中，不创建 Tag 或 Release；可以从待合并分支验证仓库密钥。获得正式发布授权后，从 `main` 运行并勾选 `publish`，才会公开版本。
 
 当前发布路线固定使用 ad-hoc 签名，不需要付费 Apple 开发者账号，也不执行 Apple 公证。发布说明和 Cask 必须保留首次启动指引。
