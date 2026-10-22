@@ -1350,17 +1350,31 @@ enum CatalystBusinessCheck {
             !mainCopy.isHighlighted && (mainCopy.backgroundColor?.cgColor.alpha ?? 0) > 0
         }
         try capture("selection-capsule-hover.png")
-        try await activate("conversation-selection-copy")
+        try await waitForOnboardingControl("conversation-selection-copy")
+        // Observe the mounted toast while the real click is in flight. An Intel
+        // XCTest snapshot can take longer than the product's 2.4-second toast.
+        let feedbackGeneration = store.transientNoteStatusGeneration
+        let copyFeedback = Task { @MainActor in
+            try await until("copy success feedback is mounted") {
+                try Task.checkCancellation()
+                guard store.transientNoteStatusGeneration > feedbackGeneration,
+                      store.transientNoteStatus == store.ui("已复制", "Copied"),
+                      let marker = descendants(window).first(where: {
+                          $0.accessibilityIdentifier == "workspace-status-layout-" + store.ui("已复制", "Copied")
+                      }), isVisible(marker, in: window) else { return false }
+                try Task.checkCancellation()
+                try capture("selection-copy-feedback.png")
+                return true
+            }
+        }
+        defer { copyFeedback.cancel() }
+        _ = try await onboardingUICommand("press", id: "conversation-selection-copy")
+        try await copyFeedback.value
         guard UIPasteboard.general.string == mainExcerpt, !mainConversation.selection.hasSelection,
-              mainConversation.selectionActions.isHidden, store.transientNoteStatus == store.ui("已复制", "Copied"),
+              mainConversation.selectionActions.isHidden,
               mainComposer.text == mainQuoted, floatingComposer()?.text == draft else {
             throw Failure("main capsule copy changed the selected text or either draft")
         }
-        try await until("copy success feedback is mounted") {
-            let feedback = try await accessibilityElement("workspace-status-message")
-            return feedback?["label"] == store.ui("已复制", "Copied")
-        }
-        try capture("selection-copy-feedback.png")
         _ = try selectVisibleParagraph(in: mainConversation)
         store.dismissFloatingSelectionAgent()
         try await until("closing floating panel restores the main selection capsule") {
