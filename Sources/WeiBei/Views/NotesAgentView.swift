@@ -3577,8 +3577,9 @@ private struct FloatingSelectionResizeHitRegion: View {
 }
 
 #if targetEnvironment(macCatalyst)
-/// Deliver resize from the native grip's primary press, including the release
-/// position, so short drags retain their complete translation.
+/// Capture resize presses at the window, since Catalyst can route a press to
+/// the underlying web view even when the current hit test finds the grip.
+/// Each recognizer accepts only its own visible edge, leaving the interior alone.
 private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
     let edge: FloatingAgentResizeEdge
     let onChanged: (CGSize?) -> Void
@@ -3590,44 +3591,26 @@ private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
         view.accessibilityIdentifier = "diagnostic-resize-grip-\(edge)"
 #endif
     }
-    static func dismantleUIView(_ view: PointerView, coordinator: ()) { view.finish(reason: "dismantle") }
+    static func dismantleUIView(_ view: PointerView, coordinator: ()) { view.disconnect() }
 
-    final class PointerView: UIView {
+    final class PointerView: UIView, UIGestureRecognizerDelegate {
         var onChanged: ((CGSize?) -> Void)?
-        private var start: CGPoint?
+        private let press = ResizePress()
 
         override init(frame: CGRect) {
             super.init(frame: frame)
             isOpaque = false
             isUserInteractionEnabled = true
             accessibilityElementsHidden = true
-            let press = ConversationSelectionPressObserver()
+            press.owner = self
+            press.delegate = self
+            press.onChanged = { [weak self] in self?.onChanged?($0) }
 #if WEIBEI_ACCEPTANCE_CHECKS
             let recognizer = String(describing: ObjectIdentifier(press))
-            press.resizeDiagnostic = { [weak self] event, fields in
+            press.diagnostic = { [weak self] event, fields in
                 self?.trace(event, fields.merging(["recognizer": recognizer]) { _, new in new })
             }
 #endif
-            press.pressed = { [weak self] point, _ in
-                guard let self, let window = self.window else { return }
-                let windowPoint = convert(point, to: window)
-                start = windowPoint
-#if WEIBEI_ACCEPTANCE_CHECKS
-                trace("down", ["point": String(describing: windowPoint)])
-#endif
-                onChanged?(.zero)
-            }
-            press.moved = { [weak self] point in
-                self?.report(point)
-            }
-            press.ended = { [weak self] point in
-#if WEIBEI_ACCEPTANCE_CHECKS
-                self?.trace("up", ["point": String(describing: point)])
-#endif
-                self?.report(point)
-            }
-            press.released = { [weak self] in self?.finish(reason: "released") }
-            addGestureRecognizer(press)
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
@@ -3636,25 +3619,28 @@ private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
 #if WEIBEI_ACCEPTANCE_CHECKS
             trace("window_changed", ["attached": String(window != nil)])
 #endif
-            if window == nil { finish(reason: "window_detached") }
+            guard press.view !== window else { return }
+            disconnect()
+            window?.addGestureRecognizer(press)
         }
 
-        private func report(_ point: CGPoint) {
-            guard let window, let start else { return }
-            let current = convert(point, to: window)
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let window, gestureRecognizer.view === window else { return false }
+            let point = touch.location(in: window)
+            guard self.point(inside: convert(point, from: window), with: nil) else { return false }
+            let hit = window.hitTest(point, with: nil)
+            let accepts = hit === self || hit?.isDescendant(of: self) == true
 #if WEIBEI_ACCEPTANCE_CHECKS
-            trace("translation", ["start": String(describing: start), "current": String(describing: current)])
+            trace("touch_filter", ["accepts": String(accepts), "point": String(describing: point),
+                "touch_view": String(describing: touch.view.map { type(of: $0) }),
+                "current_hit": String(describing: hit.map { type(of: $0) })])
 #endif
-            onChanged?(CGSize(width: current.x - start.x, height: current.y - start.y))
+            return accepts
         }
 
-        func finish(reason: String) {
-#if WEIBEI_ACCEPTANCE_CHECKS
-            trace("finish", ["reason": reason, "has_start": String(start != nil)])
-#endif
-            guard start != nil else { return }
-            start = nil
-            onChanged?(nil)
+        func disconnect() {
+            press.cancel()
+            press.view?.removeGestureRecognizer(press)
         }
 #if WEIBEI_ACCEPTANCE_CHECKS
         private func trace(_ event: String, _ fields: [String: String] = [:]) {
@@ -3665,6 +3651,81 @@ private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
             FloatingResizePointerDiagnostic.record("grip_" + event, state)
         }
 #endif
+    }
+
+    /// Owns a primary resize from press through release, including a short
+    /// drag's final position. Cancels delivery to the web content underneath.
+    private final class ResizePress: UIGestureRecognizer {
+        weak var owner: PointerView?
+        var onChanged: ((CGSize?) -> Void)?
+        private var start: CGPoint?
+#if WEIBEI_ACCEPTANCE_CHECKS
+        var diagnostic: ((String, [String: String]) -> Void)?
+#endif
+
+        init() {
+            super.init(target: nil, action: nil)
+            cancelsTouchesInView = true
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func shouldReceive(_ event: UIEvent) -> Bool {
+            guard let owner, let window = view as? UIWindow, owner.window === window else { return false }
+            return event.type == .touches && event.buttonMask.contains(.primary)
+                && !event.modifierFlags.contains(.control)
+        }
+        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            guard let touch = touches.first, let window = view as? UIWindow, owner?.window === window else {
+                state = .failed
+                return
+            }
+            start = touch.location(in: window)
+#if WEIBEI_ACCEPTANCE_CHECKS
+            diagnostic?("down", ["point": String(describing: start), "timestamp": String(touch.timestamp)])
+#endif
+            state = .began
+            onChanged?(.zero)
+        }
+
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+            state = .changed
+            report(touches)
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+            report(touches)
+            state = .ended
+            finish()
+        }
+
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { cancel() }
+        override func reset() { super.reset(); finish() }
+
+        func cancel() {
+            if state == .began || state == .changed { state = .cancelled }
+            finish()
+        }
+
+        private func report(_ touches: Set<UITouch>) {
+            guard let touch = touches.first, let window = view as? UIWindow, let start else { return }
+            let current = touch.location(in: window)
+#if WEIBEI_ACCEPTANCE_CHECKS
+            diagnostic?("translation", ["start": String(describing: start), "current": String(describing: current),
+                "phase": String(describing: touch.phase)])
+#endif
+            onChanged?(CGSize(width: current.x - start.x, height: current.y - start.y))
+        }
+
+        private func finish() {
+            guard start != nil else { return }
+#if WEIBEI_ACCEPTANCE_CHECKS
+            diagnostic?("finish", ["state": String(describing: state)])
+#endif
+            start = nil
+            onChanged?(nil)
+        }
     }
 }
 #endif
