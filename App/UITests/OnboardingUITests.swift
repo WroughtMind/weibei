@@ -36,7 +36,8 @@ final class OnboardingUITests: XCTestCase {
         app.launchEnvironment["WEIBEI_ONBOARDING_UI_DIRECTORY"] = channel.path
         app.launch()
         defer { if app.state != .notRunning { app.terminate() } }
-        let deadline = Date().addingTimeInterval(360) // Same bound as the existing CI app launch.
+        let inactivityLimit: TimeInterval = 360 // Same bound as the existing CI app launch.
+        var deadline = Date().addingTimeInterval(inactivityLimit)
         var handled: String?
         var recordedUnreachable = Set<String>()
         while app.state != .notRunning, Date() < deadline {
@@ -126,6 +127,9 @@ final class OnboardingUITests: XCTestCase {
                 throw DriverFailure(errorDescription: "Unknown UI operation: \(action)")
             }
             try JSONSerialization.data(withJSONObject: response).write(to: responseURL, options: .atomic)
+            // A complete UI round can exceed the launch bound on Intel. Keep
+            // the stall limit while allowing successfully handled requests to continue.
+            deadline = Date().addingTimeInterval(inactivityLimit)
         }
         XCTAssertEqual(app.state, .notRunning, "The acceptance App did not finish its checks")
     }
