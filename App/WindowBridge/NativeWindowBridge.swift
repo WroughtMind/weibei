@@ -752,7 +752,8 @@ private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggi
     }
     func update(sourceRect: CGRect, size: CGSize, dark: Bool) {
         if contentSize != size { contentSize = size }
-        if positioningRect != sourceRect { positioningRect = sourceRect }
+        // Before show(relativeTo:of:preferredEdge:), AppKit has no anchor edge.
+        if isShown, positioningRect != sourceRect { positioningRect = sourceRect }
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         if self.appearance != appearance { self.appearance = appearance }
     }
