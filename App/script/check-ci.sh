@@ -114,6 +114,8 @@ business_path = support / 'Workspace/business-check.json'
 # Xcode's UI testing service drives real SwiftUI controls from another process.
 # The App keeps the file, credential and recovery assertions in the same checks.
 ui_log = evidence / 'ci-onboarding-ui.log'
+isolated_desktop = (os.environ.get('CI') == 'true' and os.environ.get('GITHUB_ACTIONS') == 'true'
+                    and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted')
 with ui_log.open('w') as log:
     ui_result = subprocess.run([
         'xcodebuild', '-project', 'App/UITests/WeiBeiOnboardingUI.xcodeproj', '-scheme', 'WeiBeiOnboardingUITests',
@@ -121,7 +123,8 @@ with ui_log.open('w') as log:
         '-derivedDataPath', '.build/onboarding-ui-' + os.environ['WEIBEI_TARGET_ARCH'],
         '-resultBundlePath', str(evidence / 'ci-onboarding-ui.xcresult'),
         '-parallel-testing-enabled', 'NO',
-        'WEIBEI_CHECK_APP_PATH=' + app, 'test',
+        'WEIBEI_CHECK_APP_PATH=' + app,
+        'WEIBEI_CI_EXTERNAL_PROMPT_HANDLING=' + ('1' if isolated_desktop else '0'), 'test',
     ], stdout=log, stderr=subprocess.STDOUT)
 if ui_result.returncode:
     print(ui_log.read_text()[-16000:])

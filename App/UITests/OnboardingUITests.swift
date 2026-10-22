@@ -24,6 +24,38 @@ final class OnboardingUITests: XCTestCase {
         let responseURL = channel.appendingPathComponent("onboarding-ui-response.json")
 
         let app = XCUIApplication(url: URL(fileURLWithPath: appPath))
+        // Runner tools can leave this external permission prompt over the App.
+        // Hosted CI declines it; all product reachability checks still apply.
+        let canDeclineExternalPythonNetwork = configuration.object(forInfoDictionaryKey: "WeiBeiCIExternalPromptHandling") as? String == "1"
+        var decliningExternalPrompt = false
+        var currentRequest = "startup"
+        func normalizedSystemText(_ value: String) -> String {
+            value.replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
+                .replacingOccurrences(of: "’", with: "'").split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        }
+        func dismissPythonLocalNetworkPromptIfPresent() -> Bool {
+            guard canDeclineExternalPythonNetwork, !decliningExternalPrompt else { return false }
+            decliningExternalPrompt = true
+            defer { decliningExternalPrompt = false }
+            let notifications = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
+            let dialogs = notifications.dialogs.allElementsBoundByIndex
+            guard dialogs.count == 1, let dialog = dialogs.first else { return false }
+            let title = "Allow \"Python\" to find devices on local networks?"
+            let titles = dialog.staticTexts.allElementsBoundByIndex.filter {
+                normalizedSystemText($0.label) == title || normalizedSystemText($0.value as? String ?? "") == title
+            }
+            let buttons = dialog.buttons.allElementsBoundByIndex.filter { normalizedSystemText($0.label) == "Don't Allow" }
+            guard titles.count == 1, buttons.count == 1, let decline = buttons.first,
+                  decline.isEnabled, decline.isHittable else { return false }
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = "Declining external Python local network request: \(currentRequest) at \(ISO8601DateFormatter().string(from: Date()))"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            decline.click()
+            let dismissed = !dialog.exists
+            print("CI external Python network request declined: dismissed=\(dismissed), request=\(currentRequest)")
+            return dismissed
+        }
         let autoFillMonitor = addUIInterruptionMonitor(withDescription: "Password AutoFill") { _ in
             // The window can arrive after the immediate post-click check below.
             let autoFill = app.windows["SafariPlatformSupportAutoCompleteWindow"]
@@ -32,6 +64,10 @@ final class OnboardingUITests: XCTestCase {
             return !autoFill.exists
         }
         defer { removeUIInterruptionMonitor(autoFillMonitor) }
+        let networkMonitor = addUIInterruptionMonitor(withDescription: "CI external Python local network request") { _ in
+            dismissPythonLocalNetworkPromptIfPresent()
+        }
+        defer { removeUIInterruptionMonitor(networkMonitor) }
         app.launchArguments = ["--exit-after-check"]
         app.launchEnvironment["WEIBEI_ONBOARDING_UI_DIRECTORY"] = channel.path
         app.launch()
@@ -53,6 +89,11 @@ final class OnboardingUITests: XCTestCase {
             handled = token
             let matches = app.descendants(matching: .any).matching(identifier: id)
             let element = matches.firstMatch
+            currentRequest = action + " " + id + " " + token
+            if ["ready", "press", "fill", "hover", "drag-window-point"].contains(action),
+               element.exists, !element.isHittable {
+                _ = dismissPythonLocalNetworkPromptIfPresent()
+            }
             var response: [String: Any] = ["token": token]
             switch action {
             case "screenshot":

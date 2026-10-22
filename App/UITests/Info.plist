@@ -20,5 +20,7 @@
 	<string>1</string>
 	<key>WeiBeiCheckAppPath</key>
 	<string>$(WEIBEI_CHECK_APP_PATH)</string>
+	<key>WeiBeiCIExternalPromptHandling</key>
+	<string>$(WEIBEI_CI_EXTERNAL_PROMPT_HANDLING)</string>
 </dict>
 </plist>
