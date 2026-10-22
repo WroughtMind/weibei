@@ -160,7 +160,7 @@ Individual checks are also available:
 
 ```bash
 swift build
-swift run WeiBeiSelfCheck
+python3 script/run_self_check.py
 swift run WeiBeiWebEditorCheck
 swift run WeiBeiNativeCheck --authentication-status
 ```
