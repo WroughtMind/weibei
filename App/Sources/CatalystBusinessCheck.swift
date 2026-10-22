@@ -403,23 +403,27 @@ enum CatalystBusinessCheck {
         }
     }
 
-    @MainActor private static func verifyUpdatePopoverPageInput() async throws -> [String: Any] {
-        guard let window = conversation()?.view.window, let root = window.rootViewController,
+    @MainActor private static func verifyUpdatePopoverPageInput(store: WorkspaceStore) async throws -> [String: Any] {
+        guard !store.courseWorkspacePresented,
+              let window = conversation()?.view.window, let root = window.rootViewController,
               let toolbar = window.windowScene?.titlebar?.toolbar else {
             throw Failure("update notes page window unavailable")
         }
         let state = UpdatePopoverInputState()
         let host = CatalystTopBar.HostingView(index: 0, content: AnyView(UpdatePopoverInputView(state: state)))
-        host.frame = CGRect(x: 32, y: root.view.safeAreaInsets.top + 24, width: 120, height: 30)
-        let originalVisibility = toolbar.isVisible
-        CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(false, toolbar: toolbar)
-        root.view.addSubview(host)
         defer {
             host.tearDown()
             host.removeFromSuperview()
-            CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(originalVisibility, toolbar: toolbar)
+            store.dismissCourseWorkspace()
         }
-        var receipts: [String: Any] = ["uikit_window_bounds": NSCoder.string(for: window.bounds)]
+        // The production course-page state owns visibility; changing the
+        // native toolbar directly would be overwritten by its SwiftUI owner.
+        store.presentCourseWorkspace()
+        try await until("course page hides the original native toolbar") { !toolbar.isVisible }
+        root.view.layoutIfNeeded()
+        host.frame = CGRect(x: 32, y: root.view.safeAreaInsets.top + 24, width: 120, height: 30)
+        root.view.addSubview(host)
+        var receipts: [String: Any] = ["course_workspace_presented": store.courseWorkspacePresented]
         // The library/course header is ordinary page content with a hidden
         // toolbar. A click derived from the native anchor must hit this button.
         for phase in ["initial", "reopened"] {
@@ -429,7 +433,8 @@ enum CatalystBusinessCheck {
                 CatalystDesktopWindow.shared.updateNotesVisibleForCheck()
             }
             let expectedActions = state.actions + 1
-            let receipt = CatalystDesktopWindow.shared.clickUpdateNotesPageSourceForCheck()
+            var receipt = CatalystDesktopWindow.shared.clickUpdateNotesPageSourceForCheck()
+            receipt["uikit_window_bounds"] = NSCoder.string(for: window.bounds)
             receipts[phase] = receipt
             guard receipt["queued"] == "true", receipt["toolbar_visible"] == "false",
                   let bounds = receipt["native_source_bounds"], NSCoder.cgRect(for: bounds).size == window.bounds.size else {
@@ -607,7 +612,7 @@ enum CatalystBusinessCheck {
             try check("native_workspace_toolbar_controls", true)
             try await verifyUpdatePopoverInput()
             try check("update_popover_first_pointer_click", true)
-            result["update_notes_page_anchor"] = try await verifyUpdatePopoverPageInput()
+            result["update_notes_page_anchor"] = try await verifyUpdatePopoverPageInput(store: store)
             try check("update_popover_page_anchor_and_first_pointer_click", true)
             try await verifyLibraryOnboarding(store)
             try check("library_onboarding_failure_retry_picker_cancel_and_recovery", true)
