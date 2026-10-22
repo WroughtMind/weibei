@@ -96,6 +96,7 @@ final class OnboardingUITests: XCTestCase {
                 let origin = element.coordinate(withNormalizedOffset: .zero)
                 let start = origin.withOffset(CGVector(dx: startPoint.x, dy: startPoint.y))
                 let end = origin.withOffset(CGVector(dx: endPoint.x, dy: endPoint.y))
+                print("Resize diagnostic window frame: \(element.frame), start: \(startPoint), end: \(endPoint)")
                 start.press(forDuration: 0.1, thenDragTo: end)
             case "press", "fill", "hover":
                 guard element.exists, element.isEnabled, element.isHittable else {

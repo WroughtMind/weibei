@@ -3254,6 +3254,10 @@ struct FloatingSelectionAgentView: View {
     private var moveFloatingAgentGesture: some Gesture {
         DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { value in
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                CatalystBusinessCheck.traceFloatingResize("header_changed", ["start": String(describing: value.startLocation),
+                    "location": String(describing: value.location), "translation": String(describing: value.translation)])
+#endif
                 let base = dragAnchorOrigin ?? placedOrigin ?? initialOriginPoint
                 if dragAnchorOrigin == nil { dragAnchorOrigin = base }
                 setPlacedOrigin(CGPoint(
@@ -3262,6 +3266,9 @@ struct FloatingSelectionAgentView: View {
                 ))
             }
             .onEnded { _ in
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                CatalystBusinessCheck.traceFloatingResize("header_ended", ["origin": String(describing: placedOrigin)])
+#endif
                 dragAnchorOrigin = nil
             }
     }
@@ -3336,6 +3343,12 @@ struct FloatingSelectionAgentView: View {
             minimumHeight: Double(chrome) + SelectionFloatingAgentPlacement.minimumResizableContentHeight,
             maximumHeight: Double(chrome) + SelectionFloatingAgentPlacement.maximumResizableContentHeight
         )
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+        CatalystBusinessCheck.traceFloatingResize("calculated", ["edge": String(describing: edge),
+            "base_origin": String(describing: session.origin), "base_size": String(describing: session.size),
+            "base_feed": String(describing: session.feedHeight), "translation": String(describing: value.translation),
+            "result": String(describing: resized)])
+#endif
         var transaction = Transaction()
         transaction.animation = nil
         withTransaction(transaction) {
@@ -3349,6 +3362,14 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func commitResize() {
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+        let checkedPreview = resizePreviewHeight
+        defer {
+            CatalystBusinessCheck.traceFloatingResize("committed", ["preview": String(describing: checkedPreview),
+                "floor": String(describing: userFloor), "fixed": String(describing: userFixed),
+                "origin": String(describing: placedOrigin), "size": String(describing: measuredPanelSize)])
+        }
+#endif
         let preview = resizePreviewHeight
         let session = resizeSession
         if let height = feedHeightMeasurement.height {
@@ -3518,13 +3539,24 @@ private struct FloatingSelectionResizeHitRegion: View {
             .highPriorityGesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                        CatalystBusinessCheck.traceFloatingResize("region_changed", ["edge": String(describing: edge),
+                            "start": String(describing: value.startLocation), "location": String(describing: value.location),
+                            "translation": String(describing: value.translation)])
+#endif
                         onChanged(edge, value)
                     }
                     .onEnded { _ in
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                        CatalystBusinessCheck.traceFloatingResize("region_ended", ["edge": String(describing: edge)])
+#endif
                         onChanged(edge, nil)
                     }
             )
             .onHover { hovering in
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                CatalystBusinessCheck.traceFloatingResize("region_hover", ["edge": String(describing: edge), "hovering": String(hovering)])
+#endif
                 if hovering, !cursorPushed {
                     cursor.push()
                     cursorPushed = true

@@ -15,6 +15,12 @@ enum CatalystBusinessCheck {
     private static var fileDropDiagnostics: [String: Any] = [:]
     private static var contextualPickerDiagnostics: [String: Any] = [:]
     private static var lastOnboardingUIElement: [String: String] = [:]
+    private static var floatingResizeTrace: [[String: String]] = []
+    static func traceFloatingResize(_ event: String, _ values: [String: String]) {
+        var entry = values
+        entry["event"] = event
+        floatingResizeTrace.append(entry)
+    }
     private struct Failure: LocalizedError {
         let errorDescription: String?
         init(_ description: String) { errorDescription = description }
@@ -371,6 +377,7 @@ enum CatalystBusinessCheck {
         var checks: [String: String] = [:]
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
+            result["floating_resize_trace"] = floatingResizeTrace
             result["recorded_at"] = ISO8601DateFormatter().string(from: Date())
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: resultURL, options: .atomic)
         }
@@ -1452,6 +1459,8 @@ enum CatalystBusinessCheck {
             return mainConversation.view.convert(frame, to: window)
         }
         func dragPanel(from point: CGPoint, by delta: CGSize) async throws {
+            traceFloatingResize("requested_drag", ["start": String(describing: point), "delta": String(describing: delta),
+                "panel": String(describing: try panelFrame())])
             let coordinates = [point.x, point.y, delta.width, delta.height]
                 .map { String(Double($0)) }.joined(separator: ",")
             _ = try await onboardingUICommand("drag-window-point", id: "SceneWindow", value: coordinates)
@@ -1527,7 +1536,7 @@ enum CatalystBusinessCheck {
                 && content.bounds.maxY - mainComposer.convert(mainComposer.bounds, to: content).maxY <= 40
         }
         try capture("reasoning-composer.png")
-        return richEvidence
+        throw Failure("temporary resize input trace completed")
     }
 
     private static func verifyFloatingRichAnswer(messageID: UUID, in window: UIWindow) async throws -> [String: Any] {
