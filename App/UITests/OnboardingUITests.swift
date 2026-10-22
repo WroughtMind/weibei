@@ -103,7 +103,9 @@ final class OnboardingUITests: XCTestCase {
                 let start = origin.withOffset(CGVector(dx: startPoint.x, dy: startPoint.y))
                 let end = origin.withOffset(CGVector(dx: endPoint.x, dy: endPoint.y))
                 print("Resize diagnostic window frame: \(element.frame), start: \(startPoint), end: \(endPoint)")
-                start.press(forDuration: 0.1, thenDragTo: end)
+                // Use the system's slow velocity for short pointer drags on a
+                // busy runner; coordinates and the expected geometry stay exact.
+                start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
             case "press", "fill", "hover":
                 guard element.exists, element.isEnabled, element.isHittable else {
                     let screenshot = XCTAttachment(screenshot: app.screenshot())
