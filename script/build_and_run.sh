@@ -207,7 +207,7 @@ printf 'app=%s\narchitecture=%s\ncommit=%s\n' "$APP_BUNDLE" "$TARGET_ARCH" "$GIT
 case "$MODE" in
   check)
     swift build
-    swift run WeiBeiSelfCheck
+    python3 script/run_self_check.py
     swift test --filter WeiBeiSafetyTests
     swift run WeiBeiWebEditorCheck
     ;;
