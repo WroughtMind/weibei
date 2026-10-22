@@ -419,7 +419,7 @@ enum CatalystBusinessCheck {
             host.removeFromSuperview()
             CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(originalVisibility, toolbar: toolbar)
         }
-        var receipts: [String: Any] = ["uikit_window_bounds": NSStringFromCGRect(window.bounds)]
+        var receipts: [String: Any] = ["uikit_window_bounds": NSCoder.string(for: window.bounds)]
         // The library/course header is ordinary page content with a hidden
         // toolbar. A click derived from the native anchor must hit this button.
         for phase in ["initial", "reopened"] {
@@ -432,7 +432,7 @@ enum CatalystBusinessCheck {
             let receipt = CatalystDesktopWindow.shared.clickUpdateNotesPageSourceForCheck()
             receipts[phase] = receipt
             guard receipt["queued"] == "true", receipt["toolbar_visible"] == "false",
-                  let bounds = receipt["native_source_bounds"], CGRectFromString(bounds).size == window.bounds.size else {
+                  let bounds = receipt["native_source_bounds"], NSCoder.cgRect(for: bounds).size == window.bounds.size else {
                 throw Failure("update notes page anchor does not match the original viewport: \(receipt)")
             }
             try await until("first pointer click reaches page update action (\(phase))") { state.actions == expectedActions }
