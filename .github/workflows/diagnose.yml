@@ -19,7 +19,7 @@ on:
         description: 失败场景；结果不会覆盖合并门禁
         required: true
         type: choice
-        options: [picker, conversation, business]
+        options: [picker, conversation, business, editor]
 permissions:
   contents: read
 concurrency:
@@ -40,7 +40,7 @@ jobs:
       - name: 验证诊断范围
         run: |
           case "$WEIBEI_TARGET_ARCH" in arm64|x86_64) ;; *) exit 2 ;; esac
-          case "$SCENARIO" in picker|conversation|business) ;; *) exit 2 ;; esac
+          case "$SCENARIO" in picker|conversation|business|editor) ;; *) exit 2 ;; esac
       - id: catalyst_cache
         uses: ./.github/actions/catalyst-cache
         with:
@@ -54,7 +54,16 @@ jobs:
           "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
           echo "$RUNNER_TEMP/weibei-editor-fonts/bin" >> "$GITHUB_PATH"
       - name: 运行失败场景
-        run: ./App/script/check-ci.sh --scenario "$SCENARIO"
+        run: |
+          if [[ "$SCENARIO" == editor ]]; then
+            set -o pipefail
+            npm run build:genui
+            npm run build:editor
+            mkdir -p .build
+            swift run WeiBeiWebEditorCheck 2>&1 | tee .build/editor-diagnostic.log
+          else
+            ./App/script/check-ci.sh --scenario "$SCENARIO"
+          fi
       - name: 保留诊断与阶段耗时
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -64,6 +73,7 @@ jobs:
           path: |
             App/Evidence/ci*
             .build/timings/
+            .build/editor-diagnostic.log
             .build/catalyst-*/build*.log
             .build/catalyst-*/dependencies*.log
           if-no-files-found: error

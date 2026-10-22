@@ -11,6 +11,10 @@ import Litext
 /// editor bridge and write gate. Enabled only in the separately identified check App.
 @MainActor
 enum CatalystBusinessCheck {
+    static var focusTrace: [[String: String]] = []
+    static func recordFocus(_ event: String, _ fields: [String: String]) {
+        focusTrace.append(fields.merging(["event": event, "uptime": String(ProcessInfo.processInfo.systemUptime)]) { _, new in new })
+    }
     private static var started = false
     private static var fileDropDiagnostics: [String: Any] = [:]
     private static var contextualPickerDiagnostics: [String: Any] = [:]
@@ -483,6 +487,7 @@ enum CatalystBusinessCheck {
         var checks: [String: String] = [:]
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
+            result["focus_trace"] = focusTrace
             result["recorded_at"] = ISO8601DateFormatter().string(from: Date())
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: resultURL, options: .atomic)
         }
@@ -1170,6 +1175,8 @@ enum CatalystBusinessCheck {
     }
 
     private static func verifyContextualPickerAlignment(_ store: WorkspaceStore, in window: UIWindow) async throws -> [String: Any] {
+        recordFocus("picker_enter", ["pane": String(describing: store.focusedPane), "request": String(store.focusRequest),
+            "material_picker": String(store.materialPickerPresented), "note_picker": String(store.notePickerPresented)])
         let materialID = store.selectedMaterialItem?.id
         let noteID = store.activeNoteItemID
         store.showContextualBrowser(.material)
@@ -1202,6 +1209,13 @@ enum CatalystBusinessCheck {
                             "expected_top": String(describing: max(0, window.safeAreaInsets.top - frame.minY))]
                 }
             return ["fields": fields, "hosts": hosts,
+                    "first_responders": UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                        .flatMap(\.windows).flatMap(descendants).filter(\.isFirstResponder).map {
+                            ["type": String(describing: type(of: $0)), "identity": String(describing: ObjectIdentifier($0)),
+                             "window": $0.window.map { String(describing: ObjectIdentifier($0)) } ?? "none",
+                             "frame": String(describing: $0.convert($0.bounds, to: $0.window))]
+                        },
+                    "focused_pane": String(describing: store.focusedPane), "focus_request": store.focusRequest,
                     "window_bounds": String(describing: window.bounds),
                     "window_safe_area": String(describing: window.safeAreaInsets)]
         }

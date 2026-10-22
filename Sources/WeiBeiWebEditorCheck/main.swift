@@ -2076,12 +2076,51 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
 
     private func validateSlashCommands() {
         let triggerScript = """
+        (() => {
+        const probe = { timer: null, history: [] };
+        probe.capture = () => {
+          try {
+            const root = document.querySelector('.ProseMirror');
+            const menu = document.querySelector('.weibei-slash-menu');
+            const selection = getSelection();
+            const slash = window.WeiBeiEditor.slashStateForCheck();
+            const rect = menu?.getBoundingClientRect();
+            return { time: performance.now(), typed: probe.typed,
+              markdown: window.WeiBeiEditor.getMarkdown().slice(0, 48),
+              selection: window.WeiBeiEditor.selectionForCheck(),
+              composing: window.WeiBeiEditor.compositionStateForCheck().composing,
+              editable: root?.isContentEditable, active: document.activeElement?.tagName,
+              activeClass: document.activeElement?.className, documentFocus: document.hasFocus(),
+              visibility: document.visibilityState, timer: probe.timer, history: probe.history,
+              domSelection: { count: selection?.rangeCount, collapsed: selection?.isCollapsed,
+                anchor: selection?.anchorOffset, focus: selection?.focusOffset,
+                anchorInRoot: !!root?.contains(selection?.anchorNode), focusInRoot: !!root?.contains(selection?.focusNode) },
+              slash: { show: slash.show, commandCount: slash.commands?.length, error: slash.error },
+              menuShow: menu?.dataset.show, menuHidden: menu?.getAttribute('aria-hidden'),
+              menuRect: rect ? [rect.x, rect.y, rect.width, rect.height] : null };
+          } catch (error) { return { diagnosticError: String(error) }; }
+        };
+        const menu = document.querySelector('.weibei-slash-menu');
+        if (menu) {
+          probe.observer = new MutationObserver(records => {
+            for (const record of records) probe.history.push({ time: performance.now(), old: record.oldValue, show: menu.dataset.show });
+            probe.history = probe.history.slice(-8);
+          });
+          probe.observer.observe(menu, { attributes: true, attributeFilter: ['data-show'], attributeOldValue: true });
+        }
+        window.__weibeiAutomaticSlashProbe = probe;
         window.WeiBeiEditor.setMarkdown('');
         window.WeiBeiEditor.insertMarkdown('{{WEIBEI_CURSOR}}');
-        window.WeiBeiEditor.typeTextForCheck('/');
+        probe.typed = window.WeiBeiEditor.typeTextForCheck('/');
+        setTimeout(() => { probe.timer = performance.now(); }, 0);
+        return JSON.stringify(probe.capture());
+        })();
         """
-        webView.evaluateJavaScript(triggerScript) { [weak self] _, error in
+        webView.evaluateJavaScript(triggerScript) { [weak self] value, error in
             guard let self else { return }
+            print("Automatic slash trigger: \(String(describing: value))")
+            self.printSlashNativeHost()
+            fflush(stdout)
             guard error == nil else { self.fail("automatic slash trigger setup failed: \(error!.localizedDescription)"); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.validateAutomaticSlashMenu()
@@ -2092,6 +2131,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private func validateAutomaticSlashMenu() {
         let script = """
         (() => {
+          const automaticProbe = window.__weibeiAutomaticSlashProbe?.capture();
           const menu = document.querySelector('.weibei-slash-menu');
           const rect = menu?.getBoundingClientRect();
           const readGlassMenu = (theme) => {
@@ -2135,11 +2175,15 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             distinctShadows: dark.shadow !== light.shadow
           };
           window.WeiBeiEditor.setTheme('paper');
+          glassResult.automaticProbe = JSON.stringify(automaticProbe);
           return glassResult;
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
+            print("Automatic slash sample: \(String(describing: (value as? [String: Any])?["automaticProbe"]))")
+            self.printSlashNativeHost()
+            fflush(stdout)
             guard error == nil,
                   let state = value as? [String: Any],
                   state["show"] as? Bool == true,
@@ -2161,6 +2205,12 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             self.validateSlashCommandContents()
         }
+    }
+
+    private func printSlashNativeHost() {
+        let host = webView.window
+        let responder = host?.firstResponder.map { String(describing: type(of: $0)) } ?? "none"
+        print("Automatic slash native host: attached=\(host != nil) visible=\(host?.isVisible == true) key=\(host?.isKeyWindow == true) responder=\(responder) active=\(NSApp.isActive) policy=\(NSApp.activationPolicy().rawValue)")
     }
 
     private func validateSlashCommandContents() {
