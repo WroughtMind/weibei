@@ -110,9 +110,12 @@ def verify_run(run_id, source):
 def publish(root, record):
     version, source = record["version"], record["source_revision"]
     tag = "v" + version
-    tag_commit = optional_api(f"repos/{REPOSITORY}/commits/{tag}")
-    if tag_commit is not None and tag_commit["sha"] != source:
-        raise ValueError("existing tag points at another commit")
+    tag_ref = optional_api(f"repos/{REPOSITORY}/git/ref/tags/{tag}")
+    if tag_ref is not None:
+        # Resolve annotated tags to their commit after checking the exact tag ref.
+        tag_commit = json.loads(gh("api", f"repos/{REPOSITORY}/commits/{tag}"))
+        if tag_commit["sha"] != source:
+            raise ValueError("existing tag points at another commit")
     latest = optional_api(f"repos/{REPOSITORY}/releases/latest")
     if latest and latest["tag_name"] != tag:
         previous_version = latest["tag_name"].removeprefix("v")

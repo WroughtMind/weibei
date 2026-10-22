@@ -170,22 +170,36 @@ class CandidateBoundaries(unittest.TestCase):
             candidate.verify_run("123", SOURCE)
 
     def test_existing_tag_at_another_source_never_mutates(self):
-        with patch.object(candidate, "optional_api", return_value={"sha": "b" * 40}), patch.object(candidate, "gh") as gh:
+        with patch.object(candidate, "optional_api", return_value={"object": {"type": "tag", "sha": "c" * 40}}), patch.object(candidate, "gh", return_value=json.dumps({"sha": "b" * 40})) as gh:
             with self.assertRaisesRegex(ValueError, "tag points"):
                 candidate.publish(self.root, self.record)
-            gh.assert_not_called()
+            gh.assert_called_once_with("api", f"repos/{candidate.REPOSITORY}/commits/v{VERSION}")
+
+    def test_new_tag_is_created_without_resolving_a_missing_commit(self):
+        def api(args, **kwargs):
+            path = args[-1]
+            if "/commits/" in path:
+                return subprocess.CompletedProcess(args, 1, "", f"gh: No commit found for SHA: v{VERSION} (HTTP 422)")
+            return subprocess.CompletedProcess(args, 1, '{"message":"Not Found"}', "gh: Not Found (HTTP 404)")
+        with patch.object(candidate.subprocess, "run", side_effect=api), patch.object(candidate, "gh") as gh:
+            candidate.publish(self.root, self.record)
+            self.assertEqual(gh.call_args_list[0].args, (
+                "release", "create", "v" + VERSION, "--repo", candidate.REPOSITORY,
+                "--target", SOURCE, "--draft", "--notes-file", str(self.root / "release-notes.md"),
+                "--title", "魏碑 " + VERSION))
+            self.assertEqual(gh.call_args_list[-1].args[-1], "--draft=false")
 
     def test_existing_public_candidate_is_idempotent_and_different_bytes_fail(self):
         public = {"target_commitish": SOURCE, "draft": False, "prerelease": False,
                   "assets": [{"name": name, "digest": "sha256:" + self.record["files"][name]} for name in candidate.public_files(VERSION)]}
-        with patch.object(candidate, "optional_api", side_effect=[{"sha": SOURCE}, {"tag_name": "v" + VERSION}, public]), patch.object(candidate, "gh") as gh:
+        with patch.object(candidate, "optional_api", side_effect=[{"object": {"type": "tag", "sha": "c" * 40}}, {"tag_name": "v" + VERSION}, public]), patch.object(candidate, "gh", return_value=json.dumps({"sha": SOURCE})) as gh:
             candidate.publish(self.root, self.record)
-            gh.assert_not_called()
+            gh.assert_called_once_with("api", f"repos/{candidate.REPOSITORY}/commits/v{VERSION}")
         public["assets"][0]["digest"] = "sha256:changed"
-        with patch.object(candidate, "optional_api", side_effect=[{"sha": SOURCE}, {"tag_name": "v" + VERSION}, public]), patch.object(candidate, "gh") as gh:
+        with patch.object(candidate, "optional_api", side_effect=[{"object": {"type": "commit", "sha": SOURCE}}, {"tag_name": "v" + VERSION}, public]), patch.object(candidate, "gh", return_value=json.dumps({"sha": SOURCE})) as gh:
             with self.assertRaisesRegex(ValueError, "public asset differs"):
                 candidate.publish(self.root, self.record)
-            gh.assert_not_called()
+            gh.assert_called_once_with("api", f"repos/{candidate.REPOSITORY}/commits/v{VERSION}")
 
     def test_draft_retry_uploads_the_exact_candidate(self):
         draft = {"target_commitish": SOURCE, "draft": True}
@@ -203,9 +217,10 @@ class CandidateBoundaries(unittest.TestCase):
             gh.assert_not_called()
 
     def test_network_error_is_not_missing_release(self):
-        with patch.object(candidate.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "HTTP 403 forbidden")):
-            with self.assertRaises(RuntimeError):
-                candidate.optional_api("repo")
+        for error in ("HTTP 403 forbidden", "HTTP 422 validation failed", "HTTP 500 server error"):
+            with self.subTest(error=error), patch.object(candidate.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", error)):
+                with self.assertRaises(RuntimeError):
+                    candidate.optional_api("repo")
         with patch.object(candidate.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "HTTP 404 not found")):
             self.assertIsNone(candidate.optional_api("repo"))
 
