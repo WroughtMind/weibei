@@ -19,6 +19,7 @@ enum CatalystBusinessCheck {
     static func traceFloatingResize(_ event: String, _ values: [String: String]) {
         var entry = values
         entry["event"] = event
+        entry["uptime"] = String(ProcessInfo.processInfo.systemUptime)
         floatingResizeTrace.append(entry)
     }
     private struct Failure: LocalizedError {
