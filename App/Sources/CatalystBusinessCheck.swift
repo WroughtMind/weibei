@@ -371,6 +371,7 @@ enum CatalystBusinessCheck {
         var checks: [String: String] = [:]
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
+            result["resize_pointer_diagnostic"] = FloatingResizePointerDiagnostic.events
             result["recorded_at"] = ISO8601DateFormatter().string(from: Date())
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: resultURL, options: .atomic)
         }
@@ -1508,10 +1509,14 @@ enum CatalystBusinessCheck {
             return mainConversation.view.convert(frame, to: window)
         }
         func dragPanel(from point: CGPoint, by delta: CGSize) async throws {
+            FloatingResizePointerDiagnostic.requested(point, delta: delta, panel: try panelFrame(), in: window)
             let coordinates = [point.x, point.y, delta.width, delta.height]
                 .map { String(Double($0)) }.joined(separator: ",")
             _ = try await onboardingUICommand("drag-window-point", id: "SceneWindow", value: coordinates)
+            FloatingResizePointerDiagnostic.record("drag_returned", ["panel": String(describing: try panelFrame())])
         }
+        FloatingResizePointerDiagnostic.start(in: window)
+        defer { FloatingResizePointerDiagnostic.finish() }
         let beforeSide = try panelFrame()
         try await dragPanel(from: CGPoint(x: beforeSide.maxX - 3, y: beforeSide.midY),
                             by: CGSize(width: 24, height: 0))
