@@ -478,12 +478,11 @@ enum CatalystBusinessCheck {
             "bundle_id": Bundle.main.bundleIdentifier ?? "", "platform": "Mac Catalyst",
             "scenario": scenario,
             "configuration": "Release", "transport": "original client against isolated local SSE fixture; no live model claim",
-            "ui_evidence": "in-process behavior checks; toolbar also receives local AppKit mouse events, not physical mouse/IME acceptance", "checks": [String: String]()
+            "ui_evidence": "in-process behavior checks; Xcode system pointer injection covers selection actions, quotes and floating geometry; no human hardware acceptance", "checks": [String: String]()
         ]
         var checks: [String: String] = [:]
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
-            result["resize_pointer_diagnostic"] = FloatingResizePointerDiagnostic.events
             result["recorded_at"] = ISO8601DateFormatter().string(from: Date())
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: resultURL, options: .atomic)
         }
@@ -1632,14 +1631,10 @@ enum CatalystBusinessCheck {
             return mainConversation.view.convert(frame, to: window)
         }
         func dragPanel(from point: CGPoint, by delta: CGSize) async throws {
-            FloatingResizePointerDiagnostic.requested(point, delta: delta, panel: try panelFrame(), in: window)
             let coordinates = [point.x, point.y, delta.width, delta.height]
                 .map { String(Double($0)) }.joined(separator: ",")
             _ = try await onboardingUICommand("drag-window-point", id: "SceneWindow", value: coordinates)
-            FloatingResizePointerDiagnostic.record("drag_returned", ["panel": String(describing: try panelFrame())])
         }
-        FloatingResizePointerDiagnostic.start(in: window)
-        defer { FloatingResizePointerDiagnostic.finish() }
         // A resize must not also scroll or select the web content that Catalyst
         // can report as the original touch target underneath the floating panel.
         let underlyingWebViews = descendants(window).compactMap { $0 as? WKWebView }.filter {

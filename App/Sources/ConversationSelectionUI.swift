@@ -69,12 +69,8 @@ struct ConversationSelectionPanelProbe: UIViewRepresentable {
 final class ConversationSelectionPressObserver: UIGestureRecognizer {
     var pressed: ((CGPoint, UIView?) -> Void)?
     var moved: ((CGPoint) -> Void)?
-    var ended: ((CGPoint) -> Void)?
     var released: (() -> Void)?
     private var didMove = false
-#if WEIBEI_ACCEPTANCE_CHECKS
-    var resizeDiagnostic: ((String, [String: String]) -> Void)?
-#endif
 
     init() {
         super.init(target: nil, action: nil)
@@ -84,14 +80,8 @@ final class ConversationSelectionPressObserver: UIGestureRecognizer {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func shouldReceive(_ event: UIEvent) -> Bool {
-        let accepts = event.type == .touches && event.buttonMask.contains(.primary)
+        event.type == .touches && event.buttonMask.contains(.primary)
             && !event.modifierFlags.contains(.control)
-#if WEIBEI_ACCEPTANCE_CHECKS
-        resizeDiagnostic?("receive", ["type": String(describing: event.type),
-            "buttons": String(event.buttonMask.rawValue), "modifiers": String(event.modifierFlags.rawValue),
-            "accepts": String(accepts), "event_timestamp": String(event.timestamp)])
-#endif
-        return accepts
     }
     override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
@@ -107,111 +97,14 @@ final class ConversationSelectionPressObserver: UIGestureRecognizer {
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         if didMove, let touch = touches.first { moved?(touch.location(in: view)) }
-        if let touch = touches.first { ended?(touch.location(in: view)) }
         released?()
         state = .failed
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-#if WEIBEI_ACCEPTANCE_CHECKS
-        resizeDiagnostic?("cancelled", [:])
-#endif
         released?()
         state = .failed
     }
 }
-
-#if WEIBEI_ACCEPTANCE_CHECKS
-/// Temporary, passive trace of the native resize input boundary in the isolated App.
-@MainActor
-enum FloatingResizePointerDiagnostic {
-    static var events: [[String: String]] = []
-    private static var active = false
-    private static weak var observedWindow: UIWindow?
-    private static var observer: TouchObserver?
-
-    static func record(_ event: String, _ fields: [String: String] = [:]) {
-        guard active else { return }
-        var entry = fields
-        entry["event"] = event
-        entry["uptime"] = String(ProcessInfo.processInfo.systemUptime)
-        events.append(entry)
-    }
-
-    static func start(in window: UIWindow) {
-        finish()
-        events = []
-        active = true
-        let touchObserver = TouchObserver()
-        observedWindow = window
-        observer = touchObserver
-        window.addGestureRecognizer(touchObserver)
-    }
-
-    static func finish() {
-        if let observer { observedWindow?.removeGestureRecognizer(observer) }
-        observer = nil
-        observedWindow = nil
-        active = false
-    }
-
-    static func requested(_ point: CGPoint, delta: CGSize, panel: CGRect, in window: UIWindow) {
-        var fields = ["start": String(describing: point), "delta": String(describing: delta),
-            "panel": String(describing: panel), "hit_chain": chain(window.hitTest(point, with: nil), in: window)]
-        func visit(_ view: UIView) {
-            if let id = view.accessibilityIdentifier, id.hasPrefix("diagnostic-resize-grip-") {
-                let local = view.convert(point, from: window)
-                fields[id] = "frame=\(view.convert(view.bounds, to: window)) inside=\(view.point(inside: local, with: nil)) hit=\(String(describing: view.hitTest(local, with: nil))) alpha=\(view.alpha) hidden=\(view.isHidden) interactive=\(view.isUserInteractionEnabled)"
-            }
-            view.subviews.forEach(visit)
-        }
-        visit(window)
-        record("requested_drag", fields)
-    }
-
-    private static func chain(_ view: UIView?, in window: UIWindow) -> String {
-        var result: [String] = []
-        var current = view
-        while let view = current {
-            result.append("\(type(of: view)) \(view.convert(view.bounds, to: window)) clips=\(view.clipsToBounds) gestures=\((view.gestureRecognizers ?? []).map { "\(type(of: $0)):\($0.state)" }.joined(separator: ","))")
-            current = view.superview
-        }
-        return result.joined(separator: "\n")
-    }
-
-    private final class TouchObserver: UIGestureRecognizer {
-        init() {
-            super.init(target: nil, action: nil)
-            cancelsTouchesInView = false
-            delaysTouchesBegan = false
-            delaysTouchesEnded = false
-        }
-        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-        override func shouldReceive(_ event: UIEvent) -> Bool {
-            record("window_receive", ["type": String(describing: event.type),
-                "buttons": String(event.buttonMask.rawValue), "modifiers": String(event.modifierFlags.rawValue),
-                "event_timestamp": String(event.timestamp)])
-            return event.type == .touches
-        }
-        override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-        private func report(_ phase: String, _ touches: Set<UITouch>) {
-            guard let touch = touches.first, let window = view as? UIWindow else { return }
-            record("window_" + phase, ["point": String(describing: touch.location(in: window)),
-                "touch": String(describing: ObjectIdentifier(touch)), "touch_timestamp": String(touch.timestamp),
-                "touch_view_chain": chain(touch.view, in: window),
-                "current_hit_chain": chain(window.hitTest(touch.location(in: window), with: nil), in: window)])
-        }
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) { report("down", touches) }
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) { report("move", touches) }
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-            report("up", touches); state = .failed
-        }
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-            report("cancel", touches); state = .failed
-        }
-    }
-}
-#endif
 
 /// A custom button avoids Catalyst's AppKit alignment decoration around system buttons.
 /// The visible shape and the hit surface use the same bounds.

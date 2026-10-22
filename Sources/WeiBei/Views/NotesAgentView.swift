@@ -3369,12 +3369,6 @@ struct FloatingSelectionAgentView: View {
             minimumHeight: Double(chrome) + SelectionFloatingAgentPlacement.minimumResizableContentHeight,
             maximumHeight: Double(chrome) + SelectionFloatingAgentPlacement.maximumResizableContentHeight
         )
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        FloatingResizePointerDiagnostic.record("resize_calculated", ["edge": String(describing: edge),
-            "translation": String(describing: value), "base_size": String(describing: session.size),
-            "base_origin": String(describing: session.origin), "base_feed": String(describing: session.feedHeight),
-            "result": String(describing: resized)])
-#endif
         var transaction = Transaction()
         transaction.animation = nil
         withTransaction(transaction) {
@@ -3390,11 +3384,6 @@ struct FloatingSelectionAgentView: View {
     private func commitResize() {
         let preview = resizePreviewHeight
         let session = resizeSession
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        FloatingResizePointerDiagnostic.record("resize_commit", ["preview": String(describing: preview),
-            "session": String(describing: session), "width": String(describing: panelWidth),
-            "origin": String(describing: placedOrigin)])
-#endif
         if let height = feedHeightMeasurement.height {
             applyMeasuredFeedHeight(height)
         }
@@ -3559,7 +3548,7 @@ private struct FloatingSelectionResizeHitRegion: View {
     var body: some View {
         Group {
 #if targetEnvironment(macCatalyst)
-            FloatingSelectionResizePointerRegion(edge: edge) { onChanged(edge, $0) }
+            FloatingSelectionResizePointerRegion { onChanged(edge, $0) }
 #else
             Color.clear
                 .contentShape(Rectangle())
@@ -3603,15 +3592,11 @@ private struct FloatingSelectionResizeHitRegion: View {
 /// the underlying web view even when the current hit test finds the grip.
 /// Each recognizer accepts only its own visible edge, leaving the interior alone.
 private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
-    let edge: FloatingAgentResizeEdge
     let onChanged: (CGSize?) -> Void
 
     func makeUIView(context: Context) -> PointerView { PointerView() }
     func updateUIView(_ view: PointerView, context: Context) {
         view.onChanged = onChanged
-#if WEIBEI_ACCEPTANCE_CHECKS
-        view.accessibilityIdentifier = "diagnostic-resize-grip-\(edge)"
-#endif
     }
     static func dismantleUIView(_ view: PointerView, coordinator: ()) { view.disconnect() }
 
@@ -3627,20 +3612,11 @@ private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
             press.owner = self
             press.delegate = self
             press.onChanged = { [weak self] in self?.onChanged?($0) }
-#if WEIBEI_ACCEPTANCE_CHECKS
-            let recognizer = String(describing: ObjectIdentifier(press))
-            press.diagnostic = { [weak self] event, fields in
-                self?.trace(event, fields.merging(["recognizer": recognizer]) { _, new in new })
-            }
-#endif
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
-#if WEIBEI_ACCEPTANCE_CHECKS
-            trace("window_changed", ["attached": String(window != nil)])
-#endif
             guard press.view !== window else { return }
             disconnect()
             window?.addGestureRecognizer(press)
@@ -3651,28 +3627,13 @@ private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
             let point = touch.location(in: window)
             guard self.point(inside: convert(point, from: window), with: nil) else { return false }
             let hit = window.hitTest(point, with: nil)
-            let accepts = hit === self || hit?.isDescendant(of: self) == true
-#if WEIBEI_ACCEPTANCE_CHECKS
-            trace("touch_filter", ["accepts": String(accepts), "point": String(describing: point),
-                "touch_view": String(describing: touch.view.map { type(of: $0) }),
-                "current_hit": String(describing: hit.map { type(of: $0) })])
-#endif
-            return accepts
+            return hit === self || hit?.isDescendant(of: self) == true
         }
 
         func disconnect() {
             press.cancel()
             press.view?.removeGestureRecognizer(press)
         }
-#if WEIBEI_ACCEPTANCE_CHECKS
-        private func trace(_ event: String, _ fields: [String: String] = [:]) {
-            var state = fields
-            state["grip"] = accessibilityIdentifier ?? "unset"
-            state["view"] = String(describing: ObjectIdentifier(self))
-            state["frame"] = window.map { String(describing: convert(bounds, to: $0)) } ?? "no_window"
-            FloatingResizePointerDiagnostic.record("grip_" + event, state)
-        }
-#endif
     }
 
     /// Owns a primary resize from press through release, including a short
@@ -3681,9 +3642,6 @@ private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
         weak var owner: PointerView?
         var onChanged: ((CGSize?) -> Void)?
         private var start: CGPoint?
-#if WEIBEI_ACCEPTANCE_CHECKS
-        var diagnostic: ((String, [String: String]) -> Void)?
-#endif
 
         init() {
             super.init(target: nil, action: nil)
@@ -3704,9 +3662,6 @@ private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
                 return
             }
             start = touch.location(in: window)
-#if WEIBEI_ACCEPTANCE_CHECKS
-            diagnostic?("down", ["point": String(describing: start), "timestamp": String(touch.timestamp)])
-#endif
             state = .began
             onChanged?(.zero)
         }
@@ -3733,18 +3688,11 @@ private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
         private func report(_ touches: Set<UITouch>) {
             guard let touch = touches.first, let window = view as? UIWindow, let start else { return }
             let current = touch.location(in: window)
-#if WEIBEI_ACCEPTANCE_CHECKS
-            diagnostic?("translation", ["start": String(describing: start), "current": String(describing: current),
-                "phase": String(describing: touch.phase)])
-#endif
             onChanged?(CGSize(width: current.x - start.x, height: current.y - start.y))
         }
 
         private func finish() {
             guard start != nil else { return }
-#if WEIBEI_ACCEPTANCE_CHECKS
-            diagnostic?("finish", ["state": String(describing: state)])
-#endif
             start = nil
             onChanged?(nil)
         }
