@@ -317,11 +317,22 @@ struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
         private func synchronize() {
             guard active else { return }
             guard wantsPresentation else { dismissPresentation(); return }
-            guard view.window != nil,
-                  let sourceItem = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            guard let window = view.window else { return }
+            let sourceItem = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                     .compactMap({ $0.titlebar?.toolbar }).flatMap({ $0.items })
                     .compactMap({ $0 as? NSUIViewToolbarItem })
-                    .first(where: { view.isDescendant(of: $0.uiView) }) else { return }
+                    .first(where: { view.isDescendant(of: $0.uiView) })
+            let anchor: NSObject
+            let rect: CGRect
+            if let sourceItem {
+                anchor = sourceItem
+                rect = view.convert(view.bounds, to: sourceItem.uiView)
+            } else if let toolbar = window.windowScene?.titlebar?.toolbar {
+                // Course/library headers live in the page while this same
+                // scene's native toolbar is hidden, but still identifies it.
+                anchor = toolbar
+                rect = view.convert(view.bounds, to: window)
+            } else { return }
             if host == nil {
                 let host = CatalystTopBar.HostingView(index: 0, content: measuredContent(content))
                 self.host = host
@@ -330,13 +341,12 @@ struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
             guard let host, let contentItem else { return }
             let size = host.sizeThatFits(UIView.layoutFittingExpandedSize)
             guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return }
-            let rect = view.convert(view.bounds, to: sourceItem.uiView)
             let dark = WeiBeiThemeRuntime.mode.isDark
             if let presentation {
                 CatalystDesktopWindow.shared.updateUpdateNotes(presentation, sourceRect: rect, size: size, dark: dark)
             } else {
                 presentation = CatalystDesktopWindow.shared.presentUpdateNotes(contentItem: contentItem,
-                    sourceItem: sourceItem, sourceRect: rect, size: size, dark: dark) { [weak self] in
+                    anchor: anchor, sourceRect: rect, size: size, dark: dark) { [weak self] in
                         guard let self else { return }
                         self.presentation = nil
                         self.wantsPresentation = false

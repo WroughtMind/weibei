@@ -403,6 +403,47 @@ enum CatalystBusinessCheck {
         }
     }
 
+    @MainActor private static func verifyUpdatePopoverPageInput() async throws -> [String: Any] {
+        guard let window = conversation()?.view.window, let root = window.rootViewController,
+              let toolbar = window.windowScene?.titlebar?.toolbar else {
+            throw Failure("update notes page window unavailable")
+        }
+        let state = UpdatePopoverInputState()
+        let host = CatalystTopBar.HostingView(index: 0, content: AnyView(UpdatePopoverInputView(state: state)))
+        host.frame = CGRect(x: 32, y: root.view.safeAreaInsets.top + 24, width: 120, height: 30)
+        let originalVisibility = toolbar.isVisible
+        CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(false, toolbar: toolbar)
+        root.view.addSubview(host)
+        defer {
+            host.tearDown()
+            host.removeFromSuperview()
+            CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(originalVisibility, toolbar: toolbar)
+        }
+        var receipts: [String: Any] = ["uikit_window_bounds": NSStringFromCGRect(window.bounds)]
+        // The library/course header is ordinary page content with a hidden
+        // toolbar. A click derived from the native anchor must hit this button.
+        for phase in ["initial", "reopened"] {
+            state.showing = true
+            state.clickedWhilePresented = false
+            try await until("update notes presented from page (\(phase))") {
+                CatalystDesktopWindow.shared.updateNotesVisibleForCheck()
+            }
+            let expectedActions = state.actions + 1
+            let receipt = CatalystDesktopWindow.shared.clickUpdateNotesPageSourceForCheck()
+            receipts[phase] = receipt
+            guard receipt["queued"] == "true", receipt["toolbar_visible"] == "false",
+                  let bounds = receipt["native_source_bounds"], CGRectFromString(bounds).size == window.bounds.size else {
+                throw Failure("update notes page anchor does not match the original viewport: \(receipt)")
+            }
+            try await until("first pointer click reaches page update action (\(phase))") { state.actions == expectedActions }
+            guard state.clickedWhilePresented else { throw Failure("page update notes dismissed before action") }
+            try await until("page update notes close after action (\(phase))") {
+                !CatalystDesktopWindow.shared.updateNotesVisibleForCheck()
+            }
+        }
+        return receipts
+    }
+
     @MainActor private final class DisplayIntervalSampler: NSObject {
         private var link: CADisplayLink?
         private var previous: CFTimeInterval?
@@ -566,6 +607,8 @@ enum CatalystBusinessCheck {
             try check("native_workspace_toolbar_controls", true)
             try await verifyUpdatePopoverInput()
             try check("update_popover_first_pointer_click", true)
+            result["update_notes_page_anchor"] = try await verifyUpdatePopoverPageInput()
+            try check("update_popover_page_anchor_and_first_pointer_click", true)
             try await verifyLibraryOnboarding(store)
             try check("library_onboarding_failure_retry_picker_cancel_and_recovery", true)
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")

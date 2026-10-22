@@ -168,6 +168,34 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
 
     @MainActor func updateNotesVisibleForCheck() -> Bool { checkedUpdateNotes?.isShown == true }
 
+    @MainActor func clickUpdateNotesPageSourceForCheck() -> [String: String] {
+        guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
+              let popover = checkedUpdateNotes, popover.isShown, popover.usesUIKitWindowCoordinates,
+              let source = popover.sourceView, !source.isHiddenOrHasHiddenAncestor,
+              let window = source.window, window.toolbar?.identifier == "weibei.workspace",
+              window.isVisible, window.isOnActiveSpace else { return ["queued": "false"] }
+        let rect = popover.positioningRect
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        guard source.bounds.contains(center) else { return ["queued": "false"] }
+        let location = source.convert(center, to: nil)
+        let number = toolbarClickCheckEventNumber
+        toolbarClickCheckEventNumber &+= 2
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: location,
+                  modifierFlags: [], timestamp: timestamp, windowNumber: window.windowNumber,
+                  context: nil, eventNumber: number, clickCount: 1, pressure: 1),
+              let up = NSEvent.mouseEvent(with: .leftMouseUp, location: location,
+                  modifierFlags: [], timestamp: timestamp + 0.01, windowNumber: window.windowNumber,
+                  context: nil, eventNumber: number + 1, clickCount: 1, pressure: 0) else {
+            return ["queued": "false"]
+        }
+        NSApp.postEvent(down, atStart: false)
+        NSApp.postEvent(up, atStart: false)
+        return ["queued": "true", "native_source_bounds": NSStringFromRect(source.bounds),
+                "native_anchor_rect": NSStringFromRect(rect), "source_flipped": String(source.isFlipped),
+                "native_click_location": NSStringFromPoint(location), "toolbar_visible": String(window.toolbar?.isVisible == true)]
+    }
+
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool {
         guard let window = checkedFullScreenWorkspace
             ?? NSApp.windows.first(where: { $0.toolbar?.identifier == "weibei.workspace" }) else { return false }
@@ -266,14 +294,25 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     func open(_ url: URL) -> Bool { NSWorkspace.shared.open(url) }
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func materialWindowCount() -> Int { materials.count }
-    @MainActor func presentUpdateNotes(contentItem: NSObject, sourceItem: NSObject,
+    @MainActor func presentUpdateNotes(contentItem: NSObject, anchor: NSObject,
                                       sourceRect: CGRect, size: CGSize, dark: Bool,
                                       dismissed: @MainActor @escaping () -> Void) -> NSObject? {
-        guard let contentItem = contentItem as? NSToolbarItem, let content = contentItem.view,
-              let source = (sourceItem as? NSToolbarItem)?.view, source.window != nil else { return nil }
-        let popover = NativeUpdateNotesPopover(contentItem: contentItem, content: content, dismissed: dismissed)
+        guard let contentItem = contentItem as? NSToolbarItem, let content = contentItem.view else { return nil }
+        let source: NSView
+        let usesUIKitWindowCoordinates: Bool
+        if let item = anchor as? NSToolbarItem, let view = item.view {
+            source = view
+            usesUIKitWindowCoordinates = false
+        } else if let toolbar = anchor as? NSToolbar,
+                  let view = NSApp.windows.first(where: { $0.toolbar === toolbar })?.contentView {
+            source = view
+            usesUIKitWindowCoordinates = true
+        } else { return nil }
+        guard source.window != nil else { return nil }
+        let popover = NativeUpdateNotesPopover(contentItem: contentItem, content: content,
+            sourceView: source, usesUIKitWindowCoordinates: usesUIKitWindowCoordinates, dismissed: dismissed)
         popover.update(sourceRect: sourceRect, size: size, dark: dark)
-        popover.show(relativeTo: sourceRect, of: source, preferredEdge: .minY)
+        popover.show(relativeTo: popover.anchorRect(sourceRect), of: source, preferredEdge: .minY)
 #if WEIBEI_ACCEPTANCE_CHECKS
         checkedUpdateNotes = popover
 #endif
@@ -729,10 +768,15 @@ private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggi
 @MainActor private final class NativeUpdateNotesPopover: NSPopover, NSPopoverDelegate {
     private let contentItem: NSToolbarItem
     private var deactivationObserver: NSObjectProtocol?
+    weak var sourceView: NSView?
+    let usesUIKitWindowCoordinates: Bool
     var dismissed: (@MainActor () -> Void)?
 
-    init(contentItem: NSToolbarItem, content: NSView, dismissed: @MainActor @escaping () -> Void) {
+    init(contentItem: NSToolbarItem, content: NSView, sourceView: NSView,
+         usesUIKitWindowCoordinates: Bool, dismissed: @MainActor @escaping () -> Void) {
         self.contentItem = contentItem
+        self.sourceView = sourceView
+        self.usesUIKitWindowCoordinates = usesUIKitWindowCoordinates
         self.dismissed = dismissed
         super.init()
         behavior = .applicationDefined
@@ -751,11 +795,20 @@ private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggi
         if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }
     }
     func update(sourceRect: CGRect, size: CGSize, dark: Bool) {
+        guard sourceView?.window != nil else { close(); return }
         if contentSize != size { contentSize = size }
         // Before show(relativeTo:of:preferredEdge:), AppKit has no anchor edge.
-        if isShown, positioningRect != sourceRect { positioningRect = sourceRect }
+        let rect = anchorRect(sourceRect)
+        if isShown, positioningRect != rect { positioningRect = rect }
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         if self.appearance != appearance { self.appearance = appearance }
+    }
+    func anchorRect(_ rect: CGRect) -> CGRect {
+        guard usesUIKitWindowCoordinates, let sourceView else { return rect }
+        let bounds = sourceView.bounds
+        return CGRect(x: bounds.minX + rect.minX,
+            y: sourceView.isFlipped ? bounds.minY + rect.minY : bounds.maxY - rect.maxY,
+            width: rect.width, height: rect.height)
     }
     func popoverDidClose(_ notification: Notification) {
         let callback = dismissed
