@@ -20,7 +20,7 @@
 
 悬停立即改变按钮底色、描边与阴影，按下时压缩并加深底色。停留 250ms 后显示更新说明，离开按钮和面板 220ms 后关闭；两者分别记录悬停，避免过渡时误关。点击先取消待弹出的说明，执行更新，并抑制说明立即重开；忙碌时不能重复点击。
 
-Mac Catalyst 的说明浮窗在呈现之前配置真实按钮锚点和点击穿透，不再从已弹出的 SwiftUI 内容异步寻找控制器。浮窗使用应用共用的浮层表面：纸色主题呈现对应纸色，深色主题呈现对应深色，玻璃主题使用原有材质。版本与日期分列，分组只用文字层级和留白，正文保留完整条目、行内 Markdown 和滚动，不额外叠加白色容器或分类色条。
+Mac Catalyst 的说明浮窗由原生 AppKit 承载，以按钮实际位置为锚点，并由应用的悬停状态负责关闭。它不建立 UIKit 模态遮挡层，避免系统先截走点击去关闭说明；按钮仍只通过原本的按钮动作触发更新。面板跟随内容高度变化，关闭窗口或应用失去焦点时同步收起。浮窗使用应用共用的浮层表面：纸色主题呈现对应纸色，深色主题呈现对应深色，玻璃主题使用原有材质。版本与日期分列，分组只用文字层级和留白，正文保留完整条目、行内 Markdown 和滚动，不额外叠加白色容器或分类色条。
 
 下载完成后保留“安装并重启”，等待用户点击。删除“继续使用”按钮；删除退出时安装的说明文案。更新完成后恢复原资料、阅读位置、笔记与工作区，并给出轻量完成反馈。错误不清空工作现场。
 
@@ -32,7 +32,7 @@ Mac Catalyst 的说明浮窗在呈现之前配置真实按钮锚点和点击穿�
 
 ## 成熟参考
 
-- [Apple 浮窗设计规范](https://developer.apple.com/design/human-interface-guidelines/popovers/)与[点击穿透接口](https://developer.apple.com/documentation/uikit/uipopoverpresentationcontroller/passthroughviews)：参考锚点定位、短内容阅读，以及明确允许底层操作的原生接口。
+- [Apple 浮窗设计规范](https://developer.apple.com/design/human-interface-guidelines/popovers/)与[应用管理关闭的原生浮窗](https://developer.apple.com/documentation/appkit/nspopover/behavior-swift.enum/applicationdefined)：参考锚点定位和短内容阅读，使用不会先截走底层操作的关闭方式。
 - [待办工具 Things 的 Mac 更新说明](https://culturedcode.com/things/support/articles/1100684/)：版本、日期、适用系统和直接的变更条目。其 3.22.12 只有一项简短内部调整。参考其信息量按实际变化决定的写法，不照搬系统要求栏，也不据此声称它用悬停更新面板。
 - [Mac 编辑器 Nova 的版本记录](https://nova.app/releases/)：日常修复版本按具体问题逐条列出。参考正文的具体性，不照搬大版本的功能宣传结构。
 - [开发工具 IntelliJ IDEA 的悬停文档](https://www.jetbrains.com/help/idea/documentation-tool-window.html?keymap=primary_default_for_windows)：支持鼠标悬停查看说明。仅作为悬停读信息的交互参考，不是其更新界面的证据。

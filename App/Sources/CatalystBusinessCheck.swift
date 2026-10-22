@@ -377,21 +377,30 @@ enum CatalystBusinessCheck {
         let state = UpdatePopoverInputState()
         host.update(AnyView(UpdatePopoverInputView(state: state)))
         defer { host.update(original) }
-        try await until("update notes presented from toolbar") {
-            host.controller.presentedViewController?.popoverPresentationController?.sourceView?.window != nil
+        // Repeat after closing once: native focus and toolbar hosting windows
+        // differ on the second presentation. Use the outer workspace route.
+        for phase in ["initial", "reopened"] {
+            state.showing = true
+            state.clickedWhilePresented = false
+            try await until("update notes presented from toolbar (\(phase))") {
+                CatalystDesktopWindow.shared.updateNotesVisibleForCheck()
+            }
+            guard host.controller.presentedViewController == nil else {
+                throw Failure("update reading panel installed a modal input layer")
+            }
+            let expectedActions = state.actions + 1
+            let receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
+                itemIdentifier: "weibei.navigation", xFraction: 0.5, yFraction: 0.5,
+                activateWindow: false, routeThroughWorkspace: true)
+            guard receipt["queued"] == "true" else { throw Failure("update pointer event unavailable") }
+            try await until("first pointer click reaches update action (\(phase))") { state.actions == expectedActions }
+            guard state.clickedWhilePresented else {
+                throw Failure("update notes dismissed before the checked pointer action")
+            }
+            try await until("update notes close after action (\(phase))") {
+                !CatalystDesktopWindow.shared.updateNotesVisibleForCheck()
+            }
         }
-        let presentation = host.controller.presentedViewController?.popoverPresentationController
-        guard presentation?.passthroughViews?.contains(where: {
-            host.controller.view === $0 || host.controller.view.isDescendant(of: $0)
-        }) == true else { throw Failure("update notes block the source toolbar") }
-        let receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
-            itemIdentifier: "weibei.navigation", xFraction: 0.5, yFraction: 0.5, activateWindow: false)
-        guard receipt["queued"] == "true" else { throw Failure("update pointer event unavailable") }
-        try await until("first pointer click reaches update action") { state.actions == 1 }
-        guard state.clickedWhilePresented else {
-            throw Failure("update notes dismissed before the checked pointer action")
-        }
-        try await until("update notes close after action") { host.controller.presentedViewController == nil }
     }
 
     @MainActor private final class DisplayIntervalSampler: NSObject {
@@ -448,7 +457,7 @@ enum CatalystBusinessCheck {
             let targetFraction = xFraction ?? ((itemIdentifier == "weibei.navigation" || firstIcon) ? iconCenterFraction : 1 - iconCenterFraction)
             let settingsWasPresented = store.settingsPresented
             var receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
-                itemIdentifier: itemIdentifier, xFraction: targetFraction, yFraction: 0.5, activateWindow: true)
+                itemIdentifier: itemIdentifier, xFraction: targetFraction, yFraction: 0.5, activateWindow: true, routeThroughWorkspace: false)
             receipt["settings_presented_before"] = String(settingsWasPresented)
             if let window = item.uiView.window {
                 let point = CGPoint(x: item.uiView.bounds.minX + item.uiView.bounds.width * CGFloat(targetFraction),

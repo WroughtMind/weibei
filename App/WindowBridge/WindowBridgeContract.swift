@@ -10,6 +10,11 @@ import Foundation
     func open(_ url: URL) -> Bool
     func reveal(_ url: URL)
     @MainActor func setWorkspaceToolbarVisible(_ visible: Bool, toolbar: NSObject)
+    @MainActor func presentUpdateNotes(contentItem: NSObject, sourceItem: NSObject,
+                                      sourceRect: CGRect, size: CGSize, dark: Bool,
+                                      dismissed: @MainActor @escaping () -> Void) -> NSObject?
+    @MainActor func updateUpdateNotes(_ presentation: NSObject, sourceRect: CGRect, size: CGSize, dark: Bool)
+    @MainActor func dismissUpdateNotes(_ presentation: NSObject)
     func materialWindowCount() -> Int
     @MainActor func registerFileDrop(
         id: String, toolbar: NSObject,
@@ -26,7 +31,9 @@ import Foundation
     @MainActor func fullScreenWindowStateForCheck() -> [String: Bool]
     @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]]
     @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
-                                           xFraction: Double, yFraction: Double, activateWindow: Bool) -> [String: String]
+                                           xFraction: Double, yFraction: Double, activateWindow: Bool,
+                                           routeThroughWorkspace: Bool) -> [String: String]
+    @MainActor func updateNotesVisibleForCheck() -> Bool
 #endif
     @MainActor func presentOpenPanel(
         title: String,

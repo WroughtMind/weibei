@@ -19,6 +19,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var fullScreenCheckNotifications: [String] = []
     private var fullScreenCheckToolbarChanges: [String] = []
     private var toolbarClickCheckEventNumber = 1
+    private weak var checkedUpdateNotes: NSPopover?
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
@@ -105,7 +106,8 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     }
 #if WEIBEI_ACCEPTANCE_CHECKS
     @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
-                                           xFraction: Double, yFraction: Double, activateWindow: Bool) -> [String: String] {
+                                           xFraction: Double, yFraction: Double, activateWindow: Bool,
+                                           routeThroughWorkspace: Bool) -> [String: String] {
         guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
               let toolbar = toolbar as? NSToolbar, toolbar.identifier == "weibei.workspace",
               xFraction.isFinite, yFraction.isFinite,
@@ -121,15 +123,17 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
         let point = NSPoint(x: view.bounds.minX + view.bounds.width * CGFloat(xFraction),
                             y: view.bounds.minY + view.bounds.height * CGFloat(yFraction))
-        let location = view.convert(point, to: nil)
+        let eventWindow = routeThroughWorkspace ? workspace : window
+        let location = eventWindow.convertPoint(fromScreen: window.convertPoint(toScreen: view.convert(point, to: nil)))
         var receipt = ["queued": "false", "item": itemIdentifier,
                        "view_bounds": NSStringFromRect(view.bounds),
                        "view_frame_in_window": NSStringFromRect(view.convert(view.bounds, to: nil)),
                        "location_in_window": NSStringFromPoint(location),
-                       "window_number": String(window.windowNumber)]
+                       "window_number": String(eventWindow.windowNumber),
+                       "posted_to_workspace": String(routeThroughWorkspace)]
         // NSView hitTest takes a point in its superview's coordinates. Include
         // the frame hierarchy because a titlebar interceptor can precede UIKit.
-        if let root = window.contentView?.superview {
+        if let root = eventWindow.contentView?.superview {
             let rootPoint = root.superview?.convert(location, from: nil) ?? location
             let hit = root.hitTest(rootPoint)
             receipt["native_hit_type"] = hit.map { NSStringFromClass(type(of: $0)) } ?? "nil"
@@ -140,10 +144,10 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         let eventNumber = toolbarClickCheckEventNumber
         toolbarClickCheckEventNumber &+= 2
         guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: location,
-                  modifierFlags: [], timestamp: timestamp, windowNumber: window.windowNumber,
+                  modifierFlags: [], timestamp: timestamp, windowNumber: eventWindow.windowNumber,
                   context: nil, eventNumber: eventNumber, clickCount: 1, pressure: 1),
               let up = NSEvent.mouseEvent(with: .leftMouseUp, location: location,
-                  modifierFlags: [], timestamp: timestamp + 0.01, windowNumber: window.windowNumber,
+                  modifierFlags: [], timestamp: timestamp + 0.01, windowNumber: eventWindow.windowNumber,
                   context: nil, eventNumber: eventNumber + 1, clickCount: 1, pressure: 0) else {
             receipt["failure"] = "mouse_event_creation_failed"
             return receipt
@@ -161,6 +165,8 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         receipt["queued"] = "true"
         return receipt
     }
+
+    @MainActor func updateNotesVisibleForCheck() -> Bool { checkedUpdateNotes?.isShown == true }
 
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool {
         guard let window = checkedFullScreenWorkspace
@@ -260,6 +266,27 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     func open(_ url: URL) -> Bool { NSWorkspace.shared.open(url) }
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func materialWindowCount() -> Int { materials.count }
+    @MainActor func presentUpdateNotes(contentItem: NSObject, sourceItem: NSObject,
+                                      sourceRect: CGRect, size: CGSize, dark: Bool,
+                                      dismissed: @MainActor @escaping () -> Void) -> NSObject? {
+        guard let contentItem = contentItem as? NSToolbarItem, let content = contentItem.view,
+              let source = (sourceItem as? NSToolbarItem)?.view, source.window != nil else { return nil }
+        let popover = NativeUpdateNotesPopover(contentItem: contentItem, content: content, dismissed: dismissed)
+        popover.update(sourceRect: sourceRect, size: size, dark: dark)
+        popover.show(relativeTo: sourceRect, of: source, preferredEdge: .minY)
+#if WEIBEI_ACCEPTANCE_CHECKS
+        checkedUpdateNotes = popover
+#endif
+        return popover
+    }
+    @MainActor func updateUpdateNotes(_ presentation: NSObject, sourceRect: CGRect, size: CGSize, dark: Bool) {
+        (presentation as? NativeUpdateNotesPopover)?.update(sourceRect: sourceRect, size: size, dark: dark)
+    }
+    @MainActor func dismissUpdateNotes(_ presentation: NSObject) {
+        guard let popover = presentation as? NativeUpdateNotesPopover else { return }
+        popover.dismissed = nil
+        popover.close()
+    }
     @MainActor func registerFileDrop(
         id: String, toolbar: NSObject,
         targeted: @MainActor @escaping (Bool) -> Void,
@@ -694,5 +721,48 @@ private final class NativeFileDropDelegate: NSObject, NSWindowDelegate, NSDraggi
         guard !objects.isEmpty else { return false }
         NativeFileDropBatch(objects: objects, receive: receive).start()
         return true
+    }
+}
+
+/// Reading content must not install the modal dismissal layer that consumes
+/// the first real click on a Catalyst toolbar button.
+@MainActor private final class NativeUpdateNotesPopover: NSPopover, NSPopoverDelegate {
+    private let contentItem: NSToolbarItem
+    private var deactivationObserver: NSObjectProtocol?
+    var dismissed: (@MainActor () -> Void)?
+
+    init(contentItem: NSToolbarItem, content: NSView, dismissed: @MainActor @escaping () -> Void) {
+        self.contentItem = contentItem
+        self.dismissed = dismissed
+        super.init()
+        behavior = .applicationDefined
+        animates = false
+        delegate = self
+        let controller = ContentController()
+        controller.view = content
+        controller.cancel = { [weak self] in self?.close() }
+        contentViewController = controller
+        deactivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.close() }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    deinit {
+        if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }
+    }
+    func update(sourceRect: CGRect, size: CGSize, dark: Bool) {
+        if contentSize != size { contentSize = size }
+        if positioningRect != sourceRect { positioningRect = sourceRect }
+        let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        if self.appearance != appearance { self.appearance = appearance }
+    }
+    func popoverDidClose(_ notification: Notification) {
+        let callback = dismissed
+        dismissed = nil
+        callback?()
+    }
+    private final class ContentController: NSViewController {
+        var cancel: (() -> Void)?
+        override func cancelOperation(_ sender: Any?) { cancel?() }
     }
 }

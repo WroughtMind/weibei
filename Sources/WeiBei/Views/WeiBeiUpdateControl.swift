@@ -275,8 +275,8 @@ struct WeiBeiUpdateNotesPanel: View {
 }
 
 #if targetEnvironment(macCatalyst)
-/// Configure the actual toolbar anchor and pass-through windows BEFORE presenting.
-/// A probe inside SwiftUI's presented content runs too late to protect a quick click.
+/// The AppKit reading popover owns no modal input layer. UIKit's popover
+/// dismissal can consume a real toolbar click even when passthrough is set.
 struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
     @Binding var isPresented: Bool
     let content: Content
@@ -287,12 +287,14 @@ struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
     }
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) { controller.stop() }
 
-    final class Controller: UIViewController, UIPopoverPresentationControllerDelegate {
+    final class Controller: UIViewController {
         private var content = AnyView(EmptyView())
         private var wantsPresentation = false
         private var active = true
         private var onDismiss: (() -> Void)?
-        private var panel: UIHostingController<AnyView>?
+        private var host: NotesHost?
+        private var contentItem: NSUIViewToolbarItem?
+        private var presentation: NSObject?
 
         override func loadView() {
             view = UIView()
@@ -300,53 +302,67 @@ struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
             view.isUserInteractionEnabled = false
         }
         override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); synchronize() }
-        override func viewDidLayoutSubviews() {
-            super.viewDidLayoutSubviews()
-            panel?.popoverPresentationController?.sourceRect = view.bounds
-        }
+        override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); synchronize() }
 
         func update(content: AnyView, presented: Bool, onDismiss: @escaping () -> Void) {
             self.content = content
             wantsPresentation = presented
             self.onDismiss = onDismiss
-            panel?.rootView = content
+            host?.rootView = content
+            scheduleLayout()
+        }
+        private func scheduleLayout() {
             DispatchQueue.main.async { [weak self] in self?.synchronize() }
         }
-
         private func synchronize() {
             guard active else { return }
-            guard wantsPresentation else {
-                panel?.dismiss(animated: false)
-                panel = nil
-                return
+            guard wantsPresentation else { dismissPresentation(); return }
+            guard view.window != nil,
+                  let sourceItem = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+                    .compactMap({ $0.titlebar?.toolbar }).flatMap({ $0.items })
+                    .compactMap({ $0 as? NSUIViewToolbarItem })
+                    .first(where: { view.isDescendant(of: $0.uiView) }) else { return }
+            if host == nil {
+                let host = NotesHost(rootView: content)
+                host.safeAreaRegions = []
+                host.sizingOptions = [.preferredContentSize]
+                host.view.backgroundColor = .clear
+                host.sizeChanged = { [weak self] in self?.scheduleLayout() }
+                self.host = host
+                contentItem = NSUIViewToolbarItem(itemIdentifier: .init("weibei.update.notes"), uiView: host.view)
             }
-            guard panel == nil, let window = view.window, let presenter = parent,
-                  presenter.presentedViewController == nil else { return }
-            let panel = UIHostingController(rootView: content)
-            panel.modalPresentationStyle = .popover
-            panel.sizingOptions = .preferredContentSize
-            panel.view.backgroundColor = .clear
-            let popover = panel.popoverPresentationController!
-            popover.sourceView = view
-            popover.sourceRect = view.bounds
-            popover.permittedArrowDirections = [.up, .down]
-            popover.backgroundColor = .clear
-            popover.passthroughViews = [presenter.view] + (window.windowScene?.windows ?? [window])
-            popover.delegate = self
-            self.panel = panel
-            presenter.present(panel, animated: false)
+            guard let host, let contentItem else { return }
+            let size = host.sizeThatFits(in: UIView.layoutFittingExpandedSize)
+            guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return }
+            let rect = view.convert(view.bounds, to: sourceItem.uiView)
+            let dark = WeiBeiThemeRuntime.mode.isDark
+            if let presentation {
+                CatalystDesktopWindow.shared.updateUpdateNotes(presentation, sourceRect: rect, size: size, dark: dark)
+            } else {
+                presentation = CatalystDesktopWindow.shared.presentUpdateNotes(contentItem: contentItem,
+                    sourceItem: sourceItem, sourceRect: rect, size: size, dark: dark) { [weak self] in
+                        guard let self else { return }
+                        self.presentation = nil
+                        self.wantsPresentation = false
+                        self.onDismiss?()
+                    }
+            }
         }
+        private func dismissPresentation() {
+            let previous = presentation
+            presentation = nil
+            if let previous { CatalystDesktopWindow.shared.dismissUpdateNotes(previous) }
+            host?.sizeChanged = nil
+            contentItem = nil
+            host = nil
+        }
+        func stop() { active = false; dismissPresentation() }
 
-        func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle { .none }
-        func popoverPresentationControllerDidDismissPopover(_ controller: UIPopoverPresentationController) {
-            panel = nil
-            wantsPresentation = false
-            onDismiss?()
-        }
-        func stop() {
-            active = false
-            panel?.dismiss(animated: false)
-            panel = nil
+        private final class NotesHost: UIHostingController<AnyView> {
+            var sizeChanged: (() -> Void)?
+            override var preferredContentSize: CGSize {
+                didSet { if oldValue != preferredContentSize { sizeChanged?() } }
+            }
         }
     }
 }
