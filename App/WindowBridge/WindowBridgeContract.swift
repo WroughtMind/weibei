@@ -20,6 +20,8 @@ import Foundation
     @MainActor func currentDraggedFileURLs() -> [URL]
     @MainActor func currentDragContainsFilePromises() -> Bool
 #if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func startPointerTraceForCheck()
+    @MainActor func finishPointerTraceForCheck() -> [[String: String]]
     @MainActor func prepareFileDropCheck(id: String, urls: [URL]) -> [String: Bool]
     @MainActor func finishFileDropCheck()
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool

@@ -16,6 +16,7 @@ enum CatalystBusinessCheck {
     private static var contextualPickerDiagnostics: [String: Any] = [:]
     private static var lastOnboardingUIElement: [String: String] = [:]
     private static var floatingResizeTrace: [[String: String]] = []
+    private static var nativePointerTrace: [[String: String]] = []
     static func traceFloatingResize(_ event: String, _ values: [String: String]) {
         var entry = values
         entry["event"] = event
@@ -379,6 +380,7 @@ enum CatalystBusinessCheck {
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
             result["floating_resize_trace"] = floatingResizeTrace
+            result["native_pointer_trace"] = nativePointerTrace
             result["recorded_at"] = ISO8601DateFormatter().string(from: Date())
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: resultURL, options: .atomic)
         }
@@ -1464,12 +1466,22 @@ enum CatalystBusinessCheck {
             return mainConversation.view.convert(frame, to: window)
         }
         func dragPanel(from point: CGPoint, by delta: CGSize) async throws {
+            var chain: [String] = []
+            var hit = window.hitTest(point, with: nil)
+            while let view = hit {
+                let gestures = (view.gestureRecognizers ?? []).map { NSStringFromClass(type(of: $0)) + ":" + String(describing: $0.state) }
+                chain.append(NSStringFromClass(type(of: view)) + " " + String(describing: view.convert(view.bounds, to: window))
+                    + " gestures=" + gestures.joined(separator: ","))
+                hit = view.superview
+            }
             traceFloatingResize("requested_drag", ["start": String(describing: point), "delta": String(describing: delta),
-                "panel": String(describing: try panelFrame())])
+                "panel": String(describing: try panelFrame()), "ui_hit_chain": chain.joined(separator: "\n")])
             let coordinates = [point.x, point.y, delta.width, delta.height]
                 .map { String(Double($0)) }.joined(separator: ",")
             _ = try await onboardingUICommand("drag-window-point", id: "SceneWindow", value: coordinates)
         }
+        CatalystDesktopWindow.shared.startPointerTraceForCheck()
+        defer { nativePointerTrace = CatalystDesktopWindow.shared.finishPointerTraceForCheck() }
         let beforeSide = try panelFrame()
         try await dragPanel(from: CGPoint(x: beforeSide.maxX - 3, y: beforeSide.midY),
                             by: CGSize(width: 24, height: 0))
