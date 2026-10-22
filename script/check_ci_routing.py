@@ -88,6 +88,7 @@ with tempfile.TemporaryDirectory() as directory:
         ('检查编排', ['.github/workflows/pr-checks.yml', 'script/check_ci_routing.py'], set()),
         ('官网与应用混合', ['website/app.js', 'Sources/WeiBei/Stores/WorkspaceStore.swift'], {'website-check', 'app-check', 'catalyst-check'}),
         ('正式会话代码', ['App/Sources/ConversationController.swift'], {'catalyst-check'}),
+        ('应用自检启动器', ['script/run_self_check.py'], {'app-check', 'catalyst-check'}),
         ('原生窗口组件', ['App/WindowBridge/NativeWindowBridge.swift'], {'catalyst-check'}),
         ('原生启动与共享业务', ['App/Sources/AppDelegate.swift'], {'app-check', 'catalyst-check'}),
         ('原生与共享代码混合', ['App/Sources/ConversationController.swift', 'Sources/WeiBeiCore/StudyAgentRuntime.swift'], {'app-check', 'catalyst-check'}),

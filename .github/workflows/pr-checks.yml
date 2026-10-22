@@ -145,7 +145,7 @@ jobs:
       - name: 运行应用自检
         id: core
         if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true'
-        run: swift run WeiBeiSelfCheck
+        run: python3 script/run_self_check.py
 
       - name: 运行开发工具子命令自检
         id: dev
