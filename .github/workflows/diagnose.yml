@@ -68,6 +68,12 @@ jobs:
           else
             ./App/script/check-ci.sh --scenario "$SCENARIO"
           fi
+      - name: 记录完整业务链路的网络权限责任进程
+        if: ${{ always() && !startsWith(inputs.scenario, 'network-') && inputs.scenario != 'editor' }}
+        run: |
+          mkdir -p App/Evidence
+          ps -axo pid,ppid,comm > App/Evidence/ci-process-identity.log
+          /usr/bin/log show --last 1h --style compact --info --predicate 'process == "nehelper" OR process == "networkd" OR process == "mDNSResponder" OR subsystem CONTAINS[c] "networkextension" OR eventMessage CONTAINS[c] "localnetwork" OR eventMessage CONTAINS[c] "local network" OR eventMessage CONTAINS[c] "multicast"' > App/Evidence/ci-network-privacy.log
       - name: 保留诊断与阶段耗时
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
