@@ -22,8 +22,10 @@ classify_path() {
       return ;;
   esac
 
+  # SwiftPM host targets live in Sources/ and Tests/. Native App sources and
+  # Xcode settings are checked by Catalyst, not by an unrelated host rebuild.
   case "$path" in
-    Sources/*|Tests/*|App/Sources/*|App/WindowBridge/*|App/project.yml|App/WeiBei.xcodeproj/*|Package.swift|Package.resolved|package.json|package-lock.json|Config/*)
+    Sources/*|Tests/*|Package.swift|Package.resolved|package.json|package-lock.json|Config/*)
       code=true ;;
   esac
 
@@ -63,7 +65,7 @@ classify_path() {
   # Native interaction depends on application/build inputs, not release numbers,
   # legal text, DMG layout or publication control-plane scripts.
   case "$path" in
-    .github/actions/*|.github/workflows/diagnose.yml|script/ci_cache_key.py|script/build_and_run.sh|App/script/*|App/UITests/*|App/Config/*|App/Resources/*|Config/*|*.entitlements|*/Info.plist)
+    App/Sources/*|App/WindowBridge/*|App/project.yml|App/WeiBei.xcodeproj/*|.github/actions/*|.github/workflows/diagnose.yml|script/ci_cache_key.py|script/build_and_run.sh|App/script/*|App/UITests/*|App/Config/*|App/Resources/*|Config/*|*.entitlements|*/Info.plist)
       acceptance=true ;;
   esac
   if [[ "$code" == true || "$editor" == true ]]; then acceptance=true; fi
@@ -114,9 +116,9 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes "code data_safety acceptance" "Sources/WeiBei/Views/SidebarView.swift" "Sources/WeiBei/Views/CourseDrawerHost.swift"
   expect_scopes "code data_safety acceptance" "Sources/WeiBeiCore/LearningModels.swift" "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" "Sources/WeiBeiCore/NoteSourceRelations.swift"
   expect_scopes "code agent acceptance" "Sources/WeiBeiCore/NativeAgentRuntime/NativeAgentLoop.swift"
-  expect_scopes "code acceptance" "App/Sources/ConversationController.swift" "App/WindowBridge/NativeWindowBridge.swift"
-  expect_scopes "code agent editor data_safety acceptance" "App/Sources/AppDelegate.swift"
-  expect_scopes "code release acceptance" "App/project.yml"
+  expect_scopes "acceptance" "App/Sources/ConversationController.swift" "App/WindowBridge/NativeWindowBridge.swift"
+  expect_scopes "agent editor data_safety acceptance" "App/Sources/AppDelegate.swift"
+  expect_scopes "release acceptance" "App/project.yml"
   expect_scopes "release acceptance" "App/Resources/Web/diagram.html" "App/script/check-ci.sh"
   expect_scopes "tools" "tsconfig.json" "script/homebrew/generate_cask.test.mjs"
   expect_scopes "release tools" "DesignSystem/scripts/build-icns.ts"
