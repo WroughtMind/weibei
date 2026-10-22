@@ -11,6 +11,20 @@ import Litext
 /// editor bridge and write gate. Enabled only in the separately identified check App.
 @MainActor
 enum CatalystBusinessCheck {
+    static var focusTrace: [[String: String]] = []
+    static func recordFocus(_ event: String, _ fields: [String: String]) {
+        focusTrace.append(fields.merging(["event": event, "uptime": String(ProcessInfo.processInfo.systemUptime)]) { _, new in new })
+    }
+    static func currentFocusForTrace() -> String {
+        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        let responders = windows.flatMap(descendants).filter(\.isFirstResponder)
+        return responders.map { view in
+            let name = String(describing: type(of: view))
+            let identity = String(describing: ObjectIdentifier(view))
+            let owner = view.window.map { String(describing: ObjectIdentifier($0)) } ?? "none"
+            return "\(name) \(identity) window=\(owner)"
+        }.joined(separator: "\n")
+    }
     private static var started = false
     private static var fileDropDiagnostics: [String: Any] = [:]
     private static var contextualPickerDiagnostics: [String: Any] = [:]
@@ -483,6 +497,7 @@ enum CatalystBusinessCheck {
         var checks: [String: String] = [:]
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
+            result["focus_trace"] = focusTrace
             let resizeEvents = CatalystDesktopWindow.shared.floatingResizeEventsForCheck()
             if !resizeEvents.isEmpty { result["floating_resize_events"] = resizeEvents }
             result["floating_resize_capture_state"] = CatalystDesktopWindow.shared.floatingResizeStateForCheck()
@@ -1173,6 +1188,23 @@ enum CatalystBusinessCheck {
     }
 
     private static func verifyContextualPickerAlignment(_ store: WorkspaceStore, in window: UIWindow) async throws -> [String: Any] {
+        recordFocus("picker_enter", ["pane": String(describing: store.focusedPane), "request": String(store.focusRequest),
+            "responders": currentFocusForTrace(), "window": String(describing: ObjectIdentifier(window))])
+        let focusObservers = [UIApplication.didBecomeActiveNotification, UIApplication.willResignActiveNotification,
+            UIScene.didActivateNotification, UIScene.willDeactivateNotification,
+            UIWindow.didBecomeKeyNotification, UIWindow.didResignKeyNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                MainActor.assumeIsolated {
+                    recordFocus("lifecycle", ["name": note.name.rawValue, "responders": currentFocusForTrace(),
+                        "application": String(UIApplication.shared.applicationState.rawValue),
+                        "object": note.object.map { String(describing: ObjectIdentifier($0 as AnyObject)) } ?? "none"])
+                }
+            }
+        }
+        defer {
+            recordFocus("picker_exit", ["responders": currentFocusForTrace()])
+            focusObservers.forEach(NotificationCenter.default.removeObserver)
+        }
         let materialID = store.selectedMaterialItem?.id
         let noteID = store.activeNoteItemID
         store.showContextualBrowser(.material)
@@ -1205,6 +1237,7 @@ enum CatalystBusinessCheck {
                             "expected_top": String(describing: max(0, window.safeAreaInsets.top - frame.minY))]
                 }
             return ["fields": fields, "hosts": hosts,
+                    "responders": currentFocusForTrace(),
                     "window_bounds": String(describing: window.bounds),
                     "window_safe_area": String(describing: window.safeAreaInsets)]
         }

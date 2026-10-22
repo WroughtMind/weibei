@@ -2059,7 +2059,18 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             guard isReady, isFocused, focusRequest != lastAppliedFocusRequest,
                   let webView, webView.window != nil else { return }
 #if targetEnvironment(macCatalyst)
-            guard webView.becomeFirstResponder() else { return }
+#if WEIBEI_ACCEPTANCE_CHECKS
+            let focusTraceFields = ["web_view": String(describing: ObjectIdentifier(webView)),
+                "request": String(focusRequest), "last_request": String(lastAppliedFocusRequest),
+                "hidden": String(webView.isHidden), "responders": CatalystBusinessCheck.currentFocusForTrace()]
+            CatalystBusinessCheck.recordFocus("web_focus_requested", focusTraceFields)
+#endif
+            let accepted = webView.becomeFirstResponder()
+#if WEIBEI_ACCEPTANCE_CHECKS
+            CatalystBusinessCheck.recordFocus("web_focus_returned", focusTraceFields.merging([
+                "accepted": String(accepted), "responders": CatalystBusinessCheck.currentFocusForTrace()]) { _, new in new })
+#endif
+            guard accepted else { return }
 #else
             guard webView.window?.makeFirstResponder(webView) == true else { return }
 #endif

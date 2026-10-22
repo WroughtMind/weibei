@@ -830,11 +830,23 @@ struct WeiBeiPlainTextField: UIViewRepresentable {
         field.onEscape = onEscape
         field.onMove = onMove
         field.stripSystemChrome()
+#if WEIBEI_ACCEPTANCE_CHECKS
+        if field.appliedFocusRequest == focusRequest, focusesOnAppear, !field.isFirstResponder {
+            field.traceFocus("same_request_unfocused", ["binding": String(isFocused.wrappedValue), "focuses_on_appear": "true"])
+        }
+#endif
         if field.appliedFocusRequest != focusRequest {
             let shouldFocus = field.appliedFocusRequest != -1 || focusesOnAppear || isFocused.wrappedValue
+#if WEIBEI_ACCEPTANCE_CHECKS
+            field.traceFocus("request_changed", ["new_request": String(focusRequest), "binding": String(isFocused.wrappedValue),
+                "focuses_on_appear": String(focusesOnAppear), "should_focus": String(shouldFocus)])
+#endif
             field.appliedFocusRequest = focusRequest
             if shouldFocus { field.scheduleFocus() }
         } else if isFocused.wrappedValue, !field.wasFocusedBinding {
+#if WEIBEI_ACCEPTANCE_CHECKS
+            field.traceFocus("binding_rise")
+#endif
             field.scheduleFocus()
         }
         field.wasFocusedBinding = isFocused.wrappedValue
@@ -876,10 +888,16 @@ struct WeiBeiPlainTextField: UIViewRepresentable {
         }
 
         func textFieldDidBeginEditing(_ textField: UITextField) {
+#if WEIBEI_ACCEPTANCE_CHECKS
+            (textField as? WeiBeiSearchTextField)?.traceFocus("delegate_begin")
+#endif
             if !parent.isFocused.wrappedValue { parent.isFocused.wrappedValue = true }
         }
 
         func textFieldDidEndEditing(_ textField: UITextField) {
+#if WEIBEI_ACCEPTANCE_CHECKS
+            (textField as? WeiBeiSearchTextField)?.traceFocus("delegate_end")
+#endif
             if parent.isFocused.wrappedValue { parent.isFocused.wrappedValue = false }
         }
 
@@ -923,20 +941,66 @@ final class WeiBeiSearchTextField: UITextField {
     }
 
     override func becomeFirstResponder() -> Bool {
+#if WEIBEI_ACCEPTANCE_CHECKS
+        traceFocus("become_requested")
+#endif
         let accepted = super.becomeFirstResponder()
+#if WEIBEI_ACCEPTANCE_CHECKS
+        traceFocus("become_returned", ["accepted": String(accepted), "responders": CatalystBusinessCheck.currentFocusForTrace()])
+#endif
         stripSystemChrome()
         return accepted
     }
 
+#if WEIBEI_ACCEPTANCE_CHECKS
+    override func resignFirstResponder() -> Bool {
+        let ownedFocus = isFirstResponder
+        traceFocus("resign_requested", ownedFocus ? ["stack_addresses": Thread.callStackReturnAddresses.prefix(12).map(\.stringValue).joined(separator: ",")] : [:])
+        let accepted = super.resignFirstResponder()
+        traceFocus("resign_returned", ["accepted": String(accepted), "responders": CatalystBusinessCheck.currentFocusForTrace()])
+        return accepted
+    }
+    func traceFocus(_ event: String, _ fields: [String: String] = [:]) {
+        var state = fields
+        state["field"] = String(describing: ObjectIdentifier(self))
+        state["first_responder"] = String(isFirstResponder)
+        state["pending"] = String(pendingFocus)
+        state["request"] = String(appliedFocusRequest)
+        state["previous_binding"] = String(wasFocusedBinding)
+        state["window"] = window.map { String(describing: ObjectIdentifier($0)) } ?? "none"
+        state["key"] = String(window?.isKeyWindow == true)
+        state["application"] = String(UIApplication.shared.applicationState.rawValue)
+        state["scene"] = String(describing: window?.windowScene?.activationState.rawValue)
+        state["frame"] = window.map { String(describing: convert(bounds, to: $0)) } ?? "no_window"
+        CatalystBusinessCheck.recordFocus(event, state)
+    }
+#endif
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
+#if WEIBEI_ACCEPTANCE_CHECKS
+        traceFocus("window_changed")
+#endif
         if window != nil, pendingFocus { scheduleFocus() }
     }
 
     func scheduleFocus() {
         pendingFocus = true
+#if WEIBEI_ACCEPTANCE_CHECKS
+        traceFocus("focus_scheduled")
+        let fieldID = String(describing: ObjectIdentifier(self))
+#endif
         DispatchQueue.main.async { [weak self] in
+#if WEIBEI_ACCEPTANCE_CHECKS
+            guard let self else {
+                CatalystBusinessCheck.recordFocus("focus_skipped_deallocated", ["field": fieldID])
+                return
+            }
+            guard self.window != nil else { self.traceFocus("focus_skipped_no_window"); return }
+            self.traceFocus("focus_executing")
+#else
             guard let self, self.window != nil else { return }
+#endif
             self.pendingFocus = !self.becomeFirstResponder()
         }
     }
