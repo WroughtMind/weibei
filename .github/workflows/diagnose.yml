@@ -19,7 +19,7 @@ on:
         description: 失败场景；结果不会覆盖合并门禁
         required: true
         type: choice
-        options: [picker, conversation, business, editor]
+        options: [picker, conversation, business, editor, network-original, network-no-dns]
 permissions:
   contents: read
 concurrency:
@@ -40,12 +40,14 @@ jobs:
       - name: 验证诊断范围
         run: |
           case "$WEIBEI_TARGET_ARCH" in arm64|x86_64) ;; *) exit 2 ;; esac
-          case "$SCENARIO" in picker|conversation|business|editor) ;; *) exit 2 ;; esac
+          case "$SCENARIO" in picker|conversation|business|editor|network-original|network-no-dns) ;; *) exit 2 ;; esac
       - id: catalyst_cache
+        if: ${{ !startsWith(inputs.scenario, 'network-') }}
         uses: ./.github/actions/catalyst-cache
         with:
           arch: ${{ inputs.arch }}
       - name: 准备隔离原生环境
+        if: ${{ !startsWith(inputs.scenario, 'network-') }}
         run: |
           test "$(uname -m)" = "$WEIBEI_TARGET_ARCH"
           bash App/script/prepare-ci-desktop.sh
@@ -55,7 +57,9 @@ jobs:
           echo "$RUNNER_TEMP/weibei-editor-fonts/bin" >> "$GITHUB_PATH"
       - name: 运行失败场景
         run: |
-          if [[ "$SCENARIO" == editor ]]; then
+          if [[ "$SCENARIO" == network-* ]]; then
+            python3 App/script/network-privacy-diagnostic.py "${SCENARIO#network-}"
+          elif [[ "$SCENARIO" == editor ]]; then
             set -o pipefail
             npm run build:genui
             npm run build:editor

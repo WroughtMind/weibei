@@ -18,6 +18,7 @@ enum CatalystBusinessCheck {
     private static var started = false
     private static var fileDropDiagnostics: [String: Any] = [:]
     private static var contextualPickerDiagnostics: [String: Any] = [:]
+    private static var webPointerDiagnostics: [[String: Any]] = []
     private static var lastOnboardingUIElement: [String: String] = [:]
     private struct Failure: LocalizedError {
         let errorDescription: String?
@@ -488,6 +489,7 @@ enum CatalystBusinessCheck {
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
             result["focus_trace"] = focusTrace
+            result["web_pointer_diagnostic"] = webPointerDiagnostics
             result["recorded_at"] = ISO8601DateFormatter().string(from: Date())
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: resultURL, options: .atomic)
         }
@@ -1654,6 +1656,11 @@ enum CatalystBusinessCheck {
         let underlyingWebViews = descendants(window).compactMap { $0 as? WKWebView }.filter {
             isVisible($0, in: window) && !$0.isDescendant(of: floatingConversation.view)
         }
+        webPointerDiagnostics.append(["stage": "inventory", "web_views": descendants(window).compactMap { $0 as? WKWebView }.map {
+            ["identity": String(describing: ObjectIdentifier($0)), "url": $0.url?.absoluteString ?? "none",
+             "frame": String(describing: $0.convert($0.bounds, to: window)),
+             "visible": String(isVisible($0, in: window)), "floating_descendant": String($0.isDescendant(of: floatingConversation.view))]
+        }])
         guard !underlyingWebViews.isEmpty else { throw Failure("underlying web content is unavailable for pointer checks") }
         let webPointerStateScript = #"""
         JSON.stringify({
@@ -1665,12 +1672,48 @@ enum CatalystBusinessCheck {
             : null; })()
         })
         """#
+        let webPointerDetailScript = #"""
+        (() => {
+          const path = node => {
+            const parts = [];
+            for (let n = node; n && parts.length < 12; n = n.parentNode) {
+              parts.push([n.nodeName, n.id || '', n.parentNode ? Array.from(n.parentNode.childNodes).indexOf(n) : -1]);
+            }
+            return parts;
+          };
+          const s = getSelection();
+          return JSON.stringify({
+            scroll: Array.from(document.querySelectorAll('*')).flatMap((e, i) => e.scrollLeft || e.scrollTop
+              ? [{i, tag: e.tagName, id: e.id, cls: e.className, left: e.scrollLeft, top: e.scrollTop,
+                  client: [e.clientWidth, e.clientHeight], size: [e.scrollWidth, e.scrollHeight]}] : []),
+            selection: { count: s?.rangeCount, collapsed: s?.isCollapsed, anchor: path(s?.anchorNode), focus: path(s?.focusNode) },
+            active: { tag: document.activeElement?.tagName, cls: document.activeElement?.className }, hasFocus: document.hasFocus()
+          });
+        })()
+        """#
         var webPointerStates: [(WKWebView, String)] = []
+        func recordWebPointer(_ stage: String, _ webView: WKWebView, _ snapshot: String) async throws {
+            let detail = try await webView.evaluateJavaScript(webPointerDetailScript) as? String ?? "none"
+            webPointerDiagnostics.append(["stage": stage, "uptime": ProcessInfo.processInfo.systemUptime,
+                "identity": String(describing: ObjectIdentifier(webView)), "url": webView.url?.absoluteString ?? "none",
+                "frame": String(describing: webView.convert(webView.bounds, to: window)),
+                "native_scroll": String(describing: webView.scrollView.contentOffset),
+                "floating_descendant": webView.isDescendant(of: floatingConversation.view), "snapshot": snapshot, "detail": detail])
+        }
+        func observeWebPointers(_ stage: String) async throws {
+            for (webView, _) in webPointerStates {
+                guard let snapshot = try await webView.evaluateJavaScript(webPointerStateScript) as? String else {
+                    throw Failure("underlying web pointer diagnostic is unavailable: " + stage)
+                }
+                try await recordWebPointer(stage, webView, snapshot)
+            }
+        }
         for webView in underlyingWebViews {
             guard let snapshot = try await webView.evaluateJavaScript(webPointerStateScript) as? String else {
                 throw Failure("underlying web pointer state is unavailable before resize")
             }
             webPointerStates.append((webView, snapshot))
+            try await recordWebPointer("before_side", webView, snapshot)
         }
         let beforeSide = try panelFrame()
         try await dragPanel(from: CGPoint(x: beforeSide.maxX - 3, y: beforeSide.midY),
@@ -1678,6 +1721,7 @@ enum CatalystBusinessCheck {
         try await until("floating side still resizes with the real pointer") {
             abs(try panelFrame().width - beforeSide.width - 24) < 2
         }
+        try await observeWebPointers("after_side")
         let beforeCorner = try panelFrame()
         try await dragPanel(from: CGPoint(x: beforeCorner.maxX - 5, y: beforeCorner.minY + 5),
                             by: CGSize(width: 16, height: -12))
@@ -1687,6 +1731,7 @@ enum CatalystBusinessCheck {
                 && abs(frame.height - beforeCorner.height - 12) < 2
                 && abs(frame.minY - beforeCorner.minY + 12) < 2
         }
+        try await observeWebPointers("after_corner")
         let beforeMove = try panelFrame()
         try await dragPanel(from: CGPoint(x: beforeMove.midX, y: beforeMove.minY + 22),
                             by: CGSize(width: -24, height: -16))
@@ -1695,8 +1740,11 @@ enum CatalystBusinessCheck {
             return abs(frame.minX - beforeMove.minX + 24) < 2
                 && abs(frame.minY - beforeMove.minY + 16) < 2
         }
+        try await observeWebPointers("after_header")
         for (webView, before) in webPointerStates {
-            guard try await webView.evaluateJavaScript(webPointerStateScript) as? String == before else {
+            let after = try await webView.evaluateJavaScript(webPointerStateScript) as? String
+            if let after { try await recordWebPointer("final", webView, after) }
+            guard after == before else {
                 throw Failure("floating resize or move changed underlying web scrolling or selection")
             }
         }
