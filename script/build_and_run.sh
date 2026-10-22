@@ -19,7 +19,8 @@ CONFIGURATION=Release
 ACCEPTANCE="${WEIBEI_ACCEPTANCE_CHECKS:-0}"
 CONDITIONS=""
 [[ "$ACCEPTANCE" != 1 ]] || CONDITIONS=WEIBEI_ACCEPTANCE_CHECKS
-[[ "$CONFIGURATION" != Debug ]] || CONDITIONS="$CONDITIONS DEBUG"
+OPTIMIZATION=-Osize
+[[ "$CONFIGURATION" != Debug ]] || OPTIMIZATION=-Onone
 SIGNING_IDENTITY="${WEIBEI_SIGNING_IDENTITY:-Apple Development}"
 if [[ "${CI:-}" == true && -z "${WEIBEI_SIGNING_IDENTITY:-}" ]]; then SIGNING_IDENTITY=-; fi
 BUNDLE_ID="${WEIBEI_BUNDLE_IDENTIFIER:-com.changfenhuang.weibei}"
@@ -28,7 +29,9 @@ BUILD_NUMBER="$(python3 script/build_number.py)"
 GIT_COMMIT="$(git rev-parse HEAD)"
 SPARKLE_PUBLIC_KEY="${WEIBEI_SPARKLE_PUBLIC_KEY:-ZmrxjOBf7NQbqEbm1nU2X6oI0kfeM/W1IvC9HM7AX8Q=}"
 SPARKLE_FEED_URL="${WEIBEI_SPARKLE_FEED_URL:-https://github.com/WroughtMind/weibei/releases/latest/download/appcast-$TARGET_ARCH.xml}"
-DERIVED="$ROOT_DIR/.build/catalyst-$TARGET_ARCH-$CONFIGURATION-$ACCEPTANCE"
+# Only the App and native bridge contain acceptance code. Xcode invalidates those
+# targets when their conditions change; dependencies and WeiBeiCore remain reusable.
+DERIVED="$ROOT_DIR/.build/catalyst-$TARGET_ARCH-$CONFIGURATION"
 PACKAGES="$ROOT_DIR/.build/catalyst-packages"
 DIST_DIR="${WEIBEI_DIST_DIR:-$ROOT_DIR/dist}"
 [[ "$ACCEPTANCE" != 1 ]] || DIST_DIR="$DIST_DIR/acceptance"
@@ -50,11 +53,11 @@ phase --name genui -- npm run build:genui
 SOURCE_DIRTY=false
 [[ -z "$(git status --porcelain=v1 --untracked-files=normal)" ]] || SOURCE_DIRTY=true
 mkdir -p "$DERIVED" "$DIST_DIR"
-phase --name resolve-packages --log "$DERIVED/dependencies.log" -- \
+phase --name resolve-packages --log "$DERIVED/dependencies-$ACCEPTANCE.log" -- \
   xcodebuild -project App/WeiBei.xcodeproj -scheme WeiBei \
   -clonedSourcePackagesDirPath "$PACKAGES" -onlyUsePackageVersionsFromResolvedFile \
   -resolvePackageDependencies || {
-    tail -30 "$DERIVED/dependencies.log"; exit 8;
+    tail -30 "$DERIVED/dependencies-$ACCEPTANCE.log"; exit 8;
   }
 MARKDOWN_DIR="$PACKAGES/checkouts/MarkdownView"
 TYPOGRAPHY_PATCH="$ROOT_DIR/App/script/markdown-typography.patch"
@@ -73,20 +76,21 @@ fi
 # Recreate final products so removed build phases cannot leave stale embedded code.
 rm -rf "$DERIVED/Build/Products/$CONFIGURATION-maccatalyst/魏碑.app" \
   "$DERIVED/Build/Products/$CONFIGURATION/WeiBeiWindowBridge.bundle"
-phase --name "compile-$CONFIGURATION-acceptance-$ACCEPTANCE" --log "$DERIVED/build.log" -- \
+phase --name "compile-$CONFIGURATION-acceptance-$ACCEPTANCE" --log "$DERIVED/build-$ACCEPTANCE.log" -- \
   xcodebuild -showBuildTimingSummary -project App/WeiBei.xcodeproj -scheme WeiBei \
   -configuration "$CONFIGURATION" -destination "platform=macOS,variant=Mac Catalyst,arch=$TARGET_ARCH" \
   -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$PACKAGES" \
   -onlyUsePackageVersionsFromResolvedFile \
   "ARCHS=$TARGET_ARCH" ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
-  DEBUG_INFORMATION_FORMAT=dwarf-with-dsym "SWIFT_ACTIVE_COMPILATION_CONDITIONS=$CONDITIONS" \
+  DEBUG_INFORMATION_FORMAT=dwarf-with-dsym "SWIFT_OPTIMIZATION_LEVEL=$OPTIMIZATION" \
+  "WEIBEI_ACCEPTANCE_CONDITIONS=$CONDITIONS" \
   "WEIBEI_TARGET_ARCH=$TARGET_ARCH" "WEIBEI_VERSION=$APP_VERSION" \
   "WEIBEI_BUILD_NUMBER=$BUILD_NUMBER" "WEIBEI_GIT_COMMIT=$GIT_COMMIT" \
   "WEIBEI_SOURCE_DIRTY=$SOURCE_DIRTY" "WEIBEI_BUNDLE_IDENTIFIER=$BUNDLE_ID" \
   "WEIBEI_SPARKLE_FEED_URL=$SPARKLE_FEED_URL" "WEIBEI_SPARKLE_PUBLIC_KEY=$SPARKLE_PUBLIC_KEY" \
   "LAB_BUSINESS_CHECK_ENDPOINT=${WEIBEI_BUSINESS_CHECK_ENDPOINT:-}" \
   build || {
-    awk '/error:|^ld:|BUILD FAILED/ { if (++n <= 30) print }' "$DERIVED/build.log"; exit 9;
+    awk '/error:|^ld:|BUILD FAILED/ { if (++n <= 30) print }' "$DERIVED/build-$ACCEPTANCE.log"; exit 9;
   }
 BUILT_APP="$DERIVED/Build/Products/$CONFIGURATION-maccatalyst/魏碑.app"
 STAGING="$(mktemp -d "${TMPDIR:-/tmp}/weibei-catalyst-package.XXXXXX")"

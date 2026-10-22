@@ -213,8 +213,8 @@ jobs:
           include-hidden-files: true
           path: |
             .build/timings/
-            .build/catalyst-*/build.log
-            .build/catalyst-*/dependencies.log
+            .build/catalyst-*/build*.log
+            .build/catalyst-*/dependencies*.log
           if-no-files-found: warn
 
       - name: 保存架构发布资产

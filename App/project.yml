@@ -82,6 +82,7 @@ targets:
     settings:
       base:
         WEIBEI_BUNDLE_IDENTIFIER: com.changfenhuang.weibei
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(WEIBEI_ACCEPTANCE_CONDITIONS)
         PRODUCT_BUNDLE_IDENTIFIER: $(WEIBEI_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: 魏碑
         PRODUCT_MODULE_NAME: WeiBei
@@ -182,6 +183,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.changfenhuang.weibei.WindowBridge
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(WEIBEI_ACCEPTANCE_CONDITIONS)
         SWIFT_VERSION: '5.0'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSPrincipalClass: WeiBeiCatalystWindowBridge

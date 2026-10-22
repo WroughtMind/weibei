@@ -6,6 +6,7 @@ agent=false
 editor=false
 data_safety=false
 release=false
+acceptance=false
 tools=false
 website=false
 
@@ -17,7 +18,7 @@ classify_path() {
     website/*|.github/workflows/pages.yml|script/check_website.sh)
       website=true
       return ;;
-    .github/workflows/pr-checks.yml|script/ci_changed_scopes.sh|script/ci_metadata.py|script/check_ci_routing.py|script/test_release_flow.py)
+    .github/workflows/pr-checks.yml|script/ci_changed_scopes.sh|script/ci_metadata.py|script/check_ci_routing.py|script/test_release_flow.py|script/release.py|script/release_candidate.py|script/verify_public_release.py)
       return ;;
   esac
 
@@ -54,10 +55,18 @@ classify_path() {
   esac
 
   case "$path" in
-    VERSION|.github/actions/*|.github/workflows/diagnose.yml|script/ci_cache_key.py|script/timed_run.py|script/verify_built_app.py|script/release.py|script/release_candidate.py|script/verify_public_release.py|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|App/project.yml|App/WeiBei.xcodeproj/*|App/Config/*|App/Resources/*|App/script/*|script/verify_app_launch.sh|script/verify_update_installation.py|script/package_size.py|script/check_package_size_policy.py|script/build_number.py|script/check_build_number.py|script/check_build_info.swift|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
+    VERSION|.github/actions/*|.github/workflows/diagnose.yml|script/ci_cache_key.py|script/timed_run.py|script/verify_built_app.py|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/release.yml|App/project.yml|App/WeiBei.xcodeproj/*|App/Config/*|App/Resources/*|App/script/*|script/verify_app_launch.sh|script/verify_update_installation.py|script/package_size.py|script/check_package_size_policy.py|script/build_number.py|script/check_build_number.py|script/check_build_info.swift|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|Sources/WeiBeiDev/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|DesignSystem/assets/dmg/*|DesignSystem/scripts/*|Config/*|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
+
+  # Native interaction depends on application/build inputs, not release numbers,
+  # legal text, DMG layout or publication control-plane scripts.
+  case "$path" in
+    .github/actions/*|.github/workflows/diagnose.yml|script/ci_cache_key.py|script/build_and_run.sh|App/script/*|App/UITests/*|App/Config/*|App/Resources/*|Config/*|*.entitlements|*/Info.plist)
+      acceptance=true ;;
+  esac
+  if [[ "$code" == true || "$editor" == true ]]; then acceptance=true; fi
 
   # Node 工具脚本类型检查（npm run typecheck:tools 的触发面）。
   # 根 tsconfig.json 的 include 覆盖 DesignSystem/scripts;package.json/lockfile 变化
@@ -71,7 +80,7 @@ classify_path() {
 
 emit_scopes() {
   local scope
-  for scope in code agent editor data_safety release tools website; do
+  for scope in code agent editor data_safety release acceptance tools website; do
     printf '%s=%s\n' "$scope" "${!scope}"
   done
 }
@@ -79,9 +88,9 @@ emit_scopes() {
 expect_scopes() {
   local expected="$1" path scope actual=""
   shift
-  code=false agent=false editor=false data_safety=false release=false tools=false website=false
+  code=false agent=false editor=false data_safety=false release=false acceptance=false tools=false website=false
   for path in "$@"; do classify_path "$path"; done
-  for scope in code agent editor data_safety release tools website; do
+  for scope in code agent editor data_safety release acceptance tools website; do
     if [[ "${!scope}" == true ]]; then actual="${actual}${actual:+ }$scope"; fi
   done
   if [[ "$actual" != "$expected" ]]; then
@@ -94,24 +103,27 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes "website" "website/index.html" ".github/workflows/pages.yml" "script/check_website.sh"
   expect_scopes "" ".github/workflows/pr-checks.yml" "script/ci_changed_scopes.sh" "script/check_ci_routing.py"
   expect_scopes "" "Docs/plans/example.md" "Docs/releases/README.md" "DesignSystem/README.md" "LICENSE"
-  expect_scopes "code agent editor data_safety website" ".github/workflows/pages.yml" "Sources/WeiBei/Stores/WorkspaceStore.swift"
+  expect_scopes "code agent editor data_safety acceptance website" ".github/workflows/pages.yml" "Sources/WeiBei/Stores/WorkspaceStore.swift"
   expect_scopes "release" ".github/workflows/release.yml" "script/build_release_dmg.sh" "PRIVACY.md"
   expect_scopes "release" "script/check_package_size_policy.py"
   expect_scopes "release" "script/verify_update_installation.py"
-  expect_scopes "code agent editor data_safety" "Sources/WeiBei/Stores/WorkspaceStore.swift"
-  expect_scopes "code editor" "Sources/WeiBei/WebEditor/src/editor.ts" "Sources/WeiBeiCore/MarkdownAttachmentStore.swift"
-  expect_scopes "editor" "tsconfig.editor.json" "script/build_editor.mjs"
-  expect_scopes "code data_safety" "Tests/WeiBeiSafetyTests/CourseProjectRootSelfCheck.swift"
-  expect_scopes "code data_safety" "Sources/WeiBei/Views/SidebarView.swift" "Sources/WeiBei/Views/CourseDrawerHost.swift"
-  expect_scopes "code data_safety" "Sources/WeiBeiCore/LearningModels.swift" "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" "Sources/WeiBeiCore/NoteSourceRelations.swift"
-  expect_scopes "code agent" "Sources/WeiBeiCore/NativeAgentRuntime/NativeAgentLoop.swift"
-  expect_scopes "code" "App/Sources/ConversationController.swift" "App/WindowBridge/NativeWindowBridge.swift"
-  expect_scopes "code agent editor data_safety" "App/Sources/AppDelegate.swift"
-  expect_scopes "code release" "App/project.yml"
-  expect_scopes "release" "App/Resources/Web/diagram.html" "App/script/check-ci.sh"
+  expect_scopes "code agent editor data_safety acceptance" "Sources/WeiBei/Stores/WorkspaceStore.swift"
+  expect_scopes "code editor acceptance" "Sources/WeiBei/WebEditor/src/editor.ts" "Sources/WeiBeiCore/MarkdownAttachmentStore.swift"
+  expect_scopes "editor acceptance" "tsconfig.editor.json" "script/build_editor.mjs"
+  expect_scopes "code data_safety acceptance" "Tests/WeiBeiSafetyTests/CourseProjectRootSelfCheck.swift"
+  expect_scopes "code data_safety acceptance" "Sources/WeiBei/Views/SidebarView.swift" "Sources/WeiBei/Views/CourseDrawerHost.swift"
+  expect_scopes "code data_safety acceptance" "Sources/WeiBeiCore/LearningModels.swift" "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" "Sources/WeiBeiCore/NoteSourceRelations.swift"
+  expect_scopes "code agent acceptance" "Sources/WeiBeiCore/NativeAgentRuntime/NativeAgentLoop.swift"
+  expect_scopes "code acceptance" "App/Sources/ConversationController.swift" "App/WindowBridge/NativeWindowBridge.swift"
+  expect_scopes "code agent editor data_safety acceptance" "App/Sources/AppDelegate.swift"
+  expect_scopes "code release acceptance" "App/project.yml"
+  expect_scopes "release acceptance" "App/Resources/Web/diagram.html" "App/script/check-ci.sh"
   expect_scopes "tools" "tsconfig.json" "script/homebrew/generate_cask.test.mjs"
   expect_scopes "release tools" "DesignSystem/scripts/build-icns.ts"
-  expect_scopes "code agent editor release tools" "package.json" "package-lock.json"
+  expect_scopes "code agent editor release acceptance tools" "package.json" "package-lock.json"
+  expect_scopes "" "script/release.py" "script/release_candidate.py" "script/verify_public_release.py"
+  expect_scopes "release" "VERSION" "script/build_release_dmg.sh"
+  expect_scopes "acceptance" "App/UITests/OnboardingUITests.swift"
   echo "CI scope self-check passed"
   exit 0
 fi

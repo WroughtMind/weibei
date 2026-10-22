@@ -94,7 +94,10 @@ with tempfile.TemporaryDirectory() as directory:
         ('字体生成工具', ['script/convert_editor_fonts.py'], {'app-check', 'catalyst-check'}),
         ('字体工具依赖', ['script/editor-font-requirements.txt'], {'app-check', 'catalyst-check'}),
         ('缓存输入', ['.github/actions/catalyst-cache/action.yml', 'script/ci_cache_key.py'], {'catalyst-check'}),
-        ('发布接力', ['script/release.py', 'script/release_candidate.py'], {'catalyst-check'}),
+        ('发布接力', ['script/release.py', 'script/release_candidate.py', 'script/verify_public_release.py'], set()),
+        ('版本号', ['VERSION'], {'catalyst-check'}),
+        ('原生 UI 测试', ['App/UITests/OnboardingUITests.swift'], {'catalyst-check'}),
+        ('发布接力与应用混合', ['script/release.py', 'App/Sources/ConversationController.swift'], {'app-check', 'catalyst-check'}),
         ('定向诊断入口', ['.github/workflows/diagnose.yml'], {'catalyst-check'}),
         ('安装包声明', ['PRIVACY.md'], {'catalyst-check'}),
         ('打包脚本', ['script/build_release_dmg.sh'], {'catalyst-check'}),
@@ -117,8 +120,12 @@ with tempfile.TemporaryDirectory() as directory:
         assert jobs - {'scope', 'fast-check'} == expected, (label, jobs, expected)
         if scopes['code'] == 'true':
             require_steps(jobs, steps, 'app-check', {'compile', 'core', 'dev'})
-        if any(scopes[k] == 'true' for k in ['code', 'editor', 'release']):
-            require_steps(jobs, steps, 'catalyst-check', {'dependencies', 'compile', 'launch', 'acceptance'})
+        if any(scopes[k] == 'true' for k in ['code', 'editor', 'release', 'acceptance']):
+            require_steps(jobs, steps, 'catalyst-check', {'dependencies', 'compile', 'launch'})
+        if scopes['acceptance'] == 'true':
+            require_steps(jobs, steps, 'catalyst-check', {'native_full_screen', 'acceptance'})
+        elif 'catalyst-check' in jobs:
+            assert not {'native_full_screen', 'acceptance'} & steps['catalyst-check'], label
         if scopes['editor'] == 'true':
             require_steps(jobs, steps, 'app-check', {'dependencies', 'editor'})
         if scopes['agent'] == 'true' or scopes['data_safety'] == 'true':
@@ -144,7 +151,7 @@ for scenario in ('picker', 'conversation', 'business'):
 mutated = copy.deepcopy(JOBS)
 compile_step = next(s for s in mutated['app-check']['steps'] if s.get('id') == 'compile')
 compile_step['if'] = False
-jobs, steps = selected(dict.fromkeys(['code', 'agent', 'editor', 'data_safety', 'release', 'tools', 'website'], 'true'), jobs=mutated)
+jobs, steps = selected(dict.fromkeys(['code', 'agent', 'editor', 'data_safety', 'release', 'acceptance', 'tools', 'website'], 'true'), jobs=mutated)
 try:
     require_steps(jobs, steps, 'app-check', {'compile'})
 except AssertionError:
@@ -167,7 +174,7 @@ for event, name in [('pull_request', '快速编译与核心自检'), ('workflow_
     assert expression_value(gate['name'], {'github': {'event_name': event}}) == name, '手动结果不得覆盖 PR 合并门槛'
 assert condition(gate['if'], {'github': {'event_name': 'pull_request'}, 'inputs': {'diagnostic_scenario': ''}})
 assert set(gate['needs']) == set(JOBS) - {'fast-check', 'diagnostic'}
-outputs = dict.fromkeys(['code', 'agent', 'editor', 'data_safety', 'release', 'tools', 'website'], 'true')
+outputs = dict.fromkeys(['code', 'agent', 'editor', 'data_safety', 'release', 'acceptance', 'tools', 'website'], 'true')
 for failed_job in [None, *gate['needs']]:
     for outcome in (['success'] if failed_job is None else ['failure', 'cancelled', 'skipped']):
         results = {name: {'result': 'success', 'outputs': outputs if name == 'scope' else {}} for name in gate['needs']}
