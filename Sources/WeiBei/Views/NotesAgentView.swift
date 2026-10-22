@@ -3301,9 +3301,9 @@ struct FloatingSelectionAgentView: View {
                 .frame(width: 10, height: 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(store.ui("拖动边框调整浮窗大小", "Drag the border to resize")))
-        .accessibilityIdentifier("selection-float-resize-border")
+        // These mouse-only edge regions must not become one full-panel AX
+        // element: its hit area would cover the conversation and composer.
+        .accessibilityHidden(true)
     }
 
     private func resizeFloatingAgent(edge: FloatingAgentResizeEdge, value: DragGesture.Value?) {
