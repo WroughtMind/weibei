@@ -168,6 +168,8 @@
 	<dict/>
 	<key>WeiBeiArchitecture</key>
 	<string>$(WEIBEI_TARGET_ARCH)</string>
+	<key>WeiBeiBuildConfiguration</key>
+	<string>$(CONFIGURATION)</string>
 	<key>WeiBeiGitCommit</key>
 	<string>$(WEIBEI_GIT_COMMIT)</string>
 	<key>WeiBeiSourceDirty</key>

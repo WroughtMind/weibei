@@ -126,6 +126,7 @@ targets:
         WeiBeiGitCommit: $(WEIBEI_GIT_COMMIT)
         WeiBeiSourceDirty: $(WEIBEI_SOURCE_DIRTY)
         WeiBeiArchitecture: $(WEIBEI_TARGET_ARCH)
+        WeiBeiBuildConfiguration: $(CONFIGURATION)
         SUFeedURL: $(WEIBEI_SPARKLE_FEED_URL)
         SUPublicEDKey: $(WEIBEI_SPARKLE_PUBLIC_KEY)
         SUEnableAutomaticChecks: true

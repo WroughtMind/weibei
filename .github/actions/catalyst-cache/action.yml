@@ -1,0 +1,38 @@
+name: Catalyst build cache
+description: Restore locked dependencies and compiler intermediates for one native architecture.
+inputs:
+  arch:
+    description: Native architecture
+    required: true
+outputs:
+  key:
+    description: Exact cache key for preserving intermediates after a test failure
+    value: ${{ steps.identity.outputs.prefix }}${{ github.job }}-${{ github.sha }}
+  paths:
+    description: Regenerable dependency and compiler directories, excluding final Apps
+    value: ${{ steps.identity.outputs.paths }}
+runs:
+  using: composite
+  steps:
+    - id: identity
+      shell: bash
+      env:
+        TARGET_ARCH: ${{ inputs.arch }}
+      run: |
+        python3 script/ci_cache_key.py "$TARGET_ARCH" >> "$GITHUB_OUTPUT"
+        cat >> "$GITHUB_OUTPUT" <<'PATHS'
+        paths<<CACHE_PATHS
+        ~/.npm
+        ~/Library/Caches/pip
+        .build/catalyst-packages
+        .build/catalyst-*/Build/Intermediates.noindex
+        .build/catalyst-*/ModuleCache.noindex
+        CACHE_PATHS
+        PATHS
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ steps.identity.outputs.paths }}
+        key: ${{ steps.identity.outputs.prefix }}${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          ${{ steps.identity.outputs.prefix }}${{ github.job }}-
+          ${{ steps.identity.outputs.prefix }}

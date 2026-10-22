@@ -96,6 +96,14 @@ final class OnboardingUITests: XCTestCase {
                 else { element.click() }
                 if action == "fill" {
                     let value = try XCTUnwrap(request["value"])
+                    // A secure field may open the system Password AutoFill window.
+                    // Dismiss that window directly before typing, so XCTest's
+                    // interruption handling cannot invalidate the target field.
+                    let autoFill = app.windows["SafariPlatformSupportAutoCompleteWindow"]
+                    if autoFill.exists {
+                        autoFill.typeKey(.escape, modifierFlags: [])
+                        XCTAssertFalse(autoFill.exists, "Password AutoFill stayed open before text entry")
+                    }
                     element.typeKey("a", modifierFlags: .command)
                     element.typeText(value)
                 }

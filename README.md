@@ -140,7 +140,7 @@ npm ci
 | `make editor-build` | `npm run build:editor` |
 | `make genui-build` | `npm run build:genui` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)`（用法：`make perf-p95 LOG=<perf日志> METRIC=<指标名>`） |
-| `make release` | `./script/build_release_dmg.sh`（构建当前架构未公证的正式 DMG） |
+| `make release` | 先构建正式 App，再调用 `./script/build_release_dmg.sh` 装配当前架构未公证的 DMG |
 | `make clean` | `swift package clean && rm -rf dist`（保留 `node_modules` 与用户数据） |
 
 Node 工具链：在仓库根目录运行 `npm ci`，按唯一的 `package-lock.json` 安装依赖。`script/` 和 `DesignSystem/scripts/` 下的 TypeScript 工具用 `tsx` 运行，`npm run typecheck:tools` 做类型检查。
