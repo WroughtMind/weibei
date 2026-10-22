@@ -25,6 +25,7 @@
 - 首次拖动沿用锁定文字控件已有的点击、拖动区分，避免轻微抖动覆盖双击选词或触发滚动；进入拖动后仍跟踪回到起点的位置。
 - [会话桥接代码](../../App/Sources/CatalystConversationView.swift)将引用附到所属会话，并传入界面字号比例；[引用状态与发送代码](../../Sources/WeiBei/Stores/WorkspaceStore+SelectionChat.swift)负责去重、携带和失败恢复。
 - [输入框引用与浮窗代码](../../Sources/WeiBei/Views/NotesAgentView.swift)共用引用胶囊。浮窗边缘向[原生窗口桥接](../../App/WindowBridge/NativeWindowBridge.swift)注册自己的点击范围；鼠标按下时核对所属窗口、工具栏和 UIKit 实际命中对象，在事件到达网页前接管整段按下、拖动与松开，按固定窗口起点计算位移。移出边缘后仍完成本次拖动，失活时结束拖动，卸载或换窗时注销；最后一个边缘注销后移除鼠标监视器。
+- [编辑器宿主代码](../../Sources/WeiBei/Views/RichMarkdownEditorView.swift)在文档被列表隐藏时保留聚焦请求，不向隐藏编辑器派发原生或网页聚焦；恢复显示后再处理，避免列表搜索框失去输入焦点。
 
 ## 检查范围
 

@@ -11,20 +11,6 @@ import Litext
 /// editor bridge and write gate. Enabled only in the separately identified check App.
 @MainActor
 enum CatalystBusinessCheck {
-    static var focusTrace: [[String: String]] = []
-    static func recordFocus(_ event: String, _ fields: [String: String]) {
-        focusTrace.append(fields.merging(["event": event, "uptime": String(ProcessInfo.processInfo.systemUptime)]) { _, new in new })
-    }
-    static func currentFocusForTrace() -> String {
-        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
-        let responders = windows.flatMap(descendants).filter(\.isFirstResponder)
-        return responders.map { view in
-            let name = String(describing: type(of: view))
-            let identity = String(describing: ObjectIdentifier(view))
-            let owner = view.window.map { String(describing: ObjectIdentifier($0)) } ?? "none"
-            return "\(name) \(identity) window=\(owner)"
-        }.joined(separator: "\n")
-    }
     private static var started = false
     private static var fileDropDiagnostics: [String: Any] = [:]
     private static var contextualPickerDiagnostics: [String: Any] = [:]
@@ -495,10 +481,8 @@ enum CatalystBusinessCheck {
             "ui_evidence": "in-process behavior checks; Xcode system pointer injection covers selection actions, quotes and floating geometry; no human hardware acceptance", "checks": [String: String]()
         ]
         var checks: [String: String] = [:]
-        var resumingSavedRun = false
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
-            result[resumingSavedRun ? "reopen_focus_trace" : "focus_trace"] = focusTrace
             let resizeEvents = CatalystDesktopWindow.shared.floatingResizeEventsForCheck()
             if !resizeEvents.isEmpty { result["floating_resize_events"] = resizeEvents }
             result["floating_resize_capture_state"] = CatalystDesktopWindow.shared.floatingResizeStateForCheck()
@@ -571,7 +555,6 @@ enum CatalystBusinessCheck {
             if let previous = try? Data(contentsOf: resultURL),
                let saved = try JSONSerialization.jsonObject(with: previous) as? [String: Any],
                saved["status"] as? String == "awaiting_reopen" {
-                resumingSavedRun = true
                 result = saved; checks = saved["checks"] as? [String: String] ?? [:]
                 store.continueLastWork()
                 store.ensureAllStudySessionMessagesLoaded()
@@ -853,7 +836,7 @@ enum CatalystBusinessCheck {
             }
             try check("original_import_reader_and_editor", materials.count == 1 && notes.count == 1
                 && noteEditor.bounds.width > 100 && noteEditor.bounds.height > 100)
-            result["contextual_picker_layout"] = try await verifyContextualPickerAlignment(store, in: noteEditor.window!)
+            result["contextual_picker_layout"] = try await verifyContextualPickerAlignment(store, in: noteEditor.window!, noteEditor: noteEditor)
             try check("material_and_note_pickers_align", true)
             if scenario == "picker" {
                 try write("diagnostic_passed")
@@ -1189,24 +1172,7 @@ enum CatalystBusinessCheck {
         }
     }
 
-    private static func verifyContextualPickerAlignment(_ store: WorkspaceStore, in window: UIWindow) async throws -> [String: Any] {
-        recordFocus("picker_enter", ["pane": String(describing: store.focusedPane), "request": String(store.focusRequest),
-            "responders": currentFocusForTrace(), "window": String(describing: ObjectIdentifier(window))])
-        let focusObservers = [UIApplication.didBecomeActiveNotification, UIApplication.willResignActiveNotification,
-            UIScene.didActivateNotification, UIScene.willDeactivateNotification,
-            UIWindow.didBecomeKeyNotification, UIWindow.didResignKeyNotification].map { name in
-            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
-                MainActor.assumeIsolated {
-                    recordFocus("lifecycle", ["name": note.name.rawValue, "responders": currentFocusForTrace(),
-                        "application": String(UIApplication.shared.applicationState.rawValue),
-                        "object": note.object.map { String(describing: ObjectIdentifier($0 as AnyObject)) } ?? "none"])
-                }
-            }
-        }
-        defer {
-            recordFocus("picker_exit", ["responders": currentFocusForTrace()])
-            focusObservers.forEach(NotificationCenter.default.removeObserver)
-        }
+    private static func verifyContextualPickerAlignment(_ store: WorkspaceStore, in window: UIWindow, noteEditor: WKWebView) async throws -> [String: Any] {
         let materialID = store.selectedMaterialItem?.id
         let noteID = store.activeNoteItemID
         store.showContextualBrowser(.material)
@@ -1239,7 +1205,6 @@ enum CatalystBusinessCheck {
                             "expected_top": String(describing: max(0, window.safeAreaInsets.top - frame.minY))]
                 }
             return ["fields": fields, "hosts": hosts,
-                    "responders": currentFocusForTrace(),
                     "window_bounds": String(describing: window.bounds),
                     "window_safe_area": String(describing: window.safeAreaInsets)]
         }
@@ -1282,14 +1247,19 @@ enum CatalystBusinessCheck {
                     abs($0.minY - $1.minY) < 1 && abs($0.height - $1.height) < 1
                 }
         }
-        // A repeated pane-focus request must keep typing in the visible picker,
-        // even though its persistent editor remains mounted underneath it.
-        recordFocus("picker_refocus_probe", ["request": String(store.focusRequest), "responders": currentFocusForTrace()])
+        // The real Focus Notes command must keep typing in the visible picker.
         store.focus(.notes)
-        _ = try await onboardingUICommand("query", id: "SceneWindow")
+        let pickerFocusRequest = store.focusRequest
+        try await until("notes pane focus request reaches the editor host") {
+            guard let coordinator = noteEditor.navigationDelegate as? RichMarkdownEditorView.Coordinator else { return false }
+            return coordinator.isReady && coordinator.focusRequest == pickerFocusRequest
+        }
         try await until("notes pane focus keeps the visible picker search active") {
+            // Observe after the same web view has processed prior JS commands.
+            guard let documentFocused = try await noteEditor.evaluateJavaScript("document.hasFocus()") as? Bool else { return false }
             contextualPickerDiagnostics["after_pane_focus_request"] = layoutState()
-            return searchFields().last?.isFirstResponder == true
+            contextualPickerDiagnostics["hidden_editor_has_focus"] = documentFocused
+            return !documentFocused && searchFields().last?.isFirstResponder == true
         }
         store.settingsPresented = true
         defer { store.settingsPresented = false }
@@ -1332,6 +1302,21 @@ enum CatalystBusinessCheck {
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("contextual-pickers.png"))
+        // Showing the editor again must apply the request deferred while hidden,
+        // without issuing a new one just to make this check pass.
+        let requestBeforeClosing = store.focusRequest
+        store.materialPickerPresented = false
+        store.notePickerPresented = false
+        try await until("closing the picker restores editor input without a new focus request") {
+            let documentFocused = (try? await noteEditor.evaluateJavaScript(
+                "document.hasFocus() && document.activeElement?.isContentEditable === true"
+            ) as? Bool) == true
+            let nativeFocused = descendants(noteEditor).contains(where: \.isFirstResponder)
+            let unchanged = store.focusRequest == requestBeforeClosing
+            contextualPickerDiagnostics["editor_focus_restored"] = ["request_unchanged": unchanged,
+                "native_editor_focused": nativeFocused, "document_focused": documentFocused]
+            return unchanged && !noteEditor.isHidden && nativeFocused && documentFocused
+        }
         return ["search_frames": frames.map { String(describing: $0) },
                 "search_frames_before_settings": framesBeforeSettings.map { String(describing: $0) },
                 "layout_diagnostics": contextualPickerDiagnostics,
