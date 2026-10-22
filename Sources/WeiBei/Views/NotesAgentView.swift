@@ -2630,6 +2630,9 @@ private struct FloatingSelectionPreview: View {
 }
 
 struct FloatingSelectionAgentView: View {
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+    @ObservedObject private var hitDiagnostic = FloatingSelectionHitDiagnostic.shared
+#endif
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
@@ -2673,12 +2676,15 @@ struct FloatingSelectionAgentView: View {
                 promptBody
             }
         }
-        .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
+        .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius,
+                             allowsDecorationHitTesting: allowsDecorationHitTesting)
 #if targetEnvironment(macCatalyst)
         .background {
-            ConversationSelectionPanelProbe(position: placedOrigin)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            if hitDiagnosticStage < 2 {
+                ConversationSelectionPanelProbe(position: placedOrigin)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
 #endif
         .onChange(of: interaction.selectionContext) { previous, next in
@@ -2753,6 +2759,18 @@ struct FloatingSelectionAgentView: View {
 
     private var showsExpandedBody: Bool {
         expanded || interaction.keepFloatingSelectionForAnswer
+    }
+
+    private var allowsDecorationHitTesting: Bool {
+        hitDiagnosticStage < 3
+    }
+
+    private var hitDiagnosticStage: Int {
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+        hitDiagnostic.stage
+#else
+        0
+#endif
     }
 
     private var promptBody: some View {
@@ -3006,7 +3024,9 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .overlay {
-            floatingResizeBorder
+            if hitDiagnosticStage == 0 {
+                floatingResizeBorder
+            }
         }
         .onAppear {
             draftFocused = true

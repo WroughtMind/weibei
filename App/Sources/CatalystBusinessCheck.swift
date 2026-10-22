@@ -1334,7 +1334,7 @@ enum CatalystBusinessCheck {
                     xFraction: Double((center.x - window.bounds.minX) / window.bounds.width),
                     yFraction: Double((center.y - window.bounds.minY) / window.bounds.height))
             }
-            let key = (button.isDescendant(of: mainConversation.view) ? "main_" : "floating_") + (button.accessibilityIdentifier ?? "")
+            let key = (button.isDescendant(of: mainConversation.view) ? "main_" : "floating_") + (button.accessibilityIdentifier ?? "") + "_stage_\(FloatingSelectionHitDiagnostic.shared.stage)"
             pointerSnapshots[key] = snapshot
             try JSONSerialization.data(withJSONObject: pointerSnapshots, options: [.prettyPrinted, .sortedKeys])
                 .write(to: LabMetrics.directory.appendingPathComponent("selection-pointer-hit.json"))
@@ -1403,6 +1403,12 @@ enum CatalystBusinessCheck {
         guard let mainQuote = store.conversationQuotes(in: mainID).last, mainQuote.messageID != nil else {
             throw Failure("main quote lost its message anchor")
         }
+        store.dismissFloatingSelectionAgent()
+        try await until("main quote preview target is uncovered and floating draft is saved") {
+            floatingComposer() == nil && store.composerDraft(for: threadID) == draft
+                && mainComposer.text == mainQuoted
+        }
+        try capture("selection-quote-main-visible.png")
         try await activate("conversation-quote-\(mainQuote.id.uuidString)")
         try await until("quote preview offers its source") {
             try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") != nil
@@ -1410,6 +1416,10 @@ enum CatalystBusinessCheck {
         try await activate("conversation-quote-source-\(mainQuote.id.uuidString)")
         try await until("returning to the quoted message closes the preview") {
             try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") == nil
+        }
+        guard store.openAgentReplySource(source) else { throw Failure("floating discussion did not reopen after main quote preview") }
+        try await until("floating quote target and draft are restored after main preview") {
+            floatingComposer()?.text == draft && floatingMessage(messageID, in: window) != nil
         }
         guard let floatingConversation = conversation(containing: messageID), floatingConversation.isFloatingConversation,
               let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
@@ -1428,20 +1438,46 @@ enum CatalystBusinessCheck {
         try capture("selection-capsule-floating.png")
         let floatingCapsuleQuoted = floatingQuoted
         if try await accessibilityElement("conversation-selection-quote", forInteraction: true)?["hittable"] != "true" {
-            _ = try await onboardingUICommand("press-coordinate-diagnostic", id: "conversation-selection-quote")
-            var delivered = false
-            do {
-                try await until("floating coordinate baseline receives its quote", seconds: 3) {
-                    store.conversationQuotes(in: threadID).contains(where: { $0.text == floatingExcerpt && $0.messageID != nil })
-                        && !floatingConversation.selection.hasSelection && floatingConversation.selectionActions.isHidden
+            let diagnostic = FloatingSelectionHitDiagnostic.shared
+            for stage in 0...3 {
+                diagnostic.stage = stage
+                // Let SwiftUI commit this diagnostic-only layer change before
+                // comparing identical real pointer operations in each variant.
+                try await Task.sleep(for: .milliseconds(250))
+                window.layoutIfNeeded()
+                guard let candidate = conversation(containing: messageID) else {
+                    throw Failure("floating diagnostic lost its conversation")
                 }
-                delivered = true
-            } catch { }
-            pointerSnapshots["floating_coordinate_baseline"] = ["pointer_delivered": delivered]
-            try JSONSerialization.data(withJSONObject: pointerSnapshots, options: [.prettyPrinted, .sortedKeys])
-                .write(to: LabMetrics.directory.appendingPathComponent("selection-pointer-hit.json"))
-            try capture("selection-quote-floating.png")
-            throw Failure("floating quote accessibility hit test failed; coordinate pointer delivered: \(delivered)")
+                let excerpt = try selectVisibleParagraph(in: candidate)
+                _ = try reachableCapsuleButton(candidate.selectionActions.quoteButton)
+                let ready = try await accessibilityElement("conversation-selection-quote", forInteraction: true) ?? [:]
+                let existingIDs = Set(store.conversationQuotes(in: threadID).map(\.id))
+                diagnostic.events.removeAll()
+                if ready["hittable"] == "true" {
+                    try await activate("conversation-selection-quote")
+                } else {
+                    _ = try await onboardingUICommand("press-coordinate-diagnostic", id: "conversation-selection-quote")
+                }
+                var delivered = false
+                do {
+                    try await until("floating coordinate baseline receives its quote", seconds: 3) {
+                        store.conversationQuotes(in: threadID).contains(where: { $0.text == excerpt && $0.messageID != nil })
+                            && !candidate.selection.hasSelection && candidate.selectionActions.isHidden
+                    }
+                    delivered = true
+                } catch { }
+                pointerSnapshots["stage_\(stage)_pointer_baseline"] = [
+                    "hittable": ready["hittable"] ?? "missing", "pointer_delivered": delivered,
+                    "button_events": diagnostic.events,
+                    "drafts_preserved": mainComposer.text == mainQuoted && floatingComposer()?.text == floatingQuoted]
+                try JSONSerialization.data(withJSONObject: pointerSnapshots, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: LabMetrics.directory.appendingPathComponent("selection-pointer-hit.json"))
+                try capture("selection-quote-floating-stage-\(stage).png")
+                let added = Set(store.conversationQuotes(in: threadID).map(\.id)).subtracting(existingIDs)
+                store.removeConversationQuotes(added, in: threadID)
+            }
+            diagnostic.stage = 0
+            throw Failure("floating hit-test layer comparison completed; accessibility gate remains failed")
         }
         try await activate("conversation-selection-quote")
         try await until("floating capsule attaches a quote without touching main draft") {
@@ -1468,7 +1504,6 @@ enum CatalystBusinessCheck {
                 && store.conversationQuotes(in: mainID).contains(where: { $0.id == mainQuote.id })
                 && mainComposer.text == mainQuoted
         }
-        try capture("selection-quote-main-visible.png")
         store.clearSelectionAttachments()
         store.removeConversationQuotes(Set(store.conversationQuotes(in: mainID).map(\.id)), in: mainID)
         store.removeConversationQuotes(Set(store.conversationQuotes(in: threadID).map(\.id)), in: threadID)

@@ -36,6 +36,7 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-quote-main-visible.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-quote-floating.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-pointer-hit.json" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/"selection-quote-floating-stage-*.png \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/connection-cards.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/confirmed-import.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/contextual-pickers.png" \

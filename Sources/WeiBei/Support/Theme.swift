@@ -1958,7 +1958,8 @@ extension View {
             }
     }
 
-    func weibeiFloatingPanel(cornerRadius: CGFloat = 8, shadowOpacity: Double = 0.10) -> some View {
+    func weibeiFloatingPanel(cornerRadius: CGFloat = 8, shadowOpacity: Double = 0.10,
+                            allowsDecorationHitTesting: Bool = true) -> some View {
         let mode = WeiBeiThemeRuntime.mode
         let isGlass = mode.isGlass
         return self
@@ -1975,6 +1976,7 @@ extension View {
                             .fill(WeiBeiTheme.paperRaised.opacity(0.985))
                     }
                 }
+                .allowsHitTesting(allowsDecorationHitTesting)
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay(alignment: .top) {
@@ -1982,6 +1984,7 @@ extension View {
                     .fill(isGlass ? Color.clear : WeiBeiTheme.glassHighlight.opacity(0.24))
                     .frame(height: 1)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                    .allowsHitTesting(allowsDecorationHitTesting)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)
@@ -1989,6 +1992,7 @@ extension View {
                         WeiBeiTheme.hairline.opacity(isGlass ? 0.22 : 1),
                         lineWidth: 1
                     )
+                    .allowsHitTesting(allowsDecorationHitTesting)
             }
             .shadow(color: WeiBeiTheme.ink.opacity(shadowOpacity * 0.50), radius: 7, y: 3)
     }
