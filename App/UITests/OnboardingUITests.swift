@@ -38,6 +38,7 @@ final class OnboardingUITests: XCTestCase {
             decliningExternalPrompt = true
             defer { decliningExternalPrompt = false }
             let notifications = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
+            guard notifications.state != .notRunning else { return false }
             let dialogs = notifications.dialogs.allElementsBoundByIndex
             guard dialogs.count == 1, let dialog = dialogs.first else { return false }
             let title = "Allow \"Python\" to find devices on local networks?"

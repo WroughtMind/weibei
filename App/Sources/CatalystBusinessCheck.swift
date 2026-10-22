@@ -495,9 +495,10 @@ enum CatalystBusinessCheck {
             "ui_evidence": "in-process behavior checks; Xcode system pointer injection covers selection actions, quotes and floating geometry; no human hardware acceptance", "checks": [String: String]()
         ]
         var checks: [String: String] = [:]
+        var resumingSavedRun = false
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
-            result["focus_trace"] = focusTrace
+            result[resumingSavedRun ? "reopen_focus_trace" : "focus_trace"] = focusTrace
             let resizeEvents = CatalystDesktopWindow.shared.floatingResizeEventsForCheck()
             if !resizeEvents.isEmpty { result["floating_resize_events"] = resizeEvents }
             result["floating_resize_capture_state"] = CatalystDesktopWindow.shared.floatingResizeStateForCheck()
@@ -570,6 +571,7 @@ enum CatalystBusinessCheck {
             if let previous = try? Data(contentsOf: resultURL),
                let saved = try JSONSerialization.jsonObject(with: previous) as? [String: Any],
                saved["status"] as? String == "awaiting_reopen" {
+                resumingSavedRun = true
                 result = saved; checks = saved["checks"] as? [String: String] ?? [:]
                 store.continueLastWork()
                 store.ensureAllStudySessionMessagesLoaded()
@@ -1279,6 +1281,15 @@ enum CatalystBusinessCheck {
                 && zip(focusedFrames, framesBeforeSettings).allSatisfy {
                     abs($0.minY - $1.minY) < 1 && abs($0.height - $1.height) < 1
                 }
+        }
+        // A repeated pane-focus request must keep typing in the visible picker,
+        // even though its persistent editor remains mounted underneath it.
+        recordFocus("picker_refocus_probe", ["request": String(store.focusRequest), "responders": currentFocusForTrace()])
+        store.focus(.notes)
+        _ = try await onboardingUICommand("query", id: "SceneWindow")
+        try await until("notes pane focus keeps the visible picker search active") {
+            contextualPickerDiagnostics["after_pane_focus_request"] = layoutState()
+            return searchFields().last?.isFirstResponder == true
         }
         store.settingsPresented = true
         defer { store.settingsPresented = false }
