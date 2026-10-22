@@ -19,7 +19,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var fullScreenCheckNotifications: [String] = []
     private var fullScreenCheckToolbarChanges: [String] = []
     private var toolbarClickCheckEventNumber = 1
-    private weak var checkedUpdateNotes: NSPopover?
+    private weak var checkedUpdateNotes: NativeUpdateNotesPopover?
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
