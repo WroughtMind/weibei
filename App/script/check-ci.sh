@@ -4,6 +4,13 @@ set -euo pipefail
 [[ "${CI:-}" == true ]] || { echo '本机候选请在画中画验收。' >&2; exit 1; }
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+SCENARIO=all
+if (( $# > 0 )); then
+  [[ $# == 2 && "$1" == --scenario ]] || { echo 'usage: check-ci.sh [--scenario all|conversation|business|picker]' >&2; exit 2; }
+  SCENARIO="$2"
+fi
+case "$SCENARIO" in all|conversation|business|picker) ;; *) echo 'unknown diagnostic scenario' >&2; exit 2 ;; esac
+export WEIBEI_ACCEPTANCE_SCENARIO="$SCENARIO"
 python3 App/script/business-server.test.py
 node --test App/script/floating-label-check.test.mjs App/script/mermaid-measurement-observer.test.mjs App/script/mermaid-mounted-label-geometry.test.mjs
 CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-business-ci.XXXXXX")"
@@ -54,12 +61,13 @@ export CHECK_SUPPORT="$HOME/Library/Application Support/$WEIBEI_BUNDLE_IDENTIFIE
 export CHECK_SOURCE="$(git rev-parse HEAD)"
 mkdir -p App/Evidence
 python3 - <<'PY'
-import json, os, shutil, subprocess, tempfile, time
+import json, os, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 app = os.environ['CHECK_APP']
 support = Path(os.environ['CHECK_SUPPORT'])
 source = os.environ['CHECK_SOURCE']
 evidence = Path('App/Evidence')
+scenario = os.environ['WEIBEI_ACCEPTANCE_SCENARIO']
 
 def launch(argument):
     subprocess.run(['open', '-n', '-W', app, '--args', argument], check=True, timeout=360)
@@ -72,8 +80,10 @@ def verify(path, source_key, status=None):
     assert status is None or result['status'] == status, result
     return result
 
-launch('--self-check')
-conversation = verify(support / 'Results/latest.json', 'source_revision')
+conversation = None
+if scenario in ('all', 'conversation'):
+    launch('--self-check')
+    conversation = verify(support / 'Results/latest.json', 'source_revision')
 required_conversation_checks = {
     'empty_conversation_scroll_does_not_load_history', 'hover_strip_attachment_preserves_input',
     'prepend_preserves_reading_text', 'resize_preserves_reading_paragraph',
@@ -84,9 +94,13 @@ required_conversation_checks = {
     'code_highlight_selection_and_scroll_persist', 'math_image_and_diagram_resources',
     'single_long_answer_complete_and_revisitable',
 }
-assert conversation['idiom'] == 'mac' and required_conversation_checks <= conversation['checks'].keys(), conversation
-for filename in ['latest.json', 'window.png', 'diagram.png']:
-    shutil.copy2(support / 'Results' / filename, evidence / ('ci-conversation-' + filename))
+if conversation:
+    assert conversation['idiom'] == 'mac' and required_conversation_checks <= conversation['checks'].keys(), conversation
+    for filename in ['latest.json', 'window.png', 'diagram.png']:
+        shutil.copy2(support / 'Results' / filename, evidence / ('ci-conversation-' + filename))
+if scenario == 'conversation':
+    print('会话定向诊断通过；不替代完整合并检查。')
+    sys.exit(0)
 
 business_path = support / 'Workspace/business-check.json'
 # Xcode's UI testing service drives real SwiftUI controls from another process.
@@ -104,6 +118,13 @@ with ui_log.open('w') as log:
 if ui_result.returncode:
     print(ui_log.read_text()[-16000:])
 ui_result.check_returncode()
+if scenario == 'picker':
+    focused = verify(business_path, 'source', 'diagnostic_passed')
+    assert focused['scenario'] == 'picker'
+    assert focused['checks']['material_and_note_pickers_align'] == 'passed'
+    shutil.copy2(business_path, evidence / 'ci-picker-diagnostic.json')
+    print('选择界面定向诊断通过；不替代完整合并检查。')
+    sys.exit(0)
 verify(business_path, 'source', 'awaiting_reopen')
 launch('--exit-after-check')
 business = verify(business_path, 'source', 'passed')
@@ -148,7 +169,10 @@ shutil.copy2(business_path, evidence / 'ci-business.json')
 shutil.copy2(support / 'Results/workspace.png', evidence / 'ci-business-window.png')
 for filename in ['onboarding-library-failure.png', 'onboarding-library-recovered.png', 'onboarding-chat-credentials.png', 'onboarding-chat-rejected.png', 'onboarding-chat-models.png', 'onboarding-chat-ready.png', 'selection-composers.png', 'selection-discussion.png', 'selection-capsule-main.png', 'selection-capsule-floating.png', 'connection-cards.png', 'confirmed-import.png', 'selection-rich-answer-11pt.png', 'reasoning-composer.png', 'toolbar-navigation.png', 'toolbar-panes.png', 'toolbar-actions.png']:
     shutil.copy2(support / 'Results' / filename, evidence / ('ci-' + filename))
-print(f"{len(conversation['checks'])} 项会话检查与 {len(business['checks'])} 项原业务保存重开检查通过；含选区胶囊、浮窗 11pt 公式与图示、原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。")
+print(f"{len(conversation['checks']) if conversation else 0} 项会话检查与 {len(business['checks'])} 项原业务保存重开检查通过；含选区胶囊、浮窗 11pt 公式与图示、原生工具栏、选区双输入框与引用定位，不替代鼠标、输入法及触控板体验验收。")
+if scenario == 'business':
+    print('业务定向诊断通过；不替代完整合并检查。')
+    sys.exit(0)
 
 with tempfile.TemporaryDirectory(prefix='weibei-quit-check-') as scratch:
     helper = str(Path(scratch) / 'quit')

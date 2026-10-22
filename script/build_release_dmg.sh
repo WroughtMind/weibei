@@ -70,6 +70,12 @@ if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 UPDATE_SUMMARY_SOURCE="${WEIBEI_UPDATE_SUMMARY_FILE:-$ROOT_DIR/Docs/update-summaries/v$APP_VERSION.md}"
 PACKAGE_VERSION="$(node -p 'require(process.argv[1]).version' "$ROOT_DIR/package.json")"
+node - "$ROOT_DIR/package-lock.json" "$APP_VERSION" <<'JS'
+const lock = require(process.argv[2]);
+if (lock.version !== process.argv[3] || lock.packages[''].version !== process.argv[3]) {
+  throw new Error('package-lock.json root versions differ from VERSION');
+}
+JS
 if [[ "$PACKAGE_VERSION" != "$APP_VERSION" ]]; then
   echo "release failed: package.json version $PACKAGE_VERSION does not match VERSION $APP_VERSION" >&2
   exit 16
@@ -103,7 +109,9 @@ npm --prefix "$ROOT_DIR" ls --all >/dev/null
 
 mkdir -p "$RELEASE_DIR"
 
-"$ROOT_DIR/script/build_and_run.sh" package
+# Assembly consumes the exact production App already built by build_and_run.sh.
+# Never rebuild it here: launch evidence must describe the bytes put in the DMG.
+python3 "$ROOT_DIR/script/verify_built_app.py" "$BASE_APP" "$TARGET_ARCH"
 
 if [[ -s "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
   if [[ "$(/usr/bin/printf '%s' "$SPARKLE_PUBLIC_KEY" | /usr/bin/base64 -D 2>/dev/null | /usr/bin/wc -c | /usr/bin/tr -d ' ')" != "32" ]]; then

@@ -44,6 +44,7 @@ perf-p95: ## p95 性能解析：make perf-p95 LOG=<perf-log> METRIC=<metric-name
 	./script/perf_p95.sh $(LOG) $(METRIC)
 
 release: ## 构建未公证的正式 DMG
+	./script/build_and_run.sh package
 	./script/build_release_dmg.sh
 
 clean: ## 清理构建产物（不删 node_modules / 用户数据）

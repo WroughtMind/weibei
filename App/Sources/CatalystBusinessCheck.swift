@@ -357,12 +357,14 @@ enum CatalystBusinessCheck {
 
     static func run(store: WorkspaceStore, endpoint: String) async {
         guard !started else { return }; started = true
+        let scenario = Bundle.main.object(forInfoDictionaryKey: "WeiBeiAcceptanceScenario") as? String ?? "all"
         let root = store.storageURL.deletingLastPathComponent()
         let resultURL = root.appendingPathComponent("business-check.json")
         var result: [String: Any] = [
             "source": Bundle.main.object(forInfoDictionaryKey: "WeiBeiGitCommit") as? String ?? "",
             "source_dirty": Bundle.main.object(forInfoDictionaryKey: "WeiBeiSourceDirty") as? Bool ?? true,
             "bundle_id": Bundle.main.bundleIdentifier ?? "", "platform": "Mac Catalyst",
+            "scenario": scenario,
             "configuration": "Release", "transport": "original client against isolated local SSE fixture; no live model claim",
             "ui_evidence": "in-process behavior checks; toolbar also receives local AppKit mouse events, not physical mouse/IME acceptance", "checks": [String: String]()
         ]
@@ -433,6 +435,8 @@ enum CatalystBusinessCheck {
             try check("native_toolbar_render_snapshots", true)
         }
         do {
+            // Focused business checks must not depend on a preceding conversation run.
+            try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
             if let previous = try? Data(contentsOf: resultURL),
                let saved = try JSONSerialization.jsonObject(with: previous) as? [String: Any],
                saved["status"] as? String == "awaiting_reopen" {
@@ -715,6 +719,11 @@ enum CatalystBusinessCheck {
                 && noteEditor.bounds.width > 100 && noteEditor.bounds.height > 100)
             result["contextual_picker_layout"] = try await verifyContextualPickerAlignment(store, in: noteEditor.window!)
             try check("material_and_note_pickers_align", true)
+            if scenario == "picker" {
+                try write("diagnostic_passed")
+                if CommandLine.arguments.contains("--exit-after-check") { exit(0) }
+                return
+            }
             store.noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "\n\n" + noteMarker)
             try await until("editor command acknowledged") { store.noteEditorCommand == nil && store.noteText.contains(noteMarker) }
             let captured = await store.freshActiveNoteEditorSnapshot()

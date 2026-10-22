@@ -140,7 +140,7 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 | `make editor-build` | `npm run build:editor` |
 | `make genui-build` | `npm run build:genui` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)` (usage: `make perf-p95 LOG=<perf-log> METRIC=<metric-name>`) |
-| `make release` | `./script/build_release_dmg.sh` (build the current architecture's unnotarized release DMG) |
+| `make release` | Build the production App, then assemble the current architecture's unnotarized DMG with `./script/build_release_dmg.sh` |
 | `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules` and user data) |
 
 Node tooling: run `npm ci` at the repository root to install dependencies from the single `package-lock.json`. TypeScript tools under `script/` and `DesignSystem/scripts/` run with `tsx`; `npm run typecheck:tools` checks their types.

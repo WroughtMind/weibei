@@ -28,7 +28,7 @@ BUILD_NUMBER="$(python3 script/build_number.py)"
 GIT_COMMIT="$(git rev-parse HEAD)"
 SPARKLE_PUBLIC_KEY="${WEIBEI_SPARKLE_PUBLIC_KEY:-ZmrxjOBf7NQbqEbm1nU2X6oI0kfeM/W1IvC9HM7AX8Q=}"
 SPARKLE_FEED_URL="${WEIBEI_SPARKLE_FEED_URL:-https://github.com/WroughtMind/weibei/releases/latest/download/appcast-$TARGET_ARCH.xml}"
-DERIVED="$ROOT_DIR/.build/catalyst-$TARGET_ARCH"
+DERIVED="$ROOT_DIR/.build/catalyst-$TARGET_ARCH-$CONFIGURATION-$ACCEPTANCE"
 PACKAGES="$ROOT_DIR/.build/catalyst-packages"
 DIST_DIR="${WEIBEI_DIST_DIR:-$ROOT_DIR/dist}"
 [[ "$ACCEPTANCE" != 1 ]] || DIST_DIR="$DIST_DIR/acceptance"
@@ -43,14 +43,17 @@ fi
 [[ "$(printf '%s' "$SPARKLE_PUBLIC_KEY" | base64 -D | wc -c | tr -d ' ')" == 32 ]] || {
   echo 'build failed: Sparkle public key must contain 32 bytes' >&2; exit 7;
 }
-npm run build:editor >/dev/null
-npm run build:genui >/dev/null
+TIMINGS="$ROOT_DIR/.build/timings/$TARGET_ARCH-$CONFIGURATION-$ACCEPTANCE.jsonl"
+phase() { python3 "$ROOT_DIR/script/timed_run.py" --record "$TIMINGS" "$@"; }
+phase --name editor -- npm run build:editor
+phase --name genui -- npm run build:genui
 SOURCE_DIRTY=false
 [[ -z "$(git status --porcelain=v1 --untracked-files=normal)" ]] || SOURCE_DIRTY=true
 mkdir -p "$DERIVED" "$DIST_DIR"
-xcodebuild -project App/WeiBei.xcodeproj -scheme WeiBei \
+phase --name resolve-packages --log "$DERIVED/dependencies.log" -- \
+  xcodebuild -project App/WeiBei.xcodeproj -scheme WeiBei \
   -clonedSourcePackagesDirPath "$PACKAGES" -onlyUsePackageVersionsFromResolvedFile \
-  -resolvePackageDependencies > "$DERIVED/dependencies.log" 2>&1 || {
+  -resolvePackageDependencies || {
     tail -30 "$DERIVED/dependencies.log"; exit 8;
   }
 MARKDOWN_DIR="$PACKAGES/checkouts/MarkdownView"
@@ -70,7 +73,8 @@ fi
 # Recreate final products so removed build phases cannot leave stale embedded code.
 rm -rf "$DERIVED/Build/Products/$CONFIGURATION-maccatalyst/魏碑.app" \
   "$DERIVED/Build/Products/$CONFIGURATION/WeiBeiWindowBridge.bundle"
-xcodebuild -project App/WeiBei.xcodeproj -scheme WeiBei \
+phase --name "compile-$CONFIGURATION-acceptance-$ACCEPTANCE" --log "$DERIVED/build.log" -- \
+  xcodebuild -showBuildTimingSummary -project App/WeiBei.xcodeproj -scheme WeiBei \
   -configuration "$CONFIGURATION" -destination "platform=macOS,variant=Mac Catalyst,arch=$TARGET_ARCH" \
   -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$PACKAGES" \
   -onlyUsePackageVersionsFromResolvedFile \
@@ -81,7 +85,7 @@ xcodebuild -project App/WeiBei.xcodeproj -scheme WeiBei \
   "WEIBEI_SOURCE_DIRTY=$SOURCE_DIRTY" "WEIBEI_BUNDLE_IDENTIFIER=$BUNDLE_ID" \
   "WEIBEI_SPARKLE_FEED_URL=$SPARKLE_FEED_URL" "WEIBEI_SPARKLE_PUBLIC_KEY=$SPARKLE_PUBLIC_KEY" \
   "LAB_BUSINESS_CHECK_ENDPOINT=${WEIBEI_BUSINESS_CHECK_ENDPOINT:-}" \
-  build > "$DERIVED/build.log" 2>&1 || {
+  build || {
     awk '/error:|^ld:|BUILD FAILED/ { if (++n <= 30) print }' "$DERIVED/build.log"; exit 9;
   }
 BUILT_APP="$DERIVED/Build/Products/$CONFIGURATION-maccatalyst/魏碑.app"
@@ -93,6 +97,9 @@ CONTENTS="$STAGED_APP/Contents"
 PLIST="$CONTENTS/Info.plist"
 plutil -replace WeiBeiSourceDirty -bool "$SOURCE_DIRTY" "$PLIST"
 plutil -insert WeiBeiAcceptanceChecks -bool "$([[ "$ACCEPTANCE" == 1 ]] && echo true || echo false)" "$PLIST"
+if [[ "$ACCEPTANCE" == 1 ]]; then
+  plutil -insert WeiBeiAcceptanceScenario -string "${WEIBEI_ACCEPTANCE_SCENARIO:-all}" "$PLIST"
+fi
 mkdir -p "$CONTENTS/Resources/Legal"
 # Xcode embeds the locked Sparkle artifact in the native bridge automatically.
 [[ -d "$CONTENTS/PlugIns/WeiBeiWindowBridge.bundle/Contents/Frameworks/Sparkle.framework" ]] || {

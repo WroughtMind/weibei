@@ -1,0 +1,77 @@
+name: 魏碑定向诊断
+on:
+  workflow_call:
+    inputs:
+      arch:
+        required: true
+        type: string
+      scenario:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 失败的原生架构
+        required: true
+        type: choice
+        options: [arm64, x86_64]
+      scenario:
+        description: 失败场景；结果不会覆盖合并门禁
+        required: true
+        type: choice
+        options: [picker, conversation, business]
+permissions:
+  contents: read
+concurrency:
+  group: diagnostic-${{ github.ref }}-${{ inputs.arch }}-${{ inputs.scenario }}
+  cancel-in-progress: true
+jobs:
+  diagnose:
+    name: 定向诊断 ${{ inputs.arch }} / ${{ inputs.scenario }}
+    runs-on: ${{ inputs.arch == 'arm64' && 'macos-26' || 'macos-26-intel' }}
+    timeout-minutes: 75
+    env:
+      WEIBEI_TARGET_ARCH: ${{ inputs.arch }}
+      SCENARIO: ${{ inputs.scenario }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+      - name: 验证诊断范围
+        run: |
+          case "$WEIBEI_TARGET_ARCH" in arm64|x86_64) ;; *) exit 2 ;; esac
+          case "$SCENARIO" in picker|conversation|business) ;; *) exit 2 ;; esac
+      - id: catalyst_cache
+        uses: ./.github/actions/catalyst-cache
+        with:
+          arch: ${{ inputs.arch }}
+      - name: 准备隔离原生环境
+        run: |
+          test "$(uname -m)" = "$WEIBEI_TARGET_ARCH"
+          bash App/script/prepare-ci-desktop.sh
+          npm ci
+          python3 -m venv "$RUNNER_TEMP/weibei-editor-fonts"
+          "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
+          echo "$RUNNER_TEMP/weibei-editor-fonts/bin" >> "$GITHUB_PATH"
+      - name: 运行失败场景
+        run: ./App/script/check-ci.sh --scenario "$SCENARIO"
+      - name: 保留诊断与阶段耗时
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: diagnostic-${{ inputs.arch }}-${{ inputs.scenario }}-${{ github.sha }}
+          include-hidden-files: true
+          path: |
+            App/Evidence/ci*
+            .build/timings/
+            .build/catalyst-*/build.log
+            .build/catalyst-*/dependencies.log
+          if-no-files-found: error
+          retention-days: 2
+      - name: 诊断失败时保留编译中间结果
+        id: failed_cache
+        if: ${{ !cancelled() && failure() && steps.catalyst_cache.outcome == 'success' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ steps.catalyst_cache.outputs.key }}
+          path: ${{ steps.catalyst_cache.outputs.paths }}

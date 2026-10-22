@@ -1,4 +1,5 @@
 name: 魏碑双架构正式发布
+run-name: 魏碑 ${{ inputs.version }} / release-request-${{ inputs.request_id }}
 
 on:
   workflow_dispatch:
@@ -7,6 +8,18 @@ on:
         description: "与 VERSION/package.json 一致的 major.minor.patch（不含 v）"
         required: true
         type: string
+      expected_source:
+        description: "接力入口固定的主线提交；留空时使用所选 ref"
+        type: string
+        default: ""
+      request_id:
+        description: "接力请求标识，用于识别和恢复同一次发布"
+        type: string
+        default: ""
+      candidate_run:
+        description: "复用同一源码的 release-ready 运行编号；留空则构建"
+        type: string
+        default: ""
       publish:
         description: "公开发布版本；不勾选时只构建并验证，不创建 Tag 或 Release"
         required: false
@@ -15,6 +28,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: weibei-production-release
@@ -35,7 +49,12 @@ jobs:
         env:
           RELEASE_REF: ${{ github.ref }}
           PUBLISH_RELEASE: ${{ inputs.publish }}
+          EXPECTED_SOURCE: ${{ inputs.expected_source }}
+          CURRENT_SOURCE: ${{ github.sha }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
         run: |
+          [[ -z "$EXPECTED_SOURCE" || "$EXPECTED_SOURCE" == "$CURRENT_SOURCE" ]]
+          [[ -z "$CANDIDATE_RUN" || "$CANDIDATE_RUN" =~ ^[0-9]+$ ]]
           if [[ "$PUBLISH_RELEASE" == true ]]; then
             test "$RELEASE_REF" = "refs/heads/main"
           fi
@@ -50,6 +69,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
+          PUBLISH_RELEASE: ${{ inputs.publish }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
         run: |
           build_number="$(python3 script/build_number.py)"
           previous_tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
@@ -65,12 +86,15 @@ jobs:
           test "$(node -p 'require("./package.json").version')" = "$RELEASE_VERSION"
           test -s "Docs/update-summaries/v$RELEASE_VERSION.md"
           test -s "Docs/releases/v$RELEASE_VERSION.md"
-          ! git show-ref --verify --quiet "refs/tags/v$RELEASE_VERSION"
-          ! gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          if [[ "$PUBLISH_RELEASE" == true && -z "$CANDIDATE_RUN" ]]; then
+            ! git show-ref --verify --quiet "refs/tags/v$RELEASE_VERSION"
+            ! gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          fi
           printf 'value=%s\n' "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
           printf 'tag=v%s\n' "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
   build:
+    if: inputs.candidate_run == ''
     env:
       WEIBEI_BUILD_NUMBER: ${{ needs.authorize.outputs.build_number }}
     name: 构建 ${{ matrix.arch }} 正式资产
@@ -100,6 +124,11 @@ jobs:
           swift --version
           xcodebuild -version
 
+      - id: catalyst_cache
+        uses: ./.github/actions/catalyst-cache
+        with:
+          arch: ${{ matrix.arch }}
+
       - name: 安装固定构建依赖
         run: |
           npm ci
@@ -128,14 +157,20 @@ jobs:
           test -s "$RUNNER_TEMP/weibei-sparkle-private-key"
           chmod 600 "$RUNNER_TEMP/weibei-sparkle-private-key"
 
-      - name: 通过唯一 Catalyst 入口构建、签名并验证当前架构 DMG
+      - name: 构建并验证正式 App
+        env:
+          WEIBEI_TARGET_ARCH: ${{ matrix.arch }}
+          WEIBEI_SPARKLE_PUBLIC_KEY: ${{ secrets.WEIBEI_SPARKLE_PUBLIC_KEY }}
+        run: ./script/build_and_run.sh package
+
+      - name: 使用已验证正式 App 装配当前架构 DMG
         env:
           WEIBEI_TARGET_ARCH: ${{ matrix.arch }}
           WEIBEI_SPARKLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/weibei-sparkle-private-key
           WEIBEI_SPARKLE_PUBLIC_KEY: ${{ secrets.WEIBEI_SPARKLE_PUBLIC_KEY }}
           WEIBEI_REQUIRE_APPCAST: "1"
           WEIBEI_VERIFY_LAUNCH: "1"
-        run: ./script/build_release_dmg.sh --arch "${{ matrix.arch }}"
+        run: python3 script/timed_run.py --name assemble-dmg --record ".build/timings/${{ matrix.arch }}-release.jsonl" -- ./script/build_release_dmg.sh --arch "${{ matrix.arch }}"
 
       - name: 再验收公开资产集合
         env:
@@ -159,7 +194,7 @@ jobs:
         env:
           WEIBEI_SPARKLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/weibei-sparkle-private-key
           WEIBEI_SPARKLE_PUBLIC_KEY: ${{ secrets.WEIBEI_SPARKLE_PUBLIC_KEY }}
-        run: python3 script/verify_update_installation.py --arch "${{ matrix.arch }}"
+        run: python3 script/timed_run.py --name verify-update --record ".build/timings/${{ matrix.arch }}-release.jsonl" -- python3 script/verify_update_installation.py --arch "${{ matrix.arch }}"
 
       - name: 保留更新安装检查证据
         if: ${{ always() }}
@@ -169,6 +204,18 @@ jobs:
           path: dist/release/${{ matrix.arch }}/update-verification-*
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: 保留构建日志与阶段耗时
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: build-timings-${{ matrix.arch }}
+          include-hidden-files: true
+          path: |
+            .build/timings/
+            .build/catalyst-*/build.log
+            .build/catalyst-*/dependencies.log
+          if-no-files-found: warn
 
       - name: 保存架构发布资产
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -189,7 +236,18 @@ jobs:
         if: ${{ always() }}
         run: /bin/rm -f "$RUNNER_TEMP/weibei-sparkle-private-key"
 
+      - name: 验证失败时保留编译中间结果
+        id: failed_cache
+        if: ${{ !cancelled() && failure() && steps.catalyst_cache.outcome == 'success' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ steps.catalyst_cache.outputs.key }}
+          path: ${{ steps.catalyst_cache.outputs.paths }}
+
   prepare:
+    if: ${{ always() && needs.authorize.result == 'success' && (needs.build.result == 'success' || (inputs.candidate_run != '' && needs.build.result == 'skipped')) }}
+    outputs:
+      build_number: ${{ steps.candidate.outputs.build_number }}
     env:
       WEIBEI_BUILD_NUMBER: ${{ needs.authorize.outputs.build_number }}
     name: 汇总并验证完整候选资产
@@ -203,18 +261,21 @@ jobs:
           fetch-depth: 0
 
       - name: 下载苹果芯片资产
+        if: inputs.candidate_run == ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-arm64
           path: dist/publish
 
       - name: 下载英特尔资产
+        if: inputs.candidate_run == ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-x86_64
           path: dist/publish
 
       - name: 汇总校验并生成双架构 Homebrew Cask
+        if: inputs.candidate_run == ''
         env:
           RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
         run: |
@@ -276,6 +337,30 @@ jobs:
           (root / 'candidate.json').write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
           PYTHON
 
+      - name: 下载已有正式候选
+        if: inputs.candidate_run != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-ready
+          path: dist/publish
+          run-id: ${{ inputs.candidate_run }}
+          github-token: ${{ github.token }}
+
+      - name: 核对完整候选与来源
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+        run: |
+          options=()
+          if [[ -n "$CANDIDATE_RUN" ]]; then
+            options+=(--run-id "$CANDIDATE_RUN" --verify-run)
+          else
+            options+=(--run-id "$GITHUB_RUN_ID")
+          fi
+          python3 script/release_candidate.py dist/publish --version "$RELEASE_VERSION" --source "$GITHUB_SHA" "${options[@]}"
+
       - name: 保存可发布候选集合
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -294,7 +379,7 @@ jobs:
           retention-days: 14
 
   publish:
-    if: inputs.publish
+    if: ${{ !cancelled() && inputs.publish && needs.authorize.result == 'success' && needs.prepare.result == 'success' }}
     name: 公开已经验证的双架构候选
     needs: [authorize, prepare]
     runs-on: macos-26
@@ -302,50 +387,31 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: 取出发布与核验工具
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
       - name: 下载完整候选集合
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-ready
           path: dist/publish
 
-      - name: 核对下载集合与已验证候选完全一致
-        env:
-          RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
-          WEIBEI_BUILD_NUMBER: ${{ needs.authorize.outputs.build_number }}
-        run: |
-          python3 - <<'PYTHON'
-          import hashlib, json, os
-          from pathlib import Path
-          root = Path('dist/publish')
-          record = json.loads((root / 'candidate.json').read_text())
-          assert record['version'] == os.environ['RELEASE_VERSION']
-          assert record['build_number'] == os.environ['WEIBEI_BUILD_NUMBER']
-          assert record['source_revision'] == os.environ['GITHUB_SHA']
-          for name, expected in record['files'].items():
-              assert hashlib.sha256((root / name).read_bytes()).hexdigest() == expected, name
-          PYTHON
-
-      - name: 创建草稿、上传完整资产后再公开
+      - name: 核对候选并公开相同资产
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
-          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
-        run: |
-          gh release create "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --draft \
-            --notes-file dist/publish/release-notes.md \
-            --title "魏碑 $RELEASE_VERSION"
-          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-            dist/publish/WeiBei-*.dmg \
-            dist/publish/WeiBei-*.dmg.sha256 \
-            "dist/publish/WeiBei-$RELEASE_VERSION-debug-symbols.zip" \
-            dist/publish/appcast-arm64.xml \
-            dist/publish/appcast-x86_64.xml \
-            dist/publish/appcast.xml \
-            dist/publish/weibei.rb
-          gh release edit "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --latest \
-            --draft=false
+        run: python3 script/release_candidate.py dist/publish --version "$RELEASE_VERSION" --source "$GITHUB_SHA" --publish
+
+      - name: 验证公开下载与最新更新清单
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
+        run: python3 script/verify_public_release.py dist/publish --version "$RELEASE_VERSION" --source "$GITHUB_SHA" --output dist/public-verification.json
+
+      - name: 保存公开渠道回执
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-verification
+          path: dist/public-verification.json
+          if-no-files-found: warn
