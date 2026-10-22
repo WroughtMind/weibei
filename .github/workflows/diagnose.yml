@@ -64,8 +64,8 @@ jobs:
           path: |
             App/Evidence/ci*
             .build/timings/
-            .build/catalyst-*/build.log
-            .build/catalyst-*/dependencies.log
+            .build/catalyst-*/build*.log
+            .build/catalyst-*/dependencies*.log
           if-no-files-found: error
           retention-days: 2
       - name: 诊断失败时保留编译中间结果

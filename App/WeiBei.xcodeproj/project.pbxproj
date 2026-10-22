@@ -1495,6 +1495,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.changfenhuang.weibei.WindowBridge;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(WEIBEI_ACCEPTANCE_CONDITIONS)";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
@@ -1528,6 +1529,7 @@
 					"-ObjC",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(WEIBEI_BUNDLE_IDENTIFIER)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(WEIBEI_ACCEPTANCE_CONDITIONS)";
 				PRODUCT_MODULE_NAME = WeiBei;
 				PRODUCT_NAME = "魏碑";
 				SDKROOT = iphoneos;
@@ -1692,6 +1694,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.changfenhuang.weibei.WindowBridge;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(WEIBEI_ACCEPTANCE_CONDITIONS)";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
@@ -1725,6 +1728,7 @@
 					"-ObjC",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(WEIBEI_BUNDLE_IDENTIFIER)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(WEIBEI_ACCEPTANCE_CONDITIONS)";
 				PRODUCT_MODULE_NAME = WeiBei;
 				PRODUCT_NAME = "魏碑";
 				SDKROOT = iphoneos;

@@ -46,6 +46,7 @@ jobs:
       build_number: ${{ steps.scope.outputs.build_number }}
       code: ${{ steps.scope.outputs.code }}
       release: ${{ steps.scope.outputs.release }}
+      acceptance: ${{ steps.scope.outputs.acceptance }}
       agent: ${{ steps.scope.outputs.agent }}
       editor: ${{ steps.scope.outputs.editor }}
       data_safety: ${{ steps.scope.outputs.data_safety }}
@@ -79,6 +80,7 @@ jobs:
       - name: 验证工作流触发范围
         run: |
           python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          python3 -m compileall -q script
           python3 script/check_ci_routing.py
           python3 script/check_build_number.py
           python3 -m unittest discover -s script -p 'test_release_flow.py' -v
@@ -199,7 +201,7 @@ jobs:
       WEIBEI_TARGET_ARCH: ${{ matrix.arch }}
     name: Catalyst ${{ matrix.arch }} 构建、会话与安装包
     needs: scope
-    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.editor == 'true' || needs.scope.outputs.release == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.editor == 'true' || needs.scope.outputs.release == 'true' || needs.scope.outputs.acceptance == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -226,6 +228,7 @@ jobs:
 
       - name: 记录系统原生全屏对照
         id: native_full_screen
+        if: needs.scope.outputs.acceptance == 'true' || github.event_name == 'workflow_dispatch'
         # 系统本身无法进出全屏时立即保留环境证据，避免继续编译后才重复超时。
         # 后续真实 App 仍须独立完成全屏进出。
         run: |
@@ -308,6 +311,7 @@ jobs:
 
       - name: 在当前架构的真实 Catalyst 进程检查会话
         id: acceptance
+        if: needs.scope.outputs.acceptance == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           mkdir -p .build
           date '+%Y-%m-%d %H:%M:%S' > .build/ci-acceptance-start.txt
@@ -334,6 +338,11 @@ jobs:
       - name: 通过唯一入口构建正式 Catalyst 应用
         id: compile
         run: ./script/build_and_run.sh package
+
+      - name: 确认未重复编译验收依赖
+        id: reuse
+        if: needs.scope.outputs.acceptance == 'true' || github.event_name == 'workflow_dispatch'
+        run: python3 script/check_build_reuse.py ".build/catalyst-$WEIBEI_TARGET_ARCH-Release/build-1.log" ".build/catalyst-$WEIBEI_TARGET_ARCH-Release/build-0.log"
 
       - name: 检查聊天格式、原样代码与标准用例
         run: |
@@ -384,8 +393,8 @@ jobs:
             App/Evidence/ci*.ips
             App/Evidence/ci-onboarding-ui.xcresult
             .build/ci-launch-console.log
-            .build/catalyst-*/build.log
-            .build/catalyst-*/dependencies.log
+            .build/catalyst-*/build*.log
+            .build/catalyst-*/dependencies*.log
             .build/timings/
           retention-days: 2
           if-no-files-found: error
@@ -425,7 +434,7 @@ jobs:
               'website-check': enabled('website') or full,
               'tools-check': enabled('tools') or full,
               'app-check': manual or any(enabled(k) for k in ('code', 'agent', 'editor', 'data_safety')),
-              'catalyst-check': manual or enabled('code') or enabled('editor') or enabled('release'),
+              'catalyst-check': manual or enabled('code') or enabled('editor') or enabled('release') or enabled('acceptance'),
           }
           for name, needed in required.items():
               allowed = ('success',) if needed else ('success', 'skipped')
