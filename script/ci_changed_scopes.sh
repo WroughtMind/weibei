@@ -69,6 +69,10 @@ classify_path() {
       acceptance=true ;;
   esac
   if [[ "$code" == true || "$editor" == true ]]; then acceptance=true; fi
+  if [[ "$path" == script/check_build_reuse.py ]]; then
+    release=true
+    acceptance=true
+  fi
 
   # Node 工具脚本类型检查（npm run typecheck:tools 的触发面）。
   # 根 tsconfig.json 的 include 覆盖 DesignSystem/scripts;package.json/lockfile 变化
@@ -120,6 +124,7 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes "agent editor data_safety acceptance" "App/Sources/AppDelegate.swift"
   expect_scopes "release acceptance" "App/project.yml"
   expect_scopes "release acceptance" "App/Resources/Web/diagram.html" "App/script/check-ci.sh"
+  expect_scopes "release acceptance" "script/check_build_reuse.py"
   expect_scopes "tools" "tsconfig.json" "script/homebrew/generate_cask.test.mjs"
   expect_scopes "release tools" "DesignSystem/scripts/build-icns.ts"
   expect_scopes "code agent editor release acceptance tools" "package.json" "package-lock.json"

@@ -97,6 +97,7 @@ with tempfile.TemporaryDirectory() as directory:
         ('字体生成工具', ['script/convert_editor_fonts.py'], {'app-check', 'catalyst-check'}),
         ('字体工具依赖', ['script/editor-font-requirements.txt'], {'app-check', 'catalyst-check'}),
         ('缓存输入', ['.github/actions/catalyst-cache/action.yml', 'script/ci_cache_key.py'], {'catalyst-check'}),
+        ('编译复用检查', ['script/check_build_reuse.py'], {'catalyst-check'}),
         ('发布接力', ['script/release.py', 'script/release_candidate.py', 'script/verify_public_release.py'], set()),
         ('版本号', ['VERSION'], {'catalyst-check'}),
         ('原生 UI 测试', ['App/UITests/OnboardingUITests.swift'], {'catalyst-check'}),
@@ -126,9 +127,9 @@ with tempfile.TemporaryDirectory() as directory:
         if any(scopes[k] == 'true' for k in ['code', 'editor', 'release', 'acceptance']):
             require_steps(jobs, steps, 'catalyst-check', {'dependencies', 'compile', 'launch'})
         if scopes['acceptance'] == 'true':
-            require_steps(jobs, steps, 'catalyst-check', {'native_full_screen', 'acceptance'})
+            require_steps(jobs, steps, 'catalyst-check', {'native_full_screen', 'acceptance', 'reuse'})
         elif 'catalyst-check' in jobs:
-            assert not {'native_full_screen', 'acceptance'} & steps['catalyst-check'], label
+            assert not {'native_full_screen', 'acceptance', 'reuse'} & steps['catalyst-check'], label
         if scopes['editor'] == 'true':
             require_steps(jobs, steps, 'app-check', {'dependencies', 'editor'})
         if scopes['agent'] == 'true' or scopes['data_safety'] == 'true':

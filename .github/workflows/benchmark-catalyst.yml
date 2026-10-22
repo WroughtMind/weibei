@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 75
     env:
       WEIBEI_TARGET_ARCH: ${{ inputs.arch || 'x86_64' }}
+      TOOLCHAINS: com.apple.dt.toolchain.XcodeDefault
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:

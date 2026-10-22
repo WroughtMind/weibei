@@ -339,6 +339,11 @@ jobs:
         id: compile
         run: ./script/build_and_run.sh package
 
+      - name: 确认未重复编译验收依赖
+        id: reuse
+        if: needs.scope.outputs.acceptance == 'true' || github.event_name == 'workflow_dispatch'
+        run: python3 script/check_build_reuse.py ".build/catalyst-$WEIBEI_TARGET_ARCH-Release/build-1.log" ".build/catalyst-$WEIBEI_TARGET_ARCH-Release/build-0.log"
+
       - name: 检查聊天格式、原样代码与标准用例
         run: |
           swift build --package-path .build/catalyst-packages/checkouts/swift-cmark --product cmark-gfm-bin
