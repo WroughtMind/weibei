@@ -25,7 +25,7 @@ classify_path() {
   # SwiftPM host targets live in Sources/ and Tests/. Native App sources and
   # Xcode settings are checked by Catalyst, not by an unrelated host rebuild.
   case "$path" in
-    Sources/*|Tests/*|Package.swift|Package.resolved|package.json|package-lock.json|Config/*)
+    Sources/*|Tests/*|Package.swift|Package.resolved|package.json|package-lock.json|Config/*|script/run_self_check.py)
       code=true ;;
   esac
 
@@ -120,6 +120,7 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes "code data_safety acceptance" "Sources/WeiBei/Views/SidebarView.swift" "Sources/WeiBei/Views/CourseDrawerHost.swift"
   expect_scopes "code data_safety acceptance" "Sources/WeiBeiCore/LearningModels.swift" "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" "Sources/WeiBeiCore/NoteSourceRelations.swift"
   expect_scopes "code agent acceptance" "Sources/WeiBeiCore/NativeAgentRuntime/NativeAgentLoop.swift"
+  expect_scopes "code acceptance" "script/run_self_check.py"
   expect_scopes "acceptance" "App/Sources/ConversationController.swift" "App/WindowBridge/NativeWindowBridge.swift"
   expect_scopes "agent editor data_safety acceptance" "App/Sources/AppDelegate.swift"
   expect_scopes "release acceptance" "App/project.yml"

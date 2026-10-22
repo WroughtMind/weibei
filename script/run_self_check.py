@@ -1,13 +1,53 @@
 #!/usr/bin/env python3
 """Run the Swift self-check and PDF workers without registering Dock applications."""
 import argparse
+import os
 from pathlib import Path
 import plistlib
 import shutil
+import signal
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def exit_on_signal(signum, _frame):
+    raise SystemExit(128 + signum)
+
+
+def run(command, *, capture_output=False):
+    process = None
+    interrupted = None
+
+    def forward_signal(signum, _frame):
+        nonlocal interrupted
+        interrupted = signum
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signum)
+            except ProcessLookupError:
+                pass
+
+    previous = {sig: signal.signal(sig, forward_signal)
+                for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        # A separate group lets cancellation also reach PDF worker descendants.
+        with subprocess.Popen(command, cwd=ROOT, start_new_session=True,
+                              stdout=subprocess.PIPE if capture_output else None,
+                              text=True) as process:
+            if interrupted is not None:
+                forward_signal(interrupted, None)
+            output, _ = process.communicate()
+            code = process.returncode
+        if interrupted is not None:
+            raise SystemExit(128 + interrupted)
+        if code:
+            raise SystemExit(code if code > 0 else 128 - code)
+        return output
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def main():
@@ -17,9 +57,9 @@ def main():
     binary_dir = args.bin_dir
     if binary_dir is None:
         for product in ("WeiBeiSelfCheck", "WeiBeiPDFTextWorker"):
-            subprocess.run(["swift", "build", "--product", product], cwd=ROOT, check=True)
-        binary_dir = Path(subprocess.check_output(
-            ["swift", "build", "--show-bin-path"], cwd=ROOT, text=True
+            run(["swift", "build", "--product", product])
+        binary_dir = Path(run(
+            ["swift", "build", "--show-bin-path"], capture_output=True
         ).strip())
     binary_dir = binary_dir.resolve()
 
@@ -43,8 +83,11 @@ def main():
             "CFBundleVersion": "1",
             "LSBackgroundOnly": True,
         }))
-        return subprocess.run([str(executable), *check_args], cwd=ROOT).returncode
+        run([str(executable), *check_args])
+    return 0
 
 
 if __name__ == "__main__":
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, exit_on_signal)
     raise SystemExit(main())
