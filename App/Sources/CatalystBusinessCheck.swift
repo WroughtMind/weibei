@@ -1390,27 +1390,10 @@ enum CatalystBusinessCheck {
         _ = try reachableCapsuleButton(mainConversation.selectionActions.quoteButton)
         try await activate("conversation-selection-quote")
         try await until("main capsule attaches a quote without touching either draft") {
-            let ready = store.conversationQuotes(in: mainID).contains(where: { $0.text == mainExcerpt && $0.messageID != nil })
+            store.conversationQuotes(in: mainID).contains(where: { $0.text == mainExcerpt && $0.messageID != nil })
                 && mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
                 && !mainConversation.selection.hasSelection && mainConversation.selectionActions.isHidden
                 && workspaceIsFullyVisible()
-            if !ready {
-                let state: [String: Any] = [
-                    "expected_excerpt": mainExcerpt,
-                    "quotes": store.conversationQuotes(in: mainID).map { ["text": $0.text, "message_id": $0.messageID?.uuidString ?? ""] },
-                    "main_first_responder": mainComposer.isFirstResponder,
-                    "main_draft": mainComposer.text ?? "", "expected_main_draft": mainQuoted,
-                    "floating_draft": floatingComposer()?.text ?? "", "expected_floating_draft": draft,
-                    "has_selection": mainConversation.selection.hasSelection,
-                    "actions_hidden": mainConversation.selectionActions.isHidden,
-                    "workspace_visible": workspaceIsFullyVisible(),
-                    "main_composer_frame": String(describing: mainComposer.convert(mainComposer.bounds, to: window)),
-                    "main_composer_attached": mainComposer.window === window,
-                ]
-                try JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys])
-                    .write(to: LabMetrics.directory.appendingPathComponent("selection-quote-state.json"))
-            }
-            return ready
         }
         try await until("main quote pill is visible") {
             guard let quote = store.conversationQuotes(in: mainID).last else { return false }
@@ -1444,6 +1427,22 @@ enum CatalystBusinessCheck {
         _ = try reachableCapsuleButton(floatingConversation.selectionActions.quoteButton)
         try capture("selection-capsule-floating.png")
         let floatingCapsuleQuoted = floatingQuoted
+        if try await accessibilityElement("conversation-selection-quote", forInteraction: true)?["hittable"] != "true" {
+            _ = try await onboardingUICommand("press-coordinate-diagnostic", id: "conversation-selection-quote")
+            var delivered = false
+            do {
+                try await until("floating coordinate baseline receives its quote", seconds: 3) {
+                    store.conversationQuotes(in: threadID).contains(where: { $0.text == floatingExcerpt && $0.messageID != nil })
+                        && !floatingConversation.selection.hasSelection && floatingConversation.selectionActions.isHidden
+                }
+                delivered = true
+            } catch { }
+            pointerSnapshots["floating_coordinate_baseline"] = ["pointer_delivered": delivered]
+            try JSONSerialization.data(withJSONObject: pointerSnapshots, options: [.prettyPrinted, .sortedKeys])
+                .write(to: LabMetrics.directory.appendingPathComponent("selection-pointer-hit.json"))
+            try capture("selection-quote-floating.png")
+            throw Failure("floating quote accessibility hit test failed; coordinate pointer delivered: \(delivered)")
+        }
         try await activate("conversation-selection-quote")
         try await until("floating capsule attaches a quote without touching main draft") {
             store.conversationQuotes(in: threadID).contains(where: { $0.text == floatingExcerpt && $0.messageID != nil })
@@ -1464,6 +1463,12 @@ enum CatalystBusinessCheck {
                 && mainComposer.text == mainQuoted && floatingComposer()?.text == floatingQuoted
         }
         store.dismissFloatingSelectionAgent()
+        try await until("closing the floating panel leaves main quote pills visible") {
+            floatingComposer() == nil
+                && store.conversationQuotes(in: mainID).contains(where: { $0.id == mainQuote.id })
+                && mainComposer.text == mainQuoted
+        }
+        try capture("selection-quote-main-visible.png")
         store.clearSelectionAttachments()
         store.removeConversationQuotes(Set(store.conversationQuotes(in: mainID).map(\.id)), in: mainID)
         store.removeConversationQuotes(Set(store.conversationQuotes(in: threadID).map(\.id)), in: threadID)

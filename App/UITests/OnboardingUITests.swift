@@ -39,7 +39,6 @@ final class OnboardingUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(360) // Same bound as the existing CI app launch.
         var handled: String?
         var recordedUnreachable = Set<String>()
-        var recordedSelectionState = Set<String>()
         while app.state != .notRunning, Date() < deadline {
             guard let data = try? Data(contentsOf: requestURL),
                   let request = try JSONSerialization.jsonObject(with: data) as? [String: String],
@@ -72,10 +71,6 @@ final class OnboardingUITests: XCTestCase {
                         let hittable = element.isHittable
                         state["hittable"] = String(hittable)
                         state["ancestor_path"] = ancestorPath(in: root, identifier: id)?.joined(separator: "\n") ?? ""
-                        if id.hasPrefix("conversation-selection-"),
-                           recordedSelectionState.insert(id + String(hittable) + String(describing: snapshot.frame)).inserted {
-                            print("Selection readiness: " + String(data: try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]), encoding: .utf8)!)
-                        }
                         if !hittable {
                             let center = CGPoint(x: snapshot.frame.midX, y: snapshot.frame.midY)
                             state["overlapping_controls"] = identifiedControls(in: root, containing: center).joined(separator: "\n")
@@ -91,6 +86,13 @@ final class OnboardingUITests: XCTestCase {
                 } else {
                     response["visible_controls"] = identifiedControls(in: root).joined(separator: "\n")
                 }
+            case "press-coordinate-diagnostic":
+                guard element.exists, element.isEnabled, !element.frame.isEmpty else {
+                    throw DriverFailure(errorDescription: "Coordinate baseline has no mounted target: " + id)
+                }
+                // Diagnostic only: measure real pointer delivery independently
+                // of accessibility hit testing. The App still fails that gate.
+                element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
             case "press", "fill", "hover":
                 guard element.exists, element.isEnabled, element.isHittable else {
                     let screenshot = XCTAttachment(screenshot: app.screenshot())

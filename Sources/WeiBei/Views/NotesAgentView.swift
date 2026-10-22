@@ -3302,6 +3302,8 @@ struct FloatingSelectionAgentView: View {
                 .frame(width: 10, height: 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
+        .contentShape(.interaction, FloatingSelectionResizeOutline(
+            thickness: thickness, headerClearance: headerClearance, cornerSize: 10))
         // The eight edge regions handle pointer resizing. Exposing their union
         // as one accessibility element covers every control inside the panel.
         .accessibilityHidden(true)
@@ -3499,6 +3501,29 @@ private struct FloatingSelectionFeedHeightKey: PreferenceKey {
         if next > 1 {
             value = next
         }
+    }
+}
+
+private struct FloatingSelectionResizeOutline: Shape {
+    let thickness: CGFloat
+    let headerClearance: CGFloat
+    let cornerSize: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addRect(CGRect(x: rect.minX + cornerSize, y: rect.minY,
+                            width: max(0, rect.width - 2 * cornerSize), height: thickness))
+        path.addRect(CGRect(x: rect.minX + cornerSize, y: rect.maxY - thickness,
+                            width: max(0, rect.width - 2 * cornerSize), height: thickness))
+        let sideHeight = max(0, rect.height - headerClearance - thickness)
+        path.addRect(CGRect(x: rect.minX, y: rect.minY + headerClearance, width: thickness, height: sideHeight))
+        path.addRect(CGRect(x: rect.maxX - thickness, y: rect.minY + headerClearance, width: thickness, height: sideHeight))
+        for x in [rect.minX, rect.maxX - cornerSize] {
+            for y in [rect.minY, rect.maxY - cornerSize] {
+                path.addRect(CGRect(x: x, y: y, width: cornerSize, height: cornerSize))
+            }
+        }
+        return path
     }
 }
 
