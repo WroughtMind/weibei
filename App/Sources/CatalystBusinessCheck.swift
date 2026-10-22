@@ -1333,6 +1333,10 @@ enum CatalystBusinessCheck {
               mainComposer.text == mainQuoted, floatingComposer()?.text == draft else {
             throw Failure("main capsule copy changed the selected text or either draft")
         }
+        try await until("copy success feedback is mounted") {
+            let feedback = try await accessibilityElement("workspace-status-message")
+            return feedback?["label"] == store.ui("已复制", "Copied")
+        }
         try capture("selection-copy-feedback.png")
         _ = try selectVisibleParagraph(in: mainConversation)
         store.dismissFloatingSelectionAgent()

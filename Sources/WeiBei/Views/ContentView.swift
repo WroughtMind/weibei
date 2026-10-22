@@ -603,6 +603,7 @@ private struct WorkspaceStatusBanner: View {
             Text(message)
                 .weiBeiText(12, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.ink)
+                .accessibilityIdentifier("workspace-status-message")
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
