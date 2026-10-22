@@ -7,6 +7,7 @@ import os
 import platform
 from pathlib import Path
 import runpy
+import signal
 import socket
 import socketserver
 import subprocess
@@ -18,7 +19,7 @@ if not (os.environ.get("CI") == "true" and os.environ.get("GITHUB_ACTIONS") == "
         and os.environ.get("RUNNER_OS") == "macOS" and platform.machine() == "arm64"):
     raise SystemExit("only the isolated hosted ARM runner may run this diagnostic")
 mode = sys.argv[1]
-if mode not in ("original", "no-dns"):
+if mode not in ("original", "no-dns", "xcode"):
     raise SystemExit("unknown diagnostic mode")
 output = Path("App/Evidence/ci-network-" + mode)
 output.mkdir(parents=True, exist_ok=True)
@@ -57,6 +58,25 @@ if len(sys.argv) > 2 and sys.argv[2] == "worker":
 
     http.server.ThreadingHTTPServer = ObservedServer
     record("start", mode=mode, executable=sys.executable, version=sys.version, ppid=os.getppid())
+    if mode == "xcode":
+        child = subprocess.Popen(["xcodebuild", "-project", "App/UITests/WeiBeiOnboardingUI.xcodeproj",
+                                  "-scheme", "WeiBeiOnboardingUITests", "-showdestinations"],
+                                 stdout=sys.stdout, stderr=sys.stderr)
+        record("xcode.begin", child=child.pid)
+        try:
+            status = child.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=5)
+            (output / "xcode-result.json").write_text(json.dumps({"pid": child.pid, "status": 124, "reason": "destination discovery timeout"}))
+            record("xcode.timeout", child=child.pid)
+            raise
+        (output / "xcode-result.json").write_text(json.dumps({"pid": child.pid, "status": status}))
+        record("xcode.end", child=child.pid, status=status)
+        if status:
+            raise SystemExit(status)
+        time.sleep(30)
+        raise SystemExit(0)
     target = Path("App/script/business-server.py")
     sys.argv = [str(target), "--output", str(output)]
     runpy.run_path(str(target), run_name="__main__")
@@ -67,7 +87,7 @@ else:
     screenshot("before")
     log_start = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with (output / "resolver.log").open("w") as log:
-        worker = subprocess.Popen([sys.executable, __file__, mode, "worker"], stdout=log, stderr=log)
+        worker = subprocess.Popen([sys.executable, __file__, mode, "worker"], stdout=log, stderr=log, start_new_session=True)
         try:
             started = time.monotonic()
             for seconds in (2, 10, 20, 30):
@@ -77,24 +97,36 @@ else:
                 result = subprocess.run(["lsof", "-nP", "-a", "-p", str(worker.pid), "-iTCP"],
                                         stdout=listener, stderr=subprocess.STDOUT)
                 listener.write("\nexit=" + str(result.returncode) + "\n")
-            endpoint_file = output / "endpoint.txt"
-            endpoint = endpoint_file.read_text().strip() if endpoint_file.exists() else None
-            if not endpoint or not endpoint.startswith("http://127.0.0.1:"):
-                raise RuntimeError("numeric loopback endpoint not ready: " + str(endpoint))
-            response = subprocess.check_output(["curl", "--fail", "--silent", "--show-error", "--noproxy", "*",
-                                                "--max-time", "10", "-H", "Authorization: Bearer catalyst-test-only",
-                                                endpoint + "/models"], text=True)
-            (output / "health.json").write_text(response)
+            if mode == "xcode":
+                status = json.loads((output / "xcode-result.json").read_text())
+                if status["status"]:
+                    raise RuntimeError("xcode destination discovery failed: " + str(status))
+            else:
+                endpoint_file = output / "endpoint.txt"
+                endpoint = endpoint_file.read_text().strip() if endpoint_file.exists() else None
+                if not endpoint or not endpoint.startswith("http://127.0.0.1:"):
+                    raise RuntimeError("numeric loopback endpoint not ready: " + str(endpoint))
+                response = subprocess.check_output(["curl", "--fail", "--silent", "--show-error", "--noproxy", "*",
+                                                    "--max-time", "10", "-H", "Authorization: Bearer catalyst-test-only",
+                                                    endpoint + "/models"], text=True)
+                (output / "health.json").write_text(response)
         finally:
-            worker.terminate()
+            def stop_group(sig):
+                try:
+                    os.killpg(worker.pid, sig)
+                except ProcessLookupError:
+                    pass
+            stop_group(signal.SIGTERM)
             try:
                 worker.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                worker.kill()
+                stop_group(signal.SIGKILL)
                 worker.wait(timeout=5)
+            finally:
+                stop_group(signal.SIGKILL)
             with (output / "system.log").open("w") as system:
                 subprocess.run(["/usr/bin/log", "show", "--start", log_start, "--style", "compact", "--info",
-                                "--predicate", '(process == "tccd" OR process == "mDNSResponder" OR '
-                                'subsystem CONTAINS[c] "localnetwork" OR process == "Python")'],
+                                "--predicate", '(process == "tccd" OR process == "mDNSResponder" OR process == "nehelper" OR '
+                                'subsystem CONTAINS[c] "networkextension" OR subsystem CONTAINS[c] "localnetwork" OR process == "Python")'],
                                stdout=system, stderr=subprocess.STDOUT, timeout=20, check=True)
     print(json.dumps({"mode": mode, "evidence": str(output), "status": "observed"}))
