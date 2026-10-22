@@ -1094,6 +1094,10 @@ enum CatalystBusinessCheck {
                             "expected_top": String(describing: max(0, window.safeAreaInsets.top - frame.minY))]
                 }
             return ["fields": fields, "hosts": hosts,
+                    "first_responders": descendants(window).filter(\.isFirstResponder).map {
+                        ["type": NSStringFromClass(type(of: $0)), "identity": String(describing: ObjectIdentifier($0)),
+                         "hidden": String($0.isHidden), "frame": String(describing: $0.convert($0.bounds, to: window))]
+                    },
                     "window_bounds": String(describing: window.bounds),
                     "window_safe_area": String(describing: window.safeAreaInsets)]
         }
