@@ -2473,17 +2473,22 @@ private struct AgentSelectionAttachmentPill: View {
                 contactShadow: pillHovering
             )
             .clipShape(RoundedRectangle(cornerRadius: 8))
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+            .background(AccessibilityFrameProbe(identifier: "selection-attachment-anchor-layout"))
+#endif
             .accessibilityLabel(Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments")))
             .help(store.ui("悬停查看选区", "Hover to preview selections"))
             .frame(maxWidth: .infinity, alignment: .leading)
             // A hover preview must not install the system popover's window-wide
             // dismissal region, which consumes the first click on a nearby quote.
             .overlay(alignment: .topLeading) {
-                if pillHovering || previewHovering {
-                    previewContent
-                        .fixedSize(horizontal: false, vertical: true)
-                        .alignmentGuide(.top) { $0[.bottom] + 6 }
+                Group {
+                    if pillHovering || previewHovering {
+                        previewContent
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                .alignmentGuide(.top) { $0[.bottom] + 6 }
             }
             .zIndex(1)
         }
@@ -2527,7 +2532,9 @@ private struct AgentSelectionAttachmentPill: View {
         .frame(maxWidth: 360, alignment: .leading)
         .weibeiEtchedBackground(fill: WeiBeiTheme.paperRaised,
             stroke: WeiBeiTheme.hairline, cornerRadius: 8, contactShadow: true)
-        .accessibilityIdentifier("agent-selection-attachment-preview")
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+        .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-layout"))
+#endif
         .onHover { value in
             setPreviewHovering(value)
         }

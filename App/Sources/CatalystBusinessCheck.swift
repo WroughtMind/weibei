@@ -1405,6 +1405,16 @@ enum CatalystBusinessCheck {
         // popover and consume the next click on the new conversation quote.
         try await waitForOnboardingControl("agent-selection-attachment-preview-anchor")
         _ = try await onboardingUICommand("hover", id: "agent-selection-attachment-preview-anchor")
+        try await until("selection hover preview stays above its attachment") {
+            let views = descendants(window)
+            guard let anchor = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-anchor-layout" }),
+                  let preview = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-preview-layout" }),
+                  isVisible(anchor, in: window), isVisible(preview, in: window) else { return false }
+            let anchorFrame = anchor.convert(anchor.bounds, to: window)
+            let previewFrame = preview.convert(preview.bounds, to: window)
+            return abs(previewFrame.maxY - (anchorFrame.minY - 6)) < 1
+                && window.bounds.insetBy(dx: -1, dy: -1).contains(previewFrame)
+        }
         try await waitForOnboardingControl("agent-selection-attachment-preview-clear")
         try await until("selection hover preview shows its fragment text") {
             guard let attachment = store.selectionAttachments.first,
