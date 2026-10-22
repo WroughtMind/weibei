@@ -31,6 +31,7 @@ final class OnboardingUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(360) // Same bound as the existing CI app launch.
         var handled: String?
         var recordedUnreachable = Set<String>()
+        var recordedSelectionState = Set<String>()
         while app.state != .notRunning, Date() < deadline {
             guard let data = try? Data(contentsOf: requestURL),
                   let request = try JSONSerialization.jsonObject(with: data) as? [String: String],
@@ -62,6 +63,11 @@ final class OnboardingUITests: XCTestCase {
                     if action == "ready" {
                         let hittable = element.isHittable
                         state["hittable"] = String(hittable)
+                        state["ancestor_path"] = ancestorPath(in: root, identifier: id)?.joined(separator: "\n") ?? ""
+                        if id.hasPrefix("conversation-selection-"),
+                           recordedSelectionState.insert(id + String(hittable) + String(describing: snapshot.frame)).inserted {
+                            print("Selection readiness: " + String(data: try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]), encoding: .utf8)!)
+                        }
                         if !hittable {
                             let center = CGPoint(x: snapshot.frame.midX, y: snapshot.frame.midY)
                             state["overlapping_controls"] = identifiedControls(in: root, containing: center).joined(separator: "\n")
@@ -105,6 +111,16 @@ final class OnboardingUITests: XCTestCase {
     private func matchingSnapshots(in root: any XCUIElementSnapshot, identifier: String) -> [any XCUIElementSnapshot] {
         (root.identifier == identifier ? [root] : [])
             + root.children.flatMap { matchingSnapshots(in: $0, identifier: identifier) }
+    }
+
+    @MainActor
+    private func ancestorPath(in root: any XCUIElementSnapshot, identifier: String) -> [String]? {
+        let entry = "\(root.identifier): \(root.elementType) \(root.frame)"
+        if root.identifier == identifier { return [entry] }
+        for child in root.children {
+            if let path = ancestorPath(in: child, identifier: identifier) { return [entry] + path }
+        }
+        return nil
     }
 
     @MainActor

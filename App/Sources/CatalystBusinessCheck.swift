@@ -1305,8 +1305,30 @@ enum CatalystBusinessCheck {
             }
             return excerpt
         }
+        var pointerSnapshots: [String: [String: Any]] = [:]
         func reachableCapsuleButton(_ button: UIButton) throws -> UIButton {
             button.superview?.layoutIfNeeded()
+            let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
+            var hit = window.hitTest(center, with: nil)
+            var chain: [String] = []
+            while let current = hit {
+                chain.append(String(reflecting: type(of: current)) + " id=" + (current.accessibilityIdentifier ?? "")
+                    + " frame=" + String(describing: current.convert(current.bounds, to: window)))
+                hit = current.superview
+            }
+            var snapshot: [String: Any] = ["ui_window_point": String(describing: center),
+                                          "ui_window_bounds": String(describing: window.bounds),
+                                          "ui_button_ax_frame": String(describing: button.accessibilityFrame),
+                                          "ui_hit_chain": chain]
+            if let toolbar = window.windowScene?.titlebar?.toolbar {
+                snapshot["native"] = CatalystDesktopWindow.shared.pointerHitTestForCheck(toolbar: toolbar,
+                    xFraction: Double((center.x - window.bounds.minX) / window.bounds.width),
+                    yFraction: Double((center.y - window.bounds.minY) / window.bounds.height))
+            }
+            let key = (button.isDescendant(of: mainConversation.view) ? "main_" : "floating_") + (button.accessibilityIdentifier ?? "")
+            pointerSnapshots[key] = snapshot
+            try JSONSerialization.data(withJSONObject: pointerSnapshots, options: [.prettyPrinted, .sortedKeys])
+                .write(to: LabMetrics.directory.appendingPathComponent("selection-pointer-hit.json"))
             let bounds = button.bounds.insetBy(dx: 1, dy: 1)
             let points = [CGPoint(x: bounds.midX, y: bounds.midY),
                           CGPoint(x: bounds.minX, y: bounds.minY), CGPoint(x: bounds.maxX, y: bounds.minY),
