@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import PDFKit
@@ -55,6 +56,10 @@ private func runSafetyProbe(_ name: String) -> Never {
     exit(0)
 }
 #endif
+
+// PDFKit may register command-line tools as their launching GUI application.
+// Keep this process out of the Dock before doing any document work.
+NSApplication.shared.setActivationPolicy(.prohibited)
 
 applyResourceLimits()
 

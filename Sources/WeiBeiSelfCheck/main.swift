@@ -5,6 +5,10 @@ import Foundation
 import PDFKit
 import WeiBeiCore
 
+// PDFKit may register command-line tools as their launching GUI application.
+// Keep this process out of the Dock before doing any document work.
+NSApplication.shared.setActivationPolicy(.prohibited)
+
 try checkOfficeDocumentReading()
 if CommandLine.arguments.contains("--office") {
     print("Office source, search and persisted-location check passed")
