@@ -1405,9 +1405,21 @@ enum CatalystBusinessCheck {
         try await until("quote preview offers its source") {
             try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") != nil
         }
+        _ = try await onboardingUICommand("screenshot", id: "Conversation quote preview")
         try await activate("conversation-quote-source-\(mainQuote.id.uuidString)")
         try await until("returning to the quoted message closes the preview") {
             try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") == nil
+        }
+        try await until("returning to the quoted message reveals the start of its source") {
+            guard let sourceID = mainQuote.messageID,
+                  let section = mainConversation.messages.firstIndex(where: { $0.id == sourceID.uuidString }),
+                  let firstBody = mainConversation.collection.cellForItem(at: IndexPath(item: 1, section: section)) else { return false }
+            var viewport = mainConversation.collection.bounds
+            viewport.origin.y += mainConversation.flow.topInset
+            viewport.size.height -= mainConversation.flow.topInset
+            let frame = firstBody.convert(firstBody.bounds, to: mainConversation.collection)
+            return abs(frame.minY - viewport.minY) < 2 && viewport.intersection(frame).height > 1
+                && isVisible(firstBody, in: window)
         }
         guard store.openAgentReplySource(source) else { throw Failure("floating discussion did not reopen after main quote preview") }
         try await until("floating quote target and draft are restored after main preview") {

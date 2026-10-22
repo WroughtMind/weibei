@@ -55,6 +55,11 @@ final class OnboardingUITests: XCTestCase {
             let element = matches.firstMatch
             var response: [String: Any] = ["token": token]
             switch action {
+            case "screenshot":
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = id
+                attachment.lifetime = .keepAlways
+                add(attachment)
             case "query", "ready":
                 // One snapshot keeps observation atomic when a banner or form
                 // disappears between requests. Live attribute reads can fail
