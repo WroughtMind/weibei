@@ -1446,10 +1446,10 @@ enum CatalystBusinessCheck {
                 && mainComposer.text == mainQuoted && floatingComposer()?.text == floatingQuoted
         }
         func panelFrame() throws -> CGRect {
-            guard let frame = ConversationSelectionPanelProbe.PanelView.rectangles(in: window).first else {
+            guard let frame = ConversationSelectionPanelProbe.PanelView.rectangles(in: mainConversation.view).first else {
                 throw Failure("floating panel geometry is unavailable")
             }
-            return frame
+            return mainConversation.view.convert(frame, to: window)
         }
         func dragPanel(from point: CGPoint, by delta: CGSize) async throws {
             let coordinates = [point.x, point.y, delta.width, delta.height]
