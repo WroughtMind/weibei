@@ -1401,6 +1401,26 @@ enum CatalystBusinessCheck {
                 && mainComposer.text == mainQuoted
         }
         try capture("selection-quote-main-visible.png")
+        // Crossing an existing selection attachment used to open a modal hover
+        // popover and consume the next click on the new conversation quote.
+        try await waitForOnboardingControl("agent-selection-attachment-preview-anchor")
+        _ = try await onboardingUICommand("hover", id: "agent-selection-attachment-preview-anchor")
+        try await waitForOnboardingControl("agent-selection-attachment-preview-clear")
+        try await until("selection hover preview shows its fragment text") {
+            guard let attachment = store.selectionAttachments.first,
+                  let marker = descendants(window).first(where: {
+                      $0.accessibilityIdentifier == "selection-attachment-preview-text-\(attachment.id.uuidString)"
+                  }), isVisible(marker, in: window) else { return false }
+            let frame = marker.convert(marker.bounds, to: window)
+            var visible = frame.intersection(window.bounds)
+            var ancestor = marker.superview
+            while let view = ancestor {
+                if view.clipsToBounds { visible = visible.intersection(view.convert(view.bounds, to: window)) }
+                ancestor = view.superview
+            }
+            return visible.height >= frame.height - 1 && visible.width >= frame.width - 1
+        }
+        _ = try await onboardingUICommand("screenshot", id: "Selection attachment hover preview")
         try await activate("conversation-quote-\(mainQuote.id.uuidString)")
         try await until("quote preview offers its source") {
             try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") != nil

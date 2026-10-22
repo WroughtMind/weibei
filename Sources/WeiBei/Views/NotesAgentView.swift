@@ -2435,14 +2435,12 @@ private struct AgentSelectionAttachmentPill: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @State private var pillHovering = false
-    @State private var popoverHovering = false
+    @State private var previewHovering = false
     @State private var closeToken = UUID()
 
     var body: some View {
         if !interaction.selectionAttachments.isEmpty {
             HStack(spacing: 4) {
-                // Popover anchor is only the label — keep the clear button outside so the first
-                // click is not eaten by hover-popover dismissal.
                 HStack(spacing: 6) {
                     Image(systemName: "text.bubble")
                         .weiBeiText(12, weight: .medium)
@@ -2450,10 +2448,11 @@ private struct AgentSelectionAttachmentPill: View {
                         .weiBeiText(12, weight: .medium)
                 }
                 .contentShape(Rectangle())
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("agent-selection-attachment-preview-anchor")
                 .onHover { value in
                     setPillHovering(value)
                 }
-                .popover(isPresented: popoverPresented, arrowEdge: .bottom) { popoverContent }
 
                 Button(action: clearAllAttachments) {
                     Image(systemName: "xmark")
@@ -2476,29 +2475,28 @@ private struct AgentSelectionAttachmentPill: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .accessibilityLabel(Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments")))
             .help(store.ui("悬停查看选区", "Hover to preview selections"))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // A hover preview must not install the system popover's window-wide
+            // dismissal region, which consumes the first click on a nearby quote.
+            .overlay(alignment: .topLeading) {
+                if pillHovering || previewHovering {
+                    previewContent
+                        .fixedSize(horizontal: false, vertical: true)
+                        .alignmentGuide(.top) { $0[.bottom] + 6 }
+                }
+            }
+            .zIndex(1)
         }
     }
 
     private func clearAllAttachments() {
         closeToken = UUID()
         pillHovering = false
-        popoverHovering = false
+        previewHovering = false
         store.clearSelectionAttachments()
     }
 
-    private var popoverPresented: Binding<Bool> {
-        Binding(
-            get: { pillHovering || popoverHovering },
-            set: { presented in
-                if !presented {
-                    pillHovering = false
-                    popoverHovering = false
-                }
-            }
-        )
-    }
-
-    private var popoverContent: some View {
+    private var previewContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments"))
@@ -2512,6 +2510,7 @@ private struct AgentSelectionAttachmentPill: View {
                     clearAllAttachments()
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
+                .accessibilityIdentifier("agent-selection-attachment-preview-clear")
                 .help(store.ui("清空全部选区片段", "Clear all selected fragments"))
             }
 
@@ -2522,13 +2521,15 @@ private struct AgentSelectionAttachmentPill: View {
                     }
                 }
             }
-            .frame(maxHeight: 260)
+            .frame(idealHeight: 260, maxHeight: 260)
         }
         .padding(12)
-        .frame(width: 360, alignment: .leading)
-        .background(WeiBeiTheme.paperRaised)
+        .frame(maxWidth: 360, alignment: .leading)
+        .weibeiEtchedBackground(fill: WeiBeiTheme.paperRaised,
+            stroke: WeiBeiTheme.hairline, cornerRadius: 8, contactShadow: true)
+        .accessibilityIdentifier("agent-selection-attachment-preview")
         .onHover { value in
-            setPopoverHovering(value)
+            setPreviewHovering(value)
         }
     }
 
@@ -2549,7 +2550,7 @@ private struct AgentSelectionAttachmentPill: View {
                     store.removeSelectionAttachment(id: selection.id)
                     if shouldClose {
                         pillHovering = false
-                        popoverHovering = false
+                        previewHovering = false
                     }
                 } label: {
                     Image(systemName: "xmark")
@@ -2567,6 +2568,9 @@ private struct AgentSelectionAttachmentPill: View {
                 .allowsHitTesting(false)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 1)
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-text-\(selection.id.uuidString)"))
+#endif
         }
         .padding(9)
         .weibeiEtchedBackground(
@@ -2584,28 +2588,28 @@ private struct AgentSelectionAttachmentPill: View {
                 pillHovering = true
             }
         } else {
-            schedulePopoverClose()
+            schedulePreviewClose()
         }
     }
 
-    private func setPopoverHovering(_ value: Bool) {
+    private func setPreviewHovering(_ value: Bool) {
         if value {
             closeToken = UUID()
-            popoverHovering = true
+            previewHovering = true
         } else {
-            popoverHovering = false
-            schedulePopoverClose()
+            previewHovering = false
+            schedulePreviewClose()
         }
     }
 
-    private func schedulePopoverClose() {
+    private func schedulePreviewClose() {
         let token = UUID()
         closeToken = token
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            guard closeToken == token, !popoverHovering else { return }
+            guard closeToken == token, !previewHovering else { return }
             withAnimation(WeiBeiMotion.hover) {
                 pillHovering = false
-                popoverHovering = false
+                previewHovering = false
             }
         }
     }
@@ -3307,7 +3311,7 @@ struct FloatingSelectionAgentView: View {
             }
     }
 
-    private func resizeFloatingAgent(edge: FloatingAgentResizeEdge, value: DragGesture.Value?) {
+    private func resizeFloatingAgent(edge: FloatingAgentResizeEdge, value: CGSize?) {
         guard let value else {
             commitResize()
             return
@@ -3325,8 +3329,8 @@ struct FloatingSelectionAgentView: View {
             origin: FloatingAgentCoordinate(x: Double(session.origin.x), y: Double(session.origin.y)),
             size: FloatingAgentSize(width: Double(session.size.width), height: Double(session.size.height)),
             translation: FloatingAgentSize(
-                width: Double(value.translation.width),
-                height: Double(value.translation.height)
+                width: Double(value.width),
+                height: Double(value.height)
             ),
             canvas: FloatingAgentSize(
                 width: Double(canvasSize.width),
@@ -3509,21 +3513,25 @@ private struct FloatingSelectionResizeHitRegion: View {
 #else
     let cursor: NSCursor
 #endif
-    let onChanged: (FloatingAgentResizeEdge, DragGesture.Value?) -> Void
+    let onChanged: (FloatingAgentResizeEdge, CGSize?) -> Void
     @State private var cursorPushed = false
 
     var body: some View {
+#if targetEnvironment(macCatalyst)
+        FloatingSelectionResizePointerRegion { onChanged(edge, $0) }
+#else
         Color.clear
             .contentShape(Rectangle())
             .highPriorityGesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-                        onChanged(edge, value)
+                        onChanged(edge, value.translation)
                     }
                     .onEnded { _ in
                         onChanged(edge, nil)
                     }
             )
+#endif
             .onHover { hovering in
                 if hovering, !cursorPushed {
                     cursor.push()
@@ -3547,6 +3555,60 @@ private struct FloatingSelectionResizeHitRegion: View {
         }
     }
 }
+
+#if targetEnvironment(macCatalyst)
+/// Deliver resize from the native grip's primary press, including the release
+/// position, so short drags retain their complete translation.
+private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
+    let onChanged: (CGSize?) -> Void
+
+    func makeUIView(context: Context) -> PointerView { PointerView() }
+    func updateUIView(_ view: PointerView, context: Context) { view.onChanged = onChanged }
+    static func dismantleUIView(_ view: PointerView, coordinator: ()) { view.finish() }
+
+    final class PointerView: UIView {
+        var onChanged: ((CGSize?) -> Void)?
+        private var start: CGPoint?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isOpaque = false
+            isUserInteractionEnabled = true
+            accessibilityElementsHidden = true
+            let press = ConversationSelectionPressObserver()
+            press.pressed = { [weak self] point, _ in
+                guard let self, let window = self.window else { return }
+                start = convert(point, to: window)
+                onChanged?(.zero)
+            }
+            press.moved = { [weak self] point in
+                self?.report(point)
+            }
+            press.ended = { [weak self] point in self?.report(point) }
+            press.released = { [weak self] in self?.finish() }
+            addGestureRecognizer(press)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil { finish() }
+        }
+
+        private func report(_ point: CGPoint) {
+            guard let window, let start else { return }
+            let current = convert(point, to: window)
+            onChanged?(CGSize(width: current.x - start.x, height: current.y - start.y))
+        }
+
+        func finish() {
+            guard start != nil else { return }
+            start = nil
+            onChanged?(nil)
+        }
+    }
+}
+#endif
 
 struct FloatingSelectionMessageBubble: View {
     @EnvironmentObject private var store: WorkspaceStore

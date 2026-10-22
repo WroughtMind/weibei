@@ -69,6 +69,7 @@ struct ConversationSelectionPanelProbe: UIViewRepresentable {
 final class ConversationSelectionPressObserver: UIGestureRecognizer {
     var pressed: ((CGPoint, UIView?) -> Void)?
     var moved: ((CGPoint) -> Void)?
+    var ended: ((CGPoint) -> Void)?
     var released: (() -> Void)?
     private var didMove = false
 
@@ -97,6 +98,7 @@ final class ConversationSelectionPressObserver: UIGestureRecognizer {
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         if didMove, let touch = touches.first { moved?(touch.location(in: view)) }
+        if let touch = touches.first { ended?(touch.location(in: view)) }
         released?()
         state = .failed
     }
