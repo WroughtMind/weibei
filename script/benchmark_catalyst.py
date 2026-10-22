@@ -60,7 +60,21 @@ def main():
         build["executable_bytes"] = (app / "Contents/MacOS/WeiBei").stat().st_size
         build["launch"] = "passed"
         text = (destination / "build.log").read_text()
-        build["swift_compile_tasks"] = len(re.findall(r"^SwiftCompile normal .*\(in target", text, re.M))
+        # Package defaults can switch -Osize to single-file compilation. Record
+        # the actual driver invocation, not just the intended project settings.
+        build["swift_compilation"] = {}
+        for line in text.splitlines():
+            if "builtin-SwiftDriver --" not in line:
+                continue
+            module = re.search(r"-module-name (\S+)", line).group(1)
+            build["swift_compilation"][module] = {
+                "wholemodule": "-whole-module-optimization" in line,
+                "optimization": re.search(r" -(Osize|Onone|O)\b", line).group(1),
+            }
+        if label == "candidate":
+            assert build["swift_compilation"]
+            assert all(m["wholemodule"] and m["optimization"] == "Osize"
+                       for m in build["swift_compilation"].values()), build["swift_compilation"]
         (evidence / "comparison.json").write_text(json.dumps(result, indent=2) + "\n")
         print(f"{label}: {json.dumps(build)}", flush=True)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
