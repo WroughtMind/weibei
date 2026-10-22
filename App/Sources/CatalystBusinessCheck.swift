@@ -1439,7 +1439,7 @@ enum CatalystBusinessCheck {
         let floatingCapsuleQuoted = floatingQuoted
         if try await accessibilityElement("conversation-selection-quote", forInteraction: true)?["hittable"] != "true" {
             let diagnostic = FloatingSelectionHitDiagnostic.shared
-            for stage in 0...3 {
+            for stage in 0...7 {
                 diagnostic.stage = stage
                 // Let SwiftUI commit this diagnostic-only layer change before
                 // comparing identical real pointer operations in each variant.
@@ -1469,6 +1469,8 @@ enum CatalystBusinessCheck {
                 pointerSnapshots["stage_\(stage)_pointer_baseline"] = [
                     "hittable": ready["hittable"] ?? "missing", "pointer_delivered": delivered,
                     "button_events": diagnostic.events,
+                    "resize_present": stage & 1 == 0, "probe_present": stage & 2 == 0,
+                    "decoration_hit_testing": stage & 4 == 0,
                     "drafts_preserved": mainComposer.text == mainQuoted && floatingComposer()?.text == floatingQuoted]
                 try JSONSerialization.data(withJSONObject: pointerSnapshots, options: [.prettyPrinted, .sortedKeys])
                     .write(to: LabMetrics.directory.appendingPathComponent("selection-pointer-hit.json"))

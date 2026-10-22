@@ -2680,7 +2680,7 @@ struct FloatingSelectionAgentView: View {
                              allowsDecorationHitTesting: allowsDecorationHitTesting)
 #if targetEnvironment(macCatalyst)
         .background {
-            if hitDiagnosticStage < 2 {
+            if hitDiagnosticStage & 2 == 0 {
                 ConversationSelectionPanelProbe(position: placedOrigin)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -2762,7 +2762,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var allowsDecorationHitTesting: Bool {
-        hitDiagnosticStage < 3
+        hitDiagnosticStage & 4 == 0
     }
 
     private var hitDiagnosticStage: Int {
@@ -3024,7 +3024,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .overlay {
-            if hitDiagnosticStage == 0 {
+            if hitDiagnosticStage & 1 == 0 {
                 floatingResizeBorder
             }
         }
