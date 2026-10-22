@@ -7,49 +7,68 @@ import UIKit
 struct WeiBeiUpdateControl: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var updates: WeiBeiUpdateService
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.weiBeiTextScale) private var textScale
     @State private var showingNotes = false
     @State private var isHoveringButton = false
-    @State private var dismissTask: Task<Void, Never>?
-
-    private var isDark: Bool { colorScheme == .dark }
+    @State private var isHoveringNotes = false
+    @State private var suppressNotesUntilExit = false
+    @State private var hoverTask: Task<Void, Never>?
 
     var body: some View {
         if updates.showsToolbarControl, let update = updates.availableUpdate {
             Button {
+                hoverTask?.cancel()
+                suppressNotesUntilExit = isHoveringButton
                 showingNotes = false
                 updates.installAvailableUpdate()
             } label: {
                 contentPill
             }
-            .buttonStyle(WeiBeiUpdateButtonStyle())
-            // Keep hover readable during progress; the service rejects duplicate actions.
+            .buttonStyle(WeiBeiUpdateButtonStyle(
+                expanded: isExpanded, highlighted: isHoveringButton || showingNotes, accent: badgeColor))
+            .disabled(updates.isBusy)
             .accessibilityLabel(updates.actionLabel(english: store.interfaceLanguage == .english))
             .accessibilityValue(updates.downloadProgress.map { "\(Int($0 * 100))%" } ?? "")
             .onHover { hovering in
                 isHoveringButton = hovering
-                hoverChanged(hovering)
+                if !hovering { suppressNotesUntilExit = false }
+                updateNotesVisibility()
             }
-            .popover(isPresented: $showingNotes, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
-                WeiBeiUpdateNotesPanel(update: update,
-                    error: updates.errorDescription,
-                    english: store.interfaceLanguage == .english)
-                    .onHover(perform: hoverChanged)
-                    .presentationBackground(WeiBeiTheme.paperRaised)
 #if targetEnvironment(macCatalyst)
-                    .presentationCompactAdaptation(.popover)
-                    .background(UpdatePopoverPassthrough())
-#endif
+            .background {
+                UpdateNotesPopover(isPresented: $showingNotes, content: notesPanel(update))
             }
+#else
+            .popover(isPresented: $showingNotes, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                notesPanel(update)
+                    .presentationBackground(.clear)
+            }
+#endif
             .onDisappear {
-                dismissTask?.cancel()
+                hoverTask?.cancel()
                 showingNotes = false
+                isHoveringButton = false
+                isHoveringNotes = false
+                suppressNotesUntilExit = false
             }
         }
     }
 
+    private func notesPanel(_ update: WeiBeiAvailableUpdate) -> some View {
+        WeiBeiUpdateNotesPanel(update: update,
+            error: updates.errorDescription,
+            english: store.interfaceLanguage == .english)
+            .environment(\.weiBeiTextScale, textScale)
+            .preferredColorScheme(WeiBeiThemeRuntime.mode.isDark ? .dark : .light)
+            .onHover { hovering in
+                isHoveringNotes = hovering
+                updateNotesVisibility()
+            }
+            .onDisappear { isHoveringNotes = false }
+    }
+
     private var isExpanded: Bool {
-        updates.status == .downloading || updates.status == .ready || updates.status == .failed || updates.status == .extracting || updates.status == .saving || updates.status == .installing
+        [.downloading, .ready, .failed, .extracting, .saving, .installing].contains(updates.status)
     }
 
     private var badgeColor: Color {
@@ -64,58 +83,30 @@ struct WeiBeiUpdateControl: View {
     }
 
     private var contentPill: some View {
-        HStack(spacing: 5.5) {
+        HStack(spacing: 6) {
             statusBadge
 
             if isExpanded {
                 textContent
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                    .transition(.opacity)
             }
         }
-        .padding(.leading, isExpanded ? 3.5 : 0)
-        .padding(.trailing, isExpanded ? 8.5 : 0)
-        .frame(height: 24)
-        .background {
-            if isExpanded {
-                Capsule()
-                    .fill(
-                        isDark
-                            ? Color(white: 0.18).opacity(isHoveringButton || showingNotes ? 0.95 : 0.82)
-                            : Color(white: 0.93).opacity(isHoveringButton || showingNotes ? 1.0 : 0.88)
-                    )
-                    .overlay {
-                        Capsule()
-                            .stroke(
-                                isHoveringButton || showingNotes ? badgeColor.opacity(0.40) : (isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.08)),
-                                lineWidth: 0.6
-                            )
-                    }
-                    .shadow(color: Color.black.opacity(isDark ? 0.25 : 0.06), radius: 2, y: 1)
-            }
-        }
-        .scaleEffect(isHoveringButton ? 1.03 : 1.0)
-        .animation(WeiBeiMotion.hover, value: isHoveringButton)
+        .padding(.horizontal, isExpanded ? 5 : 3)
+        .padding(.trailing, isExpanded ? 5 : 0)
+        .frame(height: 30)
+        .contentShape(Capsule())
         .animation(WeiBeiMotion.layout, value: isExpanded)
-        .contentShape(Rectangle())
     }
 
     private var statusBadge: some View {
         ZStack {
-            Circle()
-                .fill(badgeColor)
-                .frame(width: isExpanded ? 18 : 24, height: isExpanded ? 18 : 24)
-                .shadow(
-                    color: badgeColor.opacity(isHoveringButton || showingNotes ? 0.45 : 0.22),
-                    radius: isHoveringButton ? 3 : 1.5,
-                    y: 1
-                )
+            Circle().fill(badgeColor)
 
             if updates.status == .downloading, let progress = updates.downloadProgress {
                 ZStack {
+                    Circle().stroke(Color.white.opacity(0.35), lineWidth: 1.6)
                     Circle()
-                        .stroke(Color.white.opacity(0.35), lineWidth: 1.6)
-                    Circle()
-                        .trim(from: 0, to: CGFloat(min(max(progress, 0.05), 1.0)))
+                        .trim(from: 0, to: CGFloat(min(max(progress, 0), 1)))
                         .stroke(Color.white, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
@@ -125,44 +116,43 @@ struct WeiBeiUpdateControl: View {
                     .controlSize(.mini)
                     .tint(.white)
                     .frame(width: 12, height: 12)
-            } else if updates.status == .ready {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundStyle(Color.white)
-            } else if updates.status == .failed {
-                Image(systemName: "arrow.trianglehead.clockwise")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundStyle(Color.white)
             } else {
-                Image(systemName: "arrow.down.to.line")
-                    .font(.system(size: isExpanded ? 9.5 : 11, weight: .semibold))
+                Image(systemName: updates.status == .ready ? "arrow.clockwise"
+                    : updates.status == .failed ? "arrow.trianglehead.clockwise" : "arrow.down.to.line")
+                    .font(.system(size: isExpanded ? 10 : 11, weight: .semibold))
                     .foregroundStyle(Color.white)
             }
         }
-        .frame(width: isExpanded ? 18 : 24, height: isExpanded ? 18 : 24)
+        .frame(width: isExpanded ? 20 : 24, height: isExpanded ? 20 : 24)
     }
 
-    @ViewBuilder
-    private var textContent: some View {
+    @ViewBuilder private var textContent: some View {
         if updates.status == .downloading, let progress = updates.downloadProgress {
             Text(progress, format: .percent.precision(.fractionLength(0)))
                 .monospacedDigit()
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isDark ? Color.white.opacity(0.92) : Color.black.opacity(0.85))
+                .weiBeiText(11.5, weight: .semibold)
+                .foregroundStyle(WeiBeiTheme.ink)
         } else {
             Text(updates.actionLabel(english: store.interfaceLanguage == .english))
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(isDark ? Color.white.opacity(0.92) : Color.black.opacity(0.85))
+                .weiBeiText(11.5, weight: .medium)
+                .foregroundStyle(WeiBeiTheme.ink)
         }
     }
 
-    private func hoverChanged(_ hovering: Bool) {
-        dismissTask?.cancel()
-        if hovering {
-            showingNotes = true
+    private func updateNotesVisibility() {
+        hoverTask?.cancel()
+        if isHoveringButton || isHoveringNotes {
+            guard !suppressNotesUntilExit else { return }
+            // A brief dwell lets a direct click win before presenting reading content.
+            guard !showingNotes else { return }
+            hoverTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                showingNotes = true
+            }
         } else {
-            // Let the pointer cross the small native popover gap without losing it.
-            dismissTask = Task { @MainActor in
+            // Keep the panel open while the pointer crosses the native arrow gap.
+            hoverTask = Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(220))
                 guard !Task.isCancelled else { return }
                 showingNotes = false
@@ -171,12 +161,31 @@ struct WeiBeiUpdateControl: View {
     }
 }
 
-/// Tactile button press feedback for the toolbar update button
 private struct WeiBeiUpdateButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    var expanded: Bool
+    var highlighted: Bool
+    var accent: Color
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .animation(WeiBeiMotion.press, value: configuration.isPressed)
+        let pressed = configuration.isPressed && isEnabled
+        let shape = Capsule()
+        return configuration.label
+            .background {
+                shape.fill(pressed ? WeiBeiTheme.paperInset
+                    : highlighted || expanded ? WeiBeiTheme.paperRaised : .clear)
+                if highlighted || pressed {
+                    shape.fill(accent.opacity(pressed ? 0.20 : 0.10))
+                }
+            }
+            .overlay {
+                shape.strokeBorder(highlighted || pressed ? accent.opacity(pressed ? 0.75 : 0.55)
+                    : expanded ? WeiBeiTheme.hairline : .clear, lineWidth: 1)
+            }
+            .shadow(color: accent.opacity(highlighted && isEnabled ? 0.22 : 0), radius: 4, y: 2)
+            .scaleEffect(pressed ? 0.92 : highlighted && isEnabled ? 1.04 : 1)
+            .animation(WeiBeiMotion.press, value: pressed)
+            .animation(WeiBeiMotion.hover, value: highlighted)
     }
 }
 
@@ -185,26 +194,29 @@ struct WeiBeiUpdateNotesPanel: View {
     var error: String?
     var english = false
     @State private var contentHeight: CGFloat = 0
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var isDark: Bool { colorScheme == .dark }
     private let viewportLimit: CGFloat = 310
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            headerView
-
-            Rectangle()
-                .fill(WeiBeiTheme.hairline)
-                .frame(height: 0.5)
-
-            if let error {
-                errorBanner(error)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("魏碑 \(update.version)")
+                    .weiBeiText(15, weight: .semibold)
+                    .foregroundStyle(WeiBeiTheme.ink)
+                Spacer(minLength: 0)
+                if let date = update.publishedDate {
+                    Text(date, format: .dateTime.year().month().day())
+                        .weiBeiText(11)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                }
             }
+
+            Rectangle().fill(WeiBeiTheme.hairline).frame(height: 0.5)
+
+            if let error { errorBanner(error) }
 
             ScrollView {
                 notes
-                    .padding(.vertical, contentHeight > viewportLimit ? 4 : 0)
+                    .padding(.vertical, 2)
                     .background(GeometryReader { proxy in
                         Color.clear
                             .onAppear { contentHeight = proxy.size.height }
@@ -213,138 +225,128 @@ struct WeiBeiUpdateNotesPanel: View {
             }
             .scrollBounceBehavior(.basedOnSize)
             .frame(height: min(contentHeight, viewportLimit))
-            .mask {
-                VStack(spacing: 0) {
-                    Rectangle().fill(Color.black)
-
-                    if contentHeight > viewportLimit {
-                        LinearGradient(
-                            colors: [.black, .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 12)
-                    }
-                }
-            }
         }
-        .padding(15)
-        .frame(width: 348)
-        .background(WeiBeiTheme.paperRaised)
+        .padding(18)
+        .frame(width: 360)
+        .weibeiFloatingPanel(cornerRadius: 12, shadowOpacity: 0.16)
         .environment(\.locale, Locale(identifier: english ? "en" : "zh_CN"))
     }
 
-    private var headerView: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("魏碑 \(update.version)")
-                .font(.system(size: 13.5, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.ink)
-
-            Spacer(minLength: 12)
-
-            if let date = update.publishedDate {
-                Text(date, format: .dateTime.year().month().day())
-                    .font(.system(size: 11))
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
-            }
-        }
-    }
-
     private func errorBanner(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 7) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
             Text(message)
-                .font(.system(size: 11.5))
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .weiBeiText(12)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(9)
+        .foregroundStyle(WeiBeiTheme.cinnabar)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.cinnabar.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .background(WeiBeiTheme.cinnabarSoft, in: RoundedRectangle(cornerRadius: 7))
     }
 
     private var notes: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             if update.releaseNotesLines.isEmpty {
                 Text(english ? "Fetching release notes…" : "正在获取更新说明…")
-                    .font(.system(size: 12))
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             ForEach(Array(update.releaseNotesLines.enumerated()), id: \.offset) { index, line in
                 if WeiBeiAvailableUpdate.isHeading(line) {
-                    headingRow(line, isFirst: index == 0)
+                    Text(LocalizedStringKey(WeiBeiAvailableUpdate.displayText(line)))
+                        .weiBeiText(12, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .padding(.top, index == 0 ? 0 : 9)
                 } else {
-                    bulletRow(line)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("•").foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        Text(LocalizedStringKey(line))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .weiBeiText(12)
+                    .lineSpacing(4)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-
-    private func headingRow(_ line: String, isFirst: Bool) -> some View {
-        let title = WeiBeiAvailableUpdate.displayText(line)
-        let color = headingColor(title)
-        return HStack(spacing: 5) {
-            Capsule()
-                .fill(color)
-                .frame(width: 3, height: 11)
-            Text(LocalizedStringKey(title))
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.ink)
-        }
-        .padding(.top, isFirst ? 0 : 7)
-    }
-
-    private func headingColor(_ title: String) -> Color {
-        if title.contains("新增") || title.contains("New") {
-            return Color(red: 0.16, green: 0.74, blue: 0.46)
-        } else if title.contains("改进") || title.contains("优化") || title.contains("Improvements") {
-            return Color(red: 0.24, green: 0.60, blue: 0.98)
-        } else if title.contains("修复") || title.contains("Fixed") || title.contains("Fixes") {
-            return Color(red: 0.94, green: 0.52, blue: 0.18)
-        }
-        return WeiBeiTheme.tertiaryInk
-    }
-
-    private func bulletRow(_ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Circle()
-                .fill(WeiBeiTheme.tertiaryInk.opacity(0.7))
-                .frame(width: 3.5, height: 3.5)
-                .offset(y: -1.5)
-            Text(LocalizedStringKey(text))
-                .font(.system(size: 12))
-                .lineSpacing(3)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
 }
 
 #if targetEnvironment(macCatalyst)
-/// UIKit otherwise consumes the first click outside a presented popover.
-/// Passing through its source view keeps the hovered update button actionable.
-private struct UpdatePopoverPassthrough: UIViewRepresentable {
-    func makeUIView(context: Context) -> Probe { Probe() }
-    func updateUIView(_ view: Probe, context: Context) { view.configure() }
-    final class Probe: UIView {
-        override func didMoveToWindow() { super.didMoveToWindow(); configure() }
-        func configure() {
-            DispatchQueue.main.async { [weak self] in
-                var responder: UIResponder? = self
-                while let current = responder {
-                    if let controller = current as? UIViewController,
-                       let popover = controller.popoverPresentationController,
-                       let source = popover.sourceView {
-                        popover.passthroughViews = [source]
-                        return
-                    }
-                    responder = current.next
-                }
+/// Configure the actual toolbar anchor and pass-through windows BEFORE presenting.
+/// A probe inside SwiftUI's presented content runs too late to protect a quick click.
+struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let content: Content
+
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.update(content: AnyView(content), presented: isPresented) { isPresented = false }
+    }
+    static func dismantleUIViewController(_ controller: Controller, coordinator: ()) { controller.stop() }
+
+    final class Controller: UIViewController, UIPopoverPresentationControllerDelegate {
+        private var content = AnyView(EmptyView())
+        private var wantsPresentation = false
+        private var active = true
+        private var onDismiss: (() -> Void)?
+        private var panel: UIHostingController<AnyView>?
+
+        override func loadView() {
+            view = UIView()
+            view.backgroundColor = .clear
+            view.isUserInteractionEnabled = false
+        }
+        override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); synchronize() }
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            panel?.popoverPresentationController?.sourceRect = view.bounds
+        }
+
+        func update(content: AnyView, presented: Bool, onDismiss: @escaping () -> Void) {
+            self.content = content
+            wantsPresentation = presented
+            self.onDismiss = onDismiss
+            panel?.rootView = content
+            DispatchQueue.main.async { [weak self] in self?.synchronize() }
+        }
+
+        private func synchronize() {
+            guard active else { return }
+            guard wantsPresentation else {
+                panel?.dismiss(animated: false)
+                panel = nil
+                return
             }
+            guard panel == nil, let window = view.window, let presenter = parent,
+                  presenter.presentedViewController == nil else { return }
+            let panel = UIHostingController(rootView: content)
+            panel.modalPresentationStyle = .popover
+            panel.sizingOptions = .preferredContentSize
+            panel.view.backgroundColor = .clear
+            let popover = panel.popoverPresentationController!
+            popover.sourceView = view
+            popover.sourceRect = view.bounds
+            popover.permittedArrowDirections = [.up, .down]
+            popover.backgroundColor = .clear
+            popover.passthroughViews = [presenter.view] + (window.windowScene?.windows ?? [window])
+            popover.delegate = self
+            self.panel = panel
+            presenter.present(panel, animated: false)
+        }
+
+        func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle { .none }
+        func popoverPresentationControllerDidDismissPopover(_ controller: UIPopoverPresentationController) {
+            panel = nil
+            wantsPresentation = false
+            onDismiss?()
+        }
+        func stop() {
+            active = false
+            panel?.dismiss(animated: false)
+            panel = nil
         }
     }
 }

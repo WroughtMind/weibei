@@ -141,6 +141,7 @@ required_business_checks = {
     'workspace_external_transfer_preserves_bytes_and_cleans_staging',
     'reopen_original_note_and_session_files', 'mac_idiom_and_isolated_storage',
     'original_update_service_through_native_bridge', 'native_workspace_toolbar_controls',
+    'update_popover_first_pointer_click',
     'native_toolbar_reader_pointer_toggle', 'native_toolbar_settings_pointer_open',
     'native_toolbar_agent_pointer_toggle', 'native_toolbar_notes_pointer_toggle',
     'native_toolbar_library_pointer_toggle',

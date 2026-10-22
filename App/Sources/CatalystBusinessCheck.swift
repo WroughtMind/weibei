@@ -337,6 +337,63 @@ enum CatalystBusinessCheck {
         }
     }
 
+    /// Mount the real presenter in the original native toolbar. The action must
+    /// arrive on the first posted mouse click while its reading panel is open.
+    private final class UpdatePopoverInputState: ObservableObject {
+        @Published var showing = true
+        var actions = 0
+        var clickedWhilePresented = false
+    }
+
+    private struct UpdatePopoverInputView: View {
+        @ObservedObject var state: UpdatePopoverInputState
+        var body: some View {
+            Button("更新浮窗输入检查") {
+                state.clickedWhilePresented = state.showing
+                state.actions += 1
+                state.showing = false
+            }
+            .buttonStyle(.plain)
+            .frame(width: 120, height: 30)
+            .contentShape(Rectangle())
+            .background {
+                UpdateNotesPopover(isPresented: $state.showing, content:
+                    WeiBeiUpdateNotesPanel(update: WeiBeiAvailableUpdate(version: "0.0.3",
+                        releaseNotesLines: ["## 修复", "更新说明展开时，点击按钮直接执行操作。"],
+                        informationOnly: false, informationURL: nil)))
+            }
+        }
+    }
+
+    @MainActor private static func verifyUpdatePopoverInput() async throws {
+        guard let toolbar = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            .compactMap({ $0.titlebar?.toolbar }).first(where: { $0.identifier == "weibei.workspace" }),
+              let item = toolbar.items.compactMap({ $0 as? NSUIViewToolbarItem })
+                .first(where: { $0.itemIdentifier.rawValue == "weibei.navigation" }),
+              let host = item.uiView as? CatalystTopBar.HostingView else {
+            throw Failure("update popover toolbar unavailable")
+        }
+        let original = host.controller.rootView
+        let state = UpdatePopoverInputState()
+        host.update(AnyView(UpdatePopoverInputView(state: state)))
+        defer { host.update(original) }
+        try await until("update notes presented from toolbar") {
+            host.controller.presentedViewController?.popoverPresentationController?.sourceView?.window != nil
+        }
+        let presentation = host.controller.presentedViewController?.popoverPresentationController
+        guard presentation?.passthroughViews?.contains(where: {
+            host.controller.view === $0 || host.controller.view.isDescendant(of: $0)
+        }) == true else { throw Failure("update notes block the source toolbar") }
+        let receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
+            itemIdentifier: "weibei.navigation", xFraction: 0.5, yFraction: 0.5)
+        guard receipt["queued"] == "true" else { throw Failure("update pointer event unavailable") }
+        try await until("first pointer click reaches update action") { state.actions == 1 }
+        guard state.clickedWhilePresented else {
+            throw Failure("update notes dismissed before the checked pointer action")
+        }
+        try await until("update notes close after action") { host.controller.presentedViewController == nil }
+    }
+
     @MainActor private final class DisplayIntervalSampler: NSObject {
         private var link: CADisplayLink?
         private var previous: CFTimeInterval?
@@ -498,6 +555,8 @@ enum CatalystBusinessCheck {
                 }
             }
             try check("native_workspace_toolbar_controls", true)
+            try await verifyUpdatePopoverInput()
+            try check("update_popover_first_pointer_click", true)
             try await verifyLibraryOnboarding(store)
             try check("library_onboarding_failure_retry_picker_cancel_and_recovery", true)
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
