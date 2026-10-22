@@ -385,7 +385,7 @@ enum CatalystBusinessCheck {
             host.controller.view === $0 || host.controller.view.isDescendant(of: $0)
         }) == true else { throw Failure("update notes block the source toolbar") }
         let receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
-            itemIdentifier: "weibei.navigation", xFraction: 0.5, yFraction: 0.5)
+            itemIdentifier: "weibei.navigation", xFraction: 0.5, yFraction: 0.5, activateWindow: false)
         guard receipt["queued"] == "true" else { throw Failure("update pointer event unavailable") }
         try await until("first pointer click reaches update action") { state.actions == 1 }
         guard state.clickedWhilePresented else {
@@ -448,7 +448,7 @@ enum CatalystBusinessCheck {
             let targetFraction = xFraction ?? ((itemIdentifier == "weibei.navigation" || firstIcon) ? iconCenterFraction : 1 - iconCenterFraction)
             let settingsWasPresented = store.settingsPresented
             var receipt = CatalystDesktopWindow.shared.postToolbarClickForCheck(toolbar: toolbar,
-                itemIdentifier: itemIdentifier, xFraction: targetFraction, yFraction: 0.5)
+                itemIdentifier: itemIdentifier, xFraction: targetFraction, yFraction: 0.5, activateWindow: true)
             receipt["settings_presented_before"] = String(settingsWasPresented)
             if let window = item.uiView.window {
                 let point = CGPoint(x: item.uiView.bounds.minX + item.uiView.bounds.width * CGFloat(targetFraction),

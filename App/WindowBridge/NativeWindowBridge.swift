@@ -105,7 +105,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     }
 #if WEIBEI_ACCEPTANCE_CHECKS
     @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
-                                           xFraction: Double, yFraction: Double) -> [String: String] {
+                                           xFraction: Double, yFraction: Double, activateWindow: Bool) -> [String: String] {
         guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
               let toolbar = toolbar as? NSToolbar, toolbar.identifier == "weibei.workspace",
               xFraction.isFinite, yFraction.isFinite,
@@ -150,8 +150,12 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
         // The check App owns an isolated CI desktop. Posting both events lets
         // normal dispatch and any AppKit tracking loop receive the matching up.
-        workspace.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        receipt["workspace_key_before_click"] = String(workspace.isKeyWindow)
+        if activateWindow {
+            workspace.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+        }
+        receipt["activated_workspace"] = String(activateWindow)
         NSApp.postEvent(down, atStart: false)
         NSApp.postEvent(up, atStart: false)
         receipt["queued"] = "true"
