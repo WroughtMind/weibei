@@ -292,7 +292,7 @@ struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
         private var wantsPresentation = false
         private var active = true
         private var onDismiss: (() -> Void)?
-        private var host: NotesHost?
+        private var host: CatalystTopBar.HostingView?
         private var contentItem: NSUIViewToolbarItem?
         private var presentation: NSObject?
 
@@ -308,7 +308,7 @@ struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
             self.content = content
             wantsPresentation = presented
             self.onDismiss = onDismiss
-            host?.rootView = content
+            host?.update(measuredContent(content))
             scheduleLayout()
         }
         private func scheduleLayout() {
@@ -323,16 +323,12 @@ struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
                     .compactMap({ $0 as? NSUIViewToolbarItem })
                     .first(where: { view.isDescendant(of: $0.uiView) }) else { return }
             if host == nil {
-                let host = NotesHost(rootView: content)
-                host.safeAreaRegions = []
-                host.sizingOptions = [.preferredContentSize]
-                host.view.backgroundColor = .clear
-                host.sizeChanged = { [weak self] in self?.scheduleLayout() }
+                let host = CatalystTopBar.HostingView(index: 0, content: measuredContent(content))
                 self.host = host
-                contentItem = NSUIViewToolbarItem(itemIdentifier: .init("weibei.update.notes"), uiView: host.view)
+                contentItem = NSUIViewToolbarItem(itemIdentifier: .init("weibei.update.notes"), uiView: host)
             }
             guard let host, let contentItem else { return }
-            let size = host.sizeThatFits(in: UIView.layoutFittingExpandedSize)
+            let size = host.sizeThatFits(UIView.layoutFittingExpandedSize)
             guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return }
             let rect = view.convert(view.bounds, to: sourceItem.uiView)
             let dark = WeiBeiThemeRuntime.mode.isDark
@@ -352,17 +348,20 @@ struct UpdateNotesPopover<Content: View>: UIViewControllerRepresentable {
             let previous = presentation
             presentation = nil
             if let previous { CatalystDesktopWindow.shared.dismissUpdateNotes(previous) }
-            host?.sizeChanged = nil
+            host?.tearDown()
             contentItem = nil
             host = nil
         }
         func stop() { active = false; dismissPresentation() }
 
-        private final class NotesHost: UIHostingController<AnyView> {
-            var sizeChanged: (() -> Void)?
-            override var preferredContentSize: CGSize {
-                didSet { if oldValue != preferredContentSize { sizeChanged?() } }
-            }
+        // Reuse the toolbar bridge's controller containment and transparent
+        // pointer surface. A bare hosting-controller view has no UIKit parent.
+        private func measuredContent(_ content: AnyView) -> AnyView {
+            AnyView(content.background(GeometryReader { proxy in
+                Color.clear
+                    .onAppear { [weak self] in self?.scheduleLayout() }
+                    .onChange(of: proxy.size) { [weak self] _, _ in self?.scheduleLayout() }
+            }))
         }
     }
 }
