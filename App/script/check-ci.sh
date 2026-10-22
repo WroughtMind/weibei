@@ -16,7 +16,6 @@ node --test App/script/floating-label-check.test.mjs App/script/mermaid-measurem
 CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-business-ci.XXXXXX")"
 python3 App/script/business-server.py --output "$CHECK_DIR" > "$CHECK_DIR/server.log" 2>&1 &
 server_pid=$!
-echo "diagnostic business-server pid=$server_pid parent=$$"
 mkdir -p App/Evidence
 save_evidence() {
   kill "$server_pid" 2>/dev/null || true
@@ -71,7 +70,6 @@ python3 - <<'PY'
 import json, os, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 app = os.environ['CHECK_APP']
-print(f'diagnostic check-driver pid={os.getpid()} parent={os.getppid()}', flush=True)
 support = Path(os.environ['CHECK_SUPPORT'])
 source = os.environ['CHECK_SOURCE']
 evidence = Path('App/Evidence')

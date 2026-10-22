@@ -3588,113 +3588,66 @@ private struct FloatingSelectionResizeHitRegion: View {
 }
 
 #if targetEnvironment(macCatalyst)
-/// Capture resize presses at the window, since Catalyst can route a press to
-/// the underlying web view even when the current hit test finds the grip.
-/// Each recognizer accepts only its own visible edge, leaving the interior alone.
+/// Native capture precedes WebKit's mouse handling. UIKit keeps the live,
+/// narrow hit region; only an accepted edge owns the complete native sequence.
 private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
     let onChanged: (CGSize?) -> Void
 
     func makeUIView(context: Context) -> PointerView { PointerView() }
     func updateUIView(_ view: PointerView, context: Context) {
         view.onChanged = onChanged
+        view.synchronizeRegistration()
     }
     static func dismantleUIView(_ view: PointerView, coordinator: ()) { view.disconnect() }
 
-    final class PointerView: UIView, UIGestureRecognizerDelegate {
+    final class PointerView: UIView {
         var onChanged: ((CGSize?) -> Void)?
-        private let press = ResizePress()
+        private let registrationID = UUID().uuidString
+        private var registered = false
+        private weak var registeredWindow: UIWindow?
+        private weak var registeredToolbar: NSObject?
 
         override init(frame: CGRect) {
             super.init(frame: frame)
             isOpaque = false
             isUserInteractionEnabled = true
             accessibilityElementsHidden = true
-            press.owner = self
-            press.delegate = self
-            press.onChanged = { [weak self] in self?.onChanged?($0) }
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
-            guard press.view !== window else { return }
-            disconnect()
-            window?.addGestureRecognizer(press)
+            synchronizeRegistration()
         }
 
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            guard let window, gestureRecognizer.view === window else { return false }
-            let point = touch.location(in: window)
-            guard self.point(inside: convert(point, from: window), with: nil) else { return false }
-            let hit = window.hitTest(point, with: nil)
-            return hit === self || hit?.isDescendant(of: self) == true
+        func synchronizeRegistration() {
+            guard let window, let toolbar = window.windowScene?.titlebar?.toolbar else {
+                disconnect()
+                return
+            }
+            guard !registered || window !== registeredWindow || toolbar !== registeredToolbar else { return }
+            disconnect()
+            registered = true
+            registeredWindow = window
+            registeredToolbar = toolbar
+            CatalystDesktopWindow.shared.registerFloatingResize(id: registrationID, toolbar: toolbar,
+                accepts: { [weak self, weak window] point in
+                    guard let self, let window, self.window === window,
+                          self.registeredToolbar === window.windowScene?.titlebar?.toolbar,
+                          self.point(inside: self.convert(point, from: window), with: nil) else { return false }
+                    let hit = window.hitTest(point, with: nil)
+                    return hit === self || hit?.isDescendant(of: self) == true
+                }, changed: { [weak self] translation, finished in
+                    self?.onChanged?(finished ? nil : translation)
+                })
         }
 
         func disconnect() {
-            press.cancel()
-            press.view?.removeGestureRecognizer(press)
-        }
-    }
-
-    /// Owns a primary resize from press through release, including a short
-    /// drag's final position. Cancels delivery to the web content underneath.
-    private final class ResizePress: UIGestureRecognizer {
-        weak var owner: PointerView?
-        var onChanged: ((CGSize?) -> Void)?
-        private var start: CGPoint?
-
-        init() {
-            super.init(target: nil, action: nil)
-            cancelsTouchesInView = true
-        }
-        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-        override func shouldReceive(_ event: UIEvent) -> Bool {
-            guard let owner, let window = view as? UIWindow, owner.window === window else { return false }
-            return event.type == .touches && event.buttonMask.contains(.primary)
-                && !event.modifierFlags.contains(.control)
-        }
-        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-            guard let touch = touches.first, let window = view as? UIWindow, owner?.window === window else {
-                state = .failed
-                return
-            }
-            start = touch.location(in: window)
-            state = .began
-            onChanged?(.zero)
-        }
-
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-            state = .changed
-            report(touches)
-        }
-
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-            report(touches)
-            state = .ended
-            finish()
-        }
-
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { cancel() }
-        override func reset() { super.reset(); finish() }
-
-        func cancel() {
-            if state == .began || state == .changed { state = .cancelled }
-            finish()
-        }
-
-        private func report(_ touches: Set<UITouch>) {
-            guard let touch = touches.first, let window = view as? UIWindow, let start else { return }
-            let current = touch.location(in: window)
-            onChanged?(CGSize(width: current.x - start.x, height: current.y - start.y))
-        }
-
-        private func finish() {
-            guard start != nil else { return }
-            start = nil
-            onChanged?(nil)
+            guard registered else { return }
+            registered = false
+            registeredWindow = nil
+            registeredToolbar = nil
+            CatalystDesktopWindow.shared.unregisterFloatingResize(id: registrationID)
         }
     }
 }
