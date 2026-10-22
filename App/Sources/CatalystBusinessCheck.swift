@@ -1431,6 +1431,13 @@ enum CatalystBusinessCheck {
             }
             return visible.height >= frame.height - 1 && visible.width >= frame.width - 1
         }
+        try await until("selection hover preview fits its content") {
+            let views = descendants(window)
+            guard let content = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-preview-content-layout" }),
+                  let viewport = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-preview-viewport-layout" }),
+                  content.bounds.height > 0, viewport.bounds.height > 0 else { return false }
+            return abs(viewport.bounds.height - min(content.bounds.height, 260)) < 1
+        }
         _ = try await onboardingUICommand("screenshot", id: "Selection attachment hover preview")
         try await activate("conversation-quote-\(mainQuote.id.uuidString)")
         try await until("quote preview offers its source") {
@@ -1517,6 +1524,29 @@ enum CatalystBusinessCheck {
         }
         FloatingResizePointerDiagnostic.start(in: window)
         defer { FloatingResizePointerDiagnostic.finish() }
+        // A resize must not also scroll or select the web content that Catalyst
+        // can report as the original touch target underneath the floating panel.
+        let underlyingWebViews = descendants(window).compactMap { $0 as? WKWebView }.filter {
+            isVisible($0, in: window) && !$0.isDescendant(of: floatingConversation.view)
+        }
+        guard !underlyingWebViews.isEmpty else { throw Failure("underlying web content is unavailable for pointer checks") }
+        let webPointerStateScript = #"""
+        JSON.stringify({
+          scroll: Array.from(document.querySelectorAll('*')).flatMap((e, i) =>
+            e.scrollLeft || e.scrollTop ? [[i, e.scrollLeft, e.scrollTop]] : []),
+          window: [scrollX, scrollY],
+          selection: (() => { const s = getSelection(); return s
+            ? [s.anchorNode?.nodeName, s.anchorOffset, s.focusNode?.nodeName, s.focusOffset, s.toString()]
+            : null; })()
+        })
+        """#
+        var webPointerStates: [(WKWebView, String)] = []
+        for webView in underlyingWebViews {
+            guard let snapshot = try await webView.evaluateJavaScript(webPointerStateScript) as? String else {
+                throw Failure("underlying web pointer state is unavailable before resize")
+            }
+            webPointerStates.append((webView, snapshot))
+        }
         let beforeSide = try panelFrame()
         try await dragPanel(from: CGPoint(x: beforeSide.maxX - 3, y: beforeSide.midY),
                             by: CGSize(width: 24, height: 0))
@@ -1540,6 +1570,11 @@ enum CatalystBusinessCheck {
             return abs(frame.minX - beforeMove.minX + 24) < 2
                 && abs(frame.minY - beforeMove.minY + 16) < 2
         }
+        for (webView, before) in webPointerStates {
+            guard try await webView.evaluateJavaScript(webPointerStateScript) as? String == before else {
+                throw Failure("floating resize or move changed underlying web scrolling or selection")
+            }
+        }
         guard mainComposer.text == mainQuoted, floatingComposer()?.text == floatingQuoted,
               store.conversationQuotes(in: mainID).contains(where: { $0.id == mainQuote.id }) else {
             throw Failure("floating pointer resize or move changed drafts or the main quote")
@@ -1547,6 +1582,7 @@ enum CatalystBusinessCheck {
         richEvidence["quote_capsule_and_remove_pointer"] = "passed"
         richEvidence["quote_preview_and_source_pointer"] = "passed"
         richEvidence["floating_side_corner_and_header_pointer"] = "passed"
+        richEvidence["floating_pointer_preserves_underlying_web_content"] = "passed"
         try capture("selection-quote-floating-resize.png")
         store.dismissFloatingSelectionAgent()
         try await until("closing the floating panel leaves main quote pills visible") {

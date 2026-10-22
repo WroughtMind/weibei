@@ -2437,6 +2437,7 @@ private struct AgentSelectionAttachmentPill: View {
     @State private var pillHovering = false
     @State private var previewHovering = false
     @State private var closeToken = UUID()
+    @State private var previewContentHeight: CGFloat?
 
     var body: some View {
         if !interaction.selectionAttachments.isEmpty {
@@ -2520,13 +2521,29 @@ private struct AgentSelectionAttachmentPill: View {
             }
 
             ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 9) {
+                VStack(alignment: .leading, spacing: 9) {
                     ForEach(Array(interaction.selectionAttachments.enumerated()), id: \.element.id) { index, selection in
                         selectionAttachmentRow(index: index, selection: selection)
                     }
                 }
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: SelectionAttachmentPreviewHeightKey.self, value: proxy.size.height)
+                })
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-content-layout"))
+#endif
             }
-            .frame(idealHeight: 260, maxHeight: 260)
+            .frame(height: previewContentHeight.map { min($0, 260) })
+            .frame(maxHeight: 260)
+            .onPreferenceChange(SelectionAttachmentPreviewHeightKey.self) { height in
+                // The card only exists for nonempty fragments. Zero is the
+                // preference's initial value, not a measured content height.
+                guard height.isFinite, height > 0 else { return }
+                previewContentHeight = height
+            }
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+            .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-viewport-layout"))
+#endif
         }
         .padding(12)
         .frame(maxWidth: 360, alignment: .leading)
@@ -2620,6 +2637,11 @@ private struct AgentSelectionAttachmentPill: View {
             }
         }
     }
+}
+
+private struct SelectionAttachmentPreviewHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 private struct FloatingSelectionPreview: View {
