@@ -2384,17 +2384,7 @@ private struct ConversationQuotePill: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Button {
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                CatalystBusinessCheck.traceFloatingResize("quote_clicked", ["quote": quote.id.uuidString,
-                    "session": sessionID.uuidString, "before": String(previewing),
-                    "source_exists": String(quote.messageID.map { id in store.conversationMessages(in: sessionID).contains(where: { $0.id == id }) } ?? false)])
-#endif
-                previewing.toggle()
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                CatalystBusinessCheck.traceFloatingResize("quote_toggled", ["quote": quote.id.uuidString, "value": String(previewing)])
-#endif
-            } label: {
+            Button { previewing.toggle() } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "text.quote").foregroundStyle(WeiBeiTheme.cinnabar)
                     Text(quote.text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " "))
@@ -2424,10 +2414,6 @@ private struct ConversationQuotePill: View {
                 }
                 .padding(12).frame(width: 320, alignment: .leading)
                 .background(WeiBeiTheme.paperRaised)
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                .onAppear { CatalystBusinessCheck.traceFloatingResize("quote_preview_appeared", ["quote": quote.id.uuidString, "value": String(previewing)]) }
-                .onDisappear { CatalystBusinessCheck.traceFloatingResize("quote_preview_disappeared", ["quote": quote.id.uuidString, "value": String(previewing)]) }
-#endif
             }
             Button { store.removeConversationQuotes([quote.id], in: sessionID) } label: {
                 Image(systemName: "xmark").weiBeiText(9, weight: .semibold)
@@ -2442,13 +2428,6 @@ private struct ConversationQuotePill: View {
         .weibeiEtchedBackground(fill: WeiBeiTheme.paperInset.opacity(hovering ? 0.64 : 0.34),
             stroke: WeiBeiTheme.hairline.opacity(hovering ? 0.72 : 0.42), cornerRadius: 8)
         .onHover { hovering = $0 }
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        .onChange(of: previewing) { old, new in
-            CatalystBusinessCheck.traceFloatingResize("quote_preview_changed", ["quote": quote.id.uuidString, "old": String(old), "new": String(new)])
-        }
-        .onAppear { CatalystBusinessCheck.traceFloatingResize("quote_pill_appeared", ["quote": quote.id.uuidString, "value": String(previewing)]) }
-        .onDisappear { CatalystBusinessCheck.traceFloatingResize("quote_pill_disappeared", ["quote": quote.id.uuidString, "value": String(previewing)]) }
-#endif
     }
 }
 
@@ -2511,10 +2490,6 @@ private struct AgentSelectionAttachmentPill: View {
         Binding(
             get: { pillHovering || popoverHovering },
             set: { presented in
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                CatalystBusinessCheck.traceFloatingResize("attachment_preview_set", ["value": String(presented),
-                    "pill_hover": String(pillHovering), "preview_hover": String(popoverHovering), "token": closeToken.uuidString])
-#endif
                 if !presented {
                     pillHovering = false
                     popoverHovering = false
@@ -2555,10 +2530,6 @@ private struct AgentSelectionAttachmentPill: View {
         .onHover { value in
             setPopoverHovering(value)
         }
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        .onAppear { CatalystBusinessCheck.traceFloatingResize("attachment_preview_appeared", [:]) }
-        .onDisappear { CatalystBusinessCheck.traceFloatingResize("attachment_preview_disappeared", [:]) }
-#endif
     }
 
     private func selectionAttachmentRow(index: Int, selection: SelectionContext) -> some View {
@@ -2607,10 +2578,6 @@ private struct AgentSelectionAttachmentPill: View {
     }
 
     private func setPillHovering(_ value: Bool) {
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        CatalystBusinessCheck.traceFloatingResize("attachment_pill_hover", ["value": String(value),
-            "pill_hover": String(pillHovering), "preview_hover": String(popoverHovering), "token": closeToken.uuidString])
-#endif
         if value {
             closeToken = UUID()
             withAnimation(WeiBeiMotion.hover) {
@@ -2622,10 +2589,6 @@ private struct AgentSelectionAttachmentPill: View {
     }
 
     private func setPopoverHovering(_ value: Bool) {
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        CatalystBusinessCheck.traceFloatingResize("attachment_preview_hover", ["value": String(value),
-            "pill_hover": String(pillHovering), "preview_hover": String(popoverHovering), "token": closeToken.uuidString])
-#endif
         if value {
             closeToken = UUID()
             popoverHovering = true
@@ -2640,10 +2603,6 @@ private struct AgentSelectionAttachmentPill: View {
         closeToken = token
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
             guard closeToken == token, !popoverHovering else { return }
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-            CatalystBusinessCheck.traceFloatingResize("attachment_delayed_close", ["pill_hover": String(pillHovering),
-                "preview_hover": String(popoverHovering), "token": token.uuidString])
-#endif
             withAnimation(WeiBeiMotion.hover) {
                 pillHovering = false
                 popoverHovering = false
@@ -3295,10 +3254,6 @@ struct FloatingSelectionAgentView: View {
     private var moveFloatingAgentGesture: some Gesture {
         DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { value in
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                CatalystBusinessCheck.traceFloatingResize("header_changed", ["start": String(describing: value.startLocation),
-                    "location": String(describing: value.location), "translation": String(describing: value.translation)])
-#endif
                 let base = dragAnchorOrigin ?? placedOrigin ?? initialOriginPoint
                 if dragAnchorOrigin == nil { dragAnchorOrigin = base }
                 setPlacedOrigin(CGPoint(
@@ -3307,9 +3262,6 @@ struct FloatingSelectionAgentView: View {
                 ))
             }
             .onEnded { _ in
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                CatalystBusinessCheck.traceFloatingResize("header_ended", ["origin": String(describing: placedOrigin)])
-#endif
                 dragAnchorOrigin = nil
             }
     }
@@ -3384,12 +3336,6 @@ struct FloatingSelectionAgentView: View {
             minimumHeight: Double(chrome) + SelectionFloatingAgentPlacement.minimumResizableContentHeight,
             maximumHeight: Double(chrome) + SelectionFloatingAgentPlacement.maximumResizableContentHeight
         )
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        CatalystBusinessCheck.traceFloatingResize("calculated", ["edge": String(describing: edge),
-            "base_origin": String(describing: session.origin), "base_size": String(describing: session.size),
-            "base_feed": String(describing: session.feedHeight), "translation": String(describing: value.translation),
-            "result": String(describing: resized)])
-#endif
         var transaction = Transaction()
         transaction.animation = nil
         withTransaction(transaction) {
@@ -3403,14 +3349,6 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func commitResize() {
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        let checkedPreview = resizePreviewHeight
-        defer {
-            CatalystBusinessCheck.traceFloatingResize("committed", ["preview": String(describing: checkedPreview),
-                "floor": String(describing: userFloor), "fixed": String(describing: userFixed),
-                "origin": String(describing: placedOrigin), "size": String(describing: measuredPanelSize)])
-        }
-#endif
         let preview = resizePreviewHeight
         let session = resizeSession
         if let height = feedHeightMeasurement.height {
@@ -3580,24 +3518,13 @@ private struct FloatingSelectionResizeHitRegion: View {
             .highPriorityGesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                        CatalystBusinessCheck.traceFloatingResize("region_changed", ["edge": String(describing: edge),
-                            "start": String(describing: value.startLocation), "location": String(describing: value.location),
-                            "translation": String(describing: value.translation)])
-#endif
                         onChanged(edge, value)
                     }
                     .onEnded { _ in
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                        CatalystBusinessCheck.traceFloatingResize("region_ended", ["edge": String(describing: edge)])
-#endif
                         onChanged(edge, nil)
                     }
             )
             .onHover { hovering in
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                CatalystBusinessCheck.traceFloatingResize("region_hover", ["edge": String(describing: edge), "hovering": String(hovering)])
-#endif
                 if hovering, !cursorPushed {
                     cursor.push()
                     cursorPushed = true

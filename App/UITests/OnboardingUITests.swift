@@ -102,7 +102,6 @@ final class OnboardingUITests: XCTestCase {
                 let origin = element.coordinate(withNormalizedOffset: .zero)
                 let start = origin.withOffset(CGVector(dx: startPoint.x, dy: startPoint.y))
                 let end = origin.withOffset(CGVector(dx: endPoint.x, dy: endPoint.y))
-                print("Resize diagnostic window frame: \(element.frame), start: \(startPoint), end: \(endPoint)")
                 // Use the system's slow velocity for short pointer drags on a
                 // busy runner; coordinates and the expected geometry stay exact.
                 start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)

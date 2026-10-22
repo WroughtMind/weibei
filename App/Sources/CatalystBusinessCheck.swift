@@ -15,14 +15,6 @@ enum CatalystBusinessCheck {
     private static var fileDropDiagnostics: [String: Any] = [:]
     private static var contextualPickerDiagnostics: [String: Any] = [:]
     private static var lastOnboardingUIElement: [String: String] = [:]
-    private static var floatingResizeTrace: [[String: String]] = []
-    private static var nativePointerTrace: [[String: String]] = []
-    static func traceFloatingResize(_ event: String, _ values: [String: String]) {
-        var entry = values
-        entry["event"] = event
-        entry["uptime"] = String(ProcessInfo.processInfo.systemUptime)
-        floatingResizeTrace.append(entry)
-    }
     private struct Failure: LocalizedError {
         let errorDescription: String?
         init(_ description: String) { errorDescription = description }
@@ -379,8 +371,6 @@ enum CatalystBusinessCheck {
         var checks: [String: String] = [:]
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
-            result["floating_resize_trace"] = floatingResizeTrace
-            result["native_pointer_trace"] = nativePointerTrace
             result["recorded_at"] = ISO8601DateFormatter().string(from: Date())
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: resultURL, options: .atomic)
         }
@@ -1096,10 +1086,6 @@ enum CatalystBusinessCheck {
                             "expected_top": String(describing: max(0, window.safeAreaInsets.top - frame.minY))]
                 }
             return ["fields": fields, "hosts": hosts,
-                    "first_responders": descendants(window).filter(\.isFirstResponder).map {
-                        ["type": NSStringFromClass(type(of: $0)), "identity": String(describing: ObjectIdentifier($0)),
-                         "hidden": String($0.isHidden), "frame": String(describing: $0.convert($0.bounds, to: window))]
-                    },
                     "window_bounds": String(describing: window.bounds),
                     "window_safe_area": String(describing: window.safeAreaInsets)]
         }
@@ -1492,22 +1478,10 @@ enum CatalystBusinessCheck {
             return mainConversation.view.convert(frame, to: window)
         }
         func dragPanel(from point: CGPoint, by delta: CGSize) async throws {
-            var chain: [String] = []
-            var hit = window.hitTest(point, with: nil)
-            while let view = hit {
-                let gestures = (view.gestureRecognizers ?? []).map { NSStringFromClass(type(of: $0)) + ":" + String(describing: $0.state) }
-                chain.append(NSStringFromClass(type(of: view)) + " " + String(describing: view.convert(view.bounds, to: window))
-                    + " gestures=" + gestures.joined(separator: ","))
-                hit = view.superview
-            }
-            traceFloatingResize("requested_drag", ["start": String(describing: point), "delta": String(describing: delta),
-                "panel": String(describing: try panelFrame()), "ui_hit_chain": chain.joined(separator: "\n")])
             let coordinates = [point.x, point.y, delta.width, delta.height]
                 .map { String(Double($0)) }.joined(separator: ",")
             _ = try await onboardingUICommand("drag-window-point", id: "SceneWindow", value: coordinates)
         }
-        CatalystDesktopWindow.shared.startPointerTraceForCheck()
-        defer { nativePointerTrace = CatalystDesktopWindow.shared.finishPointerTraceForCheck() }
         let beforeSide = try panelFrame()
         try await dragPanel(from: CGPoint(x: beforeSide.maxX - 3, y: beforeSide.midY),
                             by: CGSize(width: 24, height: 0))
@@ -1579,7 +1553,7 @@ enum CatalystBusinessCheck {
                 && content.bounds.maxY - mainComposer.convert(mainComposer.bounds, to: content).maxY <= 40
         }
         try capture("reasoning-composer.png")
-        throw Failure("temporary resize input trace completed")
+        return richEvidence
     }
 
     private static func verifyFloatingRichAnswer(messageID: UUID, in window: UIWindow) async throws -> [String: Any] {

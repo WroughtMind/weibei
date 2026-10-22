@@ -19,8 +19,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var fullScreenCheckNotifications: [String] = []
     private var fullScreenCheckToolbarChanges: [String] = []
     private var toolbarClickCheckEventNumber = 1
-    private var pointerCheckMonitor: Any?
-    private var pointerCheckEvents: [[String: String]] = []
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
@@ -106,43 +104,6 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
     }
 #if WEIBEI_ACCEPTANCE_CHECKS
-    @MainActor func startPointerTraceForCheck() {
-        if let pointerCheckMonitor { NSEvent.removeMonitor(pointerCheckMonitor) }
-        pointerCheckEvents.removeAll()
-        pointerCheckMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
-            guard let self else { return event }
-            var entry = ["event": String(describing: event.type), "uptime": String(ProcessInfo.processInfo.systemUptime),
-                         "point": NSStringFromPoint(event.locationInWindow), "window_number": String(event.windowNumber),
-                         "click_count": String(event.clickCount), "pressed_buttons": String(NSEvent.pressedMouseButtons)]
-            if let window = event.window {
-                entry["window_class"] = NSStringFromClass(type(of: window))
-                entry["window_frame"] = NSStringFromRect(window.frame)
-                entry["key_window"] = String(window.isKeyWindow)
-                entry["first_responder"] = window.firstResponder.map { NSStringFromClass(type(of: $0)) } ?? "nil"
-                if let root = window.contentView?.superview {
-                    let point = root.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
-                    var hit = root.hitTest(point)
-                    var chain: [String] = []
-                    while let view = hit {
-                        let gestures = view.gestureRecognizers.map { NSStringFromClass(type(of: $0)) + ":" + String(describing: $0.state) }
-                        chain.append(NSStringFromClass(type(of: view)) + " " + NSStringFromRect(view.convert(view.bounds, to: nil))
-                            + " gestures=" + gestures.joined(separator: ","))
-                        hit = view.superview
-                    }
-                    entry["native_hit_chain"] = chain.joined(separator: "\n")
-                }
-            }
-            self.pointerCheckEvents.append(entry)
-            return event
-        }
-    }
-
-    @MainActor func finishPointerTraceForCheck() -> [[String: String]] {
-        if let pointerCheckMonitor { NSEvent.removeMonitor(pointerCheckMonitor) }
-        pointerCheckMonitor = nil
-        return pointerCheckEvents
-    }
-
     @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
                                            xFraction: Double, yFraction: Double) -> [String: String] {
         guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,

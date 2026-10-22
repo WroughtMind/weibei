@@ -923,57 +923,20 @@ final class WeiBeiSearchTextField: UITextField {
     }
 
     override func becomeFirstResponder() -> Bool {
-#if WEIBEI_ACCEPTANCE_CHECKS
-        traceFocus("search_focus_requested", ["stack": Thread.callStackSymbols.prefix(14).joined(separator: "\n")])
-#endif
         let accepted = super.becomeFirstResponder()
         stripSystemChrome()
-#if WEIBEI_ACCEPTANCE_CHECKS
-        traceFocus("search_focus_completed", ["accepted": String(accepted)])
-#endif
         return accepted
     }
-
-#if WEIBEI_ACCEPTANCE_CHECKS
-    override func resignFirstResponder() -> Bool {
-        traceFocus("search_resign_requested", ["stack": Thread.callStackSymbols.prefix(14).joined(separator: "\n")])
-        let accepted = super.resignFirstResponder()
-        traceFocus("search_resign_completed", ["accepted": String(accepted)])
-        return accepted
-    }
-
-    private func traceFocus(_ event: String, _ extra: [String: String] = [:]) {
-        var values = extra
-        values["field"] = String(describing: ObjectIdentifier(self))
-        values["frame"] = String(describing: window.map { convert(bounds, to: $0) })
-        values["first_responder"] = String(isFirstResponder)
-        values["pending"] = String(pendingFocus)
-        values["binding"] = String(wasFocusedBinding)
-        values["request"] = String(appliedFocusRequest)
-        values["key_window"] = String(describing: window?.isKeyWindow)
-        values["scene_state"] = String(describing: window?.windowScene?.activationState.rawValue)
-        CatalystBusinessCheck.traceFloatingResize(event, values)
-    }
-#endif
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-#if WEIBEI_ACCEPTANCE_CHECKS
-        traceFocus("search_window_changed")
-#endif
         if window != nil, pendingFocus { scheduleFocus() }
     }
 
     func scheduleFocus() {
         pendingFocus = true
-#if WEIBEI_ACCEPTANCE_CHECKS
-        traceFocus("search_focus_scheduled")
-#endif
         DispatchQueue.main.async { [weak self] in
             guard let self, self.window != nil else { return }
-#if WEIBEI_ACCEPTANCE_CHECKS
-            self.traceFocus("search_focus_executing")
-#endif
             self.pendingFocus = !self.becomeFirstResponder()
         }
     }
