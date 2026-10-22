@@ -3517,31 +3517,33 @@ private struct FloatingSelectionResizeHitRegion: View {
     @State private var cursorPushed = false
 
     var body: some View {
+        Group {
 #if targetEnvironment(macCatalyst)
-        FloatingSelectionResizePointerRegion { onChanged(edge, $0) }
+            FloatingSelectionResizePointerRegion { onChanged(edge, $0) }
 #else
-        Color.clear
-            .contentShape(Rectangle())
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { value in
-                        onChanged(edge, value.translation)
-                    }
-                    .onEnded { _ in
-                        onChanged(edge, nil)
-                    }
-            )
+            Color.clear
+                .contentShape(Rectangle())
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { value in
+                            onChanged(edge, value.translation)
+                        }
+                        .onEnded { _ in
+                            onChanged(edge, nil)
+                        }
+                )
 #endif
-            .onHover { hovering in
-                if hovering, !cursorPushed {
-                    cursor.push()
-                    cursorPushed = true
-                } else if !hovering {
-                    popCursorIfNeeded()
-                }
+        }
+        .onHover { hovering in
+            if hovering, !cursorPushed {
+                cursor.push()
+                cursorPushed = true
+            } else if !hovering {
+                popCursorIfNeeded()
             }
-            .onDisappear(perform: popCursorIfNeeded)
-            .accessibilityHidden(true)
+        }
+        .onDisappear(perform: popCursorIfNeeded)
+        .accessibilityHidden(true)
     }
 
     private func popCursorIfNeeded() {
