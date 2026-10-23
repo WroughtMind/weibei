@@ -222,6 +222,129 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
+    func testConversationQuotePreservesCodeIndentationAndParagraphBoundaries() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let sessionID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
+        let code = "    if effect:\n        return direct + indirect\n"
+        let message = AgentMessage(role: .assistant, text: code, source: nil)
+        store.appendAgentMessage(message)
+        XCTAssertTrue(store.addConversationQuote(code, messageID: message.id, in: sessionID))
+        XCTAssertEqual(store.conversationQuotes(in: sessionID).first?.text, code)
+        XCTAssertEqual(store.conversationQuotes(in: sessionID).first?.messageID, message.id)
+    }
+
+    @MainActor
+    func testConversationQuotesKeepDraftsAndStayInTheirOwnSession() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let first = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
+        store.saveComposerDraft("已经写好的问题", for: first)
+        XCTAssertTrue(store.addConversationQuote("引用内容", messageID: nil, in: first))
+        XCTAssertTrue(store.addConversationQuote("引用内容", messageID: nil, in: first))
+        XCTAssertEqual(store.conversationQuotes(in: first).map(\.text), ["引用内容"])
+        XCTAssertEqual(store.composerDraft(for: first), "已经写好的问题")
+        let second = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
+        XCTAssertTrue(store.conversationQuotes(in: second).isEmpty)
+        XCTAssertFalse(store.addConversationQuote("不存在的原消息", messageID: UUID(), in: second))
+        XCTAssertFalse(store.addConversationQuote(" \n", messageID: nil, in: second))
+        let quote = try XCTUnwrap(store.conversationQuotes(in: first).first)
+        store.removeConversationQuotes([quote.id], in: first)
+        XCTAssertTrue(store.conversationQuotes(in: first).isEmpty)
+        XCTAssertEqual(store.composerDraft(for: first), "已经写好的问题")
+    }
+
+    @MainActor
+    func testConversationQuoteIsSentAsContextAndOnlySubmittedQuotesAreConsumed() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.agentProviderID = .openai
+        store.modelName = "gpt-5.6-sol"
+        let sessionID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
+        store.saveComposerDraft("解释这句话", for: sessionID)
+        store.addConversationQuote("既有直接效应，又通过 w 间接影响", messageID: nil, in: sessionID)
+        var submitted: StudyAgentRequest?
+        store.selfCheckAgentResponder = { request in
+            submitted = request
+            store.addConversationQuote("发送之后新选的内容", messageID: nil, in: sessionID)
+            return StudyAgentReply(text: "解释结果", backend: .native)
+        }
+        store.submitAgentDraft(sessionID: sessionID)
+        let done = expectation(description: "quoted context submitted")
+        Task { @MainActor in
+            await store.agentRuns[sessionID]?.agentRequestTask?.value
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+        XCTAssertEqual(submitted?.question, "解释这句话")
+        XCTAssertTrue(submitted?.selectionText?.contains("既有直接效应，又通过 w 间接影响") == true)
+        XCTAssertTrue(submitted?.selectionSources.isEmpty == true, "Chat quotes must not masquerade as file citations")
+        XCTAssertEqual(store.conversationMessages(in: sessionID).first?.text, "解释这句话")
+        XCTAssertEqual(store.conversationQuotes(in: sessionID).map(\.text), ["发送之后新选的内容"])
+    }
+
+    @MainActor
+    func testRejectedSubmissionKeepsConversationQuoteAndDraft() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let sessionID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
+        store.modelName = ""
+        store.saveComposerDraft("我的问题", for: sessionID)
+        store.addConversationQuote("保留的引用", messageID: nil, in: sessionID)
+        store.submitAgentDraft(sessionID: sessionID)
+        XCTAssertEqual(store.composerDraft(for: sessionID), "我的问题")
+        XCTAssertEqual(store.conversationQuotes(in: sessionID).map(\.text), ["保留的引用"])
+    }
+
+    @MainActor
+    func testUnsentConversationQuoteSurvivesWorkspaceReopenWithoutAQuestion() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let sessionID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
+        store.addConversationQuote("尚未发问的引用", messageID: nil, in: sessionID)
+        let quotes = store.conversationQuotes(in: sessionID)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        XCTAssertEqual(reopened.conversationQuotes(in: sessionID), quotes)
+        reopened.removeConversationQuotes(Set(quotes.map(\.id)), in: sessionID)
+        XCTAssertTrue(reopened.flushPendingWorkspaceSave())
+        let afterRemoval = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        XCTAssertTrue(afterRemoval.conversationQuotes(in: sessionID).isEmpty)
+    }
+
+    @MainActor
+    func testFailedRequestRestoresQuotesWithTheQuestionButDoesNotChangeANewDraft() throws {
+        for writesNewDraft in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+            store.agentProviderID = .openai
+            store.modelName = "gpt-5.6-sol"
+            let sessionID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
+            store.saveComposerDraft("解释引用", for: sessionID)
+            store.addConversationQuote("请求中的引用", messageID: nil, in: sessionID)
+            store.selfCheckAgentResponder = { _ in
+                if writesNewDraft { store.replaceComposerDraft("我正在写另一条问题", for: sessionID) }
+                throw URLError(.cannotConnectToHost)
+            }
+            store.submitAgentDraft(sessionID: sessionID)
+            let done = expectation(description: "failed quoted request restored")
+            Task { @MainActor in
+                await store.agentRuns[sessionID]?.agentRequestTask?.value
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 10)
+            XCTAssertEqual(store.composerDraft(for: sessionID), writesNewDraft ? "我正在写另一条问题" : "解释引用")
+            XCTAssertEqual(store.conversationQuotes(in: sessionID).map(\.text), writesNewDraft ? [] : ["请求中的引用"])
+        }
+    }
+
+    @MainActor
     func testAutomaticSelectionAndIndependentQuestionUseTheirOwnDraftsAndHistory() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

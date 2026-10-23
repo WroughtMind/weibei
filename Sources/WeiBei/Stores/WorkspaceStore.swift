@@ -1849,7 +1849,7 @@ final class WorkspaceStore: ObservableObject {
     func createStudySession(courseID: UUID?) -> StudySession? {
         if let freshlyCreatedEmptyStudySessionID,
            let session = studySessions.first(where: {
-               $0.id == freshlyCreatedEmptyStudySessionID && $0.messages.isEmpty
+               $0.id == freshlyCreatedEmptyStudySessionID && $0.messages.isEmpty && $0.composerQuotes.isEmpty
            }) {
             activeStudySessionID = session.id
             messages = []
@@ -1892,7 +1892,8 @@ final class WorkspaceStore: ObservableObject {
         syncActiveStudySession()
         if let blankID = freshlyCreatedEmptyStudySessionID,
            blankID != id,
-           studySessions.first(where: { $0.id == blankID })?.messages.isEmpty == true {
+           studySessions.first(where: { $0.id == blankID })?.messages.isEmpty == true,
+           conversationQuotes(in: blankID).isEmpty {
             studySessions.removeAll { $0.id == blankID }
             agentDraftsBySessionID.removeValue(forKey: blankID)
         }
@@ -9874,8 +9875,13 @@ final class WorkspaceStore: ObservableObject {
                 return focusAllowedItemIDs.contains(itemID)
             }
         } ?? currentAgentSelections(allowedItemIDs: focusAllowedItemIDs)
-        let sentSelectionTitle = replayContext != nil ? replayContext?.selectionTitle : agentSelectionTitle(from: sentSelections)
-        let sentSelectionText = replayContext != nil ? replayContext?.selectionText : agentSelectionText(from: sentSelections)
+        let sentQuotes = reusingLastUserMessage ? [] : conversationQuotes(in: target.sessionID)
+        let quotedText = sentQuotes.map { ui("对话引用", "Conversation quote") + ":\n" + $0.text }.joined(separator: "\n\n")
+        let selectedText = [agentSelectionText(from: sentSelections), quotedText.isEmpty ? nil : quotedText]
+            .compactMap { $0 }.joined(separator: "\n\n")
+        let sentSelectionTitle = replayContext != nil ? replayContext?.selectionTitle
+            : agentSelectionTitle(from: sentSelections) ?? (sentQuotes.isEmpty ? nil : ui("对话引用", "Conversation quotes"))
+        let sentSelectionText = replayContext != nil ? replayContext?.selectionText : (selectedText.isEmpty ? nil : selectedText)
         let sentSelectionSources = replayContext?.selectionSources ?? agentSelectionSources(from: sentSelections)
         let sentSelectionIDs = Set(sentSelections.map(\.id))
         associateStudySession(
@@ -10048,6 +10054,7 @@ final class WorkspaceStore: ObservableObject {
                         replaceComposerDraft("", for: target.sessionID)
                     }
                 }
+                removeConversationQuotes(Set(sentQuotes.map(\.id)), in: target.sessionID)
                 if activeStudySessionID == target.sessionID {
                     lastFailedAgentQuestion = nil
                     lastAgentFailureKind = nil
@@ -10234,7 +10241,7 @@ final class WorkspaceStore: ObservableObject {
                 // A2: 用户主动停止（stopAgent 已置 isStoppingAgent）不回填旧问题；
                 // 其他取消仅在输入框为空时回填。
                 if questionOverride == nil, !userStopped {
-                    restoreComposerDraftIfEmpty(question, for: target.sessionID)
+                    restoreComposerDraftIfEmpty(question, for: target.sessionID, quotes: sentQuotes)
                 }
                 if questionOverride == nil, !userStopped, activeStudySessionID == target.sessionID {
                     lastAgentFailureKind = .cancelled
@@ -10263,7 +10270,7 @@ final class WorkspaceStore: ObservableObject {
                 }
                 if questionOverride == nil, !userStopped {
                     // A2: 失败时仅在输入框为空时回填上一问；网络层取消同样保留主动停止的空草稿。
-                    restoreComposerDraftIfEmpty(question, for: target.sessionID)
+                    restoreComposerDraftIfEmpty(question, for: target.sessionID, quotes: sentQuotes)
                 }
                 if activeStudySessionID == target.sessionID {
                     focusedPane = .agent
@@ -11851,7 +11858,7 @@ final class WorkspaceStore: ObservableObject {
 
     private var persistedStudySessions: [StudySession] {
         studySessions.filter {
-            $0.id != freshlyCreatedEmptyStudySessionID || !$0.messages.isEmpty || !composerDraft(for: $0.id).isEmpty
+            $0.id != freshlyCreatedEmptyStudySessionID || !$0.messages.isEmpty || !composerDraft(for: $0.id).isEmpty || !$0.composerQuotes.isEmpty
         }.map { session in
             var persisted = sessionMessagePersistence.annotatingMessageCount(session)
             persisted.draft = session.id == activeStudySessionID

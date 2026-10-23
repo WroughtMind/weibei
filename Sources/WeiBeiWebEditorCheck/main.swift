@@ -2075,16 +2075,61 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 
     private func validateSlashCommands() {
+        // Hidden WebKit pages throttle timers. Observe the product's actual
+        // automatic update instead of sampling it after a fixed native delay.
+        // The harness keeps its existing 30-second budget for the whole run.
         let triggerScript = """
-        window.WeiBeiEditor.setMarkdown('');
-        window.WeiBeiEditor.insertMarkdown('{{WEIBEI_CURSOR}}');
-        window.WeiBeiEditor.typeTextForCheck('/');
+        return await new Promise((resolve, reject) => {
+          const menu = document.querySelector('.weibei-slash-menu');
+          if (!menu) { reject(new Error('slash menu is missing')); return; }
+          const started = performance.now();
+          let typed = false;
+          let showed = false;
+          const observer = new MutationObserver(check);
+          function check(records = []) {
+            try {
+              if (records.some(record => record.target === menu && record.attributeName === 'data-show')
+                  && menu.dataset.show === 'true') showed = true;
+              if (!typed || !showed) return;
+              const selection = window.WeiBeiEditor.selectionForCheck();
+              if (window.WeiBeiEditor.getMarkdown() !== '/\\n' || selection.from !== 2 || selection.to !== 2
+                  || selection.parent !== 'paragraph' || selection.parentOffset !== 1) return;
+              const rect = menu.getBoundingClientRect();
+              if (menu.dataset.show !== 'true' || rect.width <= 0 || rect.height <= 0
+                  || rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight) return;
+              observer.disconnect();
+              resolve(performance.now() - started);
+            } catch (error) {
+              observer.disconnect();
+              reject(error);
+            }
+          }
+          observer.observe(menu, { attributes: true, attributeFilter: ['data-show', 'style', 'aria-hidden'], childList: true, subtree: true });
+          try {
+            window.WeiBeiEditor.setMarkdown('');
+            window.WeiBeiEditor.insertMarkdown('{{WEIBEI_CURSOR}}');
+            typed = window.WeiBeiEditor.typeTextForCheck('/');
+            if (!typed) {
+              observer.disconnect();
+              reject(new Error('automatic slash typing failed'));
+              return;
+            }
+            check();
+          } catch (error) {
+            observer.disconnect();
+            reject(error);
+          }
+        });
         """
-        webView.evaluateJavaScript(triggerScript) { [weak self] _, error in
+        webView.callAsyncJavaScript(triggerScript, arguments: [:], in: nil, in: .page) { [weak self] result in
             guard let self else { return }
-            guard error == nil else { self.fail("automatic slash trigger setup failed: \(error!.localizedDescription)"); return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            switch result {
+            case let .success(elapsed):
+                print("Automatic slash menu rendered after \(elapsed) ms")
+                fflush(stdout)
                 self.validateAutomaticSlashMenu()
+            case let .failure(error):
+                self.fail("automatic slash trigger failed: \(error.localizedDescription)")
             }
         }
     }

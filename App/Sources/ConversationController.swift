@@ -31,7 +31,8 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
     private var loadingSession = false
     private var lastReadingMessageID: UUID?
-    var quoteText: ((String) -> Void)?
+    var quoteText: ((String, UUID?) -> Bool)?
+    var didCopyText: (() -> Void)?
     var readingMessageChanged: ((UUID?) -> Void)?
     var contentHeightChanged: ((CGFloat) -> Void)?
     var submitQuestion: ((String) -> Bool)?
@@ -120,11 +121,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         selectionPress.released = { [weak self] in self?.selection.endInteraction() }
         collection.addGestureRecognizer(selectionPress)
         selection.changed = { [weak self] in
-            self?.selectionActions.setCopied(false)
             self?.updateSelectionActions()
         }
         selection.geometryChanged = { [weak self] in self?.updateSelectionActions() }
-        selectionActions.copySelectedText = { [weak self] in self?.copySelection() }
+        selectionActions.copySelectedText = { [weak self] in self?.copySelection(dismissingSelection: true) }
         selectionActions.quoteSelectedText = { [weak self] in self?.quoteSelection() }
         NotificationCenter.default.addObserver(self, selector: #selector(selectionPanelGeometryDidChange),
             name: ConversationSelectionPanelProbe.PanelView.geometryDidChange, object: nil)
@@ -407,7 +407,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             cell.showAuxiliary(auxiliaryView(message))
         } else {
             cell.showActions(message, copy: { UIPasteboard.general.string = message.copyableMarkdown },
-                             quote: { [weak self] in self?.quote(message.copyableMarkdown) },
+                             quote: { [weak self] in self?.quote(message.copyableMarkdown, messageID: UUID(uuidString: message.id)) },
                              source: { [weak self] in
                                  if let source = message.original?.sources.first { self?.openSource?(source) }
                                  else { self?.openWorkspace?(0) }
@@ -894,10 +894,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         collection.contentOffset.y = min(max(0, collection.contentOffset.y + distance), max(0, collection.contentSize.height - collection.bounds.height))
         followsLatest = false
     }
-    func quote(_ text: String) {
-        if let quoteText { quoteText(text); return }
-        input.text += (input.text.isEmpty ? "" : "\n\n") + text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n") + "\n\n"
-        input.becomeFirstResponder()
+    @discardableResult
+    func quote(_ text: String, messageID: UUID? = nil) -> Bool {
+        quoteText?(text, messageID) ?? false
     }
     private func updateSelectionActionsAppearance() {
         selectionActions.update(appearance: jumpToLatestAppearance, language: interfaceLanguage,
@@ -961,18 +960,17 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         if candidates.first(where: reachable) != nil { return }
         selectionActions.isHidden = true
     }
-    func copySelection() {
+    func copySelection(dismissingSelection: Bool = false) {
         let text = selection.text()
         guard !text.isEmpty else { return }
         UIPasteboard.general.string = text
-        selectionActions.setCopied(true)
-        updateSelectionActions()
+        if dismissingSelection { selection.clear() }
+        didCopyText?()
     }
     func quoteSelection() {
         let text = selection.text()
         guard !text.isEmpty else { return }
-        quote(text)
-        selection.clear()
+        if quote(text, messageID: selection.messageID) { selection.clear() }
     }
     func open(_ url: URL) {
 #if WEIBEI_ACCEPTANCE_CHECKS
@@ -1665,11 +1663,28 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     && probeBody.displayedSelectionRects.isEmpty, "拖回起点后遗留旧选区或胶囊")
                 try await drag(from: 30, to: 12)
                 let excerpt = selectionProbe.selection.text()
-                let localRange = probeLabel.selectionRange
+                let capsule = selectionProbe.selectionActions
+                let normalBackground = capsule.copyButton.backgroundColor
+                capsule.copyButton.setHovered(true)
+                try expect(capsule.copyButton.backgroundColor != normalBackground,
+                           "选字动作悬停没有可见背景变化")
+                let hoverBackground = capsule.copyButton.backgroundColor
+                capsule.copyButton.isHighlighted = true
+                try expect(capsule.copyButton.backgroundColor != hoverBackground,
+                           "选字动作按压与悬停没有区别")
+                capsule.copyButton.isHighlighted = false
+                capsule.copyButton.setHovered(false)
+                try expect(capsule.copyButton.alignmentRectInsets == .zero
+                    && capsule.bounds.contains(capsule.copyButton.frame)
+                    && capsule.bounds.contains(capsule.quoteButton.frame),
+                           "选字工具条的可见边界与点击区域不一致")
+                var copyFeedback = 0
+                selectionProbe.didCopyText = { copyFeedback += 1 }
                 selectionProbe.selectionActions.copyButton.sendActions(for: .touchUpInside)
-                try expect(UIPasteboard.general.string == excerpt && selectionProbe.selection.text() == excerpt
-                    && probeLabel.selectionRange == localRange && !selectionProbe.selectionActions.isHidden,
-                           "胶囊复制丢失选区或复制了别的内容")
+                try expect(UIPasteboard.general.string == excerpt && !selectionProbe.selection.hasSelection
+                    && probeLabel.selectionRange == nil && selectionProbe.selectionActions.isHidden && copyFeedback == 1,
+                           "胶囊复制没有收起选区、显示反馈或复制了别的内容")
+                try await drag(from: 30, to: 12)
                 // A detached label's live selection must survive read-only copying.
                 let otherLabel = TextLabelView(attributedText: NSAttributedString(string: "another selected passage",
                     attributes: [.font: UIFont.systemFont(ofSize: 14)]))
@@ -1700,11 +1715,12 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 try expect(crossExcerpt == expectedCross && otherLabel.selectionRange == otherRange,
                            "跨段复制没有保持内容和其他控件的选区")
                 selectionProbe.input.text = "已经写好的草稿"
+                var quotedPassage: String?
+                selectionProbe.quoteText = { text, _ in quotedPassage = text; return true }
                 selectionProbe.selectionActions.quoteButton.sendActions(for: .touchUpInside)
-                try expect(selectionProbe.input.text == "已经写好的草稿\n\n"
-                    + crossExcerpt.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n") + "\n\n"
+                try expect(selectionProbe.input.text == "已经写好的草稿" && quotedPassage == crossExcerpt
                     && !selectionProbe.selection.hasSelection && selectionProbe.selectionActions.isHidden,
-                           "胶囊引用覆盖草稿或没有完成选区收起")
+                           "胶囊引用改写草稿、没有交付引用片段或没有收起选区")
                 try await drag(from: 4, to: 18)
                 let reflowExcerpt = selectionProbe.selection.text()
                 selectionProbe.maximumBodyWidth = selectionProbe.bodyWidth / 2
@@ -1752,8 +1768,9 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 try expect(selectionProbe.selection.text() == "quoted" && !selectionProbe.selectionActions.isHidden
                     && !codeProbeBody.displayedSelectionRects.isEmpty, "代码选字没有接入胶囊或高亮")
                 selectionProbe.selectionActions.copyButton.sendActions(for: .touchUpInside)
-                try expect(UIPasteboard.general.string == "quoted" && selectionProbe.selection.hasSelection,
-                           "代码胶囊没有复制所选文字或丢失选区")
+                try expect(UIPasteboard.general.string == "quoted" && !selectionProbe.selection.hasSelection
+                    && selectionProbe.selectionActions.isHidden,
+                           "代码胶囊没有复制所选文字或没有收起选区")
                 selectionProbe.selectionPress.pressed?(codeProbeLabel.convert(.zero, to: selectionProbe.collection), codeProbeLabel)
                 codeProbeLabel.selectionRange = NSRange(location: 4, length: 6)
                 codeProbeLabel.selectionRange = nil

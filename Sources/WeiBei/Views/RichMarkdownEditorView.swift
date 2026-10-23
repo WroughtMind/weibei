@@ -2057,7 +2057,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 
         func applyFocus() {
             guard isReady, isFocused, focusRequest != lastAppliedFocusRequest,
-                  let webView, webView.window != nil else { return }
+                  let webView, webView.window != nil, !webView.isHidden else { return }
 #if targetEnvironment(macCatalyst)
             guard webView.becomeFirstResponder() else { return }
 #else

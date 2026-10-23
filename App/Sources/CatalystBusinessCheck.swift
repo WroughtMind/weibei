@@ -478,11 +478,14 @@ enum CatalystBusinessCheck {
             "bundle_id": Bundle.main.bundleIdentifier ?? "", "platform": "Mac Catalyst",
             "scenario": scenario,
             "configuration": "Release", "transport": "original client against isolated local SSE fixture; no live model claim",
-            "ui_evidence": "in-process behavior checks; toolbar also receives local AppKit mouse events, not physical mouse/IME acceptance", "checks": [String: String]()
+            "ui_evidence": "in-process behavior checks; Xcode system pointer injection covers selection actions, quotes and floating geometry; no human hardware acceptance", "checks": [String: String]()
         ]
         var checks: [String: String] = [:]
         func write(_ status: String) throws {
             result["checks"] = checks; result["status"] = status
+            let resizeEvents = CatalystDesktopWindow.shared.floatingResizeEventsForCheck()
+            if !resizeEvents.isEmpty { result["floating_resize_events"] = resizeEvents }
+            result["floating_resize_capture_state"] = CatalystDesktopWindow.shared.floatingResizeStateForCheck()
             result["recorded_at"] = ISO8601DateFormatter().string(from: Date())
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: resultURL, options: .atomic)
         }
@@ -833,7 +836,7 @@ enum CatalystBusinessCheck {
             }
             try check("original_import_reader_and_editor", materials.count == 1 && notes.count == 1
                 && noteEditor.bounds.width > 100 && noteEditor.bounds.height > 100)
-            result["contextual_picker_layout"] = try await verifyContextualPickerAlignment(store, in: noteEditor.window!)
+            result["contextual_picker_layout"] = try await verifyContextualPickerAlignment(store, in: noteEditor.window!, noteEditor: noteEditor)
             try check("material_and_note_pickers_align", true)
             if scenario == "picker" {
                 try write("diagnostic_passed")
@@ -1132,7 +1135,9 @@ enum CatalystBusinessCheck {
                 "stream_text_count": store.agentStreaming.text.count,
                 "messages": store.messages.map { ["role": $0.role.rawValue, "state": $0.completionState.rawValue, "text_count": String($0.text.count)] },
                 "views": windows.flatMap(descendants).map { view in
-                    var state = ["type": String(reflecting: type(of: view)), "frame": String(describing: view.frame), "hidden": String(view.isHidden)]
+                    var state = ["type": String(reflecting: type(of: view)), "frame": String(describing: view.frame), "hidden": String(view.isHidden),
+                                 "frame_in_window": String(describing: view.convert(view.bounds, to: view.window)),
+                                 "clips": String(view.clipsToBounds), "interactive": String(view.isUserInteractionEnabled)]
                     if #available(iOS 26.0, *), let scroll = view as? UIScrollView {
                         state["top_edge_hidden"] = String(scroll.topEdgeEffect.isHidden)
                     }
@@ -1167,7 +1172,7 @@ enum CatalystBusinessCheck {
         }
     }
 
-    private static func verifyContextualPickerAlignment(_ store: WorkspaceStore, in window: UIWindow) async throws -> [String: Any] {
+    private static func verifyContextualPickerAlignment(_ store: WorkspaceStore, in window: UIWindow, noteEditor: WKWebView) async throws -> [String: Any] {
         let materialID = store.selectedMaterialItem?.id
         let noteID = store.activeNoteItemID
         store.showContextualBrowser(.material)
@@ -1242,6 +1247,20 @@ enum CatalystBusinessCheck {
                     abs($0.minY - $1.minY) < 1 && abs($0.height - $1.height) < 1
                 }
         }
+        // The real Focus Notes command must keep typing in the visible picker.
+        store.focus(.notes)
+        let pickerFocusRequest = store.focusRequest
+        try await until("notes pane focus request reaches the editor host") {
+            guard let coordinator = noteEditor.navigationDelegate as? RichMarkdownEditorView.Coordinator else { return false }
+            return coordinator.isReady && coordinator.focusRequest == pickerFocusRequest
+        }
+        try await until("notes pane focus keeps the visible picker search active") {
+            // Observe after the same web view has processed prior JS commands.
+            guard let documentFocused = try await noteEditor.evaluateJavaScript("document.hasFocus()") as? Bool else { return false }
+            contextualPickerDiagnostics["after_pane_focus_request"] = layoutState()
+            contextualPickerDiagnostics["hidden_editor_has_focus"] = documentFocused
+            return !documentFocused && searchFields().last?.isFirstResponder == true
+        }
         store.settingsPresented = true
         defer { store.settingsPresented = false }
         try await until("settings mounted over the pickers") {
@@ -1283,6 +1302,21 @@ enum CatalystBusinessCheck {
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         try snapshot.pngData()?.write(to: LabMetrics.directory.appendingPathComponent("contextual-pickers.png"))
+        // Showing the editor again must apply the request deferred while hidden,
+        // without issuing a new one just to make this check pass.
+        let requestBeforeClosing = store.focusRequest
+        store.materialPickerPresented = false
+        store.notePickerPresented = false
+        try await until("closing the picker restores editor input without a new focus request") {
+            let documentFocused = (try? await noteEditor.evaluateJavaScript(
+                "document.hasFocus() && document.activeElement?.isContentEditable === true"
+            ) as? Bool) == true
+            let nativeFocused = descendants(noteEditor).contains(where: \.isFirstResponder)
+            let unchanged = store.focusRequest == requestBeforeClosing
+            contextualPickerDiagnostics["editor_focus_restored"] = ["request_unchanged": unchanged,
+                "native_editor_focused": nativeFocused, "document_focused": documentFocused]
+            return unchanged && !noteEditor.isHidden && nativeFocused && documentFocused
+        }
         return ["search_frames": frames.map { String(describing: $0) },
                 "search_frames_before_settings": framesBeforeSettings.map { String(describing: $0) },
                 "layout_diagnostics": contextualPickerDiagnostics,
@@ -1370,7 +1404,7 @@ enum CatalystBusinessCheck {
         guard let richReply = store.conversationMessages(in: threadID).last, richReply.role == .assistant else {
             throw Failure("floating rich answer unavailable")
         }
-        let richEvidence = try await verifyFloatingRichAnswer(messageID: richReply.id, in: window)
+        var richEvidence = try await verifyFloatingRichAnswer(messageID: richReply.id, in: window)
         try capture("selection-rich-answer-11pt.png", label: "Floating selection answer · 11 pt · native inline/display math + rendered diagram")
         let draft = "浮窗草稿：这一句再展开说明。"
         composer.text = draft
@@ -1400,11 +1434,11 @@ enum CatalystBusinessCheck {
         }
         try capture("selection-discussion-mist.png")
         store.appearanceStyle = originalAppearanceStyle
-        mainConversation.quoteText?("主会话引用片段")
-        // A2: 引用追加到各自草稿末尾（前面空一行），不再替换已写的草稿。
-        var mainQuoted = mainDraft + "\n\n> 主会话引用片段\n\n"
-        try await until("main quote appends to its own composer") {
-            mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
+        mainConversation.quoteText?("主会话引用片段", nil)
+        let mainQuoted = mainDraft
+        try await until("main quote appears above its composer without changing either draft") {
+            store.conversationQuotes(in: mainID).map(\.text) == ["主会话引用片段"]
+                && mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
                 && workspaceIsFullyVisible()
         }
         func selectVisibleParagraph(in controller: ConversationController) throws -> String {
@@ -1444,11 +1478,38 @@ enum CatalystBusinessCheck {
         let mainCopy = try reachableCapsuleButton(mainConversation.selectionActions.copyButton)
         _ = try reachableCapsuleButton(mainConversation.selectionActions.quoteButton)
         try capture("selection-capsule-main.png")
-        mainCopy.sendActions(for: .touchUpInside)
-        guard UIPasteboard.general.string == mainExcerpt, mainConversation.selection.hasSelection,
+        try await waitForOnboardingControl("conversation-selection-copy")
+        _ = try await onboardingUICommand("hover", id: "conversation-selection-copy")
+        try await until("selection copy shows pointer hover feedback") {
+            !mainCopy.isHighlighted && (mainCopy.backgroundColor?.cgColor.alpha ?? 0) > 0
+        }
+        try capture("selection-capsule-hover.png")
+        try await waitForOnboardingControl("conversation-selection-copy")
+        // Observe the mounted toast while the real click is in flight. An Intel
+        // XCTest snapshot can take longer than the product's 2.4-second toast.
+        let feedbackGeneration = store.transientNoteStatusGeneration
+        let copyFeedback = Task { @MainActor in
+            try await until("copy success feedback is mounted") {
+                try Task.checkCancellation()
+                guard store.transientNoteStatusGeneration > feedbackGeneration,
+                      store.transientNoteStatus == store.ui("已复制", "Copied"),
+                      let marker = descendants(window).first(where: {
+                          $0.accessibilityIdentifier == "workspace-status-layout-" + store.ui("已复制", "Copied")
+                      }), isVisible(marker, in: window) else { return false }
+                try Task.checkCancellation()
+                try capture("selection-copy-feedback.png")
+                return true
+            }
+        }
+        defer { copyFeedback.cancel() }
+        _ = try await onboardingUICommand("press", id: "conversation-selection-copy")
+        try await copyFeedback.value
+        guard UIPasteboard.general.string == mainExcerpt, !mainConversation.selection.hasSelection,
+              mainConversation.selectionActions.isHidden,
               mainComposer.text == mainQuoted, floatingComposer()?.text == draft else {
             throw Failure("main capsule copy changed the selected text or either draft")
         }
+        _ = try selectVisibleParagraph(in: mainConversation)
         store.dismissFloatingSelectionAgent()
         try await until("closing floating panel restores the main selection capsule") {
             floatingComposer() == nil
@@ -1466,36 +1527,221 @@ enum CatalystBusinessCheck {
                 && (try? reachableCapsuleButton(mainConversation.selectionActions.copyButton)) != nil
                 && (try? reachableCapsuleButton(mainConversation.selectionActions.quoteButton)) != nil
         }
-        mainQuoted += "> " + mainExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-        try reachableCapsuleButton(mainConversation.selectionActions.quoteButton).sendActions(for: .touchUpInside)
-        try await until("main capsule quote appends without touching floating draft") {
-            mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
+        _ = try reachableCapsuleButton(mainConversation.selectionActions.quoteButton)
+        try await activate("conversation-selection-quote")
+        try await until("main capsule attaches a quote without touching either draft") {
+            store.conversationQuotes(in: mainID).contains(where: { $0.text == mainExcerpt && $0.messageID != nil })
+                && mainComposer.isFirstResponder && mainComposer.text == mainQuoted && floatingComposer()?.text == draft
                 && !mainConversation.selection.hasSelection && mainConversation.selectionActions.isHidden
                 && workspaceIsFullyVisible()
+        }
+        try await until("main quote pill is visible") {
+            guard let quote = store.conversationQuotes(in: mainID).last else { return false }
+            return try await accessibilityElement("conversation-quote-\(quote.id.uuidString)") != nil
+        }
+        try capture("selection-quote-main.png")
+        guard let mainQuote = store.conversationQuotes(in: mainID).last, mainQuote.messageID != nil else {
+            throw Failure("main quote lost its message anchor")
+        }
+        store.dismissFloatingSelectionAgent()
+        try await until("main quote preview target is uncovered and floating draft is saved") {
+            floatingComposer() == nil && store.composerDraft(for: threadID) == draft
+                && mainComposer.text == mainQuoted
+        }
+        try capture("selection-quote-main-visible.png")
+        // Crossing an existing selection attachment used to open a modal hover
+        // popover and consume the next click on the new conversation quote.
+        try await waitForOnboardingControl("agent-selection-attachment-preview-anchor")
+        _ = try await onboardingUICommand("hover", id: "agent-selection-attachment-preview-anchor")
+        try await until("selection hover preview stays above its attachment") {
+            let views = descendants(window)
+            guard let anchor = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-anchor-layout" }),
+                  let preview = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-preview-layout" }),
+                  isVisible(anchor, in: window), isVisible(preview, in: window) else { return false }
+            let anchorFrame = anchor.convert(anchor.bounds, to: window)
+            let previewFrame = preview.convert(preview.bounds, to: window)
+            return abs(previewFrame.maxY - (anchorFrame.minY - 6)) < 1
+                && window.bounds.insetBy(dx: -1, dy: -1).contains(previewFrame)
+        }
+        try await waitForOnboardingControl("agent-selection-attachment-preview-clear")
+        try await until("selection hover preview shows its fragment text") {
+            guard let attachment = store.selectionAttachments.first,
+                  let marker = descendants(window).first(where: {
+                      $0.accessibilityIdentifier == "selection-attachment-preview-text-\(attachment.id.uuidString)"
+                  }), isVisible(marker, in: window) else { return false }
+            let frame = marker.convert(marker.bounds, to: window)
+            var visible = frame.intersection(window.bounds)
+            var ancestor = marker.superview
+            while let view = ancestor {
+                if view.clipsToBounds { visible = visible.intersection(view.convert(view.bounds, to: window)) }
+                ancestor = view.superview
+            }
+            return visible.height >= frame.height - 1 && visible.width >= frame.width - 1
+        }
+        try await until("selection hover preview fits its content") {
+            let views = descendants(window)
+            guard let content = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-preview-content-layout" }),
+                  let viewport = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-preview-viewport-layout" }),
+                  content.bounds.height > 0, viewport.bounds.height > 0 else { return false }
+            return abs(viewport.bounds.height - min(content.bounds.height, 260)) < 1
+        }
+        _ = try await onboardingUICommand("screenshot", id: "Selection attachment hover preview")
+        try await activate("conversation-quote-\(mainQuote.id.uuidString)")
+        try await until("quote preview offers its source") {
+            try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") != nil
+        }
+        _ = try await onboardingUICommand("screenshot", id: "Conversation quote preview")
+        try await activate("conversation-quote-source-\(mainQuote.id.uuidString)")
+        try await until("returning to the quoted message closes the preview") {
+            try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") == nil
+        }
+        try await until("returning to the quoted message reveals the start of its source") {
+            guard let sourceID = mainQuote.messageID,
+                  let section = mainConversation.messages.firstIndex(where: { $0.id == sourceID.uuidString }),
+                  let firstBody = mainConversation.collection.cellForItem(at: IndexPath(item: 1, section: section)) else { return false }
+            var viewport = mainConversation.collection.bounds
+            viewport.origin.y += mainConversation.flow.topInset
+            viewport.size.height -= mainConversation.flow.topInset
+            let frame = firstBody.convert(firstBody.bounds, to: mainConversation.collection)
+            return abs(frame.minY - viewport.minY) < 2 && viewport.intersection(frame).height > 1
+                && isVisible(firstBody, in: window)
+        }
+        guard store.openAgentReplySource(source) else { throw Failure("floating discussion did not reopen after main quote preview") }
+        try await until("floating quote target and draft are restored after main preview") {
+            floatingComposer()?.text == draft && floatingMessage(messageID, in: window) != nil
         }
         guard let floatingConversation = conversation(containing: messageID), floatingConversation.isFloatingConversation,
               let quotedMessage = store.conversationMessages(in: threadID).first(where: { $0.id == messageID }) else {
             throw Failure("floating message quote action unavailable")
         }
-        let floatingQuoted = draft + "\n\n> " + quotedMessage.text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-        floatingConversation.quote(quotedMessage.text)
-        try await until("floating quote appends to its own composer") {
-            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
+        let floatingQuoted = draft
+        floatingConversation.quote(quotedMessage.text, messageID: quotedMessage.id)
+        try await until("floating quote attaches to its own composer") {
+            store.conversationQuotes(in: threadID).contains(where: { $0.text == quotedMessage.text && $0.messageID == quotedMessage.id })
+                && floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingQuoted
                 && mainComposer.text == mainQuoted && workspaceIsFullyVisible()
         }
+        guard let wholeQuote = store.conversationQuotes(in: threadID).last else {
+            throw Failure("floating footer quote is missing")
+        }
+        // Its new row changes panel placement. Wait for the real mounted pill
+        // before selecting text, just as a person would see the settled layout.
+        try await waitForOnboardingControl("conversation-quote-\(wholeQuote.id.uuidString)")
         let floatingExcerpt = try selectVisibleParagraph(in: floatingConversation)
         _ = try reachableCapsuleButton(floatingConversation.selectionActions.copyButton)
-        let floatingQuote = try reachableCapsuleButton(floatingConversation.selectionActions.quoteButton)
+        _ = try reachableCapsuleButton(floatingConversation.selectionActions.quoteButton)
+        try await waitForOnboardingControl("conversation-selection-quote")
+        _ = try await onboardingUICommand("hover", id: "conversation-selection-quote")
+        try await until("floating quote shows pointer hover feedback") {
+            (floatingConversation.selectionActions.quoteButton.backgroundColor?.cgColor.alpha ?? 0) > 0
+        }
         try capture("selection-capsule-floating.png")
-        let floatingCapsuleQuoted = floatingQuoted + "> " + floatingExcerpt.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-        floatingQuote.sendActions(for: .touchUpInside)
-        try await until("floating capsule quote appends without touching main draft") {
-            floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingCapsuleQuoted
+        let floatingCapsuleQuoted = floatingQuoted
+        try await activate("conversation-selection-quote")
+        try await until("floating capsule attaches a quote without touching main draft") {
+            store.conversationQuotes(in: threadID).contains(where: { $0.text == floatingExcerpt && $0.messageID != nil })
+                && floatingComposer()?.isFirstResponder == true && floatingComposer()?.text == floatingCapsuleQuoted
                 && mainComposer.text == mainQuoted && !floatingConversation.selection.hasSelection
                 && floatingConversation.selectionActions.isHidden && workspaceIsFullyVisible()
         }
+        try await until("floating quote pill is visible") {
+            guard let quote = store.conversationQuotes(in: threadID).last else { return false }
+            return try await accessibilityElement("conversation-quote-\(quote.id.uuidString)") != nil
+        }
+        try capture("selection-quote-floating.png")
+        guard let floatingPill = store.conversationQuotes(in: threadID).last else { throw Failure("floating quote unavailable") }
+        try await activate("conversation-quote-remove-\(floatingPill.id.uuidString)")
+        try await until("removing a floating quote preserves both drafts and main quotes") {
+            !store.conversationQuotes(in: threadID).contains(where: { $0.id == floatingPill.id })
+                && store.conversationQuotes(in: mainID).contains(where: { $0.id == mainQuote.id })
+                && mainComposer.text == mainQuoted && floatingComposer()?.text == floatingQuoted
+        }
+        func panelFrame() throws -> CGRect {
+            guard let frame = ConversationSelectionPanelProbe.PanelView.rectangles(in: mainConversation.view).first else {
+                throw Failure("floating panel geometry is unavailable")
+            }
+            return mainConversation.view.convert(frame, to: window)
+        }
+        func dragPanel(from point: CGPoint, by delta: CGSize) async throws {
+            let coordinates = [point.x, point.y, delta.width, delta.height]
+                .map { String(Double($0)) }.joined(separator: ",")
+            _ = try await onboardingUICommand("drag-window-point", id: "SceneWindow", value: coordinates)
+        }
+        // A resize must not also scroll or select the web content that Catalyst
+        // can report as the original touch target underneath the floating panel.
+        let underlyingWebViews = descendants(window).compactMap { $0 as? WKWebView }.filter {
+            isVisible($0, in: window) && !$0.isDescendant(of: floatingConversation.view)
+        }
+        guard !underlyingWebViews.isEmpty else { throw Failure("underlying web content is unavailable for pointer checks") }
+        let webPointerStateScript = #"""
+        JSON.stringify({
+          focus: document.hasFocus(),
+          scroll: Array.from(document.querySelectorAll('*')).flatMap((e, i) =>
+            e.scrollLeft || e.scrollTop ? [[i, e.scrollLeft, e.scrollTop]] : []),
+          window: [scrollX, scrollY],
+          selection: (() => { const s = getSelection(); return s
+            ? [s.anchorNode?.nodeName, s.anchorOffset, s.focusNode?.nodeName, s.focusOffset, s.toString()]
+            : null; })()
+        })
+        """#
+        var webPointerStates: [(WKWebView, String)] = []
+        for webView in underlyingWebViews {
+            guard let snapshot = try await webView.evaluateJavaScript(webPointerStateScript) as? String else {
+                throw Failure("underlying web pointer state is unavailable before resize")
+            }
+            webPointerStates.append((webView, snapshot))
+        }
+        let beforeSide = try panelFrame()
+        try await dragPanel(from: CGPoint(x: beforeSide.maxX - 3, y: beforeSide.midY),
+                            by: CGSize(width: 24, height: 0))
+        try await until("floating side still resizes with the real pointer") {
+            abs(try panelFrame().width - beforeSide.width - 24) < 2
+        }
+        let beforeCorner = try panelFrame()
+        try await dragPanel(from: CGPoint(x: beforeCorner.maxX - 5, y: beforeCorner.minY + 5),
+                            by: CGSize(width: 16, height: -12))
+        try await until("floating corner still resizes with the real pointer") {
+            let frame = try panelFrame()
+            return abs(frame.width - beforeCorner.width - 16) < 2
+                && abs(frame.height - beforeCorner.height - 12) < 2
+                && abs(frame.minY - beforeCorner.minY + 12) < 2
+        }
+        let beforeMove = try panelFrame()
+        try await dragPanel(from: CGPoint(x: beforeMove.midX, y: beforeMove.minY + 22),
+                            by: CGSize(width: -24, height: -16))
+        try await until("floating header still moves with the real pointer") {
+            let frame = try panelFrame()
+            return abs(frame.minX - beforeMove.minX + 24) < 2
+                && abs(frame.minY - beforeMove.minY + 16) < 2
+        }
+        for (webView, before) in webPointerStates {
+            guard try await webView.evaluateJavaScript(webPointerStateScript) as? String == before else {
+                throw Failure("floating resize or move changed underlying web focus, scrolling or selection")
+            }
+        }
+        guard mainComposer.text == mainQuoted, floatingComposer()?.text == floatingQuoted,
+              store.conversationQuotes(in: mainID).contains(where: { $0.id == mainQuote.id }) else {
+            throw Failure("floating pointer resize or move changed drafts or the main quote")
+        }
+        richEvidence["quote_capsule_and_remove_pointer"] = "passed"
+        richEvidence["quote_preview_and_source_pointer"] = "passed"
+        richEvidence["floating_side_corner_and_header_pointer"] = "passed"
+        richEvidence["floating_pointer_preserves_underlying_web_content"] = "passed"
+        try capture("selection-quote-floating-resize.png")
         store.dismissFloatingSelectionAgent()
+        try await until("closing the floating panel leaves main quote pills visible") {
+            floatingComposer() == nil
+                && store.conversationQuotes(in: mainID).contains(where: { $0.id == mainQuote.id })
+                && mainComposer.text == mainQuoted
+        }
+        try await until("closing the floating panel releases native resize capture") {
+            let state = CatalystDesktopWindow.shared.floatingResizeStateForCheck()
+            return state["registered"] == false && state["tracking"] == false && state["monitor"] == false
+        }
+        richEvidence["floating_resize_capture_released"] = "passed"
         store.clearSelectionAttachments()
+        store.removeConversationQuotes(Set(store.conversationQuotes(in: mainID).map(\.id)), in: mainID)
+        store.removeConversationQuotes(Set(store.conversationQuotes(in: threadID).map(\.id)), in: threadID)
         // Exercise the real composer with a documented model, using only the isolated fixture endpoint.
         let provider = store.agentProviderID
         let model = store.modelName

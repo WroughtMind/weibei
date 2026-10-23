@@ -24,11 +24,57 @@ final class OnboardingUITests: XCTestCase {
         let responseURL = channel.appendingPathComponent("onboarding-ui-response.json")
 
         let app = XCUIApplication(url: URL(fileURLWithPath: appPath))
+        // Runner tools can leave this external permission prompt over the App.
+        // Hosted CI declines it; all product reachability checks still apply.
+        let canDeclineExternalPythonNetwork = configuration.object(forInfoDictionaryKey: "WeiBeiCIExternalPromptHandling") as? String == "1"
+        var decliningExternalPrompt = false
+        var currentRequest = "startup"
+        func normalizedSystemText(_ value: String) -> String {
+            value.replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
+                .replacingOccurrences(of: "’", with: "'").split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        }
+        func dismissPythonLocalNetworkPromptIfPresent() -> Bool {
+            guard canDeclineExternalPythonNetwork, !decliningExternalPrompt else { return false }
+            decliningExternalPrompt = true
+            defer { decliningExternalPrompt = false }
+            let notifications = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
+            guard notifications.state != .notRunning else { return false }
+            let dialogs = notifications.dialogs.allElementsBoundByIndex
+            guard dialogs.count == 1, let dialog = dialogs.first else { return false }
+            let title = "Allow \"Python\" to find devices on local networks?"
+            let titles = dialog.staticTexts.allElementsBoundByIndex.filter {
+                normalizedSystemText($0.label) == title || normalizedSystemText($0.value as? String ?? "") == title
+            }
+            let buttons = dialog.buttons.allElementsBoundByIndex.filter { normalizedSystemText($0.label) == "Don't Allow" }
+            guard titles.count == 1, buttons.count == 1, let decline = buttons.first,
+                  decline.isEnabled, decline.isHittable else { return false }
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = "Declining external Python local network request: \(currentRequest) at \(ISO8601DateFormatter().string(from: Date()))"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            decline.click()
+            let dismissed = !dialog.exists
+            print("CI external Python network request declined: dismissed=\(dismissed), request=\(currentRequest)")
+            return dismissed
+        }
+        let autoFillMonitor = addUIInterruptionMonitor(withDescription: "Password AutoFill") { _ in
+            // The window can arrive after the immediate post-click check below.
+            let autoFill = app.windows["SafariPlatformSupportAutoCompleteWindow"]
+            guard autoFill.exists else { return false }
+            autoFill.typeKey(.escape, modifierFlags: [])
+            return !autoFill.exists
+        }
+        defer { removeUIInterruptionMonitor(autoFillMonitor) }
+        let networkMonitor = addUIInterruptionMonitor(withDescription: "CI external Python local network request") { _ in
+            dismissPythonLocalNetworkPromptIfPresent()
+        }
+        defer { removeUIInterruptionMonitor(networkMonitor) }
         app.launchArguments = ["--exit-after-check"]
         app.launchEnvironment["WEIBEI_ONBOARDING_UI_DIRECTORY"] = channel.path
         app.launch()
         defer { if app.state != .notRunning { app.terminate() } }
-        let deadline = Date().addingTimeInterval(360) // Same bound as the existing CI app launch.
+        let inactivityLimit: TimeInterval = 360 // Same bound as the existing CI app launch.
+        var deadline = Date().addingTimeInterval(inactivityLimit)
         var handled: String?
         var recordedUnreachable = Set<String>()
         while app.state != .notRunning, Date() < deadline {
@@ -44,8 +90,18 @@ final class OnboardingUITests: XCTestCase {
             handled = token
             let matches = app.descendants(matching: .any).matching(identifier: id)
             let element = matches.firstMatch
+            currentRequest = action + " " + id + " " + token
+            if ["ready", "press", "fill", "hover", "drag-window-point"].contains(action),
+               element.exists, !element.isHittable {
+                _ = dismissPythonLocalNetworkPromptIfPresent()
+            }
             var response: [String: Any] = ["token": token]
             switch action {
+            case "screenshot":
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = id
+                attachment.lifetime = .keepAlways
+                add(attachment)
             case "query", "ready":
                 // One snapshot keeps observation atomic when a banner or form
                 // disappears between requests. Live attribute reads can fail
@@ -73,7 +129,23 @@ final class OnboardingUITests: XCTestCase {
                 } else {
                     response["visible_controls"] = identifiedControls(in: root).joined(separator: "\n")
                 }
-            case "press", "fill":
+            case "drag-window-point":
+                let values = (request["value"] ?? "").split(separator: ",").compactMap { Double($0) }
+                guard element.exists, element.elementType == .window,
+                      values.count == 4, values.allSatisfy(\.isFinite) else {
+                    throw DriverFailure(errorDescription: "Window drag has no valid target or coordinates")
+                }
+                let bounds = CGRect(origin: .zero, size: element.frame.size)
+                let startPoint = CGPoint(x: values[0], y: values[1])
+                let endPoint = CGPoint(x: values[0] + values[2], y: values[1] + values[3])
+                guard bounds.contains(startPoint), bounds.contains(endPoint) else {
+                    throw DriverFailure(errorDescription: "Window drag left the test window")
+                }
+                let origin = element.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: startPoint.x, dy: startPoint.y))
+                let end = origin.withOffset(CGVector(dx: endPoint.x, dy: endPoint.y))
+                start.press(forDuration: 0.1, thenDragTo: end)
+            case "press", "fill", "hover":
                 guard element.exists, element.isEnabled, element.isHittable else {
                     let screenshot = XCTAttachment(screenshot: app.screenshot())
                     screenshot.name = "Unreachable control: " + id
@@ -82,7 +154,8 @@ final class OnboardingUITests: XCTestCase {
                     let frame = element.exists ? String(describing: element.frame) : "missing"
                     throw DriverFailure(errorDescription: "Unreachable mounted control: \(id), frame=\(frame), matches=\(matches.count)")
                 }
-                element.click()
+                if action == "hover" { element.hover() }
+                else { element.click() }
                 if action == "fill" {
                     let value = try XCTUnwrap(request["value"])
                     // A secure field may open the system Password AutoFill window.
@@ -100,6 +173,9 @@ final class OnboardingUITests: XCTestCase {
                 throw DriverFailure(errorDescription: "Unknown UI operation: \(action)")
             }
             try JSONSerialization.data(withJSONObject: response).write(to: responseURL, options: .atomic)
+            // A complete UI round can exceed the launch bound on Intel. Keep
+            // the stall limit while allowing successfully handled requests to continue.
+            deadline = Date().addingTimeInterval(inactivityLimit)
         }
         XCTAssertEqual(app.state, .notRunning, "The acceptance App did not finish its checks")
     }

@@ -2141,6 +2141,7 @@ struct AgentPaneView: View {
                     AgentSelectionAttachmentPill()
                         .transition(WeiBeiTransition.floating)
                 }
+                ConversationQuoteTray(sessionID: store.activeStudySessionID)
 
                 ComposerView(
                     prompt: agentPrompt,
@@ -2354,18 +2355,93 @@ private struct AgentPaneWidthKey: PreferenceKey {
     }
 }
 
+private struct ConversationQuoteTray: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
+    let sessionID: UUID?
+
+    var body: some View {
+        if let sessionID, !store.conversationQuotes(in: sessionID).isEmpty {
+            let quotes = store.conversationQuotes(in: sessionID)
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(quotes) { quote in
+                        ConversationQuotePill(quote: quote, sessionID: sessionID)
+                    }
+                }
+            }
+            .frame(height: min(CGFloat(quotes.count) * 34 * textScale, 102 * textScale))
+        }
+    }
+}
+
+private struct ConversationQuotePill: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let quote: ConversationQuoteAttachment
+    let sessionID: UUID
+    @State private var hovering = false
+    @State private var previewing = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button { previewing.toggle() } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "text.quote").foregroundStyle(WeiBeiTheme.cinnabar)
+                    Text(quote.text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " "))
+                        .lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("conversation-quote-\(quote.id.uuidString)")
+            .accessibilityLabel(store.ui("预览引用：", "Preview quote: ") + quote.text)
+            .popover(isPresented: $previewing, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(store.ui("对话引用", "Conversation quote")).weiBeiText(12, weight: .medium)
+                    ScrollView { Text(quote.text).weiBeiText(12).frame(maxWidth: .infinity, alignment: .leading) }
+                        .frame(maxHeight: 220)
+                    if let messageID = quote.messageID,
+                       store.conversationMessages(in: sessionID).contains(where: { $0.id == messageID }) {
+                        Button(store.ui("返回原消息", "Go to original message")) {
+                            previewing = false
+                            NotificationCenter.default.post(name: .weiBeiScrollAgentToMessage, object: messageID,
+                                userInfo: ["sessionID": sessionID])
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                        .accessibilityIdentifier("conversation-quote-source-\(quote.id.uuidString)")
+                    }
+                }
+                .padding(12).frame(width: 320, alignment: .leading)
+                .background(WeiBeiTheme.paperRaised)
+            }
+            Button { store.removeConversationQuotes([quote.id], in: sessionID) } label: {
+                Image(systemName: "xmark").weiBeiText(9, weight: .semibold)
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 20))
+            .accessibilityIdentifier("conversation-quote-remove-\(quote.id.uuidString)")
+            .accessibilityLabel(store.ui("移除引用", "Remove quote"))
+        }
+        .weiBeiText(12)
+        .foregroundStyle(WeiBeiTheme.secondaryInk)
+        .padding(.leading, 10).padding(.trailing, 5).padding(.vertical, 4)
+        .weibeiEtchedBackground(fill: WeiBeiTheme.paperInset.opacity(hovering ? 0.64 : 0.34),
+            stroke: WeiBeiTheme.hairline.opacity(hovering ? 0.72 : 0.42), cornerRadius: 8)
+        .onHover { hovering = $0 }
+    }
+}
+
 private struct AgentSelectionAttachmentPill: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @State private var pillHovering = false
-    @State private var popoverHovering = false
+    @State private var previewHovering = false
     @State private var closeToken = UUID()
+    @State private var previewContentHeight: CGFloat?
 
     var body: some View {
         if !interaction.selectionAttachments.isEmpty {
             HStack(spacing: 4) {
-                // Popover anchor is only the label — keep the clear button outside so the first
-                // click is not eaten by hover-popover dismissal.
                 HStack(spacing: 6) {
                     Image(systemName: "text.bubble")
                         .weiBeiText(12, weight: .medium)
@@ -2373,10 +2449,11 @@ private struct AgentSelectionAttachmentPill: View {
                         .weiBeiText(12, weight: .medium)
                 }
                 .contentShape(Rectangle())
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("agent-selection-attachment-preview-anchor")
                 .onHover { value in
                     setPillHovering(value)
                 }
-                .popover(isPresented: popoverPresented, arrowEdge: .bottom) { popoverContent }
 
                 Button(action: clearAllAttachments) {
                     Image(systemName: "xmark")
@@ -2397,31 +2474,35 @@ private struct AgentSelectionAttachmentPill: View {
                 contactShadow: pillHovering
             )
             .clipShape(RoundedRectangle(cornerRadius: 8))
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+            .background(AccessibilityFrameProbe(identifier: "selection-attachment-anchor-layout"))
+#endif
             .accessibilityLabel(Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments")))
             .help(store.ui("悬停查看选区", "Hover to preview selections"))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // A hover preview must not install the system popover's window-wide
+            // dismissal region, which consumes the first click on a nearby quote.
+            .overlay(alignment: .topLeading) {
+                Group {
+                    if pillHovering || previewHovering {
+                        previewContent
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .alignmentGuide(.top) { $0[.bottom] + 6 }
+            }
+            .zIndex(1)
         }
     }
 
     private func clearAllAttachments() {
         closeToken = UUID()
         pillHovering = false
-        popoverHovering = false
+        previewHovering = false
         store.clearSelectionAttachments()
     }
 
-    private var popoverPresented: Binding<Bool> {
-        Binding(
-            get: { pillHovering || popoverHovering },
-            set: { presented in
-                if !presented {
-                    pillHovering = false
-                    popoverHovering = false
-                }
-            }
-        )
-    }
-
-    private var popoverContent: some View {
+    private var previewContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments"))
@@ -2435,23 +2516,44 @@ private struct AgentSelectionAttachmentPill: View {
                     clearAllAttachments()
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
+                .accessibilityIdentifier("agent-selection-attachment-preview-clear")
                 .help(store.ui("清空全部选区片段", "Clear all selected fragments"))
             }
 
             ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 9) {
+                VStack(alignment: .leading, spacing: 9) {
                     ForEach(Array(interaction.selectionAttachments.enumerated()), id: \.element.id) { index, selection in
                         selectionAttachmentRow(index: index, selection: selection)
                     }
                 }
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: SelectionAttachmentPreviewHeightKey.self, value: proxy.size.height)
+                })
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-content-layout"))
+#endif
             }
+            .frame(height: previewContentHeight.map { min($0, 260) })
             .frame(maxHeight: 260)
+            .onPreferenceChange(SelectionAttachmentPreviewHeightKey.self) { height in
+                // The card only exists for nonempty fragments. Zero is the
+                // preference's initial value, not a measured content height.
+                guard height.isFinite, height > 0 else { return }
+                previewContentHeight = height
+            }
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+            .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-viewport-layout"))
+#endif
         }
         .padding(12)
-        .frame(width: 360, alignment: .leading)
-        .background(WeiBeiTheme.paperRaised)
+        .frame(maxWidth: 360, alignment: .leading)
+        .weibeiEtchedBackground(fill: WeiBeiTheme.paperRaised,
+            stroke: WeiBeiTheme.hairline, cornerRadius: 8, contactShadow: true)
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+        .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-layout"))
+#endif
         .onHover { value in
-            setPopoverHovering(value)
+            setPreviewHovering(value)
         }
     }
 
@@ -2472,7 +2574,7 @@ private struct AgentSelectionAttachmentPill: View {
                     store.removeSelectionAttachment(id: selection.id)
                     if shouldClose {
                         pillHovering = false
-                        popoverHovering = false
+                        previewHovering = false
                     }
                 } label: {
                     Image(systemName: "xmark")
@@ -2490,6 +2592,9 @@ private struct AgentSelectionAttachmentPill: View {
                 .allowsHitTesting(false)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 1)
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-text-\(selection.id.uuidString)"))
+#endif
         }
         .padding(9)
         .weibeiEtchedBackground(
@@ -2507,31 +2612,36 @@ private struct AgentSelectionAttachmentPill: View {
                 pillHovering = true
             }
         } else {
-            schedulePopoverClose()
+            schedulePreviewClose()
         }
     }
 
-    private func setPopoverHovering(_ value: Bool) {
+    private func setPreviewHovering(_ value: Bool) {
         if value {
             closeToken = UUID()
-            popoverHovering = true
+            previewHovering = true
         } else {
-            popoverHovering = false
-            schedulePopoverClose()
+            previewHovering = false
+            schedulePreviewClose()
         }
     }
 
-    private func schedulePopoverClose() {
+    private func schedulePreviewClose() {
         let token = UUID()
         closeToken = token
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            guard closeToken == token, !popoverHovering else { return }
+            guard closeToken == token, !previewHovering else { return }
             withAnimation(WeiBeiMotion.hover) {
                 pillHovering = false
-                popoverHovering = false
+                previewHovering = false
             }
         }
     }
+}
+
+private struct SelectionAttachmentPreviewHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 private struct FloatingSelectionPreview: View {
@@ -2601,6 +2711,7 @@ struct FloatingSelectionAgentView: View {
         .background {
             ConversationSelectionPanelProbe(position: placedOrigin)
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
 #endif
         .onChange(of: interaction.selectionContext) { previous, next in
@@ -3079,6 +3190,7 @@ struct FloatingSelectionAgentView: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 AgentUnconfiguredHint(store: store)
+                ConversationQuoteTray(sessionID: interaction.activeSelectionAskThreadID)
             ComposerView(
                 prompt: showsFloatingFeed
                     ? store.ui("再问一点…", "Ask a follow-up…")
@@ -3190,45 +3302,45 @@ struct FloatingSelectionAgentView: View {
     private var floatingResizeBorder: some View {
         let thickness: CGFloat = 6
         let headerClearance: CGFloat = 46
-        return ZStack {
-            FloatingSelectionResizeHitRegion(edge: .top, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
-                .frame(height: thickness)
-                .padding(.horizontal, 10)
-                .frame(maxHeight: .infinity, alignment: .top)
-            FloatingSelectionResizeHitRegion(edge: .bottom, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
-                .frame(height: thickness)
-                .padding(.horizontal, 10)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-            FloatingSelectionResizeHitRegion(edge: .leading, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
-                .frame(width: thickness)
-                .padding(.top, headerClearance)
-                .padding(.bottom, thickness)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            FloatingSelectionResizeHitRegion(edge: .trailing, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
-                .frame(width: thickness)
-                .padding(.top, headerClearance)
-                .padding(.bottom, thickness)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-
-            FloatingSelectionResizeHitRegion(edge: .topLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 10, height: 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            FloatingSelectionResizeHitRegion(edge: .topTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 10, height: 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-            FloatingSelectionResizeHitRegion(edge: .bottomLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 10, height: 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-            FloatingSelectionResizeHitRegion(edge: .bottomTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
-                .frame(width: 10, height: 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(store.ui("拖动边框调整浮窗大小", "Drag the border to resize")))
-        .accessibilityIdentifier("selection-float-resize-border")
+        // The base passes through the panel interior. Each overlay has only
+        // its actual edge bounds, so it cannot claim the conversation's AX hit.
+        return Color.clear
+            .allowsHitTesting(false)
+            .overlay(alignment: .top) {
+                FloatingSelectionResizeHitRegion(edge: .top, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
+                    .frame(height: thickness).padding(.horizontal, 10)
+            }
+            .overlay(alignment: .bottom) {
+                FloatingSelectionResizeHitRegion(edge: .bottom, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
+                    .frame(height: thickness).padding(.horizontal, 10)
+            }
+            .overlay(alignment: .leading) {
+                FloatingSelectionResizeHitRegion(edge: .leading, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
+                    .frame(width: thickness).padding(.top, headerClearance).padding(.bottom, thickness)
+            }
+            .overlay(alignment: .trailing) {
+                FloatingSelectionResizeHitRegion(edge: .trailing, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
+                    .frame(width: thickness).padding(.top, headerClearance).padding(.bottom, thickness)
+            }
+            .overlay(alignment: .topLeading) {
+                FloatingSelectionResizeHitRegion(edge: .topLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                    .frame(width: 10, height: 10)
+            }
+            .overlay(alignment: .topTrailing) {
+                FloatingSelectionResizeHitRegion(edge: .topTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                    .frame(width: 10, height: 10)
+            }
+            .overlay(alignment: .bottomLeading) {
+                FloatingSelectionResizeHitRegion(edge: .bottomLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                    .frame(width: 10, height: 10)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                FloatingSelectionResizeHitRegion(edge: .bottomTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                    .frame(width: 10, height: 10)
+            }
     }
 
-    private func resizeFloatingAgent(edge: FloatingAgentResizeEdge, value: DragGesture.Value?) {
+    private func resizeFloatingAgent(edge: FloatingAgentResizeEdge, value: CGSize?) {
         guard let value else {
             commitResize()
             return
@@ -3246,8 +3358,8 @@ struct FloatingSelectionAgentView: View {
             origin: FloatingAgentCoordinate(x: Double(session.origin.x), y: Double(session.origin.y)),
             size: FloatingAgentSize(width: Double(session.size.width), height: Double(session.size.height)),
             translation: FloatingAgentSize(
-                width: Double(value.translation.width),
-                height: Double(value.translation.height)
+                width: Double(value.width),
+                height: Double(value.height)
             ),
             canvas: FloatingAgentSize(
                 width: Double(canvasSize.width),
@@ -3430,30 +3542,37 @@ private struct FloatingSelectionResizeHitRegion: View {
 #else
     let cursor: NSCursor
 #endif
-    let onChanged: (FloatingAgentResizeEdge, DragGesture.Value?) -> Void
+    let onChanged: (FloatingAgentResizeEdge, CGSize?) -> Void
     @State private var cursorPushed = false
 
     var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { value in
-                        onChanged(edge, value)
-                    }
-                    .onEnded { _ in
-                        onChanged(edge, nil)
-                    }
-            )
-            .onHover { hovering in
-                if hovering, !cursorPushed {
-                    cursor.push()
-                    cursorPushed = true
-                } else if !hovering {
-                    popCursorIfNeeded()
-                }
+        Group {
+#if targetEnvironment(macCatalyst)
+            FloatingSelectionResizePointerRegion { onChanged(edge, $0) }
+#else
+            Color.clear
+                .contentShape(Rectangle())
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { value in
+                            onChanged(edge, value.translation)
+                        }
+                        .onEnded { _ in
+                            onChanged(edge, nil)
+                        }
+                )
+#endif
+        }
+        .onHover { hovering in
+            if hovering, !cursorPushed {
+                cursor.push()
+                cursorPushed = true
+            } else if !hovering {
+                popCursorIfNeeded()
             }
-            .onDisappear(perform: popCursorIfNeeded)
+        }
+        .onDisappear(perform: popCursorIfNeeded)
+        .accessibilityHidden(true)
     }
 
     private func popCursorIfNeeded() {
@@ -3467,6 +3586,72 @@ private struct FloatingSelectionResizeHitRegion: View {
         }
     }
 }
+
+#if targetEnvironment(macCatalyst)
+/// Native capture precedes WebKit's mouse handling. UIKit keeps the live,
+/// narrow hit region; only an accepted edge owns the complete native sequence.
+private struct FloatingSelectionResizePointerRegion: UIViewRepresentable {
+    let onChanged: (CGSize?) -> Void
+
+    func makeUIView(context: Context) -> PointerView { PointerView() }
+    func updateUIView(_ view: PointerView, context: Context) {
+        view.onChanged = onChanged
+        view.synchronizeRegistration()
+    }
+    static func dismantleUIView(_ view: PointerView, coordinator: ()) { view.disconnect() }
+
+    final class PointerView: UIView {
+        var onChanged: ((CGSize?) -> Void)?
+        private let registrationID = UUID().uuidString
+        private var registered = false
+        private weak var registeredWindow: UIWindow?
+        private weak var registeredToolbar: NSObject?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isOpaque = false
+            isUserInteractionEnabled = true
+            accessibilityElementsHidden = true
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            synchronizeRegistration()
+        }
+
+        func synchronizeRegistration() {
+            guard let window, let toolbar = window.windowScene?.titlebar?.toolbar else {
+                disconnect()
+                return
+            }
+            guard !registered || window !== registeredWindow || toolbar !== registeredToolbar else { return }
+            disconnect()
+            registered = true
+            registeredWindow = window
+            registeredToolbar = toolbar
+            CatalystDesktopWindow.shared.registerFloatingResize(id: registrationID, toolbar: toolbar,
+                accepts: { [weak self, weak window] point in
+                    guard let self, let window, self.window === window,
+                          self.registeredToolbar === window.windowScene?.titlebar?.toolbar,
+                          self.point(inside: self.convert(point, from: window), with: nil) else { return false }
+                    let hit = window.hitTest(point, with: nil)
+                    return hit === self || hit?.isDescendant(of: self) == true
+                }, changed: { [weak self] translation, finished in
+                    self?.onChanged?(finished ? nil : translation)
+                })
+        }
+
+        func disconnect() {
+            guard registered else { return }
+            registered = false
+            registeredWindow = nil
+            registeredToolbar = nil
+            CatalystDesktopWindow.shared.unregisterFloatingResize(id: registrationID)
+        }
+    }
+}
+#endif
 
 struct FloatingSelectionMessageBubble: View {
     @EnvironmentObject private var store: WorkspaceStore

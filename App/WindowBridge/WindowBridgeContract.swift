@@ -15,6 +15,10 @@ import Foundation
                                       dismissed: @MainActor @escaping () -> Void) -> NSObject?
     @MainActor func updateUpdateNotes(_ presentation: NSObject, sourceRect: CGRect, size: CGSize, dark: Bool)
     @MainActor func dismissUpdateNotes(_ presentation: NSObject)
+    @MainActor func registerFloatingResize(id: String, toolbar: NSObject,
+        accepts: @MainActor @escaping (CGPoint) -> Bool,
+        changed: @MainActor @escaping (CGSize, Bool) -> Void)
+    @MainActor func unregisterFloatingResize(id: String)
     func materialWindowCount() -> Int
     @MainActor func registerFileDrop(
         id: String, toolbar: NSObject,
@@ -35,6 +39,8 @@ import Foundation
                                            routeThroughWorkspace: Bool) -> [String: String]
     @MainActor func updateNotesVisibleForCheck() -> Bool
     @MainActor func clickUpdateNotesPageSourceForCheck() -> [String: String]
+    @MainActor func floatingResizeEventsForCheck() -> [[String: String]]
+    @MainActor func floatingResizeStateForCheck() -> [String: Bool]
 #endif
     @MainActor func presentOpenPanel(
         title: String,

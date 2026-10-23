@@ -11,6 +11,9 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var observers: [NSObjectProtocol] = []
     private var activeOpenPanel: NSOpenPanel?
     private var fileDrops: [String: NativeFileDropRegistration] = [:]
+    private var floatingResizeTargets: [String: NativeFloatingResizeTarget] = [:]
+    private var floatingResizeMonitor: Any?
+    private var floatingResizeSession: NativeFloatingResizeSession?
 #if WEIBEI_ACCEPTANCE_CHECKS
     private var fileDropCheckBoard: NSPasteboard?
     private weak var checkedFullScreenWorkspace: NSWindow?
@@ -20,6 +23,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var fullScreenCheckToolbarChanges: [String] = []
     private var toolbarClickCheckEventNumber = 1
     private weak var checkedUpdateNotes: NativeUpdateNotesPopover?
+    private var floatingResizeEvents: [[String: String]] = []
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
@@ -56,6 +60,18 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
                 || (self.mode.hasPrefix("glass") && self.materials.object(forKey: window)?.superview == nil) else { return }
             self.apply(to: window)
         })
+        for name in [NSWindow.willCloseNotification, NSWindow.didResignKeyNotification,
+                     NSWindow.didMiniaturizeNotification, NSApplication.didResignActiveNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if note.name == NSApplication.didResignActiveNotification
+                        || (note.object as? NSWindow) === self.floatingResizeSession?.window {
+                        self.finishFloatingResize()
+                    }
+                }
+            })
+        }
     }
     func configure(mode: String, intensity: Double) {
         self.mode = mode; self.intensity = intensity
@@ -326,6 +342,97 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         popover.dismissed = nil
         popover.close()
     }
+    @MainActor func registerFloatingResize(id: String, toolbar: NSObject,
+        accepts: @MainActor @escaping (CGPoint) -> Bool,
+        changed: @MainActor @escaping (CGSize, Bool) -> Void) {
+        guard let toolbar = toolbar as? NSToolbar else { return }
+        unregisterFloatingResize(id: id)
+        floatingResizeTargets[id] = NativeFloatingResizeTarget(toolbar: toolbar, accepts: accepts, changed: changed)
+        if floatingResizeMonitor == nil {
+            floatingResizeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+                let consumed = MainActor.assumeIsolated {
+                    guard let self else { return false }
+                    return self.handleFloatingResize(event) == nil
+                }
+                return consumed ? nil : event
+            }
+        }
+    }
+    @MainActor func unregisterFloatingResize(id: String) {
+        if floatingResizeSession?.id == id { finishFloatingResize() }
+        floatingResizeTargets.removeValue(forKey: id)
+        if floatingResizeTargets.isEmpty, let floatingResizeMonitor {
+            NSEvent.removeMonitor(floatingResizeMonitor)
+            self.floatingResizeMonitor = nil
+        }
+    }
+    /// Consume an accepted resize before AppKit can deliver its mouse-down to
+    /// WebKit. Cancelling the later UIKit touch cannot undo WebKit's caret move.
+    @MainActor private func handleFloatingResize(_ event: NSEvent) -> NSEvent? {
+        if event.type == .leftMouseDown {
+            finishFloatingResize()
+            guard !event.modifierFlags.contains(.control), let window = event.window,
+                  window.isVisible, !window.isMiniaturized, window.attachedSheet == nil,
+                  let toolbar = window.toolbar, let point = floatingResizePoint(event, in: window) else { return event }
+#if WEIBEI_ACCEPTANCE_CHECKS
+            if floatingResizeTargets.values.contains(where: { $0.toolbar === toolbar }) {
+                floatingResizeEvents.append(["phase": "candidate", "timestamp": String(event.timestamp),
+                    "native_point": NSStringFromPoint(event.locationInWindow), "point": NSStringFromPoint(point),
+                    "window_frame": NSStringFromRect(window.frame), "content_bounds": window.contentView.map { NSStringFromRect($0.bounds) } ?? "none",
+                    "content_flipped": String(window.contentView?.isFlipped == true), "swallowed": "false"])
+            }
+#endif
+            for (id, target) in floatingResizeTargets where target.toolbar === toolbar {
+                guard target.accepts(point) else { continue }
+                floatingResizeSession = NativeFloatingResizeSession(id: id, window: window, start: point)
+#if WEIBEI_ACCEPTANCE_CHECKS
+                floatingResizeEvents.append(["phase": "began", "id": id, "timestamp": String(event.timestamp),
+                    "point": NSStringFromPoint(point), "swallowed": "true"])
+#endif
+                target.changed(.zero, false)
+                return nil
+            }
+            return event
+        }
+        guard let session = floatingResizeSession else { return event }
+        guard let window = session.window, window.isVisible, !window.isMiniaturized,
+              let target = floatingResizeTargets[session.id], let point = floatingResizePoint(event, in: window) else {
+            finishFloatingResize()
+            return nil
+        }
+        let translation = CGSize(width: point.x - session.start.x, height: point.y - session.start.y)
+#if WEIBEI_ACCEPTANCE_CHECKS
+        floatingResizeEvents.append(["phase": event.type == .leftMouseUp ? "ended" : "changed", "id": session.id,
+            "timestamp": String(event.timestamp), "point": NSStringFromPoint(point),
+            "translation": NSStringFromSize(translation), "swallowed": "true"])
+#endif
+        target.changed(translation, false)
+        if event.type == .leftMouseUp { finishFloatingResize() }
+        return nil
+    }
+    @MainActor private func floatingResizePoint(_ event: NSEvent, in window: NSWindow) -> CGPoint? {
+        guard let content = window.contentView else { return nil }
+        let screenPoint = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? NSEvent.mouseLocation
+        let point = content.convert(window.convertPoint(fromScreen: screenPoint), from: nil)
+        let result = CGPoint(x: point.x - content.bounds.minX,
+                             y: content.isFlipped ? point.y - content.bounds.minY : content.bounds.maxY - point.y)
+        return result.x.isFinite && result.y.isFinite ? result : nil
+    }
+    @MainActor private func finishFloatingResize() {
+        guard let session = floatingResizeSession else { return }
+        floatingResizeSession = nil
+#if WEIBEI_ACCEPTANCE_CHECKS
+        floatingResizeEvents.append(["phase": "finished", "id": session.id,
+            "timestamp": String(ProcessInfo.processInfo.systemUptime)])
+#endif
+        floatingResizeTargets[session.id]?.changed(.zero, true)
+    }
+#if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func floatingResizeEventsForCheck() -> [[String: String]] { floatingResizeEvents }
+    @MainActor func floatingResizeStateForCheck() -> [String: Bool] {
+        ["registered": !floatingResizeTargets.isEmpty, "tracking": floatingResizeSession != nil, "monitor": floatingResizeMonitor != nil]
+    }
+#endif
     @MainActor func registerFileDrop(
         id: String, toolbar: NSObject,
         targeted: @MainActor @escaping (Bool) -> Void,
@@ -487,7 +594,25 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
         updateService.installAvailableUpdate()
     }
-    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+    deinit {
+        if let floatingResizeMonitor { NSEvent.removeMonitor(floatingResizeMonitor) }
+        observers.forEach(NotificationCenter.default.removeObserver)
+    }
+}
+
+@MainActor private final class NativeFloatingResizeTarget {
+    weak var toolbar: NSToolbar?
+    let accepts: @MainActor (CGPoint) -> Bool
+    let changed: @MainActor (CGSize, Bool) -> Void
+    init(toolbar: NSToolbar, accepts: @MainActor @escaping (CGPoint) -> Bool,
+         changed: @MainActor @escaping (CGSize, Bool) -> Void) {
+        self.toolbar = toolbar; self.accepts = accepts; self.changed = changed
+    }
+}
+private struct NativeFloatingResizeSession {
+    let id: String
+    weak var window: NSWindow?
+    let start: CGPoint
 }
 
 /// Own one destination for the whole promised-file drag. AppKit delivers each

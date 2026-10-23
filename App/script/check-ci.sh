@@ -29,7 +29,13 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-discussion-mist.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-main.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-hover.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-copy-feedback.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-floating.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-quote-main.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-quote-main-visible.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-quote-floating.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-quote-floating-resize.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/connection-cards.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/confirmed-import.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/contextual-pickers.png" \
@@ -106,6 +112,8 @@ business_path = support / 'Workspace/business-check.json'
 # Xcode's UI testing service drives real SwiftUI controls from another process.
 # The App keeps the file, credential and recovery assertions in the same checks.
 ui_log = evidence / 'ci-onboarding-ui.log'
+isolated_desktop = (os.environ.get('CI') == 'true' and os.environ.get('GITHUB_ACTIONS') == 'true'
+                    and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted')
 with ui_log.open('w') as log:
     ui_result = subprocess.run([
         'xcodebuild', '-project', 'App/UITests/WeiBeiOnboardingUI.xcodeproj', '-scheme', 'WeiBeiOnboardingUITests',
@@ -113,7 +121,8 @@ with ui_log.open('w') as log:
         '-derivedDataPath', '.build/onboarding-ui-' + os.environ['WEIBEI_TARGET_ARCH'],
         '-resultBundlePath', str(evidence / 'ci-onboarding-ui.xcresult'),
         '-parallel-testing-enabled', 'NO',
-        'WEIBEI_CHECK_APP_PATH=' + app, 'test',
+        'WEIBEI_CHECK_APP_PATH=' + app,
+        'WEIBEI_CI_EXTERNAL_PROMPT_HANDLING=' + ('1' if isolated_desktop else '0'), 'test',
     ], stdout=log, stderr=subprocess.STDOUT)
 if ui_result.returncode:
     print(ui_log.read_text()[-16000:])

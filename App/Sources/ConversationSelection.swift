@@ -211,6 +211,11 @@ final class ConversationSelection: NSObject, TextLabelViewDelegate, UIContextMen
         let forward = a < b || (a == b && origin.character <= end.character)
         return (Array(blocks[min(a,b)...max(a,b)]), forward ? origin : end, forward ? end : origin, forward)
     }
+    var messageID: UUID? {
+        let blockID = attachmentSelection?.blockID ?? orderedSelection()?.start.blockID
+        return controller?.messages.flatMap(\.blocks).first(where: { $0.id == blockID })
+            .flatMap { UUID(uuidString: $0.messageID) }
+    }
     private func range(for body: BlockView) -> NSRange? {
         guard let selection = orderedSelection(), let id = body.record?.id,
               selection.blocks.contains(where: { $0.id == id }) else { return nil }
@@ -282,7 +287,7 @@ final class ConversationSelection: NSObject, TextLabelViewDelegate, UIContextMen
             actions.append(UIAction(title: CatalystInterfaceCopy.text("复制整条回答", "Copy the whole answer")) { _ in UIPasteboard.general.string = message.copyableMarkdown })
             if controller?.isFloatingConversation == true {
                 actions.append(UIAction(title: CatalystInterfaceCopy.text("引用到输入框", "Quote into the input"), image: UIImage(systemName: "text.quote")) { _ in
-                    controller?.quote(message.original?.text ?? message.markdown)
+                    controller?.quote(message.original?.text ?? message.markdown, messageID: UUID(uuidString: message.id))
                 })
             }
             if let sources = message.original?.sources, !sources.isEmpty {

@@ -72,22 +72,16 @@ struct CatalystConversationView: View {
             controller.view.backgroundColor = .clear
             let targetID = floatingThreadID ?? workspace.activeStudySessionID
             controller.setAnswering(targetID.map { workspace.isAgentRunning(in: $0) } ?? false, status: streaming.activityText ?? "")
-            controller.quoteText = { [weak workspace] text in
-                guard let workspace, let targetID else { return }
-                // A2: 引用追加到草稿末尾（前面空一行），不冲掉用户已写的草稿。
-                let quote = "> " + text.replacingOccurrences(of: "\n", with: "\n> ") + "\n\n"
-                let existing = workspace.composerDraft(for: targetID)
-                let separator: String
-                if existing.isEmpty || existing.hasSuffix("\n\n") {
-                    separator = ""
-                } else if existing.hasSuffix("\n") {
-                    separator = "\n"
-                } else {
-                    separator = "\n\n"
-                }
-                workspace.replaceComposerDraft(existing + separator + quote, for: targetID)
+            controller.didCopyText = { [weak workspace] in
+                guard let workspace else { return }
+                workspace.showTransientNoteStatus(workspace.ui("已复制", "Copied"))
+            }
+            controller.quoteText = { [weak workspace] text, messageID in
+                guard let workspace, let targetID,
+                      workspace.addConversationQuote(text, messageID: messageID, in: targetID) else { return false }
                 workspace.focusedPane = .agent
                 onFocusComposer()
+                return true
             }
             let reveal = floatingThreadID == nil ? nil : workspace.selectionChatRevealMessageID
             let revealChanged = coordinator.requestedMessageID != reveal
@@ -153,7 +147,7 @@ struct CatalystConversationView: View {
                     streaming: original.completionState == .generating
                         ? workspace.streaming(in: sessionID) : inertAgentStreamingState,
                     wideTypography: wideTypography, compact: floatingThreadID != nil,
-                    onQuote: { [weak controller] text in controller?.quote(text) },
+                    onQuote: { [weak controller] text in controller?.quote(text, messageID: original.id) },
                     onHeight: { [weak controller, weak message] height in
                     // Geometry arrives during SwiftUI layout; resize the collection after that pass.
                     DispatchQueue.main.async {
@@ -247,8 +241,10 @@ struct CatalystConversationView: View {
             }
         }
         func observeNavigation(_ controller: ConversationController) {
-            navigation = NotificationCenter.default.addObserver(forName: .weiBeiScrollAgentToMessage, object: nil, queue: .main) { [weak controller] note in
+            navigation = NotificationCenter.default.addObserver(forName: .weiBeiScrollAgentToMessage, object: nil, queue: .main) { [weak self, weak controller] note in
                 guard let id = note.object as? UUID else { return }
+                if let sessionID = note.userInfo?["sessionID"] as? UUID,
+                   sessionID != (self?.floatingThreadID ?? self?.workspace?.activeStudySessionID) { return }
                 Task { @MainActor in await controller?.revealMessage(id) }
             }
         }

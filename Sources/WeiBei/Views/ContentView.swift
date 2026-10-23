@@ -603,9 +603,13 @@ private struct WorkspaceStatusBanner: View {
             Text(message)
                 .weiBeiText(12, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.ink)
+                .accessibilityIdentifier("workspace-status-message")
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+                .background(AccessibilityFrameProbe(identifier: "workspace-status-layout-" + message))
+#endif
             if isEditorCommandFailure && store.canRetryRejectedNoteEditorCommand {
                 Button {
                     store.retryRejectedNoteEditorCommand()

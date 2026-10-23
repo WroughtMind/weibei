@@ -3,6 +3,28 @@ import WeiBeiCore
 
 @MainActor
 extension WorkspaceStore {
+    func conversationQuotes(in sessionID: UUID?) -> [ConversationQuoteAttachment] {
+        studySessions.first { $0.id == sessionID }?.composerQuotes ?? []
+    }
+
+    @discardableResult
+    func addConversationQuote(_ text: String, messageID: UUID?, in sessionID: UUID) -> Bool {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let index = studySessions.firstIndex(where: { $0.id == sessionID }) else { return false }
+        if let messageID, !conversationMessages(in: sessionID).contains(where: { $0.id == messageID }) { return false }
+        guard !conversationQuotes(in: sessionID).contains(where: { $0.text == text && $0.messageID == messageID }) else { return true }
+        studySessions[index].composerQuotes.append(
+            ConversationQuoteAttachment(text: text, messageID: messageID))
+        save()
+        return true
+    }
+
+    func removeConversationQuotes(_ ids: Set<UUID>, in sessionID: UUID) {
+        guard !ids.isEmpty, let index = studySessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        studySessions[index].composerQuotes.removeAll { ids.contains($0.id) }
+        save()
+    }
+
     func composerDraft(for sessionID: UUID?) -> String {
         guard let sessionID else { return "" }
         if sessionID == activeStudySessionID { return pendingComposerDraft ?? agentDraft }
@@ -31,12 +53,16 @@ extension WorkspaceStore {
     }
 
     /// A2: 失败或取消后只在输入框为空时回填上一问，绝不覆盖用户正在写的新草稿。
-    func restoreComposerDraftIfEmpty(_ question: String, for sessionID: UUID) {
+    func restoreComposerDraftIfEmpty(_ question: String, for sessionID: UUID, quotes: [ConversationQuoteAttachment] = []) {
         let cleaned = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty,
-              composerDraft(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return }
-        replaceComposerDraft(cleaned, for: sessionID)
+        let current = composerDraft(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, current.isEmpty || current == cleaned,
+              let index = studySessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        if current.isEmpty { replaceComposerDraft(cleaned, for: sessionID) }
+        for quote in quotes where !studySessions[index].composerQuotes.contains(where: { $0.id == quote.id }) {
+            studySessions[index].composerQuotes.append(quote)
+        }
+        if !quotes.isEmpty { save() }
     }
 
     func conversationMessages(in sessionID: UUID?) -> [AgentMessage] {
