@@ -5,29 +5,35 @@ import XCTest
 /// The diagnostic workflow alone enables this suite on an isolated desktop.
 final class ReleasedAppCompatibilityUITests: XCTestCase {
     @MainActor
-    func testSettingsNotePersistenceAndDocumentPicker() throws {
-        continueAfterFailure = false
-        let configuration = Bundle(for: Self.self)
-        XCTAssertEqual(configuration.object(forInfoDictionaryKey: "WeiBeiCIExternalPromptHandling") as? String, "1")
-        let path = try XCTUnwrap(configuration.object(forInfoDictionaryKey: "WeiBeiCheckAppPath") as? String)
-        let app = XCUIApplication(url: URL(fileURLWithPath: path))
-        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
-        app.launch()
+    func testSettingsPointerAndKeyboard() throws {
+        let app = try launch()
         defer {
             record(app, "final-state")
             if app.state != .notRunning { app.terminate() }
         }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
-
-        app.typeKey(",", modifierFlags: .command)
+        let settings = app.buttons["Open Settings"]
+        guard settings.waitForExistence(timeout: 15) else { XCTFail("Missing settings toolbar button"); return }
+        settings.click()
         let closeSettings = app.buttons["settings-panel-close"]
-        XCTAssertTrue(closeSettings.waitForExistence(timeout: 15))
+        guard closeSettings.waitForExistence(timeout: 15) else { XCTFail("Settings did not open after a pointer click"); return }
         record(app, "settings")
         closeSettings.click()
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(closeSettings.waitForExistence(timeout: 15), "Settings keyboard shortcut must work after pointer interaction")
+    }
 
+    @MainActor
+    func testNotePersistenceAndDocumentPicker() throws {
+        let app = try launch()
+        defer {
+            record(app, "final-note-state")
+            if app.state != .notRunning { app.terminate() }
+        }
+        let composer = app.textViews["agent-composer-compact"]
+        if composer.exists { composer.click() }
         app.typeKey("n", modifierFlags: .command)
         let editor = app.webViews.textViews.firstMatch
-        XCTAssertTrue(editor.waitForExistence(timeout: 30), "The new note must mount its editable WebKit body")
+        guard editor.waitForExistence(timeout: 30) else { XCTFail("The new note must mount its editable WebKit body"); return }
         editor.click()
         let marker = "WeiBei compatibility saved note " + UUID().uuidString
         editor.typeText(marker)
@@ -47,6 +53,20 @@ final class ReleasedAppCompatibilityUITests: XCTestCase {
         record(app, "document-picker")
         cancel.click()
         XCTAssertTrue(waitForText(marker, in: app), "Cancelling the picker must preserve the note")
+    }
+
+    @MainActor
+    private func launch() throws -> XCUIApplication {
+        continueAfterFailure = true
+        let configuration = Bundle(for: Self.self)
+        XCTAssertEqual(configuration.object(forInfoDictionaryKey: "WeiBeiCIExternalPromptHandling") as? String, "1")
+        let path = try XCTUnwrap(configuration.object(forInfoDictionaryKey: "WeiBeiCheckAppPath") as? String)
+        let app = XCUIApplication(url: URL(fileURLWithPath: path))
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
+        record(app, "launched")
+        return app
     }
 
     @MainActor

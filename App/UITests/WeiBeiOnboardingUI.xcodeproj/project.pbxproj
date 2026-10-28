@@ -3,17 +3,17 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
-		EF05EFA9C7DE4EE8B607FF80 /* ReleasedAppCompatibilityUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F62661538B4A6DB1883F32 /* ReleasedAppCompatibilityUITests.swift */; };
 		A405D2024AEF49E8D84B69E1 /* OnboardingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DFBAABB2087211AB891BC97 /* OnboardingUITests.swift */; };
+		BF95004A75724A37F4FA97BB /* ReleasedAppCompatibilityUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C7EB233D8FDAA024AB056A1 /* ReleasedAppCompatibilityUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		12F62661538B4A6DB1883F32 /* ReleasedAppCompatibilityUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleasedAppCompatibilityUITests.swift; sourceTree = "<group>"; };
 		0C102317C3EBF4A452A0B39F /* WeiBeiOnboardingUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WeiBeiOnboardingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8C7EB233D8FDAA024AB056A1 /* ReleasedAppCompatibilityUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleasedAppCompatibilityUITests.swift; sourceTree = "<group>"; };
 		9DFBAABB2087211AB891BC97 /* OnboardingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -21,8 +21,8 @@
 		258C60F905C8A78B79B096D3 = {
 			isa = PBXGroup;
 			children = (
-				12F62661538B4A6DB1883F32 /* ReleasedAppCompatibilityUITests.swift */,
 				9DFBAABB2087211AB891BC97 /* OnboardingUITests.swift */,
+				8C7EB233D8FDAA024AB056A1 /* ReleasedAppCompatibilityUITests.swift */,
 				856E999269967FF650360CB6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -62,7 +62,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 1540;
 				TargetAttributes = {
 					725300CA7523240DA8975D27 = {
 						ProvisioningStyle = Manual;
@@ -70,7 +70,7 @@
 				};
 			};
 			buildConfigurationList = AE96ED4FEC66F080B2C0A7AF /* Build configuration list for PBXProject "WeiBeiOnboardingUI" */;
-			compatibilityVersion = "Xcode 14.0";
+			compatibilityVersion = "Xcode 15.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -79,7 +79,6 @@
 			);
 			mainGroup = 258C60F905C8A78B79B096D3;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -93,8 +92,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				EF05EFA9C7DE4EE8B607FF80 /* ReleasedAppCompatibilityUITests.swift in Sources */,
 				A405D2024AEF49E8D84B69E1 /* OnboardingUITests.swift in Sources */,
+				BF95004A75724A37F4FA97BB /* ReleasedAppCompatibilityUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
