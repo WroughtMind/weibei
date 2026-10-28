@@ -29,6 +29,10 @@ final class ReleasedAppCompatibilityUITests: XCTestCase {
             record(app, "final-note-state")
             if app.state != .notRunning { app.terminate() }
         }
+        // A duplicate shortcut can discard a whole menu group on macOS 15.
+        for title in ["New Blank Note", "Open Document", "Workspace", "Copy Current Reference"] {
+            XCTAssertTrue(app.menuItems[title].firstMatch.exists, "Missing workspace menu: \(title)")
+        }
         let composer = app.textViews["agent-composer-compact"]
         if composer.exists { composer.click() }
         app.typeKey("n", modifierFlags: .command)
@@ -56,7 +60,8 @@ final class ReleasedAppCompatibilityUITests: XCTestCase {
         record(app, "restored-note")
 
         app.typeKey("o", modifierFlags: .command)
-        let cancel = app.buttons["Cancel"].firstMatch
+        // macOS 14 also exposes a Touch Bar Cancel button, which cannot be clicked.
+        let cancel = app.sheets["open-panel"].buttons["CancelButton"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 15), "The native document picker must open")
         record(app, "document-picker")
         cancel.click()

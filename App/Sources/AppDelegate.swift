@@ -105,6 +105,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             return command(id.title(language: store.interfaceLanguage), input, id.rawValue, modifiers: chord.modifiers)
         }
         builder.remove(menu: .textSize)
+        // macOS 15 rejects an entire inserted group when a key chord already
+        // belongs to a system command. These actions are owned by the workspace.
+        builder.remove(menu: .open)
+        builder.remove(menu: .find)
+        builder.remove(menu: .textColor)
         builder.replaceChildren(ofMenu: .preferences) { _ in [command(store.ui("设置…", "Settings…"), ",", "settings")] }
         var fileCommands: [UIMenuElement] = [
             command(store.ui("新建空白笔记", "New Blank Note"), "n", "new-note")
@@ -408,9 +413,6 @@ struct CatalystWeiBeiApp: App {
             workspaceContent
 #endif
         }
-        // UIKit owns this app's menu. SwiftUI's default scene commands replace
-        // its File/View groups on macOS 15, making Command-N open a new window.
-        .commandsRemoved()
     }
 
     private var workspaceContent: some View {
