@@ -34,9 +34,17 @@ final class ReleasedAppCompatibilityUITests: XCTestCase {
         app.typeKey("n", modifierFlags: .command)
         let editor = app.webViews.textViews.firstMatch
         guard editor.waitForExistence(timeout: 30) else { XCTFail("The new note must mount its editable WebKit body"); return }
-        editor.click()
+        // Xcode 15's direct WebKit element click can stall while searching for
+        // interrupting elements. Click its visible location on the real window.
+        let window = app.windows.matching(identifier: "SceneWindow").firstMatch
+        let editorFrame = editor.frame
+        let windowFrame = window.frame
+        window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: editorFrame.midX - windowFrame.minX,
+            dy: editorFrame.midY - windowFrame.minY
+        )).click()
         let marker = "WeiBei compatibility saved note " + UUID().uuidString
-        editor.typeText(marker)
+        app.typeText(marker)
         XCTAssertTrue(waitForText(marker, in: app))
         record(app, "edited-note")
 
@@ -71,7 +79,10 @@ final class ReleasedAppCompatibilityUITests: XCTestCase {
 
     @MainActor
     private func waitForText(_ text: String, in app: XCUIApplication) -> Bool {
-        let predicate = NSPredicate { _, _ in app.debugDescription.contains(text) }
+        let editor = app.webViews.textViews.firstMatch
+        let predicate = NSPredicate { _, _ in
+            editor.exists && (editor.value as? String)?.contains(text) == true
+        }
         return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: app)], timeout: 30) == .completed
     }
 
