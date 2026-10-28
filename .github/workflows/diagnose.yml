@@ -19,7 +19,7 @@ on:
         description: 失败场景；结果不会覆盖合并门禁
         required: true
         type: choice
-        options: [picker, conversation, business]
+        options: [picker, conversation, business, compatibility]
 permissions:
   contents: read
 concurrency:
@@ -27,6 +27,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   diagnose:
+    if: inputs.scenario != 'compatibility'
     name: 定向诊断 ${{ inputs.arch }} / ${{ inputs.scenario }}
     runs-on: ${{ inputs.arch == 'arm64' && 'macos-26' || 'macos-26-intel' }}
     timeout-minutes: 75
@@ -75,3 +76,45 @@ jobs:
         with:
           key: ${{ steps.catalyst_cache.outputs.key }}
           path: ${{ steps.catalyst_cache.outputs.paths }}
+
+  compatibility:
+    if: inputs.scenario == 'compatibility'
+    name: 公开包兼容性 ${{ matrix.runner }} / ${{ inputs.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS 14 Intel is no longer a standard hosted runner.
+        runner: ${{ fromJSON(inputs.arch == 'arm64' && '["macos-14","macos-15"]' || '["macos-15-intel"]') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      WEIBEI_TARGET_ARCH: ${{ inputs.arch }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: 下载当前版本的公开安装盘并校验
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(uname -m)" = "$WEIBEI_TARGET_ARCH"
+          version="$(cat VERSION)"
+          mkdir -p .build/compatibility
+          gh release download "v$version" --pattern "WeiBei-$version-macOS-$WEIBEI_TARGET_ARCH.dmg*" --dir .build/compatibility
+          cd .build/compatibility
+          shasum -a 256 -c "WeiBei-$version-macOS-$WEIBEI_TARGET_ARCH.dmg.sha256"
+          mkdir volume
+          hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$PWD/volume" "WeiBei-$version-macOS-$WEIBEI_TARGET_ARCH.dmg"
+          ditto volume/魏碑.app 魏碑.app
+          hdiutil detach "$PWD/volume"
+          codesign --verify --deep --strict 魏碑.app
+      - name: 实际启动、窗口呈现、正常退出与重开
+        run: |
+          swiftc script/check_macos_window.swift -o .build/compatibility/window-probe
+          python3 script/check_macos_compatibility.py .build/compatibility/魏碑.app .build/compatibility/evidence .build/compatibility/window-probe
+      - name: 保留旧系统运行证据
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: compatibility-${{ matrix.runner }}-${{ inputs.arch }}-${{ github.sha }}
+          path: .build/compatibility/evidence/
+          if-no-files-found: warn
+          retention-days: 14
