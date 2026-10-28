@@ -64,6 +64,21 @@ def main():
             assert app_pid(binary) is None, 'App did not finish a normal Quit'
             pid = None
             result['rounds'].append({'phase': phase, 'window_state': state, 'quit': 'completed'})
+        with (evidence / 'ui-check.log').open('w') as log:
+            checked = subprocess.run([
+                'xcodebuild', '-project', 'App/UITests/WeiBeiOnboardingUI.xcodeproj',
+                '-scheme', 'WeiBeiOnboardingUITests', '-destination', 'platform=macOS,arch=' + result['arch'],
+                '-derivedDataPath', '.build/compatibility/ui-build',
+                '-resultBundlePath', str(evidence / 'ui-check.xcresult'),
+                '-parallel-testing-enabled', 'NO',
+                '-only-testing:WeiBeiOnboardingUITests/ReleasedAppCompatibilityUITests',
+                'SWIFT_ACTIVE_COMPILATION_CONDITIONS=WEIBEI_RELEASE_COMPATIBILITY_CHECKS',
+                'WEIBEI_CHECK_APP_PATH=' + str(app), 'WEIBEI_CI_EXTERNAL_PROMPT_HANDLING=1', 'test',
+            ], stdout=log, stderr=subprocess.STDOUT)
+        result['ui_check'] = 'passed' if checked.returncode == 0 else 'failed'
+        if checked.returncode:
+            print((evidence / 'ui-check.log').read_text()[-12000:])
+        checked.check_returncode()
         result['status'] = 'passed'
     except Exception as error:
         result['status'] = 'failed'
