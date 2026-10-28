@@ -32,6 +32,9 @@ concurrency:
 jobs:
   diagnostic:
     if: github.event_name == 'workflow_dispatch' && inputs.diagnostic_scenario != ''
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/diagnose.yml
     with:
       arch: ${{ inputs.diagnostic_arch }}

@@ -75,7 +75,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         guard !Self.usesFixture, builder.system == .main else { return }
         let store = Self.workspace
         func command(_ title: String, _ key: String, _ id: String, modifiers: UIKeyModifierFlags = .command) -> UIKeyCommand {
-            let command = UIKeyCommand(title: title, action: #selector(performWorkspaceCommand(_:)), input: key, modifierFlags: modifiers, propertyList: id)
+            let command = UIKeyCommand(title: title, action: #selector(CatalystWorkspaceCommandController.performWorkspaceCommand(_:)), input: key, modifierFlags: modifiers, propertyList: id)
             command.wantsPriorityOverSystemBehavior = id == AppShortcutID.searchInMaterial.rawValue
             return command
         }
@@ -83,7 +83,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             UICommand(
                 title: title,
                 image: nil,
-                action: #selector(performWorkspaceCommand(_:)),
+                action: #selector(CatalystWorkspaceCommandController.performWorkspaceCommand(_:)),
                 propertyList: id,
                 alternates: [],
                 discoverabilityTitle: nil,
@@ -154,7 +154,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         ] }
     }
 
-    override func validate(_ command: UICommand) {
+    func validateWorkspaceCommand(_ command: UICommand) {
         guard let value = command.propertyList as? String else { return }
         let enabled: Bool
         if value == "settings" {
@@ -173,7 +173,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
     }
 
-    @objc private func performWorkspaceCommand(_ command: UICommand) {
+    func performWorkspaceCommand(_ command: UICommand) {
         guard let value = command.propertyList as? String else { return }
         let store = Self.workspace
         guard !store.settingsPresented || value == "settings" else { return }
@@ -308,7 +308,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         return false
     }
 
-    private static func firstResponder(in view: UIView) -> UIView? {
+    fileprivate static func firstResponder(in view: UIView) -> UIView? {
         if view.isFirstResponder { return view }
         for subview in view.subviews {
             if let found = firstResponder(in: subview) { return found }
@@ -411,7 +411,7 @@ struct CatalystWeiBeiApp: App {
 
     private var workspaceContent: some View {
         // Native size restrictions own the minimum; scrolling panes extend under the toolbar.
-        CatalystWorkspaceRoot(store: AppDelegate.workspace, appDelegate: appDelegate)
+        CatalystWorkspaceCommandHost(appDelegate: appDelegate)
             .onOpenURL { AppDelegate.workspace.receiveExternalFileForConfirmedImport($0) }
 #if WEIBEI_ACCEPTANCE_CHECKS
             .task {
@@ -427,6 +427,59 @@ struct CatalystWeiBeiApp: App {
                 }
             }
 #endif
+    }
+}
+
+/// SwiftUI's application delegate adapter builds the menu, but its adapted
+/// delegate is not a command target in the UIKit responder chain on macOS 14/15.
+/// Keep the original actions and validation, hosted above every workspace pane.
+private struct CatalystWorkspaceCommandHost: UIViewControllerRepresentable {
+    let appDelegate: AppDelegate
+
+    func makeUIViewController(context: Context) -> CatalystWorkspaceCommandController {
+        CatalystWorkspaceCommandController(appDelegate: appDelegate, content: content(context))
+    }
+
+    func updateUIViewController(_ controller: CatalystWorkspaceCommandController, context: Context) {
+        controller.rootView = content(context)
+    }
+
+    private func content(_ context: Context) -> AnyView {
+        AnyView(CatalystWorkspaceRoot(store: AppDelegate.workspace, appDelegate: appDelegate)
+            .environment(\.scenePhase, context.environment.scenePhase))
+    }
+}
+
+private final class CatalystWorkspaceCommandController: UIHostingController<AnyView> {
+    private let appDelegate: AppDelegate
+
+    init(appDelegate: AppDelegate, content: AnyView) {
+        self.appDelegate = appDelegate
+        super.init(rootView: content)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // A blank workspace has no focused input yet. Keep restored editor
+        // focus when one exists; otherwise make its menu actions reachable.
+        if AppDelegate.firstResponder(in: view) == nil { becomeFirstResponder() }
+    }
+
+    override func validate(_ command: UICommand) {
+        guard command.action == #selector(performWorkspaceCommand(_:)) else {
+            super.validate(command)
+            return
+        }
+        appDelegate.validateWorkspaceCommand(command)
+    }
+
+    @objc func performWorkspaceCommand(_ command: UICommand) {
+        appDelegate.performWorkspaceCommand(command)
     }
 }
 
