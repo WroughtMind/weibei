@@ -1,10 +1,14 @@
 name: WeiBeiOnboardingUI
+options:
+  minimumXcodeGenVersion: '2.45.0'
+  projectFormat: xcode15_0
+  xcodeVersion: '15.4'
 targets:
   WeiBeiOnboardingUITests:
     type: bundle.ui-testing
     platform: macOS
     deploymentTarget: '14.0'
-    sources: [OnboardingUITests.swift]
+    sources: [OnboardingUITests.swift, ReleasedAppCompatibilityUITests.swift]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.changfenhuang.weibei.OnboardingUITests

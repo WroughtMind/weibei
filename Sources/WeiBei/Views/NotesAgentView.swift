@@ -3348,7 +3348,9 @@ struct FloatingSelectionAgentView: View {
 
         let session = resizeSession ?? FloatingResizeSession(
             origin: placedOrigin ?? initialOriginPoint,
-            size: measuredPanelSize,
+            // Geometry preferences can still describe an intermediate width
+            // from the previous drag. The frame's state already has its final width.
+            size: CGSize(width: panelWidth, height: measuredPanelSize.height),
             feedHeight: resolvedFloatingFeedHeight
         )
         if resizeSession == nil { resizeSession = session }
