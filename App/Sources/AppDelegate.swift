@@ -116,7 +116,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             command(store.ui("打开文稿", "Open Document"), "o", "open"),
             command(store.ui("打开课程空间", "Open Course Space"), "0", "courses")
         ])
-        builder.replaceChildren(ofMenu: .newScene) { _ in fileCommands }
+        builder.remove(menu: .newScene)
+        builder.insertChild(UIMenu(options: .displayInline, children: fileCommands), atStartOfMenu: .file)
         let movedToEdit: Set<AppShortcutID> = [.applyAgentAnswerToNote, .copyCurrentReference]
         let placedInFile: Set<AppShortcutID> = [.newConversation]
         let groups = AppShortcutGroup.allCases.map { group in
