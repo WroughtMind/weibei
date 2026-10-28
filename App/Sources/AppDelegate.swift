@@ -478,6 +478,10 @@ private final class CatalystWorkspaceCommandController: UIHostingController<AnyV
         appDelegate.validateWorkspaceCommand(command)
     }
 
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        action == #selector(performWorkspaceCommand(_:)) || super.canPerformAction(action, withSender: sender)
+    }
+
     @objc func performWorkspaceCommand(_ command: UICommand) {
         appDelegate.performWorkspaceCommand(command)
     }
