@@ -412,6 +412,7 @@ struct CatalystWeiBeiApp: App {
     private var workspaceContent: some View {
         // Native size restrictions own the minimum; scrolling panes extend under the toolbar.
         CatalystWorkspaceCommandHost(appDelegate: appDelegate)
+            .ignoresSafeArea(.container, edges: .top)
             .onOpenURL { AppDelegate.workspace.receiveExternalFileForConfirmedImport($0) }
 #if WEIBEI_ACCEPTANCE_CHECKS
             .task {
