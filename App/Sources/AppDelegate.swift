@@ -456,6 +456,7 @@ private final class CatalystWorkspaceCommandController: UIHostingController<AnyV
     init(appDelegate: AppDelegate, content: AnyView) {
         self.appDelegate = appDelegate
         super.init(rootView: content)
+        view.backgroundColor = .clear
     }
 
     @available(*, unavailable)
