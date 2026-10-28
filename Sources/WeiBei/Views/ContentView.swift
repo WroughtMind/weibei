@@ -1733,7 +1733,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var topBarSpacing: CGFloat {
-        7
+        0
     }
 
     private var controlHeight: CGFloat {
@@ -1806,7 +1806,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var leftPrimaryControls: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             libraryButton
 
             navigationButtons
@@ -1822,7 +1822,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var navigationButtons: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 0) {
             topIconButton("arrow.left", help: store.ui("后退", "Back"), actionID: "back") {
                 withAnimation(WeiBeiMotion.layout) {
                     store.navigateBackInWorkspace()
