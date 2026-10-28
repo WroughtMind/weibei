@@ -407,6 +407,9 @@ struct CatalystWeiBeiApp: App {
             workspaceContent
 #endif
         }
+        // UIKit owns this app's menu. SwiftUI's default scene commands replace
+        // its File/View groups on macOS 15, making Command-N open a new window.
+        .commandsRemoved()
     }
 
     private var workspaceContent: some View {

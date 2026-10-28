@@ -14,7 +14,7 @@ final class ReleasedAppCompatibilityUITests: XCTestCase {
         let settings = app.buttons["Open Settings"].firstMatch
         guard settings.waitForExistence(timeout: 15) else { XCTFail("Missing settings toolbar button"); return }
         settings.click()
-        let closeSettings = app.buttons["settings-panel-close"]
+        let closeSettings = app.buttons["settings-panel-close"].firstMatch
         guard closeSettings.waitForExistence(timeout: 15) else { XCTFail("Settings did not open after a pointer click"); return }
         record(app, "settings")
         closeSettings.click()

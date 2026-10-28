@@ -74,17 +74,28 @@ def main():
                 '-only-testing:WeiBeiOnboardingUITests/ReleasedAppCompatibilityUITests',
                 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=WEIBEI_RELEASE_COMPATIBILITY_CHECKS',
                 'WEIBEI_CHECK_APP_PATH=' + str(app), 'WEIBEI_CI_EXTERNAL_PROMPT_HANDLING=1', 'test',
-            ], stdout=log, stderr=subprocess.STDOUT)
+            # Leave time inside the 15-minute job to preserve diagnostics if
+            # Xcode's UI automation stops responding on an older system.
+            ], stdout=log, stderr=subprocess.STDOUT, timeout=600)
         result['ui_check'] = 'passed' if checked.returncode == 0 else 'failed'
         if checked.returncode:
             print((evidence / 'ui-check.log').read_text()[-12000:])
         checked.check_returncode()
+        ui_log = (evidence / 'ui-check.log').read_text()
+        required_cases = ('testSettingsPointerAndKeyboard', 'testNotePersistenceAndDocumentPicker')
+        result['ui_cases'] = {
+            name: f"ReleasedAppCompatibilityUITests {name}]' passed" in ui_log
+            for name in required_cases
+        }
+        assert all(result['ui_cases'].values()), 'The required UI cases did not all execute successfully'
         result['status'] = 'passed'
     except Exception as error:
         result['status'] = 'failed'
         result['error'] = str(error)
         raise
     finally:
+        if result['status'] == 'failed':
+            subprocess.run(['screencapture', '-x', str(evidence / 'failure.png')], check=False)
         if pid and app_pid(binary) == pid:
             subprocess.run(['kill', '-TERM', str(pid)], check=False)
         # Crash delivery can lag behind process termination.
