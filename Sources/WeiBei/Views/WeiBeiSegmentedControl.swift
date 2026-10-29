@@ -2,7 +2,7 @@ import SwiftUI
 import WeiBeiCore
 
 /// Reading toolbar controls share an outline symbol, a fixed hit region, and
-/// a neutral selection fill. Segments also share their moving hover pill.
+/// a cinnabar selected symbol with a neutral fill. Segments also share their moving hover pill.
 struct WeiBeiTopBarButton: View {
     static let width: CGFloat = 34
     static let height: CGFloat = 28
@@ -78,7 +78,8 @@ struct WeiBeiTopBarButton: View {
 
     private var iconColor: Color {
         if !isEnabled { return WeiBeiTheme.secondaryInk.opacity(0.4) }
-        return isSelected || isHovered ? WeiBeiTheme.ink : WeiBeiTheme.ink.opacity(0.85)
+        if isSelected { return WeiBeiTheme.cinnabar }
+        return isHovered ? WeiBeiTheme.ink : WeiBeiTheme.ink.opacity(0.85)
     }
 }
 
