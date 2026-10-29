@@ -2008,8 +2008,8 @@ private struct LayoutContentView: View {
             switch store.layout {
             case .documentAgentNotes, .documentNotesAgent:
                 documentPaneLayoutView()
-            // The shared pane container owns the one fixed toolbar inset. Keep
-            // the outer host full-height so it is not applied a second time.
+            // Keep the pane full-height so its shared mask can fade content
+            // within the toolbar, rather than clipping it below the gradient.
             case .immersiveReading:
                 PersistentPaneHost(role: .reader, registry: paneHostRegistry)
                     .ignoresSafeArea(.container, edges: .top)

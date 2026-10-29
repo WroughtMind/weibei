@@ -318,21 +318,27 @@ struct PersistentPaneHost: UIViewRepresentable {
     }
     final class Container: UIView {
         var onAttachment: (() -> Void)?
+        private let toolbarFade = CAGradientLayer()
         override func didMoveToWindow() { super.didMoveToWindow(); onAttachment?() }
         override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
         override func layoutSubviews() {
             super.layoutSubviews()
-            let top: CGFloat
-            if let window, window.windowScene?.titlebar?.toolbar != nil {
-                top = min(bounds.height, max(0, window.safeAreaInsets.top - convert(bounds, to: window).minY))
-            } else { top = 0 }
-            // Keep the reading viewport below the toolbar even while its icons
-            // are hidden. A gradient still allowed text to meet the controls.
-            let contentFrame = CGRect(x: bounds.minX, y: bounds.minY + top,
-                                      width: bounds.width, height: max(0, bounds.height - top))
-            for host in subviews.compactMap({ $0 as? CatalystHostingView }) where host.frame != contentFrame {
-                host.frame = contentFrame
+            guard let window, window.windowScene?.titlebar?.toolbar != nil, bounds.height > 0 else {
+                layer.mask = nil
+                return
             }
+            // Preserve the reading surface's gradient independently of toolbar
+            // control visibility. Neither hover state changes content geometry.
+            let top = max(0, window.safeAreaInsets.top - convert(bounds, to: window).minY)
+            guard top > 0 else { layer.mask = nil; return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            toolbarFade.frame = bounds
+            toolbarFade.colors = [UIColor.clear.cgColor, UIColor.clear.cgColor, UIColor.black.cgColor, UIColor.black.cgColor]
+            toolbarFade.locations = [0, NSNumber(value: Double(top * 0.25 / bounds.height)),
+                                    NSNumber(value: Double(min(top / bounds.height, 1))), 1]
+            layer.mask = toolbarFade
+            CATransaction.commit()
         }
     }
     final class Coordinator {
