@@ -50,6 +50,7 @@ let package = Package(
                 .process("Resources/Fonts"),
                 .process("Resources/Inspiration"),
                 .process("Resources/NativeChat"),
+                .process("Resources/ProviderMarks.xcassets"),
                 .process("Resources/genui.html"),
                 .process("Resources/genui.css"),
                 .process("Resources/genui.js"),

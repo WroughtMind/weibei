@@ -23,7 +23,7 @@ struct AgentReplyProfileUpdateTag: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "text.book.closed")
+                    Image(systemName: "person.text.rectangle")
                         .accessibilityHidden(true)
                     Text(summaryText)
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")

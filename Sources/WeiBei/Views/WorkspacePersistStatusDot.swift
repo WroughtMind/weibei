@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 标题栏角落的未落盘标记：saved 不占位；failed 点亮暖色平涂圆点。
-/// 悬停展开上次失败说明和重试；点按圆点也直接重试。
+/// 标题栏角落的保存失败提示：saved 不占位；failed 显示错误符号。
+/// 悬停展开上次失败说明和重试；点按图标也直接重试。
 struct WorkspacePersistStatusDot: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var showingDetail = false
@@ -13,10 +13,10 @@ struct WorkspacePersistStatusDot: View {
                 showingDetail = false
                 _ = store.retryWorkspaceSave()
             } label: {
-                Circle()
-                    .fill(WeiBeiTheme.cinnabar)
-                    .frame(width: 7, height: 7)
-                    .padding(6)
+                Image(systemName: "exclamationmark.circle")
+                    .weiBeiText(13, weight: .semibold)
+                    .foregroundStyle(.red)
+                    .frame(width: 19, height: 19)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

@@ -241,6 +241,7 @@
 		140F42A96634A9FE89C189F4 /* three.js in Resources */ = {isa = PBXBuildFile; fileRef = 1B035DA5CDBB5DD49E9DE885 /* three.js */; };
 		8AEFB6F1D755EABEF77A3B91 /* echarts-full.js in Resources */ = {isa = PBXBuildFile; fileRef = 10DA09B7D678CA3F93ED0D0A /* echarts-full.js */; };
 		41918BF9770E9F4CC9A236BC /* NativeModelUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F82757F4C2076211922411C /* NativeModelUsage.swift */; };
+		5FFC56389E3FF0B53A90E6BB /* ProviderMarks.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 692D91C568D58082BFA5DDD2 /* ProviderMarks.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -521,6 +522,7 @@
 		10DA09B7D678CA3F93ED0D0A /* echarts-full.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "echarts-full.js"; sourceTree = "<group>"; };
 		1B035DA5CDBB5DD49E9DE885 /* three.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = three.js; sourceTree = "<group>"; };
 		0F82757F4C2076211922411C /* NativeModelUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelUsage.swift; sourceTree = "<group>"; };
+		692D91C568D58082BFA5DDD2 /* ProviderMarks.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = ProviderMarks.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -952,6 +954,7 @@
 		DF0EE085D6900903A75183D9 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				692D91C568D58082BFA5DDD2 /* ProviderMarks.xcassets */,
 				32C245CD2CC84C2F2CE3198E /* Editor */,
 				ED88B9D6F5730A4FD0467B53 /* Fonts */,
 				EF4F5B2280039DF184FE8267 /* genui.css */,
@@ -1121,6 +1124,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5FFC56389E3FF0B53A90E6BB /* ProviderMarks.xcassets in Resources */,
 				A8EB41E75050821C1D0FA4A3 /* AgentResources in Resources */,
 				8A9219A259D300D0D865E45D /* AppIcon.icon in Resources */,
 				E1105BFEBABF071CBD2E515E /* Editor in Resources */,
