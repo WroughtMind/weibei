@@ -549,6 +549,38 @@ enum CatalystBusinessCheck {
             result["toolbar_snapshot_scope"] = "attached NSUIViewToolbarItem UIView hierarchy; excludes native window chrome"
             try check("native_toolbar_render_snapshots", true)
         }
+        func verifyToolbarAutoHide(in window: UIWindow, name: String) async throws {
+            guard let toolbar = window.windowScene?.titlebar?.toolbar else { throw Failure("toolbar unavailable") }
+            let panes = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
+                .filter { !$0.isHidden && $0.bounds.width > 0 }
+            let hosts = panes.flatMap(\.subviews).compactMap { $0 as? CatalystHostingView }
+            guard hosts.count == 3 else { throw Failure("three reading panes unavailable") }
+            let scrollViews = hosts.flatMap(descendants).compactMap { $0 as? UIScrollView }
+            func geometry() -> [CGRect] { hosts.map { $0.convert($0.bounds, to: window) } }
+            let initialFrames = geometry()
+            let initialOffsets = scrollViews.map(\.contentOffset)
+            var states: [[String: String]] = []
+            // Native events pass through the same monitor as user input. No
+            // fixture writes the controller's visibility or content geometry.
+            for inside in [false, true, false] {
+                let receipt = CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: inside)
+                guard receipt["queued"] == "true" else { throw Failure("toolbar hover event unavailable") }
+                try await until("\(name) toolbar \(inside ? "reveals" : "hides")") {
+                    let state = CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)
+                    result[name + "_latest_state"] = state
+                    return state[inside ? "all_shown" : "all_hidden"] == "true"
+                        && state["toolbar_visible"] == "true" && state["hover_attached"] == "true"
+                }
+                states.append(CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar))
+                guard geometry() == initialFrames, scrollViews.map(\.contentOffset) == initialOffsets else {
+                    throw Failure("reading viewport moved during toolbar hover")
+                }
+            }
+            result[name + "_states"] = states
+            result[name + "_pane_frames"] = initialFrames.map { String(describing: $0) }
+            result[name + "_scroll_offsets"] = initialOffsets.map { String(describing: $0) }
+            try check(name, Set(states.compactMap { $0["content_layout_rect"] }).count == 1)
+        }
         do {
             // Focused business checks must not depend on a preceding conversation run.
             try FileManager.default.createDirectory(at: LabMetrics.directory, withIntermediateDirectories: true)
@@ -823,19 +855,20 @@ enum CatalystBusinessCheck {
                     return scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
                 }
             }
-            try await until("all three panes fade within the original toolbar") {
+            try await until("all three reading panes stay below the original toolbar") {
                 guard let window = noteEditor.window else { return false }
                 let panes = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
                     .filter { !$0.isHidden && $0.bounds.width > 0 }
                 return panes.count == 3 && panes.allSatisfy { pane in
-                    guard let fade = pane.layer.mask as? CAGradientLayer,
-                          let end = fade.locations?.dropLast().last else { return false }
-                    let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
-                    return fade.frame == pane.bounds && abs(fadeBottom - window.safeAreaInsets.top) < 1
+                    guard let host = pane.subviews.compactMap({ $0 as? CatalystHostingView }).first else { return false }
+                    let frame = host.convert(host.bounds, to: window)
+                    return host.clipsToBounds && frame.minY >= window.safeAreaInsets.top - 1
+                        && frame.height > 0 && pane.layer.mask == nil
                 }
             }
             try check("original_import_reader_and_editor", materials.count == 1 && notes.count == 1
                 && noteEditor.bounds.width > 100 && noteEditor.bounds.height > 100)
+            try await verifyToolbarAutoHide(in: noteEditor.window!, name: "native_toolbar_auto_hide_stable_reading")
             result["contextual_picker_layout"] = try await verifyContextualPickerAlignment(store, in: noteEditor.window!, noteEditor: noteEditor)
             try check("material_and_note_pickers_align", true)
             if scenario == "picker" {
@@ -888,6 +921,7 @@ enum CatalystBusinessCheck {
                 throw Failure("workspace window disappeared before opening settings")
             }
             let windowBoundsBeforeSettings = window.bounds
+            try await verifyToolbarAutoHide(in: window, name: "native_toolbar_full_screen_auto_hide_stable_reading")
             try clickToolbar("weibei.actions")
             try await until("connection cards inside the original workspace") {
                 store.settingsPresented && descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }

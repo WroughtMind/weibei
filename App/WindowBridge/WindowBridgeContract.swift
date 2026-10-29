@@ -10,6 +10,7 @@ import Foundation
     func open(_ url: URL) -> Bool
     func reveal(_ url: URL)
     @MainActor func setWorkspaceToolbarVisible(_ visible: Bool, toolbar: NSObject)
+    @MainActor func unregisterWorkspaceToolbar(toolbar: NSObject)
     @MainActor func presentUpdateNotes(contentItem: NSObject, anchor: NSObject,
                                       sourceRect: CGRect, size: CGSize, dark: Bool,
                                       dismissed: @MainActor @escaping () -> Void) -> NSObject?
@@ -34,6 +35,8 @@ import Foundation
     @MainActor func setWorkspaceFullScreenForCheck(_ enabled: Bool) -> Bool
     @MainActor func fullScreenWindowStateForCheck() -> [String: Bool]
     @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]]
+    @MainActor func postToolbarHoverForCheck(toolbar: NSObject, inside: Bool) -> [String: String]
+    @MainActor func toolbarAutoHideStateForCheck(toolbar: NSObject) -> [String: String]
     @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
                                            xFraction: Double, yFraction: Double, activateWindow: Bool,
                                            routeThroughWorkspace: Bool) -> [String: String]
