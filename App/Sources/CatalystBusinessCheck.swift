@@ -831,17 +831,17 @@ enum CatalystBusinessCheck {
                 return (try? await editor.evaluateJavaScript("Boolean(document.querySelector('.ProseMirror'))") as? Bool) == true
             }
             let noteEditor = await editor(documentID: store.activeNoteEditorDocumentID)!
-            try await until("note viewport extends under the native toolbar") {
+            try await until("note viewport starts below the native toolbar") {
                 guard let window = noteEditor.window else { return false }
-                return abs(noteEditor.convert(noteEditor.bounds, to: window).minY) < 1
+                return abs(noteEditor.convert(noteEditor.bounds, to: window).minY - window.safeAreaInsets.top) < 1
                     && noteEditor.scrollView.contentInsetAdjustmentBehavior == .never
             }
-            try await until("conversation viewport extends under the native toolbar") {
+            try await until("conversation viewport starts below the native toolbar") {
                 guard let chat = conversation(), let window = chat.collection.window else { return false }
                 return chat.collection.contentInsetAdjustmentBehavior == .never
                     && abs(chat.collection.adjustedContentInset.top - chat.collection.contentInset.top) < 1
-                    && abs(chat.collection.convert(chat.collection.bounds, to: window).minY) < 1
-                    && conversationReachesToolbar(chat)
+                    && abs(chat.collection.convert(chat.collection.bounds, to: window).minY - window.safeAreaInsets.top) < 1
+                    && conversationFitsReadingViewport(chat)
                     && abs(chat.flow.topInset - chat.view.safeAreaInsets.top) < 1
                     && chat.collection.contentInset.top == 0
             }
@@ -850,7 +850,7 @@ enum CatalystBusinessCheck {
                     guard let window = noteEditor.window, let chat = conversation(),
                           let reader = descendants(window).first(where: { $0.accessibilityIdentifier == "persistent-pane-reader" }),
                           let text = descendants(reader).compactMap({ $0 as? UITextView }).first else { return false }
-                    // The shared pane mask owns the effect for all three viewports.
+                    // The shared fixed inset keeps all three viewports clear of the toolbar.
                     let scrolls: [UIScrollView] = [text, chat.collection, noteEditor.scrollView]
                     return scrolls.allSatisfy { $0.topEdgeEffect.isHidden }
                 }
@@ -2108,19 +2108,18 @@ enum CatalystBusinessCheck {
         }
         let controller = conversation()!
         // The immersive host is a separate SwiftUI branch from the three-pane
-        // split; it must extend under the toolbar and carry the fade mask too.
-        try await until("immersive conversation pane fades within the original toolbar") {
+        // split; it must preserve the same fixed gap below the toolbar.
+        try await until("immersive conversation preserves the toolbar reading inset") {
             guard let window = controller.collection.window,
                   let pane = descendants(window).compactMap({ $0 as? PersistentPaneHost.Container })
                       .first(where: { !$0.isHidden && $0.bounds.width > 0 }),
-                  let fade = pane.layer.mask as? CAGradientLayer,
-                  let end = fade.locations?.dropLast().last else { return false }
-            let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
+                  let host = pane.subviews.compactMap({ $0 as? CatalystHostingView }).first else { return false }
             return abs(pane.convert(pane.bounds, to: window).minY) < 1
-                && abs(fadeBottom - window.safeAreaInsets.top) < 1
-                && abs(controller.collection.convert(controller.collection.bounds, to: window).minY) < 1
+                && pane.layer.mask == nil && host.clipsToBounds
+                && abs(host.convert(host.bounds, to: window).minY - window.safeAreaInsets.top) < 1
+                && abs(controller.collection.convert(controller.collection.bounds, to: window).minY - window.safeAreaInsets.top) < 1
                 && abs(controller.collection.adjustedContentInset.top - controller.collection.contentInset.top) < 1
-                && conversationReachesToolbar(controller)
+                && conversationFitsReadingViewport(controller)
         }
         var measured: [String: Any] = [
             "first_history_page_ms": (CACurrentMediaTime() - started) * 1000,
@@ -2410,13 +2409,12 @@ enum CatalystBusinessCheck {
             try await Task.sleep(for: .milliseconds(40))
         }
     }
-    private static func conversationReachesToolbar(_ controller: ConversationController) -> Bool {
+    private static func conversationFitsReadingViewport(_ controller: ConversationController) -> Bool {
         guard let window = controller.collection.window else { return false }
         var ancestor: UIView? = controller.collection
         while let view = ancestor {
-            // A viewport at y=0 is insufficient if an intermediate SwiftUI clip
-            // still starts below the toolbar. Inspect the complete drawing path.
-            if view.clipsToBounds && view.convert(view.bounds, to: window).minY > 1 { return false }
+            // Intermediate clips must not cut into the fixed reading viewport.
+            if view.clipsToBounds && view.convert(view.bounds, to: window).minY > window.safeAreaInsets.top + 1 { return false }
             if view is PersistentPaneHost.Container { return true }
             ancestor = view.superview
         }
