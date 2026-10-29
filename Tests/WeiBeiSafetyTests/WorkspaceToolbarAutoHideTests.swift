@@ -13,6 +13,12 @@ final class WorkspaceToolbarAutoHideTests: XCTestCase {
             let item = NSToolbarItem(itemIdentifier: identifier)
             let button = NSButton(title: identifier.rawValue, target: nil, action: nil)
             button.frame = NSRect(x: 0, y: 0, width: 90, height: 28)
+            // Keep the fixture's size fixed before AppKit's deferred toolbar
+            // layout; text fitting is independent of the visibility behavior.
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 90),
+                button.heightAnchor.constraint(equalToConstant: 28)
+            ])
             item.view = button
             return item
         }

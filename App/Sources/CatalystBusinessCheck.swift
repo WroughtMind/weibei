@@ -373,6 +373,14 @@ enum CatalystBusinessCheck {
               let host = item.uiView as? CatalystTopBar.HostingView else {
             throw Failure("update popover toolbar unavailable")
         }
+        // The update panel is opened by hovering a toolbar control. Preserve
+        // that real precondition before testing its first click.
+        guard CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: true)["queued"] == "true" else {
+            throw Failure("update toolbar hover unavailable")
+        }
+        try await until("update toolbar controls revealed") {
+            CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)["all_shown"] == "true"
+        }
         let original = host.controller.rootView
         let state = UpdatePopoverInputState()
         host.update(AnyView(UpdatePopoverInputView(state: state)))
@@ -393,7 +401,11 @@ enum CatalystBusinessCheck {
                 itemIdentifier: "weibei.navigation", xFraction: 0.5, yFraction: 0.5,
                 activateWindow: false, routeThroughWorkspace: true)
             guard receipt["queued"] == "true" else { throw Failure("update pointer event unavailable") }
-            try await until("first pointer click reaches update action (\(phase))") { state.actions == expectedActions }
+            do {
+                try await until("first pointer click reaches update action (\(phase))") { state.actions == expectedActions }
+            } catch {
+                throw Failure("\(error.localizedDescription); receipt=\(receipt); toolbar=\(CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar))")
+            }
             guard state.clickedWhilePresented else {
                 throw Failure("update notes dismissed before the checked pointer action")
             }
