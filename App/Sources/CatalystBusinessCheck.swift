@@ -506,12 +506,18 @@ enum CatalystBusinessCheck {
             try write("running")
             if !value { throw Failure(name) }
         }
-        func clickToolbar(_ itemIdentifier: String, xFraction: Double? = nil, firstIcon: Bool = false) throws {
+        func clickToolbar(_ itemIdentifier: String, xFraction: Double? = nil, firstIcon: Bool = false) async throws {
             guard let toolbar = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                 .compactMap({ $0.titlebar?.toolbar }).first(where: { $0.identifier == "weibei.workspace" }),
                   let item = toolbar.items.compactMap({ $0 as? NSUIViewToolbarItem })
                     .first(where: { $0.itemIdentifier.rawValue == itemIdentifier }),
                   item.uiView.bounds.width > 0 else { throw Failure("toolbar pointer target unavailable") }
+            guard CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: true)["queued"] == "true" else {
+                throw Failure("toolbar pointer hover unavailable")
+            }
+            try await until("toolbar revealed before pointer click") {
+                CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)["all_shown"] == "true"
+            }
             // Pane targets pass their actual equal-segment centers. Library is
             // the first shared 34pt control, as is appearance; settings is last.
             let iconCenterFraction = Double(WeiBeiTopBarButton.width * 0.5 * store.interfaceTextScale.multiplier / item.uiView.bounds.width)
@@ -667,29 +673,29 @@ enum CatalystBusinessCheck {
             let paneTargets: [(WorkspacePaneRole, Double)] = [(.reader, 1.0 / 6.0), (.agent, 3.0 / 6.0), (.notes, 5.0 / 6.0)]
             for (role, fraction) in paneTargets {
                 let wasVisible = store.isPaneVisible(role)
-                try clickToolbar("weibei.panes", xFraction: fraction)
+                try await clickToolbar("weibei.panes", xFraction: fraction)
                 try await until("\(role.rawValue) changes after native pointer click") { store.isPaneVisible(role) != wasVisible }
-                try clickToolbar("weibei.panes", xFraction: fraction)
+                try await clickToolbar("weibei.panes", xFraction: fraction)
                 try await until("\(role.rawValue) restores after native pointer click") { store.isPaneVisible(role) == wasVisible }
                 try check("native_toolbar_\(role.rawValue)_pointer_toggle", true)
             }
             let libraryWasOpen = store.showLibrary
-            try clickToolbar("weibei.navigation")
+            try await clickToolbar("weibei.navigation")
             try await until("library changes after native pointer click") { store.showLibrary != libraryWasOpen }
-            try clickToolbar("weibei.navigation")
+            try await clickToolbar("weibei.navigation")
             try await until("library restores after native pointer click") { store.showLibrary == libraryWasOpen }
             try check("native_toolbar_library_pointer_toggle", true)
             let appearanceWasDark = store.appearanceMode.isDark
             let originalAppearancePreference = store.appearancePreference
-            try clickToolbar("weibei.actions", firstIcon: true)
+            try await clickToolbar("weibei.actions", firstIcon: true)
             try await until("appearance changes after native pointer click") { store.appearanceMode.isDark != appearanceWasDark }
-            try clickToolbar("weibei.actions", firstIcon: true)
+            try await clickToolbar("weibei.actions", firstIcon: true)
             try await until("appearance restores after native pointer click") { store.appearanceMode.isDark == appearanceWasDark }
             try check("native_toolbar_appearance_pointer_toggle", true)
             // Restore a possible system preference only after both event actions.
             store.appearancePreference = originalAppearancePreference
             try captureToolbarSnapshots()
-            try clickToolbar("weibei.actions")
+            try await clickToolbar("weibei.actions")
             try await until("settings opens after native pointer click") {
                 store.settingsPresented && UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
                     .flatMap(\.windows).flatMap(descendants).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
@@ -934,7 +940,7 @@ enum CatalystBusinessCheck {
             }
             let windowBoundsBeforeSettings = window.bounds
             try await verifyToolbarAutoHide(in: window, name: "native_toolbar_full_screen_auto_hide_stable_reading")
-            try clickToolbar("weibei.actions")
+            try await clickToolbar("weibei.actions")
             try await until("connection cards inside the original workspace") {
                 store.settingsPresented && descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
                     && !AgentAccountService.shared.isRefreshingModels

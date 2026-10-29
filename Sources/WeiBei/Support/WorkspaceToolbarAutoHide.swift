@@ -75,9 +75,8 @@ final class WorkspaceToolbarAutoHide {
                         let inside = self.hoverRegion.bounds.contains(point)
                         self.setPointerInside(inside)
                         if inside && (event.type == .leftMouseDown || event.type == .rightMouseDown) {
-                            // UIKit's toolbar bridge excludes fully transparent
-                            // ancestors during hit testing. Finish the reveal
-                            // before this first mouse-down is dispatched.
+                            // Resolve visibility before Catalyst dispatches the
+                            // click, even if it arrives during the fade-out.
                             self.setVisible(true, animated: false)
                         }
                     }
@@ -144,8 +143,12 @@ final class WorkspaceToolbarAutoHide {
         controlsVisible = visible
         // Keep hit regions and accessibility actions intact. The tracking view
         // passes through clicks, so the first click can reach the revealed item.
+        if visible || !animated {
+            for item in presentations { item.view?.alphaValue = visible ? item.alpha : 0 }
+            return
+        }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = !animated || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
             for item in presentations {
                 item.view?.animator().alphaValue = visible ? item.alpha : 0
             }

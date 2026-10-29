@@ -66,8 +66,7 @@ final class WorkspaceToolbarAutoHideTests: XCTestCase {
         XCTAssertTrue(controls.allSatisfy { opacity($0) < 0.01 })
 
         controller.setPointerInside(true)
-        try await Task.sleep(for: .milliseconds(200))
-        XCTAssertTrue(controls.allSatisfy { opacity($0) > 0.99 })
+        XCTAssertTrue(controls.allSatisfy { opacity($0) > 0.99 }, "Revealing controls must finish before a following click")
         XCTAssertEqual(window.contentLayoutRect, readingRect)
         XCTAssertEqual(views.map { $0.convert($0.bounds, to: nil) }, frames)
 
