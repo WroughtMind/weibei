@@ -335,6 +335,41 @@
       "sha256": "aa5cc0e3ef6c0259a271f6de00b0200279c11b9a3514d705d849bad1d5041dd3"
     },
     {
+      "path": "assets/providers/SHA256.json",
+      "bytes": 585,
+      "sha256": "3e2230faa4847f65973019eddec9a228911167e6217341780cc2a54e3b137532"
+    },
+    {
+      "path": "assets/providers/provider-ant-ling.ico",
+      "bytes": 41985,
+      "sha256": "6d7f5fa4aa79c1a4a1be1a1b40ba78fc63679424623551bee0def1e3b2bfaee5"
+    },
+    {
+      "path": "assets/providers/provider-cerebras-center.svg",
+      "bytes": 835,
+      "sha256": "3940502c1a423c9e8d1534f16cd11ec92e3e272f2fc38abb60e922a5f046c403"
+    },
+    {
+      "path": "assets/providers/provider-cerebras-rings.svg",
+      "bytes": 401,
+      "sha256": "a424bc3f143f49bdcc8743eef12b052afc9ab20bde83d7c843089b3d5012f29b"
+    },
+    {
+      "path": "assets/providers/provider-fireworks.svg",
+      "bytes": 753,
+      "sha256": "39e12366c129dcb57f1ebe1618554fec2d05b9bcf48e289733f35ebe0077a69d"
+    },
+    {
+      "path": "assets/providers/provider-radius.svg",
+      "bytes": 281,
+      "sha256": "3776db31f7b56f311d9c0246573e5c9d0800539e96e7fa060abe22b8d479aa31"
+    },
+    {
+      "path": "assets/providers/provider-together.svg",
+      "bytes": 1087,
+      "sha256": "2a1377d7535dcccb3bd620af437b9be8be3621abd422f383eaf8f1df2238a206"
+    },
+    {
       "path": "assets/social/weibei-og-1200x630.png",
       "bytes": 923680,
       "sha256": "4e2c3ba131ab2cab04ed686246981fa49766269b0583610c284b8c56ac729ee1"
