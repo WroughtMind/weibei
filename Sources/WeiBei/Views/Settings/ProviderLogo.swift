@@ -13,22 +13,43 @@ struct ProviderLogo: View {
         Group {
             if provider == .google {
                 GeminiSparkle()
-                    .frame(width: side, height: side)
-                    .grayscale(dimmed ? 1 : 0)
-                    .opacity(dimmed ? 0.55 : 1)
+            } else if provider == .cerebras {
+                ZStack {
+                    brandImage("provider-cerebras-rings")
+                    brandImage("provider-cerebras-center", template: true)
+                }
+            } else if let assetName = brandAssetName {
+                brandImage(assetName, template: provider == .radius || provider == .fireworks)
             } else if let mark = ProviderMarks.mark(for: provider) {
                 ProviderMarkShape(path: mark.path)
                     .fill(mark.monochrome ? WeiBeiTheme.ink : mark.color, style: FillStyle(eoFill: true))
-                    .frame(width: side, height: side)
-                    .grayscale(dimmed ? 1 : 0)
-                    .opacity(dimmed ? 0.55 : 1)
             } else {
-                RoundedRectangle(cornerRadius: dimmed ? 7 : 10, style: .continuous)
-                    .strokeBorder(WeiBeiTheme.hairline.opacity(dimmed ? 0.35 : 0.55), lineWidth: 1)
-                    .frame(width: side, height: side)
+                Image(systemName: provider == .llamaCpp ? "server.rack" : "network")
+                    .font(.system(size: side * 0.65, weight: .regular))
             }
         }
+        .foregroundStyle(WeiBeiTheme.ink)
+        .frame(width: side, height: side)
+        .grayscale(dimmed ? 1 : 0)
+        .opacity(dimmed ? 0.55 : 1)
         .accessibilityLabel(Text(provider.rawValue))
+    }
+
+    private var brandAssetName: String? {
+        switch provider {
+        case .antLing: "provider-ant-ling"
+        case .radius: "provider-radius"
+        case .fireworks: "provider-fireworks"
+        case .together: "provider-together"
+        default: nil
+        }
+    }
+
+    private func brandImage(_ name: String, template: Bool = false) -> some View {
+        Image(name, bundle: WeiBeiResources.bundle)
+            .renderingMode(template ? .template : .original)
+            .resizable()
+            .scaledToFit()
     }
 }
 
