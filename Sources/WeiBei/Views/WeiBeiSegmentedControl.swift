@@ -1,8 +1,8 @@
 import SwiftUI
 import WeiBeiCore
 
-/// One toolbar control for pane segments and the surrounding icon actions.
-/// Segments share their moving hover pill; standalone actions draw the same pill.
+/// Reading toolbar controls share an outline symbol, a fixed hit region, and
+/// a neutral selection fill. Segments also share their moving hover pill.
 struct WeiBeiTopBarButton: View {
     static let width: CGFloat = 34
     static let height: CGFloat = 28
@@ -31,13 +31,23 @@ struct WeiBeiTopBarButton: View {
             action()
         } label: {
             Image(systemName: systemImage)
-                .weiBeiText(13, weight: .semibold)
+                .symbolRenderingMode(.monochrome)
+                .symbolVariant(.none)
+                .weiBeiText(14, weight: .medium)
                 .foregroundStyle(iconColor)
                 .frame(width: Self.width * textScale, height: Self.height * textScale)
                 .contentShape(Rectangle())
         }
         .buttonStyle(WeiBeiTopBarPressStyle(reduceMotion: reduceMotion))
         .background {
+            Capsule()
+                .fill(WeiBeiTheme.ink.opacity(colorScheme == .dark ? 0.16 : 0.09))
+                .frame(width: (Self.width - Self.hoverInset * 2) * textScale,
+                       height: (Self.height - Self.hoverInset * 2) * textScale)
+                .opacity(isSelected && isEnabled ? 1 : 0)
+                .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: isSelected)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             if !usesGroupHover {
                 RoundedRectangle(cornerRadius: (Self.height - Self.hoverInset * 2) * textScale / 2,
                                  style: .continuous)
@@ -68,13 +78,29 @@ struct WeiBeiTopBarButton: View {
 
     private var iconColor: Color {
         if !isEnabled { return WeiBeiTheme.secondaryInk.opacity(0.4) }
-        if isSelected { return WeiBeiTheme.cinnabar }
-        return isHovered ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
+        return isSelected || isHovered ? WeiBeiTheme.ink : WeiBeiTheme.ink.opacity(0.85)
     }
 }
 
-/// Pane switches share the toolbar's transparent surface. Selection stays on
-/// the cinnabar icon; only pointer hover adds a transient, translucent highlight.
+/// A quiet group outline, sized by the existing controls so grouping does not
+/// change their hit regions or the native toolbar's overflow measurements.
+struct WeiBeiToolbarGroupBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Capsule()
+            .fill(WeiBeiTheme.paperRaised.opacity(colorScheme == .dark ? 0.65 : 0.55))
+            .overlay {
+                Capsule()
+                    .strokeBorder(WeiBeiTheme.ink.opacity(colorScheme == .dark ? 0.18 : 0.10), lineWidth: 0.5)
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Independent pane switches share a reading-toolbar capsule. Each open pane
+/// keeps its own selected fill; the moving hover highlight is only transient.
 struct WeiBeiSegmentedControl: View {
     struct Segment: Identifiable {
         let id: String
@@ -107,6 +133,7 @@ struct WeiBeiSegmentedControl: View {
         }
         .frame(height: height)
         .background(alignment: .leading) { hoverPill }
+        .background { WeiBeiToolbarGroupBackground() }
         .accessibilityElement(children: .contain)
     }
 

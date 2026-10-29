@@ -1662,7 +1662,7 @@ private struct UnifiedTopBarView: View {
             // Light/dark quick toggle — keeps the active style pair, flips the
             // preference. Command palette stays reachable on ⌘K.
             topIconButton(
-                store.appearanceMode.isDark ? "sun.max" : "moon.stars",
+                store.appearanceMode.isDark ? "sun.max" : "moon",
                 help: store.ui("切换深浅外观", "Toggle Light / Dark"),
                 actionID: "appearance"
             ) {
@@ -1678,6 +1678,7 @@ private struct UnifiedTopBarView: View {
             }
 
         }
+        .background { WeiBeiToolbarGroupBackground() }
     }
 
     private var customTopBar: some View {
@@ -1818,12 +1819,13 @@ private struct UnifiedTopBarView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.94)))
             }
         }
+        .background { WeiBeiToolbarGroupBackground() }
     }
 
     @ViewBuilder
     private var navigationButtons: some View {
         HStack(spacing: 0) {
-            topIconButton("arrow.left", help: store.ui("后退", "Back"), actionID: "back") {
+            topIconButton("chevron.left", help: store.ui("后退", "Back"), actionID: "back") {
                 withAnimation(WeiBeiMotion.layout) {
                     store.navigateBackInWorkspace()
                 }
@@ -1831,7 +1833,7 @@ private struct UnifiedTopBarView: View {
             .weiBeiKeyboardShortcut(store.executableChord(for: .navigateBack))
             .disabled(!store.canNavigateBack)
 
-            topIconButton("arrow.right", help: store.ui("前进", "Forward"), actionID: "forward") {
+            topIconButton("chevron.right", help: store.ui("前进", "Forward"), actionID: "forward") {
                 withAnimation(WeiBeiMotion.layout) {
                     store.navigateForwardInWorkspace()
                 }
@@ -1852,7 +1854,7 @@ private struct UnifiedTopBarView: View {
             ),
             WeiBeiSegmentedControl.Segment(
                 id: "agent",
-                systemImage: "bubble.left.and.text.bubble.right",
+                systemImage: "text.bubble",
                 help: agentPaneToggleHelp,
                 isSelected: store.isPaneToggleActive(.agent),
                 action: store.toggleAgent
