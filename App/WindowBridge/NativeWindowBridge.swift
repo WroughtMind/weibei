@@ -26,6 +26,7 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private var floatingResizeEvents: [[String: String]] = []
 #endif
     private let toolbarVisibility = NSMapTable<NSToolbar, NSNumber>.weakToStrongObjects()
+    private let toolbarAutoHide = NSMapTable<NSToolbar, WorkspaceToolbarAutoHide>.weakToStrongObjects()
     @MainActor private lazy var updateService = WeiBeiUpdateService()
     @MainActor private var updateObservation: AnyCancellable?
 
@@ -65,6 +66,10 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    if note.name == NSWindow.willCloseNotification,
+                       let toolbar = (note.object as? NSWindow)?.toolbar {
+                        self.unregisterWorkspaceToolbar(toolbar: toolbar)
+                    }
                     if note.name == NSApplication.didResignActiveNotification
                         || (note.object as? NSWindow) === self.floatingResizeSession?.window {
                         self.finishFloatingResize()
@@ -121,6 +126,48 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         }
     }
 #if WEIBEI_ACCEPTANCE_CHECKS
+    @MainActor func postToolbarHoverForCheck(toolbar: NSObject, inside: Bool) -> [String: String] {
+        guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
+              let toolbar = toolbar as? NSToolbar,
+              let controller = toolbarAutoHide.object(forKey: toolbar),
+              let workspace = NSApp.windows.first(where: { $0.toolbar === toolbar }),
+              let host = controller.hoverRegion.window else { return ["queued": "false"] }
+        let rect = controller.hoverRegion.convert(controller.hoverRegion.bounds, to: nil)
+        let point = NSPoint(x: rect.midX, y: inside ? rect.midY : rect.minY - 40)
+        let eventWindow = inside ? host : workspace
+        let location = eventWindow.convertPoint(fromScreen: host.convertPoint(toScreen: point))
+        guard let event = NSEvent.mouseEvent(with: .mouseMoved, location: location,
+            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: eventWindow.windowNumber, context: nil, eventNumber: 0,
+            clickCount: 0, pressure: 0) else { return ["queued": "false"] }
+        NSApp.postEvent(event, atStart: false)
+        return ["queued": "true", "inside": String(inside), "location": NSStringFromPoint(location)]
+    }
+
+    @MainActor func toolbarAutoHideStateForCheck(toolbar: NSObject) -> [String: String] {
+        guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
+              let toolbar = toolbar as? NSToolbar,
+              let controller = toolbarAutoHide.object(forKey: toolbar),
+              let window = NSApp.windows.first(where: { $0.toolbar === toolbar }) else { return [:] }
+        func opacity(_ view: NSView) -> CGFloat {
+            var value: CGFloat = 1
+            var current: NSView? = view
+            while let item = current { value *= item.alphaValue; current = item.superview }
+            return value
+        }
+        let views = toolbar.items.compactMap(\.view)
+        var state = ["toolbar_visible": String(toolbar.isVisible),
+                     "controls_visible": String(controller.controlsVisible),
+                     "hover_attached": String(controller.hoverRegion.window != nil),
+                     "content_layout_rect": NSStringFromRect(window.contentLayoutRect),
+                     "all_hidden": String(views.count == 3 && views.allSatisfy { opacity($0) < 0.01 }),
+                     "all_shown": String(views.count == 3 && views.allSatisfy { opacity($0) > 0.99 })]
+        for item in toolbar.items {
+            if let view = item.view { state[item.itemIdentifier.rawValue] = String(Double(opacity(view))) }
+        }
+        return state
+    }
+
     @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
                                            xFraction: Double, yFraction: Double, activateWindow: Bool,
                                            routeThroughWorkspace: Bool) -> [String: String] {
@@ -449,19 +496,30 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     @MainActor func setWorkspaceToolbarVisible(_ visible: Bool, toolbar: NSObject) {
         guard let toolbar = toolbar as? NSToolbar else { return }
         toolbarVisibility.setObject(NSNumber(value: visible), forKey: toolbar)
+        if toolbarAutoHide.object(forKey: toolbar) == nil {
+            toolbarAutoHide.setObject(WorkspaceToolbarAutoHide(toolbar: toolbar), forKey: toolbar)
+        }
         updateFileDrops()
+    }
+    @MainActor func unregisterWorkspaceToolbar(toolbar: NSObject) {
+        guard let toolbar = toolbar as? NSToolbar else { return }
+        toolbarAutoHide.object(forKey: toolbar)?.detach()
+        toolbarAutoHide.removeObject(forKey: toolbar)
+        toolbarVisibility.removeObject(forKey: toolbar)
     }
     private func updateFileDrops() {
         for window in NSApp.windows {
-            guard let toolbar = window.toolbar, let visible = toolbarVisibility.object(forKey: toolbar)?.boolValue,
-                  toolbar.isVisible != visible else { continue }
+            guard let toolbar = window.toolbar, let visible = toolbarVisibility.object(forKey: toolbar)?.boolValue else { continue }
+            if toolbar.isVisible != visible {
 #if WEIBEI_ACCEPTANCE_CHECKS
-            fullScreenCheckToolbarChanges.append(String(describing: toolbar.identifier) + " "
-                + String(toolbar.isVisible) + " -> " + String(visible)
-                + " full_screen=" + String(window.styleMask.contains(.fullScreen)))
-            if fullScreenCheckToolbarChanges.count > 32 { fullScreenCheckToolbarChanges.removeFirst() }
+                fullScreenCheckToolbarChanges.append(String(describing: toolbar.identifier) + " "
+                    + String(toolbar.isVisible) + " -> " + String(visible)
+                    + " full_screen=" + String(window.styleMask.contains(.fullScreen)))
+                if fullScreenCheckToolbarChanges.count > 32 { fullScreenCheckToolbarChanges.removeFirst() }
 #endif
-            toolbar.isVisible = visible
+                toolbar.isVisible = visible
+            }
+            MainActor.assumeIsolated { toolbarAutoHide.object(forKey: toolbar)?.refresh(in: window) }
         }
         fileDrops.values.forEach { $0.attach() }
     }

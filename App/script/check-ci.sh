@@ -158,6 +158,8 @@ required_business_checks = {
     'native_toolbar_appearance_pointer_toggle',
     'native_toolbar_render_snapshots',
     'native_toolbar_full_screen_settings_pointer_open',
+    'native_toolbar_auto_hide_stable_reading',
+    'native_toolbar_full_screen_auto_hide_stable_reading',
     'signed_native_window_material', 'original_import_reader_and_editor',
     'original_editor_snapshot_and_note_write_gate', 'signed_bounded_pdf_worker',
     'waiting_status_not_clipped', 'return_clears_original_composer',

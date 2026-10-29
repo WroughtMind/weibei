@@ -2008,10 +2008,8 @@ private struct LayoutContentView: View {
             switch store.layout {
             case .documentAgentNotes, .documentNotesAgent:
                 documentPaneLayoutView()
-            // Each representable pane host re-insets to the toolbar safe area on
-            // its own; the outer ignoresSafeArea does not reach it. Without this
-            // the pane container starts at y=40, its toolbar fade mask is nil and
-            // content is cut at the toolbar edge. Same rule as StableDocumentWorkspace.
+            // Keep the pane full-height so its shared mask can fade content
+            // within the toolbar, rather than clipping it below the gradient.
             case .immersiveReading:
                 PersistentPaneHost(role: .reader, registry: paneHostRegistry)
                     .ignoresSafeArea(.container, edges: .top)

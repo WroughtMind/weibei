@@ -373,6 +373,14 @@ enum CatalystBusinessCheck {
               let host = item.uiView as? CatalystTopBar.HostingView else {
             throw Failure("update popover toolbar unavailable")
         }
+        // The update panel is opened by hovering a toolbar control. Preserve
+        // that real precondition before testing its first click.
+        guard CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: true)["queued"] == "true" else {
+            throw Failure("update toolbar hover unavailable")
+        }
+        try await until("update toolbar controls revealed") {
+            CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)["all_shown"] == "true"
+        }
         let original = host.controller.rootView
         let state = UpdatePopoverInputState()
         host.update(AnyView(UpdatePopoverInputView(state: state)))
@@ -393,7 +401,11 @@ enum CatalystBusinessCheck {
                 itemIdentifier: "weibei.navigation", xFraction: 0.5, yFraction: 0.5,
                 activateWindow: false, routeThroughWorkspace: true)
             guard receipt["queued"] == "true" else { throw Failure("update pointer event unavailable") }
-            try await until("first pointer click reaches update action (\(phase))") { state.actions == expectedActions }
+            do {
+                try await until("first pointer click reaches update action (\(phase))") { state.actions == expectedActions }
+            } catch {
+                throw Failure("\(error.localizedDescription); receipt=\(receipt); toolbar=\(CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar))")
+            }
             guard state.clickedWhilePresented else {
                 throw Failure("update notes dismissed before the checked pointer action")
             }
@@ -494,12 +506,18 @@ enum CatalystBusinessCheck {
             try write("running")
             if !value { throw Failure(name) }
         }
-        func clickToolbar(_ itemIdentifier: String, xFraction: Double? = nil, firstIcon: Bool = false) throws {
+        func clickToolbar(_ itemIdentifier: String, xFraction: Double? = nil, firstIcon: Bool = false) async throws {
             guard let toolbar = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                 .compactMap({ $0.titlebar?.toolbar }).first(where: { $0.identifier == "weibei.workspace" }),
                   let item = toolbar.items.compactMap({ $0 as? NSUIViewToolbarItem })
                     .first(where: { $0.itemIdentifier.rawValue == itemIdentifier }),
                   item.uiView.bounds.width > 0 else { throw Failure("toolbar pointer target unavailable") }
+            guard CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: true)["queued"] == "true" else {
+                throw Failure("toolbar pointer hover unavailable")
+            }
+            try await until("toolbar revealed before pointer click") {
+                CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)["all_shown"] == "true"
+            }
             // Pane targets pass their actual equal-segment centers. Library is
             // the first shared 34pt control, as is appearance; settings is last.
             let iconCenterFraction = Double(WeiBeiTopBarButton.width * 0.5 * store.interfaceTextScale.multiplier / item.uiView.bounds.width)
@@ -548,6 +566,50 @@ enum CatalystBusinessCheck {
             result["toolbar_render_snapshots"] = snapshots
             result["toolbar_snapshot_scope"] = "attached NSUIViewToolbarItem UIView hierarchy; excludes native window chrome"
             try check("native_toolbar_render_snapshots", true)
+        }
+        func verifyToolbarAutoHide(in window: UIWindow, name: String) async throws {
+            guard let toolbar = window.windowScene?.titlebar?.toolbar else { throw Failure("toolbar unavailable") }
+            let panes = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
+                .filter { !$0.isHidden && $0.bounds.width > 0 }
+            let hosts = panes.flatMap(\.subviews).compactMap { $0 as? CatalystHostingView }
+            guard hosts.count == 3 else { throw Failure("three reading panes unavailable") }
+            let scrollViews = hosts.flatMap(descendants).compactMap { $0 as? UIScrollView }
+            func geometry() -> [CGRect] { hosts.map { $0.convert($0.bounds, to: window) } }
+            let initialFrames = geometry()
+            let initialOffsets = scrollViews.map(\.contentOffset)
+            var states: [[String: String]] = []
+            // Native events pass through the same monitor as user input. No
+            // fixture writes the controller's visibility or content geometry.
+            for inside in [false, true, false] {
+                let receipt = CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: inside)
+                guard receipt["queued"] == "true" else { throw Failure("toolbar hover event unavailable") }
+                try await until("\(name) toolbar \(inside ? "reveals" : "hides")") {
+                    let state = CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)
+                    result[name + "_latest_state"] = state
+                    return state[inside ? "all_shown" : "all_hidden"] == "true"
+                        && state["toolbar_visible"] == "true" && state["hover_attached"] == "true"
+                }
+                states.append(CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar))
+                guard geometry() == initialFrames, scrollViews.map(\.contentOffset) == initialOffsets else {
+                    throw Failure("reading viewport moved during toolbar hover")
+                }
+                guard panes.allSatisfy({ pane in
+                    guard let fade = pane.layer.mask as? CAGradientLayer,
+                          let end = fade.locations?.dropLast().last,
+                          let colors = fade.colors as? [CGColor] else { return false }
+                    let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
+                    return fade.frame == pane.bounds && fade.opacity == 1
+                        && colors.first?.alpha == 0 && colors.last?.alpha == 1
+                        && abs(fadeBottom - window.safeAreaInsets.top) < 1
+                }) else {
+                    throw Failure("toolbar reading gradient disappeared during hover")
+                }
+            }
+            result[name + "_states"] = states
+            result[name + "_pane_frames"] = initialFrames.map { String(describing: $0) }
+            result[name + "_scroll_offsets"] = initialOffsets.map { String(describing: $0) }
+            result[name + "_gradient_preserved"] = true
+            try check(name, Set(states.compactMap { $0["content_layout_rect"] }).count == 1)
         }
         do {
             // Focused business checks must not depend on a preceding conversation run.
@@ -623,29 +685,29 @@ enum CatalystBusinessCheck {
             let paneTargets: [(WorkspacePaneRole, Double)] = [(.reader, 1.0 / 6.0), (.agent, 3.0 / 6.0), (.notes, 5.0 / 6.0)]
             for (role, fraction) in paneTargets {
                 let wasVisible = store.isPaneVisible(role)
-                try clickToolbar("weibei.panes", xFraction: fraction)
+                try await clickToolbar("weibei.panes", xFraction: fraction)
                 try await until("\(role.rawValue) changes after native pointer click") { store.isPaneVisible(role) != wasVisible }
-                try clickToolbar("weibei.panes", xFraction: fraction)
+                try await clickToolbar("weibei.panes", xFraction: fraction)
                 try await until("\(role.rawValue) restores after native pointer click") { store.isPaneVisible(role) == wasVisible }
                 try check("native_toolbar_\(role.rawValue)_pointer_toggle", true)
             }
             let libraryWasOpen = store.showLibrary
-            try clickToolbar("weibei.navigation")
+            try await clickToolbar("weibei.navigation")
             try await until("library changes after native pointer click") { store.showLibrary != libraryWasOpen }
-            try clickToolbar("weibei.navigation")
+            try await clickToolbar("weibei.navigation")
             try await until("library restores after native pointer click") { store.showLibrary == libraryWasOpen }
             try check("native_toolbar_library_pointer_toggle", true)
             let appearanceWasDark = store.appearanceMode.isDark
             let originalAppearancePreference = store.appearancePreference
-            try clickToolbar("weibei.actions", firstIcon: true)
+            try await clickToolbar("weibei.actions", firstIcon: true)
             try await until("appearance changes after native pointer click") { store.appearanceMode.isDark != appearanceWasDark }
-            try clickToolbar("weibei.actions", firstIcon: true)
+            try await clickToolbar("weibei.actions", firstIcon: true)
             try await until("appearance restores after native pointer click") { store.appearanceMode.isDark == appearanceWasDark }
             try check("native_toolbar_appearance_pointer_toggle", true)
             // Restore a possible system preference only after both event actions.
             store.appearancePreference = originalAppearancePreference
             try captureToolbarSnapshots()
-            try clickToolbar("weibei.actions")
+            try await clickToolbar("weibei.actions")
             try await until("settings opens after native pointer click") {
                 store.settingsPresented && UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
                     .flatMap(\.windows).flatMap(descendants).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
@@ -836,6 +898,7 @@ enum CatalystBusinessCheck {
             }
             try check("original_import_reader_and_editor", materials.count == 1 && notes.count == 1
                 && noteEditor.bounds.width > 100 && noteEditor.bounds.height > 100)
+            try await verifyToolbarAutoHide(in: noteEditor.window!, name: "native_toolbar_auto_hide_stable_reading")
             result["contextual_picker_layout"] = try await verifyContextualPickerAlignment(store, in: noteEditor.window!, noteEditor: noteEditor)
             try check("material_and_note_pickers_align", true)
             if scenario == "picker" {
@@ -888,7 +951,8 @@ enum CatalystBusinessCheck {
                 throw Failure("workspace window disappeared before opening settings")
             }
             let windowBoundsBeforeSettings = window.bounds
-            try clickToolbar("weibei.actions")
+            try await verifyToolbarAutoHide(in: window, name: "native_toolbar_full_screen_auto_hide_stable_reading")
+            try await clickToolbar("weibei.actions")
             try await until("connection cards inside the original workspace") {
                 store.settingsPresented && descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
                     && !AgentAccountService.shared.isRefreshingModels

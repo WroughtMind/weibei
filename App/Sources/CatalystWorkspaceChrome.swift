@@ -77,6 +77,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         }
 
         func detach() {
+            CatalystDesktopWindow.shared.unregisterWorkspaceToolbar(toolbar: toolbar)
             if scene?.titlebar?.toolbar === toolbar { scene?.titlebar?.toolbar = nil }
             scene = nil
         }
@@ -326,6 +327,8 @@ struct PersistentPaneHost: UIViewRepresentable {
                 layer.mask = nil
                 return
             }
+            // Preserve the reading surface's gradient independently of toolbar
+            // control visibility. Neither hover state changes content geometry.
             let top = max(0, window.safeAreaInsets.top - convert(bounds, to: window).minY)
             guard top > 0 else { layer.mask = nil; return }
             CATransaction.begin()

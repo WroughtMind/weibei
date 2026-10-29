@@ -176,6 +176,7 @@ targets:
       - WindowBridge
       - ../Sources/WeiBei/Services/WeiBeiUpdateService.swift
       - ../Sources/WeiBeiCore/WeiBeiLog.swift
+      - ../Sources/WeiBei/Support/WorkspaceToolbarAutoHide.swift
     dependencies:
       - package: Sparkle
         product: Sparkle
