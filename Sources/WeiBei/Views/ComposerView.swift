@@ -36,8 +36,7 @@ struct ComposerView: View {
     private var isStopping: Bool { targetID.flatMap { store.agentRuns[$0]?.isStoppingAgent } ?? false }
 
     private var canSend: Bool {
-        AgentProviderReadiness.isReadyToChat(for: store)
-            && !isStopping
+        !isStopping
             && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -216,9 +215,9 @@ struct ComposerView: View {
     }
 
     private func commitAndSubmit() {
-        guard AgentProviderReadiness.isReadyToChat(for: store) else { return }
         // A1: 正在回答或正在停止时，回车不做任何事；停止只留给停止按钮。
         guard !isRunning, !isStopping else { return }
+        guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         store.saveComposerDraft(draft, for: targetID)
         submit()
     }

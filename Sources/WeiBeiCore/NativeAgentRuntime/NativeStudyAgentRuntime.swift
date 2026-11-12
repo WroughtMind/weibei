@@ -57,9 +57,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         let ledger = try NativeAgentLedger(fileURL: ledgerURL)
         try await ledger.synthesizeCloserIfNeeded()
         let scope = NativeToolScope.session(request.id.uuidString)
-        if mode == .assistant {
+        if liveStores.documentsRoot == nil {
             await registry.hide("create_document", scope: scope)
-            await registry.hide("delegate", scope: scope)
         }
         if delegateDepth >= NativeSubagentRunner.maximumDepth {
             await registry.hide("delegate", scope: scope)

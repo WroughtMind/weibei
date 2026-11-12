@@ -82,7 +82,8 @@ enum AgentProviderReadiness {
 
     /// 当前选中的模型服务是否已保存所需凭据。
     static func isConfigured(for store: WorkspaceStore) -> Bool {
-        effectiveAuthMethod(for: store) == .subscription
+        guard !store.agentCredentialProfiles.isEmpty else { return false }
+        return effectiveAuthMethod(for: store) == .subscription
             ? isSubscriptionLinked(for: store)
             : hasActiveAPICredential(for: store)
     }

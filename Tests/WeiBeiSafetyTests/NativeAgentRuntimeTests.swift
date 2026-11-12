@@ -2,6 +2,21 @@ import XCTest
 @testable import WeiBeiCore
 
 final class NativeAgentRuntimeTests: XCTestCase {
+    func testAssistantAdvertisesDocumentCreationAndDelegationWhenAvailable() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiAssistantTools-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capture = RequestCapture()
+        let runtime = NativeStudyAgentRuntime(model: "mock", adapter: MockLLMAdapter(
+            chunks: [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)],
+            inspect: { capture.request = $0 }), ledgerRoot: root.appendingPathComponent("Ledgers"),
+            systemPromptText: "Complete the user's task.",
+            liveStores: NativeLiveStores(documentsRoot: root.appendingPathComponent("NativeAgent/Documents")))
+        _ = try await runtime.respond(to: testRequest(), progress: nil)
+        let tools = try XCTUnwrap(capture.request).tools.map(\.name)
+        XCTAssertTrue(tools.contains("create_document"))
+        XCTAssertTrue(tools.contains("delegate"))
+    }
+
     func testHeadinglessMarkdownUsesReadableBlocksForExactCourseRead() {
         let markdown = """
         第一段解释风险溢价和无风险收益之间的关系。

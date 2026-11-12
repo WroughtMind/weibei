@@ -169,6 +169,25 @@ extension WorkspaceStore {
         return await waitForBlankNoteMaterialization()
     }
 
+    func prepareForUserRequestedRelaunch() async -> Bool {
+        allowsUnsavedRelaunch = false
+        commitCurrentReaderLocation()
+        let captured = await freshActiveNoteEditorSnapshot()
+        await flushPendingNotePersistenceAsync(flushWorkspace: false)
+        let saved = await flushPendingWorkspaceSaveAsync()
+        if captured, saved, !noteEditingSession.dirty,
+           noteEditingSession.saveStatus != .failed,
+           noteEditingSession.saveStatus != .externallyModified { return true }
+        allowsUnsavedRelaunch = await userOperationRisks.confirm(
+            title: ui("仍然安装并重启？", "Install and restart anyway?"),
+            message: ui(
+                "部分笔记或工作区更改尚未确认保存。继续安装会重启魏碑，这些未保存的修改可能丢失。也可以先取消，重试保存后再安装。",
+                "Some note or workspace changes are not confirmed saved. Installing restarts WeiBei, and those unsaved changes may be lost. You can cancel, retry saving, then install."
+            )
+        )
+        return allowsUnsavedRelaunch
+    }
+
     func noteEditorDidPersist(_ markdown: String, documentID: String) {
         let digest = Self.noteContentDigest(Data(markdown.utf8))
         let revision = latestNoteEditorSnapshot.flatMap {
@@ -379,28 +398,29 @@ extension WorkspaceStore {
         )
     }
 
-    func resolveNoteEditorRecoveryConflict(useDisk: Bool) async {
-        guard let conflict = noteEditorRecoveryConflict else { return }
-        guard let url = item(withID: conflict.id)?.url,
-              let disk = try? String(contentsOf: url, encoding: .utf8) else {
-            showImportantOperationError(ui("无法读取磁盘正文，已保留两份内容，请重试。", "Could not read the file. Both versions are retained; please retry."))
+    func resolveNoteEditorRecoveryConflict(
+        useDisk: Bool,
+        documentID: String? = nil,
+        allowUnbackedReplacement: Bool = false
+    ) async {
+        let documentID = documentID ?? activeNoteEditorDocumentID
+        guard let conflict = noteEditorRecoveryConflictsByItemID[documentID] else { return }
+        guard let url = item(withID: documentID)?.url else {
+            showImportantOperationError(ui("找不到这份笔记的文件位置。正文仍保留在魏碑中，请重新连接文件后重试。", "The note's file location is unavailable. Its text is kept in WeiBei; reconnect the file and retry."))
             return
         }
-        guard disk == conflict.diskMarkdown else {
-            noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
-                diskMarkdown: disk,
-                checkpoint: conflict.checkpoint,
-                checkpointIsPersisted: conflict.checkpointIsPersisted
-            )
-            showImportantOperationError(ui("磁盘正文又有更新，已刷新对照内容，请重新选择。", "The file changed again. Review the updated versions before choosing."))
+        let disk = try? String(contentsOf: url, encoding: .utf8)
+        if useDisk, disk == nil {
+            showImportantOperationError(ui("无法读取磁盘正文。魏碑中的内容仍保留，请检查文件权限，或选择保留魏碑中的正文。", "The disk text cannot be read. Your WeiBei text is kept; check file permissions, or choose the WeiBei version."))
             return
         }
         if useDisk {
+            let disk = disk!
             let documentID = conflict.checkpoint.metadata.documentID
             let fileURL = item(withID: documentID)?.url
             let fileName = fileURL?.lastPathComponent
                 ?? ui("这份笔记", "this note")
-            let backupEntry: NoteBackupRing.Entry
+            let backupEntry: NoteBackupRing.Entry?
             do {
                 backupEntry = try NoteBackupRing.capture(
                     content: Data(conflict.checkpoint.markdown.utf8),
@@ -411,16 +431,16 @@ extension WorkspaceStore {
                 WeiBeiLog.noteRepair.error(
                     "code=note_conflict_backup_failed path=\(fileURL?.path ?? documentID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
-                showImportantOperationError(.noteWriteSafetyHold(fileName: fileName), message: conflict.checkpointIsPersisted
-                    ? ui(
-                        "暂时无法采用“\(fileName)”的磁盘版本。未写内容已保存在魏碑中，请重试。",
-                        "Could not use the disk version of \(fileName). Unsaved content is stored in WeiBei; please retry."
-                    )
-                    : ui(
-                        "暂时无法采用“\(fileName)”的磁盘版本。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
-                        "Could not use the disk version of \(fileName). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
-                    ))
-                return
+                if !allowUnbackedReplacement {
+                    guard await userOperationRisks.confirm(
+                        title: ui("仍然采用磁盘正文？", "Use the disk text anyway?"),
+                        message: ui("无法备份魏碑中未写入的正文。继续会采用“\(fileName)”的磁盘版本，未写入的那份可能无法找回。", "WeiBei could not back up the unsaved text. Continuing uses the disk version of \(fileName); the unsaved version may be unrecoverable."),
+                        context: .noteConflict
+                    ) else { return }
+                    await resolveNoteEditorRecoveryConflict(useDisk: true, documentID: documentID, allowUnbackedReplacement: true)
+                    return
+                }
+                backupEntry = nil
             }
             cancelPendingNotePersistence(for: documentID)
             pendingNotePersistenceByItemID.removeValue(forKey: documentID)
@@ -429,23 +449,23 @@ extension WorkspaceStore {
             setNoteFileError(nil, for: documentID)
             dismissImportantOperationError()
             let remainsActive = documentID == activeNoteEditorDocumentID
-            if remainsActive { noteText = conflict.diskMarkdown }
-            let digest = Self.noteContentDigest(Data(conflict.diskMarkdown.utf8))
+            if remainsActive { noteText = disk }
+            let digest = Self.noteContentDigest(Data(disk.utf8))
             noteBackingContentDigestsByItemID[documentID] = digest
-            loadedCourseNoteTextByItemID[documentID] = conflict.diskMarkdown
+            loadedCourseNoteTextByItemID[documentID] = disk
             if remainsActive {
                 latestNoteEditorSnapshot = nil
                 noteEditingSession.replaceDocument(with: documentID)
                 noteEditorCommand = NoteEditorCommand(
                     kind: .reloadDocument,
-                    markdown: conflict.diskMarkdown
+                    markdown: disk
                 )
             }
             guard await persistWorkspaceNow() else {
                 noteEditingSession.markSaveFailed(documentID: documentID)
                 let message = ui(
-                    "已采用“\(fileName)”的磁盘版本，但魏碑尚未确认清理旧草稿。未写内容已有备份，请重试保存后再关闭。",
-                    "The disk version of \(fileName) is in use, but WeiBei has not confirmed removal of the old draft. The unsaved content has a backup; retry saving before closing."
+                    "已采用“\(fileName)”的磁盘版本，但魏碑尚未确认清理旧草稿，请重试保存。",
+                    "The disk version of \(fileName) is in use, but WeiBei has not confirmed removal of the old draft. Retry saving."
                 )
                 setNoteFileError(message, for: documentID)
                 showImportantOperationError(message)
@@ -458,17 +478,17 @@ extension WorkspaceStore {
                     "code=note_recovery_cleanup_failed document=\(documentID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
                 let message = ui(
-                    "已采用“\(fileName)”的磁盘正文，但旧恢复点清理未完成。未写内容已有备份；请重试保存。",
-                    "The disk text for \(fileName) is in use, but the old recovery point was not removed. The unsaved content has a backup; retry saving."
+                    "已采用“\(fileName)”的磁盘正文，但旧恢复点清理未完成，请重试保存。",
+                    "The disk text for \(fileName) is in use, but the old recovery point was not removed. Retry saving."
                 )
                 setNoteFileError(message, for: documentID)
                 showImportantOperationError(message)
                 return
             }
-            showTransientNoteStatus(ui(
+            showTransientNoteStatus(backupEntry != nil ? ui(
                 "已采用“\(fileName)”的磁盘版本；未写内容已保存在魏碑备份中。",
                 "Used the disk version of \(fileName); unsaved content was kept in a WeiBei backup."
-            ), revealURL: backupEntry.url)
+            ) : ui("已按你的选择采用磁盘正文，未写内容没有备份。", "Used the disk text as requested; the unsaved version has no backup."), revealURL: backupEntry?.url)
         } else {
             let documentID = conflict.checkpoint.metadata.documentID
             guard let fileURL = item(withID: documentID)?.url else { return }
@@ -478,26 +498,45 @@ extension WorkspaceStore {
             // RunLoop 自旋等待另一个 MainActor Task 会死锁（见 cancelAgentReplyAction）。
             let draftPersisted = await flushPendingWorkspaceSaveAsync()
             var recoveryPersisted = conflict.checkpointIsPersisted
+            let diskDigest = disk.map { Self.noteContentDigest(Data($0.utf8)) }
             do {
-                let diskData = Data(conflict.diskMarkdown.utf8)
                 _ = try NoteBackupRing.capture(
-                    content: diskData,
+                    sourceURL: fileURL,
                     itemID: documentID,
                     rootURL: noteBackupRootURL
                 )
-                let diskDigest = Self.noteContentDigest(diskData)
+            } catch {
+                WeiBeiLog.noteRepair.error("code=note_conflict_backup_failed document=\(documentID, privacy: .private) underlying=\(WeiBeiLog.code(error), privacy: .public)")
+                if !allowUnbackedReplacement {
+                    guard await userOperationRisks.confirm(
+                        title: ui("仍然保留魏碑正文？", "Keep the WeiBei text anyway?"),
+                        message: ui("无法备份“\(fileName)”的磁盘版本。继续会用魏碑中的正文替换它，被替换的版本可能无法找回。", "The disk version of \(fileName) could not be backed up. Continuing replaces it with the WeiBei text; the replaced version may be unrecoverable."),
+                        context: .noteConflict
+                    ) else { return }
+                    await resolveNoteEditorRecoveryConflict(useDisk: false, documentID: documentID, allowUnbackedReplacement: true)
+                    return
+                }
+            }
+            do {
                 _ = try await noteRecoveryStore.store(
                     documentID: documentID,
-                    baseFileDigest: diskDigest,
+                    baseFileDigest: diskDigest ?? conflict.checkpoint.metadata.baseFileDigest,
                     revision: conflict.checkpoint.metadata.revision,
                     markdown: conflict.checkpoint.markdown
                 )
                 recoveryPersisted = true
+            } catch {
+                // This is an additional recovery copy. Failure must not prevent
+                // the primary file write the user just requested.
+                WeiBeiLog.noteRepair.error("code=note_conflict_checkpoint_failed write_continued document=\(documentID, privacy: .private) underlying=\(WeiBeiLog.code(error), privacy: .public)")
+            }
+            do {
                 try writeNotebookMarkdownThroughGate(
                     conflict.checkpoint.markdown,
                     itemID: documentID,
                     url: fileURL,
-                    expectedBaseline: diskDigest
+                    expectedBaseline: diskDigest,
+                    overwritingAfterUserChoice: true
                 )
             } catch {
                 noteEditingSession.markExternallyModified(documentID: documentID)

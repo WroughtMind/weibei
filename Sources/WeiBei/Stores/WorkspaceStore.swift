@@ -698,6 +698,10 @@ final class WorkspaceStore: ObservableObject {
     /// 自愈重试的基础间隔(秒),测试可调短。
     var noteSelectionSelfHealDelaySeconds: TimeInterval = 0.8
     private var pendingNoteSelection: PendingNoteSelection?
+    private var pendingNoteSelectionRiskTask: Task<Void, Never>?
+    let userOperationRisks = UserOperationRiskCenter()
+    /// Applies only while the updater is actually restarting the application.
+    var allowsUnsavedRelaunch = false
     /// Serious data-operation failures (note read/write/rename/restore/identity,
     /// security scope, course file move & rollback). Never auto-dismisses — only a
     /// user close or a newer important error replaces it.
@@ -903,6 +907,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private struct PendingNoteSelection {
+        let id = UUID()
         let apply: () -> Void
     }
 
@@ -1071,7 +1076,7 @@ final class WorkspaceStore: ObservableObject {
     ) {
         let profiles = AgentCredentialProfileStore.loadProfiles()
         agentCredentialProfiles = profiles
-        activeAgentProfileID = AgentCredentialProfileStore.activeProfileID() ?? profiles[0].id
+        activeAgentProfileID = AgentCredentialProfileStore.activeProfileID() ?? profiles.first?.id ?? UUID()
         workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
         sessionMessagePersistence = StudySessionMessagePersistence(storageURL: storageURL)
@@ -2108,8 +2113,7 @@ final class WorkspaceStore: ObservableObject {
         visualizationID: String,
         stateJSON: String
     ) {
-        guard stateJSON.utf8.count <= 262_144,
-              (try? JSONSerialization.jsonObject(
+        guard (try? JSONSerialization.jsonObject(
                   with: Data(stateJSON.utf8),
                   options: .fragmentsAllowed
               )) != nil,
@@ -3679,11 +3683,15 @@ final class WorkspaceStore: ObservableObject {
         guard sourceDocumentID != documentID,
               noteEditingSession.dirty || hasUnresolvedContentCommand(for: sourceDocumentID) else {
             pendingNoteSelection = nil
+            pendingNoteSelectionRiskTask?.cancel()
+            pendingNoteSelectionRiskTask = nil
             noteSelectionTransitionState = .idle
             apply()
             return
         }
 
+        pendingNoteSelectionRiskTask?.cancel()
+        pendingNoteSelectionRiskTask = nil
         pendingNoteSelection = PendingNoteSelection(apply: apply)
         if hasUnresolvedContentCommand(for: sourceDocumentID) {
             noteSelectionTransitionState = .saving
@@ -3906,6 +3914,8 @@ final class WorkspaceStore: ObservableObject {
     private func applyPendingNoteSelection() {
         let apply = pendingNoteSelection?.apply
         pendingNoteSelection = nil
+        pendingNoteSelectionRiskTask?.cancel()
+        pendingNoteSelectionRiskTask = nil
         noteSelectionTransitionState = .idle
         pendingSelectionSelfHealAttempts = 0
         pendingSelectionSelfHealTask?.cancel()
@@ -3919,6 +3929,7 @@ final class WorkspaceStore: ObservableObject {
         )
         disarmNoteSelectionWatchdog()
         noteSelectionTransitionState = .failed(error)
+        offerPendingNoteSelectionChoice()
         schedulePendingSelectionSelfHeal()
     }
 
@@ -3928,7 +3939,43 @@ final class WorkspaceStore: ObservableObject {
         )
         disarmNoteSelectionWatchdog()
         noteSelectionTransitionState = .persistenceFailed
+        offerPendingNoteSelectionChoice()
         schedulePendingSelectionSelfHeal()
+    }
+
+    private func offerPendingNoteSelectionChoice() {
+        guard let selection = pendingNoteSelection,
+              pendingNoteSelectionRiskTask == nil else { return }
+        let documentID = noteEditingSession.documentID
+        let generation = noteEditingSession.documentGeneration
+        pendingNoteSelectionRiskTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let proceed = await userOperationRisks.confirm(
+                title: ui("仍然切换笔记？", "Switch notes anyway?"),
+                message: ui(
+                    "最新编辑尚未确认保存。仍然切换会保留魏碑已收到的草稿，但编辑器中尚未收到的最后一段修改可能丢失。也可以先留在这里重试保存。",
+                    "The latest edits are not confirmed saved. Switching keeps drafts WeiBei has received, but the final edits still in the editor may be lost. You can also stay here and retry saving."
+                )
+            )
+            guard pendingNoteSelection?.id == selection.id,
+                  noteEditingSession.documentID == documentID,
+                  noteEditingSession.documentGeneration == generation else { return }
+            if proceed {
+                // Keep the accepted editor text before executing the original
+                // navigation. Do not repeat the failed preflight after consent.
+                if !documentID.isEmpty, !documentID.hasPrefix("draft:") {
+                    setNoteDraft(noteText, for: documentID)
+                }
+                WeiBeiLog.noteRepair.info("code=note_switch_risk_accepted document=\(documentID, privacy: .private)")
+                applyPendingNoteSelection()
+            } else if !Task.isCancelled {
+                pendingNoteSelection = nil
+                pendingNoteSelectionRiskTask = nil
+                pendingSelectionSelfHealTask?.cancel()
+                disarmNoteSelectionWatchdog()
+                noteSelectionTransitionState = .idle
+            }
+        }
     }
 
     func selectMeasured(itemID: String?, opensNotebook: Bool?) {
@@ -5981,12 +6028,19 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func deleteActiveAgentCredentialProfile() {
-        guard agentCredentialProfiles.count > 1,
-              let index = agentCredentialProfiles.firstIndex(where: { $0.id == activeAgentProfileID }) else { return }
+        guard let index = agentCredentialProfiles.firstIndex(where: { $0.id == activeAgentProfileID }) else { return }
         agentCredentialProfiles.remove(at: index)
         AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
         if let next = agentCredentialProfiles.first {
             selectAgentCredentialProfile(next.id)
+        } else {
+            activeAgentProfileID = UUID()
+            AgentCredentialProfileStore.setActiveProfileID(nil)
+            modelName = ""
+            agentBaseURL = ""
+            agentProviderID = .openai
+            agentAuthMethod = .apiKey
+            save()
         }
     }
 

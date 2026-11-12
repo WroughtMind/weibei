@@ -2,6 +2,32 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WeiBeiCore
 
+struct UserOperationRiskPresenter: ViewModifier {
+    @EnvironmentObject private var store: WorkspaceStore
+    @ObservedObject var choices: UserOperationRiskCenter
+    var context: UserOperationRiskCenter.Context = .workspace
+
+    func body(content: Content) -> some View {
+        let request = choices.pendingRequest.flatMap { $0.context == context ? $0 : nil }
+        content.alert(request?.title ?? "", isPresented: Binding(
+            get: { request != nil },
+            // The explicit buttons own the decision. SwiftUI also clears this
+            // binding while dismissing; that must not cancel a confirmed choice
+            // or the next queued request.
+            set: { _ in }
+        ), presenting: request) { request in
+            Button(store.ui("仍然继续", "Continue Anyway")) {
+                choices.respond(to: request.id, continuing: true)
+            }
+            Button(store.ui("先不", "Not Now"), role: .cancel) {
+                choices.respond(to: request.id, continuing: false)
+            }
+        } message: { request in
+            Text(request.message)
+        }
+    }
+}
+
 /// Internal workspace gestures must not advertise plain text: an external
 /// text document belongs to the window's file import receiver.
 enum WeiBeiWorkspaceDrag: Codable, Equatable, Sendable, Transferable {

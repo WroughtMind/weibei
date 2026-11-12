@@ -215,6 +215,7 @@ struct ContentView: View {
         )) {
             ConfirmedFileImportView().environmentObject(store)
         }
+        .modifier(UserOperationRiskPresenter(choices: store.userOperationRisks))
         .background(WindowFullScreenReader(isFullScreen: $windowIsFullScreen))
         .background {
             // Focus / reader-search sync observes paneState so ContentView does not.
@@ -644,6 +645,16 @@ private struct WorkspaceStatusBanner: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(store.ui("撤销删除", "Undo delete")))
             } else if isImportant {
+                if case .noteWriteSafetyHold = store.importantOperationNotice,
+                   let itemID = store.activeNoteItemID,
+                   store.noteOperationErrorsByItemID[itemID] != nil {
+                    Button(store.ui("重试保存", "Retry Save")) {
+                        Task { await store.retryActiveNoteSaveFromUser() }
+                    }
+                    .buttonStyle(.plain)
+                    .weiBeiText(12, weight: .semibold)
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                }
                 if case .defaultLibraryBootstrapFailed = store.importantOperationNotice {
                     Button {
                         store.retryBootstrapDefaultLibrary()

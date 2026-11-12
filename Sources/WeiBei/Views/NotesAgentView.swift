@@ -313,9 +313,8 @@ struct NotePaneView: View {
                             Spacer(minLength: 8)
                             Button(store.ui("查看两份内容…", "Compare versions…")) {
                                 Task {
-                                    guard await store.freshActiveNoteEditorSnapshot() else {
-                                        store.showImportantOperationError(store.ui("尚未取得最新编辑内容，请重试。", "Could not capture the latest edits. Please retry."))
-                                        return
+                                    if !(await store.freshActiveNoteEditorSnapshot()) {
+                                        WeiBeiLog.noteRepair.info("code=conflict_comparison_snapshot_unavailable showing_retained_versions")
                                     }
                                     reviewingConflict = true
                                 }
@@ -733,6 +732,7 @@ struct NoteConflictComparisonView: View {
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
+        .modifier(UserOperationRiskPresenter(choices: store.userOperationRisks, context: .noteConflict))
     }
 
     private func version(_ title: String, markdown: String, useDisk: Bool) -> some View {

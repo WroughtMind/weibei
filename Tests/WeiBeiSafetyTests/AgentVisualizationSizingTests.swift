@@ -205,14 +205,31 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIRejectsOverlongActionNameWithoutChangingIt() {
+    func testGenUISubmitsLongActionsAndFormDataWithoutTruncating() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiLongAction-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(
-            workspaceDirectory: FileManager.default.temporaryDirectory,
-            startsAtBlankEntries: true
+            workspaceDirectory: root,
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
         )
+        store.agentProviderID = .openai
+        store.modelName = "test-model"
         let action = String(repeating: "动作", count: 101)
-        let rejection = store.submitAgentVisualizationAction(action, payloadJSON: "{}")
-        XCTAssertEqual(rejection, .actionNameTooLong)
+        let field = String(repeating: "用户填写的正文", count: 6_000)
+        let data = try JSONSerialization.data(withJSONObject: ["answer": field])
+        let payload = String(decoding: data, as: UTF8.self)
+        let submitted = expectation(description: "The complete interactive operation reaches the responder")
+        store.selfCheckAgentResponder = { request in
+            XCTAssertTrue(request.question.contains(action))
+            XCTAssertTrue(request.question.contains(field))
+            submitted.fulfill()
+            return StudyAgentReply(text: "已收到", backend: .native)
+        }
+        defer { store.selfCheckAgentResponder = nil; store.cancelAllAgentRequests() }
+        XCTAssertNil(store.submitAgentVisualizationAction(action, payloadJSON: payload))
+        await fulfillment(of: [submitted], timeout: 8)
+        await store.agentRequestTask?.value
     }
 
     @MainActor

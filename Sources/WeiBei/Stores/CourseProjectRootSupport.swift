@@ -3332,10 +3332,6 @@ actor CourseProjectFileWorker {
                 continue
             }
             if rootValues.isDirectory != true {
-                guard fileManager.isReadableFile(atPath: rawURL.path) else {
-                    recordUnavailable(rawURL)
-                    continue
-                }
                 appendImportSelection(
                     rawURL,
                     displayName: rawURL.lastPathComponent,
@@ -3382,11 +3378,6 @@ actor CourseProjectFileWorker {
                 if Self.ignoresImportDirectory(fileURL),
                    values.isDirectory == true {
                     enumerator.skipDescendants()
-                    continue
-                }
-                if values.isDirectory != true,
-                   !fileManager.isReadableFile(atPath: fileURL.path) {
-                    recordUnavailable(fileURL)
                     continue
                 }
                 let rootPath = rawURL.standardizedFileURL.path

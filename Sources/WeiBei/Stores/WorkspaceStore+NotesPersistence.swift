@@ -114,7 +114,8 @@ extension WorkspaceStore {
 
     func renameNotebookNoteInTransaction(
         itemID: String,
-        to rawTitle: String
+        to rawTitle: String,
+        allowUnbackedReplacement: Bool = false
     ) async {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
@@ -123,20 +124,6 @@ extension WorkspaceStore {
         }
         guard let initialIndex = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
         let oldTitle = displayTitle(for: importedItems[initialIndex])
-
-        if noteOperationErrorsByItemID[itemID] != nil {
-            cancelPendingNotePersistence(for: itemID)
-            let pending = pendingNotePersistenceByItemID.removeValue(
-                forKey: itemID
-            )
-            if activeNoteItemID == itemID {
-                setNoteDraft(noteText, for: itemID)
-            } else if let pending {
-                setNoteDraft(pending.markdown, for: itemID)
-            }
-            _ = await persistWorkspaceNow()
-            return
-        }
 
         await flushPendingNotePersistenceAsync(for: itemID)
         await persistCurrentNoteAsync()
@@ -186,20 +173,18 @@ extension WorkspaceStore {
                 )
             } catch {
                 setNoteDraft(sourceMarkdown, for: oldID)
-                let draftPersisted = await persistWorkspaceNow()
+                _ = await persistWorkspaceNow()
                 WeiBeiLog.noteRepair.error(
                     "code=note_rename_backup_failed path=\(oldURL.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
-                showImportantOperationError(.noteWriteSafetyHold(fileName: oldURL.lastPathComponent), message: draftPersisted
-                    ? ui(
-                        "无法安全备份“\(oldURL.lastPathComponent)”，魏碑没有重命名或改写文件。最新正文已保存在魏碑中，请重试。",
-                        "Could not safely back up \(oldURL.lastPathComponent), so WeiBei did not rename or rewrite it. The latest text is stored in WeiBei; please retry."
-                    )
-                    : ui(
-                        "无法安全备份“\(oldURL.lastPathComponent)”，魏碑没有重命名或改写文件。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。",
-                        "Could not safely back up \(oldURL.lastPathComponent), so WeiBei did not rename or rewrite it. The latest text remains in this session but is not safely stored yet; do not close it, and retry."
-                    ))
-                return
+                if !allowUnbackedReplacement {
+                    guard await userOperationRisks.confirm(
+                        title: ui("仍然重命名笔记？", "Rename the note anyway?"),
+                        message: ui("无法备份“\(oldURL.lastPathComponent)”。继续会重命名文件并更新正文标题，改写前的版本可能无法找回。", "WeiBei could not back up \(oldURL.lastPathComponent). Continuing renames the file and updates its heading; the previous version may be unrecoverable.")
+                    ) else { return }
+                    await renameNotebookNoteInTransaction(itemID: itemID, to: rawTitle, allowUnbackedReplacement: true)
+                    return
+                }
             }
         }
 
@@ -573,6 +558,61 @@ extension WorkspaceStore {
             await flushPendingNotePersistenceAsync(for: item.id)
         } else if notesByItemID[item.id] != nil, item.editsBackingMarkdownFile {
             await persistNoteAsync(noteText, for: item)
+        }
+    }
+
+    /// Explicit retry can proceed past advisory backup/baseline failures after
+    /// a concrete choice. Autosave continues to preserve both versions.
+    func retryActiveNoteSaveFromUser() async {
+        guard let item = activeNoteItem, item.editsBackingMarkdownFile,
+              let url = resolvedLibraryURL(for: item) else {
+            showImportantOperationError(ui("找不到笔记文件的位置，请重新连接文件后重试保存。", "The note's file location is unavailable. Reconnect the file, then retry saving."))
+            return
+        }
+        let itemID = item.id
+        let captured = await freshActiveNoteEditorSnapshot()
+        guard activeNoteItemID == itemID else { return }
+        let markdown = notesByItemID[itemID] ?? noteText
+        let outcome = attemptNoteMarkdownWrite(markdown, itemID: itemID, url: url)
+        if case .written = outcome { return }
+        _ = await completeNoteMarkdownWrite(outcome, markdown: markdown, itemID: itemID, url: url)
+        if case .failed(_, backupFailed: false) = outcome { return }
+        guard await userOperationRisks.confirm(
+            title: ui("仍然保存这份正文？", "Save this text anyway?"),
+            message: ui(
+                "继续会用魏碑保留的正文替换“\(url.lastPathComponent)”的文件内容，磁盘上的版本可能无法备份或找回。" + (captured ? "" : "编辑器中的最后一段修改尚未确认收到。"),
+                "Continuing replaces \(url.lastPathComponent) with the text kept in WeiBei. The disk version may not be backed up or recoverable." + (captured ? "" : " The final edits in the editor have not been confirmed received.")
+            )
+        ) else { return }
+        guard let current = self.item(withID: itemID),
+              resolvedLibraryURL(for: current) == url else {
+            showImportantOperationError(ui("笔记的文件位置已经改变，请在当前位置重试保存。", "The note's file location changed. Retry saving at its current location."))
+            return
+        }
+        let latest = notesByItemID[itemID] ?? markdown
+        do {
+            do {
+                _ = try NoteBackupRing.capture(sourceURL: url, itemID: itemID, rootURL: noteBackupRootURL)
+            } catch {
+                WeiBeiLog.noteRepair.error("code=note_backup_failed user_chose_continue document=\(itemID, privacy: .private) underlying=\(WeiBeiLog.code(error), privacy: .public)")
+            }
+            try writeNotebookMarkdownThroughGate(latest, itemID: itemID, url: url,
+                                                 expectedBaseline: nil, overwritingAfterUserChoice: true)
+            cancelPendingNotePersistence(for: itemID)
+            pendingNotePersistenceByItemID.removeValue(forKey: itemID)
+            pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            noteEditorRecoveryConflictsByItemID.removeValue(forKey: itemID)
+            setNoteDraft(nil, for: itemID)
+            setNoteFileError(nil, for: itemID)
+            dismissImportantOperationError()
+            loadedCourseNoteTextByItemID[itemID] = latest
+            noteEditorDidPersist(latest, documentID: itemID)
+            scheduleOrphanAttachmentGC(afterPersistingNoteAt: url, markdown: latest)
+            _ = refreshImportedFileTracking(itemID: itemID, url: url)
+            courseDocumentSearchIndex.schedule([current])
+            _ = await persistWorkspaceNow()
+        } catch {
+            _ = await completeNoteMarkdownWrite(.failed(error, backupFailed: false), markdown: latest, itemID: itemID, url: url)
         }
     }
 
@@ -960,7 +1000,8 @@ extension WorkspaceStore {
         _ markdown: String,
         itemID: String,
         url: URL,
-        expectedBaseline: String?
+        expectedBaseline: String?,
+        overwritingAfterUserChoice: Bool = false
     ) throws {
         let intendedDigest = Self.noteContentDigest(Data(markdown.utf8))
         var operationError: Error?
@@ -971,7 +1012,12 @@ extension WorkspaceStore {
             error: &coordinationError
         ) { coordinatedURL in
             do {
-                if FileManager.default.fileExists(atPath: coordinatedURL.path) {
+                guard !overwritingAfterUserChoice || CourseProjectPathPolicy.isSame(
+                    coordinatedURL,
+                    coordinatedURL.resolvingSymlinksInPath()
+                ) else { throw CocoaError(.fileWriteNoPermission) }
+                if !overwritingAfterUserChoice,
+                   FileManager.default.fileExists(atPath: coordinatedURL.path) {
                     guard let expectedBaseline,
                           let diskDigest = Self.noteContentDigest(at: coordinatedURL) else {
                         WeiBeiLog.noteRepair.error(

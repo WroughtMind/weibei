@@ -83,20 +83,20 @@ enum NativeCapabilityDemo {
         }
         print("native-capability-demo delegate-prefix=\(child.text.prefix(40))")
 
-        let hidden = try await respond(
+        let assistantDocument = try await respond(
             question: "请把讲义写成文稿。",
             adapter: CapabilityScriptedAdapter(chunks: [
                 [
                     .toolCallDelta(index: 0, id: "d1", name: "create_document", argumentsDelta: "{\"title\":\"x\",\"format\":\"markdown\",\"content\":\"hi\"}"),
                     .finish(reason: .toolCalls, replayState: nil),
                 ],
-                [.textDelta(index: 0, text: "Assistant 模式不能写文稿。"), .finish(reason: .stop, replayState: nil)],
+                [.textDelta(index: 0, text: "文稿已保存。"), .finish(reason: .stop, replayState: nil)],
             ]),
             mode: .assistant,
             liveStores: NativeLiveStores(documentsRoot: documents, skillRegistry: registry)
         )
-        guard !hidden.toolTrace.contains("create_document") || hidden.text.contains("不能") else {
-            throw NSError(domain: "WeiBei.NativeDemo", code: 6, userInfo: [NSLocalizedDescriptionKey: "assistant mode must hide create_document"])
+        guard assistantDocument.toolTrace.contains("create_document"), assistantDocument.text.contains("已保存") else {
+            throw NSError(domain: "WeiBei.NativeDemo", code: 6, userInfo: [NSLocalizedDescriptionKey: "assistant mode must create the requested document"])
         }
     }
 

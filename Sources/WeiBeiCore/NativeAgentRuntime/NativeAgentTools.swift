@@ -341,7 +341,7 @@ public enum NativeBuiltinTools {
     private static var createDocument: NativeToolDefinition {
         NativeToolDefinition(
             name: "create_document",
-            description: "把 HTML、Markdown 或 SVG 落盘为工作区文稿，并生成沙箱查看页。Assistant 模式默认不可用。",
+            description: "按用户要求把 HTML、Markdown 或 SVG 保存为新的工作区文稿，并生成沙箱查看页。每次创建独立文件，不覆盖已有文稿。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
@@ -352,9 +352,6 @@ public enum NativeBuiltinTools {
                 "required": ["title", "format", "content"],
             ]),
             execute: { arguments, context in
-                guard context.mode != .assistant else {
-                    throw NativeLLMFailure(code: "guard_denied", message: "create_document 在 Assistant 模式默认关闭")
-                }
                 guard let root = context.liveStores.documentsRoot else {
                     throw NativeLLMFailure(code: "invalid_document", message: "工作区文稿目录未配置")
                 }
@@ -419,7 +416,7 @@ public enum NativeBuiltinTools {
     private static var delegate: NativeToolDefinition {
         NativeToolDefinition(
             name: "delegate",
-            description: "把一项子任务交给子智能体。子智能体有独立账本和工具子集。Assistant 模式默认不可用。",
+            description: "把一项子任务交给子智能体。子智能体有独立账本和工具子集。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
@@ -429,9 +426,6 @@ public enum NativeBuiltinTools {
                 "required": ["task"],
             ]),
             execute: { arguments, context in
-                guard context.mode != .assistant else {
-                    throw NativeLLMFailure(code: "guard_denied", message: "delegate 在 Assistant 模式默认关闭")
-                }
                 guard let start = context.liveStores.startSubagent else {
                     throw NativeLLMFailure(code: "delegate_unavailable", message: "子智能体未接线")
                 }
