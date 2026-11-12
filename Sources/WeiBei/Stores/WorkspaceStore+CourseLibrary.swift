@@ -642,11 +642,21 @@ extension WorkspaceStore {
                     adoptionSnapshot = snapshot
                     courseID = snapshot.manifest.courseID
                 } catch {
-                    // 布局安全但状态不可读（如超大）：保留磁盘原样并拒绝，避免改写共享课程根。
-                    if let externalScopeURL {
-                        courseSecurityScopeStopper(externalScopeURL)
+                    WeiBeiLog.workspace.error("code=course_metadata_unreadable underlying=\(WeiBeiLog.code(error), privacy: .public)")
+                    guard await userOperationRisks.confirm(
+                        title: ui("保留原状态并继续加入课程？", "Keep the original state and add this course?"),
+                        message: ui("资料文件可以使用，但旧课程状态无法读取。继续会把原状态完整留在课程文件夹的备份中，再按新课程加入；旧问答和进度暂时不会显示，资料原文件不受影响。", "The material files are available, but the old course state cannot be read. Continuing keeps that state in a backup in the course folder and adds a new course. Old conversations and progress will not appear; the material files are kept."),
+                        context: .courseEntry
+                    ) else { throw CancellationError() }
+                    try validateCourseProjectRoot(canonicalRoot, identity: identity, mustBeInsideLibrary: true)
+                    guard importedFileIdentityResolver(canonicalRoot) == identity else {
+                        throw CourseProjectRootError.rootIdentityUnavailable
                     }
-                    throw CourseProjectRootError.metadataConflict
+                    let backup = canonicalRoot.appendingPathComponent(".weibei.backup-\(UUID().uuidString)", isDirectory: true)
+                    try FileManager.default.moveItem(at: metadataURL, to: backup)
+                    let result = try await adoptCourseFolderOrProposeRebindAsync(at: canonicalRoot, title: title)
+                    showTransientNoteStatus(ui("原课程状态已保留在 \(backup.lastPathComponent)。", "The original course state is kept in \(backup.lastPathComponent)."), revealURL: backup)
+                    return result
                 }
             } else {
                 // S6-1：结构异常的 .weibei（symlink/非目录）→ 改名备份后按新课继续。
@@ -1137,12 +1147,24 @@ extension WorkspaceStore {
         }
 
         _ = restorePortableCourseStates()
-        guard !blockedPortableCourseIDs.contains(existing.id) else {
-            throw CourseProjectRootError.metadataConflict
+        let keepsUnreadableState = blockedPortableCourseIDs.contains(existing.id)
+        if keepsUnreadableState {
+            guard await userOperationRisks.confirm(
+                title: ui("保留原状态并继续打开课程？", "Keep the original state and open this course?"),
+                message: ui("课程资料可以读取，但旧问答或进度无法完整读取。继续会打开资料并保留原状态文件，旧记录暂时不会全部显示；新更改会先在本机保留，原状态不会被后台覆盖。", "The material files can be read, but the old conversations or progress cannot be fully read. Continuing opens the materials and keeps the original state file. Some old records will be unavailable; new changes are kept locally without overwriting the original state."),
+                context: .courseEntry
+            ) else { throw CancellationError() }
+            guard courseRootURL(for: existing.id) == resolvedRoot,
+                  importedFileIdentityResolver(resolvedRoot) == identity else {
+                throw CourseProjectRootError.rootIdentityUnavailable
+            }
         }
         await reconcileCourseFilesNow(courseID: existing.id)
-        guard await persistWorkspaceNow() else {
-            throw CourseProjectRootError.workspaceSaveFailed
+        if !(await persistWorkspaceNow(skippingPortableCourseIDs: keepsUnreadableState ? [existing.id] : [])) {
+            reportWorkspaceSaveFailure(.coursePortableStateUnwritten, ui(
+                "课程资料已重新连接，但最新连接信息或进度尚未保存。文件仍在原位置，请重试保存。",
+                "The course materials are reconnected, but the latest connection or progress is not saved yet. Files remain in their original location; retry saving."
+            ))
         }
 
         if let previousScope {
@@ -2662,12 +2684,39 @@ extension WorkspaceStore {
             courseID: courseID,
             conflictResolution: conflictResolution
         )
+        let replacementTargetItemID = replacingItemIndex.map { importedItems[$0].id }
         let replacesExistingTarget = conflictResolution == .replace
             && FileManager.default.fileExists(atPath: targetURL.path)
         guard let targetRelativePath = CourseProjectPathPolicy.relativePath(
             of: targetURL,
             inside: canonicalRoot
         ) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        if replacesExistingTarget, role == .note {
+            do {
+                _ = try NoteBackupRing.capture(
+                    sourceURL: targetURL,
+                    itemID: replacementTargetItemID ?? preservingItemID ?? Self.makeImportedItemID(),
+                    rootURL: noteBackupRootURL
+                )
+            } catch {
+                WeiBeiLog.noteRepair.error(
+                    "code=note_backup_failed path=\(targetURL.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                )
+                guard await userOperationRisks.confirm(
+                    title: ui("仍然替换这份笔记？", "Replace this note anyway?"),
+                    message: ui("无法把“\(targetURL.lastPathComponent)”加入笔记备份。继续会替换它；魏碑仍会尝试把原文件移到废纸篓，但备份中可能找不到旧版本。", "WeiBei could not add \(targetURL.lastPathComponent) to note backups. Continuing replaces it. WeiBei will still attempt to move the original to Trash, but the old version may not be available in note backups."),
+                    context: confirmedFileImport?.stage == .importing ? .fileImport : .workspace
+                ) else { throw CancellationError() }
+            }
+        }
+        // A user's decision can take time. Verify the same directories before
+        // any target is isolated; a replaced directory must never widen the operation.
+        guard importedFileIdentityResolver(canonicalRoot) == canonicalRootIdentity,
+              importedFileIdentityResolver(destinationDirectory) == destinationDirectoryIdentity,
+              CourseProjectPathPolicy.isSame(canonicalRoot, canonicalRoot.resolvingSymlinksInPath()),
+              CourseProjectPathPolicy.isSame(destinationDirectory, destinationDirectory.resolvingSymlinksInPath()) else {
             throw CourseOwnedFileError.unsafeCoursePath
         }
         let sourceSnapshot: CourseFileSnapshot
@@ -2714,7 +2763,6 @@ extension WorkspaceStore {
                 isDirectory: false
             )
         }
-        let replacementTargetItemID = replacingItemIndex.map { importedItems[$0].id }
         let itemID = replacementTargetItemID
             ?? preservingItemID
             ?? Self.makeImportedItemID()
@@ -2782,21 +2830,6 @@ extension WorkspaceStore {
                 }
             }
             if replacesExistingTarget {
-                // 覆盖前：笔记入备份环；目标隔离进废纸篓。
-                if role == .note {
-                    do {
-                        _ = try NoteBackupRing.capture(
-                            sourceURL: targetURL,
-                            itemID: itemID,
-                            rootURL: noteBackupRootURL
-                        )
-                    } catch {
-                        WeiBeiLog.noteRepair.error(
-                            "code=note_backup_failed path=\(targetURL.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
-                        )
-                        throw CourseOwnedFileError.backupFailed
-                    }
-                }
                 guard let replacementIdentity = importedFileIdentityResolver(targetURL) else {
                     throw CourseOwnedFileError.targetConflict(targetURL)
                 }
@@ -2813,12 +2846,12 @@ extension WorkspaceStore {
                     .afterCourseFileRollbackArtifactCreationBeforeJournalIdentity
                 )
                 replacedRollbackIdentity = rollbackIdentity
-                guard await courseProjectFileWorker.isolateWithoutReplacement(
-                    from: targetURL,
-                    to: replacementQuarantineURL
-                ) else {
-                    throw CourseOwnedFileError.targetConflict(targetURL)
-                }
+                try await courseProjectFileWorker.isolateVerifiedReplacement(
+                    from: targetURL, to: replacementQuarantineURL,
+                    expectedSourceIdentity: replacementIdentity,
+                    expectedSourceDirectoryIdentity: destinationDirectoryIdentity,
+                    expectedDestinationDirectoryIdentity: transactionDirectoryIdentity
+                )
                 try courseProjectMutationHook(
                     .afterCourseFileReplacementIsolationBeforeJournal
                 )
@@ -4347,7 +4380,8 @@ extension WorkspaceStore {
 
     @discardableResult
     private func restoreCourseReferencesInsideLibrary() -> Bool {
-        (try? waitForCourseFileOperation {
+        guard courses.contains(where: { $0.sourceRootRelativePath != nil }) else { return false }
+        return (try? waitForCourseFileOperation {
             await self.restoreCourseReferencesInsideLibraryAsync()
         }) ?? false
     }
@@ -4643,26 +4677,34 @@ extension WorkspaceStore {
         save()
     }
 
-    func removeCourseFromWeiBei(_ courseID: UUID) async throws {
+    func removeCourseFromWeiBei(_ courseID: UUID, riskContext: UserOperationRiskCenter.Context = .workspace) async throws {
         let transactionID = try beginCourseRemovalTransaction()
         defer { finishCourseRemovalTransaction(transactionID) }
         let prepared = try await prepareCourseRemoval(
             courseID,
             token: transactionID,
-            requiresAvailableRoot: false
+            requiresAvailableRoot: false,
+            riskContext: riskContext
         )
         let shouldDismissCourseWorkspace =
             courseWorkspacePresented
                 && courseWorkspaceCourseID == courseID
-        guard await persistWorkspaceRemovingCourse(courseID) else {
-            finishCourseRemovalAttempt(
-                courseID,
-                token: prepared.token,
-                succeeded: false
-            )
-            throw CourseRemovalError.workspaceSaveFailed
+        let saved = await persistWorkspaceRemovingCourse(courseID)
+        if !saved {
+            guard await userOperationRisks.confirm(
+                title: ui("仍然从魏碑移除课程？", "Remove this course from WeiBei anyway?"),
+                message: ui("移除记录暂时无法保存。继续会在当前会话移除课程，文件仍保留；重启后课程记录可能再次出现。", "The removal record cannot be saved right now. Continuing removes the course in this session and keeps its files. The course record may reappear after restarting."),
+                context: riskContext
+            ) else {
+                finishCourseRemovalAttempt(courseID, token: prepared.token, succeeded: false)
+                throw CancellationError()
+            }
         }
         removeCourseLocalRegistration(courseID)
+        if !saved {
+            save()
+            showImportantOperationError(ui("课程已从当前会话移除，原文件仍保留；移除记录尚未保存，重启后可能再次出现。", "The course is removed from this session and its files are kept. The removal record is not saved yet and may reappear after restarting."))
+        }
         if shouldDismissCourseWorkspace {
             courseWorkspacePresented = false
         }
@@ -4693,13 +4735,14 @@ extension WorkspaceStore {
     }
 
     @discardableResult
-    func moveCourseFolderToTrash(_ courseID: UUID) async throws -> URL {
+    func moveCourseFolderToTrash(_ courseID: UUID, riskContext: UserOperationRiskCenter.Context = .workspace) async throws -> URL {
         let transactionID = try beginCourseRemovalTransaction()
         defer { finishCourseRemovalTransaction(transactionID) }
         let prepared = try await prepareCourseRemoval(
             courseID,
             token: transactionID,
-            requiresAvailableRoot: true
+            requiresAvailableRoot: true,
+            riskContext: riskContext
         )
         let shouldDismissCourseWorkspace =
             courseWorkspacePresented
@@ -4723,7 +4766,7 @@ extension WorkspaceStore {
             // S6-4：不再因 Agent/笔记 pending 拒绝废纸篓。
             guard course(withID: courseID) == prepared.course,
                   activeCourseRemovalTokens[courseID] == prepared.token,
-                  coursePortableStateMatchesLastSaved(courseID),
+                  (prepared.allowsUnsavedRemoval || coursePortableStateMatchesLastSaved(courseID)),
                   let currentRoot = courseRootURL(for: courseID),
                   CourseProjectPathPolicy.isSame(currentRoot, root),
                   importedFileIdentityResolver(currentRoot)
@@ -4893,7 +4936,8 @@ extension WorkspaceStore {
             let prepared = try await self.prepareCourseRemoval(
                 courseID,
                 token: transactionID,
-                requiresAvailableRoot: false
+                requiresAvailableRoot: false,
+                riskContext: .workspace
             )
             var removalSucceeded = false
             defer {
@@ -5110,12 +5154,14 @@ extension WorkspaceStore {
     private func prepareCourseRemoval(
         _ courseID: UUID,
         token: UUID,
-        requiresAvailableRoot: Bool
+        requiresAvailableRoot: Bool,
+        riskContext: UserOperationRiskCenter.Context
     ) async throws -> (
         course: Course,
         root: URL?,
         rootIdentity: ImportedFileIdentity?,
-        token: UUID
+        token: UUID,
+        allowsUnsavedRemoval: Bool
     ) {
         guard let expectedCourse = course(withID: courseID) else {
             throw CourseRemovalError.courseNotFound
@@ -5175,6 +5221,7 @@ extension WorkspaceStore {
             let rootIdentity = root.flatMap(
                 importedFileIdentityResolver
             )
+            var allowsUnsavedRemoval = false
             if requiresAvailableRoot {
                 guard let root,
                       let expectedIdentity =
@@ -5188,18 +5235,22 @@ extension WorkspaceStore {
                     mustBeInsideLibrary:
                         expectedCourse.sourceRootRelativePath != nil
                 )
-                // Trash path still refuses when the live folder cannot accept the
-                // latest portable state; unregister-only never requires that write.
-                guard await persistWorkspaceNow(),
-                      !dirtyPortableCourseIDs.contains(courseID),
-                      !blockedPortableCourseIDs.contains(courseID),
-                      !oversizedPortableCourseIDs.contains(courseID),
-                      coursePortableStateRevisions[courseID] != nil,
-                      coursePortableStateDigests[courseID] != nil,
-                      coursePortableStateMatchesLastSaved(
-                        courseID
-                      ) else {
-                    throw CourseRemovalError.latestStateNotSaved
+                // Unsaved portable state is a concrete risk, not a veto on the
+                // folder move. One choice covers the later state preflight too.
+                let saved = await persistWorkspaceNow()
+                if !(saved
+                      && !dirtyPortableCourseIDs.contains(courseID)
+                      && !blockedPortableCourseIDs.contains(courseID)
+                      && !oversizedPortableCourseIDs.contains(courseID)
+                      && coursePortableStateRevisions[courseID] != nil
+                      && coursePortableStateDigests[courseID] != nil
+                      && coursePortableStateMatchesLastSaved(courseID)) {
+                    allowsUnsavedRemoval = await userOperationRisks.confirm(
+                        title: ui("仍然把课程移到废纸篓？", "Move this course to Trash anyway?"),
+                        message: ui("最新问答、草稿或进度尚未完整保存。继续仍会把课程文件夹移到废纸篓，但废纸篓中的副本可能不包含这些最新修改，移除记录也可能尚未保存。", "The latest conversations, drafts or progress are not fully saved. Continuing moves the course folder to Trash, but that copy may not include the latest changes, and the removal record may remain unsaved."),
+                        context: riskContext
+                    )
+                    guard allowsUnsavedRemoval else { throw CancellationError() }
                 }
             }
 
@@ -5207,7 +5258,8 @@ extension WorkspaceStore {
                 expectedCourse,
                 root,
                 rootIdentity,
-                token
+                token,
+                allowsUnsavedRemoval
             )
         } catch {
             finishCourseRemovalAttempt(
@@ -6020,6 +6072,8 @@ extension WorkspaceStore {
             guard choice.index == 1 else { return }
             do {
                 try await self.moveItemSourceToTrash(itemID)
+            } catch is CancellationError {
+                return
             } catch {
                 self.recordCourseLibraryUIFailure(
                     error,
@@ -6042,16 +6096,6 @@ extension WorkspaceStore {
                     message = self.ui(
                         "删除未完整完成，魏碑无法确认原文件当前位置；课程记录变更未完成提交。请检查原位置和废纸篓后再操作。",
                         "Deletion did not fully complete, and WeiBei could not confirm the original file's current location. The course record change was not committed. Check the original location and Trash before continuing."
-                    )
-                case .workspaceSaveFailed:
-                    message = self.ui(
-                        "删除未完整完成，魏碑无法确认原文件当前位置；课程记录变更未完成提交。请检查原位置和废纸篓后再操作。",
-                        "Deletion did not fully complete, and WeiBei could not confirm the original file's current location. The course record change was not committed. Check the original location and Trash before continuing."
-                    )
-                case .pendingChangesUnsaved:
-                    message = self.ui(
-                        "还有更改尚未写入磁盘；魏碑没有移动原文件。请先处理保存提示，再重试删除。",
-                        "Some changes have not been written to disk. WeiBei did not move the original file. Resolve the save warning, then try deleting again."
                     )
                 case nil:
                     message = self.ui(
@@ -6089,7 +6133,7 @@ extension WorkspaceStore {
         return importedItems[itemIndex].url != nil
     }
 
-    private func moveItemSourceToTrash(_ itemID: String) async throws {
+    func moveItemSourceToTrash(_ itemID: String) async throws {
         guard importedItems.contains(where: { $0.id == itemID }) else {
             throw ContentSourceRemovalError.itemUnavailable
         }
@@ -6108,10 +6152,8 @@ extension WorkspaceStore {
         while let task = courseNoteWriteTasksByItemID[itemID] {
             await task.value
         }
-        guard await flushPendingWorkspaceSaveAsync() else {
-            // 有待保存的更改没能写入磁盘时拒绝删除；这不是"找不到原文件"，
-            // 分开报错避免误导（保存失败的具体原因见 workspaceSaveError / 日志）。
-            throw ContentSourceRemovalError.pendingChangesUnsaved
+        if !(await flushPendingWorkspaceSaveAsync()) {
+            guard await confirmUnsavedFileRemoval() else { throw CancellationError() }
         }
         guard let itemIndex = importedItems.firstIndex(where: {
             $0.id == itemID
@@ -6179,18 +6221,17 @@ extension WorkspaceStore {
             }
             throw ContentSourceRemovalError.trashMoveFailed
         }
-        guard let trashURL = movedTrashURL else {
+        guard movedTrashURL != nil else {
             throw ContentSourceRemovalError.trashMoveFailed
         }
 
         removeItemRegistration(itemID)
-        guard await persistWorkspaceNow() else {
-            _ = await courseProjectFileWorker.restoreIsolatedFile(
-                from: trashURL,
-                to: sourceURL
-            )
-            load()
-            throw ContentSourceRemovalError.workspaceSaveFailed
+        if !(await persistWorkspaceNow()) {
+            // The primary operation has completed. Retain its real result and
+            // retry bookkeeping; reloading an old workspace would erase other
+            // edits and silently undo the deletion the user requested.
+            save()
+            showImportantOperationError(ui("原文件已移到废纸篓，但删除记录尚未保存，重启后可能再次显示旧入口。可以从废纸篓找回原文件，或重试保存。", "The original file is in Trash, but the deletion record is not saved yet. Its old entry may reappear after restarting. You can recover the file from Trash or retry saving."))
         }
 
         await removeFormerSharedLinks(
@@ -6199,6 +6240,13 @@ extension WorkspaceStore {
         )
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
+    }
+
+    private func confirmUnsavedFileRemoval() async -> Bool {
+        await userOperationRisks.confirm(
+            title: ui("仍然将原文件移到废纸篓？", "Move the source file to Trash anyway?"),
+            message: ui("部分草稿或删除记录尚未保存。继续仍会将原文件移到废纸篓；未保存的修改可能无法恢复，重启后旧入口可能再次出现。选择先不，会保留或恢复原文件。", "Some drafts or deletion records are not saved. Continuing moves the original file to Trash. Unsaved edits may be unrecoverable, and the old entry may reappear after restarting. Choosing Not Now keeps or restores the original file.")
+        )
     }
 
     private func removeFormerSharedLinks(

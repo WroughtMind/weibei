@@ -243,6 +243,8 @@ struct CourseWorkspaceView: View {
         Task { @MainActor in
             do {
                 try await store.deleteCourse(course.id)
+            } catch is CancellationError {
+                return
             } catch {
                 store.recordCourseLibraryUIFailure(
                     error,

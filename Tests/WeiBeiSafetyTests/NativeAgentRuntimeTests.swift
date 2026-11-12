@@ -2,6 +2,54 @@ import XCTest
 @testable import WeiBeiCore
 
 final class NativeAgentRuntimeTests: XCTestCase {
+    func testLearningMemoryUpdateIsNotLimitedToTwelveEntries() async throws {
+        let capture = StateUpdateCapture()
+        let stores = NativeLiveStores(persistLearningUpdate: { update in
+            await capture.record(update)
+            return NativeStorePersistReceipt(status: .saved, message: "ok",
+                memoryUpdate: AgentReplyMemoryUpdate(memoryIDs: [], summary: "已保存"))
+        })
+        var context = NativeToolExecutionContext(request: testRequest(), liveStores: stores)
+        context.lastReadMemoryRevision = context.request.learningContext.memoryRevision
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let entries = (1...13).map { index in
+            ["kind": "goal", "text": "目标 \(index)", "origin": "userStatement",
+             "evidence": "[用户：本轮] 测试工具恢复"]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["entries": entries])
+        let result = try await registry.execute(NativeToolCallRequest(name: "weibei_update_learning_memory",
+            argumentsJSON: String(decoding: data, as: UTF8.self), callID: "memory"), context: context, scope: .global)
+        XCTAssertFalse(result.isError, result.text)
+        let update = await capture.learningUpdate
+        XCTAssertEqual(update?.entries.count, entries.count)
+    }
+
+    func testDamagedLedgerRetainsCompletedTurnsForTheNextQuestion() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiContinuingChat-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ledgerRoot = root.appendingPathComponent("NativeAgent/Ledgers")
+        let file = ledgerRoot.appendingPathComponent("same-chat/ledger.jsonl")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let damaged = Data("unreadable history".utf8)
+        try damaged.write(to: file)
+        let capture = RequestCapture()
+        let runtime = NativeStudyAgentRuntime(model: "mock", adapter: MockLLMAdapter(
+            chunks: [.textDelta(index: 0, text: "第一轮回答"), .finish(reason: .stop, replayState: nil)],
+            inspect: { capture.request = $0 }), ledgerRoot: ledgerRoot, systemPromptText: "Answer.")
+        var request = testRequest()
+        request.projectScope.chatID = "same-chat"
+        request.question = "请记住这次的问题"
+        _ = try await runtime.respond(to: request, progress: nil)
+        request.id = UUID()
+        request.question = "接着刚才的问题"
+        _ = try await runtime.respond(to: request, progress: nil)
+        let messages = try XCTUnwrap(capture.request).messages
+        XCTAssertTrue(messages.contains { $0.role == .user && $0.content == "请记住这次的问题" })
+        XCTAssertTrue(messages.contains { $0.role == .assistant && $0.content == "第一轮回答" })
+        XCTAssertEqual(try Data(contentsOf: file), damaged)
+    }
+
     func testRuntimeAnswersWithDamagedHistoryWithoutOverwritingIt() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiDamagedLedger-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

@@ -414,6 +414,19 @@ extension WorkspaceStore {
             showImportantOperationError(ui("无法读取磁盘正文。魏碑中的内容仍保留，请检查文件权限，或选择保留魏碑中的正文。", "The disk text cannot be read. Your WeiBei text is kept; check file permissions, or choose the WeiBei version."))
             return
         }
+        if useDisk, let disk, disk != conflict.diskMarkdown {
+            noteEditorRecoveryConflictsByItemID[documentID] = NoteEditorRecoveryConflict(
+                diskMarkdown: disk, checkpoint: conflict.checkpoint,
+                checkpointIsPersisted: conflict.checkpointIsPersisted
+            )
+            guard await userOperationRisks.confirm(
+                title: ui("采用更新后的磁盘正文？", "Use the updated disk text?"),
+                message: ui("打开对照后，文件又被其他程序修改了。对照已更新；继续会采用更新后的磁盘正文，魏碑中的草稿会先尝试备份。", "Another app changed the file after the comparison opened. The comparison is updated. Continuing uses the updated disk text and first attempts to back up your WeiBei draft."),
+                context: .noteConflict
+            ) else { return }
+            await resolveNoteEditorRecoveryConflict(useDisk: true, documentID: documentID, allowUnbackedReplacement: allowUnbackedReplacement)
+            return
+        }
         if useDisk {
             let disk = disk!
             let documentID = conflict.checkpoint.metadata.documentID
@@ -536,8 +549,17 @@ extension WorkspaceStore {
                     itemID: documentID,
                     url: fileURL,
                     expectedBaseline: diskDigest,
-                    overwritingAfterUserChoice: true
+                    overwritingAfterUserChoice: true,
+                    allowUnbackedReplacement: allowUnbackedReplacement
                 )
+            } catch NoteWriteGateError.backupFailed {
+                guard await userOperationRisks.confirm(
+                    title: ui("仍然保留魏碑正文？", "Keep the WeiBei text anyway?"),
+                    message: ui("保存期间磁盘正文又有更新，无法备份这个新版本。继续会替换它，被替换的内容可能无法找回。", "The disk text changed again during saving, and this new version could not be backed up. Continuing replaces it; the replaced text may be unrecoverable."),
+                    context: .noteConflict
+                ) else { return }
+                await resolveNoteEditorRecoveryConflict(useDisk: false, documentID: documentID, allowUnbackedReplacement: true)
+                return
             } catch {
                 noteEditingSession.markExternallyModified(documentID: documentID)
                 WeiBeiLog.noteRepair.error(

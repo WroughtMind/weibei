@@ -290,7 +290,7 @@ actor CourseProjectFileWorker {
     nonisolated static let portableStateMaximumByteCount = 32 * 1024 * 1024
     nonisolated static let markdownMaximumByteCount = 32 * 1024 * 1024
     nonisolated static let markdownImageMaximumByteCount =
-        MarkdownAttachmentStore.maximumImageByteCount
+        MarkdownAttachmentStore.maximumAnimatedImageByteCount
 
     nonisolated private static func ignoresImportDirectory(_ url: URL) -> Bool {
         url.lastPathComponent.caseInsensitiveCompare("node_modules") == .orderedSame
@@ -2337,6 +2337,20 @@ actor CourseProjectFileWorker {
         Self.renameWithoutReplacement(from: source, to: destination)
     }
 
+    func isolateVerifiedReplacement(
+        from source: URL, to destination: URL,
+        expectedSourceIdentity: ImportedFileIdentity,
+        expectedSourceDirectoryIdentity: ImportedFileIdentity,
+        expectedDestinationDirectoryIdentity: ImportedFileIdentity
+    ) throws {
+        _ = try Self.renameWithoutReplacementAnchored(
+            from: source, to: destination, expectedSourceIdentity: expectedSourceIdentity,
+            expectedSourceDirectoryIdentity: expectedSourceDirectoryIdentity,
+            expectedDestinationDirectoryIdentity: expectedDestinationDirectoryIdentity,
+            beforeRename: {}
+        )
+    }
+
     func remove(_ url: URL, using remover: @Sendable (URL) throws -> Void) throws {
         try remover(url)
     }
@@ -3959,12 +3973,13 @@ actor CourseProjectFileWorker {
         from source: URL,
         to destination: URL,
         expectedSourceIdentity: ImportedFileIdentity,
+        expectedSourceDirectoryIdentity: ImportedFileIdentity? = nil,
         expectedDestinationDirectoryIdentity: ImportedFileIdentity,
         beforeRename: () throws -> Void
     ) throws -> ImportedFileIdentity {
         let sourceDirectory = source.deletingLastPathComponent()
         let destinationDirectory = destination.deletingLastPathComponent()
-        guard let sourceDirectoryIdentity = identity(at: sourceDirectory) else {
+        guard let sourceDirectoryIdentity = expectedSourceDirectoryIdentity ?? identity(at: sourceDirectory) else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
         let sourceDescriptor = try openDirectory(

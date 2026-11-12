@@ -324,6 +324,7 @@ extension WorkspaceStore {
         } else {
             sessionTitleHandler = nil
         }
+        let run = agentRun
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
@@ -336,24 +337,32 @@ extension WorkspaceStore {
             systemPromptText: resources.systemPrompt,
             hostToolHandler: hostToolHandler,
             liveStores: liveStores,
-            sessionTitleHandler: sessionTitleHandler
+            sessionTitleHandler: sessionTitleHandler,
+            sessionLedger: run.sessionLedger
         )
-        let run = agentRun
         run.runtime = runtime
         defer { run.runtime = nil }
-        return try await runtime.respond(
-            to: resolvedRequest,
-            progress: { [weak self] progress in
-                await AgentConversationExecution.$run.withValue(run) {
-                    await self?.applyAgentProgress(
-                        progress,
-                        requestID: request.id,
-                        replyMessageID: replyMessageID,
-                        chatID: target.sessionID
-                    )
+        // Also retain history when the model throws or is cancelled mid-turn.
+        do {
+            let reply = try await runtime.respond(
+                to: resolvedRequest,
+                progress: { [weak self] progress in
+                    await AgentConversationExecution.$run.withValue(run) {
+                        await self?.applyAgentProgress(
+                            progress,
+                            requestID: request.id,
+                            replyMessageID: replyMessageID,
+                            chatID: target.sessionID
+                        )
+                    }
                 }
-            }
-        )
+            )
+            run.sessionLedger = await runtime.currentSessionLedger()
+            return reply
+        } catch {
+            run.sessionLedger = await runtime.currentSessionLedger()
+            throw error
+        }
     }
 
     static func explicitAgentModel(

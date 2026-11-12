@@ -406,15 +406,19 @@ final class ConfirmedFileImportTests: XCTestCase {
         let missing = fixture.outside.appendingPathComponent("已移走.txt")
 
         fixture.store.prepareConfirmedFileImport([missing])
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
         waitForStage(.finished, in: fixture.store)
 
         var batch = try XCTUnwrap(fixture.store.confirmedFileImport)
-        XCTAssertTrue(batch.candidates.isEmpty)
+        XCTAssertEqual(batch.candidates.map(\.sourceURL), [missing])
         XCTAssertEqual(batch.failures.map(\.sourceURL), [missing])
         XCTAssertFalse(batch.failures.first?.message.isEmpty ?? true)
         XCTAssertNil(fixture.store.transientNoteStatus)
 
         fixture.store.retryFailedConfirmedFileImport()
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
         waitForStage(.finished, in: fixture.store)
 
         batch = try XCTUnwrap(fixture.store.confirmedFileImport)
@@ -425,7 +429,7 @@ final class ConfirmedFileImportTests: XCTestCase {
         ))
     }
 
-    func testUnreadableFileIsOnlyAVisibleFailureAndNeverACandidate() throws {
+    func testUnreadableFileCanBeAttemptedAndReportsTheActualCopyFailure() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let unreadable = fixture.outside.appendingPathComponent("暂不可读.txt")
@@ -447,9 +451,15 @@ final class ConfirmedFileImportTests: XCTestCase {
             markdownOnly: false
         )
 
-        XCTAssertTrue(plan.candidates.isEmpty)
-        XCTAssertEqual(plan.unavailableSourceURLs, [unreadable.standardizedFileURL])
+        XCTAssertEqual(plan.candidates.map(\.sourceURL), [unreadable.standardizedFileURL])
+        XCTAssertTrue(plan.unavailableSourceURLs.isEmpty)
         XCTAssertTrue(plan.unsupportedNames.isEmpty)
+        fixture.store.prepareConfirmedFileImport([unreadable])
+        waitForStage(.reviewing, in: fixture.store)
+        fixture.store.confirmFileImport()
+        waitForStage(.finished, in: fixture.store)
+        XCTAssertEqual(fixture.store.confirmedFileImport?.failures.map(\.sourceURL), [unreadable])
+        XCTAssertTrue(fixture.store.importedItems.isEmpty)
     }
 
     func testNestedEnumerationFailureRetriesOnlyFailedSubtreeWithoutDuplicatePollution() throws {

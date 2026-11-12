@@ -197,7 +197,6 @@ enum CourseOwnedFileError: LocalizedError {
     case unsafeCoursePath
     case targetConflict(URL)
     case replacementTargetIsShared
-    case backupFailed
     case itemBusy
     case verificationFailed
     case workspaceSaveFailed
@@ -222,8 +221,6 @@ enum CourseOwnedFileError: LocalizedError {
             "课程中已经存在“\(url.lastPathComponent)”。魏碑没有覆盖它。"
         case .replacementTargetIsShared:
             "这份共享原件正被其他课程使用，不能替换；可以取消或改名保留两份。"
-        case .backupFailed:
-            "无法安全备份现有笔记，魏碑没有覆盖文件。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。"
         case .itemBusy:
             "这份文件正在进行另一项操作，请稍后重试。"
         case .verificationFailed:
@@ -237,7 +234,6 @@ enum CourseOwnedFileError: LocalizedError {
 enum CourseRemovalError: LocalizedError {
     case courseNotFound
     case courseBusy
-    case latestStateNotSaved
     case courseRootUnavailable
     case courseRootChanged
     case workspaceSaveFailed
@@ -248,8 +244,6 @@ enum CourseRemovalError: LocalizedError {
             "找不到这门课程。"
         case .courseBusy:
             "课程仍有正在进行的写入或操作，魏碑没有移除这门课。请稍后重试。"
-        case .latestStateNotSaved:
-            "课程最新状态尚未安全写入课程文件夹，魏碑没有移除这门课。"
         case .courseRootUnavailable:
             "课程文件夹当前不可访问，不能移到废纸篓。"
         case .courseRootChanged:
@@ -264,8 +258,6 @@ enum ContentSourceRemovalError: LocalizedError {
     case itemUnavailable
     case sourceChanged
     case trashMoveFailed
-    case workspaceSaveFailed
-    case pendingChangesUnsaved
 
     var errorDescription: String? {
         switch self {
@@ -275,10 +267,6 @@ enum ContentSourceRemovalError: LocalizedError {
             "原文件已经发生变化，魏碑没有删除它。"
         case .trashMoveFailed:
             "原文件没有成功移到 macOS 废纸篓，课程关系保持不变。"
-        case .workspaceSaveFailed:
-            "魏碑没有保存删除结果，原文件已从废纸篓恢复。"
-        case .pendingChangesUnsaved:
-            "有尚未写入磁盘的更改，为保护内容魏碑没有执行删除。请稍后重试。"
         }
     }
 }
@@ -9559,6 +9547,7 @@ final class WorkspaceStore: ObservableObject {
             return reason
         }
         let run = AgentConversationRun(chatID: target.sessionID)
+        run.sessionLedger = agentRuns[target.sessionID]?.sessionLedger
         run.selectionThreadID = selectionAskThreads.first(where: { $0.id == target.sessionID })?.id
         run.courseID = target.courseID
         run.authMethod = agentAuthMethod
@@ -10494,10 +10483,9 @@ final class WorkspaceStore: ObservableObject {
             targetCourseID: reply.origin?.courseID, questionOverride: question, targetSessionID: sessionID)
     }
 
-    func canRetryAgentRequest(question: String?, failureKind: AgentFailureKind?, sessionID: UUID? = nil) -> Bool {
+    func canRetryAgentRequest(question: String?, failureKind _: AgentFailureKind?, sessionID: UUID? = nil) -> Bool {
         guard let id = sessionID ?? activeStudySessionID,
               !isAgentRunning(in: id), agentRuns[id]?.isStoppingAgent != true else { return false }
-        if let failureKind, !failureKind.isRetryable { return false }
         let question = (question ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return !question.isEmpty

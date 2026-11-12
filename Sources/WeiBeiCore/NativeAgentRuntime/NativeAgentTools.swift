@@ -728,13 +728,12 @@ public enum NativeBuiltinTools {
     private static var learningUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_update_learning_memory",
-            description: "记录或更新学习记忆。未选课程时保存到全局，已选课程时保存到该课程。先读取记忆再更新，已有条目使用读取结果中的 memoryID 短别名，新建省略。每条含 kind、text、origin 和 evidence；每次最多 12 条。origin 区分 userStatement（用户自述）、observed（用户实际作答）和 agentInference（推断）。evidence 必须是可用来源标签加逐字引用；用户证据标签见读取结果，当前提问可用 [用户：本轮]。助手讲解不能证明用户已掌握。",
+            description: "记录或更新学习记忆。未选课程时保存到全局，已选课程时保存到该课程。先读取记忆再更新，已有条目使用读取结果中的 memoryID 短别名，新建省略。每条含 kind、text、origin 和 evidence。origin 区分 userStatement（用户自述）、observed（用户实际作答）和 agentInference（推断）。evidence 必须是可用来源标签加逐字引用；用户证据标签见读取结果，当前提问可用 [用户：本轮]。助手讲解不能证明用户已掌握。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
                     "entries": [
                         "type": "array",
-                        "maxItems": 12,
                         "items": [
                             "type": "object",
                             "properties": [
@@ -763,7 +762,6 @@ public enum NativeBuiltinTools {
                     ],
                     "resolutions": [
                         "type": "array",
-                        "maxItems": 12,
                         "items": [
                             "type": "object",
                             "properties": [
@@ -791,9 +789,6 @@ public enum NativeBuiltinTools {
                 let aliases = context.stateAliases ?? NativeStateAliases(request: context.request)
                 let entries = try resolveAliases(in: arguments["entries"] as? [Any] ?? [], key: "memoryID", resolve: aliases.memoryID(for:))
                 let resolutions = try resolveAliases(in: arguments["resolutions"] as? [Any] ?? [], key: "memoryID", resolve: aliases.memoryID(for:))
-                guard entries.count <= 12, resolutions.count <= 12 else {
-                    throw NativeLLMFailure(code: "entry_limit", message: "每次最多更新 12 条记忆、解决 12 条记录。")
-                }
                 var details: [String: Any] = [
                     "kind": "learning_update",
                     "contextRevision": context.request.contextRevision,

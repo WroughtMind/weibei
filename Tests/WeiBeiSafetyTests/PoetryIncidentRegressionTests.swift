@@ -170,7 +170,7 @@ final class PoetryIncidentRegressionTests: XCTestCase {
     }
 
     /// 不改写正文的重命名可直接移动文件；不可读状态不能阻止这种操作。
-    func testIncidentRenameWithUnreadableFileMovesWithoutRewritingBody() async throws {
+    func testIncidentRenameWithUnreadableFileMovesWithoutRewritingBody() throws {
         let base = makeTempRoot("weibei-poetry-unreadable")
         defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
@@ -189,7 +189,9 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         store.noteText = degradedDraft
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
 
-        await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
+        try store.waitForCourseFileOperation {
+            await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
+        }
         XCTAssertNil(store.userOperationRisks.pendingRequest)
 
         // 恢复权限后找回正文：旧路径、新路径任一完整即可。

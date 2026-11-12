@@ -27,22 +27,31 @@ final class UserInitiatedOperationsTests: XCTestCase {
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
     }
 
-    private func fixture() throws -> (root: URL, store: WorkspaceStore, item: StudyItem, url: URL) {
+    private func fixture(backupFails: Bool = true) async throws -> (root: URL, store: WorkspaceStore, item: StudyItem, url: URL) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiUserOperation-\(UUID().uuidString)")
             .resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let backups = root.appendingPathComponent("unavailable-backups")
-        try Data("not a directory".utf8).write(to: backups)
+        if backupFails { try Data("not a directory".utf8).write(to: backups) }
+        let saveFailureFlag = root.appendingPathComponent("fail-workspace-save")
         let store = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("workspace"),
-            noteBackupRootURL: backups, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+            noteBackupRootURL: backups,
+            contentSourceTrashMover: { url in
+                let destination = root.appendingPathComponent("test-trash.md")
+                try FileManager.default.moveItem(at: url, to: destination)
+                return destination
+            }, workspaceSnapshotWriter: { data, url in
+                if FileManager.default.fileExists(atPath: saveFailureFlag.path) { throw CocoaError(.fileWriteOutOfSpace) }
+                try data.write(to: url, options: .atomic)
+            }, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
         let library = root.appendingPathComponent("library")
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        try store.configureCourseLibrary(at: library)
-        let courseID = try store.createCourseInLibrary(title: "合成课程")
+        try await store.configureCourseLibraryAsync(at: library)
+        let courseID = try await store.createCourseInLibraryAsync(title: "合成课程")
         let source = root.appendingPathComponent("合成笔记.md")
         try "磁盘正文".write(to: source, atomically: true, encoding: .utf8)
-        let item = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .note).item
+        let item = try await store.importFileIntoCourse(source, courseID: courseID, role: .note).item
         let url = try XCTUnwrap(store.resolvedLibraryURL(for: item))
         store.activeNotebookItemID = item.id
         store.noteText = "魏碑正文"
@@ -109,9 +118,87 @@ final class UserInitiatedOperationsTests: XCTestCase {
         }
     }
 
+    func testPreviousConnectionFailureDoesNotDisableAnExplicitRetry() async throws {
+        let f = try await fixture(backupFails: false)
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        for failure in [AgentFailureKind.unauthorized, .insufficientQuota, .modelUnavailable] {
+            XCTAssertTrue(f.store.canRetryAgentRequest(question: "重新发送这个问题", failureKind: failure))
+        }
+        XCTAssertFalse(f.store.canRetryAgentRequest(question: " ", failureKind: .unauthorized))
+    }
+
+    func testSubmittingAgainKeepsTheChatsInMemoryLedger() async throws {
+        let f = try await fixture(backupFails: false)
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let session = try XCTUnwrap(f.store.activeStudySessionID)
+        let ledger = try NativeAgentLedger(fileURL: f.root.appendingPathComponent("workspace/NativeAgent/Ledgers/\(session.uuidString.lowercased())/ledger.jsonl"), allowsPersistenceFailure: true)
+        let initial = AgentConversationRun(chatID: session)
+        initial.sessionLedger = ledger
+        f.store.agentRuns[session] = initial
+        f.store.agentProviderID = .openai
+        f.store.modelName = "mock"
+        f.store.selfCheckAgentResponder = { _ in StudyAgentReply(text: "实际提交入口已执行", backend: .native) }
+        defer { f.store.selfCheckAgentResponder = nil; f.store.cancelAllAgentRequests() }
+        for question in ["第一问", "第二问"] {
+            f.store.saveComposerDraft(question, for: session)
+            f.store.submitAgentDraft(sessionID: session)
+            await f.store.agentRuns[session]?.agentRequestTask?.value
+            XCTAssertTrue(f.store.agentRuns[session]?.sessionLedger === ledger)
+        }
+    }
+
+    func testDecliningReplacementDoesNotRollBackAnotherChatCreatedWhileWaiting() async throws {
+        let f = try await fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let courseID = try XCTUnwrap(f.store.courseIDs(for: f.item.id).first)
+        let source = f.root.appendingPathComponent(f.url.lastPathComponent)
+        try "替换正文".write(to: source, atomically: true, encoding: .utf8)
+        let operation = Task {
+            do { _ = try await f.store.importFileIntoCourse(source, courseID: courseID, role: .note, conflictResolution: .replace) }
+            catch is CancellationError {} catch { XCTFail("\(error)") }
+        }
+        let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
+        let other = try XCTUnwrap(f.store.createStudySession(courseID: nil))
+        f.store.saveComposerDraft("等待期间写好的另一条问题", for: other.id)
+        f.store.setNoteDraft("另一份新草稿", for: "other-note")
+        f.store.userOperationRisks.respond(to: request.id, continuing: false)
+        await operation.value
+        XCTAssertTrue(f.store.studySessions.contains { $0.id == other.id })
+        XCTAssertEqual(f.store.composerDraft(for: other.id), "等待期间写好的另一条问题")
+        XCTAssertEqual(f.store.notesByItemID["other-note"], "另一份新草稿")
+    }
+
+    func testReplacementDoesNotFollowADirectoryLinkCreatedWhileWaiting() async throws {
+        let f = try await fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let courseID = try XCTUnwrap(f.store.courseIDs(for: f.item.id).first)
+        let source = f.root.appendingPathComponent(f.url.lastPathComponent)
+        try "替换正文".write(to: source, atomically: true, encoding: .utf8)
+        let operation = Task { () -> Bool in
+            do {
+                _ = try await f.store.importFileIntoCourse(source, courseID: courseID, role: .note, conflictResolution: .replace)
+                return true
+            } catch { return false }
+        }
+        let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
+        let notes = f.url.deletingLastPathComponent()
+        let moved = f.root.appendingPathComponent("原笔记目录")
+        let outside = f.root.appendingPathComponent("不属于课程的目录")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let unrelated = outside.appendingPathComponent(f.url.lastPathComponent)
+        try "不得修改的库外文件".write(to: unrelated, atomically: true, encoding: .utf8)
+        try FileManager.default.moveItem(at: notes, to: moved)
+        try FileManager.default.createSymbolicLink(at: notes, withDestinationURL: outside)
+        f.store.userOperationRisks.respond(to: request.id, continuing: true)
+        let completed = await operation.value
+        XCTAssertFalse(completed)
+        XCTAssertEqual(try String(contentsOf: unrelated, encoding: .utf8), "不得修改的库外文件")
+        XCTAssertEqual(try String(contentsOf: moved.appendingPathComponent(f.url.lastPathComponent), encoding: .utf8), "磁盘正文")
+    }
+
     func testConflictBackupFailureLetsUserContinueOrKeepBothVersions() async throws {
         for proceed in [false, true] {
-            let f = try fixture()
+            let f = try await fixture()
             defer { try? FileManager.default.removeItem(at: f.root) }
             f.store.noteEditorRecoveryConflict = conflict(for: f.item.id)
             let operation = Task { await f.store.resolveNoteEditorRecoveryConflict(useDisk: false) }
@@ -128,7 +215,7 @@ final class UserInitiatedOperationsTests: XCTestCase {
     }
 
     func testUserCanAdoptDiskTextEvenWhenDiscardedDraftCannotBeBackedUp() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         defer { try? FileManager.default.removeItem(at: f.root) }
         f.store.noteEditorRecoveryConflict = conflict(for: f.item.id)
         let operation = Task { await f.store.resolveNoteEditorRecoveryConflict(useDisk: true) }
@@ -142,7 +229,7 @@ final class UserInitiatedOperationsTests: XCTestCase {
     }
 
     func testExplicitSaveCompletesAfterBackupRiskIsAccepted() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         defer { try? FileManager.default.removeItem(at: f.root) }
         let operation = Task { await f.store.retryActiveNoteSaveFromUser() }
         let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
@@ -155,9 +242,10 @@ final class UserInitiatedOperationsTests: XCTestCase {
     }
 
     func testRenameRewriteCompletesAfterBackupRiskIsAccepted() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         defer { try? FileManager.default.removeItem(at: f.root) }
         let text = "# \(f.store.displayTitle(for: f.item))\n\n最新编辑"
+        try text.write(to: f.url, atomically: true, encoding: .utf8)
         f.store.noteText = text
         f.store.setNoteDraft(text, for: f.item.id)
         let operation = Task { await f.store.renameNotebookNoteInTransaction(itemID: f.item.id, to: "新的名字") }
@@ -170,8 +258,121 @@ final class UserInitiatedOperationsTests: XCTestCase {
         XCTAssertNil(f.store.userOperationRisks.pendingRequest)
     }
 
-    func testConfirmedReplacementStillRejectsASymbolicLink() throws {
-        let f = try fixture()
+    func testRenamePreservesBothExternalContentAndTheLocalDraft() async throws {
+        let f = try await fixture(backupFails: false)
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let title = f.store.displayTitle(for: f.item)
+        let disk = "# \(title)\n\n外部新增内容"
+        let draft = "# \(title)\n\n本地尚未写入的内容"
+        try disk.write(to: f.url, atomically: true, encoding: .utf8)
+        f.store.noteText = draft
+        f.store.setNoteDraft(draft, for: f.item.id)
+        await f.store.renameNotebookNoteInTransaction(itemID: f.item.id, to: "新名称")
+        let renamed = f.url.deletingLastPathComponent().appendingPathComponent("新名称.md")
+        XCTAssertEqual(try String(contentsOf: renamed, encoding: .utf8), "# 新名称\n\n外部新增内容")
+        XCTAssertEqual(f.store.notesByItemID[f.item.id], "# 新名称\n\n本地尚未写入的内容")
+        XCTAssertEqual(f.store.noteText, "# 新名称\n\n本地尚未写入的内容")
+    }
+
+    func testFileTrashAfterWorkspaceSaveFailureHonorsBothChoices() async throws {
+        for proceed in [false, true] {
+            let f = try await fixture(backupFails: false)
+            defer { try? FileManager.default.removeItem(at: f.root) }
+            try Data().write(to: f.root.appendingPathComponent("fail-workspace-save"))
+            let operation = Task { () throws -> Bool in
+                do { try await f.store.moveItemSourceToTrash(f.item.id); return true }
+                catch is CancellationError { return false }
+            }
+            let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: f.url.path))
+            f.store.userOperationRisks.respond(to: request.id, continuing: proceed)
+            let completed = try await operation.value
+            XCTAssertEqual(completed, proceed)
+            XCTAssertEqual(FileManager.default.fileExists(atPath: f.url.path), !proceed)
+            XCTAssertEqual(FileManager.default.fileExists(atPath: f.root.appendingPathComponent("test-trash.md").path), proceed)
+            XCTAssertEqual(f.store.item(withID: f.item.id) == nil, proceed)
+            XCTAssertNil(f.store.userOperationRisks.pendingRequest)
+        }
+    }
+
+    func testCourseTrashAfterPortableSaveFailureHonorsBothChoices() async throws {
+        for proceed in [false, true] {
+            let f = try await fixture(backupFails: false)
+            defer { try? FileManager.default.removeItem(at: f.root) }
+            let courseID = try XCTUnwrap(f.store.courseIDs(for: f.item.id).first)
+            let root = try XCTUnwrap(f.store.courseRootURL(for: courseID))
+            try Data().write(to: f.root.appendingPathComponent("fail-workspace-save"))
+            let operation = Task { () throws -> URL? in
+                do { return try await f.store.moveCourseFolderToTrash(courseID) }
+                catch is CancellationError { return nil }
+            }
+            let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
+            f.store.userOperationRisks.respond(to: request.id, continuing: proceed)
+            let trashed = try await operation.value
+            XCTAssertEqual(trashed != nil, proceed)
+            XCTAssertEqual(FileManager.default.fileExists(atPath: root.path), !proceed)
+            XCTAssertEqual(f.store.course(withID: courseID) == nil, proceed)
+            if let trashed { XCTAssertTrue(FileManager.default.fileExists(atPath: trashed.path)) }
+            XCTAssertNil(f.store.userOperationRisks.pendingRequest)
+        }
+    }
+
+    func testCourseReplacementCanContinueWithoutNoteBackup() async throws {
+        for proceed in [false, true] {
+            let f = try await fixture()
+            defer { try? FileManager.default.removeItem(at: f.root) }
+            let courseID = try XCTUnwrap(f.store.courseIDs(for: f.item.id).first)
+            let source = f.root.appendingPathComponent(f.url.lastPathComponent)
+            try "新的替换正文".write(to: source, atomically: true, encoding: .utf8)
+            let operation = Task { () throws -> Bool in
+                do {
+                    _ = try await f.store.importFileIntoCourse(source, courseID: courseID, role: .note, conflictResolution: .replace)
+                    return true
+                } catch is CancellationError { return false }
+            }
+            let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
+            f.store.userOperationRisks.respond(to: request.id, continuing: proceed)
+            let completed = try await operation.value
+            XCTAssertEqual(completed, proceed)
+            XCTAssertEqual(try String(contentsOf: f.url, encoding: .utf8), proceed ? "新的替换正文" : "磁盘正文")
+            XCTAssertEqual(try String(contentsOf: source, encoding: .utf8), "新的替换正文")
+        }
+    }
+
+    func testUnreadableCourseMetadataIsPreservedWhenUserChoosesToAdopt() async throws {
+        for proceed in [false, true] {
+            let f = try await fixture(backupFails: false)
+            defer { try? FileManager.default.removeItem(at: f.root) }
+            let root = f.root.appendingPathComponent("library/旧课程")
+            let metadata = root.appendingPathComponent(".weibei")
+            try FileManager.default.createDirectory(at: metadata, withIntermediateDirectories: true)
+            let original = Data("damaged course metadata".utf8)
+            try original.write(to: metadata.appendingPathComponent("course.json"))
+            let material = root.appendingPathComponent("讲义.txt")
+            try "原始资料".write(to: material, atomically: true, encoding: .utf8)
+            let operation = Task { () throws -> Bool in
+                do { _ = try await f.store.adoptCourseFolderOrProposeRebindAsync(at: root, title: "旧课程"); return true }
+                catch is CancellationError { return false }
+            }
+            let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
+            XCTAssertEqual(request.context, .courseEntry)
+            f.store.userOperationRisks.respond(to: request.id, continuing: proceed)
+            let completed = try await operation.value
+            XCTAssertEqual(completed, proceed)
+            XCTAssertEqual(try String(contentsOf: material, encoding: .utf8), "原始资料")
+            if proceed {
+                let backups = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+                    .filter { $0.lastPathComponent.hasPrefix(".weibei.backup-") }
+                XCTAssertEqual(backups.count, 1)
+                XCTAssertEqual(try Data(contentsOf: XCTUnwrap(backups.first).appendingPathComponent("course.json")), original)
+            } else {
+                XCTAssertEqual(try Data(contentsOf: metadata.appendingPathComponent("course.json")), original)
+            }
+        }
+    }
+
+    func testConfirmedReplacementStillRejectsASymbolicLink() async throws {
+        let f = try await fixture()
         defer { try? FileManager.default.removeItem(at: f.root) }
         let outside = f.root.appendingPathComponent("unrelated.md")
         try "其他文件".write(to: outside, atomically: true, encoding: .utf8)
@@ -182,8 +383,36 @@ final class UserInitiatedOperationsTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: outside, encoding: .utf8), "其他文件")
     }
 
+    func testConfirmedReplacementBacksUpTheVersionPresentAtWriteTime() async throws {
+        let f = try await fixture(backupFails: false)
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let previousDigest = WorkspaceStore.noteContentDigest(Data("磁盘正文".utf8))
+        try "备份之后的外部新正文".write(to: f.url, atomically: true, encoding: .utf8)
+        try f.store.writeNotebookMarkdownThroughGate("魏碑正文", itemID: f.item.id,
+            url: f.url, expectedBaseline: previousDigest, overwritingAfterUserChoice: true)
+        let backups = try NoteBackupRing.list(itemID: f.item.id, rootURL: f.root.appendingPathComponent("unavailable-backups"))
+        XCTAssertTrue(backups.contains { (try? String(contentsOf: $0.url, encoding: .utf8)) == "备份之后的外部新正文" })
+        XCTAssertEqual(try String(contentsOf: f.url, encoding: .utf8), "魏碑正文")
+    }
+
+    func testAdoptingAChangedDiskVersionRequiresANewChoice() async throws {
+        for proceed in [false, true] {
+            let f = try await fixture(backupFails: false)
+            defer { try? FileManager.default.removeItem(at: f.root) }
+            f.store.noteEditorRecoveryConflict = conflict(for: f.item.id)
+            try "对照打开之后的外部新正文".write(to: f.url, atomically: true, encoding: .utf8)
+            let operation = Task { await f.store.resolveNoteEditorRecoveryConflict(useDisk: true) }
+            let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
+            XCTAssertEqual(f.store.noteEditorRecoveryConflict?.diskMarkdown, "对照打开之后的外部新正文")
+            f.store.userOperationRisks.respond(to: request.id, continuing: proceed)
+            await operation.value
+            XCTAssertEqual(f.store.noteEditorRecoveryConflict == nil, proceed)
+            XCTAssertEqual(f.store.noteText, proceed ? "对照打开之后的外部新正文" : "魏碑正文")
+        }
+    }
+
     func testUserCanSwitchNotesAfterEditorSnapshotFailure() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         defer { try? FileManager.default.removeItem(at: f.root) }
         f.store.noteEditingSession.replaceDocument(with: f.item.id)
         _ = f.store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(documentID: f.item.id,
@@ -198,7 +427,7 @@ final class UserInitiatedOperationsTests: XCTestCase {
 
     func testRelaunchSaveFailureRespectsTheUsersChoice() async throws {
         for proceed in [false, true] {
-            let f = try fixture()
+            let f = try await fixture()
             defer { try? FileManager.default.removeItem(at: f.root) }
             f.store.noteEditingSession.replaceDocument(with: f.item.id)
             f.store.noteEditingSession.markSaveFailed(documentID: f.item.id)

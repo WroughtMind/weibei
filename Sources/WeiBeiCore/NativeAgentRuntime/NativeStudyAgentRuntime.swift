@@ -16,6 +16,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     private let registry = NativeToolRegistry()
     private let loop = NativeAgentLoop()
     private var didRegisterTools = false
+    private var sessionLedger: NativeAgentLedger?
 
     public init(
         model: String,
@@ -28,7 +29,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         liveStores: NativeLiveStores = .empty,
         mode: NativeAgentMode = .assistant,
         delegateDepth: Int = 0,
-        sessionTitleHandler: StudyAgentSessionTitleHandler? = nil
+        sessionTitleHandler: StudyAgentSessionTitleHandler? = nil,
+        sessionLedger: NativeAgentLedger? = nil
     ) {
         self.model = model
         self.adapter = adapter
@@ -41,6 +43,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         self.mode = mode
         self.delegateDepth = delegateDepth
         self.sessionTitleHandler = sessionTitleHandler
+        self.sessionLedger = sessionLedger
     }
 
     public func respond(
@@ -54,7 +57,13 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         let ledgerURL = ledgerRoot
             .appendingPathComponent(sessionID, isDirectory: true)
             .appendingPathComponent("ledger.jsonl")
-        let ledger = try NativeAgentLedger(fileURL: ledgerURL, allowsPersistenceFailure: true)
+        let ledger: NativeAgentLedger
+        if let existing = sessionLedger, existing.fileURL == ledgerURL {
+            ledger = existing
+        } else {
+            ledger = try NativeAgentLedger(fileURL: ledgerURL, allowsPersistenceFailure: true)
+            sessionLedger = ledger
+        }
         try await ledger.synthesizeCloserIfNeeded()
         let scope = NativeToolScope.session(request.id.uuidString)
         if liveStores.documentsRoot == nil {
@@ -149,6 +158,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     public func reset() async {
         await loop.reset()
     }
+
+    public func currentSessionLedger() -> NativeAgentLedger? { sessionLedger }
 
     private func scheduleSessionTitleIfNeeded(
         question: String,

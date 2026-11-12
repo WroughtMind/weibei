@@ -11,7 +11,7 @@ final class AgentReplyActionPersistenceTests: XCTestCase {
     }
 
     func testRequestedNewNoteInGlobalChatGoesToCommonNotes() async throws {
-        let (root, store, _, _) = try makeWorkspace()
+        let (root, store, _, _) = try await makeWorkspaceAsync()
         defer { try? FileManager.default.removeItem(at: root) }
         let session = try XCTUnwrap(store.createStudySession(courseID: nil))
         let request = StudyAgentRequest(purpose: .conversation, question: "新建一份通用笔记", materialTitle: "",
@@ -31,7 +31,7 @@ final class AgentReplyActionPersistenceTests: XCTestCase {
     }
 
     func testStaleProposalBaselineAppendsToCurrentTextWithoutDiscardingEdits() async throws {
-        let (root, store, courseID, chatID) = try makeWorkspace()
+        let (root, store, courseID, chatID) = try await makeWorkspaceAsync()
         defer { try? FileManager.default.removeItem(at: root) }
         let created = await store.createCourseNotebookNote(courseID: courseID, title: "笔记", markdown: "原文", revealInWorkspace: false)
         let noteID = try XCTUnwrap(created)
@@ -156,6 +156,22 @@ final class AgentReplyActionPersistenceTests: XCTestCase {
         store.studySessions[index].relatedCourseIDs = [courseID]
         return (root, store, courseID, session.id)
     }
+
+    private func makeWorkspaceAsync() async throws -> (URL, WorkspaceStore, UUID, UUID) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let library = root.appendingPathComponent("资料库")
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let store = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("Workspace"),
+                                   noteBackupRootURL: root.appendingPathComponent("Backups"),
+                                   startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        try await store.configureCourseLibraryAsync(at: library)
+        let courseID = try await store.createCourseInLibraryAsync(title: "动作保存课")
+        let session = try XCTUnwrap(store.createStudySession(courseID: courseID))
+        let index = try XCTUnwrap(store.studySessions.firstIndex { $0.id == session.id })
+        store.studySessions[index].relatedCourseIDs = [courseID]
+        return (root, store, courseID, session.id)
+    }
+
 
     private func append(_ action: AgentReplyAction, to store: WorkspaceStore,
                         courseID: UUID, chatID: UUID) async throws -> AgentMessage {

@@ -11,6 +11,7 @@ enum NoteWriteGateError: LocalizedError {
     case writeRefusedKeepContent
     case diskChangedAdoptDisk
     case writeVerificationFailed
+    case backupFailed
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +21,8 @@ enum NoteWriteGateError: LocalizedError {
             return "笔记文件已被外部修改，待写内容仍保留在魏碑中。"
         case .writeVerificationFailed:
             return "写入后重读内容不一致，未标记为已保存。"
+        case .backupFailed:
+            return "磁盘正文又有更新，但无法备份这个新版本。"
         }
     }
 }
@@ -144,19 +147,13 @@ extension WorkspaceStore {
         let wasActiveNotebook = activeNotebookItemID == oldID
         let newURL = renamedNotebookURL(in: oldURL.deletingLastPathComponent(), title: title, currentURL: oldURL)
         let newTitle = newURL.deletingPathExtension().lastPathComponent
-        let sourceMarkdown: String
-        do {
-            sourceMarkdown = wasActiveNotebook ? noteText : try notebookMarkdownReader(oldURL)
-        } catch {
-            let message = ui(
-                "无法重命名笔记：无法读取原 Markdown。",
-                "Could not rename the note because the original Markdown could not be read."
-            )
-            showImportantOperationError(message)
-            return
-        }
+        // Renaming does not choose a conflict winner. Retitle the actual file;
+        // retain a different local draft independently. An unreadable body can
+        // still be moved without rewriting its bytes.
+        let diskMarkdown = try? notebookMarkdownReader(oldURL)
+        let sourceMarkdown = diskMarkdown ?? notesByItemID[oldID] ?? (wasActiveNotebook ? noteText : "")
         let retitledMarkdown = retitledMarkdown(sourceMarkdown, from: oldTitle, to: newTitle)
-        let willRewriteMarkdown = retitledMarkdown != sourceMarkdown
+        let willRewriteMarkdown = diskMarkdown != nil && retitledMarkdown != sourceMarkdown
         let originalIdentity = oldItem.importedFileIdentity
             ?? importedFileIdentityResolver(oldURL)
         let replacementItemID = oldID.hasPrefix("file:") && originalIdentity != nil
@@ -172,7 +169,7 @@ extension WorkspaceStore {
                     rootURL: noteBackupRootURL
                 )
             } catch {
-                setNoteDraft(sourceMarkdown, for: oldID)
+                if notesByItemID[oldID] == nil { setNoteDraft(sourceMarkdown, for: oldID) }
                 _ = await persistWorkspaceNow()
                 WeiBeiLog.noteRepair.error(
                     "code=note_rename_backup_failed path=\(oldURL.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
@@ -236,8 +233,9 @@ extension WorkspaceStore {
                     retitledMarkdown,
                     itemID: oldID,
                     url: newURL,
-                    expectedBaseline: Self.noteContentDigest(at: newURL),
-                    overwritingAfterUserChoice: allowUnbackedReplacement
+                    expectedBaseline: Self.noteContentDigest(Data(sourceMarkdown.utf8)),
+                    overwritingAfterUserChoice: allowUnbackedReplacement,
+                    allowUnbackedReplacement: allowUnbackedReplacement
                 )
                 noteBackingContentDigestsByItemID[oldID] = priorBackingDigest
                 lastSelfWrittenNoteDigestsByItemID[oldID] = priorLastSelfDigest
@@ -268,7 +266,7 @@ extension WorkspaceStore {
             importedItems[index] = renamedItem
             replaceItemIDEverywhere(oldID, with: replacementItemID)
             if wasActiveNotebook {
-                noteText = retitledMarkdown
+                noteText = self.retitledMarkdown(notesByItemID[replacementItemID] ?? sourceMarkdown, from: oldTitle, to: newTitle)
             }
             if let cached = notesByItemID[replacementItemID] {
                 setNoteDraft(
@@ -604,7 +602,8 @@ extension WorkspaceStore {
                 WeiBeiLog.noteRepair.error("code=note_backup_failed user_chose_continue document=\(itemID, privacy: .private) underlying=\(WeiBeiLog.code(error), privacy: .public)")
             }
             try writeNotebookMarkdownThroughGate(latest, itemID: itemID, url: url,
-                                                 expectedBaseline: nil, overwritingAfterUserChoice: true)
+                                                 expectedBaseline: nil, overwritingAfterUserChoice: true,
+                                                 allowUnbackedReplacement: true)
             cancelPendingNotePersistence(for: itemID)
             pendingNotePersistenceByItemID.removeValue(forKey: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
@@ -1010,7 +1009,8 @@ extension WorkspaceStore {
         itemID: String,
         url: URL,
         expectedBaseline: String?,
-        overwritingAfterUserChoice: Bool = false
+        overwritingAfterUserChoice: Bool = false,
+        allowUnbackedReplacement: Bool = false
     ) throws {
         let intendedDigest = Self.noteContentDigest(Data(markdown.utf8))
         var operationError: Error?
@@ -1025,6 +1025,20 @@ extension WorkspaceStore {
                     coordinatedURL,
                     coordinatedURL.resolvingSymlinksInPath()
                 ) else { throw CocoaError(.fileWriteNoPermission) }
+                if overwritingAfterUserChoice,
+                   FileManager.default.fileExists(atPath: coordinatedURL.path) {
+                    let diskDigest = Self.noteContentDigest(at: coordinatedURL)
+                    // A version written while we awaited recovery I/O must also
+                    // be recoverable. Keep the read, backup and write coordinated.
+                    if diskDigest == nil || diskDigest != expectedBaseline {
+                        do {
+                            _ = try NoteBackupRing.capture(sourceURL: coordinatedURL, itemID: itemID, rootURL: noteBackupRootURL)
+                        } catch {
+                            WeiBeiLog.noteRepair.error("code=note_latest_version_backup_failed underlying=\(WeiBeiLog.code(error), privacy: .public)")
+                            if !allowUnbackedReplacement { throw NoteWriteGateError.backupFailed }
+                        }
+                    }
+                }
                 if !overwritingAfterUserChoice,
                    FileManager.default.fileExists(atPath: coordinatedURL.path) {
                     guard let expectedBaseline,

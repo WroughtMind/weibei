@@ -5,7 +5,7 @@ import Foundation
 /// and await the user's choice; a second operation cannot cancel the first one.
 @MainActor
 final class UserOperationRiskCenter: ObservableObject {
-    enum Context: Equatable { case workspace, noteConflict }
+    enum Context: Equatable { case workspace, noteConflict, fileImport, courseEntry, courseManagement }
 
     struct Request: Identifiable {
         let id: UUID
