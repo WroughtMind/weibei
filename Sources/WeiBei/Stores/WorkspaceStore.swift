@@ -1173,6 +1173,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     isolated deinit {
+        pendingNoteSelectionRiskTask?.cancel()
         courseReconciliationTask?.cancel()
         courseNoteLoadTasksByItemID.values.forEach { $0.cancel() }
         courseNoteWriteTasksByItemID.values.forEach { $0.cancel() }
@@ -2306,7 +2307,7 @@ final class WorkspaceStore: ObservableObject {
            let priorWrite = message.actions.last(where: { $0.kind == .writeNote && $0.targetItemID == noteID && $0.state == .executed }) {
             action.baselineContentDigest = priorWrite.resultContentDigest
         }
-        let missingCourse = target.courseID == nil && (action.kind == .createRelation || action.targetItemID == nil)
+        let missingCourse = target.courseID == nil && action.kind == .createRelation
         if missingCourse { action.failureMessage = "内容已保留为待处理建议，请先选择目标课程。" }
         guard updateAgentMessage(messageID, in: target.sessionID, { message in
             if let index = message.actions.firstIndex(where: { $0.id == action.id }) {
@@ -2315,8 +2316,11 @@ final class WorkspaceStore: ObservableObject {
                 message.actions.append(action)
             }
         }) != nil else { return .rejected("会话已不存在，内容未写入。") }
-        guard await flushPendingWorkspaceSaveAsync() else {
-            return NativeStorePersistReceipt(status: .failed, message: "这条建议还没写入磁盘。内容仍保留在魏碑里，但还没写入磁盘；请先不要退出，然后重试。", action: action)
+        if !(await flushPendingWorkspaceSaveAsync()) {
+            guard userRequested else {
+                return NativeStorePersistReceipt(status: .failed, message: "这条建议尚未保存，内容仍保留在魏碑里，请重试。", action: action)
+            }
+            WeiBeiLog.workspace.error("code=agent_action_metadata_unwritten primary_write_continued")
         }
         if !userRequested || missingCourse {
             return NativeStorePersistReceipt(status: .pending,
@@ -2357,12 +2361,9 @@ final class WorkspaceStore: ObservableObject {
         }
         guard !Task.isCancelled else { return }
 #if targetEnvironment(macCatalyst)
-        guard let finishSave = beginAgentActionSave() else {
-            await failAgentReplyAction(messageID: messageID, actionID: actionID, chatID: snapshot.chatID,
-                message: ui("当前无法安全保存笔记动作，请稍后重试。", "The note action cannot be saved safely right now. Try again later."))
-            return
-        }
-        defer { finishSave() }
+        let finishSave = beginAgentActionSave()
+        if finishSave == nil { WeiBeiLog.workspace.info("code=agent_action_background_assertion_unavailable operation_continued") }
+        defer { finishSave?() }
 #if WEIBEI_ACCEPTANCE_CHECKS
         await agentActionSaveCheck?()
 #endif
@@ -2400,12 +2401,9 @@ final class WorkspaceStore: ObservableObject {
         }
         guard !Task.isCancelled else { return }
 #if targetEnvironment(macCatalyst)
-        guard let finishSave = beginAgentActionSave() else {
-            await failAgentReplyAction(messageID: messageID, actionID: actionID, chatID: snapshot.chatID,
-                message: ui("当前无法安全保存笔记动作，请稍后重试。", "The note action cannot be saved safely right now. Try again later."))
-            return
-        }
-        defer { finishSave() }
+        let finishSave = beginAgentActionSave()
+        if finishSave == nil { WeiBeiLog.workspace.info("code=agent_action_background_assertion_unavailable operation_continued") }
+        defer { finishSave?() }
 #endif
         switch snapshot.action.kind {
         case .writeNote:
@@ -2460,42 +2458,34 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         do {
-            let current = try await agentActionNoteMarkdown(target)
-            let currentDigest = Self.noteContentDigest(Data(current.utf8))
+            var current = try await agentActionNoteMarkdown(target)
+            var currentDigest = Self.noteContentDigest(Data(current.utf8))
             let result: String
             if action.resultContentDigest == currentDigest {
                 result = current
             } else {
                 if action.resultContentDigest != nil,
                    action.baselineContentDigest != currentDigest {
-                    await failAgentReplyAction(
-                        messageID: messageID,
-                        actionID: action.id,
-                        chatID: snapshot.chatID,
-                        message: ui(
-                            "笔记在这次动作后又发生了变化。魏碑没有重复写入；请先核对当前内容。",
-                            "The note changed after this action. WeiBei did not write it again."
-                        )
-                    )
-                    return
+                    guard await userOperationRisks.confirm(
+                        title: ui("仍然添加这条建议？", "Add this proposal again?"),
+                        message: ui("笔记在上次写入后又发生了变化。继续会把这条建议添加到当前正文末尾，可能产生重复内容；现有正文会保留。", "The note changed after the previous write. Continuing appends this proposal to the current text and may create duplicate content. Existing text is kept.")
+                    ) else { return }
+                    current = try await agentActionNoteMarkdown(target)
+                    currentDigest = Self.noteContentDigest(Data(current.utf8))
                 }
-                guard action.state == .failed
-                    || action.baselineContentDigest == nil
-                    || action.baselineContentDigest == currentDigest else {
-                    await failAgentReplyAction(
-                        messageID: messageID,
-                        actionID: action.id,
-                        chatID: snapshot.chatID,
-                        message: ui(
-                            "这份笔记在建议生成后已经变化。魏碑没有覆盖它；请核对后重试。",
-                            "This note changed after the proposal was created. WeiBei did not overwrite it."
-                        )
-                    )
-                    return
+                if let baseline = action.baselineContentDigest, baseline != currentDigest {
+                    // This action appends to the current note. A stale proposal
+                    // baseline does not require discarding any existing text.
+                    WeiBeiLog.workspace.info("code=note_proposal_baseline_changed appending_to_current_text")
                 }
                 action.baselineContentDigest = currentDigest
                 result = appendingAgentNoteProposal(proposal, to: current)
                 action.resultContentDigest = Self.noteContentDigest(Data(result.utf8))
+            }
+            if target.editsBackingMarkdownFile {
+                // The appended result includes this exact current text. Carry
+                // that read baseline into the normal disk-change check.
+                noteBackingContentDigestsByItemID[target.id] = currentDigest
             }
             updateAgentReplyAction(
                 messageID: messageID,
@@ -2564,22 +2554,11 @@ final class WorkspaceStore: ObservableObject {
         snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction),
         proposal: String
     ) async {
-        guard let courseID = snapshot.courseID else {
-            await failAgentReplyAction(
-                messageID: messageID,
-                actionID: snapshot.action.id,
-                chatID: snapshot.chatID,
-                message: ui(
-                    "当前没有可归属的课程，不能新建笔记。",
-                    "This Chat has no course, so a new note cannot be created."
-                )
-            )
-            return
-        }
+        let courseID = snapshot.courseID
         let title = notebookTitle(fromProposedMarkdown: proposal)
         let fileStem = safeFileStem(title)
         let proposalDigest = Self.noteContentDigest(Data(proposal.utf8))
-        if let existing = courseNoteMatchingFileStem(courseID: courseID, fileStem: fileStem),
+        if let existing = agentNoteMatchingFileStem(courseID: courseID, fileStem: fileStem),
            let current = try? await agentActionNoteMarkdown(existing),
            Self.noteContentDigest(Data(current.utf8)) == proposalDigest {
             await markAgentNewCourseNoteExecuted(
@@ -2590,14 +2569,14 @@ final class WorkspaceStore: ObservableObject {
             )
             return
         }
-        guard let itemID = await createCourseNotebookNote(
-            courseID: courseID,
-            title: title,
-            markdown: proposal,
-            revealInWorkspace: false,
-            conflictResolution: .keepBoth(preferredFileName: nil),
-            presentsError: false
-        ) else {
+        let createdID: String?
+        if let courseID {
+            createdID = await createCourseNotebookNote(courseID: courseID, title: title, markdown: proposal,
+                revealInWorkspace: false, conflictResolution: .keepBoth(preferredFileName: nil), presentsError: false)
+        } else if !libraryMigrationInFlight {
+            createdID = createNotebookNote(seed: .blank, title: title, initialMarkdown: proposal, revealInWorkspace: false)?.id
+        } else { createdID = nil }
+        guard let itemID = createdID else {
             await failAgentReplyAction(
                 messageID: messageID,
                 actionID: snapshot.action.id,
@@ -2649,9 +2628,12 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func courseNoteMatchingFileStem(courseID: UUID, fileStem: String) -> StudyItem? {
+    private func agentNoteMatchingFileStem(courseID: UUID?, fileStem: String) -> StudyItem? {
         let fileName = "\(fileStem).md"
-        let notes = courseNotes(in: courseID)
+        let notes = courseID.map { courseNotes(in: $0) } ?? importedItems.filter {
+            guard $0.isNotebookNote, case .common = $0.storage else { return false }
+            return true
+        }
         if let byFileName = notes.first(where: { item in
             item.subtitle.compare(fileName, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
                 || (item.urlPath.map {
@@ -3067,7 +3049,10 @@ final class WorkspaceStore: ObservableObject {
         } else {
             notePersisted = notesByItemID[target.id] == markdown
         }
-        guard notePersisted else { return false }
+        if !notePersisted {
+            guard target.editsBackingMarkdownFile,
+                  await retryNoteSaveFromUser(itemID: target.id) else { return false }
+        }
         return await flushPendingWorkspaceSaveAsync()
     }
 
@@ -3948,16 +3933,16 @@ final class WorkspaceStore: ObservableObject {
               pendingNoteSelectionRiskTask == nil else { return }
         let documentID = noteEditingSession.documentID
         let generation = noteEditingSession.documentGeneration
+        let choices = userOperationRisks
+        let title = ui("仍然切换笔记？", "Switch notes anyway?")
+        let message = ui(
+            "最新编辑尚未确认保存。仍然切换会保留魏碑已收到的草稿，但编辑器中尚未收到的最后一段修改可能丢失。也可以先留在这里重试保存。",
+            "The latest edits are not confirmed saved. Switching keeps drafts WeiBei has received, but the final edits still in the editor may be lost. You can also stay here and retry saving."
+        )
         pendingNoteSelectionRiskTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let proceed = await userOperationRisks.confirm(
-                title: ui("仍然切换笔记？", "Switch notes anyway?"),
-                message: ui(
-                    "最新编辑尚未确认保存。仍然切换会保留魏碑已收到的草稿，但编辑器中尚未收到的最后一段修改可能丢失。也可以先留在这里重试保存。",
-                    "The latest edits are not confirmed saved. Switching keeps drafts WeiBei has received, but the final edits still in the editor may be lost. You can also stay here and retry saving."
-                )
-            )
-            guard pendingNoteSelection?.id == selection.id,
+            let proceed = await choices.confirm(title: title, message: message)
+            guard let self,
+                  pendingNoteSelection?.id == selection.id,
                   noteEditingSession.documentID == documentID,
                   noteEditingSession.documentGeneration == generation else { return }
             if proceed {
@@ -6410,7 +6395,8 @@ final class WorkspaceStore: ObservableObject {
         title rawTitle: String? = nil,
         initialMarkdown: String? = nil,
         courseID: UUID? = nil,
-        keepsUserChosenFileName: Bool = false
+        keepsUserChosenFileName: Bool = false,
+        revealInWorkspace: Bool = true
     ) -> StudyItem? {
         let sourceItem: StudyItem?
         let defaultTitle = suggestedNotebookTitle(for: seed)
@@ -6495,12 +6481,14 @@ final class WorkspaceStore: ObservableObject {
             }
             invalidateAgentContext()
             save()
-            requestNoteSelectionTransition(to: item.id) { [weak self] in
-                guard let self else { return }
-                activeNotebookItemID = item.id
-                noteText = markdown
-                revealRichWritingSurface()
-                focus(.notes)
+            if revealInWorkspace {
+                requestNoteSelectionTransition(to: item.id) { [weak self] in
+                    guard let self else { return }
+                    activeNotebookItemID = item.id
+                    noteText = markdown
+                    revealRichWritingSurface()
+                    focus(.notes)
+                }
             }
             return item
         } catch {
@@ -9664,12 +9652,8 @@ final class WorkspaceStore: ObservableObject {
             WeiBeiLog.workspace.error(
                 "code=agent_chat_directory_unavailable underlying=\(WeiBeiLog.code(error), privacy: .public)"
             )
-            throw AgentConversationTargetError(
-                message: ui(
-                    "魏碑无法准备 Chat 的本地工作目录，请检查本机存储空间和文件权限。",
-                    "WeiBei could not prepare the Chat workspace. Check local storage and file permissions."
-                )
-            )
+            // This directory is bookkeeping, not the model's execution target.
+            // File tools retain their own scope and real I/O checks.
         }
         let verifiedCourseRoot: URL?
         let verifiedCourseIdentity: ImportedFileIdentity?
@@ -9781,6 +9765,15 @@ final class WorkspaceStore: ObservableObject {
     private func askAgentAndWait() async {
         askAgent()
         await agentRequestTask?.value
+    }
+
+    private func confirmUnsavedAgentRequest() async -> Bool {
+        let approved = await userOperationRisks.confirm(
+            title: ui("仍然发送这条问题？", "Send this question anyway?"),
+            message: ui("对话记录暂时无法保存到本机。继续仍可请求回答，但关闭魏碑后，这次问题和回答可能丢失。也可以先检查存储空间和文件权限，再重试保存。", "The conversation cannot be saved locally right now. You can still request an answer, but this question and answer may be lost after WeiBei closes. You can also check storage and file permissions, then retry saving.")
+        )
+        if approved { WeiBeiLog.workspace.info("code=unsaved_conversation_user_chose_continue") }
+        return approved
     }
 
     private func currentVisualAssetsForAgent(
@@ -10030,6 +10023,7 @@ final class WorkspaceStore: ObservableObject {
             var didAppendUserMessage = reusingLastUserMessage
             var replyMessageID: UUID?
             var didStartModelRequest = false
+            var acceptedUnsavedConversation = false
             do {
                 if !reusingLastUserMessage {
                     let userMessage = AgentMessage(
@@ -10048,13 +10042,9 @@ final class WorkspaceStore: ObservableObject {
                     )
                 }
                 // Never flushPendingWorkspaceSave() here: RunLoop-spin on MainActor = deadlock.
-                guard await flushPendingWorkspaceSaveAsync() else {
-                    throw AgentConversationTargetError(
-                        message: ui(
-                            "问题尚未安全写入本地，魏碑没有把它发送给 Agent。",
-                            "The question was not safely saved, so WeiBei did not send it to the Agent."
-                        )
-                    )
+                if !(await flushPendingWorkspaceSaveAsync()) {
+                    acceptedUnsavedConversation = await confirmUnsavedAgentRequest()
+                    guard acceptedUnsavedConversation else { throw CancellationError() }
                 }
 
                 try Task.checkCancellation()
@@ -10091,13 +10081,9 @@ final class WorkspaceStore: ObservableObject {
                 } else {
                     appendAgentMessage(assistantMessage)
                 }
-                guard await flushPendingWorkspaceSaveAsync() else {
-                    throw AgentConversationTargetError(
-                        message: ui(
-                            "回答状态尚未安全写入本地，魏碑没有继续请求 Agent。",
-                            "The reply state was not saved safely, so WeiBei did not continue the request."
-                        )
-                    )
+                if !(await flushPendingWorkspaceSaveAsync()), !acceptedUnsavedConversation {
+                    acceptedUnsavedConversation = await confirmUnsavedAgentRequest()
+                    guard acceptedUnsavedConversation else { throw CancellationError() }
                 }
 
                 if questionOverride == nil {

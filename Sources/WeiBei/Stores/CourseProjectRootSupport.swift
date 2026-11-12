@@ -3324,7 +3324,12 @@ actor CourseProjectFileWorker {
                 .isSymbolicLinkKey,
                 .isAliasFileKey,
             ]) else {
-                recordUnavailable(rawURL)
+                if Self.supportedExtensions.contains(rawURL.pathExtension.lowercased()) {
+                    WeiBeiLog.workspace.info("code=import_metadata_unavailable copy_will_validate_source")
+                    appendImportSelection(rawURL, displayName: rawURL.lastPathComponent, markdownOnly: markdownOnly,
+                        seenSupported: &seenSupported, seenUnsupported: &seenUnsupported,
+                        supported: &supported, unsupportedNames: &unsupportedNames)
+                } else { recordUnavailable(rawURL) }
                 continue
             }
             guard rootValues.isSymbolicLink != true,
@@ -3367,7 +3372,12 @@ actor CourseProjectFileWorker {
                     .isSymbolicLinkKey,
                     .isAliasFileKey,
                 ]) else {
-                    recordUnavailable(fileURL)
+                    if Self.supportedExtensions.contains(fileURL.pathExtension.lowercased()) {
+                        WeiBeiLog.workspace.info("code=import_metadata_unavailable copy_will_validate_source")
+                        appendImportSelection(fileURL, displayName: fileURL.lastPathComponent, markdownOnly: markdownOnly,
+                            seenSupported: &seenSupported, seenUnsupported: &seenUnsupported,
+                            supported: &supported, unsupportedNames: &unsupportedNames)
+                    } else { recordUnavailable(fileURL) }
                     enumerator.skipDescendants()
                     continue
                 }
@@ -3823,15 +3833,15 @@ actor CourseProjectFileWorker {
         supported: inout [URL],
         unsupportedNames: inout [String]
     ) {
-        guard let values = try? rawURL.resourceValues(forKeys: [
+        let values = try? rawURL.resourceValues(forKeys: [
                 .isRegularFileKey,
                 .isSymbolicLinkKey,
                 .isAliasFileKey,
-              ]),
-              values.isRegularFile == true,
-              values.isSymbolicLink != true,
-              values.isAliasFile != true else {
-            return
+              ])
+        if let values {
+            guard values.isRegularFile != false,
+                  values.isSymbolicLink != true,
+                  values.isAliasFile != true else { return }
         }
         let url = rawURL.standardizedFileURL
         let pathExtension = rawURL.pathExtension.lowercased()

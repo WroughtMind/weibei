@@ -52,18 +52,33 @@ public actor NativeAgentLedger {
     private var nextSeq = 1
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let allowsPersistenceFailure: Bool
+    private var canPersist = true
+    public private(set) var historyWasUnavailable = false
 
-    public init(fileURL: URL) throws {
+    public init(fileURL: URL, allowsPersistenceFailure: Bool = false) throws {
         self.fileURL = fileURL
+        self.allowsPersistenceFailure = allowsPersistenceFailure
         encoder = JSONEncoder()
         decoder = JSONDecoder()
-        events = try Self.readEvents(at: fileURL)
+        do { events = try Self.readEvents(at: fileURL) }
+        catch {
+            guard allowsPersistenceFailure else { throw error }
+            // Do not overwrite or read through an unsafe/damaged history file.
+            // This response can still keep its protocol history in memory.
+            canPersist = false
+            historyWasUnavailable = true
+            WeiBeiLog.workspace.error("code=agent_ledger_read_failed using_memory underlying=\(WeiBeiLog.code(error), privacy: .public)")
+        }
         nextSeq = (events.map(\.seq).max() ?? 0) + 1
     }
 
     private static func readEvents(at url: URL) throws -> [NativeSessionEvent] {
         try ensureSafeParent(for: url)
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        guard try url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
+            throw NativeLLMFailure(code: "unsafe_agent_directory", message: "运行记录路径不安全")
+        }
         let decoder = JSONDecoder()
         return try Data(contentsOf: url).split(separator: 0x0A).map {
             try decoder.decode(NativeSessionEvent.self, from: Data($0))
@@ -136,19 +151,29 @@ public actor NativeAgentLedger {
     public func append(_ builder: (Int, Int64) -> NativeSessionEvent) throws -> NativeSessionEvent {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let event = builder(nextSeq, now)
-        var line = try encoder.encode(event)
-        line.append(0x0A)
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            let handle = try FileHandle(forWritingTo: fileURL)
-            defer { try? handle.close() }
-            try handle.seekToEnd()
-            try handle.write(contentsOf: line)
-        } else {
-            try line.write(to: fileURL, options: Data.WritingOptions.atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: fileURL.path
-            )
+        if canPersist {
+            do {
+                try Self.ensureSafeParent(for: fileURL)
+                if FileManager.default.fileExists(atPath: fileURL.path),
+                   try fileURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true {
+                    throw NativeLLMFailure(code: "unsafe_agent_directory", message: "运行记录路径不安全")
+                }
+                var line = try encoder.encode(event)
+                line.append(0x0A)
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    let handle = try FileHandle(forWritingTo: fileURL)
+                    defer { try? handle.close() }
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: line)
+                } else {
+                    try line.write(to: fileURL, options: Data.WritingOptions.atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+                }
+            } catch {
+                guard allowsPersistenceFailure else { throw error }
+                canPersist = false
+                WeiBeiLog.workspace.error("code=agent_ledger_write_failed using_memory underlying=\(WeiBeiLog.code(error), privacy: .public)")
+            }
         }
         events.append(event)
         nextSeq += 1

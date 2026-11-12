@@ -705,6 +705,7 @@ struct NoteConflictComparisonView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.dismiss) private var dismiss
     @State private var resolving = false
+    @State private var resolutionTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -733,6 +734,7 @@ struct NoteConflictComparisonView: View {
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
         .modifier(UserOperationRiskPresenter(choices: store.userOperationRisks, context: .noteConflict))
+        .onDisappear { resolutionTask?.cancel() }
     }
 
     private func version(_ title: String, markdown: String, useDisk: Bool) -> some View {
@@ -749,7 +751,7 @@ struct NoteConflictComparisonView: View {
             .background(WeiBeiTheme.paperRaised)
             Button(store.ui("保留这份", "Keep this version")) {
                 resolving = true
-                Task {
+                resolutionTask = Task {
                     await store.resolveNoteEditorRecoveryConflict(useDisk: useDisk)
                     resolving = false
                     if store.noteEditorRecoveryConflict == nil { dismiss() }

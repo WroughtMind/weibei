@@ -2,6 +2,44 @@ import XCTest
 @testable import WeiBeiCore
 
 final class NativeAgentRuntimeTests: XCTestCase {
+    func testRuntimeAnswersWithDamagedHistoryWithoutOverwritingIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiDamagedLedger-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let request = testRequest()
+        let ledgerRoot = root.appendingPathComponent("NativeAgent/Ledgers")
+        let file = ledgerRoot.appendingPathComponent(request.id.uuidString.lowercased()).appendingPathComponent("ledger.jsonl")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let damaged = Data("unreadable history".utf8)
+        try damaged.write(to: file)
+        let runtime = NativeStudyAgentRuntime(model: "mock", adapter: MockLLMAdapter(
+            chunks: [.textDelta(index: 0, text: "当前问题的回答"), .finish(reason: .stop, replayState: nil)]),
+            ledgerRoot: ledgerRoot, systemPromptText: "Answer the current question.")
+        let reply = try await runtime.respond(to: request, progress: nil)
+        XCTAssertEqual(reply.text, "当前问题的回答")
+        XCTAssertEqual(try Data(contentsOf: file), damaged)
+    }
+
+    func testLedgerWriteFailureKeepsProtocolHistoryInMemory() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiMemoryLedger-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("NativeAgent/Ledgers/chat/ledger.jsonl")
+        let ledger = try NativeAgentLedger(fileURL: file, allowsPersistenceFailure: true)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .userMessage, seq: seq, timeMS: time, turn: 1, text: "问题")
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .assistantMessage, seq: seq, timeMS: time, turn: 1, text: "回答")
+        }
+        let events = await ledger.allEvents()
+        let messages = await ledger.deriveMessages()
+        XCTAssertEqual(events.map(\.seq), [1, 2])
+        XCTAssertEqual(messages.map(\.content), ["问题", "回答"])
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+    }
+
     func testAssistantAdvertisesDocumentCreationAndDelegationWhenAvailable() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiAssistantTools-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

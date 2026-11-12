@@ -10,6 +10,45 @@ final class AgentReplyActionPersistenceTests: XCTestCase {
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
     }
 
+    func testRequestedNewNoteInGlobalChatGoesToCommonNotes() async throws {
+        let (root, store, _, _) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = try XCTUnwrap(store.createStudySession(courseID: nil))
+        let request = StudyAgentRequest(purpose: .conversation, question: "新建一份通用笔记", materialTitle: "",
+            materialText: "", noteTitle: "", noteText: "", contextRevision: "global-note")
+        let action = AgentReplyAction(kind: .writeNote, proposedMarkdown: "# 通用笔记\n\n正文", contextRevision: request.contextRevision)
+        let reply = AgentMessage(role: .assistant, text: "建议", source: nil, actions: [action],
+            origin: AgentReplyOrigin(requestID: request.id, chatID: session.id, courseID: nil))
+        store.appendAgentMessage(reply)
+        let previousNote = store.activeNoteItemID
+        let receipt = await store.performNativeAgentAction(action, userRequested: true, request: request,
+            target: .init(sessionID: session.id, workingDirectory: root, courseID: nil), messageID: reply.id)
+        XCTAssertEqual(receipt.status, .saved, receipt.message)
+        let note = try XCTUnwrap(receipt.action?.targetItemID.flatMap(store.item(withID:)))
+        guard case .common = note.storage else { return XCTFail("A global note must use common storage") }
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(note.url), encoding: .utf8), "# 通用笔记\n\n正文")
+        XCTAssertEqual(store.activeNoteItemID, previousNote, "Writing a requested background note must not switch the editor")
+    }
+
+    func testStaleProposalBaselineAppendsToCurrentTextWithoutDiscardingEdits() async throws {
+        let (root, store, courseID, chatID) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let created = await store.createCourseNotebookNote(courseID: courseID, title: "笔记", markdown: "原文", revealInWorkspace: false)
+        let noteID = try XCTUnwrap(created)
+        let note = try XCTUnwrap(store.item(withID: noteID))
+        let url = try XCTUnwrap(note.url)
+        try "原文\n用户后来的修改".write(to: url, atomically: false, encoding: .utf8)
+        var action = AgentReplyAction(kind: .writeNote, targetItemID: noteID, proposedMarkdown: "追加建议", contextRevision: "request")
+        action.baselineContentDigest = WorkspaceStore.noteContentDigest(Data("原文".utf8))
+        let reply = try await append(action, to: store, courseID: courseID, chatID: chatID)
+        await store.confirmAgentReplyAction(messageID: reply.id, actionID: action.id)
+        let result = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(result.hasPrefix("原文\n用户后来的修改"))
+        XCTAssertTrue(result.contains("追加建议"))
+        XCTAssertEqual(try persistedAction(reply, in: store, chatID: chatID).state, .executed)
+        XCTAssertNil(store.userOperationRisks.pendingRequest)
+    }
+
     func testNoteAndRelationActionsPersistBeforeReturning() throws {
         let (root, store, courseID, chatID) = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }

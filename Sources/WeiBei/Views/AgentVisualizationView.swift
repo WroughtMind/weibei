@@ -302,13 +302,16 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
                 guard let value = body["height"] as? NSNumber,
                       value.doubleValue.isFinite else { return }
                 parent.onHeight(max(CGFloat(value.doubleValue), 120))
+            case "diagnostic":
+                if body["code"] as? String == "genui_repaired_partial" {
+                    WeiBeiLog.web.info("code=genui_repaired_partial supported_content_rendered")
+                }
             case "state":
                 guard let state = body["state"],
                       let data = try? JSONSerialization.data(
                           withJSONObject: state,
                           options: [.sortedKeys]
                       ),
-                      data.count <= 262_144,
                       let json = String(data: data, encoding: .utf8) else { return }
                 parent.onState(json)
             case "action":

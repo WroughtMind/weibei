@@ -47,7 +47,6 @@ struct CourseManagementSheet: View {
 
     private var canUseCourseFolder: Bool {
         rootURL != nil
-            && rootUnavailableReason == nil
             && !isWorking
     }
 

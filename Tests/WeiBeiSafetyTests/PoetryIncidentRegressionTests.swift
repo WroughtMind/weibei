@@ -169,8 +169,8 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         )
     }
 
-    /// 用户选择暂不承担无备份改写的风险时，正文与草稿必须保留。
-    func testIncidentRenameWithUnreadableFileKeepsBodyWhenUserDeclines() async throws {
+    /// 不改写正文的重命名可直接移动文件；不可读状态不能阻止这种操作。
+    func testIncidentRenameWithUnreadableFileMovesWithoutRewritingBody() async throws {
         let base = makeTempRoot("weibei-poetry-unreadable")
         defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
@@ -189,15 +189,8 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         store.noteText = degradedDraft
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
 
-        let operation = Task {
-            await store.renameNotebookNoteInTransaction(
-                itemID: item.id,
-                to: "新标题"
-            )
-        }
-        let risk = try await waitForUserOperationRisk(store.userOperationRisks)
-        store.userOperationRisks.respond(to: risk.id, continuing: false)
-        await operation.value
+        await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
+        XCTAssertNil(store.userOperationRisks.pendingRequest)
 
         // 恢复权限后找回正文：旧路径、新路径任一完整即可。
         try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)

@@ -236,7 +236,8 @@ extension WorkspaceStore {
                     retitledMarkdown,
                     itemID: oldID,
                     url: newURL,
-                    expectedBaseline: Self.noteContentDigest(at: newURL)
+                    expectedBaseline: Self.noteContentDigest(at: newURL),
+                    overwritingAfterUserChoice: allowUnbackedReplacement
                 )
                 noteBackingContentDigestsByItemID[oldID] = priorBackingDigest
                 lastSelfWrittenNoteDigestsByItemID[oldID] = priorLastSelfDigest
@@ -564,30 +565,36 @@ extension WorkspaceStore {
     /// Explicit retry can proceed past advisory backup/baseline failures after
     /// a concrete choice. Autosave continues to preserve both versions.
     func retryActiveNoteSaveFromUser() async {
-        guard let item = activeNoteItem, item.editsBackingMarkdownFile,
+        guard let itemID = activeNoteItemID else { return }
+        _ = await retryNoteSaveFromUser(itemID: itemID)
+    }
+
+    func retryNoteSaveFromUser(itemID: String) async -> Bool {
+        guard let item = item(withID: itemID), item.editsBackingMarkdownFile,
               let url = resolvedLibraryURL(for: item) else {
             showImportantOperationError(ui("找不到笔记文件的位置，请重新连接文件后重试保存。", "The note's file location is unavailable. Reconnect the file, then retry saving."))
-            return
+            return false
         }
-        let itemID = item.id
-        let captured = await freshActiveNoteEditorSnapshot()
-        guard activeNoteItemID == itemID else { return }
-        let markdown = notesByItemID[itemID] ?? noteText
+        let wasActive = activeNoteItemID == itemID
+        let captured = wasActive ? await freshActiveNoteEditorSnapshot() : true
+        guard let markdown = pendingNotePersistenceByItemID[itemID]?.markdown
+                ?? notesByItemID[itemID]
+                ?? (activeNoteItemID == itemID ? noteText : loadedCourseNoteTextByItemID[itemID]) else { return false }
         let outcome = attemptNoteMarkdownWrite(markdown, itemID: itemID, url: url)
-        if case .written = outcome { return }
+        if case .written = outcome { return true }
         _ = await completeNoteMarkdownWrite(outcome, markdown: markdown, itemID: itemID, url: url)
-        if case .failed(_, backupFailed: false) = outcome { return }
+        if case .failed(_, backupFailed: false) = outcome { return false }
         guard await userOperationRisks.confirm(
             title: ui("仍然保存这份正文？", "Save this text anyway?"),
             message: ui(
                 "继续会用魏碑保留的正文替换“\(url.lastPathComponent)”的文件内容，磁盘上的版本可能无法备份或找回。" + (captured ? "" : "编辑器中的最后一段修改尚未确认收到。"),
                 "Continuing replaces \(url.lastPathComponent) with the text kept in WeiBei. The disk version may not be backed up or recoverable." + (captured ? "" : " The final edits in the editor have not been confirmed received.")
             )
-        ) else { return }
+        ) else { return false }
         guard let current = self.item(withID: itemID),
               resolvedLibraryURL(for: current) == url else {
             showImportantOperationError(ui("笔记的文件位置已经改变，请在当前位置重试保存。", "The note's file location changed. Retry saving at its current location."))
-            return
+            return false
         }
         let latest = notesByItemID[itemID] ?? markdown
         do {
@@ -611,8 +618,10 @@ extension WorkspaceStore {
             _ = refreshImportedFileTracking(itemID: itemID, url: url)
             courseDocumentSearchIndex.schedule([current])
             _ = await persistWorkspaceNow()
+            return true
         } catch {
             _ = await completeNoteMarkdownWrite(.failed(error, backupFailed: false), markdown: latest, itemID: itemID, url: url)
+            return false
         }
     }
 

@@ -54,7 +54,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         let ledgerURL = ledgerRoot
             .appendingPathComponent(sessionID, isDirectory: true)
             .appendingPathComponent("ledger.jsonl")
-        let ledger = try NativeAgentLedger(fileURL: ledgerURL)
+        let ledger = try NativeAgentLedger(fileURL: ledgerURL, allowsPersistenceFailure: true)
         try await ledger.synthesizeCloserIfNeeded()
         let scope = NativeToolScope.session(request.id.uuidString)
         if liveStores.documentsRoot == nil {
@@ -66,11 +66,14 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         let webSearchAvailable = providerID
             .flatMap(AgentProviderID.init(rawValue:))
             .map { NativeProviderRouting.route($0).webSearch != .none }
-        let prompt = NativePromptAssembler.webiSystemPrompt(
+        var prompt = NativePromptAssembler.webiSystemPrompt(
             bundledText: systemPromptText,
             skillCatalog: liveStores.skillRegistry.catalogSummary(),
             webSearchAvailable: webSearchAvailable
         )
+        if await ledger.historyWasUnavailable {
+            prompt += "\n\n本次运行未能读取以往模型历史。请依据当前问题、已提供上下文及实际可用工具完成任务，不要假设缺失的对话内容。"
+        }
         let meteredAdapter = NativeMeteredLLMAdapter(
             base: adapter, providerID: providerID, requestID: request.id,
             usageURL: ledgerURL.deletingLastPathComponent().appendingPathComponent("usage.jsonl"),

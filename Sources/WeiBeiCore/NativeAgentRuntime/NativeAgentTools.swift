@@ -462,16 +462,26 @@ public enum NativeBuiltinTools {
                 "required": ["id", "spec"],
             ]),
             execute: { arguments, _ in
-                let id = (arguments["id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard id.range(of: "^[a-z0-9]+(?:-[a-z0-9]+)*$", options: .regularExpression) != nil,
-                      let spec = arguments["spec"] as? [String: Any],
-                      let items = spec["items"] as? [Any],
+                let requestedID = (arguments["id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let id: String
+                if requestedID.range(of: "^[a-z0-9]+(?:-[a-z0-9]+)*$", options: .regularExpression) != nil {
+                    id = requestedID
+                } else {
+                    id = requestedID.isEmpty ? "view-\(UUID().uuidString.lowercased())"
+                        : "view-" + SHA256.hash(data: Data(requestedID.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+                    WeiBeiLog.workspace.info("code=genui_id_normalized render_continued")
+                }
+                guard var spec = arguments["spec"] as? [String: Any] else {
+                    throw NativeLLMFailure(code: "invalid_genui", message: "互动界面缺少可显示的组件内容")
+                }
+                if spec["items"] == nil, spec["type"] is String { spec = ["items": [spec]] }
+                guard let items = spec["items"] as? [Any],
                       !items.isEmpty else {
-                    throw NativeLLMFailure(code: "invalid_genui", message: "dshGenUI 界面必须包含稳定 id 和完整组件树")
+                    throw NativeLLMFailure(code: "invalid_genui", message: "互动界面没有可显示的组件")
                 }
                 let specJSON = try JSONSerialization.data(withJSONObject: spec)
                 if specJSON.count > 1_000_000 {
-                    throw NativeLLMFailure(code: "invalid_genui", message: "dshGenUI 界面必须包含稳定 id 和完整组件树")
+                    WeiBeiLog.workspace.info("code=large_genui_spec render_continued")
                 }
                 return NativeToolExecutionResult(
                     text: "互动界面 \(id) 已接收，等待显示结果。",

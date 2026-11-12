@@ -80,6 +80,35 @@ final class UserInitiatedOperationsTests: XCTestCase {
         withExtendedLifetime(observation) {}
     }
 
+    func testUnsavedConversationCanBeSentOrKeptAsDraftByChoice() async throws {
+        for proceed in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiUnsavedChat-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let store = WorkspaceStore(workspaceDirectory: root,
+                workspaceSnapshotWriter: { _, _ in throw CocoaError(.fileWriteOutOfSpace) },
+                startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+            store.agentProviderID = .openai
+            store.modelName = "mock"
+            var calls = 0
+            store.selfCheckAgentResponder = { _ in
+                calls += 1
+                return StudyAgentReply(text: "已回答", backend: .native)
+            }
+            defer { store.selfCheckAgentResponder = nil; store.cancelAllAgentRequests() }
+            let session = try XCTUnwrap(store.activeStudySessionID)
+            store.saveComposerDraft("问题仍应能发送", for: session)
+            store.submitAgentDraft(sessionID: session)
+            let operation = try XCTUnwrap(store.agentRuns[session]?.agentRequestTask)
+            let risk = try await waitForUserOperationRisk(store.userOperationRisks)
+            XCTAssertEqual(calls, 0)
+            store.userOperationRisks.respond(to: risk.id, continuing: proceed)
+            await operation.value
+            XCTAssertEqual(calls, proceed ? 1 : 0)
+            XCTAssertNil(store.userOperationRisks.pendingRequest, "One consent must cover the failed pre-dispatch saves")
+            if !proceed { XCTAssertEqual(store.composerDraft(for: session), "问题仍应能发送") }
+        }
+    }
+
     func testConflictBackupFailureLetsUserContinueOrKeepBothVersions() async throws {
         for proceed in [false, true] {
             let f = try fixture()
@@ -123,6 +152,22 @@ final class UserInitiatedOperationsTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: f.url, encoding: .utf8), "魏碑正文")
         XCTAssertNil(f.store.notesByItemID[f.item.id])
         XCTAssertNil(f.store.noteOperationErrorsByItemID[f.item.id])
+    }
+
+    func testRenameRewriteCompletesAfterBackupRiskIsAccepted() async throws {
+        let f = try fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let text = "# \(f.store.displayTitle(for: f.item))\n\n最新编辑"
+        f.store.noteText = text
+        f.store.setNoteDraft(text, for: f.item.id)
+        let operation = Task { await f.store.renameNotebookNoteInTransaction(itemID: f.item.id, to: "新的名字") }
+        let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
+        f.store.userOperationRisks.respond(to: request.id, continuing: true)
+        await operation.value
+        let renamed = f.url.deletingLastPathComponent().appendingPathComponent("新的名字.md")
+        XCTAssertEqual(try String(contentsOf: renamed, encoding: .utf8), "# 新的名字\n\n最新编辑")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.url.path))
+        XCTAssertNil(f.store.userOperationRisks.pendingRequest)
     }
 
     func testConfirmedReplacementStillRejectsASymbolicLink() throws {
@@ -184,6 +229,26 @@ final class UserInitiatedOperationsTests: XCTestCase {
         let path = try XCTUnwrap(result.details["path"] as? String)
         XCTAssertFalse(result.isError)
         XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8), content)
+    }
+
+    func testGenUIToolNormalizesMetadataAndKeepsLargeContent() async throws {
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let content = String(repeating: "完整的学习内容", count: 60_000)
+        let arguments = try JSONSerialization.data(withJSONObject: [
+            "id": "课堂对比 图一", "spec": ["type": "text", "content": content],
+        ])
+        let request = StudyAgentRequest(purpose: .conversation, question: "展示全部内容", materialTitle: "",
+            materialText: "", noteTitle: "", noteText: "", contextRevision: "test")
+        let result = try await registry.execute(NativeToolCallRequest(name: "render_ui",
+            argumentsJSON: String(decoding: arguments, as: UTF8.self), callID: "ui"),
+            context: NativeToolExecutionContext(request: request), scope: .global)
+        XCTAssertFalse(result.isError)
+        let id = try XCTUnwrap(result.details["id"] as? String)
+        XCTAssertNotNil(id.range(of: "^[a-z0-9]+(?:-[a-z0-9]+)*$", options: .regularExpression))
+        let spec = try XCTUnwrap(result.details["spec"] as? [String: Any])
+        let items = try XCTUnwrap(spec["items"] as? [[String: Any]])
+        XCTAssertEqual(items.first?["content"] as? String, content)
     }
 
     func testUnreadableDuplicateComparisonStillImportsASeparateCopy() throws {
