@@ -391,7 +391,7 @@ func checkCourseDocumentSearchReadiness() throws {
 }
 
 // 保护原文不等完整索引、外部修改立即可读、同页 OCR 结果复用。
-private func checkDirectSourceReading() throws {
+func checkDirectSourceReading() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("weibei-direct-read-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }

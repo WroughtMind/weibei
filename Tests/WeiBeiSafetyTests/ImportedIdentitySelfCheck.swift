@@ -721,8 +721,8 @@ enum ImportedIdentitySelfCheck {
             pointA.materialLocation?.locationID == "section-a-deep"
                 && pointA.chatID == chatA2.id
                 && pointA.noteItemID == note.id
-                && pointA.savedAt >= captureStartedAt
-                && pointA.savedAt <= captureFinishedAt,
+                && pointA.savedAt.timeIntervalSince(captureStartedAt) >= 0
+                && captureFinishedAt.timeIntervalSince(pointA.savedAt) >= 0,
             "沉浸阅读更新位置时丢掉了同一现场的精确 Chat 或笔记"
         )
 
@@ -776,6 +776,15 @@ enum ImportedIdentitySelfCheck {
                 try data.write(to: url, options: [.atomic])
             }
             courseQuestionStore.modelName = "test-model"
+            var attemptedRequests = [StudyAgentRequest]()
+            courseQuestionStore.selfCheckAgentResponder = { request in
+                attemptedRequests.append(request)
+                throw CheckError.failed("预期中的请求失败，用于验证原 Chat 重试")
+            }
+            defer {
+                courseQuestionStore.selfCheckAgentResponder = nil
+                courseQuestionStore.cancelAllAgentRequests()
+            }
             courseQuestionStore.activateCourse(courseA.id)
             courseQuestionStore.openCourseNote(note.id)
             try check(
@@ -822,6 +831,12 @@ enum ImportedIdentitySelfCheck {
                     && courseQuestionStore.agentDraft == question,
                 "课程首页在请求准备期间覆盖了原问题"
             )
+            try waitForCondition("课程首页保存失败时没有提供发送选择") {
+                courseQuestionStore.userOperationRisks.pendingRequest != nil
+            }
+            try check(attemptedRequests.isEmpty, "用户尚未选择继续就发送了课程首页问题")
+            let sendRisk = try require(courseQuestionStore.userOperationRisks.pendingRequest, "发送风险提示丢失")
+            courseQuestionStore.userOperationRisks.respond(to: sendRisk.id, continuing: true)
             var routedFailure: AgentMessage?
             let routedDeadline = Date(timeIntervalSinceNow: 20)
             repeat {
@@ -846,7 +861,15 @@ enum ImportedIdentitySelfCheck {
             )
             let failure = try require(
                 routedFailure,
-                "课程首页问题没有在本地保存失败处停止"
+                "用户选择继续后课程首页问题没有到达请求执行入口"
+            )
+            try check(
+                attemptedRequests.count == 1
+                    && attemptedRequests.first?.question == question
+                    && attemptedRequests.first?.projectScope.courseID == courseB.id.uuidString.lowercased()
+                    && courseQuestionStore.userOperationRisks.pendingRequest == nil
+                    && courseQuestionStore.workspaceSaveError != nil,
+                "未保存的课程首页问题没有按用户选择发送，或重复确认、隐去了保存失败"
             )
             try check(
                 routedChatID == originalChatID
@@ -885,6 +908,12 @@ enum ImportedIdentitySelfCheck {
                 question,
                 targetCourseID: failure.origin?.courseID
             )
+            try waitForCondition("保存仍然失败时重试没有提供发送选择") {
+                courseQuestionStore.userOperationRisks.pendingRequest != nil
+            }
+            try check(attemptedRequests.count == 1, "重试未获用户同意就发送了问题")
+            let retryRisk = try require(courseQuestionStore.userOperationRisks.pendingRequest, "重试风险提示丢失")
+            courseQuestionStore.userOperationRisks.respond(to: retryRisk.id, continuing: true)
             var retriedFailure: AgentMessage?
             let retryDeadline = Date(timeIntervalSinceNow: 20)
             repeat {
@@ -907,7 +936,7 @@ enum ImportedIdentitySelfCheck {
             } while Date() < retryDeadline
             let retryFailure = try require(
                 retriedFailure,
-                "课程首页问题重试没有在本地保存失败处停止"
+                "选择继续后课程首页问题重试没有到达请求执行入口"
             )
             try check(
                 courseQuestionStore.activeStudySessionID == originalChatID
@@ -916,6 +945,10 @@ enum ImportedIdentitySelfCheck {
                     && retryFailure.id == failure.id
                     && courseQuestionStore.activeStudySession?.messages.count == routedMessages.count
                     && rejectedCourseQuestionSaves > rejectedSavesBeforeRetry
+                    && attemptedRequests.count == 2
+                    && attemptedRequests.last?.question == question
+                    && attemptedRequests.last?.projectScope.courseID == courseB.id.uuidString.lowercased()
+                    && courseQuestionStore.userOperationRisks.pendingRequest == nil
                     && retryFailure.origin?.chatID == originalChatID
                     && retryFailure.origin?.courseID == courseB.id,
                 "课程首页问题重试换了 Chat 或退回旧课程焦点"
@@ -936,13 +969,13 @@ enum ImportedIdentitySelfCheck {
                 !courseQuestionStore.isAgentRunning(in: originalChatID)
             }
             try check(
-                recoveredRequest?.reusingLastUserMessage == false
+                recoveredRequest?.reusingLastUserMessage == true
                     && recoveredRequest?.question == question
                     && recoveredRequest?.projectScope.courseID == courseB.id.uuidString.lowercased()
                     && courseQuestionStore.activeStudySession?.messages.count == routedMessages.count
                     && courseQuestionStore.activeStudySession?.messages.last?.id == failure.id
                     && courseQuestionStore.activeStudySession?.messages.last?.completionState == .completed,
-                "保存恢复后重复了可见消息、复用了未发送的模型历史或改变了目标课程"
+                "保存恢复后重复了可见消息、丢失了已发送请求的重试上下文或改变了目标课程"
             )
             let reopenedCourseQuestionStore = makeStore()
             try check(
@@ -950,6 +983,10 @@ enum ImportedIdentitySelfCheck {
                     == originalSessionCount
                     && reopenedCourseQuestionStore.activeStudySessionID
                         == originalChatID
+                    && reopenedCourseQuestionStore.activeStudySession?.messages.count == routedMessages.count
+                    && reopenedCourseQuestionStore.activeStudySession?.messages.last?.id == failure.id
+                    && reopenedCourseQuestionStore.activeStudySession?.messages.last?.text == "保存恢复后的回答"
+                    && reopenedCourseQuestionStore.activeStudySession?.messages.last?.completionState == .completed
                     && Set(
                         reopenedCourseQuestionStore.activeStudySession?
                             .relatedCourseIDs ?? []
@@ -960,7 +997,7 @@ enum ImportedIdentitySelfCheck {
                     && reopenedCourseQuestionStore.courseResumePoint(
                         for: courseB.id
                     )?.chatID == originalChatID,
-                "重开后全局 Chat 或 A/B 课程恢复点没有保持同一身份"
+                "重开后回答没有真正保存，或全局 Chat 与 A/B 课程恢复点没有保持同一身份"
             )
         }
 
