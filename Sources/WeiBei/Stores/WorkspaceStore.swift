@@ -8472,9 +8472,6 @@ final class WorkspaceStore: ObservableObject {
               learningMemoryContextRevision(courseID: target.courseID) == expectedMemoryRevision else {
             return .rejected("学习记忆已变化，请重新读取后再更新。")
         }
-        guard update.entries.count <= 12, update.resolutions.count <= 12 else {
-            return .rejected("每次最多更新 12 条记忆、解决 12 条记录。")
-        }
         guard !update.entries.isEmpty || !update.resolutions.isEmpty else {
             return .rejected("没有需要保存的记忆内容。")
         }
