@@ -801,6 +801,7 @@ final class WorkspaceStore: ObservableObject {
     var coursePortableStateRevisions: [UUID: UInt64] = [:]
     var coursePortableStateDigests: [UUID: String] = [:]
     var dirtyPortableCourseIDs = Set<UUID>()
+    @Published var unreadableCourseHistoryIDs = Set<UUID>()
     var blockedPortableCourseIDs = Set<UUID>()
     var oversizedPortableCourseIDs = Set<UUID>()
     var persistedWorkspaceCourseIDs = Set<UUID>()
@@ -1185,6 +1186,11 @@ final class WorkspaceStore: ObservableObject {
     var activeCourse: Course? {
         guard let activeCourseID else { return nil }
         return courses.first { $0.id == activeCourseID }
+    }
+
+    var courseWorkspaceHistoryIsUnreadable: Bool {
+        guard let courseWorkspaceCourseID else { return false }
+        return unreadableCourseHistoryIDs.contains(courseWorkspaceCourseID)
     }
 
     var courseWorkspaceCourse: Course? {
@@ -2456,6 +2462,7 @@ final class WorkspaceStore: ObservableObject {
                    action.baselineContentDigest != currentDigest {
                     guard await userOperationRisks.confirm(
                         title: ui("仍然添加这条建议？", "Add this proposal again?"),
+                        actionLabel: ui("追加建议", "Append Suggestion"),
                         message: ui("笔记在上次写入后又发生了变化。继续会把这条建议添加到当前正文末尾，可能产生重复内容；现有正文会保留。", "The note changed after the previous write. Continuing appends this proposal to the current text and may create duplicate content. Existing text is kept.")
                     ) else { return }
                     current = try await agentActionNoteMarkdown(target)
@@ -3923,12 +3930,13 @@ final class WorkspaceStore: ObservableObject {
         let generation = noteEditingSession.documentGeneration
         let choices = userOperationRisks
         let title = ui("仍然切换笔记？", "Switch notes anyway?")
+        let actionLabel = ui("切换笔记", "Switch Notes")
         let message = ui(
             "最新编辑尚未确认保存。仍然切换会保留魏碑已收到的草稿，但编辑器中尚未收到的最后一段修改可能丢失。也可以先留在这里重试保存。",
             "The latest edits are not confirmed saved. Switching keeps drafts WeiBei has received, but the final edits still in the editor may be lost. You can also stay here and retry saving."
         )
         pendingNoteSelectionRiskTask = Task { @MainActor [weak self] in
-            let proceed = await choices.confirm(title: title, message: message)
+            let proceed = await choices.confirm(title: title, actionLabel: actionLabel, message: message)
             guard let self,
                   pendingNoteSelection?.id == selection.id,
                   noteEditingSession.documentID == documentID,
@@ -9756,6 +9764,7 @@ final class WorkspaceStore: ObservableObject {
     private func confirmUnsavedAgentRequest() async -> Bool {
         let approved = await userOperationRisks.confirm(
             title: ui("仍然发送这条问题？", "Send this question anyway?"),
+            actionLabel: ui("发送问题", "Send Question"),
             message: ui("对话记录暂时无法保存到本机。继续仍可请求回答，但关闭魏碑后，这次问题和回答可能丢失。也可以先检查存储空间和文件权限，再重试保存。", "The conversation cannot be saved locally right now. You can still request an answer, but this question and answer may be lost after WeiBei closes. You can also check storage and file permissions, then retry saving.")
         )
         if approved { WeiBeiLog.workspace.info("code=unsaved_conversation_user_chose_continue") }

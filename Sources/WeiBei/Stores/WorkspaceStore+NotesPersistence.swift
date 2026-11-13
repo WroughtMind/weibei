@@ -177,6 +177,7 @@ extension WorkspaceStore {
                 if !allowUnbackedReplacement {
                     guard await userOperationRisks.confirm(
                         title: ui("仍然重命名笔记？", "Rename the note anyway?"),
+                        actionLabel: ui("重命名笔记", "Rename Note"),
                         message: ui("无法备份“\(oldURL.lastPathComponent)”。继续会重命名文件并更新正文标题，改写前的版本可能无法找回。", "WeiBei could not back up \(oldURL.lastPathComponent). Continuing renames the file and updates its heading; the previous version may be unrecoverable.")
                     ) else { return }
                     await renameNotebookNoteInTransaction(itemID: itemID, to: rawTitle, allowUnbackedReplacement: true)
@@ -584,6 +585,7 @@ extension WorkspaceStore {
         if case .failed(_, backupFailed: false) = outcome { return false }
         guard await userOperationRisks.confirm(
             title: ui("仍然保存这份正文？", "Save this text anyway?"),
+            actionLabel: ui("用魏碑正文覆盖文件", "Overwrite File with WeiBei Text"),
             message: ui(
                 "继续会用魏碑保留的正文替换“\(url.lastPathComponent)”的文件内容，磁盘上的版本可能无法备份或找回。" + (captured ? "" : "编辑器中的最后一段修改尚未确认收到。"),
                 "Continuing replaces \(url.lastPathComponent) with the text kept in WeiBei. The disk version may not be backed up or recoverable." + (captured ? "" : " The final edits in the editor have not been confirmed received.")

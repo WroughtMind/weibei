@@ -16,7 +16,7 @@ struct UserOperationRiskPresenter: ViewModifier {
             // or the next queued request.
             set: { _ in }
         ), presenting: request) { request in
-            Button(store.ui("仍然继续", "Continue Anyway")) {
+            Button(request.actionLabel) {
                 choices.respond(to: request.id, continuing: true)
             }
             Button(store.ui("先不", "Not Now"), role: .cancel) {

@@ -75,6 +75,18 @@ struct CourseWorkspaceView: View {
                     CourseLibraryVolatilityBanner()
                 }
 
+                if store.courseWorkspaceHistoryIsUnreadable {
+                    Text(store.ui(
+                        "部分历史问答和学习进度暂时无法读取。课程资料仍可使用，原记录已保留。",
+                        "Some past conversations and learning progress could not be loaded. Course materials are available and the original records are preserved."
+                    ))
+                    .weiBeiText(12)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                }
+
                 Rectangle()
                     .fill(WeiBeiTheme.hairline.opacity(0.72))
                     .frame(height: 1)

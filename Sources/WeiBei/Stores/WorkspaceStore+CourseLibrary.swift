@@ -645,6 +645,7 @@ extension WorkspaceStore {
                     WeiBeiLog.workspace.error("code=course_metadata_unreadable underlying=\(WeiBeiLog.code(error), privacy: .public)")
                     guard await userOperationRisks.confirm(
                         title: ui("保留原状态并继续加入课程？", "Keep the original state and add this course?"),
+                        actionLabel: ui("按新课程加入", "Add as New Course"),
                         message: ui("资料文件可以使用，但旧课程状态无法读取。继续会把原状态完整留在课程文件夹的备份中，再按新课程加入；旧问答和进度暂时不会显示，资料原文件不受影响。", "The material files are available, but the old course state cannot be read. Continuing keeps that state in a backup in the course folder and adds a new course. Old conversations and progress will not appear; the material files are kept."),
                         context: .courseEntry
                     ) else { throw CancellationError() }
@@ -1149,11 +1150,6 @@ extension WorkspaceStore {
         _ = restorePortableCourseStates()
         let keepsUnreadableState = blockedPortableCourseIDs.contains(existing.id)
         if keepsUnreadableState {
-            guard await userOperationRisks.confirm(
-                title: ui("保留原状态并继续打开课程？", "Keep the original state and open this course?"),
-                message: ui("课程资料可以读取，但旧问答或进度无法完整读取。继续会打开资料并保留原状态文件，旧记录暂时不会全部显示；新更改会先在本机保留，原状态不会被后台覆盖。", "The material files can be read, but the old conversations or progress cannot be fully read. Continuing opens the materials and keeps the original state file. Some old records will be unavailable; new changes are kept locally without overwriting the original state."),
-                context: .courseEntry
-            ) else { throw CancellationError() }
             guard courseRootURL(for: existing.id) == resolvedRoot,
                   importedFileIdentityResolver(resolvedRoot) == identity else {
                 throw CourseProjectRootError.rootIdentityUnavailable
@@ -1689,6 +1685,7 @@ extension WorkspaceStore {
                 ) else {
                     throw CourseProjectRootError.workspaceSaveFailed
                 }
+                unreadableCourseHistoryIDs.remove(proposal.courseID)
             } catch {
                 courses = previousCourses
                 importedItems = previousImportedItems
@@ -2706,6 +2703,7 @@ extension WorkspaceStore {
                 )
                 guard await userOperationRisks.confirm(
                     title: ui("仍然替换这份笔记？", "Replace this note anyway?"),
+                    actionLabel: ui("替换笔记", "Replace Note"),
                     message: ui("无法把“\(targetURL.lastPathComponent)”加入笔记备份。继续会替换它；魏碑仍会尝试把原文件移到废纸篓，但备份中可能找不到旧版本。", "WeiBei could not add \(targetURL.lastPathComponent) to note backups. Continuing replaces it. WeiBei will still attempt to move the original to Trash, but the old version may not be available in note backups."),
                     context: confirmedFileImport?.stage == .importing ? .fileImport : .workspace
                 ) else { throw CancellationError() }
@@ -4693,6 +4691,7 @@ extension WorkspaceStore {
         if !saved {
             guard await userOperationRisks.confirm(
                 title: ui("仍然从魏碑移除课程？", "Remove this course from WeiBei anyway?"),
+                actionLabel: ui("从魏碑移除课程", "Remove Course from WeiBei"),
                 message: ui("移除记录暂时无法保存。继续会在当前会话移除课程，文件仍保留；重启后课程记录可能再次出现。", "The removal record cannot be saved right now. Continuing removes the course in this session and keeps its files. The course record may reappear after restarting."),
                 context: riskContext
             ) else {
@@ -5247,6 +5246,7 @@ extension WorkspaceStore {
                       && coursePortableStateMatchesLastSaved(courseID)) {
                     allowsUnsavedRemoval = await userOperationRisks.confirm(
                         title: ui("仍然把课程移到废纸篓？", "Move this course to Trash anyway?"),
+                        actionLabel: ui("将课程移到废纸篓", "Move Course to Trash"),
                         message: ui("最新问答、草稿或进度尚未完整保存。继续仍会把课程文件夹移到废纸篓，但废纸篓中的副本可能不包含这些最新修改，移除记录也可能尚未保存。", "The latest conversations, drafts or progress are not fully saved. Continuing moves the course folder to Trash, but that copy may not include the latest changes, and the removal record may remain unsaved."),
                         context: riskContext
                     )
@@ -5432,6 +5432,7 @@ extension WorkspaceStore {
         coursePortableStateDigests.removeValue(forKey: courseID)
         dirtyPortableCourseIDs.remove(courseID)
         blockedPortableCourseIDs.remove(courseID)
+        unreadableCourseHistoryIDs.remove(courseID)
         oversizedPortableCourseIDs.remove(courseID)
     }
 
@@ -6245,6 +6246,7 @@ extension WorkspaceStore {
     private func confirmUnsavedFileRemoval() async -> Bool {
         await userOperationRisks.confirm(
             title: ui("仍然将原文件移到废纸篓？", "Move the source file to Trash anyway?"),
+            actionLabel: ui("将原文件移到废纸篓", "Move File to Trash"),
             message: ui("部分草稿或删除记录尚未保存。继续仍会将原文件移到废纸篓；未保存的修改可能无法恢复，重启后旧入口可能再次出现。选择先不，会保留或恢复原文件。", "Some drafts or deletion records are not saved. Continuing moves the original file to Trash. Unsaved edits may be unrecoverable, and the old entry may reappear after restarting. Choosing Not Now keeps or restores the original file.")
         )
     }

@@ -68,9 +68,9 @@ final class UserInitiatedOperationsTests: XCTestCase {
 
     func testRiskRequestsAreQueuedAndCancellingOneDoesNotCancelAnother() async throws {
         let center = UserOperationRiskCenter()
-        let first = Task { await center.confirm(title: "First", message: "First consequence") }
+        let first = Task { await center.confirm(title: "First", actionLabel: "Replace", message: "First consequence") }
         let firstRequest = try await waitForUserOperationRisk(center)
-        let second = Task { await center.confirm(title: "Second", message: "Second consequence") }
+        let second = Task { await center.confirm(title: "Second", actionLabel: "Rename", message: "Second consequence") }
         await Task.yield()
         first.cancel()
         let firstChoice = await first.value
@@ -80,6 +80,8 @@ final class UserInitiatedOperationsTests: XCTestCase {
             .first { $0.id != firstRequest.id }.sink { _ in nextShown.fulfill() }
         await fulfillment(of: [nextShown], timeout: 3)
         let next = try XCTUnwrap(center.pendingRequest)
+        XCTAssertEqual(firstRequest.actionLabel, "Replace")
+        XCTAssertEqual(next.actionLabel, "Rename")
         XCTAssertEqual(next.title, "Second")
         center.respond(to: firstRequest.id, continuing: true)
         XCTAssertEqual(center.pendingRequest?.id, next.id, "A stale action cannot resolve a newer request")
@@ -337,6 +339,41 @@ final class UserInitiatedOperationsTests: XCTestCase {
             XCTAssertEqual(try String(contentsOf: f.url, encoding: .utf8), proceed ? "新的替换正文" : "磁盘正文")
             XCTAssertEqual(try String(contentsOf: source, encoding: .utf8), "新的替换正文")
         }
+    }
+
+    func testExistingCourseOpensWithUnreadableHistoryAndRecoversWhenRestored() async throws {
+        let f = try await fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let store = f.store
+        let courseID = try XCTUnwrap(f.item.storage.ownerCourseID)
+        let root = try XCTUnwrap(store.courseRootURL(for: courseID))
+        let otherID = try await store.createCourseInLibraryAsync(title: "另一门课")
+        let stateURL = root.appendingPathComponent(".weibei/course-state.json")
+        let original = try Data(contentsOf: stateURL)
+        let unreadable = Data("incomplete course history".utf8)
+        try unreadable.write(to: stateURL, options: .atomic)
+        let choices = store.userOperationRisks
+        let observation = choices.$pendingRequest.compactMap { $0 }.sink { request in
+            XCTFail("Opening an existing course must not require a risk decision")
+            Task { @MainActor in choices.respond(to: request.id, continuing: false) }
+        }
+        defer { observation.cancel() }
+
+        let openedID = try await store.adoptCourseFolderAsync(at: root, title: "合成课程")
+        store.openCourseSpace(openedID)
+        XCTAssertTrue(store.courseWorkspacePresented)
+        XCTAssertEqual(store.courseWorkspaceCourseID, courseID)
+        XCTAssertTrue(store.courseWorkspaceHistoryIsUnreadable)
+        store.selectCourseWorkspaceCourse(otherID)
+        XCTAssertFalse(store.courseWorkspaceHistoryIsUnreadable)
+        store.selectCourseWorkspaceCourse(courseID)
+        XCTAssertTrue(store.courseWorkspaceHistoryIsUnreadable)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.url.path))
+        XCTAssertEqual(try Data(contentsOf: stateURL), unreadable)
+
+        try original.write(to: stateURL, options: .atomic)
+        _ = try await store.adoptCourseFolderAsync(at: root, title: "合成课程")
+        XCTAssertFalse(store.courseWorkspaceHistoryIsUnreadable)
     }
 
     func testUnreadableCourseMetadataIsPreservedWhenUserChoosesToAdopt() async throws {

@@ -180,6 +180,7 @@ extension WorkspaceStore {
            noteEditingSession.saveStatus != .externallyModified { return true }
         allowsUnsavedRelaunch = await userOperationRisks.confirm(
             title: ui("仍然安装并重启？", "Install and restart anyway?"),
+            actionLabel: ui("安装并重启", "Install and Restart"),
             message: ui(
                 "部分笔记或工作区更改尚未确认保存。继续安装会重启魏碑，这些未保存的修改可能丢失。也可以先取消，重试保存后再安装。",
                 "Some note or workspace changes are not confirmed saved. Installing restarts WeiBei, and those unsaved changes may be lost. You can cancel, retry saving, then install."
@@ -421,6 +422,7 @@ extension WorkspaceStore {
             )
             guard await userOperationRisks.confirm(
                 title: ui("采用更新后的磁盘正文？", "Use the updated disk text?"),
+                actionLabel: ui("采用更新后的磁盘正文", "Use Updated Disk Text"),
                 message: ui("打开对照后，文件又被其他程序修改了。对照已更新；继续会采用更新后的磁盘正文，魏碑中的草稿会先尝试备份。", "Another app changed the file after the comparison opened. The comparison is updated. Continuing uses the updated disk text and first attempts to back up your WeiBei draft."),
                 context: .noteConflict
             ) else { return }
@@ -447,6 +449,7 @@ extension WorkspaceStore {
                 if !allowUnbackedReplacement {
                     guard await userOperationRisks.confirm(
                         title: ui("仍然采用磁盘正文？", "Use the disk text anyway?"),
+                        actionLabel: ui("采用磁盘正文", "Use Disk Text"),
                         message: ui("无法备份魏碑中未写入的正文。继续会采用“\(fileName)”的磁盘版本，未写入的那份可能无法找回。", "WeiBei could not back up the unsaved text. Continuing uses the disk version of \(fileName); the unsaved version may be unrecoverable."),
                         context: .noteConflict
                     ) else { return }
@@ -523,6 +526,7 @@ extension WorkspaceStore {
                 if !allowUnbackedReplacement {
                     guard await userOperationRisks.confirm(
                         title: ui("仍然保留魏碑正文？", "Keep the WeiBei text anyway?"),
+                        actionLabel: ui("保留魏碑正文", "Keep WeiBei Text"),
                         message: ui("无法备份“\(fileName)”的磁盘版本。继续会用魏碑中的正文替换它，被替换的版本可能无法找回。", "The disk version of \(fileName) could not be backed up. Continuing replaces it with the WeiBei text; the replaced version may be unrecoverable."),
                         context: .noteConflict
                     ) else { return }
@@ -555,6 +559,7 @@ extension WorkspaceStore {
             } catch NoteWriteGateError.backupFailed {
                 guard await userOperationRisks.confirm(
                     title: ui("仍然保留魏碑正文？", "Keep the WeiBei text anyway?"),
+                    actionLabel: ui("保留魏碑正文", "Keep WeiBei Text"),
                     message: ui("保存期间磁盘正文又有更新，无法备份这个新版本。继续会替换它，被替换的内容可能无法找回。", "The disk text changed again during saving, and this new version could not be backed up. Continuing replaces it; the replaced text may be unrecoverable."),
                     context: .noteConflict
                 ) else { return }

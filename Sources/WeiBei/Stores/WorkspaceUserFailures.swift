@@ -10,6 +10,7 @@ final class UserOperationRiskCenter: ObservableObject {
     struct Request: Identifiable {
         let id: UUID
         let title: String
+        let actionLabel: String
         let message: String
         let context: Context
         fileprivate let continuation: CheckedContinuation<Bool, Never>
@@ -18,7 +19,7 @@ final class UserOperationRiskCenter: ObservableObject {
     @Published private(set) var pendingRequest: Request?
     private var queuedRequests: [Request] = []
 
-    func confirm(title: String, message: String, context: Context = .workspace) async -> Bool {
+    func confirm(title: String, actionLabel: String, message: String, context: Context = .workspace) async -> Bool {
         let id = UUID()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -26,8 +27,8 @@ final class UserOperationRiskCenter: ObservableObject {
                     continuation.resume(returning: false)
                     return
                 }
-                queuedRequests.append(Request(id: id, title: title, message: message,
-                                              context: context, continuation: continuation))
+                queuedRequests.append(Request(id: id, title: title, actionLabel: actionLabel,
+                                              message: message, context: context, continuation: continuation))
                 showNextIfNeeded()
             }
         } onCancel: {
