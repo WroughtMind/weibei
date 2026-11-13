@@ -290,7 +290,7 @@ actor CourseProjectFileWorker {
     nonisolated static let portableStateMaximumByteCount = 32 * 1024 * 1024
     nonisolated static let markdownMaximumByteCount = 32 * 1024 * 1024
     nonisolated static let markdownImageMaximumByteCount =
-        MarkdownAttachmentStore.maximumImageByteCount
+        MarkdownAttachmentStore.maximumAnimatedImageByteCount
 
     nonisolated private static func ignoresImportDirectory(_ url: URL) -> Bool {
         url.lastPathComponent.caseInsensitiveCompare("node_modules") == .orderedSame
@@ -2337,6 +2337,20 @@ actor CourseProjectFileWorker {
         Self.renameWithoutReplacement(from: source, to: destination)
     }
 
+    func isolateVerifiedReplacement(
+        from source: URL, to destination: URL,
+        expectedSourceIdentity: ImportedFileIdentity,
+        expectedSourceDirectoryIdentity: ImportedFileIdentity,
+        expectedDestinationDirectoryIdentity: ImportedFileIdentity
+    ) throws {
+        _ = try Self.renameWithoutReplacementAnchored(
+            from: source, to: destination, expectedSourceIdentity: expectedSourceIdentity,
+            expectedSourceDirectoryIdentity: expectedSourceDirectoryIdentity,
+            expectedDestinationDirectoryIdentity: expectedDestinationDirectoryIdentity,
+            beforeRename: {}
+        )
+    }
+
     func remove(_ url: URL, using remover: @Sendable (URL) throws -> Void) throws {
         try remover(url)
     }
@@ -3324,7 +3338,12 @@ actor CourseProjectFileWorker {
                 .isSymbolicLinkKey,
                 .isAliasFileKey,
             ]) else {
-                recordUnavailable(rawURL)
+                if Self.supportedExtensions.contains(rawURL.pathExtension.lowercased()) {
+                    WeiBeiLog.workspace.info("code=import_metadata_unavailable copy_will_validate_source")
+                    appendImportSelection(rawURL, displayName: rawURL.lastPathComponent, markdownOnly: markdownOnly,
+                        seenSupported: &seenSupported, seenUnsupported: &seenUnsupported,
+                        supported: &supported, unsupportedNames: &unsupportedNames)
+                } else { recordUnavailable(rawURL) }
                 continue
             }
             guard rootValues.isSymbolicLink != true,
@@ -3332,10 +3351,6 @@ actor CourseProjectFileWorker {
                 continue
             }
             if rootValues.isDirectory != true {
-                guard fileManager.isReadableFile(atPath: rawURL.path) else {
-                    recordUnavailable(rawURL)
-                    continue
-                }
                 appendImportSelection(
                     rawURL,
                     displayName: rawURL.lastPathComponent,
@@ -3371,7 +3386,12 @@ actor CourseProjectFileWorker {
                     .isSymbolicLinkKey,
                     .isAliasFileKey,
                 ]) else {
-                    recordUnavailable(fileURL)
+                    if Self.supportedExtensions.contains(fileURL.pathExtension.lowercased()) {
+                        WeiBeiLog.workspace.info("code=import_metadata_unavailable copy_will_validate_source")
+                        appendImportSelection(fileURL, displayName: fileURL.lastPathComponent, markdownOnly: markdownOnly,
+                            seenSupported: &seenSupported, seenUnsupported: &seenUnsupported,
+                            supported: &supported, unsupportedNames: &unsupportedNames)
+                    } else { recordUnavailable(fileURL) }
                     enumerator.skipDescendants()
                     continue
                 }
@@ -3382,11 +3402,6 @@ actor CourseProjectFileWorker {
                 if Self.ignoresImportDirectory(fileURL),
                    values.isDirectory == true {
                     enumerator.skipDescendants()
-                    continue
-                }
-                if values.isDirectory != true,
-                   !fileManager.isReadableFile(atPath: fileURL.path) {
-                    recordUnavailable(fileURL)
                     continue
                 }
                 let rootPath = rawURL.standardizedFileURL.path
@@ -3832,15 +3847,15 @@ actor CourseProjectFileWorker {
         supported: inout [URL],
         unsupportedNames: inout [String]
     ) {
-        guard let values = try? rawURL.resourceValues(forKeys: [
+        let values = try? rawURL.resourceValues(forKeys: [
                 .isRegularFileKey,
                 .isSymbolicLinkKey,
                 .isAliasFileKey,
-              ]),
-              values.isRegularFile == true,
-              values.isSymbolicLink != true,
-              values.isAliasFile != true else {
-            return
+              ])
+        if let values {
+            guard values.isRegularFile != false,
+                  values.isSymbolicLink != true,
+                  values.isAliasFile != true else { return }
         }
         let url = rawURL.standardizedFileURL
         let pathExtension = rawURL.pathExtension.lowercased()
@@ -3958,12 +3973,13 @@ actor CourseProjectFileWorker {
         from source: URL,
         to destination: URL,
         expectedSourceIdentity: ImportedFileIdentity,
+        expectedSourceDirectoryIdentity: ImportedFileIdentity? = nil,
         expectedDestinationDirectoryIdentity: ImportedFileIdentity,
         beforeRename: () throws -> Void
     ) throws -> ImportedFileIdentity {
         let sourceDirectory = source.deletingLastPathComponent()
         let destinationDirectory = destination.deletingLastPathComponent()
-        guard let sourceDirectoryIdentity = identity(at: sourceDirectory) else {
+        guard let sourceDirectoryIdentity = expectedSourceDirectoryIdentity ?? identity(at: sourceDirectory) else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
         let sourceDescriptor = try openDirectory(

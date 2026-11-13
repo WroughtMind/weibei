@@ -334,16 +334,14 @@ public enum AgentCredentialProfileStore {
 
     public static func loadProfiles() -> [AgentCredentialProfile] {
         guard let data = UserDefaults.standard.data(forKey: profilesKey),
-              let decoded = try? JSONDecoder().decode([AgentCredentialProfile].self, from: data),
-              !decoded.isEmpty else {
+              let decoded = try? JSONDecoder().decode([AgentCredentialProfile].self, from: data) else {
             return [defaultProfile()]
         }
         return decoded
     }
 
     public static func saveProfiles(_ profiles: [AgentCredentialProfile]) {
-        let payload = profiles.isEmpty ? [defaultProfile()] : profiles
-        if let data = try? JSONEncoder().encode(payload) {
+        if let data = try? JSONEncoder().encode(profiles) {
             UserDefaults.standard.set(data, forKey: profilesKey)
         }
     }
@@ -353,8 +351,9 @@ public enum AgentCredentialProfileStore {
         return UUID(uuidString: raw)
     }
 
-    public static func setActiveProfileID(_ id: UUID) {
-        UserDefaults.standard.set(id.uuidString, forKey: activeProfileKey)
+    public static func setActiveProfileID(_ id: UUID?) {
+        if let id { UserDefaults.standard.set(id.uuidString, forKey: activeProfileKey) }
+        else { UserDefaults.standard.removeObject(forKey: activeProfileKey) }
     }
 
     public static func defaultProfile() -> AgentCredentialProfile {

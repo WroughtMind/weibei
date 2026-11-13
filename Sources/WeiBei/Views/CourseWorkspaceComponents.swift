@@ -47,7 +47,6 @@ struct CourseManagementSheet: View {
 
     private var canUseCourseFolder: Bool {
         rootURL != nil
-            && rootUnavailableReason == nil
             && !isWorking
     }
 
@@ -196,6 +195,7 @@ struct CourseManagementSheet: View {
         .foregroundStyle(WeiBeiTheme.ink)
         .weiBeiFittedSheet()
         .interactiveDismissDisabled(isWorking)
+        .modifier(UserOperationRiskPresenter(choices: store.userOperationRisks, context: .courseManagement))
         .confirmationDialog(
             store.ui(
                 "将真实课程文件夹移到废纸篓？",
@@ -256,9 +256,11 @@ struct CourseManagementSheet: View {
         Task { @MainActor in
             do {
                 _ = try await store.moveCourseFolderToTrash(
-                    courseID
+                    courseID, riskContext: .courseManagement
                 )
                 dismiss()
+            } catch is CancellationError {
+                isWorking = false
             } catch {
                 store.recordCourseLibraryUIFailure(
                     error,
@@ -279,8 +281,10 @@ struct CourseManagementSheet: View {
         errorMessage = nil
         Task { @MainActor in
             do {
-                try await store.removeCourseFromWeiBei(courseID)
+                try await store.removeCourseFromWeiBei(courseID, riskContext: .courseManagement)
                 dismiss()
+            } catch is CancellationError {
+                isWorking = false
             } catch {
                 store.recordCourseLibraryUIFailure(
                     error,
@@ -395,6 +399,7 @@ struct CourseProjectEntrySheet: View {
         .foregroundStyle(WeiBeiTheme.ink)
         .weiBeiFittedSheet()
         .interactiveDismissDisabled(isWorking)
+        .modifier(UserOperationRiskPresenter(choices: store.userOperationRisks, context: .courseEntry))
         .onAppear(perform: updateFocus)
         .onChange(of: intent) { _, _ in updateFocus() }
         .onChange(of: selectedFolder) { _, _ in updateFocus() }
@@ -854,6 +859,8 @@ struct CourseProjectEntrySheet: View {
             await Task.yield()
             do {
                 try await action()
+            } catch is CancellationError {
+                // The user chose to keep the original state.
             } catch {
                 store.recordCourseLibraryUIFailure(
                     error,

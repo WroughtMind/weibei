@@ -15,8 +15,6 @@ public struct NativeCreatedDocument: Equatable, Sendable {
 }
 
 public enum NativeDocumentSandbox {
-    public static let maximumBytes = 400_000
-
     public static func write(
         title: String,
         format: NativeDocumentFormat,
@@ -26,9 +24,6 @@ public enum NativeDocumentSandbox {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else {
             throw NativeLLMFailure(code: "invalid_document", message: "create_document 需要标题")
-        }
-        guard content.utf8.count <= maximumBytes else {
-            throw NativeLLMFailure(code: "invalid_document", message: "文稿超过 \(maximumBytes) 字节")
         }
         let workspaceRoot = documentsRoot
             .deletingLastPathComponent()

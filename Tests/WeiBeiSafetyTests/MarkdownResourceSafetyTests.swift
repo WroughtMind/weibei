@@ -188,18 +188,7 @@ final class MarkdownResourceSafetyTests: XCTestCase {
         XCTAssertTrue(CGImageDestinationFinalize(destination))
 
         let source = try XCTUnwrap(CGImageSourceCreateWithData(data, nil))
-        XCTAssertFalse(
-            MarkdownAttachmentStore.decodedPixelsAreWithinLimit(
-                source,
-                maximumPixelCount: 16
-            )
-        )
-        XCTAssertTrue(
-            MarkdownAttachmentStore.decodedPixelsAreWithinLimit(
-                source,
-                maximumPixelCount: 17
-            )
-        )
+        XCTAssertEqual(MarkdownAttachmentStore.largestFramePixelCount(source), 16)
     }
 
     func testAttachmentStoreDownscalesOversizedStillImage() throws {
@@ -227,7 +216,7 @@ final class MarkdownResourceSafetyTests: XCTestCase {
         XCTAssertLessThanOrEqual(stored.count, MarkdownAttachmentStore.maximumImageByteCount)
     }
 
-    func testAttachmentStoreKeepsLongAnimationWhenEachFrameFits() throws {
+    func testAttachmentStoreKeepsLongAnimationWhenEachFrameFits() async throws {
         let fixture = try makeFixtureDirectory()
         defer { try? FileManager.default.removeItem(at: fixture) }
         let attachments = fixture.appendingPathComponent("attachments")
@@ -250,6 +239,40 @@ final class MarkdownResourceSafetyTests: XCTestCase {
         XCTAssertTrue(saved.src.hasSuffix(".gif"))
         let stored = try Data(contentsOf: fixture.appendingPathComponent(saved.src))
         XCTAssertEqual(stored, data as Data)
+        XCTAssertEqual(MarkdownAttachmentStore.validatedImageMIMEType(data: stored,
+            suggestedMIMEType: "image/gif", allowsSVG: false), "image/gif")
+        let handler = MarkdownImageSchemeHandler()
+        handler.update(markdownBaseURLString: URL(fileURLWithPath: fixture.path, isDirectory: true).absoluteString, attachmentDirectory: attachments,
+            appearanceMode: .paper, interfaceLanguage: .chinese)
+        let loaded: Data? = await withCheckedContinuation { continuation in
+            handler.loadImage(source: saved.src) { continuation.resume(returning: $0) }
+        }
+        XCTAssertEqual(loaded, stored)
+    }
+
+    func testStoredMultiFrameImageAboveStillImageBudgetLoadsThroughSchemeHandler() async throws {
+        let fixture = try makeFixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let attachments = fixture.appendingPathComponent("attachments")
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, UTType.tiff.identifier as CFString, 2, nil))
+        let frame = try makeImage(width: 3_000, height: 1_000)
+        for _ in 0..<2 {
+            CGImageDestinationAddImage(destination, frame, [
+                kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFCompression: 1],
+            ] as CFDictionary)
+        }
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        XCTAssertGreaterThan(data.length, MarkdownAttachmentStore.maximumImageByteCount)
+        let saved = try MarkdownAttachmentStore.save(data: data as Data, originalName: "pages.tiff",
+            mime: "image/tiff", attachmentDirectory: attachments, markdownBaseURLString: fixture.absoluteString)
+        let handler = MarkdownImageSchemeHandler()
+        handler.update(markdownBaseURLString: URL(fileURLWithPath: fixture.path, isDirectory: true).absoluteString, attachmentDirectory: attachments,
+            appearanceMode: .paper, interfaceLanguage: .chinese)
+        let loaded: Data? = await withCheckedContinuation { continuation in
+            handler.loadImage(source: saved.src) { continuation.resume(returning: $0) }
+        }
+        XCTAssertEqual(loaded, data as Data)
     }
 
     func testAttachmentStoreRasterizesSVGToPNG() throws {
@@ -318,7 +341,8 @@ final class MarkdownResourceSafetyTests: XCTestCase {
 
     private func makeFixtureDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("weibei-markdown-resource-\(UUID().uuidString)")
+            .appendingPathComponent("weibei-markdown-resource-\(UUID().uuidString)", isDirectory: true)
+            .resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
         return url
     }

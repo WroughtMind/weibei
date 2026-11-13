@@ -90,8 +90,14 @@ public enum ImportFileCopy {
         guard FileManager.default.fileExists(atPath: preferred.path) else {
             return .available
         }
-        if try importedContentsMatch(from: sourceURL, at: preferred, preparedHTML: preparedHTML) {
-            return .duplicate
+        do {
+            if try importedContentsMatch(from: sourceURL, at: preferred, preparedHTML: preparedHTML) {
+                return .duplicate
+            }
+        } catch {
+            // An unreadable comparison does not prevent a separate copy. Keep
+            // the existing file and let the real copy report any I/O failure.
+            WeiBeiLog.workspace.info("code=import_comparison_unavailable using_unique_name underlying=\(WeiBeiLog.code(error), privacy: .public)")
         }
         return .conflict(suggestedFileName: uniqueCopyURL(in: directory, preferred: preferred).lastPathComponent)
     }

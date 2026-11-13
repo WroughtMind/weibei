@@ -1,8 +1,23 @@
+import Combine
 import Foundation
 @testable import WeiBei
 import WeiBeiCore
 
 enum CourseProjectRootSelfCheck {
+    @MainActor
+    private static func expectDeclinedRisk(
+        _ label: String, in store: WorkspaceStore, operation: () throws -> Void
+    ) throws {
+        var asked = false
+        let observation = store.userOperationRisks.$pendingRequest.compactMap { $0 }.sink { request in
+            asked = true
+            DispatchQueue.main.async { store.userOperationRisks.respond(to: request.id, continuing: false) }
+        }
+        defer { observation.cancel() }
+        try expectFailure(label, operation)
+        try check(asked, "\(label) 没有先提供可理解的风险选择")
+    }
+
     @MainActor
     static func runBackgroundWorkspacePersistenceOnly() throws {
         try backgroundWorkspacePersistenceIsOrderedAndDurable()
@@ -3654,8 +3669,8 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: oversizedWorkspace
         )
         try oversizedProbe.configureCourseLibrary(at: library)
-        // 布局安全但状态超大不可读：仍拒绝纳入，且不改动原文件（保护共享课程根）。
-        try expectFailure("33MB 课程状态有界拒读") {
+        // 拒绝接入新课程时，原有超大状态仍须原样保留。
+        try expectDeclinedRisk("33MB 课程状态保留原件", in: oversizedProbe) {
             _ = try oversizedProbe.adoptCourseFolder(
                 at: courseARoot,
                 title: "超大状态拒读"
@@ -5506,7 +5521,9 @@ enum CourseProjectRootSelfCheck {
         let store = makeStore(fixture: fixture)
         try store.configureCourseLibrary(at: library)
 
-        try expectFailure("损坏 metadata") { try store.adoptCourseFolder(at: external, title: "损坏课程") }
+        try expectDeclinedRisk("损坏 metadata", in: store) {
+            _ = try store.adoptCourseFolder(at: external, title: "损坏课程")
+        }
         try check(try Data(contentsOf: manifestURL) == original, "接管覆盖了未知或损坏的 .weibei")
         try check(store.courses.isEmpty, "损坏 metadata 仍产生了 Course")
     }

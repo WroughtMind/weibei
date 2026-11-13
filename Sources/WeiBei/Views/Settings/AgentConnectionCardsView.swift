@@ -134,10 +134,8 @@ struct AgentConnectionCardsView: View {
                     store.selectAgentCredentialProfile(profile.id)
                 }
             }
-            if store.agentCredentialProfiles.count > 1 {
-                Button(store.ui("删除连接", "Delete Connection"), role: .destructive) {
-                    deleteConnection(profile)
-                }
+            Button(store.ui("删除连接", "Delete Connection"), role: .destructive) {
+                deleteConnection(profile)
             }
         }
     }
@@ -649,6 +647,7 @@ struct AgentConnectionCardsView: View {
     }
 
     private func refreshActiveModels() {
+        guard !store.agentCredentialProfiles.isEmpty else { return }
         oauthService.refreshModels(
             provider: store.agentProviderID,
             baseURL: store.agentBaseURL,
@@ -693,7 +692,6 @@ struct AgentConnectionCardsView: View {
     }
 
     private func deleteConnection(_ profile: AgentCredentialProfile) {
-        guard store.agentCredentialProfiles.count > 1 else { return }
         probeState.invalidate(profile.id)
         if store.activeAgentProfileID != profile.id {
             store.selectAgentCredentialProfile(profile.id)

@@ -34,6 +34,7 @@ let spec: GenuiSpec;
 let state: BlockInteractionState = {};
 let pending: number | undefined;
 let nextRequestID = 0;
+let renderNotice = '';
 
 setGenuiAssetBase('./');
 const saveState = (value: BlockInteractionState) => {
@@ -74,10 +75,16 @@ window.WeiBeiGenUIHost = {
   render(next) {
     const result = processGenuiSpec(next.spec);
     const unsupported = result.renderedTotalCount !== result.renderedNativeCount;
-    if (!isRenderableProcess(result) || result.spec === null || unsupported) {
+    if (result.spec === null || result.renderedNativeCount === 0 || unsupported) {
       showStatus(`互动界面无法显示：${unsupported ? '包含未支持的组件' : result.errors.join('；')}`);
       post({ type: 'error', renderToken: next.renderToken, message: status.textContent });
       return;
+    }
+    const incomplete = !isRenderableProcess(result) || result.renderedNativeCount < result.declaredNativeCount;
+    renderNotice = incomplete ? '部分内容暂时无法显示，已保留其余内容。' : '';
+    if (incomplete) {
+      console.warn('GenUI repaired partial content', result.errors);
+      post({ type: 'diagnostic', code: 'genui_repaired_partial' });
     }
     if (payload === undefined || payload.id !== next.id) {
       state = next.state ?? {};
@@ -90,7 +97,7 @@ window.WeiBeiGenUIHost = {
     }
     document.body.toggleAttribute('data-ds-dark-theme', next.appearance === 'dark');
     document.documentElement.style.colorScheme = next.appearance === 'dark' ? 'dark' : 'light';
-    showStatus(next.actionUnavailableReason || (next.actionStatus === 'processing' ? '正在生成回答…' : ''));
+    showStatus(next.actionUnavailableReason || (next.actionStatus === 'processing' ? '正在生成回答…' : renderNotice));
     draw();
     reportHeight();
     requestAnimationFrame(() => {

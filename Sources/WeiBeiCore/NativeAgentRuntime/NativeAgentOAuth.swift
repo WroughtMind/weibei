@@ -523,7 +523,7 @@ final class CallbackWaiter: @unchecked Sendable {
             Self.activeLock.unlock()
             stopped.signal()
         }
-        let deadline = Date().addingTimeInterval(300)
+        let deadline = ContinuousClock.now + .seconds(300)
         while true {
             lock.lock()
             let stop = shouldStop
@@ -532,7 +532,7 @@ final class CallbackWaiter: @unchecked Sendable {
             let (_, finishedAt) = snapshot()
             // Keep the result available for refreshes; the next login retires this listener.
             if let finishedAt, Date().timeIntervalSince(finishedAt) > 300 { return }
-            if Date() >= deadline, finishedAt == nil, !hasAuthorizationCode, !resultOnly {
+            if ContinuousClock.now >= deadline, finishedAt == nil, !hasAuthorizationCode, !resultOnly {
                 complete(.expired)
                 finish(.failure(NativeLLMFailure(code: "oauth_timeout", message: "browser sign-in timed out")))
             }

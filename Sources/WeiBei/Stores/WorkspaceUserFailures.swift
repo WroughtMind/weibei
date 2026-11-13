@@ -1,4 +1,57 @@
+import Combine
 import Foundation
+
+/// A concrete, user-decidable consequence. Requests keep their own identity
+/// and await the user's choice; a second operation cannot cancel the first one.
+@MainActor
+final class UserOperationRiskCenter: ObservableObject {
+    enum Context: Equatable { case workspace, noteConflict, fileImport, courseEntry, courseManagement }
+
+    struct Request: Identifiable {
+        let id: UUID
+        let title: String
+        let actionLabel: String
+        let message: String
+        let context: Context
+        fileprivate let continuation: CheckedContinuation<Bool, Never>
+    }
+
+    @Published private(set) var pendingRequest: Request?
+    private var queuedRequests: [Request] = []
+
+    func confirm(title: String, actionLabel: String, message: String, context: Context = .workspace) async -> Bool {
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                queuedRequests.append(Request(id: id, title: title, actionLabel: actionLabel,
+                                              message: message, context: context, continuation: continuation))
+                showNextIfNeeded()
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.respond(to: id, continuing: false) }
+        }
+    }
+
+    func respond(to id: UUID, continuing: Bool) {
+        if let request = pendingRequest, request.id == id {
+            pendingRequest = nil
+            request.continuation.resume(returning: continuing)
+            // Let the current alert dismiss before presenting the next choice.
+            DispatchQueue.main.async { [weak self] in self?.showNextIfNeeded() }
+        } else if let index = queuedRequests.firstIndex(where: { $0.id == id }) {
+            queuedRequests.remove(at: index).continuation.resume(returning: false)
+        }
+    }
+
+    private func showNextIfNeeded() {
+        guard pendingRequest == nil, !queuedRequests.isEmpty else { return }
+        pendingRequest = queuedRequests.removeFirst()
+    }
+}
 
 /// 保存链路对外状态：界面只在 failed 点亮，saved 常灭。
 enum WorkspacePersistState: Equatable {

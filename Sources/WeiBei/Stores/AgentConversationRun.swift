@@ -12,6 +12,8 @@ final class AgentConversationRun {
     var baseURL = ""
     var modelName = ""
     var runtime: NativeStudyAgentRuntime?
+    /// Keep unsaved protocol history for the whole chat, including across model requests.
+    var sessionLedger: NativeAgentLedger?
     let streaming = AgentStreamingState()
 
     init(chatID: UUID?) { self.chatID = chatID }

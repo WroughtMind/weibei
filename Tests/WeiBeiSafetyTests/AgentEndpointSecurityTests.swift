@@ -167,7 +167,7 @@ final class AgentEndpointSecurityTests: XCTestCase {
     }
 
     @MainActor
-    func testAgentOwnedRootsRejectSymlinksOutsideWorkspace() throws {
+    func testAgentOwnedRootsRejectWritesOutsideWorkspaceWhileChatCanContinue() async throws {
         enum OwnedRoot: String {
             case chats = "AgentRuntime/Chats"
             case ledgers = "NativeAgent/Ledgers"
@@ -200,10 +200,19 @@ final class AgentEndpointSecurityTests: XCTestCase {
                     startsAtBlankEntries: true,
                     startsCourseFileMaintenance: false
                 )
+                store.modelName = "mock"
+                store.agentProviderID = .openai
+                let answered = expectation(description: "The model can answer without the unsafe bookkeeping directory")
+                store.selfCheckAgentResponder = { _ in
+                    answered.fulfill()
+                    return StudyAgentReply(text: "回答", backend: .native)
+                }
                 XCTAssertNotNil(store.createStudySession(courseID: nil))
                 let rejection = store.askAgent(questionOverride: "解释这段材料")
-                store.cancelAgentRequest()
-                XCTAssertNotNil(rejection, "聊天目录指向资料库外时必须拒绝发送")
+                XCTAssertNil(rejection)
+                await fulfillment(of: [answered], timeout: 8)
+                await store.agentRequestTask?.value
+                store.selfCheckAgentResponder = nil
             case .ledgers:
                 let ledgerURL = linkedRoot
                     .appendingPathComponent(UUID().uuidString, isDirectory: true)

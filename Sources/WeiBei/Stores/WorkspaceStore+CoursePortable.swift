@@ -880,6 +880,7 @@ extension WorkspaceStore {
     @discardableResult
     func restorePortableCourseStates() -> Bool {
         var changed = false
+        var unreadable = unreadableCourseHistoryIDs.intersection(courses.map(\.id))
         for courseID in courses.map(\.id) {
             guard let stateURL = coursePortableStateURL(for: courseID) else {
                 continue
@@ -903,8 +904,10 @@ extension WorkspaceStore {
                 dirtyPortableCourseIDs.remove(courseID)
                 blockedPortableCourseIDs.remove(courseID)
                 oversizedPortableCourseIDs.remove(courseID)
+                unreadable.remove(courseID)
                 changed = true
             } catch {
+                unreadable.insert(courseID)
                 blockedPortableCourseIDs.insert(courseID)
                 dirtyPortableCourseIDs.insert(courseID)
                 needsPortableCourseStateBootstrap = true
@@ -915,6 +918,7 @@ extension WorkspaceStore {
                 changed = true
             }
         }
+        if unreadable != unreadableCourseHistoryIDs { unreadableCourseHistoryIDs = unreadable }
         return changed
     }
 

@@ -643,6 +643,60 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testBulkLearningMemoryUpdatesAndResolutionsSurviveReopening() async throws {
+        let fixture = try XCTUnwrap(asyncStoreFixture)
+        let store = fixture.store
+        let session = try XCTUnwrap(store.createStudySession(courseID: nil))
+        let target = WorkspaceStore.AgentConversationTarget(
+            sessionID: session.id, workingDirectory: fixture.root, courseID: nil
+        )
+        let question = "请记录这些学习目标"
+        let goals = (1...13).map { "学习目标 \($0)" }
+        let created = await store.persistNativeLearningUpdate(
+            StudyAgentLearningUpdate(
+                contextRevision: "bulk-memory",
+                memoryRevision: store.makeLearningContext(target: target).memoryRevision,
+                entries: goals.map {
+                    StudyAgentMemoryUpdateEntry(kind: .goal, text: $0,
+                        evidence: "[用户：本轮] \(question)", origin: .userStatement)
+                }
+            ),
+            expectedContextRevision: "bulk-memory", expectedUserQuestion: question,
+            target: target, messageID: UUID()
+        )
+        XCTAssertTrue(created.accepted, created.message)
+        let memoryIDs = try XCTUnwrap(created.memoryUpdate?.memoryIDs)
+        XCTAssertEqual(memoryIDs.count, goals.count)
+
+        let reopened = WorkspaceStore(workspaceDirectory: fixture.root.appendingPathComponent("workspace"),
+            startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let saved = reopened.learningMemoryEntries(in: .global)
+        XCTAssertEqual(Set(saved.map(\.text)), Set(goals))
+        XCTAssertEqual(Set(saved.map(\.id)), Set(memoryIDs))
+        XCTAssertTrue(saved.allSatisfy { $0.status == .active })
+        let resolved = await reopened.persistNativeLearningUpdate(
+            StudyAgentLearningUpdate(
+                contextRevision: "resolve-bulk-memory",
+                memoryRevision: reopened.makeLearningContext(target: target).memoryRevision,
+                resolutions: saved.map {
+                    StudyAgentMemoryResolution(memoryID: $0.id.uuidString, text: $0.text,
+                        evidence: "[用户：本轮] 这些学习目标都已完成")
+                }
+            ),
+            expectedContextRevision: "resolve-bulk-memory", expectedUserQuestion: "这些学习目标都已完成",
+            target: target, messageID: UUID()
+        )
+        XCTAssertTrue(resolved.accepted, resolved.message)
+        XCTAssertEqual(Set(resolved.memoryUpdate?.memoryIDs ?? []), Set(memoryIDs))
+        let restored = WorkspaceStore(workspaceDirectory: fixture.root.appendingPathComponent("workspace"),
+            startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let completed = restored.learningMemoryEntries(in: .global)
+        XCTAssertEqual(Set(completed.map(\.id)), Set(memoryIDs))
+        XCTAssertEqual(Set(completed.map(\.text)), Set(goals))
+        XCTAssertTrue(completed.allSatisfy { $0.status == .resolved && $0.resolutionEvidence != nil })
+    }
+
+    @MainActor
     func testLearningUpdateKeepsFullSessionSummaryAndNextSteps() async throws {
         // 落盘回执要求课程携带状态真实写入，夹具必须有真实课程根目录。
         let fixture = try XCTUnwrap(asyncStoreFixture)
