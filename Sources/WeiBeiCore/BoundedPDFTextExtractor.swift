@@ -12,46 +12,6 @@ public struct BoundedPDFTextPage: Sendable {
 }
 
 public enum BoundedPDFTextExtractor {
-    private final class WorkerOutputBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var output = Data()
-        private var overflowed = false
-
-        func append(_ data: Data, limit: Int) -> Bool {
-            lock.lock()
-            defer { lock.unlock() }
-            guard !overflowed, output.count + data.count <= limit else {
-                overflowed = true
-                return false
-            }
-            output.append(data)
-            return true
-        }
-
-        func load() -> (output: Data, overflowed: Bool) {
-            lock.lock()
-            defer { lock.unlock() }
-            return (output, overflowed)
-        }
-    }
-
-    private final class WorkerTerminationState: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value = false
-
-        func markTerminated() {
-            lock.lock()
-            value = true
-            lock.unlock()
-        }
-
-        func wasTerminated() -> Bool {
-            lock.lock()
-            defer { lock.unlock() }
-            return value
-        }
-    }
-
     private struct WorkerResponse: Decodable {
         var pages: [WorkerPage]
     }
@@ -118,11 +78,11 @@ public enum BoundedPDFTextExtractor {
 
 #if DEBUG
     public static func runSafetySelfCheck() -> Bool {
-        func failed(_ probe: String, since start: Date) -> Bool {
-            fputs("PDF worker safety probe failed: \(probe), elapsed=\(Date().timeIntervalSince(start))s\n", stderr)
+        func failed(_ probe: String, since start: ContinuousClock.Instant) -> Bool {
+            fputs("PDF worker safety probe failed: \(probe), elapsed=\(start.duration(to: .now))\n", stderr)
             return false
         }
-        let normalStart = Date()
+        let normalStart = ContinuousClock.now
         guard runWorker(
             arguments: ["--safety-probe", "normal"],
             timeout: 1,
@@ -131,32 +91,42 @@ public enum BoundedPDFTextExtractor {
             environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
         ) == Data("verification-ok\n".utf8) else { return failed("normal output", since: normalStart) }
 
-        let timeoutStart = Date()
+        let timeoutStart = ContinuousClock.now
         guard runWorker(
             arguments: ["--safety-probe", "timeout"],
             timeout: 0.15,
             maximumResidentBytes: maximumWorkerResidentBytes,
             maximumOutputBytes: 1_024,
             environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
-        ) == nil, Date().timeIntervalSince(timeoutStart) < 1 else { return failed("timeout", since: timeoutStart) }
+        ) == nil, timeoutStart.duration(to: .now) < .seconds(1) else { return failed("timeout", since: timeoutStart) }
 
-        let outputStart = Date()
+        let outputStart = ContinuousClock.now
         guard runWorker(
             arguments: ["--safety-probe", "output"],
             timeout: 1,
             maximumResidentBytes: maximumWorkerResidentBytes,
             maximumOutputBytes: 1_024,
             environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
-        ) == nil, Date().timeIntervalSince(outputStart) < 1 else { return failed("output limit", since: outputStart) }
+        ) == nil, outputStart.duration(to: .now) < .seconds(1) else { return failed("output limit", since: outputStart) }
 
-        let memoryStart = Date()
+        let drainStart = ContinuousClock.now
+        let completeOutput = Data(repeating: 65, count: 2 * 1_024 * 1_024)
+        guard runWorker(
+            arguments: ["--safety-probe", "output"],
+            timeout: maximumWorkerTimeout,
+            maximumResidentBytes: maximumWorkerResidentBytes,
+            maximumOutputBytes: completeOutput.count,
+            environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
+        ) == completeOutput else { return failed("complete output after worker exit", since: drainStart) }
+
+        let memoryStart = ContinuousClock.now
         guard runWorker(
             arguments: ["--safety-probe", "memory"],
             timeout: 2,
             maximumResidentBytes: 128 * 1_024 * 1_024,
             maximumOutputBytes: 1_024,
             environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
-        ) == nil, Date().timeIntervalSince(memoryStart) < 1.5 else { return failed("memory limit", since: memoryStart) }
+        ) == nil, memoryStart.duration(to: .now) < .seconds(1.5) else { return failed("memory limit", since: memoryStart) }
 
         let cancellationCompletion = DispatchSemaphore(value: 0)
         let cancellationTask = Task.detached {
@@ -170,10 +140,10 @@ public enum BoundedPDFTextExtractor {
             cancellationCompletion.signal()
         }
         Thread.sleep(forTimeInterval: 0.05)
-        let cancellationStart = Date()
+        let cancellationStart = ContinuousClock.now
         cancellationTask.cancel()
         guard cancellationCompletion.wait(timeout: .now() + 1) == .success,
-              Date().timeIntervalSince(cancellationStart) < 1 else { return failed("cancellation", since: cancellationStart) }
+              cancellationStart.duration(to: .now) < .seconds(1) else { return failed("cancellation", since: cancellationStart) }
         return true
     }
 #endif
@@ -188,80 +158,15 @@ public enum BoundedPDFTextExtractor {
         guard !Task.isCancelled,
               maximumOutputBytes > 0,
               let workerURL = workerURL() else { return nil }
-#if targetEnvironment(macCatalyst)
-        return runCatalystWorker(at: workerURL, arguments: arguments, timeout: timeout,
+        return runIsolatedWorker(at: workerURL, arguments: arguments, timeout: timeout,
                                  maximumResidentBytes: maximumResidentBytes,
                                  maximumOutputBytes: maximumOutputBytes,
                                  environmentOverrides: environmentOverrides)
-#else
-        let process = Process()
-        let outputPipe = Pipe()
-        process.executableURL = workerURL
-        process.arguments = arguments
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
-        var environment = [
-            "LANG": "en_US.UTF-8",
-            "PATH": "/usr/bin:/bin",
-            "TMPDIR": FileManager.default.temporaryDirectory.path,
-        ]
-        for (key, value) in environmentOverrides {
-            environment[key] = value
-        }
-        process.environment = environment
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-
-        let outputBox = WorkerOutputBox()
-        let terminationState = WorkerTerminationState()
-        let completion = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .utility).async {
-            while true {
-                let chunk = outputPipe.fileHandleForReading.readData(ofLength: 64 * 1_024)
-                guard !chunk.isEmpty else { break }
-                guard outputBox.append(chunk, limit: maximumOutputBytes) else {
-                    terminationState.markTerminated()
-                    terminate(process)
-                    break
-                }
-            }
-            process.waitUntilExit()
-            completion.signal()
-        }
-        let deadline = Date().addingTimeInterval(timeout)
-        var terminated = false
-        while completion.wait(timeout: .now() + 0.02) == .timedOut {
-            if Task.isCancelled
-                || Date() >= deadline
-                || workerResidentBytes(process.processIdentifier).map({ $0 > maximumResidentBytes }) == true {
-                terminate(process)
-                terminated = true
-                break
-            }
-        }
-        if terminated {
-            _ = completion.wait(timeout: .now() + 1)
-        }
-
-        let captured = outputBox.load()
-        guard !Task.isCancelled,
-              !terminated,
-              !terminationState.wasTerminated(),
-              process.terminationReason == .exit,
-              process.terminationStatus == 0,
-              !captured.overflowed else { return nil }
-        return captured.output
-#endif
     }
 
-#if targetEnvironment(macCatalyst)
-    // Catalyst exposes POSIX spawning, but not Process.run(). Keep the same
-    // isolated PDF worker and its time, memory, cancellation and output limits.
-    private static func runCatalystWorker(
+    // Use the same nonblocking, reaped child process on both macOS and Catalyst.
+    // Foundation Process exit notifications must not delay the resource watchdog.
+    private static func runIsolatedWorker(
         at url: URL, arguments: [String], timeout: TimeInterval,
         maximumResidentBytes: UInt64, maximumOutputBytes: Int,
         environmentOverrides: [String: String]
@@ -296,9 +201,9 @@ public enum BoundedPDFTextExtractor {
         guard fcntl(descriptors[0], F_SETFL, O_NONBLOCK) != -1 else { return nil }
         var output = Data()
         var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = ContinuousClock.now + .seconds(timeout)
         while true {
-            guard !Task.isCancelled, Date() < deadline,
+            guard !Task.isCancelled, ContinuousClock.now < deadline,
                   workerResidentBytes(pid).map({ $0 <= maximumResidentBytes }) != false else { return nil }
             let count = read(descriptors[0], &buffer, buffer.count)
             if count > 0 {
@@ -306,11 +211,12 @@ public enum BoundedPDFTextExtractor {
                 output.append(contentsOf: buffer.prefix(count))
             } else if count < 0 && errno != EAGAIN && errno != EINTR { return nil }
             if !exited { exited = waitpid(pid, &status, WNOHANG) == pid }
-            if exited && count <= 0 { return status == 0 ? output : nil }
+            // EAGAIN can precede the child's final write and exit. Drain until
+            // actual EOF even when waitpid has already reaped the child.
+            if exited && count == 0 { return status == 0 ? output : nil }
             if count <= 0 { usleep(20_000) }
         }
     }
-#endif
 
     private static func workerURL() -> URL? {
         let fileManager = FileManager.default
@@ -342,14 +248,4 @@ public enum BoundedPDFTextExtractor {
         return result == Int32(size) ? information.pti_resident_size : nil
     }
 
-#if !targetEnvironment(macCatalyst)
-    private static func terminate(_ process: Process) {
-        guard process.isRunning else { return }
-        process.terminate()
-        Thread.sleep(forTimeInterval: 0.1)
-        if process.isRunning {
-            Darwin.kill(process.processIdentifier, SIGKILL)
-        }
-    }
-#endif
 }

@@ -150,7 +150,7 @@ final class NativeModelUsageTests: XCTestCase {
         XCTAssertEqual(try snapshots(url).last?.usage?.inputTokens, 123)
     }
 
-    func testUsagePathRejectsSymlinkWithoutWritingOutsideWorkspace() async throws {
+    func testUsagePathRejectsSymlinkWithoutBlockingTheModelResponse() async throws {
         let root = temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("NativeAgent/Ledgers/test/usage.jsonl")
@@ -160,11 +160,34 @@ final class NativeModelUsageTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: url, withDestinationURL: other)
         let adapter = NativeMeteredLLMAdapter(base: UsageChunksAdapter(chunks: [], error: nil),
             providerID: nil, requestID: UUID(), usageURL: url, contextWindow: nil)
-        do {
-            for try await _ in adapter.stream(.init(model: "mock", messages: [])) {}
-            XCTFail("符号链接必须拒绝")
-        } catch {}
+        for try await _ in adapter.stream(.init(model: "mock", messages: [])) {}
         XCTAssertEqual(try String(contentsOf: other), "keep")
+    }
+
+    func testUsageWriteFailureKeepsResponseAndOriginalProviderError() async throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("blocked".utf8).write(to: root.appendingPathComponent("NativeAgent"))
+        let url = root.appendingPathComponent("NativeAgent/Ledgers/test/usage.jsonl")
+        for providerFails in [false, true] {
+            let adapter = NativeMeteredLLMAdapter(base: UsageChunksAdapter(
+                chunks: [.textDelta(index: 0, text: "实际回答"), .finish(reason: .stop, replayState: nil)],
+                error: providerFails ? .init(code: "provider_failure", message: "service failed") : nil),
+                providerID: nil, requestID: UUID(), usageURL: url, contextWindow: nil)
+            var text = ""
+            do {
+                for try await chunk in adapter.stream(.init(model: "mock", messages: [])) {
+                    if case let .textDelta(_, value) = chunk { text += value }
+                }
+                XCTAssertFalse(providerFails)
+            } catch {
+                XCTAssertTrue(providerFails)
+                XCTAssertEqual((error as? NativeLLMFailure)?.code, "provider_failure")
+            }
+            XCTAssertEqual(text, "实际回答")
+        }
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("NativeAgent")), Data("blocked".utf8))
     }
 
     func testCodexCatalogCapacityValidationCachingAndAccountIsolation() async throws {

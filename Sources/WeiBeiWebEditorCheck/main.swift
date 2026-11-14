@@ -3584,10 +3584,10 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard expectedLoadStarted else { return }
-        validateLoadedHTML(until: Date().addingTimeInterval(3))
+        validateLoadedHTML(until: ContinuousClock.now + .seconds(3))
     }
 
-    private func validateLoadedHTML(until deadline: Date) {
+    private func validateLoadedHTML(until deadline: ContinuousClock.Instant) {
         webView.evaluateJavaScript("""
         (() => {
           const image = document.getElementById('relative-image');
@@ -3600,7 +3600,7 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
         """) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, let result = value as? [String: Any] else {
-                if Date() >= deadline {
+                if ContinuousClock.now >= deadline {
                     failure = "UTF-8 HTML reader JavaScript failed: \(String(describing: error))"
                     isDone = true
                 } else {
@@ -3614,7 +3614,7 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
                   text.contains("利率基础"),
                   text.contains("名义利率与实际利率"),
                   !text.contains("旧文稿") else {
-                if Date() >= deadline {
+                if ContinuousClock.now >= deadline {
                     failure = "UTF-8 HTML or stale-navigation cancellation failed: \(String(describing: value)); error=\(String(describing: error))"
                     isDone = true
                 } else {
@@ -3629,7 +3629,7 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
                 isDone = true
                 return
             }
-            if Date() >= deadline {
+            if ContinuousClock.now >= deadline {
                 failure = "same-directory HTML resources did not load: \(String(describing: value))"
                 isDone = true
                 return

@@ -1,8 +1,23 @@
+import Combine
 import Foundation
 @testable import WeiBei
 import WeiBeiCore
 
 enum CourseProjectRootSelfCheck {
+    @MainActor
+    private static func expectDeclinedRisk(
+        _ label: String, in store: WorkspaceStore, operation: () throws -> Void
+    ) throws {
+        var asked = false
+        let observation = store.userOperationRisks.$pendingRequest.compactMap { $0 }.sink { request in
+            asked = true
+            DispatchQueue.main.async { store.userOperationRisks.respond(to: request.id, continuing: false) }
+        }
+        defer { observation.cancel() }
+        try expectFailure(label, operation)
+        try check(asked, "\(label) 没有先提供可理解的风险选择")
+    }
+
     @MainActor
     static func runBackgroundWorkspacePersistenceOnly() throws {
         try backgroundWorkspacePersistenceIsOrderedAndDurable()
@@ -3194,12 +3209,19 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: directoryProbeWorkspace
         )
         try directoryProbe.configureCourseLibrary(at: library)
-        try expectFailure("目录伪装成课程笔记") {
-            _ = try directoryProbe.adoptCourseFolder(
-                at: courseARoot,
-                title: "目录伪装"
-            )
-        }
+        let directoryProbeID = try directoryProbe.adoptCourseFolder(
+            at: courseARoot, title: "目录伪装"
+        )
+        let directoryProbeState = try Data(contentsOf: stateURL)
+        try check(
+            directoryProbeID == courseA
+                && directoryProbe.unreadableCourseHistoryIDs.contains(courseA)
+                && !directoryProbe.importedItems.contains {
+                    $0.id == "portable-unsafe-note" || $0.url?.lastPathComponent == unsafeEntryURL.lastPathComponent
+                }
+                && directoryProbeState == unsafeEntryData,
+            "打开已有课程时应隔离目录伪装的笔记并保留原课程状态"
+        )
         try check(unsafeEntryURL.isDirectory, "目录伪装校验改动了原目录")
         try FileManager.default.removeItem(at: unsafeEntryURL)
 
@@ -3220,12 +3242,19 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: linkedEntryWorkspace
         )
         try linkedEntryProbe.configureCourseLibrary(at: library)
-        try expectFailure("链接伪装成课程笔记") {
-            _ = try linkedEntryProbe.adoptCourseFolder(
-                at: courseARoot,
-                title: "链接伪装"
-            )
-        }
+        let linkedEntryProbeID = try linkedEntryProbe.adoptCourseFolder(
+            at: courseARoot, title: "链接伪装"
+        )
+        let linkedEntryProbeState = try Data(contentsOf: stateURL)
+        try check(
+            linkedEntryProbeID == courseA
+                && linkedEntryProbe.unreadableCourseHistoryIDs.contains(courseA)
+                && !linkedEntryProbe.importedItems.contains {
+                    $0.id == "portable-unsafe-note" || $0.url?.lastPathComponent == unsafeEntryURL.lastPathComponent
+                }
+                && linkedEntryProbeState == unsafeEntryData,
+            "打开已有课程时应隔离链接伪装的笔记并保留原课程状态"
+        )
         let preservedExternalAliasData = try Data(
             contentsOf: externalAliasTarget
         )
@@ -3654,13 +3683,13 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: oversizedWorkspace
         )
         try oversizedProbe.configureCourseLibrary(at: library)
-        // 布局安全但状态超大不可读：仍拒绝纳入，且不改动原文件（保护共享课程根）。
-        try expectFailure("33MB 课程状态有界拒读") {
-            _ = try oversizedProbe.adoptCourseFolder(
-                at: courseARoot,
-                title: "超大状态拒读"
-            )
-        }
+        let openedCourse = try oversizedProbe.adoptCourseFolder(
+            at: courseARoot, title: "超大状态拒读"
+        )
+        try check(
+            openedCourse == courseA && oversizedProbe.unreadableCourseHistoryIDs.contains(courseA),
+            "已有课程的超大状态应提示历史不可用并允许打开资料"
+        )
         let oversizedVerifyHandle = try FileHandle(forReadingFrom: stateURL)
         let oversizedPrefixAfterRead = try require(
             oversizedVerifyHandle.read(upToCount: 128),
@@ -5506,7 +5535,9 @@ enum CourseProjectRootSelfCheck {
         let store = makeStore(fixture: fixture)
         try store.configureCourseLibrary(at: library)
 
-        try expectFailure("损坏 metadata") { try store.adoptCourseFolder(at: external, title: "损坏课程") }
+        try expectDeclinedRisk("损坏 metadata", in: store) {
+            _ = try store.adoptCourseFolder(at: external, title: "损坏课程")
+        }
         try check(try Data(contentsOf: manifestURL) == original, "接管覆盖了未知或损坏的 .weibei")
         try check(store.courses.isEmpty, "损坏 metadata 仍产生了 Course")
     }

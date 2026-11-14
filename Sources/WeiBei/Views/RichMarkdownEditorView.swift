@@ -33,15 +33,15 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
         var dataTask: URLSessionDataTask?
         var data = Data()
         var mimeType = ""
-        var redirectCount = 0
+        var visitedURLs: Set<String> = []
 
         init(schemeTask: WKURLSchemeTask, requestURL: URL) {
             self.schemeTask = schemeTask
             self.requestURL = requestURL
+            visitedURLs = [requestURL.absoluteString]
         }
     }
 
-    private static let maximumRedirectCount = 5
     var markdownBaseURLString = ""
     var attachmentDirectory: URL?
     var appearanceMode: WeiBeiAppearanceMode = .paper
@@ -350,10 +350,10 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
             completionHandler(nil)
             return
         }
-        load.redirectCount += 1
-        guard load.redirectCount <= Self.maximumRedirectCount,
-              let url = request.url,
-              let sanitized = Self.sanitizedRemoteRequest(for: url) else {
+        guard let url = request.url,
+              let sanitized = Self.sanitizedRemoteRequest(for: url),
+              let destination = sanitized.url,
+              load.visitedURLs.insert(destination.absoluteString).inserted else {
             completionHandler(nil)
             failRemoteLoad(taskIdentifier: task.taskIdentifier, code: 6)
             return

@@ -9,7 +9,7 @@ final class DailyWorkflowTests: XCTestCase {
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
     }
 
-    func testConcurrentChatsKeepTheirQuestionStreamAndCancellation() throws {
+    func testConcurrentChatsKeepTheirQuestionStreamAndCancellation() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("Workspace"), startsAtBlankEntries: true, startsCourseFileMaintenance: false)
         store.modelName = "test-model"
@@ -32,17 +32,15 @@ final class DailyWorkflowTests: XCTestCase {
         store.agentDraft = "问题乙"
         XCTAssertNil(store.askAgent())
         XCTAssertNotEqual(first.id, second.id)
-        wait(for: [started], timeout: 8)
+        await fulfillment(of: [started], timeout: 8)
         XCTAssertTrue(store.isAgentRunning(in: first.id))
         XCTAssertTrue(store.isAgentRunning(in: second.id))
         XCTAssertTrue(store.activateStudySession(first.id, expectedCourseID: nil, expectedScopeNeedsReview: false))
         XCTAssertEqual(store.agentStreaming.text, "片段：问题甲")
         store.cancelAgentRequest()
         let secondTask = store.agentRuns[second.id]?.agentRequestTask
-        try store.waitForCourseFileOperation {
-            await store.waitForAgentRequestsToStop()
-            await secondTask?.value
-        }
+        await store.waitForAgentRequestsToStop()
+        await secondTask?.value
         let firstMessages = try XCTUnwrap(store.studySessions.first { $0.id == first.id }).messages
         let secondMessages = try XCTUnwrap(store.studySessions.first { $0.id == second.id }).messages
         XCTAssertEqual(firstMessages.first?.text, "问题甲")
@@ -63,30 +61,32 @@ final class DailyWorkflowTests: XCTestCase {
         store.activateStudySession(second.id, expectedCourseID: nil, expectedScopeNeedsReview: false)
         store.agentDraft = "退出乙"
         XCTAssertNil(store.askAgent())
-        wait(for: [stopping], timeout: 8)
+        await fulfillment(of: [stopping], timeout: 8)
         store.cancelAllAgentRequests()
-        try store.waitForCourseFileOperation { await store.waitForAgentRequestsToStop() }
+        await store.waitForAgentRequestsToStop()
         XCTAssertFalse(store.studySessions.flatMap(\.messages).contains { $0.completionState == .generating })
         XCTAssertFalse(store.agentRuns.values.contains { $0.agentRequestTask != nil })
-        let saved = try store.waitForCourseFileOperation { await store.flushPendingWorkspaceSaveAsync() }
+        let saved = await store.flushPendingWorkspaceSaveAsync()
         XCTAssertTrue(saved)
     }
 
-    func testBlankNoteSearchAndResumeAcrossLaunch() throws {
+    func testBlankNoteSearchAndResumeAcrossLaunch() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("Workspace"), startsAtBlankEntries: true, startsCourseFileMaintenance: false)
         let library = root.appendingPathComponent("资料库")
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        try store.waitForCourseFileOperation { try await store.configureCourseLibraryAsync(at: library) }
+        try await store.configureCourseLibraryAsync(at: library)
         store.createBlankNotebookNote()
         let note = try XCTUnwrap(store.activeNoteItem)
         XCTAssertNil(store.notebookCreationDraft)
         XCTAssertEqual(store.focusedPane, .notes)
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(note.url).path))
-        store.noteText = "开头\n" + String(repeating: "正文 ", count: 80) + "共同搜索命中词"
-        store.persistCurrentNote()
-        let result = try store.waitForCourseFileOperation { await store.searchAllCourses(currentCourseID: nil, query: "共同搜索命中词") }
+        let initialText = "开头\n" + String(repeating: "正文 ", count: 80) + "共同搜索命中词"
+        store.updateNote(initialText)
+        await store.persistCurrentNoteAsync()
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(note.url), encoding: .utf8), initialText)
+        let result = await store.searchAllCourses(currentCourseID: nil, query: "共同搜索命中词")
         XCTAssertEqual(result.hits.first?.result.itemID, note.id)
         XCTAssertTrue(result.hits.first?.result.matchedText?.contains("共同搜索命中词") == true)
         let firstAction = AgentReplyAction(kind: .writeNote, targetItemID: note.id, proposedMarkdown: "追加甲")
@@ -96,11 +96,9 @@ final class DailyWorkflowTests: XCTestCase {
         store.appendAgentMessage(firstReply)
         _ = store.createStudySession(courseID: nil)
         store.appendAgentMessage(secondReply)
-        try store.waitForCourseFileOperation {
-            async let first: Void = store.confirmAgentReplyAction(messageID: firstReply.id, actionID: firstAction.id)
-            async let second: Void = store.confirmAgentReplyAction(messageID: secondReply.id, actionID: secondAction.id)
-            _ = await (first, second)
-        }
+        async let first: Void = store.confirmAgentReplyAction(messageID: firstReply.id, actionID: firstAction.id)
+        async let second: Void = store.confirmAgentReplyAction(messageID: secondReply.id, actionID: secondAction.id)
+        _ = await (first, second)
         let written = try String(contentsOf: XCTUnwrap(note.url), encoding: .utf8)
         XCTAssertTrue(written.contains("追加甲"))
         XCTAssertTrue(written.contains("追加乙"))
@@ -108,7 +106,7 @@ final class DailyWorkflowTests: XCTestCase {
         store.captureLastWork()
         let point = try XCTUnwrap(store.lastWork)
         XCTAssertEqual(point.noteID, note.id)
-        let saved = try store.waitForCourseFileOperation { await store.flushPendingWorkspaceSaveAsync() }
+        let saved = await store.flushPendingWorkspaceSaveAsync()
         XCTAssertTrue(saved)
         let reopened = WorkspaceStore(workspaceDirectory: root.appendingPathComponent("Workspace"), startsAtBlankEntries: true, startsCourseFileMaintenance: false)
         XCTAssertFalse(reopened.showNotes)
@@ -118,7 +116,8 @@ final class DailyWorkflowTests: XCTestCase {
         XCTAssertTrue(reopened.showNotes)
         XCTAssertTrue(reopened.agentRuns.isEmpty)
 
-        XCTAssertTrue(reopened.flushPendingWorkspaceSave())
+        let reopenedSaved = await reopened.flushPendingWorkspaceSaveAsync()
+        XCTAssertTrue(reopenedSaved)
         let previousWorkspace = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"]
         setenv("WEIBEI_WORKSPACE_DIR", root.appendingPathComponent("Workspace").path, 1)
         defer {

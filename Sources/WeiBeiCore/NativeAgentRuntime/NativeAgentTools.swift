@@ -341,7 +341,7 @@ public enum NativeBuiltinTools {
     private static var createDocument: NativeToolDefinition {
         NativeToolDefinition(
             name: "create_document",
-            description: "把 HTML、Markdown 或 SVG 落盘为工作区文稿，并生成沙箱查看页。Assistant 模式默认不可用。",
+            description: "按用户要求把 HTML、Markdown 或 SVG 保存为新的工作区文稿，并生成沙箱查看页。每次创建独立文件，不覆盖已有文稿。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
@@ -352,9 +352,6 @@ public enum NativeBuiltinTools {
                 "required": ["title", "format", "content"],
             ]),
             execute: { arguments, context in
-                guard context.mode != .assistant else {
-                    throw NativeLLMFailure(code: "guard_denied", message: "create_document 在 Assistant 模式默认关闭")
-                }
                 guard let root = context.liveStores.documentsRoot else {
                     throw NativeLLMFailure(code: "invalid_document", message: "工作区文稿目录未配置")
                 }
@@ -419,7 +416,7 @@ public enum NativeBuiltinTools {
     private static var delegate: NativeToolDefinition {
         NativeToolDefinition(
             name: "delegate",
-            description: "把一项子任务交给子智能体。子智能体有独立账本和工具子集。Assistant 模式默认不可用。",
+            description: "把一项子任务交给子智能体。子智能体有独立账本和工具子集。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
@@ -429,9 +426,6 @@ public enum NativeBuiltinTools {
                 "required": ["task"],
             ]),
             execute: { arguments, context in
-                guard context.mode != .assistant else {
-                    throw NativeLLMFailure(code: "guard_denied", message: "delegate 在 Assistant 模式默认关闭")
-                }
                 guard let start = context.liveStores.startSubagent else {
                     throw NativeLLMFailure(code: "delegate_unavailable", message: "子智能体未接线")
                 }
@@ -468,16 +462,26 @@ public enum NativeBuiltinTools {
                 "required": ["id", "spec"],
             ]),
             execute: { arguments, _ in
-                let id = (arguments["id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard id.range(of: "^[a-z0-9]+(?:-[a-z0-9]+)*$", options: .regularExpression) != nil,
-                      let spec = arguments["spec"] as? [String: Any],
-                      let items = spec["items"] as? [Any],
+                let requestedID = (arguments["id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let id: String
+                if requestedID.range(of: "^[a-z0-9]+(?:-[a-z0-9]+)*$", options: .regularExpression) != nil {
+                    id = requestedID
+                } else {
+                    id = requestedID.isEmpty ? "view-\(UUID().uuidString.lowercased())"
+                        : "view-" + SHA256.hash(data: Data(requestedID.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+                    WeiBeiLog.workspace.info("code=genui_id_normalized render_continued")
+                }
+                guard var spec = arguments["spec"] as? [String: Any] else {
+                    throw NativeLLMFailure(code: "invalid_genui", message: "互动界面缺少可显示的组件内容")
+                }
+                if spec["items"] == nil, spec["type"] is String { spec = ["items": [spec]] }
+                guard let items = spec["items"] as? [Any],
                       !items.isEmpty else {
-                    throw NativeLLMFailure(code: "invalid_genui", message: "dshGenUI 界面必须包含稳定 id 和完整组件树")
+                    throw NativeLLMFailure(code: "invalid_genui", message: "互动界面没有可显示的组件")
                 }
                 let specJSON = try JSONSerialization.data(withJSONObject: spec)
                 if specJSON.count > 1_000_000 {
-                    throw NativeLLMFailure(code: "invalid_genui", message: "dshGenUI 界面必须包含稳定 id 和完整组件树")
+                    WeiBeiLog.workspace.info("code=large_genui_spec render_continued")
                 }
                 return NativeToolExecutionResult(
                     text: "互动界面 \(id) 已接收，等待显示结果。",
@@ -724,13 +728,12 @@ public enum NativeBuiltinTools {
     private static var learningUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_update_learning_memory",
-            description: "记录或更新学习记忆。未选课程时保存到全局，已选课程时保存到该课程。先读取记忆再更新，已有条目使用读取结果中的 memoryID 短别名，新建省略。每条含 kind、text、origin 和 evidence；每次最多 12 条。origin 区分 userStatement（用户自述）、observed（用户实际作答）和 agentInference（推断）。evidence 必须是可用来源标签加逐字引用；用户证据标签见读取结果，当前提问可用 [用户：本轮]。助手讲解不能证明用户已掌握。",
+            description: "记录或更新学习记忆。未选课程时保存到全局，已选课程时保存到该课程。先读取记忆再更新，已有条目使用读取结果中的 memoryID 短别名，新建省略。每条含 kind、text、origin 和 evidence。origin 区分 userStatement（用户自述）、observed（用户实际作答）和 agentInference（推断）。evidence 必须是可用来源标签加逐字引用；用户证据标签见读取结果，当前提问可用 [用户：本轮]。助手讲解不能证明用户已掌握。",
             schema: NativeJSONSchema([
                 "type": "object",
                 "properties": [
                     "entries": [
                         "type": "array",
-                        "maxItems": 12,
                         "items": [
                             "type": "object",
                             "properties": [
@@ -759,7 +762,6 @@ public enum NativeBuiltinTools {
                     ],
                     "resolutions": [
                         "type": "array",
-                        "maxItems": 12,
                         "items": [
                             "type": "object",
                             "properties": [
@@ -787,9 +789,6 @@ public enum NativeBuiltinTools {
                 let aliases = context.stateAliases ?? NativeStateAliases(request: context.request)
                 let entries = try resolveAliases(in: arguments["entries"] as? [Any] ?? [], key: "memoryID", resolve: aliases.memoryID(for:))
                 let resolutions = try resolveAliases(in: arguments["resolutions"] as? [Any] ?? [], key: "memoryID", resolve: aliases.memoryID(for:))
-                guard entries.count <= 12, resolutions.count <= 12 else {
-                    throw NativeLLMFailure(code: "entry_limit", message: "每次最多更新 12 条记忆、解决 12 条记录。")
-                }
                 var details: [String: Any] = [
                     "kind": "learning_update",
                     "contextRevision": context.request.contextRevision,

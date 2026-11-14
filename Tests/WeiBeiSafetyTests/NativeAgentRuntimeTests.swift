@@ -2,6 +2,107 @@ import XCTest
 @testable import WeiBeiCore
 
 final class NativeAgentRuntimeTests: XCTestCase {
+    func testLearningMemoryUpdateIsNotLimitedToTwelveEntries() async throws {
+        let capture = StateUpdateCapture()
+        let stores = NativeLiveStores(persistLearningUpdate: { update in
+            await capture.record(update)
+            return NativeStorePersistReceipt(status: .saved, message: "ok",
+                memoryUpdate: AgentReplyMemoryUpdate(memoryIDs: [], summary: "已保存"))
+        })
+        var context = NativeToolExecutionContext(request: testRequest(), liveStores: stores)
+        context.lastReadMemoryRevision = context.request.learningContext.memoryRevision
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let entries = (1...13).map { index in
+            ["kind": "goal", "text": "目标 \(index)", "origin": "userStatement",
+             "evidence": "[用户：本轮] 测试工具恢复"]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["entries": entries])
+        let result = try await registry.execute(NativeToolCallRequest(name: "weibei_update_learning_memory",
+            argumentsJSON: String(decoding: data, as: UTF8.self), callID: "memory"), context: context, scope: .global)
+        XCTAssertFalse(result.isError, result.text)
+        let update = await capture.learningUpdate
+        XCTAssertEqual(update?.entries.count, entries.count)
+    }
+
+    func testDamagedLedgerRetainsCompletedTurnsForTheNextQuestion() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiContinuingChat-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ledgerRoot = root.appendingPathComponent("NativeAgent/Ledgers")
+        let file = ledgerRoot.appendingPathComponent("same-chat/ledger.jsonl")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let damaged = Data("unreadable history".utf8)
+        try damaged.write(to: file)
+        let capture = RequestCapture()
+        let runtime = NativeStudyAgentRuntime(model: "mock", adapter: MockLLMAdapter(
+            chunks: [.textDelta(index: 0, text: "第一轮回答"), .finish(reason: .stop, replayState: nil)],
+            inspect: { capture.request = $0 }), ledgerRoot: ledgerRoot, systemPromptText: "Answer.")
+        var request = testRequest()
+        request.projectScope.chatID = "same-chat"
+        request.question = "请记住这次的问题"
+        _ = try await runtime.respond(to: request, progress: nil)
+        request.id = UUID()
+        request.question = "接着刚才的问题"
+        _ = try await runtime.respond(to: request, progress: nil)
+        let messages = try XCTUnwrap(capture.request).messages
+        XCTAssertTrue(messages.contains { $0.role == .user && $0.content == "请记住这次的问题" })
+        XCTAssertTrue(messages.contains { $0.role == .assistant && $0.content == "第一轮回答" })
+        XCTAssertEqual(try Data(contentsOf: file), damaged)
+    }
+
+    func testRuntimeAnswersWithDamagedHistoryWithoutOverwritingIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiDamagedLedger-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let request = testRequest()
+        let ledgerRoot = root.appendingPathComponent("NativeAgent/Ledgers")
+        let file = ledgerRoot.appendingPathComponent(request.id.uuidString.lowercased()).appendingPathComponent("ledger.jsonl")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let damaged = Data("unreadable history".utf8)
+        try damaged.write(to: file)
+        let runtime = NativeStudyAgentRuntime(model: "mock", adapter: MockLLMAdapter(
+            chunks: [.textDelta(index: 0, text: "当前问题的回答"), .finish(reason: .stop, replayState: nil)]),
+            ledgerRoot: ledgerRoot, systemPromptText: "Answer the current question.")
+        let reply = try await runtime.respond(to: request, progress: nil)
+        XCTAssertEqual(reply.text, "当前问题的回答")
+        XCTAssertEqual(try Data(contentsOf: file), damaged)
+    }
+
+    func testLedgerWriteFailureKeepsProtocolHistoryInMemory() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiMemoryLedger-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("NativeAgent/Ledgers/chat/ledger.jsonl")
+        let ledger = try NativeAgentLedger(fileURL: file, allowsPersistenceFailure: true)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .userMessage, seq: seq, timeMS: time, turn: 1, text: "问题")
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .assistantMessage, seq: seq, timeMS: time, turn: 1, text: "回答")
+        }
+        let events = await ledger.allEvents()
+        let messages = await ledger.deriveMessages()
+        XCTAssertEqual(events.map(\.seq), [1, 2])
+        XCTAssertEqual(messages.map(\.content), ["问题", "回答"])
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+    }
+
+    func testAssistantAdvertisesDocumentCreationAndDelegationWhenAvailable() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiAssistantTools-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capture = RequestCapture()
+        let runtime = NativeStudyAgentRuntime(model: "mock", adapter: MockLLMAdapter(
+            chunks: [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)],
+            inspect: { capture.request = $0 }), ledgerRoot: root.appendingPathComponent("Ledgers"),
+            systemPromptText: "Complete the user's task.",
+            liveStores: NativeLiveStores(documentsRoot: root.appendingPathComponent("NativeAgent/Documents")))
+        _ = try await runtime.respond(to: testRequest(), progress: nil)
+        let tools = try XCTUnwrap(capture.request).tools.map(\.name)
+        XCTAssertTrue(tools.contains("create_document"))
+        XCTAssertTrue(tools.contains("delegate"))
+    }
+
     func testHeadinglessMarkdownUsesReadableBlocksForExactCourseRead() {
         let markdown = """
         第一段解释风险溢价和无风险收益之间的关系。

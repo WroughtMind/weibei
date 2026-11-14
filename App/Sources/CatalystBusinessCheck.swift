@@ -2414,7 +2414,9 @@ enum CatalystBusinessCheck {
         try JSONSerialization.data(withJSONObject: request).write(
             to: channel.appendingPathComponent("onboarding-ui-request.json"), options: .atomic)
         var response: [String: Any]?
-        try await until("Xcode UI driver response: " + action + " " + id) {
+        // A single Xcode interaction can include several accessibility snapshots and
+        // system interruption handling. Match the UI runner’s inactivity limit.
+        try await until("Xcode UI driver response: " + action + " " + id, seconds: 360) {
             guard let data = try? Data(contentsOf: responseURL),
                   let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   result["token"] as? String == token else { return false }

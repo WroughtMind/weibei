@@ -36,15 +36,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     static let updates: WeiBeiUpdateService = {
         let service = WeiBeiUpdateService()
         service.prepareForInstallation = {
-            let store = AppDelegate.workspace
-            store.commitCurrentReaderLocation()
-            guard await store.freshActiveNoteEditorSnapshot() else { return false }
-            await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
-            guard await store.flushPendingWorkspaceSaveAsync() else { return false }
-            // A file conflict/write failure must not be mistaken for a saved note.
-            return !store.noteEditingSession.dirty
-                && store.noteEditingSession.saveStatus != .failed
-                && store.noteEditingSession.saveStatus != .externallyModified
+            await AppDelegate.workspace.prepareForUserRequestedRelaunch()
         }
         return service
     }()
@@ -352,6 +344,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let captured = await store.freshActiveNoteEditorSnapshot()
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
             guard captured else {
+                if Self.updates.status == .installing, store.allowsUnsavedRelaunch {
+                    finishBackgroundSave(attemptID: attemptID)
+                    return
+                }
                 store.showImportantOperationError(store.ui("笔记最新内容尚未安全保存，请保持窗口打开并重试。", "The latest note is not safely saved. Keep the window open and retry."))
                 reopenAfterSaveFailure(attemptID: attemptID)
                 return
@@ -361,6 +357,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let saved = await store.flushPendingWorkspaceSaveAsync()
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
             guard saved else {
+                if Self.updates.status == .installing, store.allowsUnsavedRelaunch {
+                    finishBackgroundSave(attemptID: attemptID)
+                    return
+                }
                 reopenAfterSaveFailure(attemptID: attemptID)
                 return
             }

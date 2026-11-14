@@ -16,6 +16,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     private let registry = NativeToolRegistry()
     private let loop = NativeAgentLoop()
     private var didRegisterTools = false
+    private var sessionLedger: NativeAgentLedger?
 
     public init(
         model: String,
@@ -28,7 +29,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         liveStores: NativeLiveStores = .empty,
         mode: NativeAgentMode = .assistant,
         delegateDepth: Int = 0,
-        sessionTitleHandler: StudyAgentSessionTitleHandler? = nil
+        sessionTitleHandler: StudyAgentSessionTitleHandler? = nil,
+        sessionLedger: NativeAgentLedger? = nil
     ) {
         self.model = model
         self.adapter = adapter
@@ -41,6 +43,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         self.mode = mode
         self.delegateDepth = delegateDepth
         self.sessionTitleHandler = sessionTitleHandler
+        self.sessionLedger = sessionLedger
     }
 
     public func respond(
@@ -54,12 +57,17 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         let ledgerURL = ledgerRoot
             .appendingPathComponent(sessionID, isDirectory: true)
             .appendingPathComponent("ledger.jsonl")
-        let ledger = try NativeAgentLedger(fileURL: ledgerURL)
+        let ledger: NativeAgentLedger
+        if let existing = sessionLedger, existing.fileURL == ledgerURL {
+            ledger = existing
+        } else {
+            ledger = try NativeAgentLedger(fileURL: ledgerURL, allowsPersistenceFailure: true)
+            sessionLedger = ledger
+        }
         try await ledger.synthesizeCloserIfNeeded()
         let scope = NativeToolScope.session(request.id.uuidString)
-        if mode == .assistant {
+        if liveStores.documentsRoot == nil {
             await registry.hide("create_document", scope: scope)
-            await registry.hide("delegate", scope: scope)
         }
         if delegateDepth >= NativeSubagentRunner.maximumDepth {
             await registry.hide("delegate", scope: scope)
@@ -67,11 +75,14 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         let webSearchAvailable = providerID
             .flatMap(AgentProviderID.init(rawValue:))
             .map { NativeProviderRouting.route($0).webSearch != .none }
-        let prompt = NativePromptAssembler.webiSystemPrompt(
+        var prompt = NativePromptAssembler.webiSystemPrompt(
             bundledText: systemPromptText,
             skillCatalog: liveStores.skillRegistry.catalogSummary(),
             webSearchAvailable: webSearchAvailable
         )
+        if await ledger.historyWasUnavailable {
+            prompt += "\n\n本次运行未能读取以往模型历史。请依据当前问题、已提供上下文及实际可用工具完成任务，不要假设缺失的对话内容。"
+        }
         let meteredAdapter = NativeMeteredLLMAdapter(
             base: adapter, providerID: providerID, requestID: request.id,
             usageURL: ledgerURL.deletingLastPathComponent().appendingPathComponent("usage.jsonl"),
@@ -147,6 +158,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     public func reset() async {
         await loop.reset()
     }
+
+    public func currentSessionLedger() -> NativeAgentLedger? { sessionLedger }
 
     private func scheduleSessionTitleIfNeeded(
         question: String,

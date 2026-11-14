@@ -5,8 +5,6 @@ import WeiBeiCore
 /// agentRefused 的载荷是 askAgent 现场生成的完整说明文案。
 enum AgentVisualizationActionRejection: Equatable {
     case emptyAction
-    case actionNameTooLong
-    case payloadTooLarge
     case payloadUnreadable
     case agentBusy(activeChat: Bool)
     case agentRefused(String)
@@ -15,10 +13,6 @@ enum AgentVisualizationActionRejection: Equatable {
         switch self {
         case .emptyAction:
             return ui("这个按钮没有可执行的回答操作。", "This button has no executable response action.")
-        case .actionNameTooLong:
-            return ui("这个互动操作名称过长，未提交回答。", "This interactive action name is too long, so nothing was submitted.")
-        case .payloadTooLarge:
-            return ui("互动数据过大，无法提交回答。", "The interactive data is too large to submit.")
         case .payloadUnreadable:
             return ui("互动数据无法读取，未提交回答。", "The interactive data could not be read, so nothing was submitted.")
         case .agentBusy(activeChat: true):
@@ -39,8 +33,7 @@ extension WorkspaceStore {
     func handleAgentCredentialChange(providerID: String?) -> Bool {
         guard let providerID = providerID?.trimmingCharacters(in: .whitespacesAndNewlines),
               !providerID.isEmpty else {
-            // An unidentified credential change cannot safely leave old-key requests running.
-            shutdownAgentRuntime()
+            WeiBeiLog.workspace.info("code=unidentified_credential_change active_requests_preserved")
             return true
         }
         let affectsCurrent = providerID == AgentProviderReadiness.activeCredentialProviderID(for: self)
@@ -52,12 +45,12 @@ extension WorkspaceStore {
                 (try? AgentProviderEndpoint(provider: $0.provider, baseURL: $0.baseURL))?.credentialProviderID == providerID
             }
         guard isKnown else {
-            shutdownAgentRuntime()
+            WeiBeiLog.workspace.info("code=unknown_credential_change active_requests_preserved")
             return true
         }
         for run in runs {
             let runProviderID = run.credentialProviderID?.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard runProviderID == providerID || runProviderID?.isEmpty != false else { continue }
+            guard runProviderID == providerID else { continue }
             if let chatID = run.chatID { cancelAgentRequest(in: chatID) }
         }
         return affectsCurrent
@@ -67,12 +60,6 @@ extension WorkspaceStore {
         let action = action.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !action.isEmpty else {
             return .emptyAction
-        }
-        guard action.count <= 200 else {
-            return .actionNameTooLong
-        }
-        guard payloadJSON.utf8.count <= 65_536 else {
-            return .payloadTooLarge
         }
         guard (try? JSONSerialization.jsonObject(
             with: Data(payloadJSON.utf8),
@@ -250,10 +237,17 @@ extension WorkspaceStore {
         )
         var resolvedRequest = request
         if selectedProvider == .openaiCodex {
-            let levels = try await AgentAccountService.shared.reasoningLevelsForRequest(provider: selectedProvider, model: model)
-            resolvedRequest.reasoningEffort = agentRun.selectionThreadID != nil
-                ? AgentReasoningEffort.selected(nil, levels: levels, floating: true)
-                : request.reasoningMode.effort(saved: request.reasoningEffort, levels: levels)
+            do {
+                let levels = try await AgentAccountService.shared.reasoningLevelsForRequest(provider: selectedProvider, model: model)
+                resolvedRequest.reasoningEffort = agentRun.selectionThreadID != nil
+                    ? AgentReasoningEffort.selected(nil, levels: levels, floating: true)
+                    : request.reasoningMode.effort(saved: request.reasoningEffort, levels: levels)
+            } catch {
+                try Task.checkCancellation()
+                // Catalog discovery is advisory. The actual response request
+                // decides whether this model and the user's saved effort work.
+                WeiBeiLog.workspace.info("code=reasoning_catalog_unavailable request_continued underlying=\(WeiBeiLog.code(error), privacy: .public)")
+            }
         }
         let resources = try AgentResources.bundled()
         let liveStores = NativeLiveStores(
@@ -315,13 +309,7 @@ extension WorkspaceStore {
                     requestID: request.id, messageID: replyMessageID, chatID: target.sessionID)
             },
             documentsRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Documents", isDirectory: true),
-            skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL),
-            confirmDocumentCreation: { title, summary in
-                await AgentDocumentConfirmationCenter.shared.requestConfirmation(
-                    title: title,
-                    summary: summary
-                )
-            }
+            skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL)
         )
         let sessionTitleHandler: StudyAgentSessionTitleHandler?
         if let session = studySessions.first(where: { $0.id == target.sessionID }),
@@ -336,6 +324,7 @@ extension WorkspaceStore {
         } else {
             sessionTitleHandler = nil
         }
+        let run = agentRun
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
@@ -348,24 +337,32 @@ extension WorkspaceStore {
             systemPromptText: resources.systemPrompt,
             hostToolHandler: hostToolHandler,
             liveStores: liveStores,
-            sessionTitleHandler: sessionTitleHandler
+            sessionTitleHandler: sessionTitleHandler,
+            sessionLedger: run.sessionLedger
         )
-        let run = agentRun
         run.runtime = runtime
         defer { run.runtime = nil }
-        return try await runtime.respond(
-            to: resolvedRequest,
-            progress: { [weak self] progress in
-                await AgentConversationExecution.$run.withValue(run) {
-                    await self?.applyAgentProgress(
-                        progress,
-                        requestID: request.id,
-                        replyMessageID: replyMessageID,
-                        chatID: target.sessionID
-                    )
+        // Also retain history when the model throws or is cancelled mid-turn.
+        do {
+            let reply = try await runtime.respond(
+                to: resolvedRequest,
+                progress: { [weak self] progress in
+                    await AgentConversationExecution.$run.withValue(run) {
+                        await self?.applyAgentProgress(
+                            progress,
+                            requestID: request.id,
+                            replyMessageID: replyMessageID,
+                            chatID: target.sessionID
+                        )
+                    }
                 }
-            }
-        )
+            )
+            run.sessionLedger = await runtime.currentSessionLedger()
+            return reply
+        } catch {
+            run.sessionLedger = await runtime.currentSessionLedger()
+            throw error
+        }
     }
 
     static func explicitAgentModel(

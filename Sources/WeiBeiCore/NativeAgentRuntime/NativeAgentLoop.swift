@@ -58,7 +58,9 @@ public actor NativeAgentLoop {
             )
         }
         let previousEvents = request.reusingLastUserMessage ? await ledger.allEvents() : []
-        let originalUser = previousEvents.last { $0.type == .userMessage }
+        let originalUser = previousEvents.last { $0.type == .userMessage }.flatMap {
+            $0.text == request.question ? $0 : nil
+        }
         var sources = request.knownSources
         sources += previousEvents.filter { $0.type == .toolResult && $0.seq > (originalUser?.seq ?? Int.max) }
             .flatMap { NativeAgentSources.fromToolText($0.text ?? "", aliases: aliases) }

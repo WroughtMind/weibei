@@ -68,14 +68,14 @@ struct NativeMeteredLLMAdapter: NativeLLMAdapter {
                     model: request.model, purpose: request.purpose, contextWindow: contextWindow
                 )
                 do {
-                    try await NativeUsageJournal.shared.append(record, to: usageURL)
+                    await recordUsage(record)
                     try Task.checkCancellation()
                     for try await chunk in base.stream(request) {
                         switch chunk {
                         case let .usage(usage):
                             record.usage = record.usage?.merging(usage) ?? usage
                             record.updatedAt = Date()
-                            try await NativeUsageJournal.shared.append(record, to: usageURL)
+                            await recordUsage(record)
                         case let .finish(reason, _):
                             record.finishReason = reason
                         default: break
@@ -92,7 +92,7 @@ struct NativeMeteredLLMAdapter: NativeLLMAdapter {
                     case nil: record.state = .incomplete
                     }
                     record.updatedAt = Date()
-                    try await NativeUsageJournal.shared.append(record, to: usageURL)
+                    await recordUsage(record)
                     continuation.finish()
                 } catch {
                     if let usage = (error as? NativeLLMFailure)?.usage {
@@ -102,16 +102,20 @@ struct NativeMeteredLLMAdapter: NativeLLMAdapter {
                         || (error as? NativeLLMFailure)?.asAgentFailureKind == .cancelled
                         ? .cancelled : .failed
                     record.updatedAt = Date()
-                    do {
-                        try await NativeUsageJournal.shared.append(record, to: usageURL)
-                        continuation.finish(throwing: error)
-                    } catch {
-                        // Do not turn a failed disk write into a successful accounting record.
-                        continuation.finish(throwing: error)
-                    }
+                    await recordUsage(record)
+                    continuation.finish(throwing: error)
                 }
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
+    private func recordUsage(_ record: NativeModelCallUsage) async {
+        do { try await NativeUsageJournal.shared.append(record, to: usageURL) }
+        catch {
+            // Accounting is advisory. Keep the provider's response/error and
+            // do not invent a successful on-disk accounting record.
+            WeiBeiLog.workspace.error("code=model_usage_write_failed request_continued underlying=\(WeiBeiLog.code(error), privacy: .public)")
         }
     }
 }

@@ -368,56 +368,27 @@ public enum MarkdownAttachmentStore {
         suggestedMIMEType: String?,
         allowsSVG: Bool
     ) -> String? {
-        guard data.count <= maximumImageByteCount else { return nil }
+        guard data.count <= maximumAnimatedImageByteCount else { return nil }
         let suggested = suggestedMIMEType?.lowercased()
         if allowsSVG, suggested == "image/svg+xml" {
+            guard data.count <= maximumImageByteCount else { return nil }
             let prefix = String(decoding: data.prefix(4_096), as: UTF8.self)
                 .lowercased()
             return prefix.contains("<svg") ? "image/svg+xml" : nil
         }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0,
-              decodedPixelsAreWithinLimit(
-                  source,
-                  maximumPixelCount: maximumDecodedPixelCount
-              ) else {
+              largestFramePixelCount(source) <= maximumDecodedPixelCount else {
             return nil
         }
+        let byteLimit = CGImageSourceGetCount(source) > 1 ? maximumAnimatedImageByteCount : maximumImageByteCount
+        guard data.count <= byteLimit else { return nil }
         guard let type = CGImageSourceGetType(source),
               let mimeType = UTType(type as String)?.preferredMIMEType,
               mimeType.hasPrefix("image/") else {
             return nil
         }
         return mimeType
-    }
-
-    static func decodedPixelsAreWithinLimit(
-        _ source: CGImageSource,
-        maximumPixelCount: Int
-    ) -> Bool {
-        var totalPixels = 0
-        for frameIndex in 0..<CGImageSourceGetCount(source) {
-            guard let properties = CGImageSourceCopyPropertiesAtIndex(
-                source,
-                frameIndex,
-                nil
-            ) as? [CFString: Any],
-            let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
-            let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
-            width > 0,
-            height > 0 else {
-                return false
-            }
-            let (framePixels, frameOverflow) = width.multipliedReportingOverflow(by: height)
-            let (nextTotal, totalOverflow) = totalPixels.addingReportingOverflow(framePixels)
-            guard !frameOverflow,
-                  !totalOverflow,
-                  nextTotal <= maximumPixelCount else {
-                return false
-            }
-            totalPixels = nextTotal
-        }
-        return true
     }
 
     public static func relativePath(to target: URL, markdownBaseURLString: String) -> String {

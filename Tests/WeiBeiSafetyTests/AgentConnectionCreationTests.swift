@@ -375,6 +375,26 @@ final class AgentConnectionCreationTests: XCTestCase {
     }
 
     @MainActor
+    func testDeletingLastConnectionPersistsAnEmptyListAndAllowsAddingAgain() throws {
+        let store = try XCTUnwrap(storeFixture).store
+        while let profile = store.agentCredentialProfiles.first {
+            store.selectAgentCredentialProfile(profile.id)
+            store.deleteActiveAgentCredentialProfile()
+        }
+        XCTAssertTrue(store.agentCredentialProfiles.isEmpty)
+        XCTAssertTrue(AgentCredentialProfileStore.loadProfiles().isEmpty)
+        XCTAssertNil(AgentCredentialProfileStore.activeProfileID())
+        XCTAssertTrue(store.modelName.isEmpty)
+        let reopened = WorkspaceStore(workspaceDirectory: try XCTUnwrap(storeFixture).root.appendingPathComponent("reopened"),
+            startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        XCTAssertTrue(reopened.agentCredentialProfiles.isEmpty)
+        let created = try reopened.createAgentConnection(provider: .custom, authMethod: .apiKey,
+            baseURL: "https://new.example.test/v1")
+        XCTAssertEqual(reopened.agentCredentialProfiles.map(\.id), [created])
+        XCTAssertEqual(reopened.activeAgentProfileID, created)
+    }
+
+    @MainActor
     func testOtherCredentialChangeStopsOnlyItsBackgroundRun() async throws {
         let store = try XCTUnwrap(storeFixture).store
         let currentCredential = AgentProviderReadiness.activeCredentialProviderID(for: store)
@@ -417,7 +437,7 @@ final class AgentConnectionCreationTests: XCTestCase {
     }
 
     @MainActor
-    func testUnidentifiedCredentialChangeDoesNotKeepOldKeyRequestsAlive() async throws {
+    func testUnidentifiedCredentialChangePreservesActiveRequests() async throws {
         let store = try XCTUnwrap(storeFixture).store
         for providerID in [nil, " \n", "unrecognized-credential-identity"] as [String?] {
             let run = pendingRun(in: store,
@@ -425,14 +445,15 @@ final class AgentConnectionCreationTests: XCTestCase {
             defer { run.task.cancel() }
 
             XCTAssertTrue(store.handleAgentCredentialChange(providerID: providerID))
-            XCTAssertTrue(run.task.isCancelled)
+            XCTAssertFalse(run.task.isCancelled)
+            store.cancelAllAgentRequests()
             await store.waitForAgentRequestsToStop()
             XCTAssertFalse(store.isAgentRunning(in: run.id))
         }
     }
 
     @MainActor
-    func testRunWithUnknownCredentialIsStoppedConservatively() async throws {
+    func testKnownCredentialChangeDoesNotCancelAnUnidentifiedRun() async throws {
         let store = try XCTUnwrap(storeFixture).store
         let known = pendingRun(in: store,
             credentialProviderID: AgentProviderReadiness.activeCredentialProviderID(for: store))
@@ -441,7 +462,7 @@ final class AgentConnectionCreationTests: XCTestCase {
 
         XCTAssertFalse(store.handleAgentCredentialChange(providerID: AgentProviderID.openai.credentialProviderID))
         XCTAssertFalse(known.task.isCancelled)
-        XCTAssertTrue(unknown.task.isCancelled)
+        XCTAssertFalse(unknown.task.isCancelled)
         await store.waitForAgentRequestsToStop()
         store.cancelAllAgentRequests()
         await store.waitForAgentRequestsToStop()

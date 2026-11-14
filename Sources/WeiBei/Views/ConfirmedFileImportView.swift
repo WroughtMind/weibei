@@ -809,6 +809,9 @@ extension WorkspaceStore {
     }
 
     private func confirmedImportFailureMessage(_ error: Error) -> String {
+        if error is CancellationError {
+            return ui("已按你的选择保留原文件，未执行替换。", "The original file was kept as you chose; it was not replaced.")
+        }
         let cocoaCode = (error as? CocoaError)?.code
         if cocoaCode == .fileNoSuchFile || cocoaCode == .fileReadNoSuchFile {
             return ui(
@@ -898,6 +901,7 @@ struct ConfirmedFileImportView: View {
         .preferredColorScheme(store.appearanceMode.colorScheme)
         .modifier(WeiBeiFittedSheetPresentation())
         .interactiveDismissDisabled(batch?.stage == .importing)
+        .modifier(UserOperationRiskPresenter(choices: store.userOperationRisks, context: .fileImport))
         .sheet(isPresented: $creatingCourse) {
             CourseProjectEntrySheet(
                 cancel: { creatingCourse = false },

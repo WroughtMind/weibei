@@ -19,6 +19,21 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+#if DEBUG
+if CommandLine.arguments.contains("--pdf") {
+    expect(BoundedPDFTextExtractor.runSafetySelfCheck(), "PDF worker resource and cancellation checks")
+    print("PDF worker checks passed")
+    do {
+        try checkDirectSourceReading()
+    } catch {
+        fputs("PDF source reading check failed: \(error)\n", stderr)
+        exit(1)
+    }
+    print("PDF source reading checks passed")
+    exit(0)
+}
+#endif
+
 let legacyChatID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
 let legacyChatCourseID = UUID(uuidString: "00000000-0000-0000-0000-000000000102")!
 let legacyChatData = try! JSONSerialization.data(withJSONObject: [

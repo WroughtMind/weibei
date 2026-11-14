@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import WebKit
 import XCTest
+import WeiBeiCore
 @testable import WeiBei
 
 final class AgentVisualizationSizingTests: XCTestCase {
@@ -180,7 +181,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIActionRejectsWhenChatWorkspaceCannotBePrepared() throws {
+    func testGenUIActionContinuesWhenBookkeepingDirectoryCannotBePrepared() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiGenUIAction-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -191,34 +192,80 @@ final class AgentVisualizationSizingTests: XCTestCase {
             startsAtBlankEntries: true,
             startsCourseFileMaintenance: false
         )
-
+        store.modelName = "mock"
+        store.agentProviderID = .openai
+        let answered = expectation(description: "The interactive operation reaches the model")
+        store.selfCheckAgentResponder = { _ in
+            answered.fulfill()
+            return StudyAgentReply(text: "回答", backend: .native)
+        }
+        defer { store.selfCheckAgentResponder = nil; store.cancelAllAgentRequests() }
         let rejection = store.submitAgentVisualizationAction(
             "继续解释",
             payloadJSON: "{}"
         )
 
-        guard case .agentRefused = rejection else {
-            XCTFail("expected an askAgent refusal, got \(String(describing: rejection))")
-            return
-        }
-        XCTAssertNil(store.agentRequestTask)
+        XCTAssertNil(rejection)
+        await fulfillment(of: [answered], timeout: 8)
+        await store.agentRequestTask?.value
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("AgentRuntime")), Data())
     }
 
     @MainActor
-    func testGenUIRejectsOverlongActionNameWithoutChangingIt() {
+    func testGenUISubmitsLongActionsAndFormDataWithoutTruncating() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiLongAction-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(
-            workspaceDirectory: FileManager.default.temporaryDirectory,
-            startsAtBlankEntries: true
+            workspaceDirectory: root,
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
         )
+        store.agentProviderID = .openai
+        store.modelName = "test-model"
         let action = String(repeating: "动作", count: 101)
-        let rejection = store.submitAgentVisualizationAction(action, payloadJSON: "{}")
-        XCTAssertEqual(rejection, .actionNameTooLong)
+        let field = String(repeating: "用户填写的正文", count: 6_000)
+        let data = try JSONSerialization.data(withJSONObject: ["answer": field])
+        let payload = String(decoding: data, as: UTF8.self)
+        let submitted = expectation(description: "The complete interactive operation reaches the responder")
+        store.selfCheckAgentResponder = { request in
+            XCTAssertTrue(request.question.contains(action))
+            XCTAssertTrue(request.question.contains(field))
+            submitted.fulfill()
+            return StudyAgentReply(text: "已收到", backend: .native)
+        }
+        defer { store.selfCheckAgentResponder = nil; store.cancelAllAgentRequests() }
+        XCTAssertNil(store.submitAgentVisualizationAction(action, payloadJSON: payload))
+        await fulfillment(of: [submitted], timeout: 8)
+        await store.agentRequestTask?.value
+    }
+
+    @MainActor
+    func testGenUIKeepsUsableComponentsWhenASiblingCannotRender() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let result = try await webView.evaluateJavaScript("""
+        (() => {
+          window.WeiBeiGenUIHost.render({spec: {items: [
+            {type: 'callout', content: '可用的学习内容'},
+            {type: 'callout'},
+            {type: 'button', label: '继续学习', action: 'continue'}
+          ]}});
+          return {
+            text: document.getElementById('genui-content').textContent,
+            notice: document.getElementById('genui-status').textContent,
+            available: document.querySelector('button')?.disabled === false
+          };
+        })()
+        """) as? [String: Any]
+        XCTAssertTrue((result?["text"] as? String)?.contains("可用的学习内容") == true)
+        XCTAssertFalse((result?["notice"] as? String ?? "").isEmpty)
+        XCTAssertEqual(result?["available"] as? Bool, true)
+        withExtendedLifetime(navigationProbe) {}
     }
 
     @MainActor
     func testGenUIKeepsFullFormInputAfterRedraw() async throws {
         let (webView, navigationProbe) = try await loadGenUI()
-        let input = String(repeating: "这是需要完整保留的课堂问题，包括背景、推理和引用。", count: 300)
+        let input = String(repeating: "这是需要完整保留的课堂问题，包括背景、推理和引用。", count: 6_000)
             + "问题末尾"
         let encodedInput = try XCTUnwrap(
             String(data: JSONEncoder().encode(input), encoding: .utf8)

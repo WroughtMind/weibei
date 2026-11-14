@@ -23,7 +23,7 @@ public enum WeiBeiWebResearchError: LocalizedError, Equatable, Sendable {
         case .unsupportedContent:
             return "这个地址返回的不是可读取网页。"
         case .responseTooLarge:
-            return "网页内容超过读取上限。"
+            return "网页过大，继续解析可能耗尽内存。请在浏览器打开，或下载后导入资料库。"
         case .emptyContent:
             return "网页没有可读取的正文。"
         }
@@ -71,7 +71,6 @@ public enum WeiBeiWebResearchURLPolicy {
     public static func validatedPublicHTTPSURL(_ rawValue: String) throws -> URL {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
-              trimmed.utf8.count <= 2_048,
               var components = URLComponents(string: trimmed),
               components.scheme?.lowercased() == "https",
               let host = components.host?.lowercased(),
@@ -97,8 +96,7 @@ public enum WeiBeiWebResearchURLPolicy {
 
     fileprivate static func canonicalSourceURL(_ rawValue: String) -> String? {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.utf8.count <= 2_048,
-              var components = URLComponents(string: trimmed),
+        guard var components = URLComponents(string: trimmed),
               components.scheme?.lowercased() == "https",
               let host = components.host?.lowercased(),
               !host.isEmpty,
@@ -211,17 +209,29 @@ public enum WeiBeiWebResearchURLPolicy {
 }
 
 public enum WeiBeiWebResearchClient {
-    private static let maximumResponseBytes = 1_000_000
-    private static let maximumRedirects = 5
+    private static let advisoryResponseBytes = 1_000_000
+    // Large normal pages are allowed. Stop receiving only at a memory budget
+    // that also leaves room for decoded text and the HTML parser's copies.
+    private static let maximumResponseBytes = max(advisoryResponseBytes,
+        Int(min(128 * 1_024 * 1_024, ProcessInfo.processInfo.physicalMemory / 16)))
 
     public static func open(
         _ rawURL: String,
         cursor: Int = 0,
         maximumCharacters: Int
     ) async throws -> StudyAgentWebPage {
+        try await open(rawURL, cursor: cursor, maximumCharacters: maximumCharacters,
+                       configuration: .ephemeral)
+    }
+
+    static func open(
+        _ rawURL: String,
+        cursor: Int = 0,
+        maximumCharacters: Int,
+        configuration: URLSessionConfiguration
+    ) async throws -> StudyAgentWebPage {
         let url = try WeiBeiWebResearchURLPolicy.validatedPublicHTTPSURL(rawURL)
-        let redirectDelegate = WebResearchRedirectDelegate(maximumRedirects: maximumRedirects)
-        let configuration = URLSessionConfiguration.ephemeral
+        let redirectDelegate = WebResearchRedirectDelegate(initialURL: url)
         configuration.urlCache = nil
         configuration.urlCredentialStorage = nil
         configuration.httpCookieStorage = nil
@@ -264,17 +274,15 @@ public enum WeiBeiWebResearchClient {
                 || mimeType == "text/plain" else {
             throw WeiBeiWebResearchError.unsupportedContent
         }
-        guard http.expectedContentLength <= Int64(maximumResponseBytes)
-                || http.expectedContentLength < 0 else {
-            throw WeiBeiWebResearchError.responseTooLarge
-        }
-
         var data = Data()
-        data.reserveCapacity(min(max(Int(http.expectedContentLength), 0), maximumResponseBytes))
+        data.reserveCapacity(min(max(Int(http.expectedContentLength), 0), advisoryResponseBytes))
         do {
             for try await byte in bytes {
                 guard data.count < maximumResponseBytes else {
                     throw WeiBeiWebResearchError.responseTooLarge
+                }
+                if data.count == advisoryResponseBytes {
+                    WeiBeiLog.workspace.info("code=large_web_response read_continued")
                 }
                 data.append(byte)
             }
@@ -409,12 +417,11 @@ public enum WeiBeiWebResearchClient {
 }
 
 private final class WebResearchRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    private let maximumRedirects: Int
-    private var redirectCount = 0
+    private var visitedURLs: Set<String>
     private let lock = NSLock()
 
-    init(maximumRedirects: Int) {
-        self.maximumRedirects = maximumRedirects
+    init(initialURL: URL) {
+        visitedURLs = [initialURL.absoluteString]
     }
 
     func urlSession(
@@ -424,13 +431,15 @@ private final class WebResearchRedirectDelegate: NSObject, URLSessionTaskDelegat
         newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
-        lock.lock()
-        redirectCount += 1
-        let permitsAnotherRedirect = redirectCount <= maximumRedirects
-        lock.unlock()
-        guard permitsAnotherRedirect,
-              let rawURL = request.url?.absoluteString,
+        guard let rawURL = request.url?.absoluteString,
               let validated = try? WeiBeiWebResearchURLPolicy.validatedPublicHTTPSURL(rawURL) else {
+            completionHandler(nil)
+            return
+        }
+        lock.lock()
+        let isNewURL = visitedURLs.insert(validated.absoluteString).inserted
+        lock.unlock()
+        guard isNewURL else {
             completionHandler(nil)
             return
         }
