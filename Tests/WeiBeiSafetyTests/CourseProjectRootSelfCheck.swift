@@ -3209,12 +3209,19 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: directoryProbeWorkspace
         )
         try directoryProbe.configureCourseLibrary(at: library)
-        try expectFailure("目录伪装成课程笔记") {
-            _ = try directoryProbe.adoptCourseFolder(
-                at: courseARoot,
-                title: "目录伪装"
-            )
-        }
+        let directoryProbeID = try directoryProbe.adoptCourseFolder(
+            at: courseARoot, title: "目录伪装"
+        )
+        let directoryProbeState = try Data(contentsOf: stateURL)
+        try check(
+            directoryProbeID == courseA
+                && directoryProbe.unreadableCourseHistoryIDs.contains(courseA)
+                && !directoryProbe.importedItems.contains {
+                    $0.id == "portable-unsafe-note" || $0.url?.lastPathComponent == unsafeEntryURL.lastPathComponent
+                }
+                && directoryProbeState == unsafeEntryData,
+            "打开已有课程时应隔离目录伪装的笔记并保留原课程状态"
+        )
         try check(unsafeEntryURL.isDirectory, "目录伪装校验改动了原目录")
         try FileManager.default.removeItem(at: unsafeEntryURL)
 
@@ -3235,12 +3242,19 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: linkedEntryWorkspace
         )
         try linkedEntryProbe.configureCourseLibrary(at: library)
-        try expectFailure("链接伪装成课程笔记") {
-            _ = try linkedEntryProbe.adoptCourseFolder(
-                at: courseARoot,
-                title: "链接伪装"
-            )
-        }
+        let linkedEntryProbeID = try linkedEntryProbe.adoptCourseFolder(
+            at: courseARoot, title: "链接伪装"
+        )
+        let linkedEntryProbeState = try Data(contentsOf: stateURL)
+        try check(
+            linkedEntryProbeID == courseA
+                && linkedEntryProbe.unreadableCourseHistoryIDs.contains(courseA)
+                && !linkedEntryProbe.importedItems.contains {
+                    $0.id == "portable-unsafe-note" || $0.url?.lastPathComponent == unsafeEntryURL.lastPathComponent
+                }
+                && linkedEntryProbeState == unsafeEntryData,
+            "打开已有课程时应隔离链接伪装的笔记并保留原课程状态"
+        )
         let preservedExternalAliasData = try Data(
             contentsOf: externalAliasTarget
         )
@@ -3669,13 +3683,13 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: oversizedWorkspace
         )
         try oversizedProbe.configureCourseLibrary(at: library)
-        // 拒绝接入新课程时，原有超大状态仍须原样保留。
-        try expectDeclinedRisk("33MB 课程状态保留原件", in: oversizedProbe) {
-            _ = try oversizedProbe.adoptCourseFolder(
-                at: courseARoot,
-                title: "超大状态拒读"
-            )
-        }
+        let openedCourse = try oversizedProbe.adoptCourseFolder(
+            at: courseARoot, title: "超大状态拒读"
+        )
+        try check(
+            openedCourse == courseA && oversizedProbe.unreadableCourseHistoryIDs.contains(courseA),
+            "已有课程的超大状态应提示历史不可用并允许打开资料"
+        )
         let oversizedVerifyHandle = try FileHandle(forReadingFrom: stateURL)
         let oversizedPrefixAfterRead = try require(
             oversizedVerifyHandle.read(upToCount: 128),
