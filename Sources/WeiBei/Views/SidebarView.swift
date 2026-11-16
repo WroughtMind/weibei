@@ -16,6 +16,7 @@ struct SidebarView: View {
             CourseSidebarList(
                 store: store,
                 model: model,
+                panes: store.paneState,
                 onRenameCourse: { course in
                     renameCourseTitle = course.title
                     courseToRename = course
@@ -24,10 +25,9 @@ struct SidebarView: View {
                     courseManagementPresentation = CourseManagementPresentation(courseID: courseID)
                 }
             )
-                .background(WeiBeiTheme.paper)
         }
         .foregroundStyle(WeiBeiTheme.ink)
-        .background(WeiBeiTheme.paper)
+        .tint(WeiBeiTheme.cinnabar)
         .onReceive(store.paneState.$focusRequest) { _ in
             librarySearchFocused = store.paneState.focusedPane == .library
         }
@@ -63,64 +63,67 @@ struct SidebarView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             librarySearchField
 
             Menu {
-                Button(ui("新建课程", "New Course")) {
+                Button(ui("新建课程", "New Course"), systemImage: "folder.badge.plus") {
                     courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
                 }
                 Divider()
-                Button(ui("导入文稿", "Import materials")) {
+                if let course = store.activeCourse {
+                    Text(ui("导入到「\(course.title)」", "Import into \(course.title)"))
+                }
+                Button(ui("导入文稿…", "Import Documents…"), systemImage: "doc.badge.plus") {
                     importMaterialsFromSidebar()
                 }
-                Button(ui("导入笔记", "Import notes")) {
+                Button(ui("导入笔记…", "Import Notes…"), systemImage: "note.text.badge.plus") {
                     importNotesFromSidebar()
                 }
             } label: {
                 Image(systemName: "plus")
+                    .frame(width: 24, height: 28)
+                    .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .buttonStyle(SidebarAddMenuButtonStyle())
+            .buttonStyle(.borderless)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
             .accessibilityLabel(Text(ui("添加", "Add")))
-            .help(ui("新建课程，或导入文稿和笔记", "Create a course, or import materials and notes"))
+            .help(ui("新建课程，或导入文稿和笔记", "Create a course, or import documents and notes"))
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 12)
-        .padding(.bottom, 9)
-        .background(WeiBeiTheme.paper)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.35))
-                .frame(height: 1)
-        }
-        .zIndex(1)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
     }
 
     private var librarySearchField: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
-                .weiBeiText(10.5, weight: .medium)
-                .foregroundStyle(librarySearchFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.placeholderInk)
+                .weiBeiText(12)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
             WeiBeiSearchField(
-                text: Binding(
-                    get: { model.query },
-                    set: model.updateQuery
-                ),
-                prompt: ui("搜索课程文稿与笔记", "Search course documents and notes"),
+                text: Binding(get: { model.query }, set: model.updateQuery),
+                prompt: ui("搜索", "Search"),
                 isFocused: $librarySearchFocused,
                 drawsChrome: false,
                 chromeHeight: 28
             )
+            .accessibilityLabel(ui("搜索课程、文稿与笔记", "Search courses, documents and notes"))
             .frame(maxWidth: .infinity, alignment: .leading)
+            if !model.query.isEmpty {
+                Button {
+                    model.updateQuery("")
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(ui("清除搜索", "Clear search"))
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .weibeiInputSurface(
-            active: librarySearchFocused,
-            height: 28,
-            horizontalPadding: 8
-        )
+        .padding(.horizontal, 7)
+        .background(WeiBeiTheme.ink.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func importMaterialsFromSidebar() {
@@ -154,62 +157,32 @@ struct SidebarView: View {
 struct CourseSidebarList: View {
     let store: WorkspaceStore
     @ObservedObject var model: CourseSidebarModel
+    @ObservedObject var panes: WorkspacePaneState
     let onRenameCourse: (Course) -> Void
     let onManageCourse: (UUID) -> Void
+    @State private var expandedCourses: Set<UUID> = []
+    @State private var collapsedResults: Set<UUID> = []
+
+    private var searching: Bool {
+        !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
-        ScrollViewReader { scrollProxy in
-            List {
-                Section {
-                    if model.courses.isEmpty {
-                        if store.courses.isEmpty {
-                            SidebarEmptyRow(
-                                title: ui("还没有课程", "No courses yet")
-                            )
-                        } else {
-                            SidebarEmptyRow(title: ui("还没有匹配课程", "No matching courses"))
-                        }
-                    } else {
-                        ForEach(model.courses) { row in
-                            courseRow(row)
-                        }
-                    }
-                }
-
-                if !model.unassignedMaterials.isEmpty {
-                    Section {
-                        ForEach(model.unassignedMaterials) { row in
-                            itemRow(row, compact: false, accent: nil, opensNotebook: false)
-                        }
-                    } header: {
-                        SidebarSectionHeader(title: ui("通用资料", "General materials"))
-                    }
-                }
-
-                if !model.unassignedNotes.isEmpty {
-                    Section {
-                        ForEach(model.unassignedNotes) { row in
-                            itemRow(row, compact: false, accent: nil, opensNotebook: true)
-                        }
-                    } header: {
-                        SidebarSectionHeader(title: ui("独立笔记", "Unassigned Notes"))
-                    }
-                }
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(WeiBeiTheme.paper)
-            .onAppear {
-                scrollToRecentlyImported(using: scrollProxy)
-            }
-            .onChange(of: model.recentlyImportedItemIDs) { _, _ in
-                scrollToRecentlyImported(using: scrollProxy)
-            }
-            .onChange(of: recentlyImportedScrollTarget) { _, target in
-                guard let target else { return }
-                scrollProxy.scrollTo(target, anchor: .center)
-            }
+        ZStack {
+            // Keep the actual browsing list mounted so its scroll offset survives filtering.
+            outline(model.browsing, results: false)
+                .opacity(searching ? 0 : 1)
+                .allowsHitTesting(!searching)
+                .accessibilityHidden(searching)
+                .disabled(searching)
+            if searching { outline(model.projection, results: true) }
         }
+        .onAppear {
+            expandedCourses = store.libraryDrawer.expandedCourseIDs ?? Set([model.activeCourseID].compactMap { $0 })
+            revealImport()
+        }
+        .onChange(of: model.query) { _, _ in collapsedResults.removeAll() }
+        .onChange(of: model.recentlyImportedItemIDs) { _, _ in revealImport() }
         .task(id: model.searchTagTaskID) { [weak store = store, weak model = model] in
             guard let requests = model?.missingTagRequestsForSearch(),
                   !requests.isEmpty else { return }
@@ -230,32 +203,92 @@ struct CourseSidebarList: View {
         }
     }
 
-    private var recentlyImportedScrollTarget: String? {
-        model.firstVisibleItemID(in: model.recentlyImportedItemIDs)
+    private func revealImport() {
+        if !model.recentlyImportedItemIDs.isEmpty, let id = model.activeCourseID {
+            expandedCourses.insert(id)
+            store.libraryDrawer.expandedCourseIDs = expandedCourses
+        }
     }
 
-    private func scrollToRecentlyImported(using proxy: ScrollViewProxy) {
-        guard let target = recentlyImportedScrollTarget else { return }
-        proxy.scrollTo(target, anchor: .center)
+    private func outline(_ projection: CourseSidebarProjection, results: Bool) -> some View {
+        ScrollViewReader { proxy in
+            List {
+                if !projection.courses.isEmpty {
+                    SidebarSectionHeader(title: results ? ui("搜索结果", "Search results") : ui("课程", "Courses"))
+                    ForEach(projection.courses) { row in courseRow(row, results: results) }
+                }
+                if !projection.unassignedMaterials.isEmpty {
+                    SidebarSectionHeader(title: ui("通用资料", "General materials"), topSpacing: 10)
+                    ForEach(projection.unassignedMaterials) { row in itemRow(row, opensNotebook: false) }
+                }
+                if !projection.unassignedNotes.isEmpty {
+                    SidebarSectionHeader(title: ui("独立笔记", "Unassigned notes"), topSpacing: 10)
+                    ForEach(projection.unassignedNotes) { row in itemRow(row, opensNotebook: true) }
+                }
+                if projection.courses.isEmpty && projection.unassignedMaterials.isEmpty && projection.unassignedNotes.isEmpty {
+                    SidebarEmptyRow(title: results ? ui("没有匹配结果", "No results") : ui("还没有课程", "No courses yet"))
+                }
+            }
+            .listStyle(.plain)
+            .environment(\.defaultMinListRowHeight, 18)
+            .scrollContentBackground(.hidden)
+            .contentMargins(.all, 0, for: .scrollContent)
+            .task(id: model.firstVisibleItemID(in: model.recentlyImportedItemIDs)) {
+                guard !results, let target = model.firstVisibleItemID(in: model.recentlyImportedItemIDs) else { return }
+                await Task.yield()
+                proxy.scrollTo(target, anchor: .center)
+            }
+        }
+    }
+
+    private func toggleCourse(_ id: UUID, results: Bool) {
+        if results {
+            if !collapsedResults.insert(id).inserted { collapsedResults.remove(id) }
+        } else {
+            if !expandedCourses.insert(id).inserted { expandedCourses.remove(id) }
+            store.libraryDrawer.expandedCourseIDs = expandedCourses
+        }
     }
 
     @ViewBuilder
-    private func courseRow(_ row: CourseSidebarCourseRow) -> some View {
+    private func courseRow(_ row: CourseSidebarCourseRow, results: Bool) -> some View {
         let course = row.course
-        let expanded = model.activeCourseID == course.id
-        let accent = sidebarCourseAccent(colorIndex: course.colorIndex)
-
+        let expanded = results ? !collapsedResults.contains(course.id) : expandedCourses.contains(course.id)
         HStack(spacing: 4) {
-            SidebarCourseRow(
-                course: course,
-                materialCount: row.materialCount,
-                noteCount: row.noteCount,
-                expanded: expanded,
-                language: model.interfaceLanguage,
-                onToggle: { store.activateCourse(expanded ? nil : course.id) },
-                onEnter: { store.openCourseSpace(course.id) }
-            )
+            Button { toggleCourse(course.id, results: results) } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .frame(width: 12)
+                    Text(course.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel(course.title)
+            .accessibilityValue(expanded ? ui("已展开", "Expanded") : ui("已收起", "Collapsed"))
+            .onKeyPress(.rightArrow) {
+                if !expanded { toggleCourse(course.id, results: results) }
+                return .handled
+            }
+            .onKeyPress(.leftArrow) {
+                if expanded { toggleCourse(course.id, results: results) }
+                return .handled
+            }
+            Button { store.openCourseSpace(course.id) } label: {
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .frame(width: 24, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel(ui("进入\(course.title)课程空间", "Enter \(course.title)"))
+            .help(ui("进入课程空间", "Open course space"))
         }
+        .buttonStyle(.plain)
         .contextMenu { courseContextMenu(for: course) }
         .draggable(WeiBeiWorkspaceDrag.course(course.id))
         .dropDestination(for: WeiBeiWorkspaceDrag.self) { values, _ in
@@ -263,150 +296,111 @@ struct CourseSidebarList: View {
             store.moveCourse(courseID, before: course.id)
             return true
         }
-        .listRowInsets(EdgeInsets(top: 1, leading: 2, bottom: 1, trailing: 2))
+        .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
-
-        if expanded {
-            SidebarCourseGroupHeader(
-                title: ui("文稿", "Documents"),
-                language: model.interfaceLanguage,
-                systemImage: "doc.text",
-                count: row.materials.count,
-                accent: accent,
-                add: { store.importCourseMaterialsFromPanel(courseID: course.id) },
-                onDropItem: {
-                    store.moveCourseItem($0, before: row.materials.first?.id, intoNotebook: false)
-                }
-            )
-            .id("\(course.id.uuidString)-materials-header")
-            .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 0, trailing: 6))
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-
-            if row.materials.isEmpty {
-                SidebarEmptyRow(
-                    title: ui("暂无文稿", "No documents"),
-                    actionTitle: ui("导入文稿…", "Import…"),
-                    action: { store.importCourseMaterialsFromPanel(courseID: course.id) }
-                )
-                .id("\(course.id.uuidString)-materials-empty")
-                .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 2, trailing: 6))
-                .listRowSeparator(.hidden)
-            } else {
-                ForEach(row.materials) { item in
-                    itemRow(item, compact: true, accent: accent, opensNotebook: false)
-                }
-            }
-
-            SidebarCourseGroupHeader(
-                title: ui("笔记", "Notes"),
-                language: model.interfaceLanguage,
-                systemImage: "note.text",
-                count: row.notes.count,
-                accent: accent,
-                add: { store.importCourseNotesFromPanel(courseID: course.id) },
-                onDropItem: {
-                    store.moveCourseItem($0, before: row.notes.first?.id, intoNotebook: true)
-                }
-            )
-            .id("\(course.id.uuidString)-notes-header")
-            .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 0, trailing: 6))
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-
-            if row.notes.isEmpty {
-                SidebarEmptyRow(
-                    title: ui("暂无笔记", "No notes"),
-                    actionTitle: ui("导入笔记…", "Import…"),
-                    action: { store.importCourseNotesFromPanel(courseID: course.id) }
-                )
-                .id("\(course.id.uuidString)-notes-empty")
-                .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 4, trailing: 6))
-                .listRowSeparator(.hidden)
-            } else {
-                ForEach(row.notes) { item in
-                    itemRow(item, compact: true, accent: accent, opensNotebook: true)
-                }
-            }
-        }
+        .id(course.id)
+        if expanded { courseContents(row, results: results) }
     }
 
     @ViewBuilder
-    private func itemRow(
-        _ row: CourseSidebarItemRow,
-        compact: Bool,
-        accent: Color?,
-        opensNotebook: Bool
-    ) -> some View {
-        let item = row.item
-        let selected = opensNotebook
-            ? model.activeNotebookItemID == item.id
-            : model.selectedItemID == item.id
-        Group {
-            if model.notebookRenameDraft?.itemID == item.id {
-                NotebookRenameRow(
-                    store: store,
-                    model: model,
-                    item: item,
-                    selected: selected,
-                    compact: compact,
-                    accent: accent ?? WeiBeiTheme.cinnabar
+    private func courseContents(_ row: CourseSidebarCourseRow, results: Bool) -> some View {
+        if !results || !row.materials.isEmpty {
+            SidebarCourseGroupHeader(title: ui("文稿", "Documents")) {
+                store.moveCourseItem($0, before: row.materials.first?.id, intoNotebook: false)
+            }
+            .id("\(row.id.uuidString)-materials-header")
+            if row.materials.isEmpty {
+                SidebarEmptyRow(
+                    title: row.materialCount == 0
+                        ? ui("暂无文稿", "No documents")
+                        : ui("没有匹配的文稿", "No matching documents"),
+                    leadingInset: 52,
+                    actionTitle: row.materialCount == 0 ? ui("导入…", "Import…") : nil,
+                    action: { store.importCourseMaterialsFromPanel(courseID: row.id) }
                 )
+                .id("\(row.id.uuidString)-materials-empty")
             } else {
-                HStack(spacing: 2) {
-                    Button { open(item, opensNotebook: opensNotebook) } label: {
-                        LibraryRow(
-                            item: item,
-                            subtitle: store.displaySubtitle(for: item),
-                            resolvedTitle: row.resolvedTitle,
-                            tags: row.tags,
-                            selected: selected,
-                            compact: compact,
-                            accent: accent
-                        )
-                    }
-                    .buttonStyle(.plain)
+                ForEach(row.materials) { item in
+                    itemRow(item, opensNotebook: false, courseID: row.id)
+                }
+            }
+        }
+        if !results || !row.notes.isEmpty {
+            SidebarCourseGroupHeader(title: ui("笔记", "Notes")) {
+                store.moveCourseItem($0, before: row.notes.first?.id, intoNotebook: true)
+            }
+            .id("\(row.id.uuidString)-notes-header")
+            if row.notes.isEmpty {
+                SidebarEmptyRow(
+                    title: row.noteCount == 0
+                        ? ui("暂无笔记", "No notes")
+                        : ui("没有匹配的笔记", "No matching notes"),
+                    leadingInset: 52,
+                    actionTitle: row.noteCount == 0 ? ui("导入…", "Import…") : nil,
+                    action: { store.importCourseNotesFromPanel(courseID: row.id) }
+                )
+                .id("\(row.id.uuidString)-notes-empty")
+            } else {
+                ForEach(row.notes) { item in
+                    itemRow(item, opensNotebook: true, courseID: row.id)
+                }
+            }
+        }
 
+    }
+
+    private func itemRow(_ row: CourseSidebarItemRow, opensNotebook: Bool, courseID: UUID? = nil) -> some View {
+        let item = row.item
+        let nested = courseID != nil
+        let opened = opensNotebook ? panes.showNotes && model.activeNotebookItemID == item.id
+            : panes.showReader && model.selectedItemID == item.id
+        let selected = opened && panes.lastContentPane == (opensNotebook ? .notes : .reader)
+        return Group {
+            if model.notebookRenameDraft?.itemID == item.id {
+                NotebookRenameRow(store: store, model: model, item: item)
+                    .padding(.leading, nested ? 20 : 6)
+                    .padding(.trailing, 6)
+            } else {
+                Button { open(item, opensNotebook: opensNotebook, courseID: courseID) } label: {
+                    LibraryRow(
+                        item: item,
+                        subtitle: store.displaySubtitle(for: item),
+                        resolvedTitle: row.resolvedTitle,
+                        selected: selected,
+                        opened: opened,
+                        isNote: opensNotebook,
+                        language: model.interfaceLanguage
+                    )
+                    .padding(.leading, nested ? 20 : 6)
+                    .padding(.trailing, 6)
+                    .background {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(selected ? WeiBeiTheme.cinnabar.opacity(model.appearanceMode.isDark ? 0.20 : 0.09) : .clear)
+                    }
                 }
-                .contextMenu {
-                    itemContextMenu(for: row, opensNotebook: opensNotebook)
-                }
+                .buttonStyle(.plain)
+                .help(([row.resolvedTitle ?? item.title, store.displaySubtitle(for: item)] + row.tags)
+                    .joined(separator: "\n"))
+                .contextMenu { itemContextMenu(for: row, opensNotebook: opensNotebook) }
                 .draggable(WeiBeiWorkspaceDrag.item(item.id))
                 .dropDestination(for: WeiBeiWorkspaceDrag.self) { values, _ in
                     guard let itemID = draggedItemID(from: values) else { return false }
-                    store.moveCourseItem(
-                        itemID,
-                        before: item.id,
-                        intoNotebook: opensNotebook
-                    )
+                    store.moveCourseItem(itemID, before: item.id, intoNotebook: opensNotebook)
                     return true
                 }
             }
         }
-        .listRowInsets(EdgeInsets(
-            top: 1,
-            leading: compact ? 28 : 2,
-            bottom: 1,
-            trailing: 2
-        ))
-        .listRowBackground(
-            store.recentlyImportedItemIDs.contains(item.id)
-                ? WeiBeiTheme.cinnabarSoft.opacity(0.24)
-                : Color.clear
-        )
+        .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
+        .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .id(item.id)
-        // 显示名与标签共用同一条异步正文管线：compact 行（课程分组内）不展示标签，
-        // 但展示解析后的笔记名，所以笔记行无论 compact 与否都要加载。
+        // Search still indexes tags and resolved note titles without displaying
+        // another metadata line in every row.
         .task(id: row.tagRequest) { [weak store = store, weak model = model] in
             guard let request = row.tagRequest else { return }
-            if request.draftToken == nil,
-               store?.cachedSidebarNoteMeta(for: request) != nil {
-                return
-            }
-            guard
-                  let meta = await store?.loadSidebarNoteMeta(for: request),
+            if request.draftToken == nil, store?.cachedSidebarNoteMeta(for: request) != nil { return }
+            guard let meta = await store?.loadSidebarNoteMeta(for: request),
                   !Task.isCancelled else { return }
             model?.acceptLoadedNoteMeta([(request, meta)])
         }
@@ -414,6 +408,15 @@ struct CourseSidebarList: View {
 
     @ViewBuilder
     private func courseContextMenu(for course: Course) -> some View {
+        Button(ui("打开课程空间", "Open Course")) { store.openCourseSpace(course.id) }
+        Divider()
+        Button(ui("导入文稿…", "Import Documents…")) {
+            store.importCourseMaterialsFromPanel(courseID: course.id)
+        }
+        Button(ui("导入笔记…", "Import Notes…")) {
+            store.importCourseNotesFromPanel(courseID: course.id)
+        }
+        Divider()
         Button(ui("重命名课程", "Rename course")) {
             onRenameCourse(course)
         }
@@ -463,17 +466,17 @@ struct CourseSidebarList: View {
         }
     }
 
-    private func open(_ item: StudyItem, opensNotebook: Bool) {
+    private func open(_ item: StudyItem, opensNotebook: Bool, courseID: UUID?) {
         if item.isSample {
             store.select(itemID: item.id)
             store.showLibrary = false
             return
         }
         let opened = opensNotebook
-            ? store.openCourseNote(item.id)
-            : store.openCourseMaterial(item.id)
+            ? store.openCourseNote(item.id, in: courseID)
+            : store.openCourseMaterial(item.id, in: courseID)
         if !opened {
-            store.revealCourseFolder(containing: item.id)
+            store.revealCourseFolder(containing: item.id, in: courseID)
         }
     }
 
@@ -492,245 +495,72 @@ struct CourseSidebarList: View {
 
 private struct SidebarSectionHeader: View {
     let title: String
+    var topSpacing: CGFloat = 0
 
     var body: some View {
         Text(title)
-            .weiBeiText(12, weight: .semibold)
-            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-            .textCase(nil)
+            .weiBeiText(11, weight: .semibold)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, topSpacing)
+            .padding(.bottom, 5)
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 12))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .selectionDisabled()
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
 private struct SidebarEmptyRow: View {
     let title: String
+    var leadingInset: CGFloat = 16
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
 
-    @State private var hovering = false
-
     var body: some View {
-        HStack(spacing: 8) {
+        HStack {
             Text(title)
-                .weiBeiText(12)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.78))
-            Spacer(minLength: 8)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            Spacer(minLength: 4)
             if let actionTitle, let action {
-                Button(actionTitle) {
-                    action()
-                }
-                .buttonStyle(.plain)
-                .weiBeiText(10.5, weight: .medium)
-                .foregroundStyle(
-                    hovering ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk.opacity(0.85)
-                )
-                .contentShape(Rectangle())
+                Button(actionTitle, action: action)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
             }
         }
-        .frame(minHeight: 28, alignment: .leading)
+        .weiBeiText(12)
+        .frame(minHeight: 30)
+        .listRowInsets(EdgeInsets(top: 0, leading: leadingInset, bottom: 0, trailing: 18))
         .listRowBackground(Color.clear)
-        .onHover { isHovering in
-            hovering = isHovering
-        }
+        .listRowSeparator(.hidden)
+        .selectionDisabled()
     }
 }
 
 private struct SidebarCourseGroupHeader: View {
     let title: String
-    let language: WeiBeiInterfaceLanguage
-    let systemImage: String
-    let count: Int
-    let accent: Color
-    var add: (() -> Void)? = nil
-    var onDropItem: ((String) -> Void)? = nil
-
-    @State private var hoveringAdd = false
+    let onDropItem: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: systemImage)
-                .weiBeiText(9.5, weight: .semibold)
-                .foregroundStyle(accent.opacity(0.74))
-            Text(title)
-                .weiBeiText(10.5, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-            Spacer(minLength: 4)
-            Text("\(count)")
-                .weiBeiText(9.5, weight: .medium, design: .monospaced)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-            if let add {
-                Button(action: add) {
-                    Image(systemName: "plus")
-                        .weiBeiText(9.5, weight: .semibold)
-                        .frame(width: 18, height: 18)
-                        .background {
-                            if hoveringAdd {
-                                WeiBeiEtchedBackdrop(
-                                    shape: Circle(),
-                                    fill: WeiBeiTheme.paperInset.opacity(0.34),
-                                    stroke: WeiBeiTheme.hairline.opacity(0.30)
-                                )
-                            }
-                        }
-                }
-                .buttonStyle(.plain)
-                .onHover { hoveringAdd = $0 }
-                .foregroundStyle(accent.opacity(0.82))
-                .accessibilityLabel(Text(language.text("添加\(title)", "Add \(title)")))
-                .help(language.text("添加\(title)", "Add \(title)"))
+        Text(title)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 7)
+            .padding(.bottom, 1)
+            .listRowInsets(EdgeInsets(top: 0, leading: 52, bottom: 0, trailing: 12))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .selectionDisabled()
+            .accessibilityAddTraits(.isHeader)
+            .dropDestination(for: WeiBeiWorkspaceDrag.self) { values, _ in
+                guard let itemID = values.compactMap({ value -> String? in
+                    if case .item(let id) = value { return id }; return nil
+                }).first else { return false }
+                onDropItem(itemID)
+                return true
             }
-        }
-        .frame(height: 18)
-        .dropDestination(for: WeiBeiWorkspaceDrag.self) { values, _ in
-            guard let itemID = values.compactMap({ value -> String? in
-                if case .item(let id) = value { return id }; return nil
-            }).first, let onDropItem else {
-                return false
-            }
-            onDropItem(itemID)
-            return true
-        }
-    }
-}
-
-private struct SidebarCourseRow: View {
-    let course: Course
-    let materialCount: Int
-    let noteCount: Int
-    let expanded: Bool
-    let language: WeiBeiInterfaceLanguage
-    let onToggle: () -> Void
-    let onEnter: () -> Void
-    @State private var hovering = false
-    @State private var hoveringEnter = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button(action: onToggle) {
-                HStack(spacing: 10) {
-                    Image(systemName: expanded ? "book.closed.fill" : "book.closed")
-                        .foregroundStyle(accent.opacity(expanded || hovering ? 1 : 0.78))
-                        .frame(width: 18)
-                        .scaleEffect(expanded || hovering ? 1.08 : 1)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(course.title)
-                            .weiBeiText(13, weight: .medium)
-                            .lineLimit(1)
-                            .foregroundStyle(WeiBeiTheme.ink)
-                        Text(language.text(
-                            "\(materialCount) 份资料 · \(noteCount) 份笔记",
-                            "\(materialCount) materials · \(noteCount) notes"
-                        ))
-                        .weiBeiText(10.5)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(Text(expanded
-                ? language.text("收起课程内容", "Collapse course contents")
-                : language.text("展开课程内容", "Expand course contents")))
-
-            Button(action: onEnter) {
-                Image(systemName: "arrow.right")
-                    .weiBeiText(9.5, weight: .semibold)
-                    .foregroundStyle(enterTint)
-                    .frame(width: 22, height: 22)
-                    .background {
-                        if enterBackdropOpacity > 0 {
-                            WeiBeiEtchedBackdrop(
-                                shape: Circle(),
-                                fill: WeiBeiTheme.paperInset.opacity(enterBackdropOpacity),
-                                stroke: WeiBeiTheme.hairline.opacity(0.30)
-                            )
-                        }
-                    }
-            }
-            .buttonStyle(.plain)
-            .help(language.text("进入课程空间", "Enter course space"))
-            .accessibilityLabel(Text(language.text("进入课程空间", "Enter course space")))
-            .onHover { hoveringEnter = $0 }
-        }
-        .padding(.horizontal, 9)
-        .frame(height: 48)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background { rowBackdrop }
-        .offset(x: expanded || hovering ? 2 : 0)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onHover { hovering = $0 }
-        .animation(WeiBeiMotion.layout, value: expanded)
-        .animation(WeiBeiMotion.hover, value: hovering)
-        .animation(WeiBeiMotion.hover, value: hoveringEnter)
-    }
-
-    @ViewBuilder
-    private var rowBackdrop: some View {
-        if expanded {
-            WeiBeiEtchedBackdrop(
-                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                fill: WeiBeiTheme.paperInset.opacity(0.70),
-                stroke: WeiBeiTheme.hairline.opacity(0.40)
-            )
-        } else if hovering {
-            WeiBeiEtchedBackdrop(
-                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                fill: WeiBeiTheme.paperInset.opacity(0.30),
-                stroke: WeiBeiTheme.hairline.opacity(0.30)
-            )
-        }
-    }
-
-    private var accent: Color {
-        sidebarCourseAccent(colorIndex: course.colorIndex)
-    }
-
-    private var enterTint: Color {
-        if hoveringEnter { return accent.opacity(0.95) }
-        if expanded || hovering { return accent.opacity(0.82) }
-        return WeiBeiTheme.tertiaryInk.opacity(0.85)
-    }
-
-    private var enterBackdropOpacity: Double {
-        if hoveringEnter { return 0.52 }
-        if expanded || hovering { return 0.38 }
-        return 0
-    }
-}
-
-/// 侧栏搜索框旁边的加号菜单按钮：与搜索框同高度、同圆角语言，弱化到次级操作的分量。
-private struct SidebarAddMenuButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        SidebarAddMenuButtonBody(configuration: configuration)
-    }
-}
-
-private struct SidebarAddMenuButtonBody: View {
-    let configuration: ButtonStyle.Configuration
-    @State private var hovering = false
-
-    var body: some View {
-        configuration.label
-            .weiBeiText(12, weight: .medium)
-            .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-            .frame(width: 28, height: 28)
-            .background {
-                WeiBeiEtchedBackdrop(
-                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                    fill: WeiBeiTheme.paperInset.opacity(highlighted ? 0.42 : 0.18),
-                    stroke: WeiBeiTheme.hairline.opacity(highlighted ? 0.62 : 0.42)
-                )
-            }
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .animation(WeiBeiMotion.press, value: configuration.isPressed)
-            .animation(WeiBeiMotion.hover, value: hovering)
-            .onHover { hovering = $0 }
-    }
-
-    private var highlighted: Bool {
-        hovering || configuration.isPressed
     }
 }
 
@@ -784,9 +614,6 @@ private struct NotebookRenameRow: View {
     let store: WorkspaceStore
     @ObservedObject var model: CourseSidebarModel
     let item: StudyItem
-    let selected: Bool
-    let compact: Bool
-    let accent: Color
     @FocusState private var focused: Bool
 
     private var title: Binding<String> {
@@ -797,37 +624,28 @@ private struct NotebookRenameRow: View {
     }
 
     var body: some View {
-        HStack(spacing: compact ? 7 : 8) {
+        HStack(spacing: 6) {
             Image(systemName: item.kind.systemImage)
-                .foregroundStyle(accent.opacity(0.78))
-                .frame(width: compact ? 15 : 18)
-            TextField(
-                "",
-                text: title,
-                prompt: Text(model.interfaceLanguage.text("笔记名", "Note title"))
-                    .foregroundStyle(WeiBeiTheme.placeholderInk)
-            )
-            .textFieldStyle(.plain)
-            .focused($focused)
-            .weiBeiText(compact ? 12.5 : 13, weight: .medium)
-            .foregroundColor(WeiBeiTheme.ink)
-            .onSubmit {
-                if !title.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    store.confirmRenameNotebookNote()
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .frame(width: 14)
+            TextField(model.interfaceLanguage.text("笔记名", "Note title"), text: title)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .onSubmit {
+                    if !title.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        store.confirmRenameNotebookNote()
+                    }
                 }
-            }
             Button { store.cancelRenameNotebookNote() } label: {
-                Image(systemName: "xmark")
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 20))
+            .buttonStyle(.borderless)
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel(Text(model.interfaceLanguage.text("取消", "Cancel")))
         }
-        .padding(.horizontal, compact ? 7 : 9)
-        .frame(height: compact ? 38 : 48)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.paperInset.opacity(selected ? 0.74 : 0.44))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .weiBeiText(13)
+        .frame(minHeight: 30)
         .onAppear { focused = true }
     }
 }
@@ -835,87 +653,40 @@ private struct NotebookRenameRow: View {
 private struct LibraryRow: View {
     let item: StudyItem
     let subtitle: String
-    /// 解析后的显示名（自定义名 / 正文抬头）；nil 时显示文件名。
     let resolvedTitle: String?
-    let tags: [String]
     let selected: Bool
-    let compact: Bool
-    let accent: Color?
-    @State private var hovering = false
+    let opened: Bool
+    let isNote: Bool
+    let language: WeiBeiInterfaceLanguage
 
     var body: some View {
-        HStack(spacing: compact ? 7 : 10) {
-            Image(systemName: item.kind.systemImage)
-                .foregroundStyle(iconColor)
-                .frame(width: compact ? 15 : 18)
-                .scaleEffect(selected || hovering ? 1.08 : 1)
-                .opacity(selected || hovering ? 1 : 0.78)
-            VStack(alignment: .leading, spacing: compact ? 1 : 2) {
+        HStack(spacing: 6) {
+            Image(systemName: isNote ? "square.and.pencil" : "doc.text")
+                .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(resolvedTitle ?? item.title)
-                    .weiBeiText(compact ? 12.5 : 13, weight: compact ? .medium : .regular)
                     .lineLimit(1)
-                    .foregroundStyle(WeiBeiTheme.ink)
-                Text(subtitle)
-                    .font(compact ? .system(size: 10.5) : .caption)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .lineLimit(1)
-                if !compact, !tags.isEmpty {
-                    Text(tags.prefix(3).joined(separator: " "))
-                        .weiBeiText(10.5, weight: .medium)
-                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.72))
+                // Keep file-availability errors visible; ordinary filenames
+                // belong in the tooltip, not a duplicated second title line.
+                if subtitle != item.subtitle {
+                    Text(subtitle)
+                        .weiBeiText(11)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
                 }
             }
-        }
-        .padding(.horizontal, compact ? 7 : 9)
-        .frame(height: compact ? 38 : (tags.isEmpty ? 48 : 58))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background { rowBackdrop }
-        .offset(x: selected || hovering ? (compact ? 1 : 2) : 0)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(alignment: .leading) {
-            if selected {
-                Capsule()
-                    .fill((accent ?? WeiBeiTheme.cinnabar).opacity(0.72))
-                    .frame(width: compact ? 2 : 3, height: compact ? 18 : 24)
-                    .padding(.leading, 2)
+            if opened && !selected {
+                Spacer(minLength: 3)
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 5))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .accessibilityHidden(true)
             }
         }
-        .onHover { hovering = $0 }
-        .animation(WeiBeiMotion.micro, value: selected)
-        .animation(WeiBeiMotion.hover, value: hovering)
-    }
-
-    @ViewBuilder
-    private var rowBackdrop: some View {
-        if selected {
-            WeiBeiEtchedBackdrop(
-                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                fill: WeiBeiTheme.paperInset.opacity(compact ? 0.54 : 0.70),
-                stroke: WeiBeiTheme.hairline.opacity(0.40)
-            )
-        } else if hovering {
-            WeiBeiEtchedBackdrop(
-                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                fill: WeiBeiTheme.paperInset.opacity(compact ? 0.22 : 0.30),
-                stroke: WeiBeiTheme.hairline.opacity(0.30)
-            )
-        }
-    }
-
-    private var iconColor: Color {
-        if let accent {
-            return accent.opacity(item.isNotebookNote ? 0.70 : 0.82)
-        }
-        return item.kind == .pdf ? WeiBeiTheme.link : WeiBeiTheme.tertiaryInk
-    }
-}
-
-private func sidebarCourseAccent(colorIndex: Int) -> Color {
-    switch ((colorIndex % 4) + 4) % 4 {
-    case 0: WeiBeiTheme.cinnabar
-    case 1: WeiBeiTheme.moss
-    case 2: WeiBeiTheme.link
-    default: WeiBeiTheme.secondaryInk
+        .accessibilityValue(opened ? (selected ? language.text("当前内容", "Current") : language.text("已打开", "Open")) : "")
+        .font(.system(size: 13))
+        .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }

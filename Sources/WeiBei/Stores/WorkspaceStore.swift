@@ -276,6 +276,7 @@ enum ContentSourceRemovalError: LocalizedError {
 @MainActor
 final class LibraryDrawerState: ObservableObject {
     @Published var isOpen = false
+    var expandedCourseIDs: Set<UUID>?
 }
 
 @MainActor
