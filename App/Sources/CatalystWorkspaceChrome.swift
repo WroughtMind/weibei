@@ -646,7 +646,7 @@ struct HoverPassThroughRegion: UIViewRepresentable {
 struct CatalystWindowChrome: UIViewRepresentable {
     let appearanceMode: WeiBeiAppearanceMode
     var initialSize = CGSize(width: 1240, height: 792)
-    var minimumSize = CGSize(width: 520, height: 560)
+    var minimumSize = CGSize(width: WeiBeiMetric.minimumWorkspaceWidth, height: 560)
     func makeUIView(context: Context) -> Probe {
         let view = Probe()
         view.initialSize = initialSize
@@ -662,7 +662,7 @@ struct CatalystWindowChrome: UIViewRepresentable {
     final class Probe: UIView {
         var mode: WeiBeiAppearanceMode = .paper
         var initialSize = CGSize.zero
-        var minimumSize = CGSize(width: 520, height: 560)
+        var minimumSize = CGSize(width: WeiBeiMetric.minimumWorkspaceWidth, height: 560)
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         func configure() {
             CatalystDesktopWindow.configure(mode: mode)

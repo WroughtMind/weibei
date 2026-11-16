@@ -473,8 +473,8 @@ struct CourseSidebarList: View {
             return
         }
         let opened = opensNotebook
-            ? store.openCourseNote(item.id, in: courseID)
-            : store.openCourseMaterial(item.id, in: courseID)
+            ? store.openCourseNote(item.id, in: courseID, keepLibraryOpen: store.libraryDrawer.displaysAlongsideWorkspace)
+            : store.openCourseMaterial(item.id, in: courseID, keepLibraryOpen: store.libraryDrawer.displaysAlongsideWorkspace)
         if !opened {
             store.revealCourseFolder(containing: item.id, in: courseID)
         }

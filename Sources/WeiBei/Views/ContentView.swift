@@ -23,6 +23,7 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let fitsSidebar = !isImmersiveLayout && geometry.size.width >= WeiBeiMetric.courseDrawerWidth + WeiBeiMetric.minimumWorkspaceWidth
             ZStack {
                 WorkspaceChromeBackdrop(isFullScreen: windowIsFullScreen)
 
@@ -90,11 +91,16 @@ struct ContentView: View {
                                     )
                                 }
                             }
+                            .modifier(CourseSidebarContentInset(fitsSidebar: fitsSidebar))
 
                         // AppKit drawer: slide starts immediately; sidebar not store-synced while closed.
                         CourseLibraryDrawerLayer(store: store) {
                             store.toggleLibrary()
                         }
+                        .frame(width: fitsSidebar ? WeiBeiMetric.courseDrawerWidth : nil)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onAppear { store.libraryDrawer.displaysAlongsideWorkspace = fitsSidebar }
+                        .onChange(of: fitsSidebar) { _, fits in store.libraryDrawer.displaysAlongsideWorkspace = fits }
                         .zIndex(35)
 
                         if store.commandPalettePresented {
@@ -341,6 +347,18 @@ private struct WindowFullScreenReader: NSViewRepresentable {
 }
 
 #endif
+
+/// The empty launcher already makes room for the open directory itself.
+private struct CourseSidebarContentInset: ViewModifier {
+    @EnvironmentObject private var drawer: LibraryDrawerState
+    @EnvironmentObject private var panes: WorkspacePaneState
+    let fitsSidebar: Bool
+
+    func body(content: Content) -> some View {
+        let hasContent = panes.showReader || panes.showNotes || panes.showAgent
+        content.padding(.leading, fitsSidebar && drawer.isOpen && hasContent ? WeiBeiMetric.courseDrawerWidth : 0)
+    }
+}
 
 /// AppKit course drawer layer. Observes only `LibraryDrawerState`; the store reference
 /// is passed through without subscribing this chrome layer to the whole workspace.
