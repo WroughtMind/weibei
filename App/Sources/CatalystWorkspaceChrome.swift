@@ -376,12 +376,17 @@ struct StableDocumentWorkspace: UIViewRepresentable {
     }
     func makeUIView(context: Context) -> StableDocumentSplitView {
         let view = StableDocumentSplitView()
+        view.onContentClick = { [weak store] role in
+            guard role == .reader || role == .notes else { return }
+            store?.focusedPane = role.focus
+        }
         for role in WorkspacePaneRole.allCases {
             let host = CatalystHostingView(PersistentPaneHost(role: role, registry: registry)
                 .ignoresSafeArea(.container, edges: .top)
                 .environmentObject(store).environmentObject(store.paneState)
                 .environmentObject(store.interaction).environmentObject(store.threePaneReorder)
                 .environmentObject(store.libraryDrawer).weiBeiMotionScoped())
+            view.observeClicks(in: host)
             host.isHidden = true
             view.roleHosts[role] = host
             view.addSubview(host)
@@ -423,6 +428,25 @@ final class StableDocumentSplitView: UIView {
     var emptyHost: CatalystHostingView?
     let dividerViews = [CatalystDividerView(), CatalystDividerView()]
     weak var coordinator: StableDocumentSplitCoordinator?
+    var onContentClick: ((WorkspacePaneRole) -> Void)?
+
+    func observeClicks(in host: UIView) {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(contentClicked(_:)))
+        tap.cancelsTouchesInView = false
+        tap.delaysTouchesEnded = false
+        tap.delegate = self
+        host.addGestureRecognizer(tap)
+    }
+
+    @objc private func contentClicked(_ tap: UITapGestureRecognizer) {
+        if let role = roleHosts.first(where: { $0.value === tap.view })?.key {
+            onContentClick?(role)
+        }
+    }
+
+    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                                    shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+
     override func layoutSubviews() { super.layoutSubviews(); coordinator?.containerDidLayout(self) }
     func assertStableOwnership() {
         assert(emptyHost?.superview === self)
