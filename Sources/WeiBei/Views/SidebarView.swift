@@ -163,6 +163,12 @@ struct SidebarView: View {
 
 }
 
+private struct SidebarFileLocation: Hashable {
+    let courseID: UUID?
+    let itemID: String
+    let isNote: Bool
+}
+
 struct CourseSidebarList: View {
     let store: WorkspaceStore
     @ObservedObject var model: CourseSidebarModel
@@ -172,6 +178,7 @@ struct CourseSidebarList: View {
     @State private var expandedCourses: Set<UUID> = []
     @State private var hoveredCourse: UUID?
     @FocusState private var focusedCourse: UUID?
+    @FocusState private var focusedCourseEntry: UUID?
 
     private var searching: Bool {
         !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -242,11 +249,11 @@ struct CourseSidebarList: View {
                 }
                 if !projection.unassignedMaterials.isEmpty {
                     SidebarSectionHeader(title: ui("通用资料", "General materials"), topSpacing: 10)
-                    ForEach(projection.unassignedMaterials) { row in itemRow(row, opensNotebook: false) }
+                    ForEach(projection.unassignedMaterials) { row in itemRow(row, opensNotebook: false, result: results) }
                 }
                 if !projection.unassignedNotes.isEmpty {
                     SidebarSectionHeader(title: ui("独立笔记", "Unassigned notes"), topSpacing: 10)
-                    ForEach(projection.unassignedNotes) { row in itemRow(row, opensNotebook: true) }
+                    ForEach(projection.unassignedNotes) { row in itemRow(row, opensNotebook: true, result: results) }
                 }
                 if projection.courses.isEmpty && projection.unassignedMaterials.isEmpty && projection.unassignedNotes.isEmpty {
                     SidebarEmptyRow(title: results ? ui("没有匹配结果", "No results") : ui("还没有课程", "No courses yet"))
@@ -259,7 +266,12 @@ struct CourseSidebarList: View {
             .task(id: model.firstVisibleItemID(in: model.recentlyImportedItemIDs)) {
                 guard !results, let target = model.firstVisibleItemID(in: model.recentlyImportedItemIDs) else { return }
                 await Task.yield()
-                proxy.scrollTo(target, anchor: .center)
+                if let course = model.browsing.courses.first(where: { $0.id == model.activeCourseID }),
+                   course.materials.contains(where: { $0.id == target }) || course.notes.contains(where: { $0.id == target }) {
+                    proxy.scrollTo(SidebarFileLocation(courseID: course.id, itemID: target, isNote: !course.materials.contains(where: { $0.id == target })), anchor: .center)
+                } else {
+                    proxy.scrollTo(SidebarFileLocation(courseID: nil, itemID: target, isNote: !model.browsing.unassignedMaterials.contains(where: { $0.id == target })), anchor: .center)
+                }
             }
         }
     }
@@ -307,8 +319,8 @@ struct CourseSidebarList: View {
             }
             .accessibilityLabel(ui("进入\(course.title)课程空间", "Enter \(course.title)"))
             .help(ui("进入课程空间", "Open course space"))
-            .opacity(hoveredCourse == course.id || focusedCourse == course.id || expanded ? 1 : 0)
-
+            .focused($focusedCourseEntry, equals: course.id)
+            .opacity(hoveredCourse == course.id || focusedCourse == course.id || focusedCourseEntry == course.id || expanded ? 1 : 0)
         }
         .buttonStyle(.plain)
         .onHover { inside in hoveredCourse = inside ? course.id : (hoveredCourse == course.id ? nil : hoveredCourse) }
@@ -414,7 +426,7 @@ struct CourseSidebarList: View {
         .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
-        .id(item.id)
+        .id(SidebarFileLocation(courseID: courseID, itemID: item.id, isNote: opensNotebook))
         // Search still indexes tags and resolved note titles without displaying
         // another metadata line in every row.
         .task(id: row.tagRequest) { [weak store = store, weak model = model] in
