@@ -423,7 +423,7 @@ struct StableDocumentWorkspace: UIViewRepresentable {
     }
 }
 
-final class StableDocumentSplitView: UIView {
+final class StableDocumentSplitView: UIView, UIGestureRecognizerDelegate {
     var roleHosts: [WorkspacePaneRole: CatalystHostingView] = [:]
     var emptyHost: CatalystHostingView?
     let dividerViews = [CatalystDividerView(), CatalystDividerView()]
@@ -444,8 +444,8 @@ final class StableDocumentSplitView: UIView {
         }
     }
 
-    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                                    shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
 
     override func layoutSubviews() { super.layoutSubviews(); coordinator?.containerDidLayout(self) }
     func assertStableOwnership() {
