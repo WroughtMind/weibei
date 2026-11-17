@@ -63,7 +63,7 @@ struct CourseSidebarCourseRow: Identifiable, Equatable {
     var id: UUID { course.id }
 }
 
-private struct CourseSidebarProjection: Equatable {
+struct CourseSidebarProjection: Equatable {
     var courses: [CourseSidebarCourseRow] = []
     var unassignedMaterials: [CourseSidebarItemRow] = []
     var unassignedNotes: [CourseSidebarItemRow] = []
@@ -71,7 +71,8 @@ private struct CourseSidebarProjection: Equatable {
 
 @MainActor
 final class CourseSidebarModel: ObservableObject {
-    @Published private var projection = CourseSidebarProjection()
+    private(set) var browsing = CourseSidebarProjection()
+    @Published private(set) var projection = CourseSidebarProjection()
     @Published private(set) var selectedItemID: String?
     @Published private(set) var activeNotebookItemID: String?
     @Published private(set) var activeCourseID: UUID?
@@ -237,11 +238,12 @@ final class CourseSidebarModel: ObservableObject {
 
         let nextCourses: [CourseSidebarCourseRow] = store.courses.compactMap { course -> CourseSidebarCourseRow? in
             let allCourseRows = rowsByCourseID[course.id] ?? []
-            let visibleRows = normalizedQuery.isEmpty
+            let courseMatches = !normalizedQuery.isEmpty && course.title.localizedCaseInsensitiveContains(normalizedQuery)
+            let visibleRows = normalizedQuery.isEmpty || courseMatches
                 ? allCourseRows
                 : allCourseRows.filter { filteredIDs.contains($0.id) }
             guard normalizedQuery.isEmpty
-                    || course.title.localizedCaseInsensitiveContains(normalizedQuery)
+                    || courseMatches
                     || !visibleRows.isEmpty else {
                 return nil
             }
@@ -267,6 +269,7 @@ final class CourseSidebarModel: ObservableObject {
             unassignedMaterials: nextUnassignedMaterials,
             unassignedNotes: nextUnassignedNotes
         )
+        if normalizedQuery.isEmpty { browsing = nextProjection }
         if projection != nextProjection { projection = nextProjection }
     }
 

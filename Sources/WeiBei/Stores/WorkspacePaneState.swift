@@ -112,7 +112,12 @@ final class WorkspacePaneState: ObservableObject {
         searchFocusRequest &+= 1
     }
 
-    @Published var focusedPane: PaneFocus = .reader
+    private(set) var lastContentPane: PaneFocus = .reader
+    @Published var focusedPane: PaneFocus = .reader {
+        didSet {
+            if focusedPane == .reader || focusedPane == .notes { lastContentPane = focusedPane }
+        }
+    }
     @Published var focusRequest = 0
 
     /// Collapse/expand notes+agent with a single `objectWillChange` (was two store publishes).

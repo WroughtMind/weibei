@@ -276,6 +276,8 @@ enum ContentSourceRemovalError: LocalizedError {
 @MainActor
 final class LibraryDrawerState: ObservableObject {
     @Published var isOpen = false
+    var expandedCourseIDs: Set<UUID>?
+    var displaysAlongsideWorkspace = false
 }
 
 @MainActor
@@ -4285,7 +4287,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    func openCourseMaterial(_ itemID: String, in requestedCourseID: UUID? = nil) -> Bool {
+    func openCourseMaterial(_ itemID: String, in requestedCourseID: UUID? = nil, keepLibraryOpen: Bool = false) -> Bool {
         if let requestedCourseID {
             guard itemIsAvailableInCourseContext(itemID: itemID, courseID: requestedCourseID) else {
                 return false
@@ -4315,7 +4317,7 @@ final class WorkspaceStore: ObservableObject {
             activeCourseID = requestedCourseID
         }
         dismissCourseWorkspace(restoringFocus: false)
-        showLibrary = false
+        if !keepLibraryOpen { showLibrary = false }
         selectMeasured(itemID: itemID, opensNotebook: false)
         if layout == .immersiveWriting || layout == .immersiveConversation {
             setLayout(.immersiveReading)
@@ -4832,7 +4834,7 @@ final class WorkspaceStore: ObservableObject {
                     self.clearUnpinnedFloatingSelection()
                     self.focusedPane = .library
                 } else if self.focusedPane == .library {
-                    self.focusedPane = .reader
+                    self.focusedPane = self.paneState.lastContentPane
                 }
                 self.focusRequest += 1
             }

@@ -441,7 +441,7 @@ extension WorkspaceStore {
     }
 
     @discardableResult
-    func openCourseNote(_ itemID: String, in requestedCourseID: UUID? = nil) -> Bool {
+    func openCourseNote(_ itemID: String, in requestedCourseID: UUID? = nil, keepLibraryOpen: Bool = false) -> Bool {
         guard importedItems.contains(where: {
             $0.id == itemID && $0.isNotebookNote
         }) else {
@@ -457,7 +457,7 @@ extension WorkspaceStore {
             return false
         }
         dismissCourseWorkspace(restoringFocus: false)
-        showLibrary = false
+        if !keepLibraryOpen { showLibrary = false }
         select(itemID: itemID)
         return true
     }

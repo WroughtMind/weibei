@@ -376,12 +376,17 @@ struct StableDocumentWorkspace: UIViewRepresentable {
     }
     func makeUIView(context: Context) -> StableDocumentSplitView {
         let view = StableDocumentSplitView()
+        view.onContentClick = { [weak store] role in
+            guard role == .reader || role == .notes else { return }
+            store?.focusedPane = role.focus
+        }
         for role in WorkspacePaneRole.allCases {
             let host = CatalystHostingView(PersistentPaneHost(role: role, registry: registry)
                 .ignoresSafeArea(.container, edges: .top)
                 .environmentObject(store).environmentObject(store.paneState)
                 .environmentObject(store.interaction).environmentObject(store.threePaneReorder)
                 .environmentObject(store.libraryDrawer).weiBeiMotionScoped())
+            view.observeClicks(in: host)
             host.isHidden = true
             view.roleHosts[role] = host
             view.addSubview(host)
@@ -418,11 +423,30 @@ struct StableDocumentWorkspace: UIViewRepresentable {
     }
 }
 
-final class StableDocumentSplitView: UIView {
+final class StableDocumentSplitView: UIView, UIGestureRecognizerDelegate {
     var roleHosts: [WorkspacePaneRole: CatalystHostingView] = [:]
     var emptyHost: CatalystHostingView?
     let dividerViews = [CatalystDividerView(), CatalystDividerView()]
     weak var coordinator: StableDocumentSplitCoordinator?
+    var onContentClick: ((WorkspacePaneRole) -> Void)?
+
+    func observeClicks(in host: UIView) {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(contentClicked(_:)))
+        tap.cancelsTouchesInView = false
+        tap.delaysTouchesEnded = false
+        tap.delegate = self
+        host.addGestureRecognizer(tap)
+    }
+
+    @objc private func contentClicked(_ tap: UITapGestureRecognizer) {
+        if let role = roleHosts.first(where: { $0.value === tap.view })?.key {
+            onContentClick?(role)
+        }
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+
     override func layoutSubviews() { super.layoutSubviews(); coordinator?.containerDidLayout(self) }
     func assertStableOwnership() {
         assert(emptyHost?.superview === self)
@@ -646,7 +670,7 @@ struct HoverPassThroughRegion: UIViewRepresentable {
 struct CatalystWindowChrome: UIViewRepresentable {
     let appearanceMode: WeiBeiAppearanceMode
     var initialSize = CGSize(width: 1240, height: 792)
-    var minimumSize = CGSize(width: 520, height: 560)
+    var minimumSize = CGSize(width: WeiBeiMetric.minimumWorkspaceWidth, height: 560)
     func makeUIView(context: Context) -> Probe {
         let view = Probe()
         view.initialSize = initialSize
@@ -662,7 +686,7 @@ struct CatalystWindowChrome: UIViewRepresentable {
     final class Probe: UIView {
         var mode: WeiBeiAppearanceMode = .paper
         var initialSize = CGSize.zero
-        var minimumSize = CGSize(width: 520, height: 560)
+        var minimumSize = CGSize(width: WeiBeiMetric.minimumWorkspaceWidth, height: 560)
         override func didMoveToWindow() { super.didMoveToWindow(); configure() }
         func configure() {
             CatalystDesktopWindow.configure(mode: mode)

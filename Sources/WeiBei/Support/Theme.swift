@@ -2024,7 +2024,10 @@ extension Image {
     }
 }
 
-extension WeiBeiMetric { static let courseDrawerWidth: CGFloat = 252 }
+extension WeiBeiMetric {
+    static let courseDrawerWidth: CGFloat = 252
+    static let minimumWorkspaceWidth: CGFloat = 520
+}
 
 struct WeiBeiFittedSheetPresentation: ViewModifier {
     @ViewBuilder
