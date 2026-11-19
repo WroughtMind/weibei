@@ -28,13 +28,13 @@ extension WorkspaceStore {
     func composerDraft(for sessionID: UUID?) -> String {
         guard let sessionID else { return "" }
         if sessionID == activeStudySessionID { return pendingComposerDraft ?? agentDraft }
-        return agentDraftsBySessionID[sessionID]
+        return sessionDrafts.textBySession[sessionID]
             ?? studySessions.first(where: { $0.id == sessionID })?.draft ?? ""
     }
 
     func saveComposerDraft(_ draft: String, for sessionID: UUID?) {
         guard let sessionID else { return }
-        agentDraftsBySessionID[sessionID] = draft
+        sessionDrafts.textBySession[sessionID] = draft
         if sessionID == activeStudySessionID {
             pendingComposerDraft = draft
             // 输入框订阅的是 agentDraft。只改 pending 时，失败回填会把空的 agentDraft 当成「输入框是空的」。
@@ -49,7 +49,6 @@ extension WorkspaceStore {
             studySessions[index].draft = draft
         }
         if sessionID == activeStudySessionID { agentDraft = draft }
-        if sessionID == activeSelectionAskThreadID { floatingAgentDraft = draft }
     }
 
     /// A2: 失败或取消后只在输入框为空时回填上一问，绝不覆盖用户正在写的新草稿。

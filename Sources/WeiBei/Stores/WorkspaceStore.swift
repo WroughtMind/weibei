@@ -7,6 +7,7 @@ import Combine
 import CryptoKit
 import Darwin
 import Foundation
+import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 import WeiBeiCore
@@ -278,6 +279,11 @@ final class LibraryDrawerState: ObservableObject {
     @Published var isOpen = false
     var expandedCourseIDs: Set<UUID>?
     var displaysAlongsideWorkspace = false
+}
+
+@MainActor @Observable
+final class AgentSessionDrafts {
+    var textBySession: [UUID: String] = [:]
 }
 
 @MainActor
@@ -614,7 +620,6 @@ final class WorkspaceStore: ObservableObject {
     }
     /// Durable selection→chat threads (underline marks + reopen floating Q&A).
     @Published var selectionAskThreads: [SelectionAskThread] = []
-    @Published var floatingAgentDraft = ""
     @Published var selectionChatError: String?
     @Published var selectionChatRevealMessageID: UUID?
     var automaticSelection: SelectionContext?
@@ -630,7 +635,6 @@ final class WorkspaceStore: ObservableObject {
         set {
             if interaction.activeSelectionAskThreadID != newValue {
                 interaction.activeSelectionAskThreadID = newValue
-                floatingAgentDraft = composerDraft(for: newValue)
             }
         }
     }
@@ -794,7 +798,7 @@ final class WorkspaceStore: ObservableObject {
     private var selfCheckCapturedAgentRequest: StudyAgentRequest?
 #endif
     var lastWork: WorkspaceResumePoint?
-    var agentDraftsBySessionID: [UUID: String] = [:]
+    let sessionDrafts = AgentSessionDrafts()
     var pendingComposerDraft: String?
     /// Session-local identity of the one reusable, newly created empty Chat.
     /// Deliberately not persisted: reopening the App starts with a fresh empty Chat.
@@ -1856,7 +1860,7 @@ final class WorkspaceStore: ObservableObject {
             activeStudySessionID = session.id
             messages = []
             agentDraft = ""; pendingComposerDraft = nil
-            agentDraftsBySessionID[session.id] = ""
+            sessionDrafts.textBySession[session.id] = ""
             return session
         }
         saveActiveAgentDraft()
@@ -1897,7 +1901,7 @@ final class WorkspaceStore: ObservableObject {
            studySessions.first(where: { $0.id == blankID })?.messages.isEmpty == true,
            conversationQuotes(in: blankID).isEmpty {
             studySessions.removeAll { $0.id == blankID }
-            agentDraftsBySessionID.removeValue(forKey: blankID)
+            sessionDrafts.textBySession.removeValue(forKey: blankID)
         }
         freshlyCreatedEmptyStudySessionID = nil
         activeStudySessionID = id
@@ -1980,7 +1984,7 @@ final class WorkspaceStore: ObservableObject {
         if freshlyCreatedEmptyStudySessionID == id {
             freshlyCreatedEmptyStudySessionID = nil
         }
-        agentDraftsBySessionID.removeValue(forKey: id)
+        sessionDrafts.textBySession.removeValue(forKey: id)
         sessionMessagePersistence.forget(id)
         studySessions.remove(at: index)
         selectionAskThreads.removeAll { $0.id == id }
@@ -2141,11 +2145,11 @@ final class WorkspaceStore: ObservableObject {
 
     private func saveActiveAgentDraft() {
         guard let activeStudySessionID else { return }
-        agentDraftsBySessionID[activeStudySessionID] = pendingComposerDraft ?? agentDraft
+        sessionDrafts.textBySession[activeStudySessionID] = pendingComposerDraft ?? agentDraft
     }
 
     func restoreAgentDraft(for sessionID: UUID) {
-        agentDraft = agentDraftsBySessionID[sessionID] ?? studySessions.first(where: { $0.id == sessionID })?.draft ?? ""
+        agentDraft = sessionDrafts.textBySession[sessionID] ?? studySessions.first(where: { $0.id == sessionID })?.draft ?? ""
         pendingComposerDraft = agentDraft.isEmpty ? nil : agentDraft
     }
 
@@ -4435,7 +4439,7 @@ final class WorkspaceStore: ObservableObject {
         freshlyCreatedEmptyStudySessionID = nil
         activeCourseID = courseID
         agentDraft = question; pendingComposerDraft = question
-        agentDraftsBySessionID[session.id] = question
+        sessionDrafts.textBySession[session.id] = question
         openConversationInWorkspace(courseID: courseID)
         submitAgentDraft(targetCourseID: courseID)
         return session.id
@@ -8310,7 +8314,7 @@ final class WorkspaceStore: ObservableObject {
         selectionContext = selection
         addSelectionAttachment(selection)
         agentDraft = "检查课程授权后的最终请求"
-        agentDraftsBySessionID[session.id] = agentDraft
+        sessionDrafts.textBySession[session.id] = agentDraft
         selfCheckCapturedAgentRequest = nil
         capturesAgentRequestForSelfCheck = true
         defer { capturesAgentRequestForSelfCheck = false }
@@ -11899,7 +11903,7 @@ final class WorkspaceStore: ObservableObject {
             var persisted = sessionMessagePersistence.annotatingMessageCount(session)
             persisted.draft = session.id == activeStudySessionID
                 ? pendingComposerDraft ?? agentDraft
-                : agentDraftsBySessionID[session.id] ?? session.draft
+                : sessionDrafts.textBySession[session.id] ?? session.draft
             return persisted
         }
     }

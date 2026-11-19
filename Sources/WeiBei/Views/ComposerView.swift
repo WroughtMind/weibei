@@ -1,12 +1,12 @@
 import SwiftUI
 import WeiBeiCore
 
-/// Chat 输入框。草稿放在本地 `@State`，打字不写 `store.agentDraft`，避免整棵对话树刷新。
+/// 浮窗直接编辑该选区会话的草稿；主对话沿用本地编辑状态。
 struct ComposerView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
     @ObservedObject var agentAccount = AgentAccountService.shared
-    @State private var draft = ""
+    @State private var mainDraft = ""
     @State private var editorHeight: CGFloat = 0
     @State private var editorActive = false
     @State private var focusRequest = 0
@@ -23,21 +23,30 @@ struct ComposerView: View {
     var sendTrailing: CGFloat
     var horizontalPadding: CGFloat = 10
     var verticalPadding: CGFloat = 0
-    /// Floating paper surfaces already provide their own chrome.
-    var showsChrome = true
+    var isFloating = false
     var focusesOnAppear = false
     var focusTrigger = 0
     var showsReasoningEffort = false
     var sessionID: UUID? = nil
     var submit: () -> Void
 
-    private var targetID: UUID? { sessionID ?? store.activeStudySessionID }
+    private var targetID: UUID? { isFloating ? sessionID : store.activeStudySessionID }
     private var isRunning: Bool { targetID.map { store.isAgentRunning(in: $0) } ?? false }
     private var isStopping: Bool { targetID.flatMap { store.agentRuns[$0]?.isStoppingAgent } ?? false }
 
+    private var visibleDraft: String { isFloating ? store.composerDraft(for: sessionID) : mainDraft }
+
+    private var editorDraft: Binding<String> {
+        guard isFloating else { return $mainDraft }
+        return Binding(
+            get: { store.composerDraft(for: sessionID) },
+            set: { store.saveComposerDraft($0, for: sessionID) }
+        )
+    }
+
     private var canSend: Bool {
         !isStopping
-            && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !visibleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var hasReasoningControl: Bool {
@@ -49,14 +58,14 @@ struct ComposerView: View {
     }
 
     var body: some View {
-        let corner: CGFloat = showsChrome ? 22 : WeiBeiMetric.controlRadius
+        let corner: CGFloat = isFloating ? WeiBeiMetric.controlRadius : 22
         let textHeight = max(editorHeight, fontSize + 3)
         let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
         let controlBottomInset = max(verticalPadding, (height - sendButtonSize * textScale) / 2)
         HStack(alignment: .bottom, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 AgentComposerTextEditor(
-                    text: $draft,
+                    text: editorDraft,
                     measuredHeight: $editorHeight,
                     active: $editorActive,
                     focused: focused,
@@ -70,27 +79,21 @@ struct ComposerView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: textHeight)
 
-                if draft.isEmpty && !editorActive {
+                if visibleDraft.isEmpty && (isFloating || !editorActive) {
                     Text(prompt)
                         .weiBeiText(fontSize)
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: textHeight)
                         .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
             .padding(.vertical, verticalPadding)
-            .padding(.trailing, hasReasoningControl ? 0 : trailingPadding)
+            .padding(.trailing, hasReasoningControl ? 0 : max(trailingPadding, sendButtonSize * textScale + sendTrailing))
             .padding(.horizontal, horizontalPadding)
-            .frame(
-                maxWidth: .infinity,
-                minHeight: max(
-                    CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
-                        composerMinimumHeight: Double(height)
-                    )),
-                    reservedControlHeight
-                ),
-                alignment: .leading
-            )
+            .frame(maxWidth: .infinity, minHeight: max(height, reservedControlHeight), alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture { focusRequest &+= 1 }
             .overlay(alignment: .bottomTrailing) {
@@ -115,33 +118,31 @@ struct ComposerView: View {
         .frame(maxWidth: .infinity)
         .frame(height: min(
             max(height, textHeight + verticalPadding * 2, reservedControlHeight),
-            compactMaxHeight ?? .greatestFiniteMagnitude
+            compactMaxHeight.map { $0 * textScale } ?? .greatestFiniteMagnitude
         ), alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
         .weibeiComposerCard(
             cornerRadius: corner,
             focused: focused.wrappedValue,
-            showsChrome: showsChrome
+            fill: isFloating ? WeiBeiTheme.paperInset.opacity(0.38) : WeiBeiTheme.paperRaised
         )
         .contentShape(RoundedRectangle(cornerRadius: corner))
         .onAppear {
-            draft = store.composerDraft(for: targetID)
+            if !isFloating { mainDraft = store.composerDraft(for: targetID) }
             if focusesOnAppear || focused.wrappedValue { focusRequest &+= 1 }
         }
         .onChange(of: focused.wrappedValue) { _, focused in
             if focused { focusRequest &+= 1 }
         }
         .onChange(of: focusTrigger) { _, _ in focusRequest &+= 1 }
-        .onChange(of: targetID) { _, _ in draft = store.composerDraft(for: targetID) }
-        .onReceive(store.$floatingAgentDraft) { newValue in
-            guard let sessionID, sessionID == store.activeSelectionAskThreadID, draft != newValue else { return }
-            draft = newValue
+        .onChange(of: targetID) { _, id in
+            if !isFloating { mainDraft = store.composerDraft(for: id) }
         }
         .onReceive(store.$agentDraft) { newValue in
-            guard sessionID == nil, draft != newValue else { return }
-            draft = newValue
+            guard !isFloating, mainDraft != newValue else { return }
+            mainDraft = newValue
         }
-        .onChange(of: draft) { _, newValue in
+        .onChange(of: mainDraft) { _, newValue in
             store.saveComposerDraft(newValue, for: targetID)
             guard focused.wrappedValue else { return }
             guard let span = WeiBeiPerf.begin(
@@ -216,9 +217,8 @@ struct ComposerView: View {
 
     private func commitAndSubmit() {
         // A1: 正在回答或正在停止时，回车不做任何事；停止只留给停止按钮。
-        guard !isRunning, !isStopping else { return }
-        guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        store.saveComposerDraft(draft, for: targetID)
+        guard !isRunning, canSend else { return }
+        if !isFloating { store.saveComposerDraft(mainDraft, for: targetID) }
         submit()
     }
 
@@ -227,7 +227,7 @@ struct ComposerView: View {
             if isRunning, let targetID { store.cancelAgentRequest(in: targetID) }
             else { commitAndSubmit() }
         } label: {
-            Image(systemName: isRunning ? "stop.fill" : showsChrome ? "arrow.up" : "paperplane.fill")
+            Image(systemName: isRunning ? "stop.fill" : isFloating ? "paperplane.fill" : "arrow.up")
         }
         .buttonStyle(WeiBeiIconButtonStyle(
             size: sendButtonSize,

@@ -1933,17 +1933,18 @@ extension View {
             .animation(WeiBeiMotion.reveal, value: active)
     }
 
-    /// A flat input surface; floating composers already supply their own background.
+    /// A flat input surface with a theme stroke.
     func weibeiComposerCard(
         cornerRadius: CGFloat,
         focused: Bool,
-        showsChrome: Bool = true
+        showsChrome: Bool = true,
+        fill: Color = WeiBeiTheme.paperRaised
     ) -> some View {
         self
             .background {
                 if showsChrome {
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(WeiBeiTheme.paperRaised)
+                        .fill(fill)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
