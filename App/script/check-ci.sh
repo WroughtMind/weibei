@@ -31,6 +31,7 @@ save_evidence() {
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-main.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-hover.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-copy-feedback.png" \
+    "${CHECK_SUPPORT:-$CHECK_DIR}/Results/workspace-status-compact.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-capsule-floating.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-quote-main.png" \
     "${CHECK_SUPPORT:-$CHECK_DIR}/Results/selection-quote-main-visible.png" \

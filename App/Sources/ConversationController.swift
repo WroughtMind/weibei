@@ -32,7 +32,6 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     private var loadingSession = false
     private var lastReadingMessageID: UUID?
     var quoteText: ((String, UUID?) -> Bool)?
-    var didCopyText: (() -> Void)?
     var readingMessageChanged: ((UUID?) -> Void)?
     var contentHeightChanged: ((CGFloat) -> Void)?
     var submitQuestion: ((String) -> Bool)?
@@ -76,6 +75,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     var saveNote: ((String) -> Void)?
     lazy var selection = ConversationSelection(controller: self)
     let selectionActions = ConversationSelectionActions()
+    private var selectionCopyFeedbackTask: Task<Void, Never>?
     private let selectionPress = ConversationSelectionPressObserver()
     var selectionActionTextScale: CGFloat = 1 {
         didSet { if isViewLoaded, selectionActionTextScale != oldValue { updateSelectionActionsAppearance() } }
@@ -121,7 +121,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         selectionPress.released = { [weak self] in self?.selection.endInteraction() }
         collection.addGestureRecognizer(selectionPress)
         selection.changed = { [weak self] in
-            self?.updateSelectionActions()
+            guard let self else { return }
+            selectionCopyFeedbackTask?.cancel()
+            selectionActions.copyFeedback = .none
+            updateSelectionActions()
         }
         selection.geometryChanged = { [weak self] in self?.updateSelectionActions() }
         selectionActions.copySelectedText = { [weak self] in self?.copySelection(dismissingSelection: true) }
@@ -905,7 +908,16 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
     @objc private func selectionPanelGeometryDidChange() { updateSelectionActions() }
     func updateSelectionActions() {
-        guard isViewLoaded, !selection.isInteracting, selection.hasSelection else {
+        guard isViewLoaded else { return }
+        if selectionActions.copyFeedback == .confirmation {
+            selectionActions.frame.size = selectionActions.intrinsicContentSize
+            let frame = selectionActions.frame
+            let isCovered = !isFloatingConversation && ConversationSelectionPanelProbe.PanelView.rectangles(in: view)
+                .contains(where: { $0.intersects(frame) })
+            selectionActions.isHidden = !collection.frame.intersection(view.bounds).contains(frame) || isCovered
+            return
+        }
+        guard !selection.isInteracting, selection.hasSelection else {
             selectionActions.isHidden = true
             return
         }
@@ -964,8 +976,19 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
         let text = selection.text()
         guard !text.isEmpty else { return }
         UIPasteboard.general.string = text
+        let hasVisibleActions = !selectionActions.isHidden
         if dismissingSelection { selection.clear() }
-        didCopyText?()
+        UIAccessibility.post(notification: .announcement, argument: selectionActions.copiedTitle)
+        guard hasVisibleActions else { return }
+        selectionActions.copyFeedback = dismissingSelection ? .confirmation : .inActions
+        updateSelectionActions()
+        selectionCopyFeedbackTask?.cancel()
+        selectionCopyFeedbackTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled, let self else { return }
+            selectionActions.copyFeedback = .none
+            updateSelectionActions()
+        }
     }
     func quoteSelection() {
         let text = selection.text()
@@ -1678,12 +1701,12 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     && capsule.bounds.contains(capsule.copyButton.frame)
                     && capsule.bounds.contains(capsule.quoteButton.frame),
                            "选字工具条的可见边界与点击区域不一致")
-                var copyFeedback = 0
-                selectionProbe.didCopyText = { copyFeedback += 1 }
-                selectionProbe.selectionActions.copyButton.sendActions(for: .touchUpInside)
+                let actionFrame = capsule.frame
+                capsule.copyButton.sendActions(for: .touchUpInside)
                 try expect(UIPasteboard.general.string == excerpt && !selectionProbe.selection.hasSelection
-                    && probeLabel.selectionRange == nil && selectionProbe.selectionActions.isHidden && copyFeedback == 1,
-                           "胶囊复制没有收起选区、显示反馈或复制了别的内容")
+                    && probeLabel.selectionRange == nil && !capsule.isHidden && !capsule.isUserInteractionEnabled
+                    && capsule.quoteButton.isHidden && actionFrame.contains(capsule.frame) && capsule.frame.width < actionFrame.width,
+                           "胶囊复制未在原位显示轻量确认，或改动了复制内容和选区")
                 try await drag(from: 30, to: 12)
                 // A detached label's live selection must survive read-only copying.
                 let otherLabel = TextLabelView(attributedText: NSAttributedString(string: "another selected passage",
@@ -1693,8 +1716,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 otherLabel.layoutIfNeeded()
                 otherLabel.selectionRange = NSRange(location: 2, length: 7)
                 let otherRange = otherLabel.selectionRange
-                try expect(selectionProbe.selection.text() == excerpt && otherLabel.selectionRange == otherRange,
-                           "复制通知别的文字控件取消了选区")
+                selectionProbe.copySelection()
+                try expect(UIPasteboard.general.string == excerpt && selectionProbe.selection.text() == excerpt
+                    && otherLabel.selectionRange == otherRange && capsule.copyFeedback == .inActions && !capsule.quoteButton.isHidden,
+                           "键盘复制未显示确认，或改变了仍可操作的选区")
                 let secondProbeBody = selectionProbe.store.view(for: probeMessage.blocks[1], width: selectionProbe.bodyWidth)
                 guard let paragraphStart = secondProbeBody.rect(for: 0) else {
                     throw Failure(message: "跨段起点没有文字位置")
@@ -1769,7 +1794,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     && !codeProbeBody.displayedSelectionRects.isEmpty, "代码选字没有接入胶囊或高亮")
                 selectionProbe.selectionActions.copyButton.sendActions(for: .touchUpInside)
                 try expect(UIPasteboard.general.string == "quoted" && !selectionProbe.selection.hasSelection
-                    && selectionProbe.selectionActions.isHidden,
+                    && capsule.copyFeedback == .confirmation && capsule.quoteButton.isHidden,
                            "代码胶囊没有复制所选文字或没有收起选区")
                 selectionProbe.selectionPress.pressed?(codeProbeLabel.convert(.zero, to: selectionProbe.collection), codeProbeLabel)
                 codeProbeLabel.selectionRange = NSRange(location: 4, length: 6)

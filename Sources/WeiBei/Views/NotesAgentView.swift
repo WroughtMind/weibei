@@ -2363,21 +2363,27 @@ private struct ConversationQuoteTray: View {
     let sessionID: UUID?
 
     var body: some View {
-        if let sessionID, !store.conversationQuotes(in: sessionID).isEmpty {
-            let quotes = store.conversationQuotes(in: sessionID)
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(quotes) { quote in
-                        ConversationQuotePill(quote: quote, sessionID: sessionID)
-                    }
+        let quotes = store.conversationQuotes(in: sessionID)
+        if let sessionID, !quotes.isEmpty {
+            let rows = VStack(alignment: .leading, spacing: 6) {
+                ForEach(quotes) { quote in
+                    ConversationQuoteRow(quote: quote, sessionID: sessionID)
                 }
             }
-            .frame(height: min(CGFloat(quotes.count) * 34 * textScale, 102 * textScale))
+            ViewThatFits(in: .vertical) {
+                rows.fixedSize(horizontal: false, vertical: true)
+                ScrollView {
+                    rows
+                }
+                .defaultScrollAnchor(.bottom)
+            }
+            .frame(maxHeight: 102 * textScale, alignment: .topLeading)
+            .padding(.horizontal, 4)
         }
     }
 }
 
-private struct ConversationQuotePill: View {
+private struct ConversationQuoteRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     let quote: ConversationQuoteAttachment
     let sessionID: UUID
@@ -2385,24 +2391,42 @@ private struct ConversationQuotePill: View {
     @State private var previewing = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 4) {
             Button { previewing.toggle() } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "text.quote").foregroundStyle(WeiBeiTheme.cinnabar)
-                    Text(quote.text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " "))
-                        .lineLimit(1).truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .contentShape(Rectangle())
+                Text(quote.text.split(whereSeparator: \.isWhitespace).joined(separator: " "))
+                    .weiBeiText(12)
+                    .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+                    .lineSpacing(2)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 10)
+                    .padding(.vertical, 3)
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(WeiBeiTheme.secondaryInk.opacity(hovering ? 0.55 : 0.28))
+                            .frame(width: 2)
+                            .allowsHitTesting(false)
+                    }
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .onHover { hovering = $0 }
             .accessibilityIdentifier("conversation-quote-\(quote.id.uuidString)")
             .accessibilityLabel(store.ui("预览引用：", "Preview quote: ") + quote.text)
             .popover(isPresented: $previewing, arrowEdge: .bottom) {
+                let excerpt = Text(quote.text)
+                    .weiBeiText(12)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 10) {
                     Text(store.ui("对话引用", "Conversation quote")).weiBeiText(12, weight: .medium)
-                    ScrollView { Text(quote.text).weiBeiText(12).frame(maxWidth: .infinity, alignment: .leading) }
-                        .frame(maxHeight: 220)
+                    ViewThatFits(in: .vertical) {
+                        excerpt
+                        ScrollView { excerpt }
+                    }
+                    .frame(maxHeight: 220, alignment: .topLeading)
+                    .fixedSize(horizontal: false, vertical: true)
                     if let messageID = quote.messageID,
                        store.conversationMessages(in: sessionID).contains(where: { $0.id == messageID }) {
                         Button(store.ui("返回原消息", "Go to original message")) {
@@ -2420,16 +2444,10 @@ private struct ConversationQuotePill: View {
             Button { store.removeConversationQuotes([quote.id], in: sessionID) } label: {
                 Image(systemName: "xmark").weiBeiText(9, weight: .semibold)
             }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 20))
+            .buttonStyle(WeiBeiIconButtonStyle(size: 22))
             .accessibilityIdentifier("conversation-quote-remove-\(quote.id.uuidString)")
             .accessibilityLabel(store.ui("移除引用", "Remove quote"))
         }
-        .weiBeiText(12)
-        .foregroundStyle(WeiBeiTheme.secondaryInk)
-        .padding(.leading, 10).padding(.trailing, 5).padding(.vertical, 4)
-        .weibeiEtchedBackground(fill: WeiBeiTheme.paperInset.opacity(hovering ? 0.64 : 0.34),
-            stroke: WeiBeiTheme.hairline.opacity(hovering ? 0.72 : 0.42), cornerRadius: 8)
-        .onHover { hovering = $0 }
     }
 }
 
