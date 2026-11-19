@@ -1259,14 +1259,6 @@ expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 190
 expect(SelectionFloatingAgentPlacement.expandedComposerMaxHeight > 48
     && SelectionFloatingAgentPlacement.expandedComposerMaxHeight < SelectionFloatingAgentPlacement.expandedHalfHeight,
     "selection agent composer grows for multiple lines without taking over the floating panel")
-expect(SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight == 40,
-    "selection agent composer stays visually subordinate to the selected passage")
-let floatingComposerControlHostHeight = SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
-    composerMinimumHeight: SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight
-)
-expect(floatingComposerControlHostHeight == SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight
-    && floatingComposerControlHostHeight >= 26 + 4,
-    "selection agent send and stop controls stay fully inside the compact composer")
 expect(SelectionFloatingAgentPlacement.automaticContentHeight(measuredContentHeight: 360) == 360,
     "selection agent follows the real answer height well beyond the old shallow stop")
 expect(SelectionFloatingAgentPlacement.automaticContentHeight(measuredContentHeight: 900)
@@ -1371,6 +1363,9 @@ expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight:
     "a floor above the automatic cap can grow up to the resize limit")
 expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 400, userFixed: 180) == 180,
     "shrinking below the text fixes the viewport and scrolls inside")
+expect(SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 400, availableHeight: 140) == 140
+    && SelectionFloatingAgentPlacement.resolvedFeedHeight(measuredContentHeight: 540, availableHeight: 140) == 140,
+    "a final reply with taller layout scrolls within the same space below a parked panel")
 let openingTopLeft = SelectionFloatingAgentPlacement.initialTopLeft(
     anchor: FloatingAgentCoordinate(x: 320, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)

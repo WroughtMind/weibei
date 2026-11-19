@@ -1030,13 +1030,9 @@ public enum SelectionFloatingAgentPlacement {
     public static let compactHalfHeight = 28.0
     /// A typed question may grow to five lines, but never consume the floating panel.
     public static let expandedComposerMaxHeight = 96.0
-    public static let expandedComposerCollapsedHeight = 40.0
+    public static let expandedComposerCollapsedHeight = 34.0
     /// Nominal height of the panel before an answer exists. Side choice uses this once.
     public static let initialPlacedPanelHeight = 96.0
-
-    public static func composerControlHostMinimumHeight(composerMinimumHeight: Double) -> Double {
-        composerMinimumHeight
-    }
 
     public static func automaticContentHeight(measuredContentHeight: Double) -> Double {
         clamp(
@@ -1050,10 +1046,12 @@ public enum SelectionFloatingAgentPlacement {
     public static func resolvedFeedHeight(
         measuredContentHeight: Double,
         userFloor: Double? = nil,
-        userFixed: Double? = nil
+        userFixed: Double? = nil,
+        availableHeight: Double = .greatestFiniteMagnitude
     ) -> Double {
+        let available = max(0, availableHeight)
         if let userFixed {
-            return clamp(userFixed, min: minimumResizableContentHeight, max: maximumResizableContentHeight)
+            return min(available, clamp(userFixed, min: minimumResizableContentHeight, max: maximumResizableContentHeight))
         }
         let measured = max(0, measuredContentHeight)
         if measured <= 1, (userFloor ?? 0) <= 1 { return 0 }
@@ -1063,7 +1061,12 @@ public enum SelectionFloatingAgentPlacement {
             : maximumAutomaticContentHeight
         // A dragged floor keeps the resize minimum. Untouched text uses its own height.
         let minimum = (userFloor ?? 0) > 1 ? minimumResizableContentHeight : 0
-        return clamp(preferred, min: minimum, max: cap)
+        return min(available, clamp(preferred, min: minimum, max: cap))
+    }
+
+    /// Reserve room for a scrollable reply beneath the parked header and composer.
+    public static func maximumParkedY(contentHeight: Double, chromeHeight: Double) -> Double {
+        max(8, contentHeight - chromeHeight - minimumResizableContentHeight - 8)
     }
 
     /// Opening placement, returned as the panel's top-left. Side choice uses the nominal size only.
@@ -1084,7 +1087,10 @@ public enum SelectionFloatingAgentPlacement {
         )
         return FloatingAgentCoordinate(
             x: center.x - expandedHalfWidth,
-            y: center.y - initialPlacedPanelHeight / 2
+            y: min(center.y - initialPlacedPanelHeight / 2, maximumParkedY(
+                contentHeight: canvas.y - topInset,
+                chromeHeight: initialPlacedPanelHeight
+            ))
         )
     }
 
