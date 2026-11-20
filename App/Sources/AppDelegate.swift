@@ -321,9 +321,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func saveWorkspace() {
         guard !Self.usesFixture else { return }
         guard saveTask == nil else { return }
-        // A failed save retains its assertion until reactivation. If another
-        // inactive save starts first, retire that assertion before replacing it.
-        finishBackgroundSave()
         let attemptID = UUID()
         saveAttemptID = attemptID
         Self.workspace.commitCurrentReaderLocation()
@@ -341,48 +338,21 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         saveTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { finishBackgroundSave(attemptID: attemptID) }
             let store = Self.workspace
-            let captured = await store.freshActiveNoteEditorSnapshot()
+            _ = await store.freshActiveNoteEditorSnapshot()
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
-            guard captured else {
-                if Self.updates.status == .installing, store.allowsUnsavedRelaunch {
-                    finishBackgroundSave(attemptID: attemptID)
-                    return
-                }
-                store.showImportantOperationError(store.ui("笔记最新内容尚未安全保存，请保持窗口打开并重试。", "The latest note is not safely saved. Keep the window open and retry."))
-                reopenAfterSaveFailure(attemptID: attemptID)
-                return
-            }
             await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
-            let saved = await store.flushPendingWorkspaceSaveAsync()
-            guard !Task.isCancelled, saveAttemptID == attemptID else { return }
-            guard saved else {
-                if Self.updates.status == .installing, store.allowsUnsavedRelaunch {
-                    finishBackgroundSave(attemptID: attemptID)
-                    return
-                }
-                reopenAfterSaveFailure(attemptID: attemptID)
-                return
-            }
-            finishBackgroundSave(attemptID: attemptID)
+            _ = await store.flushPendingWorkspaceSaveAsync()
         }
     }
 
-    private func reopenAfterSaveFailure(attemptID: UUID) {
-        guard saveAttemptID == attemptID else { return }
-        saveTask = nil
-        UIApplication.shared.requestSceneSessionActivation(UIApplication.shared.openSessions.first, userActivity: nil, options: nil) { error in
-            WeiBeiLog.noteRepair.error("code=catalyst_save_reopen_failed reason=\(error.localizedDescription, privacy: .private)")
-        }
-        // The background assertion ends when the reactivated scene is visible.
-    }
     func sceneBecameActive() {
-        if saveTask == nil { finishBackgroundSave() }
         Task { await Self.workspace.reconcileActiveNoteEditorWithBackingFile() }
     }
-    private func finishBackgroundSave(attemptID: UUID? = nil) {
-        if let attemptID, saveAttemptID != attemptID { return }
+    private func finishBackgroundSave(attemptID: UUID) {
+        guard saveAttemptID == attemptID else { return }
         saveTask = nil
         saveAttemptID = nil
         if backgroundTask != .invalid {
@@ -529,7 +499,6 @@ private struct CatalystWorkspaceRoot: View {
             .onAppear { store.refreshAppearanceForSystemChange() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { appDelegate.sceneBecameActive() }
-                else { appDelegate.saveWorkspace() }
             }
             .onChange(of: store.customShortcutOverrides) { _, _ in UIMenuSystem.main.setNeedsRebuild() }
             .onChange(of: store.interfaceLanguage) { _, _ in UIMenuSystem.main.setNeedsRebuild() }

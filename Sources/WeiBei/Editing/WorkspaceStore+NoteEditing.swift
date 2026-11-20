@@ -170,7 +170,6 @@ extension WorkspaceStore {
     }
 
     func prepareForUserRequestedRelaunch() async -> Bool {
-        allowsUnsavedRelaunch = false
         commitCurrentReaderLocation()
         let captured = await freshActiveNoteEditorSnapshot()
         await flushPendingNotePersistenceAsync(flushWorkspace: false)
@@ -178,7 +177,7 @@ extension WorkspaceStore {
         if captured, saved, !noteEditingSession.dirty,
            noteEditingSession.saveStatus != .failed,
            noteEditingSession.saveStatus != .externallyModified { return true }
-        allowsUnsavedRelaunch = await userOperationRisks.confirm(
+        return await userOperationRisks.confirm(
             title: ui("仍然安装并重启？", "Install and restart anyway?"),
             actionLabel: ui("安装并重启", "Install and Restart"),
             message: ui(
@@ -186,7 +185,6 @@ extension WorkspaceStore {
                 "Some note or workspace changes are not confirmed saved. Installing restarts WeiBei, and those unsaved changes may be lost. You can cancel, retry saving, then install."
             )
         )
-        return allowsUnsavedRelaunch
     }
 
     func noteEditorDidPersist(_ markdown: String, documentID: String) {
@@ -273,30 +271,33 @@ extension WorkspaceStore {
         }
     }
 
-    func classifyNoteEditorRecovery(
-        documentID: String,
-        diskMarkdown: String
-    ) async -> NoteRecoveryClassification {
-        (try? await noteRecoveryStore.classify(
-            documentID: documentID,
-            diskDigest: Self.noteContentDigest(Data(diskMarkdown.utf8))
-        )) ?? .damaged
-    }
-
     func reconcileActiveNoteEditorWithBackingFile() async {
-        let documentID = noteEditingSession.dirty
-            ? noteEditingSession.documentID
-            : activeNoteEditorDocumentID
+        let activeDocumentID = activeNoteEditorDocumentID
+        let session = noteEditingSession
+        let documentID = session.dirty ? session.documentID : activeDocumentID
         guard let item = item(withID: documentID),
               item.editsBackingMarkdownFile,
-              let url = item.url,
-              let data = try? Data(contentsOf: url),
-              let diskMarkdown = String(data: data, encoding: .utf8) else { return }
-        if noteEditingSession.dirty {
-            switch await classifyNoteEditorRecovery(
-                documentID: documentID,
-                diskMarkdown: diskMarkdown
-            ) {
+              let url = item.url else { return }
+        let generation = session.documentGeneration
+        let savedRevision = session.savedRevision
+        let disk = await Task.detached(priority: .utility) { () -> (String, String)? in
+            guard let data = try? Data(contentsOf: url),
+                  let markdown = String(data: data, encoding: .utf8) else { return nil }
+            return (markdown, Self.noteContentDigest(data))
+        }.value
+        guard let (diskMarkdown, diskDigest) = disk else { return }
+        let recovery = (try? await noteRecoveryStore.classify(
+            documentID: documentID,
+            diskDigest: diskDigest
+        )) ?? .damaged
+        guard activeNoteEditorDocumentID == activeDocumentID,
+              session.documentGeneration == generation,
+              session.savedRevision == savedRevision,
+              documentID == (session.dirty ? session.documentID : activeDocumentID),
+              self.item(withID: documentID)?.url == url else { return }
+
+        if session.dirty {
+            switch recovery {
             case .stale:
                 noteEditorDidPersist(diskMarkdown, documentID: documentID)
             case .restore:
@@ -311,7 +312,6 @@ extension WorkspaceStore {
                     checkpointIsPersisted: true
                 )
             case .none:
-                let diskDigest = Self.noteContentDigest(data)
                 let baseDigest = latestNoteEditorSnapshot.flatMap {
                     $0.documentID == documentID ? $0.baseDigest : nil
                 } ?? noteEditorBaseDigest(for: documentID)
@@ -344,10 +344,7 @@ extension WorkspaceStore {
             return
         }
 
-        switch await classifyNoteEditorRecovery(
-            documentID: documentID,
-            diskMarkdown: diskMarkdown
-        ) {
+        switch recovery {
         case .restore(let checkpoint):
             latestNoteEditorSnapshot = (
                 documentID,
@@ -385,18 +382,12 @@ extension WorkspaceStore {
             break
         }
 
-        let previousDigest = Self.noteContentDigest(Data(noteText.utf8))
-        let diskChanged = previousDigest != Self.noteContentDigest(
-            Data(diskMarkdown.utf8)
-        )
+        if diskDigest == lastSelfWrittenNoteDigestsByItemID[documentID],
+           noteText.utf8.elementsEqual(diskMarkdown.utf8)
+               || noteText.utf8.elementsEqual(cleanLegacyPlaceholder(diskMarkdown).utf8) {
+            return
+        }
         refreshActiveNoteFromBackingFile()
-        guard diskChanged else { return }
-        guard previousDigest != Self.noteContentDigest(Data(noteText.utf8)) else { return }
-        noteEditingSession.replaceDocument(with: item.id)
-        noteEditorCommand = NoteEditorCommand(
-            kind: .reloadDocument,
-            markdown: noteText
-        )
     }
 
     func resolveNoteEditorRecoveryConflict(
