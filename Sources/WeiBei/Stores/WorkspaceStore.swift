@@ -694,8 +694,6 @@ final class WorkspaceStore: ObservableObject {
     private var pendingNoteSelection: PendingNoteSelection?
     private var pendingNoteSelectionRiskTask: Task<Void, Never>?
     let userOperationRisks = UserOperationRiskCenter()
-    /// Applies only while the updater is actually restarting the application.
-    var allowsUnsavedRelaunch = false
     /// Serious data-operation failures (note read/write/rename/restore/identity,
     /// security scope, course file move & rollback). Never auto-dismisses — only a
     /// user close or a newer important error replaces it.
@@ -11871,7 +11869,7 @@ final class WorkspaceStore: ObservableObject {
         noteText = noteText(for: activeNoteItem)
     }
 
-    private func cleanLegacyPlaceholder(_ text: String) -> String {
+    func cleanLegacyPlaceholder(_ text: String) -> String {
         text
             .replacingOccurrences(
                 of: #"(?m)^- (?:静默洞察|Agent 洞察)：(.+)\n  来源：(.+)$"#,
