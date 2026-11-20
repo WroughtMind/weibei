@@ -379,7 +379,7 @@ private struct CourseNewNoteSheet: View {
             if let error, !error.isEmpty {
                 Text(error)
                     .weiBeiText(12)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.failure)
             }
 
             HStack {
@@ -455,7 +455,7 @@ struct CourseWorkspaceHeader: View {
                             }
                         }
                     }
-                    // The ONLY animated piece of a page switch: the shared cinnabar
+                    // The ONLY animated piece of a page switch: the shared accent
                     // underline sliding across the tab strip. Page content swaps
                     // immediately — no panel bounce anywhere.
                     .animation(
@@ -471,7 +471,7 @@ struct CourseWorkspaceHeader: View {
 
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(searchFocused.wrappedValue ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                    .foregroundStyle(searchFocused.wrappedValue ? WeiBeiTheme.accent : WeiBeiTheme.tertiaryInk)
                 WeiBeiSearchField(
                     text: $search,
                     prompt: searchPrompt,
@@ -605,7 +605,7 @@ struct CourseWorkspaceTab: View {
                     // tabs instead of each tab fading its own marker in and out.
                     if active {
                         Rectangle()
-                            .fill(WeiBeiTheme.cinnabar)
+                            .fill(WeiBeiTheme.accent)
                             .frame(height: 2)
                             .matchedGeometryEffect(
                                 id: "course-workspace-tab-underline",

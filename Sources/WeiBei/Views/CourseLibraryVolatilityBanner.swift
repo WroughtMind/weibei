@@ -8,7 +8,7 @@ struct CourseLibraryVolatilityBanner: View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .weiBeiText(13, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.failure)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -42,10 +42,10 @@ struct CourseLibraryVolatilityBanner: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.cinnabarSoft.opacity(0.72))
+        .background(WeiBeiTheme.failureSoft.opacity(0.72))
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.28))
+                .fill(WeiBeiTheme.failure.opacity(0.28))
                 .frame(height: 1)
         }
         .accessibilityElement(children: .contain)

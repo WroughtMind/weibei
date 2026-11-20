@@ -36,6 +36,29 @@ const options = {
       contents: (await readFile(path, 'utf8')).replace(/,\s*url\([^)]*\.(?:woff|ttf)\)\s*format\("[^"]+"\)/g, ''),
       loader: 'css', resolveDir: dirname(path),
     }));
+    builder.onLoad({ filter: /dsh-genui\/src\/client\/GenuiBlock\.module\.css$/ }, async ({ path }) => {
+      const source = await readFile(path, 'utf8');
+      const primaryInk = /(\.button\.primary\s*\{[^}]*?color:\s*)#fff;/;
+      assert(primaryInk.test(source), '上游 GenUI 主按钮样式已变化，请核对强调色文字');
+      return {
+        contents: source.replace(primaryInk, '$1var(--weibei-on-accent, #fff);'),
+        loader: 'local-css', resolveDir: dirname(path),
+      };
+    });
+    builder.onLoad({ filter: /dsh-genui\/src\/client\/EChartNode\.tsx$/ }, async ({ path }) => {
+      const source = await readFile(path, 'utf8');
+      const update = '    instanceRef.current.setOption(option, true)';
+      assert(source.includes(update), '上游 GenUI 图表更新入口已变化，请核对强调色');
+      return {
+        contents: source.replace(update, `${update}
+    // Preset charts read theme tokens while building canvas options.
+    if (node.option !== undefined) return
+    const updateAccent = () => instanceRef.current?.setOption(presetOption(node, ref.current))
+    window.addEventListener('weibei-accent-change', updateAccent)
+    return () => window.removeEventListener('weibei-accent-change', updateAccent)`),
+        loader: 'tsx', resolveDir: dirname(path),
+      };
+    });
   } }],
 };
 await build({ ...options,

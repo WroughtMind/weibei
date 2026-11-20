@@ -360,7 +360,7 @@ struct ContentRailView: View {
 
     private func tickColor(for item: ContentRailItem, active: Bool) -> Color {
         if item.id == highlightedID {
-            return WeiBeiTheme.cinnabar
+            return WeiBeiTheme.accent
         }
         return WeiBeiTheme.secondaryInk.opacity(appearanceMode.isDark ? 0.78 : 0.58)
     }
@@ -468,7 +468,7 @@ private struct ContentRailPreviewCard: View {
                 Text(label)
                     .weiBeiText(9.5, weight: .semibold)
                     .tracking(0.7)
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
+                    .foregroundStyle(WeiBeiTheme.accent.opacity(0.78))
                     .lineLimit(1)
 
                 Text(item.title)

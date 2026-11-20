@@ -973,7 +973,7 @@ struct ConfirmedFileImportView: View {
             if let error = batch.destinationError {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .weiBeiText(12)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.failure)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1055,7 +1055,7 @@ struct ConfirmedFileImportView: View {
                 .weiBeiText(12, weight: .medium)
             }
         }
-        .foregroundStyle(WeiBeiTheme.cinnabar)
+        .foregroundStyle(WeiBeiTheme.accent)
         .padding(.vertical, 6)
         .help(name)
     }
@@ -1074,7 +1074,7 @@ struct ConfirmedFileImportView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .foregroundStyle(WeiBeiTheme.cinnabar)
+        .foregroundStyle(WeiBeiTheme.failure)
         .padding(.vertical, 6)
         .help(failure.sourceURL.lastPathComponent)
     }
@@ -1136,7 +1136,7 @@ struct ConfirmedFileImportView: View {
                 Text(current).weiBeiText(13).lineLimit(2)
             }
             ProgressView(value: Double(batch.completed), total: Double(max(1, batch.total)))
-                .tint(WeiBeiTheme.cinnabar)
+                .tint(WeiBeiTheme.accent)
             Text("\(batch.completed) / \(batch.total)")
                 .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -1298,7 +1298,7 @@ struct ConfirmedFileImportView: View {
         switch candidate.disposition {
         case .ready: WeiBeiTheme.secondaryInk
         case .duplicate: WeiBeiTheme.tertiaryInk
-        case .conflict: WeiBeiTheme.cinnabar
+        case .conflict: WeiBeiTheme.failure
         }
     }
 

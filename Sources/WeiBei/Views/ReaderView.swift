@@ -156,7 +156,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
             .baselineOffset(0.7)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-            .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
+            .foregroundStyle(WeiBeiTheme.accent.opacity(0.82))
     }
 
     private func renameField(_ titleRename: HoverTitleRename) -> some View {
@@ -864,10 +864,10 @@ struct ReaderView: View {
             } label: {
                 Text(store.ui("已问 · \(threads.count)", "Asked · \(threads.count)"))
                     .weiBeiText(12, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.9))
+                    .foregroundStyle(WeiBeiTheme.accent.opacity(0.9))
                     .padding(.horizontal, 8)
                     .frame(height: 22)
-                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.55), in: Capsule())
+                    .background(WeiBeiTheme.accentSoft.opacity(0.55), in: Capsule())
             }
             .menuStyle(.borderlessButton)
             .fixedSize(horizontal: true, vertical: false)
@@ -1147,7 +1147,7 @@ struct ReaderView: View {
 
     private var pdfModeForeground: Color {
         if pdfBrowseMode == .page {
-            return WeiBeiTheme.cinnabar
+            return WeiBeiTheme.accent
         }
         return WeiBeiTheme.secondaryInk
     }
@@ -1677,6 +1677,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     /// R6: false when PDFKit cannot parse or unlock the file — the host swaps in a failure page.
     var onDocumentReadabilityChange: (Bool) -> Void = { _ in }
     var onSelectionChange: (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void
+    private let customAccent = WeiBeiThemeRuntime.customAccent
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -1760,7 +1761,10 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         view.isHidden = hidesHostedDocument
         context.coordinator.pageIndex = $pageIndex
         context.coordinator.pageCount = $pageCount
+        let paletteChanged = context.coordinator.appearanceMode != appearanceMode
+            || context.coordinator.customAccent != customAccent
         context.coordinator.appearanceMode = appearanceMode
+        context.coordinator.customAccent = customAccent
         context.coordinator.onSelectableTextChange = onSelectableTextChange
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onSearchResults = onSearchResults
@@ -1820,6 +1824,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.applyRemarkMarks(remarkMarks, in: view)
         context.coordinator.setActiveRemark(activeRemarkID, in: view)
         context.coordinator.revealRemark(excerptRevealRequest, in: view)
+        if paletteChanged { context.coordinator.refreshAccent(in: view) }
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
                 in: view,
@@ -1845,6 +1850,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         var onSelectionChange: (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void
         var onAskUnderlineActivate: (String, SelectionPopoverAnchor?) -> Void
         var appearanceMode: WeiBeiAppearanceMode = .paper
+        var customAccent: WeiBeiAccentColor?
         private weak var observedView: PDFView?
         private var observer: NSObjectProtocol?
         private var pageObserver: NSObjectProtocol?
@@ -1852,6 +1858,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var selectionWork: DispatchWorkItem?
         private var nativeTextPageIndexes: Set<Int> = []
         private var ocrPagesByPageIndex: [Int: PDFOCRPage] = [:]
+        private var visibleOCROverlays: [PDFPage: PDFOCRPageOverlayView] = [:]
         private var pendingOCRPageIndexes: Set<Int> = []
         private var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]
         private var lastSearchQuery = ""
@@ -1893,6 +1900,50 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var restorationAttemptState = PDFPageRestorationAttemptState()
         private let askUnderlineMarker = "weibei-selection-ask"
         private let askUnderlineHoverMarker = "weibei-selection-ask-hover"
+        private var selectionAnnotations: [String: [PDFAnnotation]] = [:]
+
+        func addSelectionAnnotation(_ annotation: PDFAnnotation, to page: PDFPage, marker: String) {
+            annotation.userName = marker
+            page.addAnnotation(annotation)
+            selectionAnnotations[marker, default: []].append(annotation)
+        }
+
+        func removeSelectionAnnotations(marked marker: String) {
+            for annotation in selectionAnnotations.removeValue(forKey: marker) ?? [] {
+                annotation.page?.removeAnnotation(annotation)
+            }
+        }
+
+        func refreshAccent(in view: PDFView) {
+            let accent = WeiBeiNativePalette.accent(for: appearanceMode)
+            let colors = [
+                askUnderlineMarker: accent.withAlphaComponent(0.92),
+                askUnderlineHoverMarker: accent.withAlphaComponent(0.12),
+                Self.remarkMarkMarker: accent,
+                Self.remarkMarkHoverMarker: accent.withAlphaComponent(0.14),
+            ]
+            var changedPages: Set<PDFPage> = []
+            for (marker, annotations) in selectionAnnotations {
+                guard let color = colors[marker] else { continue }
+                for annotation in annotations {
+                    annotation.color = color
+                    if marker == Self.remarkMarkMarker {
+                        annotation.setValue(color, forAnnotationKey: .interiorColor)
+                    }
+                    if let page = annotation.page { changedPages.insert(page) }
+                }
+            }
+            for page in changedPages { view.annotationsChanged(on: page) }
+
+            let selection = WeiBeiNativePalette.selectionFill(for: appearanceMode)
+            view.currentSelection?.color = selection
+            if view.highlightedSelections?.isEmpty == false {
+                // PDFKit caches the drawn highlights. Reinstall them to redraw in the new color.
+                view.highlightedSelections = nil
+                applySearchHighlights(in: view)
+            }
+            for overlay in visibleOCROverlays.values { overlay.applySelectionTint(selection) }
+        }
 
         init(
             pageIndex: Binding<Int>,
@@ -2051,6 +2102,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             lastSearchTargetPageIndex = nil
             lastAppliedAskUnderlineMarks = []
             lastAppliedRemarkMarkSignature = nil
+            selectionAnnotations.removeAll()
             remarkHits = []
             hoveredRemarkRecordID = nil
             askUnderlineHits = []
@@ -2170,6 +2222,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private func clearOCROverlays(in view: PDFView) {
             let hadOverlays = !ocrPagesByPageIndex.isEmpty || view.pageOverlayViewProvider != nil
             ocrPagesByPageIndex = [:]
+            visibleOCROverlays.removeAll()
             pendingOCRPageIndexes = []
             ocrHighlightedLinesByPageIndex = [:]
             setOCRPageOverlayProvider(nil, in: view)
@@ -2479,17 +2532,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             if navigated, let requestedIndex {
                 searchResultIndex = min(max(0, requestedIndex), max(0, searchHits.count - 1))
             }
-            var selections: [PDFSelection] = []
-            var ocrLines: [Int: Set<Int>] = [:]
-            for (index, hit) in searchHits.enumerated() {
-                if let selection = hit.selection {
-                    selection.color = WeiBeiNativePalette.selectionFill(for: appearanceMode)
-                        .withAlphaComponent(index == searchResultIndex ? 0.65 : 0.22)
-                    selections.append(selection)
-                } else if let lineIndex = hit.ocrLineIndex { ocrLines[hit.pageIndex, default: []].insert(lineIndex) }
-            }
-            view.highlightedSelections = selections.isEmpty ? nil : selections
-            setOCRHighlightedLines(ocrLines, in: view)
+            applySearchHighlights(in: view)
             if query.isEmpty { view.clearSelection() }
             if navigated, searchHits.indices.contains(searchResultIndex) {
                 if searchOrigin == nil { searchOrigin = view.currentDestination }
@@ -2521,7 +2564,23 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             }
         }
 
-        /// Cinnabar underlines for selection-ask history (PDF text layer).
+        private func applySearchHighlights(in view: PDFView) {
+            let color = WeiBeiNativePalette.selectionFill(for: appearanceMode)
+            var selections: [PDFSelection] = []
+            var ocrLines: [Int: Set<Int>] = [:]
+            for (index, hit) in searchHits.enumerated() {
+                if let selection = hit.selection {
+                    selection.color = color.withAlphaComponent(index == searchResultIndex ? 0.65 : 0.22)
+                    selections.append(selection)
+                } else if let lineIndex = hit.ocrLineIndex {
+                    ocrLines[hit.pageIndex, default: []].insert(lineIndex)
+                }
+            }
+            view.highlightedSelections = selections.isEmpty ? nil : selections
+            setOCRHighlightedLines(ocrLines, in: view)
+        }
+
+        /// Accent underlines for selection-ask history (PDF text layer).
         /// Uses per-line thin strips — never the multi-line union bounds (those look like red highlights).
         /// Anchored threads (第二刀起) draw straight from anchor rects; text search stays as fallback.
         func applyAskUnderlines(_ marks: [(id: String, text: String, anchor: SelectionDocumentAnchor?)], in view: PDFView) {
@@ -2532,14 +2591,15 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             lastAppliedAskUnderlineMarks = marks
             askUnderlineHits = []
             hoveredAskThreadID = nil
-            clearAskUnderlineAnnotations(in: document, includingHover: true)
-            let cinnabar = weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 0.92)
+            removeSelectionAnnotations(marked: askUnderlineMarker)
+            removeSelectionAnnotations(marked: askUnderlineHoverMarker)
+            let accent = WeiBeiNativePalette.accent(for: appearanceMode).withAlphaComponent(0.92)
             for mark in marks {
                 if let pdf = mark.anchor?.pdf {
                     for (pageIndex, rects) in pdf.rectsByPage {
                         guard let page = document.page(at: pageIndex) else { continue }
                         for lineBounds in rects.map(\.cgRect) {
-                            addAskUnderline(page: page, pageIndex: pageIndex, lineBounds: lineBounds, threadID: mark.id, cinnabar: cinnabar)
+                            addAskUnderline(page: page, pageIndex: pageIndex, lineBounds: lineBounds, threadID: mark.id, accent: accent)
                         }
                     }
                     continue
@@ -2553,7 +2613,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                         for page in line.pages {
                             let lineBounds = line.bounds(for: page)
                             let pageIndex = document.index(for: page)
-                            addAskUnderline(page: page, pageIndex: pageIndex, lineBounds: lineBounds, threadID: mark.id, cinnabar: cinnabar)
+                            addAskUnderline(page: page, pageIndex: pageIndex, lineBounds: lineBounds, threadID: mark.id, accent: accent)
                         }
                     }
                 }
@@ -2565,7 +2625,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             pageIndex: Int,
             lineBounds: CGRect,
             threadID: String,
-            cinnabar: WeiBeiPlatformColor
+            accent: WeiBeiPlatformColor
         ) {
             guard lineBounds.width > 2, lineBounds.height > 0.5, pageIndex != NSNotFound else { return }
             var underlineBounds = lineBounds
@@ -2573,9 +2633,8 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             underlineBounds.origin.y = lineBounds.minY
             underlineBounds.size.height = thickness
             let annotation = PDFAnnotation(bounds: underlineBounds, forType: .underline, withProperties: nil)
-            annotation.color = cinnabar
-            annotation.userName = askUnderlineMarker
-            page.addAnnotation(annotation)
+            annotation.color = accent
+            addSelectionAnnotation(annotation, to: page, marker: askUnderlineMarker)
             if !threadID.isEmpty {
                 askUnderlineHits.append((
                     threadID: threadID,
@@ -2638,33 +2697,14 @@ struct PDFReaderRepresentable: ReaderRepresentable {
 
         private func applyAskUnderlineHoverHighlight(in view: PDFView) {
             guard let document = view.document else { return }
-            clearAskUnderlineAnnotations(in: document, includingHover: true, underlines: false)
+            removeSelectionAnnotations(marked: askUnderlineHoverMarker)
             guard let threadID = hoveredAskThreadID else { return }
-            let fill = weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 0.12)
+            let fill = WeiBeiNativePalette.accent(for: appearanceMode).withAlphaComponent(0.12)
             for hit in askUnderlineHits where hit.threadID == threadID {
                 guard let page = document.page(at: hit.pageIndex) else { continue }
                 let annotation = PDFAnnotation(bounds: hit.hitBounds, forType: .highlight, withProperties: nil)
                 annotation.color = fill
-                annotation.userName = askUnderlineHoverMarker
-                page.addAnnotation(annotation)
-            }
-        }
-
-        private func clearAskUnderlineAnnotations(
-            in document: PDFDocument,
-            includingHover: Bool,
-            underlines: Bool = true
-        ) {
-            for pageIndex in 0..<document.pageCount {
-                guard let page = document.page(at: pageIndex) else { continue }
-                for annotation in page.annotations {
-                    let name = annotation.userName
-                    if underlines, name == askUnderlineMarker {
-                        page.removeAnnotation(annotation)
-                    } else if includingHover, name == askUnderlineHoverMarker {
-                        page.removeAnnotation(annotation)
-                    }
-                }
+                addSelectionAnnotation(annotation, to: page, marker: askUnderlineHoverMarker)
             }
         }
 
@@ -2798,6 +2838,16 @@ final class ReaderPDFView: PDFView {
 #endif
 
 extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
+    func pdfView(_ view: PDFView, willDisplayOverlayView overlayView: ReaderOverlayView, for page: PDFPage) {
+        guard let overlay = overlayView as? PDFOCRPageOverlayView else { return }
+        visibleOCROverlays[page] = overlay
+        overlay.applySelectionTint(WeiBeiNativePalette.selectionFill(for: appearanceMode))
+    }
+
+    func pdfView(_ view: PDFView, willEndDisplayingOverlayView overlayView: ReaderOverlayView, for page: PDFPage) {
+        if visibleOCROverlays[page] === overlayView { visibleOCROverlays.removeValue(forKey: page) }
+    }
+
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> ReaderOverlayView? {
         guard let document = view.document else { return nil }
         let index = document.index(for: page)
@@ -2885,6 +2935,10 @@ private final class PDFOCRPageOverlayView: NSView {
             return view
         }
     }
+
+    func applySelectionTint(_ tint: NSColor) {
+        for view in lineViews { view.applySelectionTint(tint) }
+    }
 }
 
 private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDelegate {
@@ -2905,7 +2959,6 @@ private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDele
         isEditable = false
         isSelectable = true
         drawsBackground = isSearchHighlighted
-        backgroundColor = isSearchHighlighted ? WeiBeiNativePalette.selectionFill(for: appearanceMode).withAlphaComponent(0.28) : .clear
         wantsLayer = true
         layer?.cornerRadius = 2
         layer?.masksToBounds = true
@@ -2913,12 +2966,17 @@ private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDele
         textContainer?.lineFragmentPadding = 0
         textContainer?.widthTracksTextView = true
         textColor = .clear
-        insertionPointColor = WeiBeiNativePalette.selectionFill(for: appearanceMode)
+        applySelectionTint(WeiBeiNativePalette.selectionFill(for: appearanceMode))
+        delegate = self
+    }
+
+    func applySelectionTint(_ tint: NSColor) {
+        backgroundColor = drawsBackground ? tint.withAlphaComponent(0.28) : .clear
+        insertionPointColor = tint
         selectedTextAttributes = [
             .foregroundColor: NSColor.clear,
-            .backgroundColor: WeiBeiNativePalette.selectionFill(for: appearanceMode)
+            .backgroundColor: tint
         ]
-        delegate = self
     }
 
     required init?(coder: NSCoder) {
@@ -3132,7 +3190,14 @@ enum ReaderWebSearch {
           document.getElementById('weibei-search-style')?.remove();
           const style = document.createElement('style');
           style.id = 'weibei-search-style';
-          style.textContent = '::highlight(weibei-search){background:rgba(166,54,43,.24)}::highlight(weibei-search-current){background:rgba(166,54,43,.55)}';
+          style.textContent = `
+            ::highlight(weibei-search) {
+              background: color-mix(in srgb, var(--weibei-note-accent, var(--accent)) 24%, transparent);
+            }
+            ::highlight(weibei-search-current) {
+              background: color-mix(in srgb, var(--weibei-note-accent, var(--accent)) 55%, transparent);
+            }
+          `;
           document.head.append(style);
           const hits = [], rows = [];
           if (!query) { window.weiBeiSearchHits = hits; return rows; }
@@ -3236,6 +3301,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     var onResourceIssuesChange: ([String]) -> Void = { _ in }
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    private let customAccent = WeiBeiThemeRuntime.customAccent
 
     private static let scriptMessageNames = [
         "htmlResourceIssues",
@@ -3474,8 +3540,10 @@ struct WebReaderRepresentable: ReaderRepresentable {
         context.coordinator.selectionRemarkMarks = selectionRemarkMarks
         context.coordinator.updateInterfaceLanguage(interfaceLanguage, in: view)
         if context.coordinator.appearanceMode != appearanceMode
+            || context.coordinator.customAccent != customAccent
             || context.coordinator.adaptsDocumentColors != adaptsDocumentColors {
             context.coordinator.appearanceMode = appearanceMode
+            context.coordinator.customAccent = customAccent
             context.coordinator.adaptsDocumentColors = adaptsDocumentColors
             view.evaluateJavaScript(Self.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors))
         }
@@ -3909,22 +3977,25 @@ struct WebReaderRepresentable: ReaderRepresentable {
     static func readerStyleScript(for mode: WeiBeiAppearanceMode, adaptsDocumentColors: Bool = true) -> String {
         let tokens = WeiBeiNativePalette.cssHex(for: mode)
         let scheme = mode.isDark ? "dark" : "light"
+        // The Office renderer preserves the document's paper even in dark app themes.
+        let officeLink = weiBeiCSSColor(WeiBeiNativePalette.accent(for: .paper))
         let maskRGB = WeiBeiNativePalette.documentMaskFill(for: mode).cgColor.components!
             .prefix(3).map { String(Int(($0 * 255).rounded())) }.joined(separator: ",")
         let selectionCSS = """
-            :root { --weibei-document-mask: rgb(\(maskRGB)); --weibei-note-fill: \(tokens.paperRaised); --weibei-note-ink: \(tokens.ink); --weibei-note-muted: \(tokens.muted); --weibei-note-accent: \(tokens.cinnabar); }
+            :root { --weibei-document-mask: rgb(\(maskRGB)); --weibei-note-fill: \(tokens.paperRaised); --weibei-note-ink: \(tokens.ink); --weibei-note-muted: \(tokens.muted); --weibei-note-accent: \(tokens.accent); }
+            :where(#office-document) a { color: \(officeLink); }
             ::selection { background: \(tokens.selection); color: \(tokens.ink); }
             .weibei-selection-ask-mark {
               text-decoration-line: underline;
-              text-decoration-color: \(tokens.cinnabar);
+              text-decoration-color: \(tokens.accent);
               text-decoration-thickness: 1.5px;
               text-underline-offset: 3px;
               cursor: pointer;
-              background: color-mix(in srgb, \(tokens.cinnabar) 12%, transparent);
+              background: color-mix(in srgb, \(tokens.accent) 12%, transparent);
               border-radius: 2px;
             }
             .weibei-selection-ask-mark:hover {
-              background: color-mix(in srgb, \(tokens.cinnabar) 20%, transparent);
+              background: color-mix(in srgb, \(tokens.accent) 20%, transparent);
             }
             """
 
@@ -3937,7 +4008,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             body, main, article, section, div, p, li, blockquote, td, th, span { color: \(tokens.ink) !important; background-color: transparent !important; }
             a { color: \(tokens.link) !important; text-decoration-color: color-mix(in srgb, \(tokens.link) 55%, transparent) !important; }
             h1, h2, h3 { color: \(tokens.link) !important; }
-            blockquote { border-left-color: color-mix(in srgb, \(tokens.cinnabar) 62%, transparent) !important; background-color: color-mix(in srgb, \(tokens.cinnabar) 10%, transparent) !important; color: \(tokens.ink) !important; }
+            blockquote { border-left-color: color-mix(in srgb, \(tokens.accent) 62%, transparent) !important; background-color: color-mix(in srgb, \(tokens.accent) 10%, transparent) !important; color: \(tokens.ink) !important; }
             code { background-color: rgba(255, 255, 255, .05) !important; color: \(tokens.link) !important; }
             pre { background-color: \(tokens.paperRaised) !important; border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; color: \(tokens.ink) !important; }
             table { background-color: rgba(255, 255, 255, .02) !important; }
@@ -4030,6 +4101,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         private var searchResultIndex = -1
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
+        var customAccent: WeiBeiAccentColor?
         var interfaceLanguage: WeiBeiInterfaceLanguage
         var selectionAskMarks = "[]"
         var selectionRemarkMarks = "[]"
@@ -4112,7 +4184,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             let html = """
             <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-\(nonce)' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src weibeihtml:; base-uri 'none'; frame-src 'none'">
-            <style>html,body{margin:0;padding:0}body{font:15px/1.7 -apple-system}#office-document{padding:16px;box-sizing:border-box;min-height:100vh}#office-document[data-weibei-adapts-colors]::after{content:"";position:fixed;inset:0;background:var(--weibei-document-mask);mix-blend-mode:multiply;pointer-events:none;z-index:2147483647}.docx-wrapper{padding:0!important;background:transparent!important}.docx-wrapper>section.docx{margin-bottom:16px;box-shadow:none!important}.office-note-trigger,.office-note header button{width:26px;height:26px;box-sizing:border-box;display:grid;place-items:center;padding:4px;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:7px;color:var(--weibei-note-muted);background:rgb(from var(--weibei-note-fill) r g b / .94);cursor:pointer}.office-note-trigger{position:absolute;right:8px;box-shadow:0 1px 4px #0002}.office-note-trigger:hover,.office-note header button:hover{color:var(--weibei-note-ink)}.office-note-trigger:focus-visible,.office-note header button:focus-visible{outline:2px solid var(--weibei-note-accent);outline-offset:2px}.office-note-trigger svg,.office-note header svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.office-note{position:fixed;inset:auto;margin:0;padding:0;width:min(22rem,calc(100vw - 24px));box-sizing:border-box;overflow:hidden;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:9px;background:rgb(from var(--weibei-note-fill) r g b / .97);color:var(--weibei-note-ink);box-shadow:0 8px 28px #0003;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);font:14px/1.65 -apple-system}.office-note:popover-open{display:flex;flex-direction:column}.office-note header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px 8px 16px;flex-shrink:0}.office-note header strong{font-size:13px;font-weight:600}.office-note header button{border:0;background:transparent}.office-note-body{min-height:0;padding:0 16px 14px;overflow:auto;overflow-wrap:anywhere;overscroll-behavior:contain}.office-note-body>p{margin:0 0 10px}.office-note-body>p:last-child{margin-bottom:0}math{font-family:"Cambria Math","STIX Two Math",serif}a{color:#91261b}</style>
+            <style>html,body{margin:0;padding:0}body{font:15px/1.7 -apple-system}#office-document{padding:16px;box-sizing:border-box;min-height:100vh}#office-document[data-weibei-adapts-colors]::after{content:"";position:fixed;inset:0;background:var(--weibei-document-mask);mix-blend-mode:multiply;pointer-events:none;z-index:2147483647}.docx-wrapper{padding:0!important;background:transparent!important}.docx-wrapper>section.docx{margin-bottom:16px;box-shadow:none!important}.office-note-trigger,.office-note header button{width:26px;height:26px;box-sizing:border-box;display:grid;place-items:center;padding:4px;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:7px;color:var(--weibei-note-muted);background:rgb(from var(--weibei-note-fill) r g b / .94);cursor:pointer}.office-note-trigger{position:absolute;right:8px;box-shadow:0 1px 4px #0002}.office-note-trigger:hover,.office-note header button:hover{color:var(--weibei-note-ink)}.office-note-trigger:focus-visible,.office-note header button:focus-visible{outline:2px solid var(--weibei-note-accent);outline-offset:2px}.office-note-trigger svg,.office-note header svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.office-note{position:fixed;inset:auto;margin:0;padding:0;width:min(22rem,calc(100vw - 24px));box-sizing:border-box;overflow:hidden;border:1px solid color-mix(in srgb,var(--weibei-note-ink) 16%,transparent);border-radius:9px;background:rgb(from var(--weibei-note-fill) r g b / .97);color:var(--weibei-note-ink);box-shadow:0 8px 28px #0003;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);font:14px/1.65 -apple-system}.office-note:popover-open{display:flex;flex-direction:column}.office-note header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px 8px 16px;flex-shrink:0}.office-note header strong{font-size:13px;font-weight:600}.office-note header button{border:0;background:transparent}.office-note-body{min-height:0;padding:0 16px 14px;overflow:auto;overflow-wrap:anywhere;overscroll-behavior:contain}.office-note-body>p{margin:0 0 10px}.office-note-body>p:last-child{margin-bottom:0}math{font-family:"Cambria Math","STIX Two Math",serif}</style>
             </head><body data-weibei-revision="\(revision)" data-weibei-reader-load-token="\(loadToken)"><main id="office-document"><p role="status">\(language.text("正在读取文稿…", "Reading the document…"))</p></main>
             <script nonce="\(nonce)">\(Self.officeRuntime)</script>
             <script nonce="\(nonce)">window.WeiBeiOffice.open(\(Self.json(fileURL.absoluteString)),\(Self.json(url.pathExtension.lowercased())),\(Self.json(language == .english ? "english" : "chinese")));</script>
@@ -4608,7 +4680,7 @@ private struct ReaderStateMessage: View {
         VStack(spacing: 10) {
             Image(systemName: systemImage)
                 .weiBeiText(18, weight: .medium)
-                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.62))
+                .foregroundStyle(WeiBeiTheme.accent.opacity(0.62))
             Text(title)
                 .weiBeiText(18, weight: .semibold, design: .serif)
                 .foregroundStyle(WeiBeiTheme.ink)
@@ -4622,7 +4694,7 @@ private struct ReaderStateMessage: View {
                     action.handler()
                 }
                 .weiBeiText(12, weight: .medium)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
                 .buttonStyle(.plain)
                 .padding(.top, 4)
             }
@@ -4710,6 +4782,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     var underlineSnippets: [String]
     var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+    private let customAccent = WeiBeiThemeRuntime.customAccent
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onSelectionChange: onSelectionChange)
@@ -4766,7 +4839,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
             ]
         )
         let full = NSRange(location: 0, length: attributed.length)
-        let cinnabar = weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 1)
+        let accent = customAccent?.platformColor ?? WeiBeiNativePalette.defaultAccent(for: appearanceMode)
         for snippet in underlineSnippets {
             let needle = snippet.trimmingCharacters(in: .whitespacesAndNewlines)
             guard needle.count >= 4 else { continue }
@@ -4777,7 +4850,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
                 attributed.addAttributes(
                     [
                         .underlineStyle: NSUnderlineStyle.single.rawValue,
-                        .underlineColor: cinnabar,
+                        .underlineColor: accent,
                     ],
                     range: found
                 )
@@ -4786,7 +4859,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
             }
         }
         for range in ReaderSearch.matches(in: text, query: searchQuery) {
-            attributed.addAttribute(.backgroundColor, value: weiBeiColor(red: 0.67, green: 0.24, blue: 0.16, alpha: 0.24), range: range)
+            attributed.addAttribute(.backgroundColor, value: accent.withAlphaComponent(0.24), range: range)
         }
         guard !textView.attributedString().isEqual(to: attributed) else { return }
         let scrollView = textView.enclosingScrollView

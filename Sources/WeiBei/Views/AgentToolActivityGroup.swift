@@ -140,7 +140,7 @@ struct AgentToolActivityGroup: View {
                             .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.75))
                     }
                     if activity.state == .failed {
-                        Image(systemName: "exclamationmark.circle").foregroundStyle(WeiBeiTheme.cinnabar)
+                        Image(systemName: "exclamationmark.circle").foregroundStyle(WeiBeiTheme.failure)
                     } else if activity.state == .cancelled {
                         Text(store.ui("已取消", "Cancelled"))
                     }
@@ -170,7 +170,7 @@ struct AgentToolActivityGroup: View {
                     .frame(width: 48, height: geometry.size.height)
                 Image(systemName: AgentActivityIcon.symbol(for: activity.name))
                     .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(activity.state == .failed ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                    .foregroundStyle(activity.state == .failed ? WeiBeiTheme.failure : WeiBeiTheme.secondaryInk)
                     .frame(width: 16, height: 16)
                     .offset(x: 32, y: 8 + 4 * (1 - timing.content))
                     .opacity(timing.content)

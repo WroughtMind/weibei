@@ -221,7 +221,7 @@ struct CourseRelationPaperView: View {
                 courseScopeRow(
                     title: store.ui("未建立关系", "Unlinked"),
                     detail: store.ui("尚未互相关联的项", "Items without links"),
-                    accent: WeiBeiTheme.cinnabar.opacity(0.72),
+                    accent: WeiBeiTheme.accent.opacity(0.72),
                     selected: effectiveScope == .unlinked
                 ) {
                     setScope(.unlinked)
@@ -269,7 +269,7 @@ struct CourseRelationPaperView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 selected
-                    ? WeiBeiTheme.cinnabarSoft.opacity(0.36)
+                    ? WeiBeiTheme.accentSoft.opacity(0.36)
                     : Color.clear
             )
             .contentShape(Rectangle())
@@ -729,7 +729,7 @@ struct CourseRelationPaperView: View {
             Rectangle()
                 .fill(WeiBeiTheme.paperRaised.opacity(0.22))
             Circle()
-                .fill(WeiBeiTheme.cinnabarSoft.opacity(0.15))
+                .fill(WeiBeiTheme.accentSoft.opacity(0.15))
                 .frame(width: 480, height: 480)
                 .blur(radius: 78)
                 .offset(x: size.width * 0.12, y: -20)
@@ -916,7 +916,7 @@ struct CourseRelationPaperView: View {
         guard let courseID = store.courseIDs(for: node.itemID).first,
               let course = store.course(withID: courseID)
         else {
-            return node.kind == .note ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
+            return node.kind == .note ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk
         }
         return courseAccent(colorIndex: course.colorIndex)
     }
@@ -942,7 +942,7 @@ struct CourseRelationPaperView: View {
     private func courseAccent(colorIndex: Int) -> Color {
         switch ((colorIndex % 4) + 4) % 4 {
         case 0:
-            return WeiBeiTheme.cinnabar
+            return WeiBeiTheme.accent
         case 1:
             return WeiBeiTheme.moss
         case 2:
@@ -1144,7 +1144,7 @@ private struct CourseRelationPaperNodeView: View {
         case .alternate:
             return WeiBeiTheme.secondaryInk.opacity(0.84)
         case .source:
-            return WeiBeiTheme.onCinnabar
+            return WeiBeiTheme.onAccent
         case .target:
             return accent
         case .linked:

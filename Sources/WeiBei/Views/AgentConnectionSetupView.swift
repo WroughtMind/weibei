@@ -247,7 +247,7 @@ struct AgentConnectionSetupView: View {
     }
 
     private func failureText(_ text: String) -> some View {
-        Text(text).weiBeiText(11.5).foregroundStyle(WeiBeiTheme.cinnabar)
+        Text(text).weiBeiText(11.5).foregroundStyle(WeiBeiTheme.failure)
             .accessibilityIdentifier("connection-setup-error")
     }
 

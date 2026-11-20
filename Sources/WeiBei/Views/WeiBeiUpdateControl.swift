@@ -78,8 +78,18 @@ struct WeiBeiUpdateControl: View {
         case .failed:
             return Color(red: 0.90, green: 0.28, blue: 0.24)
         default:
+            if let color = WeiBeiThemeRuntime.customAccent {
+                return Color(weiBeiNativeColor: color.platformColor)
+            }
             return Color(red: 0.92, green: 0.35, blue: 0.24)
         }
+    }
+
+    private var badgeInk: Color {
+        if updates.status != .ready, updates.status != .failed, let color = WeiBeiThemeRuntime.customAccent {
+            return Color(weiBeiNativeColor: color.contrastingForeground)
+        }
+        return .white
     }
 
     private var contentPill: some View {
@@ -104,23 +114,23 @@ struct WeiBeiUpdateControl: View {
 
             if updates.status == .downloading, let progress = updates.downloadProgress {
                 ZStack {
-                    Circle().stroke(Color.white.opacity(0.35), lineWidth: 1.6)
+                    Circle().stroke(badgeInk.opacity(0.35), lineWidth: 1.6)
                     Circle()
                         .trim(from: 0, to: CGFloat(min(max(progress, 0), 1)))
-                        .stroke(Color.white, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                        .stroke(badgeInk, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
                 .frame(width: 12, height: 12)
             } else if updates.isBusy {
                 ProgressView()
                     .controlSize(.mini)
-                    .tint(.white)
+                    .tint(badgeInk)
                     .frame(width: 12, height: 12)
             } else {
                 Image(systemName: updates.status == .ready ? "arrow.clockwise"
                     : updates.status == .failed ? "arrow.trianglehead.clockwise" : "arrow.down.to.line")
                     .font(.system(size: isExpanded ? 10 : 11, weight: .semibold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(badgeInk)
             }
         }
         .frame(width: isExpanded ? 20 : 24, height: isExpanded ? 20 : 24)
@@ -239,10 +249,10 @@ struct WeiBeiUpdateNotesPanel: View {
                 .weiBeiText(12)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .foregroundStyle(WeiBeiTheme.cinnabar)
+        .foregroundStyle(WeiBeiTheme.accent)
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.cinnabarSoft, in: RoundedRectangle(cornerRadius: 7))
+        .background(WeiBeiTheme.accentSoft, in: RoundedRectangle(cornerRadius: 7))
     }
 
     private var notes: some View {

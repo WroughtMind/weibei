@@ -193,7 +193,7 @@ struct CommandPaletteView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     Image(systemName: "command")
-                        .foregroundStyle(searchFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(searchFocused ? WeiBeiTheme.accent : WeiBeiTheme.tertiaryInk)
                     WeiBeiSearchField(
                         text: $query,
                         prompt: store.commandPaletteChatsOnly
@@ -253,7 +253,7 @@ struct CommandPaletteView: View {
                                         .padding(.horizontal, 13)
                                         .padding(.vertical, 9)
                                         .contentShape(Rectangle())
-                                        .background(index == selectedIndex ? WeiBeiTheme.cinnabarSoft : Color.clear)
+                                        .background(index == selectedIndex ? WeiBeiTheme.accentSoft : Color.clear)
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
                                         .scaleEffect(index == selectedIndex ? 1.006 : 1, anchor: .center)
                                         .animation(WeiBeiMotion.micro, value: selectedIndex)

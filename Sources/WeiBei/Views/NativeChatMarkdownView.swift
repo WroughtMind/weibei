@@ -25,7 +25,7 @@ enum NativeChatMarkdownAttributed {
                 .font: font, .paragraphStyle: paragraph,
                 .foregroundColor: s.quote > 0 ? WeiBeiNativePalette.secondaryInk() : WeiBeiNativePalette.ink()
             ]
-            if s.callout != nil { attributes[.backgroundColor] = WeiBeiNativePalette.cinnabarSoft() }
+            if s.callout != nil { attributes[.backgroundColor] = WeiBeiNativePalette.accentSoft() }
             if s.strike { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             if s.code { attributes[.backgroundColor] = WeiBeiNativePalette.codePaper() }
             if s.highlight { attributes[.backgroundColor] = NSColor.systemYellow.withAlphaComponent(isDark ? 0.28 : 0.2) }
@@ -59,6 +59,7 @@ struct NativeChatMarkdownView: NSViewRepresentable {
     var onOpenURL: (URL) -> Void
     var visualizationView: NativeChatVisualizationView? = nil
     var imageLoader: ((String, @escaping (Data?) -> Void) -> Void)? = nil
+    private let customAccent = WeiBeiThemeRuntime.customAccent
 
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NativeChatTextView {
@@ -88,8 +89,11 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         coordinator.onOpenURL = onOpenURL
         coordinator.visualizationView = visualizationView
         coordinator.imageLoader = imageLoader
-        let restyle = coordinator.fontSize != fontSize || coordinator.isDark != isDark || coordinator.appearanceKey != appearanceKey || coordinator.interfaceLanguage != interfaceLanguage
+        let restyle = coordinator.fontSize != fontSize || coordinator.isDark != isDark
+            || coordinator.appearanceKey != appearanceKey || coordinator.customAccent != customAccent
+            || coordinator.interfaceLanguage != interfaceLanguage
         coordinator.fontSize = fontSize; coordinator.isDark = isDark; coordinator.appearanceKey = appearanceKey; coordinator.interfaceLanguage = interfaceLanguage
+        coordinator.customAccent = customAccent
         view.linkTextAttributes = [.foregroundColor: WeiBeiNativePalette.link()]
         view.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
         if restyle { coordinator.restyle() }
@@ -118,6 +122,7 @@ struct NativeChatMarkdownView: NSViewRepresentable {
         var fontSize: CGFloat = 15
         var isDark = false
         var appearanceKey = ""
+        var customAccent: WeiBeiAccentColor?
         var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
         var onOpenURL: (URL) -> Void = { _ in }
         var visualizationView: NativeChatVisualizationView?

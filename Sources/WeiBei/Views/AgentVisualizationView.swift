@@ -11,20 +11,17 @@ import WebKit
 import WeiBeiCore
 
 func agentVisualizationTheme(for mode: WeiBeiAppearanceMode, textScale: CGFloat) -> [String: String] {
-    func css(_ color: WeiBeiPlatformColor) -> String {
-        let rgb = color.cgColor.converted(to: CGColorSpace(name: CGColorSpace.sRGB)!, intent: .defaultIntent, options: nil)!
-        let channels = rgb.components!
-        return String(format: "rgba(%.0f,%.0f,%.0f,%.4f)", channels[0] * 255, channels[1] * 255, channels[2] * 255, channels[3])
-    }
-    return [
-        "surface": css(WeiBeiNativePalette.paperRaised(for: mode)),
-        "ink": css(WeiBeiNativePalette.ink(for: mode)),
-        "muted": css(WeiBeiNativePalette.secondaryInk(for: mode)),
-        "soft": css(WeiBeiNativePalette.tertiaryInk(for: mode)),
-        "border": css(WeiBeiNativePalette.hairline(for: mode)),
-        "accent": css(WeiBeiNativePalette.cinnabar(for: mode)),
-        "success": css(WeiBeiNativePalette.moss(for: mode)),
-        "link": css(WeiBeiNativePalette.link(for: mode)),
+    [
+        "surface": weiBeiCSSColor(WeiBeiNativePalette.paperRaised(for: mode)),
+        "ink": weiBeiCSSColor(WeiBeiNativePalette.ink(for: mode)),
+        "muted": weiBeiCSSColor(WeiBeiNativePalette.secondaryInk(for: mode)),
+        "soft": weiBeiCSSColor(WeiBeiNativePalette.tertiaryInk(for: mode)),
+        "border": weiBeiCSSColor(WeiBeiNativePalette.hairline(for: mode)),
+        "accent": weiBeiCSSColor(WeiBeiNativePalette.accent(for: mode)),
+        "on-accent": weiBeiCSSColor(WeiBeiNativePalette.onAccent(for: mode)),
+        "failure": weiBeiCSSColor(WeiBeiNativePalette.defaultAccent(for: mode)),
+        "success": weiBeiCSSColor(WeiBeiNativePalette.moss(for: mode)),
+        "link": weiBeiCSSColor(WeiBeiNativePalette.link(for: mode)),
         "scale": String(Double(textScale)),
         "radius": "\(Int(WeiBeiMetric.controlRadius))px",
     ]
@@ -73,6 +70,8 @@ struct AgentVisualizationView: View {
                     visualization: visualization,
                     appearance: store.appearanceMode,
                     textScale: textScale,
+                    accent: weiBeiCSSColor(WeiBeiNativePalette.accent(for: store.appearanceMode)),
+                    onAccent: weiBeiCSSColor(WeiBeiNativePalette.onAccent(for: store.appearanceMode)),
                     loadAttempt: loadState.attempt,
                     receiptToken: receiptToken,
                     actionStatus: store.isAgentRunningInActiveChat ? "processing" : "ready",
@@ -131,6 +130,8 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
     var visualization: AgentVisualization
     var appearance: WeiBeiAppearanceMode
     var textScale: CGFloat
+    var accent: String
+    var onAccent: String
     var loadAttempt: Int
     var receiptToken: UUID?
     var actionStatus: String
@@ -212,6 +213,7 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
         private var parent: AgentVisualizationWebView
         private var isReady = false
         private var sentFingerprint: String?
+        private var appliedAccent: (accent: String, foreground: String)?
         private var renderToken: String?
         private var renderingVisualization: AgentVisualization?
 
@@ -240,7 +242,15 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
                 parent.actionUnavailableReason ?? "",
                 parent.receiptToken?.uuidString ?? "",
             ].joined(separator: "|")
-            guard fingerprint != sentFingerprint else { return }
+            let colors = (parent.accent, parent.onAccent)
+            guard fingerprint != sentFingerprint else {
+                if appliedAccent?.accent != parent.accent || appliedAccent?.foreground != parent.onAccent {
+                    // Recolor the mounted card without remounting its interactive controls.
+                    webView.evaluateJavaScript("window.WeiBeiGenUIHost.setAccent('\(parent.accent)', '\(parent.onAccent)')")
+                    appliedAccent = colors
+                }
+                return
+            }
 
             let token = UUID().uuidString
             renderToken = token
@@ -267,6 +277,7 @@ private struct AgentVisualizationWebView: VisualizationRepresentable {
                 return
             }
             sentFingerprint = fingerprint
+            appliedAccent = colors
             webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(json))") { [weak self] _, error in
                 if let error {
                     guard let self, self.renderToken == token else { return }
@@ -411,7 +422,7 @@ struct UnavailableAgentContentBlockView: View {
             if let exportError {
                 Text(exportError)
                     .weiBeiText(10)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.failure)
                     .textSelection(.enabled)
             }
         }

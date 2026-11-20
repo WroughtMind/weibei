@@ -2,7 +2,7 @@ import PDFKit
 import SwiftUI
 import WeiBeiCore
 
-/// 单条记过标记的命中信息:朱砂圆点热区 + hover 时要高亮的整句行矩形。
+/// 单条记过标记的命中信息：圆点热区和悬停时要高亮的整句话。
 struct PDFRemarkMarkHit {
     var recordID: String
     var pageIndex: Int
@@ -17,14 +17,10 @@ extension PDFReaderRepresentable.Coordinator {
     static let remarkMarkMarker = "weibei-selection-remark"
     static let remarkMarkHoverMarker = "weibei-selection-remark-hover"
 
-    private var remarkCinnabar: WeiBeiPlatformColor {
-        weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 1.0)
-    }
-
     private static let dotDiameter: CGFloat = 8
     private static let dotSpacing: CGFloat = 4
 
-    /// 渲染记过朱砂圆点。只有带 PDF 锚点的记录能画;无锚旧数据不渲染。
+    /// 渲染带 PDF 锚点的记过圆点。
     func applyRemarkMarks(
         _ marks: [(id: String, anchor: SelectionDocumentAnchor?, text: String)],
         in view: PDFView
@@ -35,7 +31,8 @@ extension PDFReaderRepresentable.Coordinator {
         lastAppliedRemarkMarkSignature = signature
         remarkHits = []
         hoveredRemarkRecordID = nil
-        clearRemarkAnnotations(in: document, includingHover: true)
+        removeSelectionAnnotations(marked: Self.remarkMarkMarker)
+        removeSelectionAnnotations(marked: Self.remarkMarkHoverMarker)
 
         struct PendingDot {
             var recordID: String
@@ -82,7 +79,7 @@ extension PDFReaderRepresentable.Coordinator {
             }
         }
 
-        let cinnabar = remarkCinnabar
+        let accent = WeiBeiNativePalette.accent(for: appearanceMode)
         // cropBox 才是真正显示出来的页面范围,圆点必须收在它里面。
         let pageRightLimit = { (page: PDFPage) -> CGFloat in
             page.bounds(for: .cropBox).maxX - Self.dotDiameter - 2
@@ -102,13 +99,12 @@ extension PDFReaderRepresentable.Coordinator {
                     height: Self.dotDiameter
                 )
                 let annotation = PDFAnnotation(bounds: dotRect, forType: .circle, withProperties: nil)
-                annotation.color = cinnabar
-                annotation.setValue(cinnabar, forAnnotationKey: .interiorColor)
+                annotation.color = accent
+                annotation.setValue(accent, forAnnotationKey: .interiorColor)
                 let border = PDFBorder()
                 border.lineWidth = 1.2
                 annotation.border = border
-                annotation.userName = Self.remarkMarkMarker
-                page.addAnnotation(annotation)
+                addSelectionAnnotation(annotation, to: page, marker: Self.remarkMarkMarker)
                 remarkHits.append(
                     PDFRemarkMarkHit(
                         recordID: dot.recordID,
@@ -203,33 +199,19 @@ extension PDFReaderRepresentable.Coordinator {
 
     private func applyRemarkHoverHighlight(in view: PDFView) {
         guard let document = view.document else { return }
-        clearRemarkAnnotations(in: document, includingHover: true, bars: false)
+        removeSelectionAnnotations(marked: Self.remarkMarkHoverMarker)
         guard let recordID = hoveredRemarkRecordID ?? activeRemarkRecordID else { return }
-        let fill = weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 0.14)
+        let fill = WeiBeiNativePalette.accent(for: appearanceMode).withAlphaComponent(0.14)
         for hit in remarkHits where hit.recordID == recordID {
             for (pageIndex, rects) in hit.highlightRectsByPage {
                 guard let page = document.page(at: pageIndex) else { continue }
                 for rect in rects {
                     let annotation = PDFAnnotation(bounds: rect, forType: .highlight, withProperties: nil)
                     annotation.color = fill
-                    annotation.userName = Self.remarkMarkHoverMarker
-                    page.addAnnotation(annotation)
+                    addSelectionAnnotation(annotation, to: page, marker: Self.remarkMarkHoverMarker)
                 }
             }
         }
     }
 
-    func clearRemarkAnnotations(in document: PDFDocument, includingHover: Bool, bars: Bool = true) {
-        for pageIndex in 0..<document.pageCount {
-            guard let page = document.page(at: pageIndex) else { continue }
-            for annotation in page.annotations {
-                let name = annotation.userName
-                if bars, name == Self.remarkMarkMarker {
-                    page.removeAnnotation(annotation)
-                } else if includingHover, name == Self.remarkMarkHoverMarker {
-                    page.removeAnnotation(annotation)
-                }
-            }
-        }
-    }
 }
