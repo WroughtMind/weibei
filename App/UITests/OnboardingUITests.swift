@@ -129,22 +129,45 @@ final class OnboardingUITests: XCTestCase {
                 } else {
                     response["visible_controls"] = identifiedControls(in: root).joined(separator: "\n")
                 }
-            case "drag-window-point":
+            case "hover-window-point", "drag-window-point":
+                let dragging = action == "drag-window-point"
                 let values = (request["value"] ?? "").split(separator: ",").compactMap { Double($0) }
                 guard element.exists, element.elementType == .window,
-                      values.count == 4, values.allSatisfy(\.isFinite) else {
-                    throw DriverFailure(errorDescription: "Window drag has no valid target or coordinates")
+                      values.count == (dragging ? 4 : 2), values.allSatisfy(\.isFinite) else {
+                    throw DriverFailure(errorDescription: "Window gesture has no valid target or coordinates")
                 }
                 let bounds = CGRect(origin: .zero, size: element.frame.size)
                 let startPoint = CGPoint(x: values[0], y: values[1])
-                let endPoint = CGPoint(x: values[0] + values[2], y: values[1] + values[3])
-                guard bounds.contains(startPoint), bounds.contains(endPoint) else {
-                    throw DriverFailure(errorDescription: "Window drag left the test window")
+                guard bounds.contains(startPoint) else {
+                    throw DriverFailure(errorDescription: "Window gesture started outside the test window")
                 }
                 let origin = element.coordinate(withNormalizedOffset: .zero)
                 let start = origin.withOffset(CGVector(dx: startPoint.x, dy: startPoint.y))
-                let end = origin.withOffset(CGVector(dx: endPoint.x, dy: endPoint.y))
-                start.press(forDuration: 0.1, thenDragTo: end)
+                if dragging {
+                    let endPoint = CGPoint(x: values[0] + values[2], y: values[1] + values[3])
+                    guard bounds.contains(endPoint) else {
+                        throw DriverFailure(errorDescription: "Window drag left the test window")
+                    }
+                    let end = origin.withOffset(CGVector(dx: endPoint.x, dy: endPoint.y))
+                    start.press(forDuration: 0.1, thenDragTo: end)
+                } else {
+                    start.hover()
+                }
+            case "save-pdf":
+                let folder = try XCTUnwrap(request["value"])
+                let confirm = app.buttons.matching(NSPredicate(format: "label IN %@",
+                    ["Save", "Export", "Move", "存储", "儲存", "保存", "导出", "輸出", "移动", "移動"])).firstMatch
+                guard confirm.waitForExistence(timeout: 12), confirm.isHittable else {
+                    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                    attachment.name = "System PDF save dialog"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    throw DriverFailure(errorDescription: "The system PDF save confirmation is unreachable")
+                }
+                app.typeKey("g", modifierFlags: [.command, .shift])
+                app.typeText(folder)
+                app.typeKey(.return, modifierFlags: [])
+                confirm.click()
             case "press", "fill", "hover":
                 guard element.exists, element.isEnabled, element.isHittable else {
                     let screenshot = XCTAttachment(screenshot: app.screenshot())

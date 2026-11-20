@@ -261,7 +261,6 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       #note-page figure { margin: 0 0 1em; }
       #note-page figure img { width: min(65%, 400px); display: block; box-shadow: none; }
       #note-page figcaption { color: var(--muted); font: 9pt -apple-system, sans-serif; }
-      #note-page .chapter-end { display: block; width: 1px; height: 0; }
     `;
     document.head.append(style);
     const page = document.createElement('main');
@@ -295,9 +294,6 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       mark.style.height = 'auto';
       story.prepend(mark);
     }
-    const end = document.createElement('span');
-    end.className = 'chapter-end';
-    story.append(end);
     viewport.append(story);
     const number = document.createElement('div');
     number.className = 'folio';
@@ -314,14 +310,18 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
     }
     const origin = story.getBoundingClientRect().left;
     const column = rect => Math.max(0, Math.floor((rect.left - origin + 0.01) / measure));
-    const pageCount = column(end.getBoundingClientRect()) + 1;
+    // Measure actual laid-out content. An empty end marker can report its
+    // unfragmented position on older WebKit versions, even inside a later column.
+    let lastColumn = 0;
 
     // Clipping controls the appearance, but PDF readers can extract invisible
     // glyphs outside a clip. Hide off-page text before asking WebKit to draw.
     const atomicSelector = 'img, svg, .weibei-math-node';
     for (const element of story.querySelectorAll(atomicSelector)) {
       if (!element.parentElement.closest(atomicSelector)) {
-        element.dataset.pdfColumn = String(column(element.getBoundingClientRect()));
+        const index = column(element.getBoundingClientRect());
+        element.dataset.pdfColumn = String(index);
+        lastColumn = Math.max(lastColumn, index);
       }
     }
     const walker = document.createTreeWalker(story, NodeFilter.SHOW_TEXT);
@@ -337,11 +337,12 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       const lines = rects(0, text.length);
       if (!lines.length) continue;
       const fragment = document.createDocumentFragment();
-      const lastColumn = column(lines[lines.length - 1]);
+      const lastTextColumn = column(lines[lines.length - 1]);
+      lastColumn = Math.max(lastColumn, lastTextColumn);
       let offset = 0;
-      for (let index = column(lines[0]); index <= lastColumn && offset < text.length; index++) {
+      for (let index = column(lines[0]); index <= lastTextColumn && offset < text.length; index++) {
         let limit = text.length;
-        if (index < lastColumn) {
+        if (index < lastTextColumn) {
           let low = offset + 1, high = text.length;
           while (low < high) {
             const middle = Math.floor((low + high) / 2);
@@ -379,6 +380,6 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       });
     };
     window.weiBeiSelectPDFPage(0);
-    return pageCount;
+    return lastColumn + 1;
     """
 }
