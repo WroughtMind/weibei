@@ -919,17 +919,20 @@ enum CatalystBusinessCheck {
                 .map { String(Double($0)) }.joined(separator: ",")
             _ = try await onboardingUICommand("hover-window-point", id: "SceneWindow", value: headerPoint)
             try await activate("note-pdf-open")
-            try await waitForOnboardingControl("note-pdf-save")
-            let exportDocument = UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap(\.windows)
-                .flatMap(descendants)
-                .compactMap { $0 as? PDFView }
-                .first { $0.accessibilityIdentifier == "note-pdf-preview" }?.document
-            let previewText = exportDocument?.string?.precomposedStringWithCompatibilityMapping ?? ""
-            try check("note_pdf_export_opens_in_app",
-                      exportDocument?.pageCount == 1 && previewText.contains("编辑器输入"))
+            var previewText = ""
+            try await until("the export window displays the current note PDF") {
+                let document = UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .flatMap(\.windows)
+                    .flatMap(descendants)
+                    .compactMap { $0 as? PDFView }
+                    .first { $0.accessibilityIdentifier == "note-pdf-preview" }?.document
+                previewText = document?.string?.precomposedStringWithCompatibilityMapping ?? ""
+                return document?.pageCount == 1 && previewText.contains("编辑器输入")
+            }
             _ = try await onboardingUICommand("screenshot", id: "Note PDF export")
+            try await waitForOnboardingControl("note-pdf-save")
+            try check("note_pdf_export_opens_in_app", store.notePDFExportRequest?.itemID == note.id)
             try await activate("note-pdf-cancel")
             try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }
             try check("note_pdf_export_keeps_note_selection", store.activeNoteItemID == note.id)

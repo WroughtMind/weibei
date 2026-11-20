@@ -62,7 +62,6 @@ struct NotePDFExportView: View {
         .background(Color(weiBeiNativeColor: WeiBeiNativePalette.foregroundWorkspaceSurface(for: store.appearanceMode)))
         .preferredColorScheme(store.appearanceMode.colorScheme)
         .modifier(WeiBeiFittedSheetPresentation())
-        .accessibilityIdentifier("note-pdf-export")
         .task(id: RenderRequest(options: options, retry: retry)) {
             await updatePreview(for: options)
         }

@@ -221,6 +221,8 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
     await document.fonts.ready;
     if (!editor.isConnected) throw new Error('Markdown renderer unavailable');
 
+    const contentWidth = width - 2 * margin;
+    const contentHeight = height - 2 * margin;
     const style = document.createElement('style');
     style.textContent = `
       html, body { margin: 0; overflow: hidden; background: var(--paper); }
@@ -232,8 +234,9 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       }
       #note-page .viewport { position: absolute; inset: ${margin}px; overflow: hidden; }
       #note-page .ProseMirror {
-        box-sizing: border-box; width: 100%; height: 100%; padding: 0; margin: 0; min-height: 0;
-        font-size: ${size}pt; line-height: ${leading}; column-count: 1; column-gap: 0; column-fill: auto;
+        box-sizing: border-box; width: ${2 * contentWidth}px; height: ${contentHeight}px;
+        padding: 0; margin: 0; min-height: 0;
+        font-size: ${size}pt; line-height: ${leading}; column-count: 2; column-gap: 0; column-fill: auto;
         overflow-wrap: anywhere; widows: 2; orphans: 2;
       }
       #note-page .ProseMirror > :first-child { margin-top: 0; }
@@ -250,7 +253,7 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       #note-page .ProseMirror h3 { font-size: 1.22em; }
       #note-page .ProseMirror :is(h1,h2,h3,h4,h5,h6) { break-after: avoid; }
       #note-page .ProseMirror :is(figure, img, tr, .weibei-math-block, .weibei-mermaid-render) { break-inside: avoid; }
-      #note-page .ProseMirror :is(img, svg) { max-width: 100%; max-height: ${height - 2 * margin}px; object-fit: contain; }
+      #note-page .ProseMirror :is(img, svg) { max-width: 100%; max-height: ${contentHeight}px; object-fit: contain; }
       #note-page .ProseMirror :is(pre, pre code) { white-space: pre-wrap; overflow: visible; overflow-wrap: anywhere; }
       #note-page .ProseMirror table { display: table; overflow: visible; table-layout: fixed; width: 100%; }
       #note-page .ProseMirror :is(td,th) { white-space: normal; overflow-wrap: anywhere; }
@@ -305,24 +308,25 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
     // A layout pass starts loading fonts introduced by the print stylesheet.
     story.getBoundingClientRect();
     await document.fonts.ready;
-    const measure = viewport.clientWidth;
     for (const math of story.querySelectorAll('.weibei-math-block')) {
-      if (math.scrollWidth > measure) math.style.fontSize = measure / math.scrollWidth + 'em';
+      if (math.scrollWidth > contentWidth) math.style.fontSize = contentWidth / math.scrollWidth + 'em';
     }
     const origin = story.getBoundingClientRect().left;
-    const column = rect => Math.max(0, Math.floor((rect.left - origin + 0.01) / measure));
-    // Measure actual laid-out content. An empty end marker can report its
-    // unfragmented position on older WebKit versions, even inside a later column.
+    const column = rect => Math.max(0, Math.floor((rect.left - origin + 0.01) / contentWidth));
+    const pageBottom = viewport.getBoundingClientRect().bottom;
     let lastColumn = 0;
+    let contentOverflowsBottom = false;
 
     // Clipping controls the appearance, but PDF readers can extract invisible
     // glyphs outside a clip. Hide off-page text before asking WebKit to draw.
     const atomicSelector = 'img, svg, .weibei-math-node';
     for (const element of story.querySelectorAll(atomicSelector)) {
       if (!element.parentElement.closest(atomicSelector)) {
-        const index = column(element.getBoundingClientRect());
+        const rect = element.getBoundingClientRect();
+        const index = column(rect);
         element.dataset.pdfColumn = String(index);
         lastColumn = Math.max(lastColumn, index);
+        contentOverflowsBottom ||= rect.bottom > pageBottom + 1;
       }
     }
     const walker = document.createTreeWalker(story, NodeFilter.SHOW_TEXT);
@@ -340,6 +344,7 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       const fragment = document.createDocumentFragment();
       const lastTextColumn = column(lines[lines.length - 1]);
       lastColumn = Math.max(lastColumn, lastTextColumn);
+      contentOverflowsBottom ||= lines.some(rect => rect.bottom > pageBottom + 1);
       let offset = 0;
       for (let index = column(lines[0]); index <= lastTextColumn && offset < text.length; index++) {
         let limit = text.length;
@@ -362,12 +367,15 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       }
       replacements.push([text, fragment]);
     }
+    if (lastColumn === 0 && contentOverflowsBottom) {
+      throw new Error('WebKit did not paginate overflowing note content');
+    }
     for (const [text, fragment] of replacements) text.replaceWith(fragment);
 
     const mask = document.createElement('style');
     document.head.append(mask);
     window.weiBeiSelectPDFPage = index => {
-      story.style.transform = 'translateX(' + (-index * measure) + 'px)';
+      story.style.transform = 'translateX(' + (-index * contentWidth) + 'px)';
       mask.textContent = '#note-page [data-pdf-column]:not([data-pdf-column="' + index + '"]) { visibility: hidden; }';
       if (!number.hidden) number.textContent = String(index + 1);
       const visible = viewport.getBoundingClientRect();
