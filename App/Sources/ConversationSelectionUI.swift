@@ -125,7 +125,6 @@ final class ConversationSelectionActionButton: UIButton {
         isAccessibilityElement = true
         layer.cornerRadius = 6
         isPointerInteractionEnabled = true
-        addInteraction(UIToolTipInteraction())
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hover(_:))))
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -138,7 +137,6 @@ final class ConversationSelectionActionButton: UIButton {
         label.font = .systemFont(ofSize: 12 * scale, weight: .medium)
         label.textColor = ink
         accessibilityLabel = title
-        interactions.compactMap { $0 as? UIToolTipInteraction }.first?.defaultToolTip = title
         refreshBackground(); setNeedsLayout()
     }
     override func layoutSubviews() {
@@ -160,11 +158,33 @@ final class ConversationSelectionActionButton: UIButton {
 }
 
 final class ConversationSelectionActions: UIView {
+    enum CopyFeedback {
+        case none, inActions, confirmation
+    }
+
     let copyButton = ConversationSelectionActionButton(frame: .zero)
     let quoteButton = ConversationSelectionActionButton(frame: .zero)
     private let material = UIVisualEffectView()
     private let separator = UIView()
     private var textScale: CGFloat = 1
+    private var language: WeiBeiInterfaceLanguage = .chinese
+    private var ink = UIColor.label
+    var copyFeedback: CopyFeedback = .none {
+        didSet {
+            guard copyFeedback != oldValue else { return }
+            let confirmationOnly = copyFeedback == .confirmation
+            quoteButton.isHidden = confirmationOnly
+            separator.isHidden = confirmationOnly
+            isUserInteractionEnabled = !confirmationOnly
+            copyButton.accessibilityIdentifier = confirmationOnly
+                ? "conversation-selection-copy-feedback" : "conversation-selection-copy"
+            copyButton.accessibilityTraits = confirmationOnly ? .staticText : .button
+            updateCopyButton()
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+    var copiedTitle: String { language.text("已复制", "Copied") }
     var copySelectedText: (() -> Void)?
     var quoteSelectedText: (() -> Void)?
     override var isHidden: Bool {
@@ -196,6 +216,7 @@ final class ConversationSelectionActions: UIView {
 
     func update(appearance: WeiBeiAppearanceMode, language: WeiBeiInterfaceLanguage, textScale: CGFloat) {
         self.textScale = textScale
+        self.language = language
         if appearance.isGlass {
             let frosted = appearance == .glassMist || appearance == .glassSlate
             let style: UIBlurEffect.Style = frosted
@@ -207,31 +228,45 @@ final class ConversationSelectionActions: UIView {
             material.effect = nil
             material.contentView.backgroundColor = WeiBeiNativePalette.paperRaised(for: appearance)
         }
-        let ink = WeiBeiNativePalette.ink(for: appearance)
+        ink = WeiBeiNativePalette.ink(for: appearance)
         material.layer.borderColor = WeiBeiNativePalette.hairline(for: appearance).cgColor
         layer.shadowColor = ink.cgColor
         separator.backgroundColor = WeiBeiNativePalette.hairline(for: appearance)
-        copyButton.update(title: language.text("复制", "Copy"), symbol: "doc.on.doc", ink: ink, scale: textScale)
-        quoteButton.update(title: language.text("引用", "Quote"), symbol: "text.quote", ink: ink, scale: textScale)
+        updateCopyButton()
+        quoteButton.update(title: quoteTitle, symbol: "text.quote", ink: ink, scale: textScale)
         invalidateIntrinsicContentSize(); setNeedsLayout()
     }
-    private var buttonWidth: CGFloat {
-        [copyButton, quoteButton].map { button in
-            let title = button.accessibilityLabel ?? ""
-            let width = (title as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: 12 * textScale, weight: .medium)]).width
-            return ceil(width + 31 * textScale)
-        }.max() ?? 0
+
+    private var copyTitle: String { language.text("复制", "Copy") }
+    private var quoteTitle: String { language.text("引用", "Quote") }
+
+    private func updateCopyButton() {
+        let copied = copyFeedback != .none
+        copyButton.update(title: copied ? copiedTitle : copyTitle, symbol: copied ? "checkmark" : "doc.on.doc",
+                          ink: ink, scale: textScale)
     }
+
+    private func buttonWidth(for title: String) -> CGFloat {
+        let font = UIFont.systemFont(ofSize: 12 * textScale, weight: .medium)
+        return ceil((title as NSString).size(withAttributes: [.font: font]).width + 31 * textScale)
+    }
+
+    // Reserve the copied title's width so ⌘C does not move either action.
+    private var copyWidth: CGFloat { max(buttonWidth(for: copyTitle), buttonWidth(for: copiedTitle)) }
+    private var quoteWidth: CGFloat { buttonWidth(for: quoteTitle) }
+
     override var intrinsicContentSize: CGSize {
-        CGSize(width: 2 * buttonWidth + 13 * textScale, height: 34 * textScale)
+        let width = copyFeedback == .confirmation ? copyWidth + 8 * textScale
+            : copyWidth + quoteWidth + 13 * textScale
+        return CGSize(width: width, height: 34 * textScale)
     }
     override func layoutSubviews() {
         super.layoutSubviews()
-        let width = buttonWidth
+        let width = copyWidth
         copyButton.frame = CGRect(x: 4 * textScale, y: 3 * textScale, width: width, height: 28 * textScale)
         separator.frame = CGRect(x: width + 6 * textScale, y: 10 * textScale,
                                  width: 1 / UIScreen.main.scale, height: 14 * textScale)
-        quoteButton.frame = CGRect(x: width + 9 * textScale, y: 3 * textScale, width: width, height: 28 * textScale)
+        quoteButton.frame = CGRect(x: width + 9 * textScale, y: 3 * textScale, width: quoteWidth, height: 28 * textScale)
         material.frame = bounds
         let radius = 9 * textScale
         material.layer.cornerRadius = radius

@@ -173,7 +173,6 @@ struct AgentUnconfiguredHint: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .frame(maxWidth: 460, alignment: .leading)
         .background {
             WeiBeiEtchedBackdrop(
                 shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
@@ -184,5 +183,6 @@ struct AgentUnconfiguredHint: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-unconfigured-hint")
+        .frame(maxWidth: 460, alignment: .leading)
     }
 }

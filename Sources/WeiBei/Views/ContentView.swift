@@ -140,7 +140,7 @@ struct ContentView: View {
                     || store.noteEditorCommandFailureMessage != nil
                     || store.noteSelectionStatusMessage != nil
                     || store.transientNoteStatus != nil {
-                    WorkspaceStatusBanner()
+                    WorkspaceStatusBanner(workspaceHeight: geometry.size.height)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 #if targetEnvironment(macCatalyst)
                         .padding(.top, geometry.safeAreaInsets.top + 10)
@@ -154,7 +154,7 @@ struct ContentView: View {
                 if store.courseFileOperationProgress != nil {
                     ImportProgressPill()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                        .padding(.leading, 16)
+                        .padding(.horizontal, 16)
                         .padding(.bottom, 16)
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
@@ -549,6 +549,8 @@ private struct FloatingSelectionPositionEffect: GeometryEffect {
 
 /// Top-level workspace feedback: important data-operation errors (persistent,
 /// user-dismissed) take priority over the auto-expiring transient status.
+private let workspaceStatusMaximumWidth: CGFloat = 440
+
 private struct ImportProgressPill: View {
     @EnvironmentObject private var store: WorkspaceStore
 
@@ -577,11 +579,13 @@ private struct ImportProgressPill: View {
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(store.ui("正在导入文件", "Importing files")))
+        .frame(maxWidth: workspaceStatusMaximumWidth, alignment: .leading)
     }
 }
 
 private struct WorkspaceStatusBanner: View {
     @EnvironmentObject private var store: WorkspaceStore
+    let workspaceHeight: CGFloat
 
     private var isImportant: Bool {
         store.importantOperationError != nil
@@ -615,123 +619,28 @@ private struct WorkspaceStatusBanner: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: isAlert ? "exclamationmark.triangle.fill" : "info.circle")
                 .weiBeiText(12, weight: .medium)
                 .foregroundStyle(isAlert ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-            Text(message)
-                .weiBeiText(12, weight: .medium)
-                .foregroundStyle(WeiBeiTheme.ink)
-                .accessibilityIdentifier("workspace-status-message")
-                .lineLimit(3)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 1)
 #if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                .background(AccessibilityFrameProbe(identifier: "workspace-status-layout-" + message))
+                .background(AccessibilityFrameProbe(identifier: "workspace-status-icon-layout"))
 #endif
-            if isEditorCommandFailure && store.canRetryRejectedNoteEditorCommand {
-                Button {
-                    store.retryRejectedNoteEditorCommand()
-                } label: {
-                    Text(store.ui("重试", "Retry"))
-                        .weiBeiText(12, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .contentShape(Rectangle())
+                .accessibilityHidden(true)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    statusMessage
+                    statusActions
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(store.ui("重试应用编辑内容", "Retry applying editor content")))
-            } else if isNoteSelectionFailure {
-                Button {
-                    store.retryPendingNoteSelection()
-                } label: {
-                    Text(store.ui("重试", "Retry"))
-                        .weiBeiText(12, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .contentShape(Rectangle())
+                VStack(alignment: .leading, spacing: 8) {
+                    statusMessage
+                    statusActions.layoutPriority(1)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(store.ui("重试保存并切换笔记", "Retry saving and switching notes")))
-            } else if store.pendingDeletionUndo != nil {
-                Button {
-                    store.undoPendingDeletion()
-                } label: {
-                    Text(store.ui("撤销", "Undo"))
-                        .weiBeiText(12, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(store.ui("撤销删除", "Undo delete")))
-            } else if isImportant {
-                if case .noteWriteSafetyHold = store.importantOperationNotice,
-                   let itemID = store.activeNoteItemID,
-                   store.noteOperationErrorsByItemID[itemID] != nil {
-                    Button(store.ui("重试保存", "Retry Save")) {
-                        Task { await store.retryActiveNoteSaveFromUser() }
-                    }
-                    .buttonStyle(.plain)
-                    .weiBeiText(12, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                }
-                if case .defaultLibraryBootstrapFailed = store.importantOperationNotice {
-                    Button {
-                        store.retryBootstrapDefaultLibrary()
-                    } label: {
-                        Text(store.ui("重试", "Retry"))
-                            .weiBeiText(12, weight: .semibold)
-                            .foregroundStyle(WeiBeiTheme.cinnabar)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text(store.ui("重试建立默认资料库", "Retry creating the default library")))
-                    .disabled(store.libraryLocationBusy)
-                    Button(store.ui("选择位置…", "Choose Location…")) {
-                        Task { await LibraryPlacementPicker.choose(for: store) }
-                    }
-                    .buttonStyle(.plain)
-                    .weiBeiText(12, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .accessibilityIdentifier("library-bootstrap-choose-location")
-                    .disabled(store.libraryLocationBusy)
-                }
-                Button {
-                    store.dismissImportantOperationError()
-                } label: {
-                    Image(systemName: "xmark")
-                        .weiBeiText(10.5, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(store.ui("关闭错误提示", "Dismiss error")))
-            } else if showsBackupReveal {
-                Button {
-                    if let url = store.transientNoteStatusRevealURL {
-                        store.revealMaterialFileInFinder(url)
-                    }
-                } label: {
-                    Text(store.ui("在访达中显示", "Show in Finder"))
-                        .weiBeiText(12, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(store.ui("在访达中显示备份", "Show backup in Finder")))
-                Button {
-                    store.dismissTransientNoteStatus()
-                } label: {
-                    Image(systemName: "xmark")
-                        .weiBeiText(10.5, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(store.ui("关闭提示", "Dismiss notice")))
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .frame(maxWidth: 440, alignment: .leading)
         .background {
             WeiBeiEtchedBackdrop(
                 shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
@@ -744,9 +653,113 @@ private struct WorkspaceStatusBanner: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+        .background(AccessibilityFrameProbe(identifier: "workspace-status-surface-layout"))
+#endif
         .allowsHitTesting(isAlert || showsBackupReveal || store.pendingDeletionUndo != nil)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(store.ui("工作台状态提示", "Workspace status")))
+        // Cap the visible footprint while letting short statuses hug their text.
+        .frame(maxWidth: workspaceStatusMaximumWidth, maxHeight: workspaceHeight / 2, alignment: .top)
+        .padding(.horizontal, 12)
+    }
+
+    private var statusMessage: some View {
+        let text = Text(message)
+            .weiBeiText(12, weight: .medium)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .accessibilityIdentifier("workspace-status-message")
+            .lineLimit(isAlert || showsBackupReveal ? nil : 3)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
+            .background(AccessibilityFrameProbe(identifier: "workspace-status-layout-" + message))
+#endif
+        return ViewThatFits(in: .vertical) {
+            text
+            ScrollView { text }
+        }
+    }
+
+    @ViewBuilder private var statusActions: some View {
+        if isEditorCommandFailure && store.canRetryRejectedNoteEditorCommand {
+            statusAction(store.ui("重试", "Retry"),
+                         accessibilityLabel: store.ui("重试应用编辑内容", "Retry applying editor content")) {
+                store.retryRejectedNoteEditorCommand()
+            }
+        } else if isNoteSelectionFailure {
+            statusAction(store.ui("重试", "Retry"),
+                         accessibilityLabel: store.ui("重试保存并切换笔记", "Retry saving and switching notes")) {
+                store.retryPendingNoteSelection()
+            }
+        } else if store.pendingDeletionUndo != nil {
+            statusAction(store.ui("撤销", "Undo"), accessibilityLabel: store.ui("撤销删除", "Undo delete")) {
+                store.undoPendingDeletion()
+            }
+        } else if isImportant {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if case .noteWriteSafetyHold = store.importantOperationNotice,
+                   let itemID = store.activeNoteItemID,
+                   store.noteOperationErrorsByItemID[itemID] != nil {
+                    statusAction(store.ui("重试保存", "Retry Save")) {
+                        Task { await store.retryActiveNoteSaveFromUser() }
+                    }
+                }
+                if case .defaultLibraryBootstrapFailed = store.importantOperationNotice {
+                    statusAction(store.ui("重试", "Retry"),
+                                 accessibilityLabel: store.ui("重试建立默认资料库", "Retry creating the default library")) {
+                        store.retryBootstrapDefaultLibrary()
+                    }
+                    .disabled(store.libraryLocationBusy)
+                    statusAction(store.ui("选择位置…", "Choose Location…")) {
+                        Task { await LibraryPlacementPicker.choose(for: store) }
+                    }
+                    .accessibilityIdentifier("library-bootstrap-choose-location")
+                    .disabled(store.libraryLocationBusy)
+                }
+                dismissAction(store.ui("关闭错误提示", "Dismiss error")) {
+                    store.dismissImportantOperationError()
+                }
+            }
+        } else if showsBackupReveal {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                statusAction(store.ui("在访达中显示", "Show in Finder"),
+                             accessibilityLabel: store.ui("在访达中显示备份", "Show backup in Finder")) {
+                    if let url = store.transientNoteStatusRevealURL {
+                        store.revealMaterialFileInFinder(url)
+                    }
+                }
+                dismissAction(store.ui("关闭提示", "Dismiss notice")) {
+                    store.dismissTransientNoteStatus()
+                }
+            }
+        }
+    }
+
+    private func statusAction(
+        _ title: String,
+        accessibilityLabel: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .weiBeiText(12, weight: .semibold)
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(accessibilityLabel ?? title))
+    }
+
+    private func dismissAction(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .weiBeiText(10.5, weight: .semibold)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(title))
     }
 }
 

@@ -1549,17 +1549,18 @@ enum CatalystBusinessCheck {
         }
         try capture("selection-capsule-hover.png")
         try await waitForOnboardingControl("conversation-selection-copy")
-        // Observe the mounted toast while the real click is in flight. An Intel
-        // XCTest snapshot can take longer than the product's 2.4-second toast.
+        // Capture the short-lived confirmation while XCTest handles the click.
         let feedbackGeneration = store.transientNoteStatusGeneration
+        let mainActions = mainConversation.selectionActions
+        let actionFrame = mainActions.frame
         let copyFeedback = Task { @MainActor in
             try await until("copy success feedback is mounted") {
                 try Task.checkCancellation()
-                guard store.transientNoteStatusGeneration > feedbackGeneration,
-                      store.transientNoteStatus == store.ui("已复制", "Copied"),
-                      let marker = descendants(window).first(where: {
-                          $0.accessibilityIdentifier == "workspace-status-layout-" + store.ui("已复制", "Copied")
-                      }), isVisible(marker, in: window) else { return false }
+                guard mainActions.copyFeedback == .confirmation, isVisible(mainCopy, in: window) else { return false }
+                guard actionFrame.contains(mainActions.frame), !mainActions.isUserInteractionEnabled,
+                      store.transientNoteStatusGeneration == feedbackGeneration else {
+                    throw Failure("copy confirmation left the selection controls or showed a workspace status")
+                }
                 try Task.checkCancellation()
                 try capture("selection-copy-feedback.png")
                 return true
@@ -1569,7 +1570,7 @@ enum CatalystBusinessCheck {
         _ = try await onboardingUICommand("press", id: "conversation-selection-copy")
         try await copyFeedback.value
         guard UIPasteboard.general.string == mainExcerpt, !mainConversation.selection.hasSelection,
-              mainConversation.selectionActions.isHidden,
+              mainActions.isHidden || mainActions.copyFeedback == .confirmation,
               mainComposer.text == mainQuoted, floatingComposer()?.text == draft else {
             throw Failure("main capsule copy changed the selected text or either draft")
         }
@@ -1806,6 +1807,25 @@ enum CatalystBusinessCheck {
         store.clearSelectionAttachments()
         store.removeConversationQuotes(Set(store.conversationQuotes(in: mainID).map(\.id)), in: mainID)
         store.removeConversationQuotes(Set(store.conversationQuotes(in: threadID).map(\.id)), in: threadID)
+        do {
+            let message = store.ui("已更新", "Updated")
+            store.showTransientNoteStatus(message)
+            defer { store.dismissTransientNoteStatus() }
+            try await until("short workspace status hugs its content") {
+                let views = descendants(window)
+                guard let surface = views.first(where: { $0.accessibilityIdentifier == "workspace-status-surface-layout" }),
+                      let icon = views.first(where: { $0.accessibilityIdentifier == "workspace-status-icon-layout" }),
+                      let text = views.first(where: { $0.accessibilityIdentifier == "workspace-status-layout-" + message }),
+                      [surface, icon, text].allSatisfy({ isVisible($0, in: window) }) else { return false }
+                let frame = surface.convert(surface.bounds, to: window)
+                let leading = icon.convert(icon.bounds, to: window).minX - frame.minX
+                let trailing = frame.maxX - text.convert(text.bounds, to: window).maxX
+                guard leading > 0, abs(trailing - leading) <= 1 else { return false }
+                try capture("workspace-status-compact.png")
+                return true
+            }
+        }
+        richEvidence["workspace_status_hugs_content"] = "passed"
         // Exercise the real composer with a documented model, using only the isolated fixture endpoint.
         let provider = store.agentProviderID
         let model = store.modelName

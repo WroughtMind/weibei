@@ -72,10 +72,6 @@ struct CatalystConversationView: View {
             controller.view.backgroundColor = .clear
             let targetID = floatingThreadID ?? workspace.activeStudySessionID
             controller.setAnswering(targetID.map { workspace.isAgentRunning(in: $0) } ?? false, status: streaming.activityText ?? "")
-            controller.didCopyText = { [weak workspace] in
-                guard let workspace else { return }
-                workspace.showTransientNoteStatus(workspace.ui("已复制", "Copied"))
-            }
             controller.quoteText = { [weak workspace] text, messageID in
                 guard let workspace, let targetID,
                       workspace.addConversationQuote(text, messageID: messageID, in: targetID) else { return false }
