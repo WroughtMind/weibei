@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import WeiBeiCore
 import WebKit
 
 struct NotePDFSource {

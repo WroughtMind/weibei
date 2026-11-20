@@ -51,59 +51,11 @@ struct NotePDFExportView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(store.ui("导出 PDF", "Export PDF")).font(.headline)
-                    if let source {
-                        Text(source.title).font(.subheadline).foregroundStyle(WeiBeiTheme.secondaryInk).lineLimit(1)
-                    }
-                }
-                Spacer()
-                Button {
-                    showsOptions.toggle()
-                } label: {
-                    Image(systemName: "sidebar.right")
-                }
-                .buttonStyle(WeiBeiIconButtonStyle(active: showsOptions, size: 28))
-                .accessibilityLabel(store.ui("排版设置", "Layout Settings"))
-                .accessibilityValue(showsOptions ? store.ui("已显示", "Shown") : store.ui("已收起", "Hidden"))
-                .help(showsOptions ? store.ui("收起排版设置", "Hide Layout Settings")
-                                    : store.ui("显示排版设置", "Show Layout Settings"))
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            header
             Divider()
-            GeometryReader { geometry in
-                let wide = geometry.size.width >= 600
-                let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
-                layout {
-                    preview.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if showsOptions {
-                        Divider()
-                        inspector.frame(width: wide ? 252 : nil, height: wide ? nil : geometry.size.height * 0.44)
-                    }
-                }
-            }
+            pageLayout
             Divider()
-            HStack {
-                if let rendered, rendered.options == options, renderError == nil {
-                    Text(store.ui("\(rendered.document.pageCount) 页", "\(rendered.document.pageCount) pages"))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .font(.subheadline)
-                }
-                Spacer()
-                Button(store.ui("取消", "Cancel")) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityIdentifier("note-pdf-cancel")
-                Button(store.ui("导出…", "Export…")) { showsFileExporter = true }
-                    .buttonStyle(.borderedProminent)
-                    .tint(WeiBeiTheme.accent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(rendered?.options != options || renderError != nil)
-                    .accessibilityIdentifier("note-pdf-save")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            footer
         }
         .frame(minWidth: 440, idealWidth: 900, minHeight: 440, idealHeight: 650)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -129,6 +81,67 @@ struct NotePDFExportView: View {
         } message: {
             Text(store.ui("请重试，或选择其他保存位置。", "Try again or choose another save location."))
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(store.ui("导出 PDF", "Export PDF")).font(.headline)
+                if let source {
+                    Text(source.title).font(.subheadline).foregroundStyle(WeiBeiTheme.secondaryInk).lineLimit(1)
+                }
+            }
+            Spacer()
+            Button {
+                showsOptions.toggle()
+            } label: {
+                Image(systemName: "sidebar.right")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(active: showsOptions, size: 28))
+            .accessibilityLabel(store.ui("排版设置", "Layout Settings"))
+            .accessibilityValue(showsOptions ? store.ui("已显示", "Shown") : store.ui("已收起", "Hidden"))
+            .help(showsOptions ? store.ui("收起排版设置", "Hide Layout Settings")
+                               : store.ui("显示排版设置", "Show Layout Settings"))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private var pageLayout: some View {
+        GeometryReader { geometry in
+            let wide = geometry.size.width >= 600
+            let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+            layout {
+                preview.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showsOptions {
+                    Divider()
+                    inspector.frame(width: wide ? 252 : nil, height: wide ? nil : geometry.size.height * 0.44)
+                }
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            if let rendered, rendered.options == options, renderError == nil {
+                let count = rendered.document.pageCount
+                Text(store.ui("\(count) 页", count == 1 ? "1 page" : "\(count) pages"))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .font(.subheadline)
+            }
+            Spacer()
+            Button(store.ui("取消", "Cancel")) { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("note-pdf-cancel")
+            Button(store.ui("导出…", "Export…")) { showsFileExporter = true }
+                .buttonStyle(.borderedProminent)
+                .tint(WeiBeiTheme.accent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(rendered?.options != options || renderError != nil)
+                .accessibilityIdentifier("note-pdf-save")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     private var preview: some View {
