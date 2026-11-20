@@ -112,7 +112,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         fileCommands.append(contentsOf: [
             command(store.ui("打开文稿", "Open Document"), "o", "open"),
-            command(store.ui("打开课程空间", "Open Course Space"), "0", "courses")
+            command(store.ui("打开课程空间", "Open Course Space"), "0", "courses"),
+            plainCommand(store.ui("导出笔记为 PDF…", "Export Note as PDF…"), "export-note-pdf")
         ])
         builder.remove(menu: .newScene)
         builder.insertChild(UIMenu(options: .displayInline, children: fileCommands), atStartOfMenu: .file)
@@ -160,6 +161,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             enabled = true
         } else if Self.workspace.settingsPresented {
             enabled = false
+        } else if value == "export-note-pdf" {
+            enabled = Self.workspace.activeNoteItemID != nil && Self.workspace.notePDFExportRequest == nil
+                && !Self.workspace.courseWorkspacePresented && !Self.workspace.notePickerPresented
         } else if let id = AppShortcutID(rawValue: value) {
             enabled = Self.shortcutIsEnabled(id)
         } else {
@@ -185,6 +189,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         case "new-note": Self.revealWorkspaceThen { store.promptCreateBlankNotebookNote() }
         case "open": Self.revealWorkspaceThen { store.importFilesFromPanel() }
         case "courses": store.presentCourseWorkspace(.hub)
+        case "export-note-pdf":
+            if let itemID = store.activeNoteItemID, store.notePDFExportRequest == nil,
+               !store.courseWorkspacePresented, !store.notePickerPresented {
+                store.notePDFExportRequest = NotePDFExportRequest(itemID: itemID)
+            }
         case "zoom-in", "zoom-in-equals": if let scale = store.interfaceTextScale.nextLarger { store.setInterfaceTextScale(scale) }
         case "zoom-out": if let scale = store.interfaceTextScale.nextSmaller { store.setInterfaceTextScale(scale) }
         case "zoom-reset": store.setInterfaceTextScale(.standard)

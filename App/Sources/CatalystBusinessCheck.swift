@@ -3,6 +3,7 @@ import UIKit
 import SwiftUI
 import Combine
 import WebKit
+import PDFKit
 import WeiBeiCore
 import MarkdownView
 import Litext
@@ -911,6 +912,36 @@ enum CatalystBusinessCheck {
             let captured = await store.freshActiveNoteEditorSnapshot()
             await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             try check("original_editor_snapshot_and_note_write_gate", captured && (try String(contentsOf: persistedNote, encoding: .utf8)).contains(noteMarker))
+
+            let fileCommand = store.ui("导出笔记为 PDF…", "Export Note as PDF…")
+                .lowercased().replacingOccurrences(of: " ", with: "_")
+            func openPDFExport() async throws {
+                try await activate("com.apple.menu.file")
+                try await activate(fileCommand)
+                try await waitForOnboardingControl("note-pdf-save")
+            }
+            try await openPDFExport()
+            _ = try await onboardingUICommand("screenshot", id: "Note PDF export")
+            let pageCount = try await accessibilityElement("note-pdf-page-count")?["label"]
+            try check("note_pdf_export_opens_in_app", store.notePDFExportRequest?.itemID == note.id
+                      && pageCount == store.ui("1 页", "1 page"))
+            try await activate("note-pdf-cancel")
+            try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }
+            try check("note_pdf_export_keeps_note_selection", store.activeNoteItemID == note.id)
+
+            try await openPDFExport()
+            let exports = inputs.appendingPathComponent("Exported Notes", isDirectory: true)
+            try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+            try await activate("note-pdf-save")
+            _ = try await onboardingUICommand("save-pdf", id: "note-pdf", value: exports.path)
+            try await until("system PDF save finished in the selected folder") {
+                let files = try FileManager.default.contentsOfDirectory(at: exports, includingPropertiesForKeys: nil)
+                guard let url = files.first(where: { $0.pathExtension == "pdf" }),
+                      let savedDocument = PDFDocument(url: url) else { return false }
+                let text = savedDocument.string?.precomposedStringWithCompatibilityMapping ?? ""
+                return store.notePDFExportRequest == nil && savedDocument.pageCount == 1 && text.contains("编辑器输入")
+            }
+            try check("note_pdf_export_saves_preview_to_disk", store.activeNoteItemID == note.id)
 
             let pdfURL = inputs.appendingPathComponent("bounded-worker.pdf")
             try UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 400, height: 500)).writePDF(to: pdfURL) { context in

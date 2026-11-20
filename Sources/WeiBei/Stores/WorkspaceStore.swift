@@ -625,6 +625,7 @@ final class WorkspaceStore: ObservableObject {
     var automaticSelection: SelectionContext?
     /// 选区"记"留痕(原文标记渲染与回访;管理逻辑在 WorkspaceStore+SelectionRemark)。
     @Published var excerptBookPresented = false
+    @Published var notePDFExportRequest: NotePDFExportRequest?
     @Published var excerptBookCourseID: UUID?
     @Published var excerptBookTargetRecordID: UUID?
     @Published var excerptRevealRequest: ExcerptRevealRequest?
@@ -2961,22 +2962,68 @@ final class WorkspaceStore: ObservableObject {
         guard item.editsBackingMarkdownFile else {
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
         }
+        if case .courseOwned = item.storage {
+            return try await readNoteBackingMarkdown(item)
+        }
+        guard let identity = item.importedFileIdentity else {
+            return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
+        }
+        guard let url = item.url else {
+            return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
+        }
+        let result = try await courseProjectFileWorker.readMarkdown(at: url, expectedIdentity: identity)
+        return cleanLegacyPlaceholder(result.markdown)
+    }
+
+    func notePDFSource(itemID: String) async throws -> NotePDFSource {
+        guard let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        let markdown: String
+        if activeNoteItemID == itemID, noteEditingSession.documentID == itemID, noteEditingSession.dirty {
+            let snapshot = try await noteEditingSession.snapshot(persists: false)
+            guard snapshot.documentID == itemID else { throw CocoaError(.fileReadNoSuchFile) }
+            markdown = snapshot.markdown
+        } else if let draft = notesByItemID[itemID] {
+            markdown = cleanLegacyPlaceholder(draft)
+        } else if item.editsBackingMarkdownFile {
+            markdown = try await readNoteBackingMarkdown(item, refreshTracking: false)
+        } else {
+            markdown = activeNoteItemID == itemID ? noteText : defaultNote(for: item)
+        }
+        guard let current = allItems.first(where: { $0.id == itemID }) else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        let title = NoteTabDisplayTitle.resolve(
+            customTitle: current.customDisplayTitle, noteTitle: current.title, body: markdown
+        )
+        let directory = (resolvedLibraryURL(for: current) ?? current.url)?.deletingLastPathComponent()
+        let appFiles = workspaceDirectory.appendingPathComponent("Files", isDirectory: true)
+        return NotePDFSource(
+            title: title.isEmpty ? current.title : title, markdown: markdown,
+            baseURL: directory ?? appFiles,
+            attachments: directory?.appendingPathComponent(".weibei-assets", isDirectory: true)
+                ?? appFiles.appendingPathComponent("Attachments", isDirectory: true)
+        )
+    }
+
+    private func readNoteBackingMarkdown(_ item: StudyItem, refreshTracking: Bool = true) async throws -> String {
         let url: URL
         let identity: ImportedFileIdentity
         let courseAccess: VerifiedCourseOwnedNoteAccess?
         if case .courseOwned = item.storage {
-            guard let access = verifiedCourseOwnedNoteAccess(item) else {
+            guard let access = verifiedCourseOwnedNoteAccess(item, refreshTracking: refreshTracking) else {
                 throw CourseOwnedFileError.verificationFailed
             }
             url = access.url
             identity = access.fileIdentity
             courseAccess = access
         } else {
-            guard let itemURL = item.url,
-                  let itemIdentity = item.importedFileIdentity else {
-                return cleanLegacyPlaceholder(
-                    notesByItemID[item.id] ?? defaultNote(for: item)
-                )
+            let registeredURL = refreshTracking ? item.url : resolvedLibraryURL(for: item) ?? item.url
+            guard let itemURL = registeredURL,
+                  let itemIdentity = (refreshTracking ? item.importedFileIdentity : nil)
+                  ?? importedFileIdentityResolver(itemURL) else {
+                throw CocoaError(.fileReadNoSuchFile)
             }
             url = itemURL
             identity = itemIdentity
@@ -2991,7 +3038,7 @@ final class WorkspaceStore: ObservableObject {
                 $0.id == item.id
             }),
             let currentAccess =
-                verifiedCourseOwnedNoteAccess(currentItem),
+                verifiedCourseOwnedNoteAccess(currentItem, refreshTracking: refreshTracking),
             currentAccess.matches(courseAccess) else {
                 throw CourseOwnedFileError.verificationFailed
             }
@@ -10838,7 +10885,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func verifiedCourseOwnedNoteAccess(
-        _ item: StudyItem
+        _ item: StudyItem,
+        refreshTracking: Bool = true
     ) -> VerifiedCourseOwnedNoteAccess? {
         guard item.isNotebookNote,
               case .courseOwned(let courseID, _) = item.storage,
@@ -10872,20 +10920,22 @@ final class WorkspaceStore: ObservableObject {
         // resolveTrackedImportedFile 一致）：课程内文件以课程相对路径为准，
         // 路径下文件可读即接受。identity 不一致（iCloud 驱逐重下换 inode、
         // APFS 卷号漂移等）时刷新记录并继续，最多记一条日志（计划 §5 阶段5）。
-        if course.sourceRootIdentity != rootIdentity {
-            if let courseIndex = courses.firstIndex(where: { $0.id == courseID }) {
-                courses[courseIndex].sourceRootIdentity = rootIdentity
+        if refreshTracking {
+            if course.sourceRootIdentity != rootIdentity {
+                if let courseIndex = courses.firstIndex(where: { $0.id == courseID }) {
+                    courses[courseIndex].sourceRootIdentity = rootIdentity
+                }
+                WeiBeiLog.workspace.notice("note_access_root_identity_refreshed")
             }
-            WeiBeiLog.workspace.notice("note_access_root_identity_refreshed")
-        }
-        if item.importedFileIdentity != fileIdentity {
-            if let itemIndex = importedItems.firstIndex(where: { $0.id == item.id }) {
-                importedItems[itemIndex].importedFileIdentity = fileIdentity
+            if item.importedFileIdentity != fileIdentity {
+                if let itemIndex = importedItems.firstIndex(where: { $0.id == item.id }) {
+                    importedItems[itemIndex].importedFileIdentity = fileIdentity
+                }
+                WeiBeiLog.workspace.notice("note_access_file_identity_refreshed")
             }
-            WeiBeiLog.workspace.notice("note_access_file_identity_refreshed")
-        }
-        if courseItemMemberships[membershipIndex].entryIdentity != fileIdentity {
-            courseItemMemberships[membershipIndex].entryIdentity = fileIdentity
+            if courseItemMemberships[membershipIndex].entryIdentity != fileIdentity {
+                courseItemMemberships[membershipIndex].entryIdentity = fileIdentity
+            }
         }
         return VerifiedCourseOwnedNoteAccess(
             courseID: courseID,

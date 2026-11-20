@@ -30,6 +30,7 @@ final class NoteEditingSession: ObservableObject {
     private struct PendingSnapshot {
         let requestID: String
         var minimumRevision: UInt64
+        var persists: Bool
         var completions: [SnapshotCompletion]
     }
 
@@ -146,6 +147,7 @@ final class NoteEditingSession: ObservableObject {
     @discardableResult
     func requestSnapshot(
         minimumRevision: UInt64? = nil,
+        persists: Bool = true,
         completion: SnapshotCompletion? = nil
     ) -> Bool {
         guard onSnapshotRequest != nil else {
@@ -159,6 +161,7 @@ final class NoteEditingSession: ObservableObject {
                 pendingSnapshot.minimumRevision,
                 requiredRevision
             )
+            pendingSnapshot.persists = pendingSnapshot.persists || persists
             if let completion {
                 pendingSnapshot.completions.append(completion)
             }
@@ -168,15 +171,17 @@ final class NoteEditingSession: ObservableObject {
 
         return issueSnapshotRequest(
             minimumRevision: requiredRevision,
+            persists: persists,
             completions: completion.map { [$0] } ?? []
         )
     }
 
     func snapshot(
-        minimumRevision: UInt64? = nil
+        minimumRevision: UInt64? = nil,
+        persists: Bool = true
     ) async throws -> NoteEditorSnapshotReadyEvent {
         try await withCheckedThrowingContinuation { continuation in
-            requestSnapshot(minimumRevision: minimumRevision) { result in
+            requestSnapshot(minimumRevision: minimumRevision, persists: persists) { result in
                 continuation.resume(with: result)
             }
         }
@@ -197,6 +202,7 @@ final class NoteEditingSession: ObservableObject {
             self.pendingSnapshot = nil
             _ = issueSnapshotRequest(
                 minimumRevision: pendingSnapshot.minimumRevision,
+                persists: pendingSnapshot.persists,
                 completions: pendingSnapshot.completions
             )
             return false
@@ -205,10 +211,12 @@ final class NoteEditingSession: ObservableObject {
         self.pendingSnapshot = nil
         snapshotTimeoutTask?.cancel()
         snapshotTimeoutTask = nil
-        cancelScheduledSnapshots()
-        currentRevision = max(currentRevision, event.revision)
-        dirty = dirty || currentRevision != savedRevision
-        onSnapshotAccepted(event)
+        if pendingSnapshot.persists {
+            cancelScheduledSnapshots()
+            currentRevision = max(currentRevision, event.revision)
+            dirty = dirty || currentRevision != savedRevision
+            onSnapshotAccepted(event)
+        }
         pendingSnapshot.completions.forEach { $0(.success(event)) }
         return true
     }
@@ -260,6 +268,7 @@ final class NoteEditingSession: ObservableObject {
     @discardableResult
     private func issueSnapshotRequest(
         minimumRevision: UInt64,
+        persists: Bool,
         completions: [SnapshotCompletion]
     ) -> Bool {
         guard let onSnapshotRequest else {
@@ -271,6 +280,7 @@ final class NoteEditingSession: ObservableObject {
         pendingSnapshot = PendingSnapshot(
             requestID: requestID,
             minimumRevision: minimumRevision,
+            persists: persists,
             completions: completions
         )
         snapshotTimeoutTask?.cancel()

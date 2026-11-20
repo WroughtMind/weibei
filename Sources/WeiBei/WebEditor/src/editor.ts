@@ -69,6 +69,7 @@ declare global {
     weiBeiMarkdownEditable?: boolean;
     weiBeiTypewriterMode?: boolean;
     weiBeiMarkdownCompactPreview?: boolean;
+    weiBeiNotePDF?: boolean;
     weiBeiDocumentID?: string;
     weiBeiDocumentGeneration?: number;
     weiBeiMarkdownBaseURL?: string;
@@ -3945,6 +3946,7 @@ let editorBuilder = Editor
         image: createReadOnlyImageNodeView,
         math_inline: createReadOnlyMathNodeView,
         math_block: createReadOnlyMathNodeView,
+        ...(window.weiBeiNotePDF ? { embed: createStructuredInlineNodeView } : {}),
       },
     });
     ctx.set(streamingConfig.key, {
@@ -4068,6 +4070,11 @@ editorBuilder
       reportSelection();
     });
     document.addEventListener('scroll', reportActiveHeading, true);
+    if (window.weiBeiNotePDF && window.WeiBeiEditor) {
+      window.WeiBeiEditor.prepareNotePDF = async () => {
+        if (document.querySelector('#editor .weibei-math-node')) await loadKaTeX();
+      };
+    }
     post('editorReady', {});
     window.setTimeout(() => {
       editorReadyPosted = true;

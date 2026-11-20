@@ -145,6 +145,21 @@ final class OnboardingUITests: XCTestCase {
                 let start = origin.withOffset(CGVector(dx: startPoint.x, dy: startPoint.y))
                 let end = origin.withOffset(CGVector(dx: endPoint.x, dy: endPoint.y))
                 start.press(forDuration: 0.1, thenDragTo: end)
+            case "save-pdf":
+                let folder = try XCTUnwrap(request["value"])
+                let panel = app.descendants(matching: .sheet).matching(identifier: "save-panel").firstMatch
+                let confirm = panel.buttons["OKButton"]
+                guard confirm.waitForExistence(timeout: 12), confirm.isHittable else {
+                    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                    attachment.name = "System PDF save dialog"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    throw DriverFailure(errorDescription: "The system PDF save confirmation is unreachable")
+                }
+                panel.textFields["saveAsNameTextField"].typeKey("g", modifierFlags: [.command, .shift])
+                app.typeText(folder)
+                app.typeKey(.return, modifierFlags: [])
+                confirm.click()
             case "press", "fill", "hover":
                 guard element.exists, element.isEnabled, element.isHittable else {
                     let screenshot = XCTAttachment(screenshot: app.screenshot())

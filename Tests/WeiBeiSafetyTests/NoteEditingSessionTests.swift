@@ -170,6 +170,31 @@ final class NoteEditingSessionTests: XCTestCase {
     }
 
     @MainActor
+    func testExportSnapshotReadsWithoutSavingAndCanShareAnAutosave() throws {
+        var commands: [NoteEditorSnapshotRequest] = []
+        var saved: [String] = []
+        let session = NoteEditingSession(
+            documentID: "note-a",
+            onSnapshotRequest: { commands.append($0) },
+            onSnapshotAccepted: { saved.append($0.markdown) }
+        )
+        var exported: String?
+        session.requestSnapshot(persists: false) { exported = try? $0.get().markdown }
+        let export = try XCTUnwrap(commands.last)
+        XCTAssertTrue(session.receive(snapshot(for: export, revision: 0, markdown: "current draft")))
+        XCTAssertEqual(exported, "current draft")
+        XCTAssertTrue(saved.isEmpty)
+
+        session.requestSnapshot(persists: false) { exported = try? $0.get().markdown }
+        session.requestSnapshot()
+        XCTAssertEqual(commands.count, 2)
+        let shared = try XCTUnwrap(commands.last)
+        XCTAssertTrue(session.receive(snapshot(for: shared, revision: 0, markdown: "next draft")))
+        XCTAssertEqual(exported, "next draft")
+        XCTAssertEqual(saved, ["next draft"])
+    }
+
+    @MainActor
     func testAsyncSnapshotResumesWithFlightResult() async throws {
         var commands: [NoteEditorSnapshotRequest] = []
         let session = NoteEditingSession(documentID: "note-a") {

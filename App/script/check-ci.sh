@@ -163,6 +163,7 @@ required_business_checks = {
     'native_toolbar_full_screen_auto_hide_stable_reading',
     'signed_native_window_material', 'original_import_reader_and_editor',
     'original_editor_snapshot_and_note_write_gate', 'signed_bounded_pdf_worker',
+    'note_pdf_export_opens_in_app', 'note_pdf_export_keeps_note_selection', 'note_pdf_export_saves_preview_to_disk',
     'waiting_status_not_clipped', 'return_clears_original_composer',
     'status_disappears_at_first_text', 'original_http_agent_tools_and_uikit_stream',
     'original_source_navigation', 'original_attachment_loader',
