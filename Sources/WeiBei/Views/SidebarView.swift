@@ -335,6 +335,11 @@ struct CourseSidebarList: View {
             .padding(.trailing, 6)
         }
         .buttonStyle(SidebarRowStyle(selected: selected))
+        .contextMenu {
+            if opensNotebook {
+                NotePDFExportMenuItem(itemID: item.id)
+            }
+        }
         .accessibilityValue(opened ? (selected ? ui("当前内容", "Current") : ui("已打开", "Open")) : "")
         .help(([row.resolvedTitle ?? item.title, store.displaySubtitle(for: item)] + row.tags)
             .joined(separator: "\n"))

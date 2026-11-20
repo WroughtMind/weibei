@@ -490,7 +490,7 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
     }
 }
 
-private enum MarkdownWebNetworkGuard {
+enum MarkdownWebNetworkGuard {
     private static let identifier = "com.changfenhuang.weibei.markdown.block-network.v1"
     private static let rules = """
     [

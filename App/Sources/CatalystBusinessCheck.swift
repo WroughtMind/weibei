@@ -3,6 +3,7 @@ import UIKit
 import SwiftUI
 import Combine
 import WebKit
+import PDFKit
 import WeiBeiCore
 import MarkdownView
 import Litext
@@ -911,6 +912,22 @@ enum CatalystBusinessCheck {
             let captured = await store.freshActiveNoteEditorSnapshot()
             await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             try check("original_editor_snapshot_and_note_write_gate", captured && (try String(contentsOf: persistedNote, encoding: .utf8)).contains(noteMarker))
+
+            try await activate("note-pdf-open")
+            try await waitForOnboardingControl("note-pdf-save")
+            let exportDocument = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows)
+                .flatMap(descendants)
+                .compactMap { $0 as? PDFView }
+                .first { $0.accessibilityIdentifier == "note-pdf-preview" }?.document
+            let previewText = exportDocument?.string?.precomposedStringWithCompatibilityMapping ?? ""
+            try check("note_pdf_export_opens_in_app",
+                      exportDocument?.pageCount == 1 && previewText.contains("编辑器输入"))
+            _ = try await onboardingUICommand("screenshot", id: "Note PDF export")
+            try await activate("note-pdf-cancel")
+            try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }
+            try check("note_pdf_export_keeps_note_selection", store.activeNoteItemID == note.id)
 
             let pdfURL = inputs.appendingPathComponent("bounded-worker.pdf")
             try UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 400, height: 500)).writePDF(to: pdfURL) { context in

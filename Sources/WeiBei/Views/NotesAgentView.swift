@@ -426,6 +426,7 @@ struct NotePaneView: View {
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
                 typewriterButton
+                notePDFExportButton
                 ContextualContentListButton(kind: .note)
                 ExcerptBookButton()
                 newNoteControl
@@ -449,6 +450,7 @@ struct NotePaneView: View {
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
                 typewriterButton
+                notePDFExportButton
                 ContextualContentListButton(kind: .note)
                 ExcerptBookButton()
                 newNoteControl
@@ -461,6 +463,22 @@ struct NotePaneView: View {
                     .padding(.top, 42)
                     .transition(WeiBeiTransition.floating)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var notePDFExportButton: some View {
+        if let itemID = store.activeNoteItemID {
+            let label = store.ui("导出 PDF…", "Export PDF…")
+            Button {
+                store.notePDFExportRequest = NotePDFExportRequest(itemID: itemID)
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+            .accessibilityLabel(label)
+            .accessibilityIdentifier("note-pdf-open")
+            .help(label)
         }
     }
 
