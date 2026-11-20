@@ -913,13 +913,14 @@ enum CatalystBusinessCheck {
             await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             try check("original_editor_snapshot_and_note_write_gate", captured && (try String(contentsOf: persistedNote, encoding: .utf8)).contains(noteMarker))
 
-            guard let noteWindow = noteEditor.window else { throw Failure("note editor window is unavailable") }
-            let noteFrame = noteEditor.convert(noteEditor.bounds, to: noteWindow)
-            let headerPoint = [noteFrame.midX, noteWindow.safeAreaInsets.top + 16]
-                .map { String(Double($0)) }.joined(separator: ",")
-            _ = try await onboardingUICommand("hover-window-point", id: "SceneWindow", value: headerPoint)
-            try await activate("note-pdf-open")
-            try await waitForOnboardingControl("note-pdf-save")
+            let fileCommand = store.ui("导出笔记为 PDF…", "Export Note as PDF…")
+                .lowercased().replacingOccurrences(of: " ", with: "_")
+            func openPDFExport() async throws {
+                try await activate("com.apple.menu.file")
+                try await activate(fileCommand)
+                try await waitForOnboardingControl("note-pdf-save")
+            }
+            try await openPDFExport()
             _ = try await onboardingUICommand("screenshot", id: "Note PDF export")
             let pageCount = try await accessibilityElement("note-pdf-page-count")?["label"]
             try check("note_pdf_export_opens_in_app", store.notePDFExportRequest?.itemID == note.id
@@ -928,12 +929,7 @@ enum CatalystBusinessCheck {
             try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }
             try check("note_pdf_export_keeps_note_selection", store.activeNoteItemID == note.id)
 
-            try await activate("com.apple.menu.file")
-            let fileCommand = store.ui("导出笔记为 PDF…", "Export Note as PDF…")
-                .lowercased().replacingOccurrences(of: " ", with: "_")
-            try await activate(fileCommand)
-            try await waitForOnboardingControl("note-pdf-save")
-            try check("note_pdf_export_opens_from_file_menu", store.notePDFExportRequest?.itemID == note.id)
+            try await openPDFExport()
             let exports = inputs.appendingPathComponent("Exported Notes", isDirectory: true)
             try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
             try await activate("note-pdf-save")
