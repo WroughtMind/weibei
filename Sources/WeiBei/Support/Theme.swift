@@ -41,6 +41,120 @@ extension Color {
     }
 }
 
+/// A device-independent, opaque sRGB color shared by native and web surfaces.
+struct WeiBeiAccentColor: RawRepresentable, Equatable {
+    let rawValue: UInt32
+
+    init?(rawValue: UInt32) {
+        guard rawValue <= 0xFFFFFF else { return nil }
+        self.rawValue = rawValue
+    }
+
+    var hex: String { String(format: "#%06X", rawValue) }
+
+    init?(platformColor: WeiBeiPlatformColor) {
+        guard let rgb = platformColor.cgColor.converted(to: CGColorSpace(name: CGColorSpace.sRGB)!,
+            intent: .defaultIntent, options: nil)?.components else { return nil }
+        self.init(red: rgb[0], green: rgb[1], blue: rgb[2])
+    }
+
+    private init(red: CGFloat, green: CGFloat, blue: CGFloat) {
+        let channels = [red, green, blue].map { UInt32((min(1, max(0, $0)) * 255).rounded()) }
+        rawValue = (channels[0] << 16) | (channels[1] << 8) | channels[2]
+    }
+
+    private var rgb: (red: CGFloat, green: CGFloat, blue: CGFloat) {
+        (CGFloat(rawValue >> 16) / 255, CGFloat((rawValue >> 8) & 255) / 255, CGFloat(rawValue & 255) / 255)
+    }
+
+    var platformColor: WeiBeiPlatformColor {
+        let (red, green, blue) = rgb
+#if targetEnvironment(macCatalyst)
+        return UIColor(red: red, green: green, blue: blue, alpha: 1)
+#else
+        return NSColor(srgbRed: red, green: green, blue: blue, alpha: 1)
+#endif
+    }
+
+    var contrastingForeground: WeiBeiPlatformColor {
+        func linear(_ value: CGFloat) -> CGFloat {
+            value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        let (red, green, blue) = rgb
+        let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
+        let whiteContrast = 1.05 / (luminance + 0.05)
+        let blackContrast = (luminance + 0.05) / 0.05
+        return blackContrast >= whiteContrast ? .black : .white
+    }
+
+    func adjustedBrightness(_ value: Double, for mode: WeiBeiAppearanceMode) -> Self {
+        let fraction = CGFloat(min(1, max(-1, value)))
+        let darkens = fraction < 0
+        // Preserve contrast near the background, with more room in the other direction.
+        let movesTowardBackground = darkens == mode.isDark
+        let blend = abs(fraction) * (movesTowardBackground ? 0.07 : 0.32)
+        let target: CGFloat = darkens ? 0 : 1
+        let (red, green, blue) = rgb
+        return Self(
+            red: red + (target - red) * blend,
+            green: green + (target - green) * blend,
+            blue: blue + (target - blue) * blend
+        )
+    }
+}
+
+enum WeiBeiAccentDirection: String, CaseIterable, Codable {
+    case cinnabar, amber, pine, teal, indigo, violet, rose, graphite
+
+    func label(ui: (String, String) -> String) -> String {
+        switch self {
+        case .cinnabar: ui("朱砂", "Cinnabar")
+        case .amber: ui("琥珀", "Amber")
+        case .pine: ui("松绿", "Pine")
+        case .teal: ui("青绿", "Teal")
+        case .indigo: ui("靛蓝", "Indigo")
+        case .violet: ui("墨紫", "Violet")
+        case .rose: ui("玫红", "Rose")
+        case .graphite: ui("石墨", "Graphite")
+        }
+    }
+
+    func color(for mode: WeiBeiAppearanceMode) -> WeiBeiAccentColor {
+        let colors: (light: UInt32, dark: UInt32)
+        switch self {
+        case .cinnabar:
+            return WeiBeiAccentColor(platformColor: WeiBeiNativePalette.defaultAccent(for: mode))!
+        case .amber: colors = (0x8A5021, 0xD6AF80)
+        case .pine: colors = (0x376641, 0x9DBB9E)
+        case .teal: colors = (0x176962, 0x7EBFB5)
+        case .indigo: colors = (0x285AB5, 0x9CB5F0)
+        case .violet: colors = (0x734994, 0xBDACDF)
+        case .rose: colors = (0x963D65, 0xDAA3BC)
+        case .graphite: colors = (0x4E5865, 0xADB5C0)
+        }
+        return WeiBeiAccentColor(rawValue: mode.isDark ? colors.dark : colors.light)!
+    }
+}
+
+struct WeiBeiAccentPreference: Codable, Equatable {
+    var direction: WeiBeiAccentDirection
+    var brightness: Double = 0
+
+    static let themeDefault = Self(direction: .cinnabar)
+
+    func customColor(for mode: WeiBeiAppearanceMode) -> WeiBeiAccentColor? {
+        guard self != Self.themeDefault else { return nil }
+        return direction.color(for: mode).adjustedBrightness(brightness, for: mode)
+    }
+}
+
+func weiBeiCSSColor(_ color: WeiBeiPlatformColor) -> String {
+    let rgb = color.cgColor.converted(to: CGColorSpace(name: CGColorSpace.sRGB)!, intent: .defaultIntent, options: nil)!
+    let components = rgb.components!
+    return String(format: "rgba(%.0f,%.0f,%.0f,%.4f)",
+                  components[0] * 255, components[1] * 255, components[2] * 255, components[3])
+}
+
 enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
     case paper
     case xuan
@@ -177,6 +291,7 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
 private final class WeiBeiThemeObservationState {
     var mode: WeiBeiAppearanceMode = .paper
     var glassIntensity: Double = 1.0
+    var accentPreference: WeiBeiAccentPreference = .themeDefault
 }
 
 /// Live appearance used by theme colors. Always update **before** publishing
@@ -188,6 +303,13 @@ enum WeiBeiThemeRuntime {
         get { observationState.mode }
         set { observationState.mode = newValue }
     }
+
+    static var accentPreference: WeiBeiAccentPreference {
+        get { observationState.accentPreference }
+        set { observationState.accentPreference = newValue }
+    }
+
+    static var customAccent: WeiBeiAccentColor? { accentPreference.customColor(for: mode) }
 
     /// Glass theme translucency 0–1, driven by the Settings slider; persisted in
     /// defaults. Observable so SwiftUI sheets re-render, plus a notification so
@@ -411,9 +533,11 @@ enum WeiBeiTheme {
     static var tertiaryInk: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.tertiaryInk()) }
     static var placeholderInk: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.placeholderInk()) }
     static var hairline: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.hairline()) }
-    static var cinnabar: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.cinnabar()) }
-    static var cinnabarSoft: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.cinnabarSoft()) }
-    static var onCinnabar: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.onCinnabar()) }
+    static var accent: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.accent()) }
+    static var accentSoft: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.accentSoft()) }
+    static var onAccent: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.onAccent()) }
+    static var failure: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.defaultAccent()) }
+    static var failureSoft: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.defaultAccentSoft()) }
     static var link: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.link()) }
     static var moss: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.moss()) }
     static var codePaper: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.codePaper()) }
@@ -799,7 +923,11 @@ enum WeiBeiNativePalette {
         }
     }
 
-    static func cinnabar(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
+    static func accent(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
+        WeiBeiThemeRuntime.accentPreference.customColor(for: mode)?.platformColor ?? defaultAccent(for: mode)
+    }
+
+    static func defaultAccent(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
         switch mode {
         case .paper:
             return weiBeiColor(red: 0.570, green: 0.150, blue: 0.105, alpha: 1.0)
@@ -883,7 +1011,14 @@ enum WeiBeiNativePalette {
         }
     }
 
-    static func cinnabarSoft(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
+    static func accentSoft(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
+        if let customAccent = WeiBeiThemeRuntime.accentPreference.customColor(for: mode) {
+            return customAccent.platformColor.withAlphaComponent(mode.isDark ? 0.25 : 0.10)
+        }
+        return defaultAccentSoft(for: mode)
+    }
+
+    static func defaultAccentSoft(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
         switch mode {
         case .paper:
             return weiBeiColor(red: 0.570, green: 0.150, blue: 0.105, alpha: 0.10)
@@ -904,7 +1039,10 @@ enum WeiBeiNativePalette {
         }
     }
 
-    static func onCinnabar(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
+    static func onAccent(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
+        if let customAccent = WeiBeiThemeRuntime.accentPreference.customColor(for: mode) {
+            return customAccent.contrastingForeground
+        }
         switch mode {
         case .paper:
             return weiBeiColor(red: 0.973, green: 0.918, blue: 0.831, alpha: 1.0)
@@ -1069,48 +1207,41 @@ enum WeiBeiNativePalette {
     }
 
     static func selectionFill(for mode: WeiBeiAppearanceMode = current) -> WeiBeiPlatformColor {
+        let alpha: CGFloat
         switch mode {
-        case .paper:
-            return weiBeiColor(red: 0.570, green: 0.150, blue: 0.105, alpha: 0.20)
-        case .xuan:
-            return weiBeiColor(red: 0.540, green: 0.145, blue: 0.110, alpha: 0.18)
-        case .inkstone:
-            return weiBeiColor(red: 0.651, green: 0.212, blue: 0.169, alpha: 0.35)
-        case .stele:
-            return weiBeiColor(red: 0.690, green: 0.250, blue: 0.200, alpha: 0.32)
-        case .glassLight:
-            return weiBeiColor(red: 0.610, green: 0.155, blue: 0.115, alpha: 0.20)
-        case .glassDark:
-            return weiBeiColor(red: 0.920, green: 0.335, blue: 0.275, alpha: 0.34)
-        case .glassMist:
-            return weiBeiColor(red: 0.540, green: 0.145, blue: 0.110, alpha: 0.18)
-        case .glassSlate:
-            return weiBeiColor(red: 0.690, green: 0.250, blue: 0.200, alpha: 0.32)
+        case .paper, .glassLight: alpha = 0.20
+        case .xuan, .glassMist: alpha = 0.18
+        case .inkstone: alpha = 0.35
+        case .stele, .glassSlate: alpha = 0.32
+        case .glassDark: alpha = 0.34
         }
+        return accent(for: mode).withAlphaComponent(alpha)
     }
 
-    /// CSS hex tokens for WebKit injection (reader / editor helpers).
+    /// CSS tokens for the WebKit reader.
     static func cssHex(for mode: WeiBeiAppearanceMode = current) -> (
         paper: String, paperRaised: String, ink: String, muted: String,
-        cinnabar: String, link: String, selection: String
+        accent: String, link: String, selection: String
     ) {
+        let accent = weiBeiCSSColor(accent(for: mode))
+        let selection = weiBeiCSSColor(selectionFill(for: mode))
         switch mode {
         case .paper:
-            return ("#f4ead5", "#f9f1de", "#1d1814", "rgba(58,46,38,.72)", "#91261c", "#31566b", "rgba(145,38,28,.18)")
+            return ("#f4ead5", "#f9f1de", "#1d1814", "rgba(58,46,38,.72)", accent, "#31566b", selection)
         case .xuan:
-            return ("#f8f5f0", "#fdfcf9", "#25231f", "rgba(90,86,78,.74)", "#8a2f24", "#335266", "rgba(138,47,36,.16)")
+            return ("#f8f5f0", "#fdfcf9", "#25231f", "rgba(90,86,78,.74)", accent, "#335266", selection)
         case .inkstone:
-            return ("#0f0f0f", "#151515", "#d7cbb0", "rgba(155,145,120,.88)", "#a6362b", "#c8b98a", "rgba(166,54,43,.35)")
+            return ("#0f0f0f", "#151515", "#d7cbb0", "rgba(155,145,120,.88)", accent, "#c8b98a", selection)
         case .stele:
-            return ("#16181c", "#1e2228", "#d2d6dc", "rgba(154,161,171,.88)", "#b04034", "#b8c4d0", "rgba(176,64,52,.32)")
+            return ("#16181c", "#1e2228", "#d2d6dc", "rgba(154,161,171,.88)", accent, "#b8c4d0", selection)
         case .glassLight:
-            return ("rgba(230,240,250,.52)", "rgba(248,251,255,.60)", "#171d26", "rgba(62,74,90,.78)", "#9c281d", "#1f5a89", "rgba(156,40,29,.20)")
+            return ("rgba(230,240,250,.52)", "rgba(248,251,255,.60)", "#171d26", "rgba(62,74,90,.78)", accent, "#1f5a89", selection)
         case .glassDark:
-            return ("rgba(12,16,24,.36)", "rgba(27,35,48,.40)", "#e8eef9", "rgba(174,186,204,.88)", "#eb5746", "#7dbeF5", "rgba(235,87,70,.34)")
+            return ("rgba(12,16,24,.36)", "rgba(27,35,48,.40)", "#e8eef9", "rgba(174,186,204,.88)", accent, "#7dbeF5", selection)
         case .glassMist:
-            return ("rgba(246,245,242,.38)", "rgba(246,245,242,.55)", "#25231f", "rgba(90,86,78,.74)", "#8a2f24", "#335266", "rgba(138,47,36,.16)")
+            return ("rgba(246,245,242,.38)", "rgba(246,245,242,.55)", "#25231f", "rgba(90,86,78,.74)", accent, "#335266", selection)
         case .glassSlate:
-            return ("rgba(40,40,38,.40)", "rgba(40,40,38,.55)", "#e9e6dd", "rgba(184,181,172,.88)", "#b04034", "#ccc8b6", "rgba(176,64,52,.32)")
+            return ("rgba(40,40,38,.40)", "rgba(40,40,38,.55)", "#e9e6dd", "rgba(184,181,172,.88)", accent, "#ccc8b6", selection)
         }
     }
 }
@@ -1212,7 +1343,7 @@ struct WeiBeiThemeLayoutPreview: View {
     private var inset: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.paperInset(for: mode)) }
     private var ink: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.ink(for: mode)) }
     private var hairline: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.hairline(for: mode)) }
-    private var cinnabar: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.cinnabar(for: mode)) }
+    private var accent: Color { Color(weiBeiNativeColor: WeiBeiNativePalette.accent(for: mode)) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1272,12 +1403,12 @@ struct WeiBeiThemeLayoutPreview: View {
     /// Wide reading column — primary surface in WeiBei.
     private var readerPane: some View {
         VStack(alignment: .leading, spacing: 3) {
-            // Title + cinnabar underline (reading hierarchy)
+            // Title + accent underline (reading hierarchy)
             Capsule()
                 .fill(ink.opacity(0.42))
                 .frame(width: 28, height: 3)
             Capsule()
-                .fill(cinnabar.opacity(0.75))
+                .fill(accent.opacity(0.75))
                 .frame(width: 12, height: 1.5)
                 .padding(.bottom, 1)
 
@@ -1305,7 +1436,7 @@ struct WeiBeiThemeLayoutPreview: View {
             Capsule()
                 .fill(ink.opacity(0.22))
                 .frame(width: 14, height: 2)
-            chatBubble(alignment: .trailing, fill: cinnabar.opacity(mode.isDark ? 0.35 : 0.22), width: 0.72)
+            chatBubble(alignment: .trailing, fill: accent.opacity(mode.isDark ? 0.35 : 0.22), width: 0.72)
             chatBubble(alignment: .leading, fill: inset.opacity(0.95), width: 0.88)
             chatBubble(alignment: .leading, fill: inset.opacity(0.80), width: 0.64)
             Spacer(minLength: 0)
@@ -1355,7 +1486,7 @@ struct WeiBeiThemeLayoutPreview: View {
 
     private func iconDot(active: Bool) -> some View {
         RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-            .fill(active ? cinnabar.opacity(0.85) : ink.opacity(0.22))
+            .fill(active ? accent.opacity(0.85) : ink.opacity(0.22))
             .frame(width: 5, height: 5)
     }
 
@@ -1599,7 +1730,7 @@ struct WeiBeiEtchedBackdrop<Shape: InsettableShape>: View {
 
 enum WeiBeiIconButtonProminence {
     case neutral
-    /// Solid cinnabar fill with an on-cinnabar (米白) icon in every state —
+    /// Solid accent fill with an on-accent (米白) icon in every state —
     /// the filled action look (send button), not a translucent glass tint.
     case primary
 }
@@ -1663,7 +1794,7 @@ private struct WeiBeiIconButtonBody: View {
 
     /// Neutral hover/active states go through the etched backdrop (top sheen +
     /// bottom shade + hairline + contact shadow); the filled `.primary` keeps
-    /// its solid cinnabar fill untouched.
+    /// its solid accent fill untouched.
     @ViewBuilder
     private var chromeBackground: some View {
         let chromeShape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -1683,9 +1814,9 @@ private struct WeiBeiIconButtonBody: View {
     private func foreground(isPressed: Bool) -> Color {
         guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.58) }
         if prominence == .primary {
-            return WeiBeiTheme.onCinnabar
+            return WeiBeiTheme.onAccent
         }
-        if active { return WeiBeiTheme.cinnabar }
+        if active { return WeiBeiTheme.accent }
         if isPressed || hovering { return WeiBeiTheme.ink }
         return WeiBeiTheme.secondaryInk
     }
@@ -1694,15 +1825,15 @@ private struct WeiBeiIconButtonBody: View {
         guard isEnabled else { return Color.clear }
         if prominence == .primary {
             if isPressed {
-                return WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.78 : 0.86)
+                return WeiBeiTheme.accent.opacity(colorScheme == .dark ? 0.78 : 0.86)
             }
             if hovering {
-                return WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.86 : 0.92)
+                return WeiBeiTheme.accent.opacity(colorScheme == .dark ? 0.86 : 0.92)
             }
-            return WeiBeiTheme.cinnabar
+            return WeiBeiTheme.accent
         }
         if active {
-            return WeiBeiTheme.cinnabarSoft.opacity(activeOpacity(isPressed: isPressed))
+            return WeiBeiTheme.accentSoft.opacity(activeOpacity(isPressed: isPressed))
         }
         if isPressed { return WeiBeiTheme.paperInset.opacity(0.46) }
         if hovering { return WeiBeiTheme.paperInset.opacity(colorScheme == .dark ? 0.34 : 0.28) }
@@ -1715,7 +1846,7 @@ private struct WeiBeiIconButtonBody: View {
             return Color.clear
         }
         if active {
-            return WeiBeiTheme.cinnabar.opacity(hovering ? (colorScheme == .dark ? 0.50 : 0.42) : (colorScheme == .dark ? 0.34 : 0.25))
+            return WeiBeiTheme.accent.opacity(hovering ? (colorScheme == .dark ? 0.50 : 0.42) : (colorScheme == .dark ? 0.34 : 0.25))
         }
         return hovering ? WeiBeiTheme.hairline.opacity(colorScheme == .dark ? 0.92 : 0.72) : Color.clear
     }
@@ -1756,12 +1887,12 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
 
     private var foreground: Color {
         guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.60) }
-        return active ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
+        return active ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk
     }
 
     private func background(isPressed: Bool) -> Color {
-        if active || isPressed { return WeiBeiTheme.cinnabarSoft }
-        if hovering { return neutralHoverWhenInactive ? WeiBeiTheme.paperInset.opacity(0.40) : WeiBeiTheme.cinnabarSoft }
+        if active || isPressed { return WeiBeiTheme.accentSoft }
+        if hovering { return neutralHoverWhenInactive ? WeiBeiTheme.paperInset.opacity(0.40) : WeiBeiTheme.accentSoft }
         return WeiBeiTheme.paperInset.opacity(idleOpacity)
     }
 }
@@ -1786,7 +1917,7 @@ private struct WeiBeiFittedSheetModifier: ViewModifier {
     }
 }
 
-/// Dialog / sheet action buttons in the paper language: the solid-cinnabar
+/// Dialog / sheet action buttons in the paper language: the solid-accent
 /// primary (same filled treatment as the send action) and the etched
 /// secondary, so sheets stop mixing system `.bordered` chrome in.
 struct WeiBeiDialogButtonStyle: ButtonStyle {
@@ -1821,10 +1952,10 @@ struct WeiBeiDialogButtonStyle: ButtonStyle {
     private var foreground: Color {
         guard isEnabled else {
             return prominence == .primary
-                ? WeiBeiTheme.onCinnabar.opacity(0.66)
+                ? WeiBeiTheme.onAccent.opacity(0.66)
                 : WeiBeiTheme.tertiaryInk.opacity(0.60)
         }
-        if prominence == .primary { return WeiBeiTheme.onCinnabar }
+        if prominence == .primary { return WeiBeiTheme.onAccent }
         return hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
     }
 
@@ -1832,7 +1963,7 @@ struct WeiBeiDialogButtonStyle: ButtonStyle {
     private func background(isPressed: Bool, shape: RoundedRectangle) -> some View {
         if !isEnabled {
             if prominence == .primary {
-                shape.fill(WeiBeiTheme.cinnabar.opacity(0.38))
+                shape.fill(WeiBeiTheme.accent.opacity(0.38))
             } else {
                 WeiBeiEtchedBackdrop(
                     shape: shape,
@@ -1842,11 +1973,11 @@ struct WeiBeiDialogButtonStyle: ButtonStyle {
             }
         } else if prominence == .primary {
             if isPressed {
-                shape.fill(WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.78 : 0.86))
+                shape.fill(WeiBeiTheme.accent.opacity(colorScheme == .dark ? 0.78 : 0.86))
             } else if hovering {
-                shape.fill(WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.86 : 0.92))
+                shape.fill(WeiBeiTheme.accent.opacity(colorScheme == .dark ? 0.86 : 0.92))
             } else {
-                shape.fill(WeiBeiTheme.cinnabar)
+                shape.fill(WeiBeiTheme.accent)
             }
         } else {
             WeiBeiEtchedBackdrop(
@@ -1920,7 +2051,7 @@ extension View {
         return self
             .foregroundColor(WeiBeiTheme.ink)
             .foregroundStyle(WeiBeiTheme.ink)
-            .tint(WeiBeiTheme.cinnabar)
+            .tint(WeiBeiTheme.accent)
             .padding(.horizontal, horizontalPadding)
             .frame(minHeight: height)
             .background { shape.fill(WeiBeiTheme.searchFieldFill) }

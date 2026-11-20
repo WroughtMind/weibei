@@ -287,7 +287,7 @@ struct CourseDocNoteWorkspaceView: View {
                             item: counterpart,
                             kind: kind == .materials ? .notes : .materials,
                             counterpart: item
-                        ) ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk
+                        ) ? WeiBeiTheme.accent : WeiBeiTheme.tertiaryInk
                     )
                     .frame(width: 28, height: 36)
                     .contentShape(Rectangle())
@@ -308,7 +308,7 @@ struct CourseDocNoteWorkspaceView: View {
         }
         .background(
             store.recentlyImportedItemIDs.contains(item.id)
-                ? WeiBeiTheme.cinnabarSoft.opacity(0.24)
+                ? WeiBeiTheme.accentSoft.opacity(0.24)
                 : Color.clear
         )
     }
@@ -386,7 +386,7 @@ struct CourseDocNoteWorkspaceView: View {
                 Text(kind == .materials ? "READ" : "NOTE")
                     .font(WeiBeiTypography.englishBrandFont(size: 9, weight: .semibold))
                     .tracking(1.0)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.accent)
 
                 Text(store.noteListDisplayTitle(for: item))
                     .weiBeiText(16, weight: .semibold)

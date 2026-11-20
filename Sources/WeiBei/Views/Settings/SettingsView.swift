@@ -98,6 +98,7 @@ struct SettingsView: View {
     @StateObject var oauthService = AgentAccountService.shared
     @State private var selectedSection: SettingsSection = .agent
     @FocusState var focusedField: Field?
+    @State private var showsAccentPalette = false
     @State var showManualModelEntry = false
     // Profile inline-rename state (AgentSettingsView extension).
     @State var isRenamingActiveProfile = false
@@ -108,7 +109,7 @@ struct SettingsView: View {
     // Shortcut rebinding: click a key chip, then press the new chord.
     @State private var recordingShortcutID: AppShortcutID?
     @State private var shortcutRecordMonitor: Any?
-    @State private var shortcutStatusMessage: String?
+    @State private var shortcutStatusMessage: (text: String, isWarning: Bool)?
     // In-app feedback sheet.
     @State private var showFeedbackSheet = false
     @State private var feedbackDragOffset: CGSize = .zero
@@ -331,25 +332,26 @@ struct SettingsView: View {
                     }
                 }
 
-                themePicker
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 12)
+                VStack(spacing: 0) {
+                    themePicker
+                        .padding(.vertical, 12)
 
-                if store.appearanceMode.isGlass {
-                    settingsRow(
-                        title: store.ui("玻璃浓度", "Glass intensity"),
-                        showsBottomDivider: false
-                    ) {
-                        Slider(value: Binding(
-                            get: { store.glassIntensity },
-                            set: { store.glassIntensity = $0 }
-                        ), in: 0...1, onEditingChanged: { editing in
-                            if !editing { store.persistGlassIntensity() }
-                        })
-                        .tint(WeiBeiTheme.cinnabar)
-                        .frame(width: 170)
+                    if store.appearanceMode.isGlass {
+                        settingsRow(title: store.ui("玻璃浓度", "Glass intensity")) {
+                            Slider(value: Binding(
+                                get: { store.glassIntensity },
+                                set: { store.glassIntensity = $0 }
+                            ), in: 0...1, onEditingChanged: { editing in
+                                if !editing { store.persistGlassIntensity() }
+                            })
+                            .tint(WeiBeiTheme.accent)
+                            .frame(width: 170)
+                        }
                     }
+
+                    accentSettings
                 }
+                .frame(maxWidth: 428)
             }
 
             settingsGroup(store.ui("动态效果", "Motion")) {
@@ -427,6 +429,122 @@ struct SettingsView: View {
         }
     }
 
+    private var currentAccentHex: String {
+        WeiBeiAccentColor(platformColor: WeiBeiNativePalette.accent())?.hex ?? ""
+    }
+
+    private var accentSettings: some View {
+        VStack(spacing: 0) {
+            settingsRow(title: store.ui("强调色", "Accent Color"), showsBottomDivider: false) {
+                HStack(spacing: 10) {
+                    Button(store.ui("恢复默认", "Restore Default")) {
+                        store.accentPreference = .themeDefault
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(neutralHoverWhenInactive: true, idleOpacity: 0))
+                    .disabled(store.accentPreference == .themeDefault)
+
+                    Button {
+                        withAnimation(WeiBeiMotion.micro) { showsAccentPalette.toggle() }
+                    } label: {
+                        HStack(spacing: 7) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(WeiBeiTheme.accent)
+                                .frame(width: 20, height: 13)
+                            Text(store.accentPreference.direction.label(ui: store.ui))
+                                .font(SettingsType.menu)
+                            Image(systemName: showsAccentPalette ? "chevron.up" : "chevron.down")
+                                .weiBeiText(9.5, weight: .semibold)
+                        }
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .padding(.horizontal, 9)
+                        .frame(height: 26)
+                        .weibeiEtchedBackground(
+                            fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                            stroke: WeiBeiTheme.hairline.opacity(0.48),
+                            cornerRadius: 8
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(store.ui("选择强调色", "Choose Accent Color"))
+                    .accessibilityValue("\(store.accentPreference.direction.label(ui: store.ui)) · \(currentAccentHex)")
+                    .accessibilityIdentifier("settings-accent-color")
+                }
+            }
+            if showsAccentPalette {
+                VStack(spacing: 10) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) {
+                            accentSwatches
+                        }
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 4) {
+                            accentSwatches
+                        }
+                    }
+                    HStack(spacing: 10) {
+                        Text(store.ui("更深", "Deeper"))
+                            .fixedSize()
+                        AccentBrightnessControl(
+                            baseColor: store.accentPreference.direction.color(for: store.appearanceMode),
+                            appearanceMode: store.appearanceMode,
+                            label: store.ui("微调强调色明暗", "Fine-tune Accent Brightness"),
+                            brightness: Binding(
+                                get: { store.accentPreference.brightness },
+                                set: { store.accentPreference.brightness = $0 }
+                            )
+                        )
+                        Text(store.ui("更浅", "Lighter"))
+                            .fixedSize()
+                    }
+                    .font(SettingsType.detail)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                }
+                .padding(.top, 2)
+                .padding(.bottom, 12)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private var accentSwatches: some View {
+        ForEach(WeiBeiAccentDirection.allCases, id: \.self) { direction in
+            accentSwatch(direction)
+        }
+    }
+
+    private func accentSwatch(_ direction: WeiBeiAccentDirection) -> some View {
+        let selected = store.accentPreference.direction == direction
+        let label = direction.label(ui: store.ui)
+        let color = direction.color(for: store.appearanceMode)
+            .adjustedBrightness(selected ? store.accentPreference.brightness : 0, for: store.appearanceMode)
+        return Button {
+            if !selected { store.accentPreference = WeiBeiAccentPreference(direction: direction) }
+        } label: {
+            Circle()
+                .fill(Color(weiBeiNativeColor: color.platformColor))
+                .frame(width: 24, height: 24)
+                .overlay {
+                    if selected {
+                        Image(systemName: "checkmark")
+                            .weiBeiText(11, weight: .semibold)
+                            .foregroundStyle(Color(weiBeiNativeColor: color.contrastingForeground))
+                    }
+                }
+                .padding(2)
+                .overlay {
+                    Circle().strokeBorder(selected ? WeiBeiTheme.ink : WeiBeiTheme.hairline, lineWidth: 1)
+                }
+                .animation(WeiBeiMotion.micro, value: selected)
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityValue(color.hex)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("settings-accent-swatch-\(direction.rawValue)")
+    }
+
     private var libraryLocationSettings: some View {
         settingsGroup(store.ui("资料库", "Library")) {
             settingsRow(
@@ -467,7 +585,7 @@ struct SettingsView: View {
             if let migrationSuccessText {
                 Text(migrationSuccessText)
                     .font(SettingsType.detail)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.accent)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 12)
             }
@@ -585,7 +703,6 @@ struct SettingsView: View {
                 stylePreviewCard(style)
             }
         }
-        .frame(maxWidth: 428, alignment: .leading)
         // Eight full mini-chrome previews repainting every scroll frame over a
         // transparent glass window janks hard — rasterize the whole grid once.
         .drawingGroup()
@@ -614,7 +731,7 @@ struct SettingsView: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(
                                 selected
-                                    ? WeiBeiTheme.cinnabar.opacity(0.90)
+                                    ? WeiBeiTheme.accent.opacity(0.90)
                                     : WeiBeiTheme.hairline.opacity(0.42),
                                 lineWidth: selected ? 1.5 : 1
                             )
@@ -623,7 +740,7 @@ struct SettingsView: View {
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
                             .weiBeiText(11, weight: .semibold)
-                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                            .foregroundStyle(WeiBeiTheme.accent)
                             .padding(4)
                     }
                 }
@@ -658,10 +775,11 @@ struct SettingsView: View {
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
             .padding(.horizontal, 2)
 
-            if let message = shortcutStatusMessage ?? storedShortcutWarning, !message.isEmpty {
+            if let message = shortcutStatusMessage?.text ?? storedShortcutWarning, !message.isEmpty {
+                let color = shortcutStatusMessage?.isWarning == false ? WeiBeiTheme.accent : WeiBeiTheme.failure
                 Text(message)
                     .font(SettingsType.detail)
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.90))
+                    .foregroundStyle(color.opacity(0.90))
                     .padding(.horizontal, 2)
             }
 
@@ -682,7 +800,9 @@ struct SettingsView: View {
             Button(store.ui("全部恢复默认", "Reset All to Defaults")) {
                 stopShortcutRecording()
                 store.resetAllShortcuts()
-                shortcutStatusMessage = store.ui("已恢复全部默认快捷键。", "All shortcuts restored to defaults.")
+                shortcutStatusMessage = (
+                    store.ui("已恢复全部默认快捷键。", "All shortcuts restored to defaults."), false
+                )
             }
             .buttonStyle(WeiBeiTextActionButtonStyle())
             .padding(.top, 2)
@@ -723,19 +843,19 @@ struct SettingsView: View {
                  ? store.ui("按下…", "Press…")
                  : chord.display)
                 .weiBeiText(12, weight: .semibold, design: .monospaced)
-                .foregroundStyle(recording ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .foregroundStyle(recording ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 7)
                 .frame(height: 22)
                 .background(
                     recording
-                        ? WeiBeiTheme.cinnabar.opacity(0.10)
+                        ? WeiBeiTheme.accent.opacity(0.10)
                         : WeiBeiTheme.paperInset.opacity(0.45)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .overlay {
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(
-                            recording ? WeiBeiTheme.cinnabar.opacity(0.55) : WeiBeiTheme.hairline.opacity(0.36),
+                            recording ? WeiBeiTheme.accent.opacity(0.55) : WeiBeiTheme.hairline.opacity(0.36),
                             lineWidth: 1
                         )
                 }
@@ -745,10 +865,10 @@ struct SettingsView: View {
         .contextMenu {
             Button(store.ui("恢复默认", "Reset to Default")) {
                 stopShortcutRecording()
-                shortcutStatusMessage = store.resetShortcut(id) ? nil : store.ui(
+                shortcutStatusMessage = store.resetShortcut(id) ? nil : (store.ui(
                     "默认组合正被其他动作使用，请先改掉冲突项。",
                     "The default chord is used by another action. Rebind that action first."
-                )
+                ), true)
             }
         }
     }
@@ -780,10 +900,10 @@ struct SettingsView: View {
     private func applyRecordedShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
         defer { stopShortcutRecording() }
         guard AppShortcutCatalog.acceptsRecording(chord) else {
-            shortcutStatusMessage = store.ui(
+            shortcutStatusMessage = (store.ui(
                 "系统编辑键不能占用，并且组合里要有 ⌘、⌃ 或 ⌥。",
                 "System editing keys stay reserved, and the shortcut needs ⌘, ⌃, or ⌥."
-            )
+            ), true)
             return
         }
         if let conflict = AppShortcutCatalog.conflict(
@@ -791,10 +911,10 @@ struct SettingsView: View {
             excluding: id,
             overrides: store.customShortcutOverrides
         ) {
-            shortcutStatusMessage = store.ui(
+            shortcutStatusMessage = (store.ui(
                 "未改绑；与「\(conflict.title(language: store.interfaceLanguage))」冲突。",
                 "Not saved; conflicts with “\(conflict.title(language: store.interfaceLanguage))”."
-            )
+            ), true)
             return
         }
         store.setShortcut(id, chord: chord)
@@ -1049,7 +1169,7 @@ struct SettingsView: View {
             .contentShape(Rectangle())
             .overlay(alignment: .leading) {
                 Rectangle()
-                    .fill(active ? WeiBeiTheme.cinnabar.opacity(0.82) : .clear)
+                    .fill(active ? WeiBeiTheme.accent.opacity(0.82) : .clear)
                     .frame(width: 2, height: 16)
                     .padding(.leading, 1)
             }
@@ -1058,12 +1178,12 @@ struct SettingsView: View {
         .accessibilityLabel(Text(section.title(store)))
     }
 
-    /// Shared switch used across Settings — always cinnabar, never system blue.
+    /// Shared switch uses the current app accent.
     func settingsSwitch(isOn: Binding<Bool>, accessibilityLabel: String) -> some View {
         Toggle("", isOn: isOn)
             .labelsHidden()
             .toggleStyle(.switch)
-            .tint(WeiBeiTheme.cinnabar)
+            .tint(WeiBeiTheme.accent)
             .accessibilityLabel(Text(accessibilityLabel))
     }
 
@@ -1120,7 +1240,7 @@ struct SettingsView: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: icon)
                 .weiBeiText(12, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.90))
+                .foregroundStyle(WeiBeiTheme.accent.opacity(0.90))
             Text(text)
                 .font(SettingsType.detail)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -1185,6 +1305,69 @@ struct SettingsView: View {
         Text(title)
             .weiBeiBrandFont(language: store.interfaceLanguage, size: 12, weight: .semibold)
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
+    }
+}
+
+private struct AccentBrightnessControl: View {
+    let baseColor: WeiBeiAccentColor
+    let appearanceMode: WeiBeiAppearanceMode
+    let label: String
+    @Binding var brightness: Double
+
+    private let range = -1.0...1.0
+    private let keyStep = 0.1
+    private let thumbSize: CGFloat = 18
+
+    var body: some View {
+        GeometryReader { geometry in
+            let travel = max(1, geometry.size.width - thumbSize)
+            let span = range.upperBound - range.lowerBound
+            let progress = CGFloat((brightness - range.lowerBound) / span)
+            let gradientInset = (thumbSize / 2) / (travel + thumbSize)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(LinearGradient(
+                        colors: [color(at: range.lowerBound), color(at: 0), color(at: range.upperBound)],
+                        startPoint: UnitPoint(x: gradientInset, y: 0.5),
+                        endPoint: UnitPoint(x: 1 - gradientInset, y: 0.5)
+                    ))
+                    .frame(height: 12)
+
+                Circle()
+                    .fill(color(at: brightness))
+                    .overlay { Circle().strokeBorder(.white, lineWidth: 2) }
+                    .shadow(color: .black.opacity(0.22), radius: 2, y: 1)
+                    .frame(width: thumbSize, height: thumbSize)
+                    .offset(x: travel * progress)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                let progress = Double((drag.location.x - thumbSize / 2) / travel)
+                updateBrightness(range.lowerBound + progress * span)
+            })
+        }
+        .frame(height: 28)
+        .focusable()
+        .onKeyPress(keys: [.leftArrow, .rightArrow], phases: [.down, .repeat]) { press in
+            updateBrightness(brightness + (press.key == .rightArrow ? keyStep : -keyStep))
+            return .handled
+        }
+        .accessibilityRepresentation {
+            Slider(value: $brightness, in: range, step: keyStep) {
+                Text(label)
+            }
+            .accessibilityIdentifier("settings-accent-brightness")
+        }
+    }
+
+    private func color(at brightness: Double) -> Color {
+        Color(weiBeiNativeColor: baseColor.adjustedBrightness(brightness, for: appearanceMode).platformColor)
+    }
+
+    private func updateBrightness(_ value: Double) {
+        brightness = min(range.upperBound, max(range.lowerBound, value))
     }
 }
 

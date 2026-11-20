@@ -243,7 +243,7 @@ struct LearningMemoryListSection: View {
             if !(memories.isEmpty && centerEmptyState) {
                 HStack(spacing: 8) {
                     Image(systemName: "brain.head.profile")
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .foregroundStyle(WeiBeiTheme.accent)
                     Text(title)
                         .weiBeiBrandFont(language: store.interfaceLanguage, size: 15, weight: .semibold)
                     Spacer()
@@ -322,7 +322,7 @@ struct LearningMemoryListSection: View {
                     HStack(spacing: 7) {
                         Text(store.learningMemoryKindLabel(memory.kind))
                             .weiBeiText(10.5, weight: .semibold)
-                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                            .foregroundStyle(WeiBeiTheme.accent)
                         if memory.status == .resolved {
                             Text(store.ui("已解决", "Resolved"))
                                 .weiBeiText(10.5, weight: .medium)

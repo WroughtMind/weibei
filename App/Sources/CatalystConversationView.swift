@@ -28,6 +28,7 @@ struct CatalystConversationView: View {
         var onContentHeight: (CGFloat) -> Void
         var onFocusComposer: () -> Void
         var onReadingMessage: (UUID?) -> Void
+        private let customAccent = WeiBeiThemeRuntime.customAccent
         func makeCoordinator() -> Coordinator { Coordinator() }
         func makeUIViewController(context: Context) -> ConversationController {
             let controller = ConversationController(fixtureMode: false)
@@ -54,8 +55,10 @@ struct CatalystConversationView: View {
                 ? AgentChatLayoutMetrics.floatingBodyFontSize
                 : (wideTypography ? 16.0 : 14.0)) * workspace.interfaceTextScale.multiplier
             var appearanceChanged = false
-            if coordinator.fontSize != fontSize || coordinator.appearance != workspace.appearanceMode {
+            if coordinator.fontSize != fontSize || coordinator.appearance != workspace.appearanceMode
+                || coordinator.customAccent != customAccent {
                 coordinator.fontSize = fontSize; coordinator.appearance = workspace.appearanceMode
+                coordinator.customAccent = customAccent
                 appearanceChanged = controller.store.setTheme(.weiBei(fontSize: fontSize, appearance: workspace.appearanceMode))
             }
             if appearanceChanged { controller.updateJumpToLatestAppearance(workspace.appearanceMode) }
@@ -118,6 +121,7 @@ struct CatalystConversationView: View {
         var wideTypography = false
         var fontSize: CGFloat = 0
         var appearance: WeiBeiAppearanceMode?
+        var customAccent: WeiBeiAccentColor?
         var floatingMessages: [AgentMessage]?
         var floatingThreadID: UUID?
         var auxiliaryHosts: [String: CatalystHostingView] = [:]
@@ -169,8 +173,7 @@ struct CatalystConversationView: View {
                 guard let workspace, let messageID = UUID(uuidString: block.messageID) else { return UIView() }
                 return CatalystHostingView(AgentNativeContentAttachment(messageID: messageID,
                     identifier: identifier, initialBlocks: workspace.studySessions.lazy.flatMap(\.messages).first { $0.id == messageID }?.contentBlocks ?? [],
-                    onHeight: height).environmentObject(workspace)
-                    .environment(\.weiBeiTextScale, workspace.interfaceTextScale.multiplier))
+                    onHeight: height).environmentObject(workspace))
             }
             controller.messageLink = { [weak workspace, weak controller] url, message in
                 guard let workspace, let controller else { return }
@@ -324,6 +327,7 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
     var fontSize: CGFloat
     var appearanceMode: WeiBeiAppearanceMode
     var openLink: (URL) -> Void
+    private let customAccent = WeiBeiThemeRuntime.customAccent
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> MarkdownTextView {
         context.coordinator.makeView()
@@ -335,7 +339,7 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
             case let .string(value): if let url = URL(string: value) { openLink(url) }
             }
         }
-        context.coordinator.update(view, markdown: markdown, fontSize: fontSize, appearance: appearanceMode)
+        context.coordinator.update(view, markdown: markdown, fontSize: fontSize, appearance: appearanceMode, customAccent: customAccent)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context) -> CGSize? {
         context.coordinator.sizeThatFits(proposedWidth: proposal.width, view: uiView)
@@ -353,6 +357,7 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
         var markdown: String?
         var fontSize: CGFloat = 0
         var appearance: WeiBeiAppearanceMode?
+        var customAccent: WeiBeiAccentColor?
         var citationTitles: [String: String] = [:]
         private var citationTooltips: SourceCitationTooltips?
         #if WEIBEI_ACCEPTANCE_CHECKS
@@ -373,10 +378,15 @@ struct CatalystMessageMarkdown: UIViewRepresentable {
             return view
         }
 
-        func update(_ view: MarkdownTextView, markdown: String, fontSize: CGFloat, appearance: WeiBeiAppearanceMode) {
-            guard self.markdown != markdown || self.fontSize != fontSize || self.appearance != appearance else { return }
+        func update(
+            _ view: MarkdownTextView, markdown: String, fontSize: CGFloat, appearance: WeiBeiAppearanceMode,
+            customAccent: WeiBeiAccentColor? = WeiBeiThemeRuntime.customAccent
+        ) {
+            guard self.markdown != markdown || self.fontSize != fontSize || self.appearance != appearance
+                || self.customAccent != customAccent else { return }
             measurement.invalidate()
             self.markdown = markdown; self.fontSize = fontSize; self.appearance = appearance
+            self.customAccent = customAccent
             citationTitles = AgentReplySourceInlinePresentation.linkTitles(in: markdown)
             let theme = MarkdownTheme.weiBei(fontSize: fontSize, appearance: appearance)
             let parsed = MarkdownParser().parse(markdown)
@@ -409,9 +419,6 @@ struct CatalystRichAnswer: View {
     let contentBlocks: [AgentMessageContentBlock]
     let openLink: (URL) -> Void
 
-    @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.weiBeiTextScale) private var textScale
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(AgentAnswerMarkdownSegments.split(markdown).enumerated()), id: \.offset) { _, part in
@@ -431,8 +438,6 @@ struct CatalystRichAnswer: View {
                             initialBlocks: contentBlocks,
                             onHeight: { _ in }
                         )
-                        .environmentObject(store)
-                        .environment(\.weiBeiTextScale, textScale)
                     }
                 }
             }

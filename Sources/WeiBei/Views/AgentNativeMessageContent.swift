@@ -153,6 +153,7 @@ struct AgentNativeContentAttachment: View {
                 UnavailableAgentContentBlockView(type: type, rawJSON: rawJSON)
             }
         }
+        .environment(\.weiBeiTextScale, store.interfaceTextScale.multiplier)
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background {

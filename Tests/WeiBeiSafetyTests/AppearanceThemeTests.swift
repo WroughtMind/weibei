@@ -102,6 +102,54 @@ final class AppearanceThemeTests: XCTestCase {
         }
     }
 
+    func testCustomAccentUpdatesNativeAndWebPalettesAcrossAllThemes() throws {
+        let original = WeiBeiThemeRuntime.accentPreference
+        defer { WeiBeiThemeRuntime.accentPreference = original }
+        WeiBeiThemeRuntime.accentPreference = .themeDefault
+        let preference = WeiBeiAccentPreference(direction: .indigo, brightness: 0.5)
+        let defaults = WeiBeiAppearanceMode.allCases.map { WeiBeiNativePalette.accent(for: $0) }
+        let changed = expectation(description: "Accent consumers observed the color change")
+        withObservationTracking {
+            _ = WeiBeiTheme.accent
+        } onChange: { changed.fulfill() }
+
+        WeiBeiThemeRuntime.accentPreference = preference
+        wait(for: [changed], timeout: 1)
+
+        for (mode, defaultAccent) in zip(WeiBeiAppearanceMode.allCases, defaults) {
+            let custom = try XCTUnwrap(preference.customColor(for: mode))
+            let accent = WeiBeiNativePalette.accent(for: mode)
+            XCTAssertEqual(WeiBeiAccentColor(platformColor: accent), custom)
+            XCTAssertEqual(WeiBeiAccentColor(platformColor: WeiBeiNativePalette.accentSoft(for: mode)), custom)
+            XCTAssertEqual(WeiBeiAccentColor(platformColor: WeiBeiNativePalette.selectionFill(for: mode)), custom)
+            XCTAssertEqual(WeiBeiNativePalette.cssHex(for: mode).accent, weiBeiCSSColor(accent))
+            XCTAssertEqual(agentVisualizationTheme(for: mode, textScale: 1)["accent"], weiBeiCSSColor(accent))
+            XCTAssertEqual(WeiBeiNativePalette.defaultAccent(for: mode), defaultAccent)
+        }
+
+        WeiBeiThemeRuntime.accentPreference = .themeDefault
+        XCTAssertEqual(WeiBeiAppearanceMode.allCases.map { WeiBeiNativePalette.accent(for: $0) }, defaults)
+    }
+
+    func testPresetDirectionsAdaptToThemeAndAllowBrightnessChanges() {
+        for direction in WeiBeiAccentDirection.allCases {
+            XCTAssertNotEqual(direction.color(for: .paper), direction.color(for: .inkstone))
+            for mode in WeiBeiAppearanceMode.allCases {
+                let color = direction.color(for: mode)
+                XCTAssertLessThan(color.adjustedBrightness(-1, for: mode).rawValue, color.rawValue)
+                XCTAssertGreaterThan(color.adjustedBrightness(1, for: mode).rawValue, color.rawValue)
+                XCTAssertEqual(color.adjustedBrightness(0, for: mode), color)
+            }
+        }
+    }
+
+    func testTextOnCustomAccentUsesTheHigherContrastColor() throws {
+        let light = try XCTUnwrap(WeiBeiAccentColor(rawValue: 0xFFE000))
+        let dark = try XCTUnwrap(WeiBeiAccentColor(rawValue: 0x322264))
+        XCTAssertEqual(WeiBeiAccentColor(platformColor: light.contrastingForeground)?.rawValue, 0x000000)
+        XCTAssertEqual(WeiBeiAccentColor(platformColor: dark.contrastingForeground)?.rawValue, 0xFFFFFF)
+    }
+
     private func assertThemeObservation(
         from source: WeiBeiAppearanceMode,
         to target: WeiBeiAppearanceMode,

@@ -129,7 +129,7 @@ struct ContextualContentPicker: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
             }
             if group.items.isEmpty {
                 Text(kind == .note ? store.ui("还没有笔记", "No notes yet") : store.ui("还没有资料", "No materials yet"))

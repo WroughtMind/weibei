@@ -60,7 +60,7 @@ struct AgentReplyMemoryUpdateTag: View {
                         .accessibilityHidden(true)
                     Text(summaryText)
                         .weiBeiText(10.5, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .foregroundStyle(WeiBeiTheme.accent)
                         .lineLimit(1)
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
                         .weiBeiText(9.5, weight: .bold)
@@ -70,11 +70,11 @@ struct AgentReplyMemoryUpdateTag: View {
                 .frame(height: 25)
                 .background {
                     Capsule()
-                        .fill(WeiBeiTheme.cinnabarSoft.opacity(0.34))
+                        .fill(WeiBeiTheme.accentSoft.opacity(0.34))
                 }
                 .overlay {
                     Capsule()
-                        .strokeBorder(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
+                        .strokeBorder(WeiBeiTheme.accent.opacity(0.22), lineWidth: 1)
                 }
             }
             .buttonStyle(.plain)
@@ -91,7 +91,7 @@ struct AgentReplyMemoryUpdateTag: View {
                             if let kind = item.kind {
                                 Text(store.learningMemoryKindLabel(kind))
                                     .weiBeiText(10.5, weight: .semibold)
-                                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                                    .foregroundStyle(WeiBeiTheme.accent)
                                     .fixedSize()
                             }
                             Text(item.text)
@@ -112,7 +112,7 @@ struct AgentReplyMemoryUpdateTag: View {
                 .padding(.leading, 9)
                 .overlay(alignment: .leading) {
                     Rectangle()
-                        .fill(WeiBeiTheme.cinnabar.opacity(0.28))
+                        .fill(WeiBeiTheme.accent.opacity(0.28))
                         .frame(width: 1)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))

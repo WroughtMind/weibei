@@ -74,6 +74,23 @@ extension WorkspaceStore {
     private static let appearancePreferenceKey = "weibei.appearancePreference"
     private static let appearanceStyleKey = "weibei.appearanceStyle"
     private static let glassIntensityKey = "weibei.glassIntensity"
+    private static let accentPreferenceKey = "weibei.accentPreference"
+
+    var accentPreference: WeiBeiAccentPreference {
+        get { WeiBeiThemeRuntime.accentPreference }
+        set {
+            guard newValue != accentPreference else { return }
+            let stored = newValue == .themeDefault ? nil : try? JSONEncoder().encode(newValue)
+            UserDefaults.standard.set(stored, forKey: Self.accentPreferenceKey)
+            WeiBeiThemeRuntime.accentPreference = newValue
+        }
+    }
+
+    static func loadPersistedAccentPreference() {
+        let stored = UserDefaults.standard.data(forKey: accentPreferenceKey)
+        WeiBeiThemeRuntime.accentPreference = stored.flatMap { try? JSONDecoder().decode(WeiBeiAccentPreference.self, from: $0) }
+            ?? .themeDefault
+    }
 
     var appearancePreference: WeiBeiAppearancePreference {
         get {

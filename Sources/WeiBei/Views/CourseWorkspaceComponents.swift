@@ -111,7 +111,7 @@ struct CourseManagementSheet: View {
             VStack(alignment: .leading, spacing: 9) {
                 Text(store.ui("危险操作", "Danger Zone"))
                     .weiBeiText(12, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.failure)
                 if UnavailableCourseUnregister.shouldOfferUnregister(
                     rootURL: rootURL,
                     unavailableReason: rootUnavailableReason
@@ -173,7 +173,7 @@ struct CourseManagementSheet: View {
                     systemImage: "exclamationmark.triangle"
                 )
                 .weiBeiText(12)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.failure)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -378,7 +378,7 @@ struct CourseProjectEntrySheet: View {
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
                     .weiBeiText(12)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.failure)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(Text(store.ui(
                         "错误：\(errorMessage)",
@@ -936,7 +936,7 @@ struct CourseWorkspaceRow: View {
                 if !status.isEmpty {
                     Text(status)
                         .weiBeiText(10.5, weight: .medium)
-                        .foregroundStyle(selected || prominence == .linked ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                        .foregroundStyle(selected || prominence == .linked ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk)
                         .multilineTextAlignment(.trailing)
                         .lineLimit(2)
                 }
@@ -949,7 +949,7 @@ struct CourseWorkspaceRow: View {
                 if selected || prominence == .linked {
                     Capsule()
                         .fill(prominence == .linked && !selected
-                              ? WeiBeiTheme.cinnabar.opacity(0.55)
+                              ? WeiBeiTheme.accent.opacity(0.55)
                               : WeiBeiTheme.secondaryInk.opacity(0.42))
                         .frame(width: 2, height: 24)
                         .padding(.leading, 3)
@@ -964,14 +964,14 @@ struct CourseWorkspaceRow: View {
     }
 
     private var iconColor: Color {
-        if selected || prominence == .linked { return WeiBeiTheme.cinnabar }
+        if selected || prominence == .linked { return WeiBeiTheme.accent }
         if prominence == .dimmed { return WeiBeiTheme.tertiaryInk }
         return WeiBeiTheme.secondaryInk
     }
 
     private var rowBackground: Color {
         if selected { return WeiBeiTheme.paperInset.opacity(0.38) }
-        if prominence == .linked { return WeiBeiTheme.cinnabarSoft.opacity(0.28) }
+        if prominence == .linked { return WeiBeiTheme.accentSoft.opacity(0.28) }
         if hovering { return WeiBeiTheme.paperInset.opacity(0.18) }
         return .clear
     }
@@ -990,7 +990,7 @@ struct RelationSelectionRow: View {
             HStack(spacing: 11) {
                 Image(systemName: checked ? "checkmark.square.fill" : "square")
                     .weiBeiText(15, weight: .medium)
-                    .foregroundStyle(checked ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                    .foregroundStyle(checked ? WeiBeiTheme.accent : WeiBeiTheme.tertiaryInk)
                     .frame(width: 20)
                 Image(systemName: item.kind.systemImage)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -1033,7 +1033,7 @@ struct CourseEmptyState: View {
         VStack(alignment: alignment, spacing: 8) {
             Image(systemName: systemImage)
                 .weiBeiText(18, weight: .regular)
-                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.58))
+                .foregroundStyle(WeiBeiTheme.accent.opacity(0.58))
                 .frame(width: 28, height: 28, alignment: .center)
             Text(title)
                 .weiBeiText(13, weight: .semibold)
@@ -1107,12 +1107,12 @@ func relationFooter(
     HStack {
         Text(countTitle)
             .weiBeiText(12, weight: .semibold)
-            .foregroundStyle(WeiBeiTheme.cinnabar)
+            .foregroundStyle(WeiBeiTheme.accent)
         Spacer()
         if let errorTitle {
             Text(errorTitle)
                 .weiBeiText(10.5)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.failure)
                 .lineLimit(1)
             Button(retryTitle, action: retry)
                 .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
@@ -1164,7 +1164,7 @@ func courseLocationLabel(_ location: StudyLocation, store: WorkspaceStore) -> St
 func courseWorkspaceAccent(colorIndex: Int) -> Color {
     switch ((colorIndex % 4) + 4) % 4 {
     case 0:
-        return WeiBeiTheme.cinnabar
+        return WeiBeiTheme.accent
     case 1:
         return WeiBeiTheme.moss
     case 2:

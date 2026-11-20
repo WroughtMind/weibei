@@ -11,7 +11,7 @@ extension MarkdownTheme {
         theme.colors.body = WeiBeiNativePalette.ink(for: appearance)
         theme.colors.code = theme.colors.body
         theme.colors.codeBackground = WeiBeiNativePalette.codePaper(for: appearance)
-        theme.colors.highlight = WeiBeiNativePalette.cinnabar(for: appearance)
+        theme.colors.highlight = WeiBeiNativePalette.accent(for: appearance)
         theme.colors.emphasis = theme.colors.body
         theme.colors.selectionBackground = WeiBeiNativePalette.selectionFill(for: appearance)
         theme.spacings.paragraph = fontSize * 0.75
@@ -177,9 +177,14 @@ final class ContentStore {
         let citationTitles = AgentReplySourceInlinePresentation.linkTitles(in: text)
         let rendered = parsed.renderedContent(theme: theme)
         message.blocks = parsed.document.enumerated().map { index, node in
-            if preservesRendering, index < message.blocks.count, message.blocks[index].node == node {
-                message.blocks[index].citationTitles = citationTitles
-                return message.blocks[index]
+            if index < message.blocks.count, message.blocks[index].node == node {
+                let existing = message.blocks[index]
+                // Interactive attachments observe the app palette in their own host.
+                if case .workspaceAttachment = existing.kind { return existing }
+                if preservesRendering {
+                    existing.citationTitles = citationTitles
+                    return existing
+                }
             }
             var imageSources: Set<String> = []
             let isCallout: Bool

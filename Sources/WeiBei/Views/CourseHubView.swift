@@ -612,7 +612,7 @@ struct CourseHubView: View {
                         .weiBeiText(9.5, weight: .semibold)
                 }
                 .weiBeiText(12, weight: .medium)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
                 .frame(maxWidth: .infinity, minHeight: 52)
                 .contentShape(Rectangle())
             }
@@ -642,7 +642,7 @@ struct CourseHubView: View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "folder.badge.questionmark")
                 .weiBeiText(15, weight: .medium)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.ui(
@@ -672,7 +672,7 @@ struct CourseHubView: View {
         }
         .padding(14)
         .background(
-            WeiBeiTheme.cinnabarSoft.opacity(0.22),
+            WeiBeiTheme.accentSoft.opacity(0.22),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
     }
@@ -894,7 +894,7 @@ private struct CourseHubContinueCard: View {
         HStack(spacing: 18) {
             Image(systemName: icon)
                 .weiBeiText(22, weight: .regular)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
                 .frame(width: 46)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -931,7 +931,7 @@ private struct CourseHubContinueCard: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(WeiBeiTheme.cinnabar.opacity(0.12), lineWidth: 1)
+                .stroke(WeiBeiTheme.accent.opacity(0.12), lineWidth: 1)
         }
     }
 }
@@ -942,14 +942,14 @@ private struct CourseHubContinueActionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .weiBeiText(13, weight: .semibold)
-            .foregroundStyle(primary ? WeiBeiTheme.onCinnabar : WeiBeiTheme.cinnabar)
+            .foregroundStyle(primary ? WeiBeiTheme.onAccent : WeiBeiTheme.accent)
             .padding(.horizontal, 20)
             .frame(minWidth: 132, minHeight: 42)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(
                         primary
-                            ? WeiBeiTheme.cinnabar.opacity(
+                            ? WeiBeiTheme.accent.opacity(
                                 configuration.isPressed ? 0.82 : 0.94
                             )
                             : WeiBeiTheme.paperRaised.opacity(
@@ -960,7 +960,7 @@ private struct CourseHubContinueActionButtonStyle: ButtonStyle {
             .overlay {
                 if !primary {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(WeiBeiTheme.cinnabar.opacity(0.72), lineWidth: 1)
+                        .stroke(WeiBeiTheme.accent.opacity(0.72), lineWidth: 1)
                 }
             }
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
@@ -978,7 +978,7 @@ private struct CourseHubStartReadingRow: View {
         HStack(spacing: 18) {
             Image(systemName: "doc.badge.plus")
                 .weiBeiText(22, weight: .regular)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
                 .frame(width: 46)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -1023,7 +1023,7 @@ private struct CourseHubContentRow: View {
                 Image(systemName: icon)
                     .weiBeiText(15, weight: .medium)
                     .foregroundStyle(selected
-                                     ? WeiBeiTheme.cinnabar
+                                     ? WeiBeiTheme.accent
                                      : WeiBeiTheme.secondaryInk)
                     .frame(width: 24)
 
@@ -1072,7 +1072,7 @@ private struct CourseHubContentRow: View {
             .contentShape(Rectangle())
             .background(
                 highlighted
-                    ? WeiBeiTheme.cinnabarSoft.opacity(0.24)
+                    ? WeiBeiTheme.accentSoft.opacity(0.24)
                     : selected
                     ? WeiBeiTheme.paperInset.opacity(0.34)
                     : (hovering ? WeiBeiTheme.paperInset.opacity(0.16) : .clear)
@@ -1115,7 +1115,7 @@ private struct CourseHubMemoryLine: View {
         HStack(spacing: 14) {
             Image(systemName: icon)
                 .weiBeiText(15, weight: .regular)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
                 .frame(width: 24)
 
             Text(title)

@@ -48,7 +48,7 @@ struct WorkspacePersistStatusDot: View {
             } label: {
                 Text(store.ui("重试", "Retry"))
                     .weiBeiText(12, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.failure)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
@@ -57,7 +57,7 @@ struct WorkspacePersistStatusDot: View {
                     )
                     .overlay {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(WeiBeiTheme.cinnabar.opacity(0.35), lineWidth: 1)
+                            .strokeBorder(WeiBeiTheme.failure.opacity(0.35), lineWidth: 1)
                     }
                     .contentShape(Rectangle())
             }

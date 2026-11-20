@@ -104,7 +104,7 @@ struct WeiBeiPaneHeader<Actions: View>: View {
                     Text(latinMark)
                         .font(WeiBeiTypography.englishBrandFont(size: isCompactHeader ? 8.5 : 9.5, weight: .semibold))
                         .tracking(0.8)
-                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
+                        .foregroundStyle(WeiBeiTheme.accent.opacity(0.78))
                         .baselineOffset(1)
                         .lineLimit(1)
                         .layoutPriority(0)
@@ -719,7 +719,7 @@ struct NoteConflictComparisonView: View {
                 }
             }
             if let error = store.importantOperationError {
-                Text(error).weiBeiText(12).foregroundStyle(WeiBeiTheme.cinnabar)
+                Text(error).weiBeiText(12).foregroundStyle(WeiBeiTheme.failure)
             }
             HStack {
                 Spacer()
@@ -796,7 +796,7 @@ private struct NoteSaveStatusLabel: View {
                 .foregroundStyle(
                     store.activeNoteSaveStatus == .failed
                         || store.activeNoteSaveStatus == .externallyModified
-                        ? WeiBeiTheme.cinnabar
+                        ? WeiBeiTheme.failure
                         : WeiBeiTheme.secondaryInk
                 )
                 .lineLimit(1)
@@ -841,7 +841,7 @@ private struct NotebookCreationPanel: View {
         HStack(spacing: 9) {
             Text(draft.kind == .blank ? store.ui("新建笔记", "New Note") : store.ui("资料笔记", "Material Note"))
                 .weiBeiText(12, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.86))
+                .foregroundStyle(WeiBeiTheme.accent.opacity(0.86))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
 
@@ -932,29 +932,29 @@ private struct NotebookCreationPanel: View {
 
     private var confirmColor: Color {
         guard canCreate else { return WeiBeiTheme.tertiaryInk }
-        return hoveredConfirm ? WeiBeiTheme.onCinnabar : WeiBeiTheme.secondaryInk
+        return hoveredConfirm ? WeiBeiTheme.onAccent : WeiBeiTheme.secondaryInk
     }
 
     private var confirmBackground: Color {
         guard canCreate, hoveredConfirm else { return Color.clear }
-        return WeiBeiTheme.cinnabar.opacity(0.88)
+        return WeiBeiTheme.accent.opacity(0.88)
     }
 
     private var confirmBorder: Color {
         guard canCreate, hoveredConfirm else { return Color.clear }
-        return WeiBeiTheme.cinnabar.opacity(0.48)
+        return WeiBeiTheme.accent.opacity(0.48)
     }
 
     private var cancelColor: Color {
-        hoveredCancel ? WeiBeiTheme.cinnabar.opacity(0.72) : WeiBeiTheme.secondaryInk
+        hoveredCancel ? WeiBeiTheme.accent.opacity(0.72) : WeiBeiTheme.secondaryInk
     }
 
     private var cancelBackground: Color {
-        hoveredCancel ? WeiBeiTheme.cinnabarSoft.opacity(0.68) : Color.clear
+        hoveredCancel ? WeiBeiTheme.accentSoft.opacity(0.68) : Color.clear
     }
 
     private var cancelBorder: Color {
-        hoveredCancel ? WeiBeiTheme.cinnabar.opacity(0.22) : Color.clear
+        hoveredCancel ? WeiBeiTheme.accent.opacity(0.22) : Color.clear
     }
 }
 
@@ -3215,11 +3215,11 @@ struct FloatingSelectionAgentView: View {
             .padding(.bottom, 5)
             if remarkSaveFailed {
                 Text(store.ui("摘抄尚未保存，内容仍在这里，请重试。", "The excerpt is not saved. Your draft is kept here; retry."))
-                    .weiBeiText(11).foregroundStyle(WeiBeiTheme.cinnabar)
+                    .weiBeiText(11).foregroundStyle(WeiBeiTheme.failure)
                     .padding(.horizontal, 14)
             }
         } else if let error = store.selectionChatError {
-            Text(error).weiBeiText(12).foregroundStyle(WeiBeiTheme.cinnabar)
+            Text(error).weiBeiText(12).foregroundStyle(WeiBeiTheme.failure)
                 .padding(.horizontal, 14)
             Button(store.ui("重试", "Retry")) { store.askSelection() }
         } else {
@@ -3711,7 +3711,7 @@ struct FloatingSelectionMessageBubble: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(text)
                             .weiBeiText(AgentChatLayoutMetrics.floatingBodyFontSize)
-                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                            .foregroundStyle(WeiBeiTheme.failure)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                             .allowsHitTesting(false)
@@ -3897,7 +3897,7 @@ struct AgentBubble: View {
             } label: {
                 Image(systemName: copiedMessage ? "checkmark" : "doc.on.doc")
                     .weiBeiText(12, weight: .medium)
-                    .foregroundStyle(copiedMessage ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                    .foregroundStyle(copiedMessage ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk)
                     .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }
@@ -3978,7 +3978,7 @@ struct AgentBubble: View {
                     } label: {
                         Image(systemName: copiedMessage ? "checkmark" : "doc.on.doc")
                             .weiBeiText(12, weight: .medium)
-                            .foregroundStyle(copiedMessage ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                            .foregroundStyle(copiedMessage ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk)
                             .frame(width: 24, height: 24)
                             .contentShape(Rectangle())
                     }
@@ -4012,7 +4012,7 @@ struct AgentBubble: View {
 
     private var userBubbleStroke: Color {
         if copiedMessage {
-            return WeiBeiTheme.cinnabar.opacity(0.52)
+            return WeiBeiTheme.accent.opacity(0.52)
         }
         return store.appearanceMode.isDark
             ? WeiBeiTheme.hairline.opacity(hovering ? 0.58 : 0.42)
@@ -4408,7 +4408,7 @@ private struct AgentReplyActionCard: View {
         if let failure = action.failureMessage, !failure.isEmpty {
             Label(failure, systemImage: "exclamationmark.triangle")
                 .weiBeiText(10.5)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.failure)
                 .fixedSize(horizontal: false, vertical: true)
         }
 
@@ -4796,7 +4796,7 @@ private struct AgentReplySourceTag: View {
                     .weiBeiText(10.5, weight: .semibold)
                     .lineLimit(1)
             }
-            .foregroundStyle(hovering ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+            .foregroundStyle(hovering ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk)
             .padding(.horizontal, 8)
             .frame(height: 22)
             .background(
@@ -4807,7 +4807,7 @@ private struct AgentReplySourceTag: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(
                         hovering
-                            ? WeiBeiTheme.cinnabar.opacity(0.28)
+                            ? WeiBeiTheme.accent.opacity(0.28)
                             : WeiBeiTheme.hairline.opacity(0.40),
                         lineWidth: 1
                     )
@@ -4870,7 +4870,7 @@ private struct AgentReplySourceDetail: View {
                 Spacer(minLength: 6)
                 Image(systemName: "arrow.up.right")
                     .weiBeiText(9.5, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.85))
+                    .foregroundStyle(WeiBeiTheme.accent.opacity(0.85))
             }
             let cleanExcerpt = source.excerpt.trimmingCharacters(in: .whitespacesAndNewlines)
             if !cleanExcerpt.isEmpty {
@@ -5027,7 +5027,7 @@ private struct AgentCitationTag: View {
         case .note:
             return hovering ? WeiBeiTheme.link : WeiBeiTheme.link.opacity(0.90)
         case .selection:
-            return hovering ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.88)
+            return hovering ? WeiBeiTheme.accent : WeiBeiTheme.accent.opacity(0.88)
         case .learningRecord:
             return hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
         case .learningMemory:
@@ -5044,7 +5044,7 @@ private struct AgentCitationTag: View {
         case .note:
             return WeiBeiTheme.link.opacity(hovering ? 0.12 : 0.07)
         case .selection:
-            return WeiBeiTheme.cinnabarSoft.opacity(hovering ? 0.55 : 0.38)
+            return WeiBeiTheme.accentSoft.opacity(hovering ? 0.55 : 0.38)
         case .learningRecord:
             return WeiBeiTheme.paperInset.opacity(hovering ? 0.55 : 0.38)
         case .learningMemory:
@@ -5061,7 +5061,7 @@ private struct AgentCitationTag: View {
         case .note:
             return WeiBeiTheme.link.opacity(hovering ? 0.32 : 0.18)
         case .selection:
-            return WeiBeiTheme.cinnabar.opacity(hovering ? 0.36 : 0.22)
+            return WeiBeiTheme.accent.opacity(hovering ? 0.36 : 0.22)
         case .learningRecord, .learningMemory, .session, .discussion:
             return WeiBeiTheme.hairline.opacity(hovering ? 0.55 : 0.36)
         }
@@ -5262,7 +5262,7 @@ private struct AgentMessageMarkdownText: View {
                             identifier: identifier.removingPercentEncoding ?? identifier,
                             initialBlocks: contentBlocks,
                             onHeight: onHeight
-                        ).environmentObject(store).environment(\.weiBeiTextScale, textScale))
+                        ).environmentObject(store))
                         host.sizingOptions = []
                         host.frame.size = NSSize(width: width, height: 160)
                         return host
@@ -5411,7 +5411,7 @@ private struct AgentLiveResponse: View {
 /// `ScrollView` / `LazyVStack` do not re-run `sizeThatFits` every frame
 /// (that thrash was freezing the app after a couple of scrolls).
 ///
-/// Geometry: cinnabar orbit keeps equal padding on all four sides of the status text.
+/// Geometry: accent orbit keeps equal padding on all four sides of the status text.
 ///
 /// Model (view coords, flipped):
 /// ```
@@ -5759,7 +5759,7 @@ final class AgentThinkingOrbitNSView: OrbitPlatformView {
 
         let ink = WeiBeiNativePalette.ink(for: appearanceMode).withAlphaComponent(0.93)
         let dim = WeiBeiNativePalette.tertiaryInk(for: appearanceMode).withAlphaComponent(0.70)
-        let cinnabar = WeiBeiNativePalette.cinnabar(for: appearanceMode).withAlphaComponent(0.82)
+        let accent = WeiBeiNativePalette.accent(for: appearanceMode).withAlphaComponent(0.82)
 
         let font = WeiBeiPlatformFont.systemFont(ofSize: fontSize, weight: .medium)
         // Line box inset so every side has the same gap to the stroke centerline.
@@ -5812,7 +5812,7 @@ final class AgentThinkingOrbitNSView: OrbitPlatformView {
             let segment = CGRect(x: x, y: y, width: Self.segmentLength, height: lineWidth)
             context.saveGState()
             context.setAlpha(CGFloat(cursorOpacity))
-            context.setFillColor(cinnabar.cgColor)
+            context.setFillColor(accent.cgColor)
             let path = CGPath(
                 roundedRect: segment,
                 cornerWidth: lineWidth / 2,
@@ -5834,7 +5834,7 @@ final class AgentThinkingOrbitNSView: OrbitPlatformView {
                 height: pathHeight,
                 segmentLength: Self.segmentLength,
                 lineWidth: lineWidth,
-                color: cinnabar,
+                color: accent,
                 in: context
             )
             context.restoreGState()
@@ -5842,7 +5842,7 @@ final class AgentThinkingOrbitNSView: OrbitPlatformView {
     }
 }
 
-/// Short cinnabar segment orbiting a measured text box (V3 path geometry).
+/// Short accent segment orbiting a measured text box (V3 path geometry).
 /// Pure geometry/paint helper — not a SwiftUI View — so it cannot thrash ScrollView layout.
 enum TextOrbitSegment {
     static let firstPassDuration: TimeInterval = 0.88

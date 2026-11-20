@@ -229,7 +229,7 @@ private final class StableDocumentDividerView: NSView {
     private var isHovering = false
     private var isPressed = false
 
-    /// Fixed 1pt cinnabar emphasis line over the neutral divider line:
+    /// Fixed 1pt accent emphasis line over the neutral divider line:
     /// transparent at rest, ~0.55 on hover, full strength while dragging.
     private enum AccentPhase {
         case idle
@@ -368,7 +368,7 @@ private final class StableDocumentDividerView: NSView {
 
     private func updateAccentLine() {
         let target = accentTargetOpacity
-        accentLayer.backgroundColor = WeiBeiNativePalette.cinnabar().cgColor
+        accentLayer.backgroundColor = WeiBeiNativePalette.accent().cgColor
         guard !reduceMotion else {
             accentLayer.removeAllAnimations()
             accentLayer.opacity = target

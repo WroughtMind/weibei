@@ -80,19 +80,27 @@ final class ReaderPDFView: PDFView {
 
 final class PDFOCRPageOverlayView: UIView {
     private var lines: [OCRLine] = []
+    private let highlightedLineIndexes: Set<Int>
     init(page: PDFOCRPage, highlightedLineIndexes: Set<Int>, appearanceMode: WeiBeiAppearanceMode,
          onSelectionChange: @escaping (String, SelectionPopoverAnchor?, CGRect?) -> Void) {
+        self.highlightedLineIndexes = highlightedLineIndexes
         super.init(frame: .zero)
         backgroundColor = .clear
-        lines = page.lines.enumerated().map { index, line in
+        lines = page.lines.map { line in
             let view = OCRLine(text: line.text, box: line.boundingBox, onSelection: onSelectionChange)
-            view.backgroundColor = highlightedLineIndexes.contains(index)
-                ? WeiBeiNativePalette.selectionFill(for: appearanceMode).withAlphaComponent(0.28) : .clear
-            view.tintColor = WeiBeiNativePalette.selectionFill(for: appearanceMode)
             addSubview(view)
             return view
         }
+        applySelectionTint(WeiBeiNativePalette.selectionFill(for: appearanceMode))
     }
+
+    func applySelectionTint(_ tint: UIColor) {
+        for (index, line) in lines.enumerated() {
+            line.backgroundColor = highlightedLineIndexes.contains(index) ? tint.withAlphaComponent(0.28) : .clear
+            line.tintColor = tint
+        }
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -142,6 +150,7 @@ struct SelectablePlainTextReader: UIViewRepresentable {
     var underlineSnippets: [String]
     var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+    private let customAccent = WeiBeiThemeRuntime.customAccent
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
@@ -163,12 +172,14 @@ struct SelectablePlainTextReader: UIViewRepresentable {
         let sourceChanged = coordinator.parent.text != text
         let changed = coordinator.parent.text != text || coordinator.parent.appearanceMode != appearanceMode
             || coordinator.parent.underlineSnippets != underlineSnippets || coordinator.query != ReaderSearch.cleaned(searchQuery)
+            || coordinator.parent.customAccent != customAccent
             || view.attributedText.length == 0
         coordinator.parent = self
         coordinator.suppressSelection = true
         defer { coordinator.suppressSelection = false }
         view.tintColor = WeiBeiNativePalette.selectionFill(for: appearanceMode)
         if changed {
+            let accent = WeiBeiNativePalette.accent(for: appearanceMode)
             let attributed = NSMutableAttributedString(string: text, attributes: [
                 .font: UIFont.monospacedSystemFont(ofSize: 15, weight: .regular),
                 .foregroundColor: WeiBeiNativePalette.ink(for: appearanceMode)])
@@ -180,12 +191,12 @@ struct SelectablePlainTextReader: UIViewRepresentable {
                     let found = (text as NSString).range(of: needle, range: search)
                     guard found.location != NSNotFound else { break }
                     attributed.addAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue,
-                        .underlineColor: weiBeiColor(red: 0.56, green: 0.16, blue: 0.12, alpha: 1)], range: found)
+                        .underlineColor: accent], range: found)
                     search = NSRange(location: NSMaxRange(found), length: attributed.length - NSMaxRange(found))
                 }
             }
             for range in ReaderSearch.matches(in: text, query: searchQuery) {
-                attributed.addAttribute(.backgroundColor, value: weiBeiColor(red: 0.67, green: 0.24, blue: 0.16, alpha: 0.24), range: range)
+                attributed.addAttribute(.backgroundColor, value: accent.withAlphaComponent(0.24), range: range)
             }
             let selected = view.selectedRange
             let readingOffset = view.contentOffset
