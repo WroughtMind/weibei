@@ -140,7 +140,7 @@ private struct ExcerptBookRow: View {
                     .textSelection(.enabled)
                     .padding(.leading, 13)
                     .overlay(alignment: .leading) {
-                        Rectangle().fill(WeiBeiTheme.cinnabar.opacity(0.55)).frame(width: 1)
+                        Rectangle().fill(WeiBeiTheme.accent.opacity(0.55)).frame(width: 1)
                     }
             }
             if let page = record.documentAnchor?.pdf?.pageIndex {
@@ -152,7 +152,7 @@ private struct ExcerptBookRow: View {
         .padding(.vertical, 4)
         .overlay(alignment: .leading) {
             if selected {
-                Circle().fill(WeiBeiTheme.cinnabar).frame(width: 5, height: 5).offset(x: -18)
+                Circle().fill(WeiBeiTheme.accent).frame(width: 5, height: 5).offset(x: -18)
             }
         }
         .contentShape(Rectangle())
@@ -253,7 +253,7 @@ private struct ExcerptRemarkEditor: View {
             HStack {
                 Button(store.ui("取消", "Cancel"), action: finish).disabled(saving)
                     .buttonStyle(.plain)
-                if failed { Text(store.ui("尚未保存，请重试", "Not saved; retry")).foregroundStyle(WeiBeiTheme.cinnabar) }
+                if failed { Text(store.ui("尚未保存，请重试", "Not saved; retry")).foregroundStyle(WeiBeiTheme.failure) }
             }
             .weiBeiText(11).foregroundStyle(WeiBeiTheme.secondaryInk)
         }

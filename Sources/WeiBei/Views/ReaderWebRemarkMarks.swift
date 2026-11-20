@@ -27,7 +27,7 @@ func selectionRemarkMarksJSON(_ records: [SelectionRemarkRecord], activeID: UUID
 }
 
 extension WebReaderRepresentable {
-    /// HTML 材料阅读器的记过标记:整句 wrap + **行右缘朱砂圆点**(绝对定位,不用 float——满行时 float 会掉到下一行看不见)。
+    /// HTML 材料阅读器的记过标记，整句高亮并在行右缘显示圆点。
     /// hover 圆点或整句 → 整句高亮;点击回传 remarkMark。
     static let readerRemarkMarksScript = """
     (() => {
@@ -42,7 +42,7 @@ extension WebReaderRepresentable {
         .weibei-remark-mark:hover,
         .weibei-remark-mark.weibei-remark-hover,
         .weibei-remark-mark.weibei-remark-active {
-          background-color: rgba(145, 38, 27, 0.14);
+          background-color: color-mix(in srgb, var(--weibei-note-accent) 14%, transparent);
         }
         .weibei-remark-dot {
           position: absolute;
@@ -50,7 +50,7 @@ extension WebReaderRepresentable {
           height: 24px;
           margin-left: 5px;
           border-radius: 50%;
-          background: radial-gradient(circle, rgba(145, 38, 27, 1) 4.5px, transparent 5px);
+          background: radial-gradient(circle, var(--weibei-note-accent) 4.5px, transparent 5px);
           cursor: pointer;
           z-index: 3;
         }

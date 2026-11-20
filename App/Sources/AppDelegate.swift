@@ -20,6 +20,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     static let workspace: WorkspaceStore = {
         WeiBeiPerf.beginLaunch()
         WorkspaceStore.loadPersistedGlassIntensity()
+        WorkspaceStore.loadPersistedAccentPreference()
         if Bundle.main.bundleIdentifier == "com.changfenhuang.weibei" {
             return WorkspaceStore()
         }

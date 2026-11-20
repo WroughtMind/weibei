@@ -18,7 +18,7 @@ struct SidebarView: View {
                               lastBrowsedCourseID: $lastBrowsedCourseID)
         }
         .foregroundStyle(WeiBeiTheme.ink)
-        .tint(WeiBeiTheme.cinnabar)
+        .tint(WeiBeiTheme.accent)
         .onReceive(store.paneState.$focusRequest) { _ in
             librarySearchFocused = store.paneState.focusedPane == .library
         }
@@ -237,7 +237,7 @@ struct CourseSidebarList: View {
                     .frame(width: 11)
                 Image(systemName: "book.closed")
                     .font(.system(size: 13))
-                    .foregroundStyle([WeiBeiTheme.cinnabar, WeiBeiTheme.moss, WeiBeiTheme.link, WeiBeiTheme.secondaryInk][((course.colorIndex % 4) + 4) % 4])
+                    .foregroundStyle([WeiBeiTheme.accent, WeiBeiTheme.moss, WeiBeiTheme.link, WeiBeiTheme.secondaryInk][((course.colorIndex % 4) + 4) % 4])
                     .frame(width: 15)
                 Text(course.title)
                     .font(.system(size: 13, weight: .medium))
@@ -410,7 +410,7 @@ private struct SidebarEmptyRow: View {
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
                     .buttonStyle(.borderless)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.accent)
             }
         }
         .weiBeiText(12)
@@ -462,7 +462,7 @@ private struct SidebarRowStyle: ButtonStyle {
             configuration.label
                 .background {
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(selected ? WeiBeiTheme.cinnabar.opacity(0.15) : (hovered ? WeiBeiTheme.paperInset : .clear))
+                        .fill(selected ? WeiBeiTheme.accent.opacity(0.15) : (hovered ? WeiBeiTheme.paperInset : .clear))
                         .shadow(color: hovered ? Color.black.opacity(0.22) : .clear, radius: 3, y: 2)
                 }
                 .opacity(configuration.isPressed ? 0.8 : 1)
@@ -492,7 +492,7 @@ private struct LibraryRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: isNote ? "square.and.pencil" : "doc.text")
-                .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .foregroundStyle(selected ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk)
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 2) {
                 title.lineLimit(1)

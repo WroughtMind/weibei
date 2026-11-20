@@ -98,6 +98,7 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
             window.weiBeiNotePDF = true;
             document.documentElement.dataset.weibeiTheme = window.weiBeiTheme;
             document.documentElement.dataset.weibeiLanguage = window.weiBeiInterfaceLanguage;
+            \(RichMarkdownEditorView.accentStyleScript(for: options.theme))
             """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let frame = CGRect(x: 0, y: 0, width: width, height: height)
         let web = WKWebView(frame: frame, configuration: configuration)

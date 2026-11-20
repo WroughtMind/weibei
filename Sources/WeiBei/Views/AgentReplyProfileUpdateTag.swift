@@ -31,16 +31,16 @@ struct AgentReplyProfileUpdateTag: View {
                         .accessibilityHidden(true)
                 }
                 .weiBeiText(10.5, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
                 .padding(.horizontal, 9)
                 .frame(height: 25)
                 .background {
                     Capsule()
-                        .fill(WeiBeiTheme.cinnabarSoft.opacity(0.34))
+                        .fill(WeiBeiTheme.accentSoft.opacity(0.34))
                 }
                 .overlay {
                     Capsule()
-                        .strokeBorder(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
+                        .strokeBorder(WeiBeiTheme.accent.opacity(0.22), lineWidth: 1)
                 }
             }
             .buttonStyle(.plain)
@@ -58,7 +58,7 @@ struct AgentReplyProfileUpdateTag: View {
                 .padding(.leading, 9)
                 .overlay(alignment: .leading) {
                     Rectangle()
-                        .fill(WeiBeiTheme.cinnabar.opacity(0.28))
+                        .fill(WeiBeiTheme.accent.opacity(0.28))
                         .frame(width: 1)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))

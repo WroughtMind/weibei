@@ -21,8 +21,8 @@
     },
     {
       "name": "index.html",
-      "bytes": 58670,
-      "sha256": "81e5fa9ee2cc85d262dd2d8757591c6da43c37a4c7d7409f80e14f0a693ae860"
+      "bytes": 59136,
+      "sha256": "99e156c8b02642ba63c39c4324d770e9b9252e900c01f76bb041f041af5f44b2"
     },
     {
       "name": "KaTeX_AMS-Regular.woff2",
@@ -151,8 +151,8 @@
     },
     {
       "name": "office-entry.js.deflate",
-      "bytes": 1446861,
-      "sha256": "0cc1a8120485ffa144d2b6f4836e06efdf2a2718e2f416b9d60280454ed6b113"
+      "bytes": 1446886,
+      "sha256": "d8043d3f6bbd0f6cd81a8e1a0324f2a272dd163e889adecbffd1549ea084553b"
     },
     {
       "name": "office-licenses.txt",

@@ -103,6 +103,32 @@ final class AppearancePreferenceTests: XCTestCase {
         XCTAssertFalse(store.appearanceMode.isDark)
     }
 
+    func testAccentPreferenceSurvivesReloadAndResetRestoresThemeDefault() throws {
+        let key = "weibei.accentPreference"
+        let originalPreference = UserDefaults.standard.object(forKey: key)
+        let originalAccent = WeiBeiThemeRuntime.accentPreference
+        defer {
+            UserDefaults.standard.set(originalPreference, forKey: key)
+            WeiBeiThemeRuntime.accentPreference = originalAccent
+        }
+        WeiBeiThemeRuntime.accentPreference = .themeDefault
+        let store = try makeStore()
+        let custom = WeiBeiAccentPreference(direction: .pine, brightness: 0.42)
+        store.accentPreference = custom
+        store.appearancePreference = .dark
+        XCTAssertEqual(store.accentPreference, custom)
+
+        WeiBeiThemeRuntime.accentPreference = .themeDefault
+        WorkspaceStore.loadPersistedAccentPreference()
+        XCTAssertEqual(store.accentPreference, custom)
+
+        store.accentPreference = .themeDefault
+        WorkspaceStore.loadPersistedAccentPreference()
+        XCTAssertEqual(store.accentPreference, .themeDefault)
+        XCTAssertEqual(WeiBeiNativePalette.accent(for: store.appearanceMode),
+                       WeiBeiNativePalette.defaultAccent(for: store.appearanceMode))
+    }
+
     func testGlassIntensityClampsAndPersists() throws {
         let store = try makeStore()
         store.glassIntensity = 1.7

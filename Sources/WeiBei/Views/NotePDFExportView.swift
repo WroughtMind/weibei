@@ -135,7 +135,7 @@ struct NotePDFExportView: View {
                 .accessibilityIdentifier("note-pdf-cancel")
             Button(store.ui("导出…", "Export…")) { showsFileExporter = true }
                 .buttonStyle(.borderedProminent)
-                .tint(WeiBeiTheme.cinnabar)
+                .tint(WeiBeiTheme.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(rendered?.options != options || renderError != nil)
                 .accessibilityIdentifier("note-pdf-save")

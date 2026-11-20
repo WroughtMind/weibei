@@ -371,6 +371,7 @@ struct StableDocumentWorkspace: UIViewRepresentable {
     let appearanceMode: WeiBeiAppearanceMode
     let onFramesChange: ([WorkspacePaneRole], [CGRect]) -> Void
     let onExpansionRequestHandled: (UUID) -> Void
+    private let customAccent = WeiBeiThemeRuntime.customAccent
     func makeCoordinator() -> StableDocumentSplitCoordinator {
         StableDocumentSplitCoordinator(firstSplit: $firstSplit, secondSplit: $secondSplit, halfSplit: $halfSplit)
     }
@@ -410,6 +411,7 @@ struct StableDocumentWorkspace: UIViewRepresentable {
         coordinator.reduceMotion = reduceMotion
         for divider in view.dividerViews {
             divider.appearanceMode = appearanceMode
+            divider.setAccentColor(customAccent?.platformColor ?? WeiBeiNativePalette.defaultAccent(for: appearanceMode))
             divider.reduceMotion = reduceMotion
             divider.interfaceLanguage = store.interfaceLanguage
         }
@@ -515,8 +517,8 @@ final class CatalystDividerView: UIView {
         super.layoutSubviews()
         refreshCopy()
         accent.frame = CGRect(x: bounds.midX - 0.5, y: 14, width: 1, height: max(0, bounds.height - 28))
-        accent.backgroundColor = WeiBeiNativePalette.cinnabar(for: appearanceMode).cgColor
     }
+    func setAccentColor(_ color: UIColor) { accent.backgroundColor = color.cgColor }
     @objc private func hover(_ recognizer: UIHoverGestureRecognizer) {
         let inside = recognizer.state == .began || recognizer.state == .changed
         if inside != hovering {

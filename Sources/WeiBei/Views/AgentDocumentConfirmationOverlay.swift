@@ -38,7 +38,7 @@ struct AgentDocumentConfirmationOverlay: View {
                 .foregroundStyle(WeiBeiTheme.ink)
             } icon: {
                 Image(systemName: "doc.badge.plus")
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.accent)
             }
 
             Text(request.title)

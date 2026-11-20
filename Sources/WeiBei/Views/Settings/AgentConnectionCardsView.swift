@@ -81,7 +81,7 @@ struct AgentConnectionCardsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text(store.ui("服务地址", "Service URL")).font(.headline)
                 TextField("https://…", text: $endpointDraft).textFieldStyle(.roundedBorder)
-                if let endpointError { Text(endpointError).foregroundStyle(WeiBeiTheme.cinnabar) }
+                if let endpointError { Text(endpointError).foregroundStyle(WeiBeiTheme.failure) }
                 HStack {
                     Button(store.ui("取消", "Cancel")) { showsEndpointEditor = false }
                     Spacer()
@@ -152,7 +152,7 @@ struct AgentConnectionCardsView: View {
                         if let note = statusNote(for: profile) {
                             Text(note)
                                 .font(ConnType.detail)
-                                .foregroundStyle(WeiBeiTheme.cinnabar)
+                                .foregroundStyle(WeiBeiTheme.accent)
                                 .lineLimit(1)
                         }
                     }
@@ -193,7 +193,7 @@ struct AgentConnectionCardsView: View {
             if let error = oauthService.lastError, profile.id == store.activeAgentProfileID {
                 Text(store.ui(error.chinese, error.english))
                     .font(ConnType.detail)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.failure)
             }
         }
         .padding(.horizontal, 18)
@@ -854,7 +854,7 @@ private struct ConnProbeRingView: View {
             if ring == .alive || ring == .dead {
                 settled(ring == .alive
                     ? Color(red: 0.20, green: 0.64, blue: 0.42)
-                    : WeiBeiTheme.cinnabar)
+                    : WeiBeiTheme.accent)
                     .opacity(settledOpacity)
             }
         }

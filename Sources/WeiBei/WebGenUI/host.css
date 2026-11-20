@@ -14,8 +14,8 @@ body {
   --dsw-alias-border-l2: var(--dsw-alias-border-l1);
   --dsw-alias-state-business-primary: var(--weibei-accent, AccentColor);
   --dsw-alias-state-success-primary: var(--weibei-success, CanvasText);
-  --dsw-alias-state-warn-primary: var(--weibei-accent, AccentColor);
-  --dsw-alias-state-error-primary: var(--weibei-accent, AccentColor);
+  --dsw-alias-state-warn-primary: var(--weibei-failure, #91261c);
+  --dsw-alias-state-error-primary: var(--weibei-failure, #91261c);
   --dsw-alias-state-success-secondary: var(--dsw-alias-state-success-primary);
   --dsw-alias-state-warn-secondary: var(--dsw-alias-state-warn-primary);
   --dsw-alias-markdown-code-block: var(--dsw-alias-bg-layer-1);

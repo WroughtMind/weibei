@@ -15,9 +15,9 @@
       --muted: rgba(58, 46, 38, .72);
       --faint: rgba(58, 46, 38, .50);
       --line: rgba(92, 70, 46, .28);
-      --cinnabar: #91261c;
-      --cinnabar-soft: rgba(145, 38, 28, .10);
-      --cinnabar-line: rgba(145, 38, 28, .26);
+      --default-accent: #91261c;
+      --default-accent-soft: rgba(145, 38, 28, .10);
+      --accent-line: color-mix(in srgb, var(--accent) 26%, transparent);
       --ochre: #77582f;
       --moss: #395f48;
       --blue-ink: #31566b;
@@ -35,9 +35,9 @@
       --muted: rgba(155, 145, 120, .88);
       --faint: rgba(111, 102, 85, .86);
       --line: #2d2d2d;
-      --cinnabar: #a6362b;
-      --cinnabar-soft: rgba(92, 38, 33, .62);
-      --cinnabar-line: rgba(166, 54, 43, .45);
+      --default-accent: #a6362b;
+      --default-accent-soft: rgba(92, 38, 33, .62);
+      --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
       --ochre: #8b5e3c;
       --moss: #b88a42;
       --blue-ink: #c8b98a;
@@ -63,9 +63,9 @@
       --muted: rgba(90, 86, 78, .74);
       --faint: rgba(90, 86, 78, .52);
       --line: rgba(110, 104, 92, .22);
-      --cinnabar: #8a2f24;
-      --cinnabar-soft: rgba(138, 47, 36, .09);
-      --cinnabar-line: rgba(138, 47, 36, .24);
+      --default-accent: #8a2f24;
+      --default-accent-soft: rgba(138, 47, 36, .09);
+      --accent-line: color-mix(in srgb, var(--accent) 24%, transparent);
       --ochre: #6e634f;
       --moss: #3f614c;
       --blue-ink: #335266;
@@ -83,9 +83,9 @@
       --muted: rgba(154, 161, 171, .88);
       --faint: rgba(110, 118, 130, .86);
       --line: #3a414c;
-      --cinnabar: #b04034;
-      --cinnabar-soft: rgba(90, 42, 40, .58);
-      --cinnabar-line: rgba(176, 64, 52, .45);
+      --default-accent: #b04034;
+      --default-accent-soft: rgba(90, 42, 40, .58);
+      --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
       --ochre: #8a7a5c;
       --moss: #8fa06a;
       --blue-ink: #b8c4d0;
@@ -104,14 +104,13 @@
     }
 
     :root {
+      --accent: var(--default-accent);
+      --accent-soft: var(--default-accent-soft);
       --floating-surface: color-mix(in srgb, var(--paper-raised) 96%, transparent);
       --floating-line: var(--line);
       --floating-ink: var(--ink);
       --floating-muted: var(--muted);
       --floating-faint: var(--faint);
-      --floating-accent: var(--cinnabar);
-      --floating-accent-soft: var(--cinnabar-soft);
-      --floating-accent-line: var(--cinnabar-line);
       --floating-input: rgba(255, 255, 255, .18);
       --floating-input-focus: var(--paper-raised);
       --floating-menu-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10);
@@ -132,9 +131,9 @@
       --floating-ink: #171d26;
       --floating-muted: rgba(70, 80, 94, .92);
       --floating-faint: rgba(110, 122, 140, .82);
-      --floating-accent: #9c281d;
-      --floating-accent-soft: rgba(156, 40, 29, .11);
-      --floating-accent-line: rgba(156, 40, 29, .28);
+      --default-accent: #9c281d;
+      --default-accent-soft: rgba(156, 40, 29, .11);
+      --accent-line: color-mix(in srgb, var(--accent) 28%, transparent);
       --floating-input: rgba(255, 255, 255, .30);
       --floating-input-focus: rgba(248, 252, 255, .88);
       --floating-menu-shadow: 0 14px 34px rgba(37, 55, 76, .14), 0 2px 8px rgba(37, 55, 76, .08);
@@ -147,9 +146,9 @@
       --floating-ink: #e8eff9;
       --floating-muted: rgba(173, 186, 204, .94);
       --floating-faint: rgba(122, 140, 163, .86);
-      --floating-accent: #eb5746;
-      --floating-accent-soft: rgba(158, 48, 42, .42);
-      --floating-accent-line: rgba(235, 87, 70, .46);
+      --default-accent: #eb5746;
+      --default-accent-soft: rgba(158, 48, 42, .42);
+      --accent-line: color-mix(in srgb, var(--accent) 46%, transparent);
       --floating-input: rgba(255, 255, 255, .08);
       --floating-input-focus: rgba(31, 43, 61, .92);
       --floating-menu-shadow: 0 16px 38px rgba(0, 0, 0, .34), 0 2px 8px rgba(0, 0, 0, .24);
@@ -162,9 +161,9 @@
       --floating-ink: #25231f;
       --floating-muted: rgba(90, 86, 78, .74);
       --floating-faint: rgba(90, 86, 78, .52);
-      --floating-accent: #8a2f24;
-      --floating-accent-soft: rgba(138, 47, 36, .09);
-      --floating-accent-line: rgba(138, 47, 36, .24);
+      --default-accent: #8a2f24;
+      --default-accent-soft: rgba(138, 47, 36, .09);
+      --accent-line: color-mix(in srgb, var(--accent) 24%, transparent);
       --floating-input: rgba(255, 255, 255, .18);
       --floating-input-focus: #fdfcf9;
       --floating-menu-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10);
@@ -185,9 +184,9 @@
       --floating-ink: #e9e6dd;
       --floating-muted: rgba(184, 181, 172, .88);
       --floating-faint: rgba(148, 146, 140, .86);
-      --floating-accent: #b04034;
-      --floating-accent-soft: rgba(90, 42, 40, .58);
-      --floating-accent-line: rgba(176, 64, 52, .45);
+      --default-accent: #b04034;
+      --default-accent-soft: rgba(90, 42, 40, .58);
+      --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
       --floating-input: rgba(255, 255, 255, .18);
       --floating-input-focus: #282826;
       --floating-menu-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10);
@@ -371,7 +370,7 @@
       color: var(--muted);
       background: rgba(247, 236, 217, .54);
       border: 1px solid var(--line);
-      border-left: 2px solid rgba(145, 38, 28, .34);
+      border-left: 2px solid color-mix(in srgb, var(--accent) 34%, transparent);
       font: 12px/1.55 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
     }
 
@@ -402,7 +401,7 @@
     :root[data-weibei-theme="stele"] #frontmatter-panel {
       background: var(--paper-raised);
       border-color: var(--line);
-      border-left-color: var(--cinnabar-line);
+      border-left-color: var(--accent-line);
     }
 
     :root {
@@ -414,7 +413,7 @@
       min-height: calc(100vh - 92px);
       font-size: calc(17px * var(--weibei-text-scale));
       line-height: 1.82;
-      caret-color: var(--cinnabar);
+      caret-color: var(--accent);
       word-break: break-word;
     }
 
@@ -437,7 +436,7 @@
     }
 
     .weibei-selection-ask-mark {
-      text-decoration: underline solid var(--cinnabar) 1.5px;
+      text-decoration: underline solid var(--accent) 1.5px;
       text-underline-offset: 3px;
     }
     .weibei-selection-ask-mark, .weibei-remark-mark {
@@ -445,7 +444,7 @@
       border-radius: 2px;
     }
     .weibei-selection-ask-mark:hover, .weibei-remark-mark:hover, .weibei-remark-active {
-      background: color-mix(in srgb, var(--cinnabar) 14%, transparent);
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
     }
     .weibei-remark-end { position: relative; }
     .weibei-remark-end::after {
@@ -456,7 +455,7 @@
       width: 24px;
       height: 24px;
       transform: translate(1px, -50%);
-      background: radial-gradient(circle, var(--cinnabar) 4.5px, transparent 5px);
+      background: radial-gradient(circle, var(--accent) 4.5px, transparent 5px);
       cursor: pointer;
     }
 
@@ -545,14 +544,14 @@
       text-underline-offset: .18em;
     }
     .ProseMirror a[href^="weibei-source"] {
-      color: var(--cinnabar);
+      color: var(--accent);
       font-size: .78em;
       font-weight: 600;
       line-height: 1;
       white-space: nowrap;
       text-decoration: none;
-      background: var(--cinnabar-soft);
-      border: 1px solid var(--cinnabar-line);
+      background: var(--accent-soft);
+      border: 1px solid var(--accent-line);
       border-radius: 5px;
       padding: 1px 5px;
     }
@@ -632,7 +631,7 @@
     .ProseMirror s,
     .ProseMirror del {
       color: var(--faint);
-      text-decoration-color: rgba(145, 38, 28, .42);
+      text-decoration-color: color-mix(in srgb, var(--accent) 42%, transparent);
       text-decoration-thickness: 1px;
     }
 
@@ -691,7 +690,7 @@
       width: 4px;
       cursor: col-resize;
       z-index: 20;
-      background: color-mix(in srgb, var(--cinnabar) 34%, transparent);
+      background: color-mix(in srgb, var(--accent) 34%, transparent);
       border-radius: 2px;
     }
 
@@ -708,14 +707,14 @@
     .ProseMirror blockquote {
       margin: 1em 0;
       padding: .1em 0 .1em 1em;
-      border-left: 3px solid var(--cinnabar-line);
+      border-left: 3px solid var(--accent-line);
       background: transparent;
       color: var(--muted);
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror blockquote,
     :root[data-weibei-theme="stele"] .ProseMirror blockquote {
-      border-left-color: var(--cinnabar-line);
+      border-left-color: var(--accent-line);
       background: transparent;
       color: var(--muted);
     }
@@ -796,13 +795,13 @@
     .ProseMirror blockquote.weibei-callout-danger,
     .ProseMirror blockquote.weibei-callout-failure,
     .ProseMirror blockquote.weibei-callout-bug {
-      border-left-color: var(--cinnabar);
-      background: var(--cinnabar-soft);
+      border-left-color: var(--default-accent);
+      background: var(--default-accent-soft);
     }
-    .ProseMirror blockquote.weibei-callout-caution::before { color: var(--cinnabar); }
-    .ProseMirror blockquote.weibei-callout-danger::before { color: var(--cinnabar); }
-    .ProseMirror blockquote.weibei-callout-failure::before { color: var(--cinnabar); }
-    .ProseMirror blockquote.weibei-callout-bug::before { color: var(--cinnabar); }
+    .ProseMirror blockquote.weibei-callout-caution::before { color: var(--default-accent); }
+    .ProseMirror blockquote.weibei-callout-danger::before { color: var(--default-accent); }
+    .ProseMirror blockquote.weibei-callout-failure::before { color: var(--default-accent); }
+    .ProseMirror blockquote.weibei-callout-bug::before { color: var(--default-accent); }
     .ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }
 
     .weibei-callout-header {
@@ -881,13 +880,13 @@
       padding: .42em .72em .42em .86em;
       background: rgba(251, 245, 234, .18);
       box-shadow: none;
-      border-left-color: rgba(145, 38, 28, .28);
+      border-left-color: color-mix(in srgb, var(--accent) 28%, transparent);
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout[data-callout-title="阅读线索"],
     :root[data-weibei-theme="stele"] .ProseMirror blockquote.weibei-callout[data-callout-title="阅读线索"] {
-      background: rgba(166, 54, 43, .055);
-      border-left-color: rgba(166, 54, 43, .38);
+      background: color-mix(in srgb, var(--accent) 5.5%, transparent);
+      border-left-color: color-mix(in srgb, var(--accent) 38%, transparent);
     }
 
     .ProseMirror blockquote.weibei-callout[data-callout-title="阅读线索"] .weibei-callout-heading {
@@ -912,7 +911,7 @@
     .ProseMirror blockquote.weibei-callout-danger .weibei-callout-heading,
     .ProseMirror blockquote.weibei-callout-failure .weibei-callout-heading,
     .ProseMirror blockquote.weibei-callout-bug .weibei-callout-heading {
-      color: var(--cinnabar);
+      color: var(--default-accent);
     }
 
     .ProseMirror code {
@@ -953,7 +952,7 @@
       border: 0;
       border-radius: 4px;
       outline: none;
-      caret-color: var(--cinnabar);
+      caret-color: var(--accent);
       font: 10px/1.4 "SF Mono", Menlo, ui-monospace, monospace;
       text-align: right;
     }
@@ -999,7 +998,7 @@
     .ProseMirror pre .token.keyword,
     .ProseMirror pre .token.operator,
     .ProseMirror pre .token.atrule {
-      color: var(--cinnabar);
+      color: var(--accent);
     }
 
     .ProseMirror pre .token.string,
@@ -1040,15 +1039,15 @@
     }
 
     .weibei-highlight {
-      background: rgba(145, 38, 28, .14);
-      box-shadow: 0 .08em 0 rgba(145, 38, 28, .18);
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+      box-shadow: 0 .08em 0 color-mix(in srgb, var(--accent) 18%, transparent);
       padding: 0 .05em;
     }
 
     :root[data-weibei-theme="inkstone"] .weibei-highlight,
     :root[data-weibei-theme="stele"] .weibei-highlight {
-      background: rgba(166, 54, 43, .28);
-      box-shadow: 0 .08em 0 rgba(166, 54, 43, .24);
+      background: color-mix(in srgb, var(--accent) 28%, transparent);
+      box-shadow: 0 .08em 0 color-mix(in srgb, var(--accent) 24%, transparent);
       color: #f0d6b0;
     }
 
@@ -1148,8 +1147,8 @@
     :root[data-weibei-theme="inkstone"] .weibei-tag,
     :root[data-weibei-theme="stele"] .weibei-tag {
       color: #d6b17c;
-      background: rgba(166, 54, 43, .16);
-      border: 1px solid rgba(166, 54, 43, .45);
+      background: color-mix(in srgb, var(--accent) 16%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
       padding: 0 .18em;
     }
 
@@ -1264,8 +1263,8 @@
     }
 
     .weibei-mermaid-error {
-      color: var(--cinnabar);
-      background: var(--cinnabar-soft);
+      color: var(--default-accent);
+      background: var(--default-accent-soft);
       font: 12px/1.55 "SF Mono", Menlo, ui-monospace, monospace;
       white-space: pre-wrap;
     }
@@ -1320,21 +1319,21 @@
     .weibei-slash-group { padding: 4px 8px 3px; color: var(--floating-faint); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; user-select: none; }
     .weibei-slash-command { border-radius: 6px; }
     .weibei-slash-command-button { display: flex; width: 100%; height: 31px; align-items: center; box-sizing: border-box; padding: 0 9px; color: var(--floating-ink); background: transparent; border: 0; border-radius: 6px; font: 500 13px/1 -apple-system, BlinkMacSystemFont, "Songti SC", serif; text-align: left; cursor: default; }
-    .weibei-slash-command.is-active > .weibei-slash-command-button { color: var(--floating-accent); background: var(--floating-accent-soft); }
+    .weibei-slash-command.is-active > .weibei-slash-command-button { color: var(--accent); background: var(--accent-soft); }
     .weibei-slash-empty { padding: 13px 10px; color: var(--floating-faint); font-size: 12px; }
-    .weibei-slash-error { margin: 3px 4px 5px; padding: 6px 7px; color: var(--floating-accent); background: var(--floating-accent-soft); border-radius: 5px; font-size: 11px; }
+    .weibei-slash-error { margin: 3px 4px 5px; padding: 6px 7px; color: var(--default-accent); background: var(--default-accent-soft); border-radius: 5px; font-size: 11px; }
     .weibei-editor-notice { position: fixed; z-index: 130; top: 14px; left: 50%; transform: translateX(-50%); max-width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 8px 12px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 8px; box-shadow: var(--floating-menu-shadow); font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Songti SC", serif; }
     :root[data-weibei-glass] .weibei-editor-notice { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
     .weibei-slash-table-panel { position: fixed; z-index: 121; width: 164px; box-sizing: border-box; padding: 8px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: var(--floating-menu-shadow); }
     :root[data-weibei-glass] .weibei-table-toolbar,
     :root[data-weibei-glass] .weibei-slash-table-panel { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
     .weibei-slash-stepper { display: grid; grid-template-columns: minmax(24px, 1fr) 28px 38px 28px; align-items: center; gap: 4px; width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 4px; color: var(--floating-muted); font-size: 12px; border-radius: 6px; }
-    .weibei-slash-stepper.is-focused { background: var(--floating-accent-soft); }
+    .weibei-slash-stepper.is-focused { background: var(--accent-soft); }
     .weibei-slash-stepper-label { min-width: 0; }
     .weibei-slash-stepper button, .weibei-slash-table-insert { color: var(--floating-muted); background: transparent; border: 1px solid var(--floating-line); border-radius: 4px; }
     .weibei-slash-stepper button { width: 28px; height: 27px; padding: 0; }
     .weibei-slash-stepper-input { width: 38px; height: 27px; box-sizing: border-box; padding: 0 2px; color: var(--floating-ink); background: var(--floating-input); border: 1px solid var(--floating-line); border-radius: 4px; font: inherit; text-align: center; outline: none; appearance: textfield; }
-    .weibei-slash-stepper-input:focus { border-color: var(--floating-accent-line); background: var(--floating-input-focus); }
+    .weibei-slash-stepper-input:focus { border-color: var(--accent-line); background: var(--floating-input-focus); }
     .weibei-slash-stepper-input::-webkit-inner-spin-button, .weibei-slash-stepper-input::-webkit-outer-spin-button { margin: 0; -webkit-appearance: none; }
     .weibei-slash-table-insert { width: 100%; margin-top: 7px; padding: 6px; color: var(--floating-ink); }
 
@@ -1351,7 +1350,7 @@
     }
 
     .editor-status.error {
-      color: var(--cinnabar);
+      color: var(--default-accent);
       font-family: "SF Mono", Menlo, ui-monospace, monospace;
       white-space: pre-wrap;
     }

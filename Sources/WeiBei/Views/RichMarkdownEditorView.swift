@@ -751,6 +751,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     var selectionRemarkMarks: String = "[]"
     var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     private static let localImageScheme = "weibeiimage"
+    private let customAccent = WeiBeiThemeRuntime.customAccent
 
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(
@@ -797,6 +798,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         coordinator.readerSearchReturnRequest = readerSearchReturnRequest
         coordinator.readerLocationID = readerLocationID
         coordinator.readerLocationRequestID = readerLocationRequestID
+        coordinator.customAccent = customAccent
         return coordinator
     }
 
@@ -846,6 +848,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             window.weiBeiTypewriterMode = \(notesTypewriterMode ? "true" : "false");
             window.weiBeiTextScale = \(textScale);
             document.documentElement.style.setProperty('--weibei-text-scale', String(window.weiBeiTextScale));
+            \(Self.accentStyleScript(for: appearanceMode))
             document.documentElement.dataset.weibeiTheme = window.weiBeiTheme === "glassLight" || window.weiBeiTheme === "glassMist"
               ? "xuan"
               : window.weiBeiTheme === "glassDark" || window.weiBeiTheme === "glassSlate" ? "stele" : window.weiBeiTheme;
@@ -971,10 +974,17 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         context.coordinator.readerSearchReturnRequest = readerSearchReturnRequest
         context.coordinator.readerLocationID = readerLocationID
         context.coordinator.readerLocationRequestID = readerLocationRequestID
-        if context.coordinator.appearanceMode != appearanceMode {
+        let modeChanged = context.coordinator.appearanceMode != appearanceMode
+        if modeChanged {
             context.coordinator.appearanceMode = appearanceMode
             if context.coordinator.isReady {
                 context.coordinator.setTheme(appearanceMode)
+            }
+        }
+        if modeChanged || context.coordinator.customAccent != customAccent {
+            context.coordinator.customAccent = customAccent
+            if context.coordinator.isReady {
+                context.coordinator.setAccentStyle()
             }
         }
         if context.coordinator.interfaceLanguage != interfaceLanguage {
@@ -1102,7 +1112,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         "remarkMark"
     ]
 
-    /// CSS + apply helper for cinnabar underlines on asked selections (read-only markdown).
+    /// CSS + apply helper for accent underlines on asked selections (read-only markdown).
     private static let selectionAskMarksBootstrapScript = """
     (() => {
       if (window.WeiBeiSelectionAskMarks) return;
@@ -1124,6 +1134,20 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
       };
     })();
     """
+
+    static func accentStyleScript(for mode: WeiBeiAppearanceMode) -> String {
+        let accent = weiBeiCSSColor(WeiBeiNativePalette.accent(for: mode))
+        let soft = weiBeiCSSColor(WeiBeiNativePalette.accentSoft(for: mode))
+        let selection = weiBeiCSSColor(WeiBeiNativePalette.selectionFill(for: mode))
+        return """
+        (() => {
+          const style = document.documentElement.style;
+          style.setProperty('--accent', '\(accent)');
+          style.setProperty('--accent-soft', '\(soft)');
+          style.setProperty('--selection', '\(selection)');
+        })();
+        """
+    }
 
     private static func applyWebAppearance(to view: WKWebView, appearanceMode: WeiBeiAppearanceMode) {
         view.underPageBackgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
@@ -1193,6 +1217,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         var searchQuery: String
         var searchRequest = 0
         var appearanceMode: WeiBeiAppearanceMode
+        var customAccent: WeiBeiAccentColor?
         var interfaceLanguage: WeiBeiInterfaceLanguage
         var reduceMotion = false
         var notesTypewriterMode = false
@@ -1497,6 +1522,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 applySearch()
                 applyReaderLocation()
                 setTheme(appearanceMode)
+                setAccentStyle()
                 setChatWideTypography(isChatWideTypography)
                 setTextScale(textScale)
                 setTypewriterMode(notesTypewriterMode)
@@ -1749,6 +1775,10 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             } else {
                 evaluate("window.WeiBeiEditor?.setTheme?.(\(Self.json(mode.webThemeName)))")
             }
+        }
+
+        func setAccentStyle() {
+            evaluate(RichMarkdownEditorView.accentStyleScript(for: appearanceMode))
         }
 
         func setInterfaceLanguage(_ language: WeiBeiInterfaceLanguage) {

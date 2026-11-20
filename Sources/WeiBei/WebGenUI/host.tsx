@@ -20,7 +20,12 @@ type ActionResult = { requestID: number; accepted: boolean; reason?: string };
 declare global {
   interface Window {
     webkit?: { messageHandlers?: { weibeiGenUI?: { postMessage(body: unknown): void } } };
-    WeiBeiGenUIHost: { render(payload: Payload): void; actionResult(result: ActionResult): void; snapshot(): BlockInteractionState };
+    WeiBeiGenUIHost: {
+      render(payload: Payload): void;
+      setAccent(accent: string, foreground: string): void;
+      actionResult(result: ActionResult): void;
+      snapshot(): BlockInteractionState;
+    };
   }
 }
 
@@ -107,6 +112,11 @@ window.WeiBeiGenUIHost = {
         ? { type: 'error', renderToken: next.renderToken, message: failure.textContent }
         : { type: 'rendered', renderToken: next.renderToken });
     });
+  },
+  setAccent(accent, foreground) {
+    document.body.style.setProperty('--weibei-accent', accent);
+    document.body.style.setProperty('--weibei-on-accent', foreground);
+    window.dispatchEvent(new Event('weibei-accent-change'));
   },
   actionResult(result) {
     if (result.requestID !== pending) return;

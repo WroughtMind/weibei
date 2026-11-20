@@ -203,6 +203,11 @@ function canGoTo(location: string) {
   const part = location.split('#')[0];
   return viewer.presentationData!.slides.some(slide => slide.slidePath === part || noteParts.get(slide.slidePath) === part);
 }
+const searchHighlightStyle = {
+  scrollIntoView: false,
+  borderColor: 'var(--weibei-note-accent)',
+  backgroundColor: 'color-mix(in srgb, var(--weibei-note-accent) 24%, transparent)',
+};
 async function find(query: string) {
   if (!viewer) return (window as any).find(query, false, false, true, false, true, false);
   if (query !== searchQuery) { searchQuery = query; searchResult = -1; }
@@ -214,7 +219,7 @@ async function find(query: string) {
   if (!count) return false;
   searchResult = (searchResult + 1) % count;
   if (searchResult < results.length) {
-    const match = await viewer.highlightSearchResult(results[searchResult], { scrollIntoView: false });
+    const match = await viewer.highlightSearchResult(results[searchResult], searchHighlightStyle);
     match?.element.scrollIntoView({ block: 'center', behavior: 'instant' });
     return Boolean(match);
   }
@@ -296,7 +301,7 @@ async function activateSearchResult(index: number) {
   }
   viewer.clearSearchHighlights();
   await viewer.goToSlide(hit.slideIndex);
-  const match = await viewer.highlightSearchResult(hit, { scrollIntoView: false });
+  const match = await viewer.highlightSearchResult(hit, searchHighlightStyle);
   match?.element.scrollIntoView({ block: 'center', behavior: 'instant' });
 }
 

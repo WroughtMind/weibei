@@ -273,12 +273,12 @@ private struct WeiBeiFileDropPrompt: View {
     var body: some View {
         Label(store.ui("松开以导入资料", "Drop to import"), systemImage: "tray.and.arrow.down")
             .weiBeiText(14, weight: .semibold)
-            .foregroundStyle(WeiBeiTheme.cinnabar)
+            .foregroundStyle(WeiBeiTheme.accent)
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
             .weibeiEtchedCapsuleBackground(
                 fill: WeiBeiTheme.paperRaised.opacity(0.94),
-                stroke: WeiBeiTheme.cinnabar.opacity(0.32),
+                stroke: WeiBeiTheme.accent.opacity(0.32),
                 contactShadow: true
             )
             .allowsHitTesting(false)
@@ -626,7 +626,7 @@ private struct WorkspaceStatusBanner: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: isAlert ? "exclamationmark.triangle.fill" : "info.circle")
                 .weiBeiText(12, weight: .medium)
-                .foregroundStyle(isAlert ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .foregroundStyle(isAlert ? WeiBeiTheme.failure : WeiBeiTheme.secondaryInk)
                 .padding(.top, 1)
 #if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
                 .background(AccessibilityFrameProbe(identifier: "workspace-status-icon-layout"))
@@ -650,7 +650,7 @@ private struct WorkspaceStatusBanner: View {
                 shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
                 fill: WeiBeiTheme.paperRaised.opacity(0.97),
                 stroke: isAlert
-                    ? WeiBeiTheme.cinnabar.opacity(0.55)
+                    ? WeiBeiTheme.failure.opacity(0.55)
                     : WeiBeiTheme.hairline.opacity(0.6),
                 showsContactShadow: true
             )
@@ -748,7 +748,7 @@ private struct WorkspaceStatusBanner: View {
         Button(action: action) {
             Text(title)
                 .weiBeiText(12, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -847,6 +847,7 @@ struct WeiBeiPlainTextField: UIViewRepresentable {
     var onSubmit: (() -> Void)?
     var onEscape: (() -> Void)?
     var onMove: ((Int) -> Void)?
+    private let accent = WeiBeiNativePalette.accent()
 
     func makeUIView(context: Context) -> WeiBeiSearchTextField {
         let field = WeiBeiSearchTextField()
@@ -863,7 +864,7 @@ struct WeiBeiPlainTextField: UIViewRepresentable {
         let font = Self.font(size: fontSize, brandLanguage: brandLanguage)
         field.font = font
         field.textColor = WeiBeiNativePalette.ink()
-        field.tintColor = WeiBeiNativePalette.cinnabar()
+        field.tintColor = accent
         field.attributedPlaceholder = NSAttributedString(
             string: prompt,
             attributes: [
@@ -953,7 +954,7 @@ final class WeiBeiSearchTextField: UITextField {
         spellCheckingType = .no
         clearButtonMode = .never
         returnKeyType = .search
-        tintColor = WeiBeiNativePalette.cinnabar()
+        tintColor = WeiBeiNativePalette.accent()
     }
 
     required init?(coder: NSCoder) { return nil }
@@ -1137,7 +1138,7 @@ private struct MacSearchField: View {
             .modifier(MacSearchFieldFont(fontSize: fontSize, brandLanguage: brandLanguage))
             .focused($focused)
             .foregroundStyle(WeiBeiTheme.ink)
-            .tint(WeiBeiTheme.cinnabar)
+            .tint(WeiBeiTheme.accent)
             .onChange(of: focused) { _, value in
                 if isFocused.wrappedValue != value { isFocused.wrappedValue = value }
             }
@@ -1328,7 +1329,7 @@ private struct SearchResultRow<Label: View>: View {
     }
 
     private var rowFill: Color {
-        if selected { return WeiBeiTheme.cinnabarSoft }
+        if selected { return WeiBeiTheme.accentSoft }
         if hovering { return WeiBeiTheme.ink.opacity(0.06) }
         return .clear
     }
@@ -1379,7 +1380,7 @@ private struct UnifiedTopBarView: View {
                     HStack(spacing: 2) {
                         Image(systemName: "magnifyingglass")
                             .weiBeiText(11, weight: .medium)
-                            .foregroundStyle(searchFieldFocused ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+                            .foregroundStyle(searchFieldFocused ? WeiBeiTheme.accent : WeiBeiTheme.tertiaryInk)
                             .frame(width: 18)
                         searchControls
                     }
@@ -1690,7 +1691,7 @@ private struct UnifiedTopBarView: View {
         let match = source.substring(with: range)
         let after = source.substring(from: NSMaxRange(range))
         return Text(before).foregroundColor(WeiBeiTheme.ink)
-            + Text(match).foregroundColor(WeiBeiTheme.cinnabar).bold()
+            + Text(match).foregroundColor(WeiBeiTheme.accent).bold()
             + Text(after).foregroundColor(WeiBeiTheme.ink)
     }
 
@@ -2025,7 +2026,7 @@ private struct ThreePaneWorkspaceChrome: View {
                 .opacity(0.11)
                 .overlay {
                     Rectangle()
-                        .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
+                        .stroke(WeiBeiTheme.accent.opacity(0.22), lineWidth: 1)
                 }
                 .position(
                     x: sourceFrame.midX + min(max(drag.translation, -canvasSize.width), canvasSize.width),
@@ -2447,10 +2448,10 @@ private struct PaneDropTargetView: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 12)
-            .fill(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode.isDark ? 0.16 : 0.12))
+            .fill(WeiBeiTheme.accentSoft.opacity(store.appearanceMode.isDark ? 0.16 : 0.12))
             .overlay {
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
+                    .stroke(WeiBeiTheme.accent.opacity(0.30), lineWidth: 1)
                     .padding(8)
             }
             .overlay(alignment: .topLeading) {
@@ -2460,7 +2461,7 @@ private struct PaneDropTargetView: View {
                     Text(role.label(language: store.interfaceLanguage))
                         .weiBeiText(12, weight: .semibold)
                 }
-                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .foregroundStyle(WeiBeiTheme.accent)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .weibeiEtchedCapsuleBackground(
