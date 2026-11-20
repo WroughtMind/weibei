@@ -305,6 +305,8 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
     page.append(viewport, number);
     document.body.append(page);
     await Promise.all(Array.from(story.querySelectorAll('img'), image => image.decode().catch(() => {})));
+    // A layout pass starts loading fonts introduced by the print stylesheet.
+    story.getBoundingClientRect();
     await document.fonts.ready;
     const measure = viewport.clientWidth;
     for (const math of story.querySelectorAll('.weibei-math-block')) {
