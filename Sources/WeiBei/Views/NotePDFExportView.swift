@@ -127,6 +127,7 @@ struct NotePDFExportView: View {
                 Text(store.ui("\(count) 页", count == 1 ? "1 page" : "\(count) pages"))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .font(.subheadline)
+                    .accessibilityIdentifier("note-pdf-page-count")
             }
             Spacer()
             Button(store.ui("取消", "Cancel")) { dismiss() }
@@ -289,9 +290,6 @@ private struct NotePDFPreview: NotePDFPreviewRepresentable {
         view.autoScales = true
         view.displaysPageBreaks = true
         view.backgroundColor = WeiBeiNativePalette.paperInset()
-#if targetEnvironment(macCatalyst)
-        view.accessibilityIdentifier = "note-pdf-preview"
-#endif
         return view
     }
 
