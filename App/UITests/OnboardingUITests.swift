@@ -155,8 +155,8 @@ final class OnboardingUITests: XCTestCase {
                 }
             case "save-pdf":
                 let folder = try XCTUnwrap(request["value"])
-                let confirm = app.buttons.matching(NSPredicate(format: "label IN %@",
-                    ["Save", "Export", "Move", "存储", "儲存", "保存", "导出", "輸出", "移动", "移動"])).firstMatch
+                let panel = app.descendants(matching: .sheet).matching(identifier: "save-panel").firstMatch
+                let confirm = panel.buttons["OKButton"]
                 guard confirm.waitForExistence(timeout: 12), confirm.isHittable else {
                     let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
                     attachment.name = "System PDF save dialog"
@@ -164,7 +164,7 @@ final class OnboardingUITests: XCTestCase {
                     add(attachment)
                     throw DriverFailure(errorDescription: "The system PDF save confirmation is unreachable")
                 }
-                app.typeKey("g", modifierFlags: [.command, .shift])
+                panel.textFields["saveAsNameTextField"].typeKey("g", modifierFlags: [.command, .shift])
                 app.typeText(folder)
                 app.typeKey(.return, modifierFlags: [])
                 confirm.click()

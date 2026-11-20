@@ -170,10 +170,19 @@ struct NotePDFExportView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 11) {
                 Text(store.ui("排版", "Layout")).font(.headline)
-                Picker(store.ui("主题", "Theme"), selection: $options.theme) {
-                    ForEach([WeiBeiAppearanceMode.paper, .xuan, .inkstone, .stele], id: \.self) { theme in
-                        Text(theme.label(language: store.interfaceLanguage)).tag(theme)
+                LabeledContent(store.ui("主题", "Theme")) {
+                    Menu {
+                        Picker(store.ui("主题", "Theme"), selection: $options.theme) {
+                            ForEach([WeiBeiAppearanceMode.paper, .xuan, .inkstone, .stele], id: \.self) { theme in
+                                Text(theme.label(language: store.interfaceLanguage)).tag(theme)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Text(options.theme.label(language: store.interfaceLanguage))
+                            .lineLimit(1)
                     }
+                    .frame(maxWidth: 148, alignment: .trailing)
                 }
                 Picker(store.ui("字体", "Font"), selection: $options.font) {
                     Text(store.ui("沿用笔记", "From Note")).tag(NotePDFOptions.Font.note)
@@ -277,28 +286,55 @@ private struct NotePDFPreview: NotePDFPreviewRepresentable {
     let document: PDFDocument
 
 #if targetEnvironment(macCatalyst)
-    func makeUIView(context: Context) -> PDFView { makePreview() }
-    func updateUIView(_ view: PDFView, context: Context) { updatePreview(view) }
+    func makeUIView(context: Context) -> NotePDFPageView { makePreview() }
+    func updateUIView(_ view: NotePDFPageView, context: Context) { updatePreview(view) }
 #else
-    func makeNSView(context: Context) -> PDFView { makePreview() }
-    func updateNSView(_ view: PDFView, context: Context) { updatePreview(view) }
+    func makeNSView(context: Context) -> NotePDFPageView { makePreview() }
+    func updateNSView(_ view: NotePDFPageView, context: Context) { updatePreview(view) }
 #endif
 
-    private func makePreview() -> PDFView {
-        let view = PDFView()
+    private func makePreview() -> NotePDFPageView {
+        let view = NotePDFPageView()
         view.displayMode = .singlePageContinuous
-        view.autoScales = true
         view.displaysPageBreaks = true
         view.backgroundColor = WeiBeiNativePalette.paperInset()
         return view
     }
 
-    private func updatePreview(_ view: PDFView) {
+    private func updatePreview(_ view: NotePDFPageView) {
         guard view.document !== document else { return }
         let index = view.currentPage.flatMap { view.document?.index(for: $0) } ?? 0
         view.document = document
+        view.fitPage(reset: true)
         if index > 0, let page = document.page(at: min(index, document.pageCount - 1)) {
             view.go(to: page)
         }
+    }
+}
+
+private final class NotePDFPageView: PDFView {
+    private var lastFit: CGFloat?
+
+#if targetEnvironment(macCatalyst)
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        fitPage()
+    }
+#else
+    override func layout() {
+        super.layout()
+        fitPage()
+    }
+#endif
+
+    func fitPage(reset: Bool = false) {
+        guard let page = document?.page(at: 0) else { return }
+        let size = page.bounds(for: .cropBox).size
+        let fit = min((bounds.width - 28) / size.width, (bounds.height - 28) / size.height)
+        guard fit.isFinite, fit > 0, reset || fit != lastFit else { return }
+        lastFit = fit
+        if fit < minScaleFactor { minScaleFactor = fit }
+        if fit > maxScaleFactor { maxScaleFactor = fit }
+        scaleFactor = fit
     }
 }
