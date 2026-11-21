@@ -10,9 +10,9 @@ final class NotePDFRendererTests: XCTestCase {
             "Part\($0)End " + String(repeating: "文字可以从 PDF 中选择。", count: 5)
         }.joined(separator: " ")
         let source = NotePDFSource(
-            title: "导出检查",
+            title: "FileOnlyTitle",
             markdown: """
-                # 导出检查
+                ## 导出检查
 
                 | 记录 | 内容 |
                 | --- | --- |
@@ -34,6 +34,7 @@ final class NotePDFRendererTests: XCTestCase {
         XCTAssertGreaterThan(document.pageCount, 1)
         let pages = (0..<document.pageCount).compactMap(document.page(at:))
         let text = pages.compactMap(\.string).joined(separator: "\n")
+        XCTAssertFalse(text.contains(source.title), "The filename must not become an extra heading")
         for token in (0..<40).map({ "Row\($0)End" }) + (0..<30).map({ "Part\($0)End" }) {
             XCTAssertEqual(text.components(separatedBy: token).count, 2, token)
         }

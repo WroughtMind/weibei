@@ -1323,7 +1323,12 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 
         func bindEditingSession() {
             guard let editingSession, editingSessionBindingToken == nil else { return }
-            editingSessionBindingToken = editingSession.bindSnapshotRequestHandler { [weak self] request in
+            editingSessionBindingToken = editingSession.bindSnapshotRequestHandler(compactTypography: { [weak self] in
+                guard let view = self?.webView, view.window != nil else { return nil }
+                return try? await view.evaluateJavaScript(
+                    "matchMedia(document.getElementById('compact-note-typography').media).matches"
+                ) as? Bool
+            }) { [weak self] request in
                 self?.dispatchV2(request)
             }
         }

@@ -152,7 +152,7 @@ struct NotePDFExportView: View {
             }
             if let renderError {
                 VStack(spacing: 8) {
-                    Text(renderError)
+                    Text(renderError).accessibilityIdentifier("note-pdf-render-error")
                     Button(store.ui("重试", "Try Again")) { retry += 1 }
                 }
                 .padding(16)
@@ -190,7 +190,7 @@ struct NotePDFExportView: View {
                     Text(store.ui("宋体", "Songti")).tag(NotePDFOptions.Font.serif)
                 }
                 Stepper(value: $options.size, in: 7...32, step: 0.5) {
-                    LabeledContent(store.ui("字号", "Size"), value: options.size.formatted() + " pt")
+                    LabeledContent(store.ui("字号", "Size"), value: options.size.formatted(.number.precision(.fractionLength(0...2))) + " pt")
                 }
                 Stepper(value: $options.lineSpacing, in: 1...3, step: 0.1) {
                     LabeledContent(store.ui("行距", "Line Spacing"), value: options.lineSpacing.formatted(.number.precision(.fractionLength(1...2))))

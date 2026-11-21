@@ -918,8 +918,15 @@ enum CatalystBusinessCheck {
             func openPDFExport() async throws {
                 try await activate("com.apple.menu.file")
                 try await activate(fileCommand)
-                try await waitForOnboardingControl("note-pdf-save")
+                // Intel's first accessibility snapshot can outlast the default
+                // control wait. Let pagination reach readiness or report an error.
+                try await until("note PDF preview completed", seconds: 360) {
+                    let control = try await accessibilityElement("note-pdf-save", forInteraction: true)
+                    if let failure = control?["render_error"] { throw Failure("note PDF: " + failure) }
+                    return control?["enabled"] == "true" && control?["hittable"] == "true"
+                }
             }
+            _ = try await onboardingUICommand("screenshot", id: "Note before PDF export")
             try await openPDFExport()
             _ = try await onboardingUICommand("screenshot", id: "Note PDF export")
             let pageCount = try await accessibilityElement("note-pdf-page-count")?["label"]

@@ -2991,6 +2991,9 @@ final class WorkspaceStore: ObservableObject {
         } else {
             markdown = activeNoteItemID == itemID ? noteText : defaultNote(for: item)
         }
+        let compactTypography = activeNoteItemID == itemID
+            ? await noteEditingSession.compactTypographyForExport(documentID: itemID)
+            : nil
         guard let current = allItems.first(where: { $0.id == itemID }) else {
             throw CocoaError(.fileReadNoSuchFile)
         }
@@ -3003,7 +3006,8 @@ final class WorkspaceStore: ObservableObject {
             title: title.isEmpty ? current.title : title, markdown: markdown,
             baseURL: directory ?? appFiles,
             attachments: directory?.appendingPathComponent(".weibei-assets", isDirectory: true)
-                ?? appFiles.appendingPathComponent("Attachments", isDirectory: true)
+                ?? appFiles.appendingPathComponent("Attachments", isDirectory: true),
+            compactTypography: compactTypography
         )
     }
 

@@ -8,15 +8,16 @@ struct NotePDFSource {
     let markdown: String
     let baseURL: URL?
     let attachments: URL?
+    var compactTypography: Bool? = nil
 }
 
 struct NotePDFOptions: Equatable {
     enum Font: String, CaseIterable {
         case note, sans, serif
 
-        var css: String {
+        var cssOverride: String? {
             switch self {
-            case .note: "\"Mplus1p\", sans-serif"
+            case .note: nil
             case .sans: "-apple-system, 'PingFang SC', sans-serif"
             case .serif: "'Songti SC', 'STSong', serif"
             }
@@ -57,7 +58,7 @@ struct NotePDFOptions: Equatable {
         case .glassDark, .glassSlate: self.theme = .stele
         default: self.theme = theme
         }
-        size = (12 * Double(textScale) * 4).rounded() / 4
+        size = 12 * Double(textScale)
     }
 
     var pageSize: CGSize {
@@ -123,7 +124,8 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
 
             let arguments: [String: Any] = [
                 "width": width, "height": height, "margin": Int((Double(options.margin) * 96 / 25.4).rounded()),
-                "title": source.title, "font": options.font.css, "noteFont": options.font == .note,
+                "font": options.font.cssOverride ?? "",
+                "compactTypography": source.compactTypography.map { $0 as Any } ?? NSNull(),
                 "size": options.size,
                 "leading": options.lineSpacing, "space": options.paragraphSpacing,
                 "folio": options.folio.rawValue,
@@ -223,6 +225,16 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
 
     const contentWidth = width - 2 * margin;
     const contentHeight = height - 2 * margin;
+    document.body.dataset.weibeiNotePdf = 'true';
+    const compactStyles = document.getElementById('compact-note-typography');
+    if (typeof compactTypography === 'boolean') compactStyles.media = compactTypography ? 'all' : 'not all';
+    document.documentElement.style.setProperty('--weibei-text-scale', String(size / 12));
+    document.body.style.setProperty('--weibei-writing-leading', String(leading));
+    document.body.style.setProperty('--weibei-writing-paragraph-spacing', space + 'rem');
+    if (font) {
+      document.body.style.setProperty('--weibei-writing-font', font);
+      document.body.style.setProperty('--weibei-writing-heading-font', font);
+    }
     const style = document.createElement('style');
     style.textContent = `
       html, body { margin: 0; overflow: hidden; background: var(--paper); }
@@ -236,21 +248,13 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       #note-page .ProseMirror {
         box-sizing: border-box; width: ${2 * contentWidth}px; height: ${contentHeight}px;
         padding: 0; margin: 0; min-height: 0;
-        font-size: ${size}pt; line-height: ${leading}; column-count: 2; column-gap: 0; column-fill: auto;
+        column-count: 2; column-gap: 0; column-fill: auto;
         overflow-wrap: anywhere; widows: 2; orphans: 2;
       }
       #note-page .ProseMirror > :first-child { margin-top: 0; }
-      #note-page .ProseMirror p { margin: 0 0 ${space}em; }
-      #note-page .ProseMirror :is(th,td) > p { margin: 0; }
-      #note-page .ProseMirror strong { font-weight: 700; }
       #note-page .ProseMirror .weibei-callout-collapse { display: block; opacity: 1; overflow: visible; }
       #note-page .ProseMirror .weibei-math-block { overflow: visible; }
       #note-page .ProseMirror .weibei-math-block :is(.katex, .katex-display) { font-size: 1em; }
-      #note-page .ProseMirror.note-writing { font-weight: 300; }
-      #note-page .ProseMirror.note-writing :is(h1,h2,h3,h4,h5,h6) { font-family: "Mplus1p Heading", sans-serif; }
-      #note-page .ProseMirror h1 { font-size: 1.85em; }
-      #note-page .ProseMirror h2 { font-size: 1.42em; }
-      #note-page .ProseMirror h3 { font-size: 1.22em; }
       #note-page .ProseMirror :is(h1,h2,h3,h4,h5,h6) { break-after: avoid; }
       #note-page .ProseMirror :is(figure, img, tr, .weibei-math-block, .weibei-mermaid-render) { break-inside: avoid; }
       #note-page .ProseMirror :is(img, svg) { max-width: 100%; max-height: ${contentHeight}px; object-fit: contain; }
@@ -273,13 +277,6 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
     viewport.className = 'viewport';
     const story = editor.cloneNode(true);
     story.classList.remove('weibei-empty-document');
-    story.style.fontFamily = font;
-    story.classList.toggle('note-writing', noteFont);
-    if (story.firstElementChild?.tagName !== 'H1') {
-      const heading = document.createElement('h1');
-      heading.textContent = title;
-      story.prepend(heading);
-    }
     if (illustration) {
       const figure = document.createElement('figure');
       figure.className = 'title-art';
@@ -289,7 +286,8 @@ final class NotePDFRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHand
       const credit = document.createElement('figcaption');
       credit.textContent = caption;
       figure.append(image, credit);
-      story.firstElementChild.after(figure);
+      if (story.firstElementChild?.tagName === 'H1') story.firstElementChild.after(figure);
+      else story.prepend(figure);
     }
     if (logo) {
       const mark = new Image(128, 128);

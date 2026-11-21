@@ -118,7 +118,11 @@ final class OnboardingUITests: XCTestCase {
                     if action == "ready" {
                         let hittable = element.isHittable
                         state["hittable"] = String(hittable)
-                        if !hittable, recordedUnreachable.insert(id).inserted {
+                        let waitingForPDF = id == "note-pdf-save" && !snapshot.isEnabled
+                        if waitingForPDF {
+                            state["render_error"] = matchingSnapshots(in: root, identifier: "note-pdf-render-error").first?.label
+                        }
+                        if (!hittable || waitingForPDF), recordedUnreachable.insert(id).inserted {
                             let screenshot = XCTAttachment(screenshot: app.screenshot())
                             screenshot.name = "Waiting for control: " + id
                             screenshot.lifetime = .keepAlways

@@ -35,6 +35,7 @@ final class NoteEditingSession: ObservableObject {
     }
 
     private var onSnapshotRequest: ((NoteEditorSnapshotRequest) -> Void)?
+    private var readCompactTypography: (() async -> Bool?)?
     private var snapshotRequestHandlerToken: UUID?
     private let onSnapshotAccepted: (NoteEditorSnapshotReadyEvent) -> Void
     private var pendingSnapshot: PendingSnapshot?
@@ -81,12 +82,14 @@ final class NoteEditingSession: ObservableObject {
 
     @discardableResult
     func bindSnapshotRequestHandler(
+        compactTypography: (() async -> Bool?)? = nil,
         _ handler: @escaping (NoteEditorSnapshotRequest) -> Void
     ) -> UUID {
         failPendingSnapshot(with: .bridgeUnavailable)
         let token = UUID()
         snapshotRequestHandlerToken = token
         onSnapshotRequest = handler
+        readCompactTypography = compactTypography
         return token
     }
 
@@ -94,8 +97,17 @@ final class NoteEditingSession: ObservableObject {
         guard snapshotRequestHandlerToken == token else { return }
         snapshotRequestHandlerToken = nil
         onSnapshotRequest = nil
+        readCompactTypography = nil
         failPendingSnapshot(with: .bridgeUnavailable)
         cancelScheduledSnapshots()
+    }
+
+    func compactTypographyForExport(documentID: String) async -> Bool? {
+        guard self.documentID == documentID else { return nil }
+        let generation = documentGeneration
+        let binding = snapshotRequestHandlerToken
+        let compact = await readCompactTypography?()
+        return generation == documentGeneration && binding == snapshotRequestHandlerToken ? compact : nil
     }
 
     @discardableResult
