@@ -24,6 +24,7 @@ struct NotePDFExportView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.dismiss) private var dismiss
     let request: NotePDFExportRequest
+    private let noteTheme: WeiBeiAppearanceMode
     @State private var options: NotePDFOptions
     @State private var source: NotePDFSource?
     @State private var rendered: Rendered?
@@ -46,6 +47,7 @@ struct NotePDFExportView: View {
 
     init(request: NotePDFExportRequest, theme: WeiBeiAppearanceMode, textScale: CGFloat) {
         self.request = request
+        noteTheme = theme
         _options = State(initialValue: NotePDFOptions(theme: theme, textScale: textScale))
     }
 
@@ -173,7 +175,7 @@ struct NotePDFExportView: View {
                 LabeledContent(store.ui("主题", "Theme")) {
                     Menu {
                         Picker(store.ui("主题", "Theme"), selection: $options.theme) {
-                            ForEach([WeiBeiAppearanceMode.paper, .xuan, .inkstone, .stele], id: \.self) { theme in
+                            ForEach((noteTheme.isGlass ? [noteTheme] : []) + [.paper, .xuan, .inkstone, .stele], id: \.self) { theme in
                                 Text(theme.label(language: store.interfaceLanguage)).tag(theme)
                             }
                         }

@@ -53,11 +53,7 @@ struct NotePDFOptions: Equatable {
     var illustration = false
 
     init(theme: WeiBeiAppearanceMode, textScale: CGFloat) {
-        switch theme {
-        case .glassLight, .glassMist: self.theme = .xuan
-        case .glassDark, .glassSlate: self.theme = .stele
-        default: self.theme = theme
-        }
+        self.theme = theme
         size = 12 * Double(textScale)
     }
 
