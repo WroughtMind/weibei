@@ -733,7 +733,26 @@ enum CatalystBusinessCheck {
             let materialURL = inputs.appendingPathComponent("候选验证材料.txt")
             try "# 阅读位置\n\n候选独立合成资料：内容增长时保留同一处文字。材料标记 WB452_SOURCE。\n".write(to: materialURL, atomically: true, encoding: .utf8)
             let noteURL = inputs.appendingPathComponent("候选验证笔记.md")
-            try "# 候选验证笔记\n\n这是独立测试资料，不是用户笔记。\n".write(to: noteURL, atomically: true, encoding: .utf8)
+            try """
+            # 清晨散步
+
+            出门时天还阴着。沿河走到第三座桥，雾刚散开，水面也亮了起来。
+
+            ## 沿途所见
+
+            | 地点 | 记录 |
+            | --- | --- |
+            | 桥头 | 灰鹭停在浅滩，风把水纹推向东岸。 |
+            | 旧书摊 | 带回一本散文集，书页间夹着一张车票。 |
+            | 河边石阶 | 下过雨，石阶上留着几片银杏叶。 |
+
+            > 摊主说，下周还会带几本写这条河的旧书。
+
+            ## 下次再走
+
+            - 查查散文集里提到的那座旧桥。
+            - 从桥头沿河走回书摊，试试半小时能不能走完。
+            """.write(to: noteURL, atomically: true, encoding: .utf8)
             var confirmedItems: [StudyItem] = []
             let importSheet = {
                 // Catalyst can host the sheet outside connectedScenes.windows.
@@ -932,6 +951,15 @@ enum CatalystBusinessCheck {
             let pageCount = try await accessibilityElement("note-pdf-page-count")?["label"]
             try check("note_pdf_export_opens_in_app", store.notePDFExportRequest?.itemID == note.id
                       && pageCount == store.ui("1 页", "1 page"))
+            do {
+                let language = store.interfaceLanguage
+                defer { store.setInterfaceLanguage(language) }
+                store.setInterfaceLanguage(.chinese)
+                try await until("Chinese labels appear in PDF export", seconds: 360) {
+                    try await accessibilityElement("note-pdf-page-count")?["label"] == "1 页"
+                }
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Chinese")
+            }
             try await activate("note-pdf-cancel")
             try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }
             try check("note_pdf_export_keeps_note_selection", store.activeNoteItemID == note.id)
