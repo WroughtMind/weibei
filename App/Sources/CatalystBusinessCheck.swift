@@ -732,9 +732,10 @@ enum CatalystBusinessCheck {
             try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
             let materialURL = inputs.appendingPathComponent("候选验证材料.txt")
             try "# 阅读位置\n\n候选独立合成资料：内容增长时保留同一处文字。材料标记 WB452_SOURCE。\n".write(to: materialURL, atomically: true, encoding: .utf8)
-            let noteURL = inputs.appendingPathComponent("候选验证笔记.md")
+            let noteTitle = "清晨散步"
+            let noteURL = inputs.appendingPathComponent(noteTitle + ".md")
             try """
-            # 清晨散步
+            # \(noteTitle)
 
             出门时天还阴着。沿河走到第三座桥，雾刚散开，水面也亮了起来。
 

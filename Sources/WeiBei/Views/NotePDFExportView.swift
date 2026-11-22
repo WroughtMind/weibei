@@ -106,6 +106,7 @@ struct NotePDFExportView: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
+            .tint(.secondary)
             .accessibilityLabel(store.ui("排版设置", "Layout Settings"))
             .accessibilityValue(showsOptions ? store.ui("已显示", "Shown") : store.ui("已收起", "Hidden"))
             .help(showsOptions ? store.ui("收起排版设置", "Hide Layout Settings")
@@ -260,11 +261,9 @@ struct NotePDFExportView: View {
                 Picker(title, selection: selection, content: choices)
                     .pickerStyle(.inline)
             } label: {
-                Text(current)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(current).lineLimit(1)
             }
-            .frame(width: 126)
+            .frame(maxWidth: 126, alignment: .trailing)
             .accessibilityLabel(title)
             .accessibilityValue(current)
         }
