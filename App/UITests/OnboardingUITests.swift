@@ -88,7 +88,13 @@ final class OnboardingUITests: XCTestCase {
                 continue
             }
             handled = token
-            let matches = app.descendants(matching: .any).matching(identifier: id)
+            let controls = app.descendants(matching: .any)
+            let matches: XCUIElementQuery
+            if action == "press", let label = request["value"] {
+                matches = controls.matching(NSPredicate(format: "label == %@", label))
+            } else {
+                matches = controls.matching(identifier: id)
+            }
             let element = matches.firstMatch
             currentRequest = action + " " + id + " " + token
             if ["ready", "press", "fill", "hover", "drag-window-point"].contains(action),

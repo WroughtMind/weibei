@@ -960,6 +960,14 @@ enum CatalystBusinessCheck {
                     try await accessibilityElement("note-pdf-page-count")?["label"] == "1 页"
                 }
                 _ = try await onboardingUICommand("screenshot", id: "Note PDF export Chinese")
+                _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "页面")
+                try await waitForOnboardingControl("note-pdf-logo")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Page Chinese")
+                _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "样式")
+                try await waitForOnboardingControl("note-pdf-size")
+                let updatedPageCount = try await accessibilityElement("note-pdf-page-count")?["label"]
+                try check("note_pdf_export_switches_settings_in_place",
+                          store.notePDFExportRequest?.itemID == note.id && updatedPageCount == "1 页")
             }
             try await activate("note-pdf-cancel")
             try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }

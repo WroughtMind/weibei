@@ -28,11 +28,13 @@ struct NotePDFExportView: View {
     @State private var options: NotePDFOptions
     @State private var source: NotePDFSource?
     @State private var rendered: Rendered?
-    @State private var showsOptions = true
+    @State private var section: Section = .style
     @State private var showsFileExporter = false
     @State private var renderError: String?
     @State private var saveError = false
     @State private var retry = 0
+
+    private enum Section { case style, page }
 
     private struct Rendered {
         let options: NotePDFOptions
@@ -52,18 +54,36 @@ struct NotePDFExportView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            pageLayout
-            Divider()
-            footer
+        GeometryReader { geometry in
+            if geometry.size.width >= 600 {
+                HStack(alignment: .top, spacing: 24) {
+                    previewColumn
+                    VStack(alignment: .leading, spacing: 18) {
+                        header
+                        inspector
+                        actions
+                    }
+                    .frame(width: 248)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    header
+                    previewColumn
+                    inspector.frame(height: geometry.size.height * 0.44)
+                    actions
+                }
+            }
         }
-        .frame(minWidth: 440, idealWidth: 790, minHeight: 440, idealHeight: 650)
-        .background(.background)
-        .presentationBackground(.background)
+        .padding(24)
+        .frame(minWidth: 440, idealWidth: 800, minHeight: 490, idealHeight: 640)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .background {
+            if store.appearanceMode.isGlass {
+                Rectangle().fill(.regularMaterial)
+            }
+        }
         .preferredColorScheme(store.appearanceMode.colorScheme)
-        .modifier(WeiBeiFittedSheetPresentation())
+        .weiBeiFittedSheet()
         .task(id: RenderRequest(options: options, retry: retry)) {
             await updatePreview(for: options)
         }
@@ -85,213 +105,226 @@ struct NotePDFExportView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(store.ui("导出 PDF", "Export PDF"))
-                .font(.title3.weight(.semibold))
-                .fixedSize()
+                .weiBeiText(18, weight: .semibold)
                 .accessibilityAddTraits(.isHeader)
             if let source {
                 Text(source.title)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .weiBeiText(12)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
             }
-            Spacer(minLength: 0)
-            Button {
-                showsOptions.toggle()
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.borderless)
-            .tint(.secondary)
-            .accessibilityLabel(store.ui("排版设置", "Layout Settings"))
-            .accessibilityValue(showsOptions ? store.ui("已显示", "Shown") : store.ui("已收起", "Hidden"))
-            .help(showsOptions ? store.ui("收起排版设置", "Hide Layout Settings")
-                               : store.ui("显示排版设置", "Show Layout Settings"))
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-    }
-
-    private var pageLayout: some View {
-        GeometryReader { geometry in
-            let wide = geometry.size.width >= 600
-            let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
-            layout {
-                preview.frame(maxWidth: .infinity, maxHeight: .infinity)
-                if showsOptions {
-                    Divider()
-                    inspector.frame(width: wide ? 262 : nil, height: wide ? nil : geometry.size.height * 0.44)
-                }
-            }
         }
     }
 
-    private var footer: some View {
-        HStack {
-            if let rendered, rendered.options == options, renderError == nil {
-                let count = rendered.document.pageCount
-                Text(store.ui("\(count) 页", count == 1 ? "1 page" : "\(count) pages"))
-                    .foregroundStyle(.secondary)
-                    .font(.caption.monospacedDigit())
-                    .accessibilityIdentifier("note-pdf-page-count")
-            }
-            Spacer()
+    private var canSave: Bool {
+        rendered?.options == options && renderError == nil
+    }
+
+    private var actions: some View {
+        HStack(spacing: 8) {
             Button(store.ui("取消", "Cancel")) { dismiss() }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
                 .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("note-pdf-cancel")
             Button(store.ui("导出…", "Export…")) { showsFileExporter = true }
-                .buttonStyle(.borderedProminent)
-                .tint(WeiBeiTheme.accent)
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 .keyboardShortcut(.defaultAction)
-                .disabled(rendered?.options != options || renderError != nil)
+                .disabled(!canSave)
                 .accessibilityIdentifier("note-pdf-save")
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
-    private var preview: some View {
-        ZStack {
-            Color(weiBeiNativeColor: NotePDFPreview.canvasColor)
-            if let rendered {
-                NotePDFPreview(document: rendered.document)
-            }
-            if let renderError {
-                VStack(spacing: 8) {
-                    Text(renderError).accessibilityIdentifier("note-pdf-render-error")
-                    Button(store.ui("重试", "Try Again")) { retry += 1 }
+    private var previewColumn: some View {
+        VStack(spacing: 8) {
+            ZStack {
+                WeiBeiTheme.paperInset.opacity(0.48)
+                if let rendered {
+                    NotePDFPreview(document: rendered.document)
                 }
-                .padding(16)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-            } else if rendered?.options != options {
-                ProgressView(store.ui("正在排版…", "Preparing PDF…"))
-                    .controlSize(.small)
+                if let renderError {
+                    VStack(spacing: 10) {
+                        Text(renderError)
+                            .weiBeiText(13)
+                            .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("note-pdf-render-error")
+                        Button(store.ui("重试", "Try Again")) { retry += 1 }
+                            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+                    }
+                    .padding(16)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     .padding(12)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                } else if rendered == nil {
+                    ProgressView(store.ui("正在排版…", "Preparing PDF…"))
+                        .controlSize(.small)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            previewStatus.frame(height: 28)
+        }
+    }
+
+    @ViewBuilder
+    private var previewStatus: some View {
+        if let rendered, renderError == nil {
+            if canSave {
+                let count = rendered.document.pageCount
+                Text(store.ui("\(count) 页", count == 1 ? "1 page" : "\(count) pages"))
+                    .weiBeiText(12)
+                    .monospacedDigit()
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .accessibilityIdentifier("note-pdf-page-count")
+            } else {
+                ProgressView(store.ui("正在更新预览…", "Updating Preview…"))
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .accessibilityLabel(store.ui("正在更新预览", "Updating Preview"))
+            }
+        } else {
+            Color.clear.accessibilityHidden(true)
         }
     }
 
     private var inspector: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(spacing: 4) {
-                    menuRow(store.ui("主题", "Theme"), selection: $options.theme,
-                            current: options.theme.label(language: store.interfaceLanguage)) {
-                        ForEach((noteTheme.isGlass ? [noteTheme] : []) + [.paper, .xuan, .inkstone, .stele], id: \.self) { theme in
-                            Text(theme.label(language: store.interfaceLanguage)).tag(theme)
-                        }
-                    }
-                    menuRow(store.ui("字体", "Font"), selection: $options.font, current: fontName(options.font)) {
-                        ForEach(NotePDFOptions.Font.allCases, id: \.self) { font in
-                            Text(fontName(font)).tag(font)
-                        }
-                    }
-                    numberRow(store.ui("字号", "Size"), value: $options.size, in: 7...32, step: 0.5, unit: " pt")
-                    numberRow(store.ui("行距", "Line Spacing"), value: $options.lineSpacing, in: 1...3, step: 0.1)
-                    numberRow(store.ui("段距", "Paragraph Spacing"), value: $options.paragraphSpacing, in: 0...2, step: 0.1)
-                }
-                Divider()
-                pageOptions
-                DisclosureGroup(store.ui("首页装饰", "First Page")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle(store.ui("魏碑标志", "WeiBei Mark"), isOn: $options.logo)
-                        Toggle(store.ui("兰亭题图", "Orchid Pavilion Artwork"), isOn: $options.illustration)
-                    }
-                    .padding(.top, 8)
+        VStack(alignment: .leading, spacing: 14) {
+            Picker(store.ui("导出设置", "Export Settings"), selection: $section) {
+                Text(store.ui("样式", "Style")).tag(Section.style)
+                Text(store.ui("页面", "Page")).tag(Section.page)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            ScrollView {
+                switch section {
+                case .style: styleOptions
+                case .page: pageOptions
                 }
             }
-            .font(.subheadline)
-            .controlSize(.small)
-            .pickerStyle(.menu)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 16)
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var styleOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(spacing: 5) {
+                let themes = (noteTheme.isGlass ? [noteTheme] : []) + [.paper, .xuan, .inkstone, .stele]
+                menuRow(store.ui("主题", "Theme"), selection: $options.theme, choices: themes) {
+                    $0.label(language: store.interfaceLanguage)
+                }
+                menuRow(store.ui("字体", "Font"), selection: $options.font, choices: NotePDFOptions.Font.allCases) { font in
+                    switch font {
+                    case .note: store.ui("沿用笔记", "From Note")
+                    case .sans: store.ui("苹方", "System Sans")
+                    case .serif: store.ui("宋体", "Songti")
+                    }
+                }
+            }
+            VStack(spacing: 12) {
+                sliderRow(store.ui("字号", "Size"), value: $options.size, in: 7...32, step: 0.5, unit: " pt")
+                    .accessibilityIdentifier("note-pdf-size")
+                sliderRow(store.ui("行距", "Line Spacing"), value: $options.lineSpacing, in: 1...3, step: 0.05)
+                sliderRow(store.ui("段距", "Paragraph Spacing"), value: $options.paragraphSpacing, in: 0...2, step: 0.05)
+            }
         }
     }
 
     private var pageOptions: some View {
-        DisclosureGroup {
-            VStack(alignment: .leading, spacing: 9) {
-                Picker(store.ui("纸张", "Paper"), selection: $options.paper) {
-                    ForEach(NotePDFOptions.Paper.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        VStack(alignment: .leading, spacing: 17) {
+            VStack(spacing: 5) {
+                menuRow(store.ui("纸张", "Paper"), selection: $options.paper, choices: NotePDFOptions.Paper.allCases, label: \.rawValue)
+                menuRow(store.ui("方向", "Orientation"), selection: $options.landscape, choices: [false, true]) {
+                    $0 ? store.ui("横向", "Landscape") : store.ui("纵向", "Portrait")
                 }
-                Picker(store.ui("方向", "Orientation"), selection: $options.landscape) {
-                    Text(store.ui("纵向", "Portrait")).tag(false)
-                    Text(store.ui("横向", "Landscape")).tag(true)
+                menuRow(store.ui("页边距", "Margins"), selection: $options.margin, choices: [14, 20, 27]) { margin in
+                    switch margin {
+                    case 14: store.ui("窄", "Narrow")
+                    case 27: store.ui("宽", "Wide")
+                    default: store.ui("标准", "Standard")
+                    }
                 }
-                Picker(store.ui("页边距", "Margins"), selection: $options.margin) {
-                    Text(store.ui("窄", "Narrow")).tag(14)
-                    Text(store.ui("标准", "Standard")).tag(20)
-                    Text(store.ui("宽", "Wide")).tag(27)
-                }
-                Picker(store.ui("页码", "Page Numbers"), selection: $options.folio) {
-                    Text(store.ui("右下角", "Bottom Right")).tag(NotePDFOptions.Folio.right)
-                    Text(store.ui("居中", "Centered")).tag(NotePDFOptions.Folio.center)
-                    Text(store.ui("隐藏", "Hidden")).tag(NotePDFOptions.Folio.hidden)
+                menuRow(store.ui("页码", "Page Numbers"), selection: $options.folio, choices: NotePDFOptions.Folio.allCases) { folio in
+                    switch folio {
+                    case .right: store.ui("右下角", "Bottom Right")
+                    case .center: store.ui("居中", "Centered")
+                    case .hidden: store.ui("隐藏", "Hidden")
+                    }
                 }
             }
-            .padding(.top, 8)
-        } label: {
-            HStack {
-                Text(store.ui("页面", "Page"))
-                Spacer(minLength: 8)
-                Text(options.paper.rawValue)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(store.ui("首页装饰", "First Page"))
+                    .weiBeiText(12, weight: .semibold)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .accessibilityAddTraits(.isHeader)
+                toggleRow(store.ui("魏碑标志", "WeiBei Mark"), isOn: $options.logo)
+                    .accessibilityIdentifier("note-pdf-logo")
+                toggleRow(store.ui("兰亭题图", "Orchid Pavilion Artwork"), isOn: $options.illustration)
             }
         }
     }
 
-    private func fontName(_ font: NotePDFOptions.Font) -> String {
-        switch font {
-        case .note: store.ui("沿用笔记", "From Note")
-        case .sans: store.ui("苹方", "System Sans")
-        case .serif: store.ui("宋体", "Songti")
-        }
-    }
-
-    private func menuRow<Selection: Hashable, Choices: View>(
-        _ title: String, selection: Binding<Selection>, current: String, @ViewBuilder choices: () -> Choices
+    private func menuRow<Selection: Hashable>(
+        _ title: String, selection: Binding<Selection>, choices: [Selection], label: @escaping (Selection) -> String
     ) -> some View {
-        settingRow(title) {
-            Menu {
-                Picker(title, selection: selection, content: choices)
-                    .pickerStyle(.inline)
-            } label: {
-                Text(current).lineLimit(1)
+        let current = label(selection.wrappedValue)
+        return settingRow(title) {
+            WeiBeiCompactMenu(title: current) {
+                Picker(title, selection: selection) {
+                    ForEach(choices, id: \.self) { choice in
+                        Text(label(choice)).tag(choice)
+                    }
+                }
+                .pickerStyle(.inline)
             }
-            .frame(maxWidth: 126, alignment: .trailing)
             .accessibilityLabel(title)
             .accessibilityValue(current)
         }
     }
 
-    private func numberRow(
+    private func sliderRow(
         _ title: String, value: Binding<Double>, in range: ClosedRange<Double>, step: Double, unit: String = ""
     ) -> some View {
         let display = value.wrappedValue.formatted(.number.precision(.fractionLength(0...2))) + unit
-        return settingRow(title) {
-            Stepper(value: value, in: range, step: step) {
+        return VStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).weiBeiText(13)
+                Spacer(minLength: 8)
                 Text(display)
+                    .weiBeiText(12)
                     .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
-            .accessibilityLabel(title)
-            .accessibilityValue(display)
+            .accessibilityHidden(true)
+            Slider(value: value, in: range, step: step) { Text(title) }
+                .labelsHidden()
+                .controlSize(.small)
+                .tint(WeiBeiTheme.accent)
+                .accessibilityValue(Text(display))
+        }
+    }
+
+    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
+        settingRow(title) {
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .tint(WeiBeiTheme.accent)
         }
     }
 
     private func settingRow<Control: View>(_ title: String, @ViewBuilder control: () -> Control) -> some View {
         HStack(spacing: 10) {
-            Text(title)
+            Text(title).weiBeiText(13)
                 .accessibilityHidden(true)
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             control()
         }
-        .frame(minHeight: 28)
+        .frame(minHeight: WeiBeiMetric.inputHeight)
     }
 
     private func updatePreview(for current: NotePDFOptions) async {
@@ -358,16 +391,8 @@ private struct NotePDFPreview: NotePDFPreviewRepresentable {
         let view = NotePDFPageView()
         view.displayMode = .singlePageContinuous
         view.displaysPageBreaks = true
-        view.backgroundColor = Self.canvasColor
+        view.backgroundColor = .clear
         return view
-    }
-
-    static var canvasColor: WeiBeiPlatformColor {
-#if targetEnvironment(macCatalyst)
-        .systemGray5
-#else
-        .underPageBackgroundColor
-#endif
     }
 
     private func updatePreview(_ view: NotePDFPageView) {
