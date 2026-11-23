@@ -77,7 +77,7 @@ struct NotePDFExportView: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 440, idealWidth: 800, minHeight: 490, idealHeight: 640)
+        .frame(minWidth: 440, idealWidth: 780, minHeight: 490, idealHeight: 640)
         .foregroundStyle(WeiBeiTheme.ink)
         .background {
             if store.appearanceMode.isGlass {
@@ -572,7 +572,7 @@ private final class NotePDFPageView: PDFView {
     func fitPage(reset: Bool = false) {
         guard let page = document?.page(at: 0) else { return }
         let size = page.bounds(for: .cropBox).size
-        let gutter = min(24, min(bounds.width, bounds.height) / 10)
+        let gutter = min(10, min(bounds.width, bounds.height) / 10)
         let fit = min((bounds.width - 2 * gutter) / size.width, (bounds.height - 2 * gutter) / size.height)
         guard fit.isFinite, fit > 0, reset || fit != lastFit else { return }
         lastFit = fit
