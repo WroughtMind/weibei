@@ -44,7 +44,7 @@ struct ExcerptBookView: View {
                             ForEach(sources, id: \.self) { source in
                                 Button(sourceTitle(groups[source]?.first)) {
                                     if let record = groups[source]?.first {
-                                        withAnimation(WeiBeiMotion.panel) { proxy.scrollTo(record.id, anchor: .top) }
+                                        withAnimation(WeiBeiMotion.layout) { proxy.scrollTo(record.id, anchor: .top) }
                                     }
                                 }
                             }

@@ -1,5 +1,8 @@
 #if !targetEnvironment(macCatalyst)
 import AppKit
+#if SWIFT_PACKAGE
+import WeiBeiCore
+#endif
 
 /// The native toolbar stays mounted so its safe area and the reading viewport
 /// never change. Only the controls' opacity changes, including window buttons.
@@ -148,7 +151,11 @@ final class WorkspaceToolbarAutoHide {
             return
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
+            context.duration = WeiBeiMotionTokens.durationControl
+            let curve = WeiBeiMotionTokens.easeIn
+            context.timingFunction = CAMediaTimingFunction(
+                controlPoints: Float(curve.x1), Float(curve.y1), Float(curve.x2), Float(curve.y2)
+            )
             for item in presentations {
                 item.view?.animator().alphaValue = visible ? item.alpha : 0
             }

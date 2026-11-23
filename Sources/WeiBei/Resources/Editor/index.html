@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>魏碑笔记</title>
   <link rel="stylesheet" href="./editor.css">
+  <link rel="stylesheet" href="./motion.css">
+  <script src="./motion.js"></script>
   <style>
     :root,
     :root[data-weibei-theme="paper"] {
@@ -259,7 +261,7 @@
       border: 2px solid color-mix(in srgb, var(--paper) 88%, transparent);
       border-radius: 999px;
       background: transparent;
-      transition: background-color .18s ease-out;
+      transition: background-color var(--duration-control) var(--ease-out);
     }
 
     :root[data-weibei-theme="inkstone"] #editor::-webkit-scrollbar-thumb,
@@ -326,7 +328,7 @@
       border: 2px solid color-mix(in srgb, var(--paper) 88%, transparent);
       border-radius: 999px;
       background: transparent;
-      transition: background-color .18s ease-out;
+      transition: background-color var(--duration-control) var(--ease-out);
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror pre::-webkit-scrollbar-thumb,
@@ -834,21 +836,22 @@
       grid-template-rows: 0fr;
       opacity: 0;
       overflow: hidden;
-      transition: grid-template-rows .25s ease-out, opacity .25s ease-out;
+      --callout-duration: var(--duration-sm-exit);
+      --callout-ease: var(--ease-in);
+      transition: var(--editor-reduced-opacity, grid-template-rows var(--callout-duration) var(--callout-ease), opacity var(--callout-duration) var(--callout-ease));
     }
 
     body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"].weibei-callout-open .weibei-callout-collapse {
       grid-template-rows: 1fr;
       opacity: 1;
+      --callout-duration: var(--duration-md-exit);
+      --callout-ease: var(--ease-out);
     }
 
     .weibei-callout-collapse > .weibei-callout-content {
       min-height: 0;
     }
 
-    :root[data-weibei-reduce-motion="true"] .weibei-callout-collapse {
-      transition: none;
-    }
 
     /* Check runs assertions synchronously — visual transitions must not delay
        computed state. !important beats the fold rule's higher specificity. */
@@ -1277,9 +1280,8 @@
 
     .weibei-image-node { position: relative; display: inline-block; max-width: 100%; vertical-align: bottom; }
     .weibei-image-node.ProseMirror-selectednode { outline: 1px solid color-mix(in srgb, var(--moss) 55%, transparent); outline-offset: 3px; }
-    .weibei-image-controls { position: absolute; left: 6px; bottom: 8px; z-index: 2; display: flex; gap: 3px; padding: 3px; background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(35, 26, 19, .14); opacity: 0; pointer-events: none; transition: opacity .15s ease-out; }
-    .weibei-image-controls[data-state="open"] { opacity: 1; pointer-events: auto; }
-    :root[data-weibei-reduce-motion="true"] .weibei-image-controls { transition: none; }
+    .weibei-image-controls { position: absolute; left: 6px; bottom: 8px; z-index: 2; display: flex; gap: 3px; padding: 3px; background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(35, 26, 19, .14); opacity: 0; pointer-events: none; transition: var(--editor-reduced-opacity, opacity var(--duration-sm-exit) var(--ease-in)); }
+    .weibei-image-controls[data-state="open"] { opacity: 1; pointer-events: auto; transition: var(--editor-reduced-opacity, opacity var(--duration-sm) var(--ease-out)); }
     .weibei-image-controls button, .weibei-image-controls select { height: 24px; color: var(--ink); background: transparent; border: 0; border-radius: 4px; font: 11px/24px -apple-system, BlinkMacSystemFont, sans-serif; }
     .weibei-image-controls button { padding: 0 7px; }
     .weibei-image-controls select { padding: 0 4px; }
@@ -1304,15 +1306,14 @@
       background: rgba(255, 255, 255, .035);
     }
 
-    .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: var(--floating-menu-shadow); backdrop-filter: blur(16px); transition: transform .25s ease-out; }
+    .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: var(--floating-menu-shadow); backdrop-filter: blur(16px); transition: var(--editor-reduced-opacity, transform var(--duration-sm-exit) var(--ease-in)); }
+    .weibei-slash-menu[data-show="true"] { transition: var(--editor-reduced-opacity, transform var(--duration-md-exit) var(--ease-out)); }
     .weibei-slash-menu[data-show="false"] { visibility: hidden; transform: scale(.985) translateY(-2px); pointer-events: none; }
-    :root[data-weibei-reduce-motion="true"] .weibei-slash-menu { transition: none; }
     :root[data-weibei-glass] .weibei-slash-menu { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
     .weibei-line-plus { position: fixed; z-index: 110; width: 24px; height: 24px; transform: translateY(-50%); padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 4px; font: 17px/24px -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer; }
     .weibei-line-plus:hover, .weibei-line-plus:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 72%, transparent); outline: none; }
-    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 7px; box-shadow: var(--floating-toolbar-shadow); opacity: 0; pointer-events: none; transition: opacity .15s ease-out; }
-    .weibei-table-toolbar[data-state="open"] { opacity: 1; pointer-events: auto; }
-    :root[data-weibei-reduce-motion="true"] .weibei-table-toolbar { transition: none; }
+    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 7px; box-shadow: var(--floating-toolbar-shadow); opacity: 0; pointer-events: none; transition: var(--editor-reduced-opacity, opacity var(--duration-sm-exit) var(--ease-in)); }
+    .weibei-table-toolbar[data-state="open"] { opacity: 1; pointer-events: auto; transition: var(--editor-reduced-opacity, opacity var(--duration-sm) var(--ease-out)); }
     .weibei-table-toolbar button { min-width: 34px; height: 22px; padding: 0 6px; color: var(--floating-muted); background: transparent; border: 0; border-radius: 4px; font: 11px/22px -apple-system, BlinkMacSystemFont, sans-serif; }
     .weibei-table-toolbar button:hover, .weibei-table-toolbar button:focus-visible { color: var(--floating-ink); background: color-mix(in srgb, var(--floating-line) 25%, transparent); outline: none; }
     .weibei-slash-section + .weibei-slash-section { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--floating-line); }
@@ -1362,15 +1363,9 @@
       display: none;
     }
 
-    /* Streaming appearance: newly typed characters sharpen out of a soft blur
-       and a quiet caret follows the flow, so evenly paced inserts read as a
-       continuous stream instead of discrete character pops. The 480ms window
-       makes ~14 characters materialize simultaneously at typical Chinese
-       output rates, bridging the 33ms arrival gaps into a continuous flow.
-       Blur+opacity matches mainstream chat LLM styling; decoration spans
-       retire on schedule so the filter never lingers on settled text. */
+    /* Only newly inserted text fades in; decoration spans retire when the fade settles. */
     .wb-stream-in {
-      animation: wb-stream-in 480ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+      animation: wb-stream-in var(--duration-sm) var(--ease-out) both;
     }
 
     @keyframes wb-stream-in {
@@ -1386,14 +1381,14 @@
       border-radius: 1px;
       background: currentColor;
       opacity: 0.7;
-      animation: wb-stream-caret-blink 1.06s ease-in-out infinite;
+      animation: wb-stream-caret-blink 1.06s var(--ease-in-out) infinite;
       pointer-events: none;
     }
 
     .wb-stream-caret.is-finalized {
       animation: none;
       opacity: 0;
-      transition: opacity 160ms ease-out;
+      transition: opacity var(--duration-sm-exit) var(--ease-in);
     }
 
     @keyframes wb-stream-caret-blink {
@@ -1401,9 +1396,22 @@
       50%      { opacity: 0.06; }
     }
 
+    @keyframes wb-stream-fade { from { opacity: 0; } to { opacity: 1; } }
+
+    :root[data-weibei-reduce-motion="true"] {
+      --editor-reduced-opacity: opacity var(--duration-sm-exit) var(--ease-out);
+    }
     @media (prefers-reduced-motion: reduce) {
-      .wb-stream-in { animation: none; }
-      .wb-stream-caret { animation: none; }
+      :root:not([data-weibei-reduce-motion="false"]) {
+        --editor-reduced-opacity: opacity var(--duration-sm-exit) var(--ease-out);
+      }
+    }
+
+    :root[data-weibei-reduce-motion="true"] .wb-stream-in { animation: wb-stream-fade var(--duration-sm-exit) var(--ease-out) both; }
+    :root[data-weibei-reduce-motion="true"] .wb-stream-caret { animation: none; }
+    @media (prefers-reduced-motion: reduce) {
+      :root:not([data-weibei-reduce-motion="false"]) .wb-stream-in { animation: wb-stream-fade var(--duration-sm-exit) var(--ease-out) both; }
+      :root:not([data-weibei-reduce-motion="false"]) .wb-stream-caret { animation: none; }
     }
 
     /* Notes follow the user's Typora Onigiri typography. Reader/chat keep their

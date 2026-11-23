@@ -154,15 +154,42 @@ final class HTMLReadingLocationBridgeTests: XCTestCase {
             XCTAssertTrue(probe.activeIDs.contains(target), name)
         }
         // The saved block can be outside the 24 markers shown in the rail.
+        let interrupted = try XCTUnwrap(observed.first { $0["name"] == "block-17" }?["location"])
         let restored = try XCTUnwrap(observed.first { $0["name"] == "block-37" }?["location"])
-        probe.activeIDs.removeAll()
+        let encodedInterrupted = String(data: try JSONEncoder().encode(interrupted), encoding: .utf8)!
         let encoded = String(data: try JSONEncoder().encode(restored), encoding: .utf8)!
-        XCTAssertEqual(try evaluate("window.WeiBeiContentRail.scrollTo(\(encoded))") as? Bool, true)
+        let motion = try XCTUnwrap(try evaluate("""
+            (() => {
+              const frames = new Map();
+              let nextFrame = 0;
+              window.requestAnimationFrame = callback => { frames.set(++nextFrame, callback); return nextFrame; };
+              window.cancelAnimationFrame = id => frames.delete(id);
+              const runFrame = offset => {
+                const callbacks = [...frames.values()];
+                frames.clear();
+                for (const callback of callbacks) callback(performance.now() + offset);
+              };
+              document.documentElement.dataset.weibeiReduceMotion = 'false';
+              const start = scrollY;
+              if (!window.WeiBeiContentRail.scrollTo(\(encodedInterrupted))) throw Error('First jump failed');
+              const initial = scrollY;
+              runFrame(100);
+              const intermediate = scrollY;
+              if (!window.WeiBeiContentRail.scrollTo(\(encoded))) throw Error('Replacement jump failed');
+              const replacementStart = scrollY;
+              runFrame(1000);
+              return { start, initial, intermediate, replacementStart, top: document.getElementById('block-37').getBoundingClientRect().top };
+            })()
+            """) as? [String: Double])
+        XCTAssertEqual(motion["start"], motion["initial"])
+        XCTAssertNotEqual(motion["start"], motion["intermediate"])
+        XCTAssertEqual(motion["intermediate"], motion["replacementStart"])
+        XCTAssertEqual(try XCTUnwrap(motion["top"]), 44, accuracy: 1)
         let restoreDeadline = Date().addingTimeInterval(3)
-        while !probe.activeIDs.contains(restored) && Date() < restoreDeadline {
+        while probe.jumpIDs.isEmpty && Date() < restoreDeadline {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
-        XCTAssertTrue(probe.activeIDs.contains(restored))
+        XCTAssertEqual(probe.jumpIDs, [restored])
         XCTAssertEqual(try evaluate("window.WeiBeiContentRail.scrollTo(\"html-block-missing\")") as? Bool, false)
         XCTAssertFalse(window.isVisible)
     }
@@ -172,6 +199,7 @@ private final class HTMLReadingLocationProbe: NSObject, WKNavigationDelegate, WK
     var didLoad = false
     var onLoad: () -> Void = {}
     var activeIDs: [String] = []
+    var jumpIDs: [String] = []
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         didLoad = true
         onLoad()
@@ -180,5 +208,6 @@ private final class HTMLReadingLocationProbe: NSObject, WKNavigationDelegate, WK
         guard message.name == "contentRailActive", let body = message.body as? [String: Any],
               let id = body["id"] as? String else { return }
         activeIDs.append(id)
+        if body["reason"] as? String == "jump" { jumpIDs.append(id) }
     }
 }

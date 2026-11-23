@@ -79,6 +79,10 @@ declare global {
     weiBeiEditorCheckMode?: boolean;
     initialMarkdown?: string;
     WeiBeiEditorBootFailed?: (error: unknown) => void;
+    WeiBeiMotion: {
+      scrollIntoView(element: Element, options?: ScrollIntoViewOptions & { onFinish?: () => void }): void;
+      scrollToTop(scroller: Element | null, options?: { onFinish?: () => void }): void;
+    };
     WeiBeiEditor?: Record<string, unknown>;
     WeiBeiCompactPreviewHeight?: number;
     WeiBeiCompactPreviewMeasuredAt?: number;
@@ -3574,8 +3578,7 @@ const reportActiveHeading = () => {
 const scrollToHeadingInternal = (rawIndex: any) => {
   const index = Number(rawIndex);
   if (index === -1 && !isEditable) {
-    window.scrollTo({ top: 0, behavior: isEditorReduceMotion() ? 'auto' : 'smooth' });
-    window.setTimeout(reportActiveHeading, isEditorReduceMotion() ? 0 : 180);
+    window.WeiBeiMotion.scrollToTop(document.getElementById('editor'), { onFinish: reportActiveHeading });
     return true;
   }
   const headings = headingElements();
@@ -3584,15 +3587,7 @@ const scrollToHeadingInternal = (rawIndex: any) => {
     : headings;
   const block = Number.isFinite(index) ? readingBlocks[Math.max(0, Math.floor(index))] : null;
   if (!block) return false;
-  const reduceMotion = isEditorReduceMotion();
-  block.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
-  if (reduceMotion) {
-    // Instant jump settled this frame — report the position immediately;
-    // only smooth scrolling needs the delayed report.
-    reportActiveHeading();
-  } else {
-    window.setTimeout(reportActiveHeading, 180);
-  }
+  window.WeiBeiMotion.scrollIntoView(block, { block: 'start', onFinish: reportActiveHeading });
   return true;
 };
 

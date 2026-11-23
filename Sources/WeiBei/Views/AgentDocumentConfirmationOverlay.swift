@@ -3,6 +3,7 @@ import SwiftUI
 /// Agent 创建文稿的写盘确认浮层。
 /// 视觉沿用笔记提案卡：环境面平涂遮罩，操作件（确认）为亮药丸浮起的卡片。
 struct AgentDocumentConfirmationOverlay: View {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @EnvironmentObject private var store: WorkspaceStore
     @ObservedObject private var center = AgentDocumentConfirmationCenter.shared
 
@@ -17,14 +18,15 @@ struct AgentDocumentConfirmationOverlay: View {
                     confirmationCard(request)
                         .padding(.horizontal, 28)
                         .transition(
-                            .opacity.combined(with: .scale(scale: 0.97, anchor: .center))
+                            reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.97, anchor: .center))
                         )
                 }
                 .zIndex(130)
                 .transition(.opacity)
             }
         }
-        .animation(WeiBeiMotion.panel, value: center.pendingRequest?.id)
+        .animation(WeiBeiMotion.visibility(center.pendingRequest != nil, size: .medium), value: center.pendingRequest?.id)
+        .weiBeiFadeWhenReducingMotion(center.pendingRequest?.id)
     }
 
     private func confirmationCard(_ request: AgentDocumentConfirmationCenter.PendingRequest) -> some View {

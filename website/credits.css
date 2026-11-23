@@ -36,7 +36,7 @@
   border: 0; border-radius: 8px; cursor: pointer;
   background: transparent; color: var(--ink-soft);
   font: 18px/1 ui-sans-serif, system-ui, sans-serif;
-  transition: color .15s ease, background .15s ease;
+  transition: color var(--duration-control) var(--ease-out), background var(--duration-control) var(--ease-out);
 }
 .credits-close:hover { color: var(--ink); background: rgba(54, 47, 40, .08); }
 
@@ -64,10 +64,13 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10.5px; letter-spacing: .04em; white-space: nowrap;
   opacity: 0; transform: translateY(3px);
-  transition: opacity .15s ease, transform .15s ease;
+  transition: opacity var(--duration-sm-exit) var(--ease-in), transform var(--duration-sm-exit) var(--ease-in);
   pointer-events: none;
 }
-.credit-row:hover::after { opacity: 1; transform: translateY(0); }
+.credit-row:hover::after {
+  opacity: 1; transform: translateY(0);
+  transition: opacity var(--duration-sm) var(--ease-out), transform var(--duration-sm) var(--ease-out);
+}
 .credit-row:first-of-type::after { top: auto; bottom: calc(100% + 4px); }
 
 .credits-total { margin: 10px 6px 0; color: var(--ink-soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; letter-spacing: .05em; }

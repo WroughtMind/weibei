@@ -401,7 +401,10 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
             let block = message.blocks[path.item - 1]
             let stale = block.width != bodyWidth
             cell.show(body: store.view(for: block, width: bodyWidth))
-            cell.body?.revealAppendedText(animated: !reduceMotion && message.state == .streaming && followsLatest)
+            cell.body?.revealAppendedText(
+                animated: message.state == .streaming && followsLatest,
+                reduceMotion: reduceMotion
+            )
             selection.paint(cell.body!)
             // A paragraph scrolled in before the width converged was sized from its
             // previous width; the frame in the layout catches up on the next turn.
@@ -612,14 +615,15 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
     }
 
     private func animateInsertion(in section: Int) {
-        guard !reduceMotion else { return }
         for path in collection.indexPathsForVisibleItems where path.section == section {
             guard let cell = collection.cellForItem(at: path) else { continue }
             let isQuestion = messages[section].original?.role == .user
             let travel = isQuestion ? max(8, collection.bounds.maxY - cell.frame.maxY - 16) : 8
             cell.contentView.alpha = 0
-            cell.contentView.transform = CGAffineTransform(translationX: 0, y: travel)
-            UIView.animate(withDuration: isQuestion ? 0.42 : 0.24, delay: 0,
+            cell.contentView.transform = reduceMotion ? .identity : CGAffineTransform(translationX: 0, y: travel)
+            let duration = reduceMotion ? WeiBeiMotionTokens.durationSmExit
+                : (isQuestion ? WeiBeiMotionTokens.durationLg : WeiBeiMotionTokens.durationMdExit)
+            UIView.animate(withDuration: duration, delay: 0,
                            options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
                 cell.contentView.alpha = 1
                 cell.contentView.transform = .identity
@@ -1264,7 +1268,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     "淡入遮罩重播了旧文字，或未覆盖新增文字")
                 try expect(mask.sublayers?.last?.animation(forKey: "stream-reveal") != nil, "新增文字没有淡入动画")
                 growing.revealAppendedText(animated: false)
-                try expect(growing.label.layer.mask == nil, "减少动态效果后仍保留文字动画")
+                try expect(growing.label.layer.mask == nil, "停止淡入后仍保留文字遮罩")
 
                 let unfinished = LabMessage(author: "显示格式检查", markdown: "**尚未闭合")
                 unfinished.state = .streaming

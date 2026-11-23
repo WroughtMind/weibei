@@ -11,8 +11,8 @@
     },
     {
       "name": "editor-entry.js",
-      "bytes": 618521,
-      "sha256": "1883646f3769ab86c09dc4856f16fdb8e1ec86c1bfcb1516030631e4f06ef509"
+      "bytes": 618556,
+      "sha256": "d27c1cc0d16d6da688dd26152b2fe06ca3545c5627da397ab557f57dc9d9d3e9"
     },
     {
       "name": "editor.css",
@@ -21,8 +21,8 @@
     },
     {
       "name": "index.html",
-      "bytes": 59136,
-      "sha256": "99e156c8b02642ba63c39c4324d770e9b9252e900c01f76bb041f041af5f44b2"
+      "bytes": 60021,
+      "sha256": "d9d5f784d80c45b681dea6de37fcf5a477aa74a5bda04f3a29db6fa8aec99833"
     },
     {
       "name": "KaTeX_AMS-Regular.woff2",
@@ -135,6 +135,16 @@
       "sha256": "38afa8fe9f85dfd95aeb1860a660f9143a9dba78e358f879fe6d5f8a119ecabc"
     },
     {
+      "name": "motion.css",
+      "bytes": 695,
+      "sha256": "4b248d5d166023b797cfa2552b41c83638884acadda4c3248be8b16cdb4d4b0b"
+    },
+    {
+      "name": "motion.js",
+      "bytes": 4858,
+      "sha256": "cfe727e0de1014df751019a696462b11c7507da6b8103b2ca78047881ea2ab2c"
+    },
+    {
       "name": "Mplus1p-Bold.woff2",
       "bytes": 745188,
       "sha256": "00d2efa910d15d817c6decb3306998de29d64230b2ee20417db61e060907a32c"
@@ -171,8 +181,8 @@
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 539404,
-      "sha256": "7cb775e8759f1c70cbdcc7d41411ee33a80d01811d6e9d56dca22ee404506abb"
+      "bytes": 539437,
+      "sha256": "d7afef6b64cd0c6153f7b4d3559b00abc928a2f754214bf6a2ab3c4d2f93eee3"
     }
   ]
 }

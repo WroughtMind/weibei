@@ -367,6 +367,7 @@ struct StableDocumentWorkspace: UIViewRepresentable {
     let normalizedOrder: [WorkspacePaneRole]
     let visibleOrder: [WorkspacePaneRole]
     let draggedRole: WorkspacePaneRole?
+    let reorderReleaseVelocity: CGFloat?
     let expansionRequest: PaneExpansionRequest?
     let appearanceMode: WeiBeiAppearanceMode
     let onFramesChange: ([WorkspacePaneRole], [CGRect]) -> Void
@@ -412,12 +413,12 @@ struct StableDocumentWorkspace: UIViewRepresentable {
         for divider in view.dividerViews {
             divider.appearanceMode = appearanceMode
             divider.setAccentColor(customAccent?.platformColor ?? WeiBeiNativePalette.defaultAccent(for: appearanceMode))
-            divider.reduceMotion = reduceMotion
             divider.interfaceLanguage = store.interfaceLanguage
         }
         coordinator.update(state: StableDocumentLayoutState(normalizedOrder: WorkspacePaneRole.normalized(normalizedOrder),
             visibleOrder: visibleOrder, firstSplit: firstSplit, secondSplit: secondSplit, halfSplit: halfSplit),
-            draggedRole: draggedRole, expansionRequest: expansionRequest, in: view)
+            draggedRole: draggedRole, reorderReleaseVelocity: reorderReleaseVelocity,
+            expansionRequest: expansionRequest, in: view)
     }
     static func dismantleUIView(_ view: StableDocumentSplitView, coordinator: StableDocumentSplitCoordinator) { coordinator.stop(in: view) }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: StableDocumentSplitView, context: Context) -> CGSize? {
@@ -460,11 +461,10 @@ final class StableDocumentSplitView: UIView, UIGestureRecognizerDelegate {
 final class CatalystDividerView: UIView {
     var onDragStart: (() -> Void)?
     var onDragChange: ((CGFloat) -> Void)?
-    var onDragEnd: (() -> Void)?
+    var onDragEnd: ((CGFloat) -> Void)?
     var onEqualize: (() -> Void)?
     var skipSnap = false
     var appearanceMode: WeiBeiAppearanceMode = .paper { didSet { setNeedsDisplay() } }
-    var reduceMotion = false
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese {
         didSet {
             guard interfaceLanguage != oldValue else { return }
@@ -500,13 +500,15 @@ final class CatalystDividerView: UIView {
         case .changed: onDragChange?(gesture.translation(in: superview).x)
         case .ended, .cancelled:
             if gesture.state == .ended { onDragChange?(gesture.translation(in: superview).x) }
-            pressed = false; updateAccent(); onDragEnd?(); skipSnap = false
+            pressed = false; updateAccent()
+            onDragEnd?(gesture.state == .ended ? gesture.velocity(in: superview).x : 0)
+            skipSnap = false
         default: break
         }
     }
     @objc private func equalize() -> Bool { onEqualize?(); return true }
-    override func accessibilityIncrement() { onDragStart?(); onDragChange?(40); onDragEnd?() }
-    override func accessibilityDecrement() { onDragStart?(); onDragChange?(-40); onDragEnd?() }
+    override func accessibilityIncrement() { onDragStart?(); onDragChange?(40); onDragEnd?(0) }
+    override func accessibilityDecrement() { onDragStart?(); onDragChange?(-40); onDragEnd?(0) }
     override func draw(_ rect: CGRect) {
         WeiBeiNativePalette.dividerFill(for: appearanceMode).setFill()
         UIRectFill(bounds)
@@ -534,9 +536,13 @@ final class CatalystDividerView: UIView {
         let animation = CABasicAnimation(keyPath: "opacity")
         animation.fromValue = accent.presentation()?.opacity ?? accent.opacity
         animation.toValue = opacity
-        animation.duration = opacity == 0 ? 0.14 : 0.08
+        animation.duration = WeiBeiMotionTokens.durationControl
+        animation.timingFunction = WeiBeiMotionTokens.easeOut.mediaTiming
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         accent.opacity = opacity
-        if !reduceMotion { accent.add(animation, forKey: "weiBeiAccentOpacity") }
+        CATransaction.commit()
+        accent.add(animation, forKey: "weiBeiAccentOpacity")
     }
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -563,11 +569,14 @@ struct WindowFullScreenReader: UIViewRepresentable {
 
 
 struct CourseDrawerHost: UIViewRepresentable {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @ObservedObject var drawer: LibraryDrawerState
     let store: WorkspaceStore
     var onDismiss: () -> Void
     func makeUIView(context: Context) -> Drawer { Drawer() }
-    func updateUIView(_ view: Drawer, context: Context) { view.apply(open: drawer.isOpen, store: store, dismiss: onDismiss) }
+    func updateUIView(_ view: Drawer, context: Context) {
+        view.apply(open: drawer.isOpen, store: store, reduceMotion: reduceMotion, dismiss: onDismiss)
+    }
     final class Drawer: UIView {
         private let scrim = UIView()
         private let panel = UIView()
@@ -575,10 +584,12 @@ struct CourseDrawerHost: UIViewRepresentable {
         var host: CatalystHostingView?
         var model: CourseSidebarModel?
         var open = false
+        private var transitionGeneration = 0
         var onDismiss: (() -> Void)?
         private let panelWidth = WeiBeiMetric.courseDrawerWidth
         override init(frame: CGRect) {
             super.init(frame: frame)
+            panel.transform = CGAffineTransform(translationX: -panelWidth, y: 0)
             scrim.alpha = 0
             scrim.isUserInteractionEnabled = true
             scrim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(closeFromScrim)))
@@ -591,10 +602,11 @@ struct CourseDrawerHost: UIViewRepresentable {
         override func layoutSubviews() {
             super.layoutSubviews()
             scrim.frame = bounds
-            panel.frame = CGRect(x: open ? 0 : -panelWidth, y: 0, width: panelWidth, height: bounds.height)
+            panel.bounds = CGRect(x: 0, y: 0, width: panelWidth, height: bounds.height)
+            panel.center = CGPoint(x: panelWidth / 2, y: bounds.midY)
             material.frame = panel.bounds; host?.frame = panel.bounds
         }
-        func apply(open: Bool, store: WorkspaceStore, dismiss: @escaping () -> Void) {
+        func apply(open: Bool, store: WorkspaceStore, reduceMotion: Bool, dismiss: @escaping () -> Void) {
             onDismiss = dismiss
             if open, host == nil {
                 let model = CourseSidebarModel(store: store)
@@ -619,11 +631,20 @@ struct CourseDrawerHost: UIViewRepresentable {
             }
             guard self.open != open else { return }
             self.open = open
-            UIView.animate(withDuration: 0.12, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
-                self.panel.frame.origin.x = open ? 0 : -self.panelWidth
+            transitionGeneration &+= 1
+            let generation = transitionGeneration
+            let target = CGAffineTransform(translationX: open ? 0 : -panelWidth, y: 0)
+            if reduceMotion {
+                panel.layer.removeAnimation(forKey: "transform")
+                panel.transform = target
+            }
+            let duration = reduceMotion ? WeiBeiMotionTokens.durationSmExit : WeiBeiMotion.visibilityDuration(open, size: .medium)
+            let curve: UIView.AnimationOptions = open || reduceMotion ? .curveEaseOut : .curveEaseIn
+            UIView.animate(withDuration: duration, delay: 0, options: [curve, .beginFromCurrentState, .allowUserInteraction]) {
+                if !reduceMotion { self.panel.transform = target }
                 self.scrim.alpha = open ? 1 : 0
             } completion: { [weak self] _ in
-                guard let self, !self.open else { return }
+                guard let self, self.transitionGeneration == generation, !self.open else { return }
                 self.model?.stop(); self.model = nil
                 self.host?.removeFromSuperview(); self.host = nil
             }

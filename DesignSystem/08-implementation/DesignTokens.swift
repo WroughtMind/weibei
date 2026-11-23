@@ -49,15 +49,6 @@ enum WeiBeiDesignToken {
         static let railDefaultExpanded: CGFloat = 420
     }
 
-    enum Motion {
-        static let press = Animation.spring(response: 0.18, dampingFraction: 0.82)
-        static let micro = Animation.easeOut(duration: 0.14)
-        static let hover = Animation.spring(response: 0.20, dampingFraction: 0.86)
-        static let reveal = Animation.spring(response: 0.24, dampingFraction: 0.88)
-        static let panel = Animation.spring(response: 0.30, dampingFraction: 0.88)
-        static let layout = Animation.spring(response: 0.38, dampingFraction: 0.90)
-        static let appearance = Animation.easeInOut(duration: 0.42)
-    }
 }
 
 private extension NSColor {

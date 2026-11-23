@@ -146,6 +146,7 @@ struct WeiBeiPaneHeader<Actions: View>: View {
 }
 
 struct PaneHeaderReorderModifier: ViewModifier {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @EnvironmentObject private var store: WorkspaceStore
     @State private var dragActive = false
     @State private var hovering = false
@@ -169,9 +170,10 @@ struct PaneHeaderReorderModifier: ViewModifier {
                         .transition(WeiBeiTransition.floating)
                     }
                 }
+                .weiBeiFadeWhenReducingMotion(dragActive)
                 .contentShape(Rectangle())
-                .offset(y: hovering || dragActive ? -1 : 0)
-                .scaleEffect(dragActive ? 1.01 : hovering ? 1.004 : 1, anchor: .top)
+                .offset(y: !reduceMotion && (hovering || dragActive) ? -1 : 0)
+                .scaleEffect(reduceMotion ? 1 : (dragActive ? 1.01 : hovering ? 1.004 : 1), anchor: .top)
                 .textSelection(.disabled)
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 12, coordinateSpace: .global)
@@ -185,8 +187,10 @@ struct PaneHeaderReorderModifier: ViewModifier {
                             store.updateThreePaneReorder(role, horizontalDelta: value.translation.width)
                         }
                         .onEnded { value in
-                            store.finishThreePaneReorder(role, horizontalDelta: value.translation.width)
-                            dragActive = false
+                            store.finishThreePaneReorder(role, horizontalDelta: value.translation.width, velocity: value.velocity.width)
+                            if dragActive {
+                                withAnimation(WeiBeiMotion.reorderSettle) { dragActive = false }
+                            }
                         }
                 )
                 .onHover { value in
@@ -197,7 +201,7 @@ struct PaneHeaderReorderModifier: ViewModifier {
                 }
                 .onChange(of: store.normalizedThreePaneOrder) { _, _ in
                     if dragActive {
-                        withAnimation(WeiBeiMotion.micro) {
+                        withAnimation(WeiBeiMotion.reorderSettle) {
                             dragActive = false
                         }
                     }
@@ -355,7 +359,7 @@ struct NotePaneView: View {
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(WeiBeiTheme.paper)
-        .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
+        .animation(WeiBeiMotion.visibility(store.notebookCreationDraft != nil, size: .medium), value: store.notebookCreationDraft?.id)
         // Note chrome follows opacity. The editor web view is hidden separately.
         .opacity(store.notePickerPresented ? 0 : 1)
         .allowsHitTesting(!store.notePickerPresented)
@@ -488,12 +492,12 @@ struct NotePaneView: View {
                 set: { store.notebookCreationDraft?.title = $0 }
             ),
             confirm: {
-                withAnimation(WeiBeiMotion.panel) {
+                withAnimation(WeiBeiMotion.visibility(false, size: .medium)) {
                     store.confirmNotebookNoteCreation()
                 }
             },
             cancel: {
-                withAnimation(WeiBeiMotion.panel) {
+                withAnimation(WeiBeiMotion.visibility(false, size: .medium)) {
                     store.cancelNotebookNoteCreation()
                 }
             }
@@ -505,12 +509,12 @@ struct NotePaneView: View {
         if store.hasSelectedMaterial {
             Menu {
                 Button(store.ui("空白课程笔记", "Blank Course Note")) {
-                    withAnimation(WeiBeiMotion.panel) {
+                    withAnimation(WeiBeiMotion.visibility(true, size: .medium)) {
                         store.promptCreateBlankNotebookNote()
                     }
                 }
                 Button(store.ui("当前文稿笔记", "Note for this document")) {
-                    withAnimation(WeiBeiMotion.panel) {
+                    withAnimation(WeiBeiMotion.visibility(true, size: .medium)) {
                         store.promptCreateNotebookNoteFromCurrentMaterial()
                     }
                 }
@@ -522,7 +526,7 @@ struct NotePaneView: View {
             .help(store.ui("新建空白笔记或当前文稿笔记", "Create a blank note or a note for this document"))
         } else {
             Button {
-                withAnimation(WeiBeiMotion.panel) {
+                withAnimation(WeiBeiMotion.visibility(true, size: .medium)) {
                     store.promptCreateBlankNotebookNote()
                 }
             } label: {
@@ -544,15 +548,15 @@ struct NotePaneView: View {
             begin: {
                 // 预填解析后的当前显示名（自定义名 / title / 正文回退），从现有名字开始编辑。
                 noteTabTitleDraft = store.agentNoteTitle
-                withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = true }
+                withAnimation(WeiBeiMotion.visibility(true)) { editingNoteTabTitle = true }
             },
             commit: {
                 // 空白提交 = 清除自定义名，恢复自动跟随 title / 正文。
                 store.setNoteCustomDisplayTitle(noteTabTitleDraft, for: noteID)
-                withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = false }
+                withAnimation(WeiBeiMotion.visibility(false)) { editingNoteTabTitle = false }
             },
             cancel: {
-                withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = false }
+                withAnimation(WeiBeiMotion.visibility(false)) { editingNoteTabTitle = false }
             }
         )
     }
@@ -1384,7 +1388,7 @@ struct AgentPaneView: View {
     @State private var offscreenPlaceholderIDs: Set<UUID> = []
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
-    private static let paneStructureTransitionDuration: TimeInterval = 0.24
+    private static let paneStructureTransitionDuration = WeiBeiMotion.layoutDuration
 
     private let agentBottomAnchorID = "agentConversationBottom"
 
@@ -1564,17 +1568,17 @@ struct AgentPaneView: View {
                                 composerHeight: composerHeight
                             ))
                             .animation(
-                                reduceMotion ? nil : .smooth(duration: 0.42),
+                                reduceMotion ? nil : WeiBeiMotionTokens.easeInOut.animation(WeiBeiMotionTokens.durationLg),
                                 value: paneState.centersInitialAgentComposer
                             )
-                            .animation(WeiBeiMotion.panel, value: store.layout)
-                            .animation(WeiBeiMotion.panel, value: wide)
+                            .animation(WeiBeiMotion.layout, value: store.layout)
+                            .animation(WeiBeiMotion.layout, value: wide)
                     }
                     .overlay(alignment: .bottom) {
                         if showsJumpToLatest {
                             jumpToLatestButton(proxy: proxy)
                                 .padding(.bottom, composerHeight + 34)
-                                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.92)))
                         }
                     }
                     // Once the rail owns the pane, keep the invisible resident chat
@@ -1945,7 +1949,7 @@ struct AgentPaneView: View {
 #if targetEnvironment(macCatalyst)
             NotificationCenter.default.post(name: .weiBeiScrollAgentToMessage, object: turn.startMessageID)
 #else
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.layout) {
                 proxy.scrollTo(turn.startMessageID, anchor: .center)
             }
 #endif
@@ -1990,7 +1994,7 @@ struct AgentPaneView: View {
         // flip at 8pt deadband keeps SwiftUI updates off the scroll hot path.
         let shouldShow = metrics.distanceFromBottom > 160
         if shouldShow != showsJumpToLatest {
-            withAnimation(WeiBeiMotion.reveal) {
+            withAnimation(WeiBeiMotion.visibility(shouldShow)) {
                 showsJumpToLatest = shouldShow
             }
         }
@@ -2021,7 +2025,7 @@ struct AgentPaneView: View {
     private func jumpToLatestButton(proxy: ScrollViewProxy) -> some View {
         Button {
             agentFollowsLatest = true
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.layout) {
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
             }
         } label: {
@@ -2327,7 +2331,7 @@ struct AgentPaneView: View {
         let chatID = store.activeStudySessionID
         DispatchQueue.main.async {
             guard agentFollowsLatest, store.activeStudySessionID == chatID else { return }
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.layout) {
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
             }
         }
@@ -2750,13 +2754,13 @@ struct FloatingSelectionAgentView: View {
                     || store.selectionRemarkRecords.contains { $0.id == context.id }
             } ?? false
             if isReopen, interaction.keepFloatingSelectionForAnswer {
-                withAnimation(WeiBeiMotion.panel) {
+                withAnimation(WeiBeiMotion.visibility(true, size: .medium)) {
                     expanded = true
                 }
                 return
             }
             // Live reselection → capsule only. Keep the parked origin so the next 「问」 does not jump.
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.visibility(false, size: .medium)) {
                 expanded = false
                 interaction.keepFloatingSelectionForAnswer = false
                 store.activeSelectionAskThreadID = nil
@@ -2794,7 +2798,7 @@ struct FloatingSelectionAgentView: View {
                store.selectionRemarkRecords.contains(where: { $0.id == interaction.selectionContext?.id }) {
                 closeFloatingAgent()
             } else if showsExpandedBody && !store.isFloatingChatRunning {
-                withAnimation(WeiBeiMotion.panel) {
+                withAnimation(WeiBeiMotion.visibility(false, size: .medium)) {
                     expanded = false
                     store.keepFloatingSelectionForAnswer = false
                 }
@@ -3453,7 +3457,7 @@ struct FloatingSelectionAgentView: View {
 
     private func openExpandedComposer() {
         placeIfNeeded()
-        withAnimation(WeiBeiMotion.panel) {
+        withAnimation(WeiBeiMotion.visibility(true, size: .medium)) {
             interaction.floatingComposerMode = .ask
             expanded = true
             store.keepFloatingSelectionForAnswer = true
@@ -3472,7 +3476,7 @@ struct FloatingSelectionAgentView: View {
     /// 胶囊"记":展开共用浮层进入札记模式,不建提问线程、不带附件。
     private func openRemarkComposer() {
         placeIfNeeded()
-        withAnimation(WeiBeiMotion.panel) {
+        withAnimation(WeiBeiMotion.visibility(true, size: .medium)) {
             interaction.floatingComposerMode = .remark
             expanded = true
             store.keepFloatingSelectionForAnswer = true
@@ -3507,7 +3511,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func closeFloatingAgent() {
-        withAnimation(WeiBeiMotion.panel) {
+        withAnimation(WeiBeiMotion.visibility(false, size: .medium)) {
             expanded = false
             store.dismissFloatingSelectionAgent()
         }
@@ -4178,12 +4182,12 @@ struct AgentBubble: View {
                 AgentConnectionRecoveryView(failureKind: message.failureKind)
             }
         }
-        .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.memoryUpdate)
-        .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.profileUpdate)
+        .animation(reduceMotion ? nil : WeiBeiMotion.visibility(message.memoryUpdate != nil), value: message.memoryUpdate)
+        .animation(reduceMotion ? nil : WeiBeiMotion.visibility(message.profileUpdate != nil), value: message.profileUpdate)
     }
 
     private func activateSource(_ source: AgentReplySource) {
-        withAnimation(WeiBeiMotion.panel) {
+        withAnimation(WeiBeiMotion.layout) {
             _ = store.openAgentReplySource(source)
         }
     }
@@ -4191,24 +4195,24 @@ struct AgentBubble: View {
     private func activateCitation(_ citation: AgentCitation) {
         switch citation.kind {
         case .material:
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.layout) {
                 _ = store.openAgentCitation(kind: "material", value: citation.value)
             }
         case .note:
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.layout) {
                 _ = store.openAgentCitation(kind: "note", value: citation.value)
             }
         case .selection:
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.layout) {
                 _ = store.openAgentCitation(kind: "selection", value: citation.value)
             }
         case .learningRecord:
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.layout) {
                 store.resumePreviousStudy()
             }
         case .learningMemory:
             if let courseID = message.origin?.courseID {
-                withAnimation(WeiBeiMotion.panel) {
+                withAnimation(WeiBeiMotion.visibility(true, size: .large)) {
                     store.presentCourseWorkspace(.memory, courseID: courseID)
                 }
             }
@@ -5630,8 +5634,7 @@ private struct AgentThinkingOrbitHost: OrbitRepresentable {
 /// Text sits in a line box; orbit stroke centerline keeps equal `orbitPadding` on all four sides.
 final class AgentThinkingOrbitNSView: OrbitPlatformView {
     private static let segmentLength: CGFloat = 10
-    private static let firstPassDuration: TimeInterval = 0.88
-    private static let orbitDuration: TimeInterval = 2.25
+    private static let firstPassDuration = TextOrbitSegment.firstPassDuration
 
     private var statusText = ""
     private var textWidth: CGFloat = 1
@@ -5748,13 +5751,10 @@ final class AgentThinkingOrbitNSView: OrbitPlatformView {
         let reveal = TextOrbitSegment.revealProgress(at: elapsed)
         let firstPass = elapsed < Self.firstPassDuration
         let cursorProgress = firstPass ? reveal : 1
-        let cursorOpacity = firstPass
-            ? TextOrbitSegment.smootherStep(TextOrbitSegment.clamp(reveal / 0.14))
-                * (1 - TextOrbitSegment.smootherStep(TextOrbitSegment.clamp((elapsed - 0.82) / 0.16)))
-            : 0
-        let orbitOpacity = firstPass
-            ? TextOrbitSegment.smootherStep(TextOrbitSegment.clamp((elapsed - 0.82) / 0.18))
-            : 1
+        let overlap = elapsed - Self.firstPassDuration * (0.82 / 0.88)
+        let cursorOpacity = WeiBeiMotionTokens.easeOut.progress(reveal / 0.14)
+            * (1 - WeiBeiMotionTokens.easeIn.progress(overlap / WeiBeiMotionTokens.durationSmExit))
+        let orbitOpacity = WeiBeiMotionTokens.easeOut.progress(overlap / WeiBeiMotionTokens.durationSm)
         let orbitProgress = TextOrbitSegment.orbitProgress(at: elapsed)
 
         let ink = WeiBeiNativePalette.ink(for: appearanceMode).withAlphaComponent(0.93)
@@ -5845,12 +5845,12 @@ final class AgentThinkingOrbitNSView: OrbitPlatformView {
 /// Short accent segment orbiting a measured text box (V3 path geometry).
 /// Pure geometry/paint helper — not a SwiftUI View — so it cannot thrash ScrollView layout.
 enum TextOrbitSegment {
-    static let firstPassDuration: TimeInterval = 0.88
+    private static let firstPassDelay: TimeInterval = 0.10
+    static let firstPassDuration = firstPassDelay + WeiBeiMotionTokens.durationLg
     static let orbitDuration: TimeInterval = 2.25
 
     static func revealProgress(at elapsed: TimeInterval) -> Double {
-        let raw = clamp((elapsed - 0.10) / 0.78)
-        return 1 - pow(1 - raw, 3.2)
+        WeiBeiMotionTokens.easeOut.progress((elapsed - firstPassDelay) / WeiBeiMotionTokens.durationLg)
     }
 
     static func orbitProgress(at elapsed: TimeInterval) -> Double {
@@ -5858,15 +5858,6 @@ enum TextOrbitSegment {
         let t = (elapsed - firstPassDuration) / orbitDuration
         let remainder = t.truncatingRemainder(dividingBy: 1)
         return remainder >= 0 ? remainder : remainder + 1
-    }
-
-    static func clamp(_ value: Double) -> Double {
-        min(max(value, 0), 1)
-    }
-
-    static func smootherStep(_ value: Double) -> Double {
-        let x = clamp(value)
-        return x * x * x * (x * (x * 6 - 15) + 10)
     }
 
     static func stroke(

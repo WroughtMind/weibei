@@ -207,7 +207,7 @@ enum CatalystBusinessCheck {
                 store.paneState.showNotes = false
                 try await Task.sleep(for: .milliseconds(700))
                 let divider = split.dividerViews[0]
-                divider.onDragStart?(); divider.onDragChange?(-160); divider.onDragEnd?()
+                divider.onDragStart?(); divider.onDragChange?(-160); divider.onDragEnd?(0)
                 try await Task.sleep(for: .milliseconds(700))
                 let before = [WorkspacePaneRole.reader, .agent].map { split.roleHosts[$0]!.frame.width }
                 store.paneState.showNotes = true
@@ -274,7 +274,7 @@ enum CatalystBusinessCheck {
             }
             metrics.record("product_drag_hz", hz)
             divider.onDragChange?(0)
-            divider.onDragEnd?()
+            divider.onDragEnd?(0)
             try await Task.sleep(for: .milliseconds(800))
             sampler.stop()
             metrics.record("product_drag_events", Double(frames))
@@ -2104,7 +2104,7 @@ enum CatalystBusinessCheck {
             let measurements = controller.store.measureCount
             divider.onDragStart?()
             do {
-                defer { divider.onDragChange?(0); divider.onDragEnd?() }
+                defer { divider.onDragChange?(0); divider.onDragEnd?(0) }
                 for delta in [CGFloat(6), 12, 18] {
                     divider.onDragChange?(index == 0 ? delta : -delta)
                 }

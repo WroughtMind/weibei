@@ -15,11 +15,16 @@ classify_path() {
 
   # 官网、检查编排和普通文档不改变 App；打包输入与工具分别判断。
   case "$path" in
-    website/*|.github/workflows/pages.yml|script/check_website.sh)
+    website/*|.github/workflows/pages.yml|script/check_website.sh|script/build_motion_tokens.mjs|DesignSystem/08-implementation/tokens.json)
       website=true
       return ;;
     .github/workflows/pr-checks.yml|script/ci_changed_scopes.sh|script/ci_metadata.py|script/check_ci_routing.py|script/test_release_flow.py|script/release.py|script/release_candidate.py|script/verify_public_release.py)
       return ;;
+  esac
+
+  case "$path" in
+    Sources/WeiBei/Resources/Editor/motion.css|Sources/WeiBei/Resources/Editor/motion.js|Sources/WeiBeiCore/MotionTokens.swift)
+      website=true ;;
   esac
 
   # SwiftPM host targets live in Sources/ and Tests/. Native App sources and
@@ -132,6 +137,10 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes "" "script/release.py" "script/release_candidate.py" "script/verify_public_release.py"
   expect_scopes "release" "VERSION" "script/build_release_dmg.sh"
   expect_scopes "acceptance" "App/UITests/OnboardingUITests.swift"
+  expect_scopes "website" "DesignSystem/08-implementation/tokens.json" "script/build_motion_tokens.mjs"
+  expect_scopes "code acceptance website" "Sources/WeiBeiCore/MotionTokens.swift"
+  expect_scopes "code editor acceptance website" "Sources/WeiBei/Resources/Editor/motion.css"
+  expect_scopes "code editor acceptance website" "Sources/WeiBei/Resources/Editor/motion.js"
   echo "CI scope self-check passed"
   exit 0
 fi

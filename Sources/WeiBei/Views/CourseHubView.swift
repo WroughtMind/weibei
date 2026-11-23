@@ -597,7 +597,7 @@ struct CourseHubView: View {
     private var courseContentFooter: some View {
         if cleanedSearch.isEmpty, recentEntries.count > 3 {
             Button {
-                withAnimation(WeiBeiMotion.panel) {
+                withAnimation(WeiBeiMotion.visibility(!showsAllContent)) {
                     showsAllContent.toggle()
                 }
             } label: {

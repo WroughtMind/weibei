@@ -118,7 +118,7 @@ struct CourseRelationPaperView: View {
         }
         .background(WeiBeiTheme.paper.opacity(0.94))
         .animation(WeiBeiMotion.hover, value: hoveredNodeID)
-        .animation(WeiBeiMotion.panel, value: effectiveScope.id)
+        .animation(WeiBeiMotion.layout, value: effectiveScope.id)
         .onAppear {
             // Seed once from the course already open in course space.
             if scope == nil {
@@ -423,7 +423,7 @@ struct CourseRelationPaperView: View {
                 .simultaneousGesture(magnificationGesture)
                 .onChange(of: fitScrollRequest) { _, _ in
                     DispatchQueue.main.async {
-                        withAnimation(WeiBeiMotion.hover) {
+                        withAnimation(WeiBeiMotion.layout) {
                             scrollProxy.scrollTo(Self.paperOriginID, anchor: .topLeading)
                         }
                     }
@@ -524,7 +524,7 @@ struct CourseRelationPaperView: View {
     }
 
     private func setZoomScale(_ scale: CGFloat) {
-        withAnimation(WeiBeiMotion.hover) {
+        withAnimation(WeiBeiMotion.layout) {
             zoomScale = clampedZoomScale(scale)
         }
     }
