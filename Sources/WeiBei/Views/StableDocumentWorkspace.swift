@@ -24,6 +24,7 @@ struct StableDocumentWorkspace: NSViewRepresentable {
     let normalizedOrder: [WorkspacePaneRole]
     let visibleOrder: [WorkspacePaneRole]
     let draggedRole: WorkspacePaneRole?
+    let reorderReleaseVelocity: CGFloat?
     let expansionRequest: PaneExpansionRequest?
     /// Explicit input so theme changes always re-enter `updateNSView` and repaint the empty board layer.
     /// Do not rely only on `@EnvironmentObject` for long-lived NSHostingView paper sync.
@@ -115,6 +116,7 @@ struct StableDocumentWorkspace: NSViewRepresentable {
                 halfSplit: halfSplit
             ),
             draggedRole: draggedRole,
+            reorderReleaseVelocity: reorderReleaseVelocity,
             expansionRequest: expansionRequest,
             in: splitView
         )
@@ -212,7 +214,7 @@ final class StableDocumentSplitView: NSView {
 private final class StableDocumentDividerView: NSView {
     var onDragStart: (() -> Void)?
     var onDragChange: ((CGFloat) -> Void)?
-    var onDragEnd: (() -> Void)?
+    var onDragEnd: ((CGFloat) -> Void)?
     var onEqualize: (() -> Void)?
     var skipSnap = false
     /// Resolved app reduce-motion, pushed from SwiftUI — never read the system switch here.
@@ -250,11 +252,6 @@ private final class StableDocumentDividerView: NSView {
         case .hover: return 0.55
         case .pressed: return 1
         }
-    }
-
-    /// Enter fast (80ms), leave a touch slower (140ms).
-    private var accentTransitionDuration: TimeInterval {
-        accentPhase == .idle ? 0.14 : 0.08
     }
 
     override var isFlipped: Bool { true }
@@ -362,24 +359,23 @@ private final class StableDocumentDividerView: NSView {
         // Released while still over the divider: back to hover, not idle.
         accentPhase = isHovering ? .hover : .idle
         skipSnap = event.modifierFlags.contains(.option)
-        if didDrag { onDragEnd?() }
+        if didDrag { onDragEnd?(0) }
         didDrag = false
     }
 
     private func updateAccentLine() {
         let target = accentTargetOpacity
         accentLayer.backgroundColor = WeiBeiNativePalette.accent().cgColor
-        guard !reduceMotion else {
-            accentLayer.removeAllAnimations()
-            accentLayer.opacity = target
-            return
-        }
+        guard accentLayer.opacity != target else { return }
         let animation = CABasicAnimation(keyPath: "opacity")
         animation.fromValue = accentLayer.presentation()?.opacity ?? accentLayer.opacity
         animation.toValue = target
-        animation.duration = accentTransitionDuration
-        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        animation.duration = WeiBeiMotionTokens.durationControl
+        animation.timingFunction = WeiBeiMotionTokens.easeOut.mediaTiming
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         accentLayer.opacity = target
+        CATransaction.commit()
         accentLayer.add(animation, forKey: "weiBeiAccentOpacity")
     }
 
@@ -423,9 +419,8 @@ final class StableDocumentSplitCoordinator {
     private let railWidth = ContentRailMetrics.railOnlyWidth
     private let readableWidthThreshold = ContentRailMetrics.readableWidth
     private let defaultReadableWidth = ContentRailMetrics.defaultReadableWidth
-    // Restored from 8a172fe5「保持分栏切换连续」— known-smooth pane show/hide motion.
-    private let layoutAnimationDuration = 0.24
-    private let snapAnimationDuration = 0.18
+    private let layoutAnimationDuration = WeiBeiMotion.layoutDuration
+    private var previousDraggedRole: WorkspacePaneRole?
     private let animationFallbackGrace: TimeInterval = 0.25
 
     init(
@@ -449,12 +444,12 @@ final class StableDocumentSplitCoordinator {
                 guard let self, let splitView else { return }
                 self.updateDividerDrag(delta: delta, in: splitView)
             }
-            divider.onDragEnd = { [weak self, weak splitView, weak divider] in
+            divider.onDragEnd = { [weak self, weak splitView, weak divider] velocity in
                 guard let self, let splitView else { return }
-                self.endDividerDrag(in: splitView, skipSnap: divider?.skipSnap ?? false)
+                self.endDividerDrag(in: splitView, skipSnap: divider?.skipSnap ?? false, releaseVelocity: velocity)
             }
             divider.onEqualize = { [weak self, weak splitView] in
-                guard let self, let splitView, !self.isAnimatingLayout, !self.isDraggingDivider else { return }
+                guard let self, let splitView, !self.isDraggingDivider else { return }
                 self.beginDividerDrag(index: index, in: splitView)
                 self.endDividerDrag(in: splitView, equalize: true)
             }
@@ -462,6 +457,11 @@ final class StableDocumentSplitCoordinator {
     }
 
     func stop(in splitView: StableDocumentSplitView) {
+        if isDraggingDivider {
+            dividerDrag = nil
+            isDraggingDivider = false
+            notifyDividerDragEnded(in: splitView)
+        }
         splitView.coordinator = nil
         for divider in splitView.dividerViews {
             divider.onDragStart = nil
@@ -474,11 +474,14 @@ final class StableDocumentSplitCoordinator {
     func update(
         state: StableDocumentLayoutState,
         draggedRole: WorkspacePaneRole?,
+        reorderReleaseVelocity: CGFloat? = nil,
         expansionRequest: PaneExpansionRequest?,
         in splitView: StableDocumentSplitView
     ) {
         splitView.assertStableOwnership()
         desiredState = state
+        let finishedReorder = previousDraggedRole != nil && draggedRole == nil
+        previousDraggedRole = draggedRole
         updateDragAppearance(draggedRole, in: splitView)
 
         if let expansionRequest, expansionRequest.id != handledExpansionRequestID {
@@ -490,7 +493,7 @@ final class StableDocumentSplitCoordinator {
             return
         }
 
-        if isAnimatingLayout || isDraggingDivider {
+        if isDraggingDivider {
             pendingState = state
             return
         }
@@ -502,12 +505,20 @@ final class StableDocumentSplitCoordinator {
         }
 
         if !state.hasSameStructure(as: appliedState) {
+            pendingState = nil
             apply(
                 state: state,
                 in: splitView,
                 animated: true,
-                preserveCurrentWidths: true
+                preserveCurrentWidths: true,
+                releaseVelocity: finishedReorder && state.normalizedOrder != appliedState.normalizedOrder ? (reorderReleaseVelocity ?? 0) : nil
             )
+            return
+        }
+
+        if isAnimatingLayout {
+            pendingState = state
+            handlePendingExpansionRequest(in: splitView)
             return
         }
 
@@ -533,7 +544,8 @@ final class StableDocumentSplitCoordinator {
         state: StableDocumentLayoutState,
         in splitView: StableDocumentSplitView,
         animated: Bool,
-        preserveCurrentWidths: Bool
+        preserveCurrentWidths: Bool,
+        releaseVelocity: CGFloat? = nil
     ) {
         let visibleOrder = state.visibleOrder.filter { state.normalizedOrder.contains($0) }
         let widths = paneWidths(
@@ -559,11 +571,12 @@ final class StableDocumentSplitCoordinator {
             size: splitView.bounds.size
         )
         let previousVisible = Set(displayedVisibleOrder)
+        let mounted = Set(splitView.roleHosts.compactMap { role, host in host.isHidden ? nil : role })
         let nextVisible = Set(visibleOrder)
         let shouldAnimate = animated && !reduceMotion
 
         prepareHosts(
-            previousVisible: previousVisible,
+            previousVisible: isAnimatingLayout ? mounted : previousVisible,
             nextVisible: nextVisible,
             targetFrames: allTargetFrames,
             in: splitView
@@ -574,6 +587,11 @@ final class StableDocumentSplitCoordinator {
         lastContainerSize = splitView.bounds.size
 
         guard shouldAnimate else {
+            if isAnimatingLayout {
+                activeAnimationToken = nil
+                isAnimatingLayout = false
+            }
+            let emptyAlpha = splitView.emptyHost?.paneOpacity ?? 0
             setFramesImmediately(
                 roleFrames: allTargetFrames,
                 dividerFrames: targetDividerFrames,
@@ -581,9 +599,23 @@ final class StableDocumentSplitCoordinator {
                 in: splitView
             )
             finishLayout(state: state, in: splitView, saveRatios: animated)
+            // The existing launcher opacity can change without moving a pane.
+            if animated, visibleOrder.isEmpty != previousVisible.isEmpty {
+                let target: CGFloat = visibleOrder.isEmpty ? 1 : 0
+                splitView.emptyHost?.isHidden = false
+                splitView.emptyHost?.paneOpacity = previousVisible.isEmpty ? 1 : emptyAlpha
+                animatePaneLayout(duration: WeiBeiMotionTokens.durationSmExit,
+                                  curve: WeiBeiMotionTokens.easeOut, changes: {
+                    splitView.emptyHost?.setAnimatedPaneOpacity(target)
+                }, completion: { [weak self, weak splitView] in
+                    guard let self, self.displayedVisibleOrder.isEmpty == (target == 1) else { return }
+                    splitView?.emptyHost?.isHidden = target == 0
+                })
+            }
             return
         }
 
+        let duration = releaseVelocity == nil ? layoutAnimationDuration : WeiBeiMotion.settleDuration
         let animationToken = beginAnimation()
         let finishAnimation = { [weak self, weak splitView] in
             guard let self, let splitView else { return }
@@ -598,7 +630,7 @@ final class StableDocumentSplitCoordinator {
                 self.applyPendingWork(in: splitView)
             }
         }
-        animatePaneLayout(duration: layoutAnimationDuration, changes: {
+        animatePaneLayout(duration: duration, releaseVelocity: releaseVelocity, changes: {
             self.animateFrames(
                 roleFrames: allTargetFrames,
                 dividerFrames: targetDividerFrames,
@@ -608,7 +640,7 @@ final class StableDocumentSplitCoordinator {
         }, completion: finishAnimation)
 #if !targetEnvironment(macCatalyst)
         DispatchQueue.main.asyncAfter(
-            deadline: .now() + layoutAnimationDuration + animationFallbackGrace,
+            deadline: .now() + duration + animationFallbackGrace,
             execute: finishAnimation
         )
 #endif
@@ -916,9 +948,23 @@ final class StableDocumentSplitCoordinator {
     }
 
     private func beginDividerDrag(index: Int, in splitView: StableDocumentSplitView) {
-        guard !isAnimatingLayout, displayedVisibleOrder.count > index + 1 else { return }
-        let widths = displayedVisibleOrder.compactMap { splitView.roleHosts[$0]?.frame.width }
+        guard displayedVisibleOrder.count > index + 1 else { return }
+        var widths = displayedVisibleOrder.compactMap { role in
+            splitView.roleHosts[role].map { host in
+                isAnimatingLayout ? host.presentedPaneWidth : host.frame.width
+            }
+        }
         guard widths.count == displayedVisibleOrder.count else { return }
+        if isAnimatingLayout {
+            activeAnimationToken = nil
+            isAnimatingLayout = false
+            let total = splitView.bounds.width - CGFloat(widths.count - 1) * dividerWidth
+            widths = normalizedWidths(widths, total: total)
+            for host in splitView.roleHosts.values { host.stopPaneAnimation() }
+            for divider in splitView.dividerViews { divider.stopPaneAnimation() }
+            applyVisibleWidthsImmediately(widths, in: splitView)
+            if let appliedState { finishLayout(state: appliedState, in: splitView, saveRatios: false) }
+        }
         captureReadableWidths(in: splitView)
         dividerDrag = DividerDrag(index: index, baseWidths: widths)
         isDraggingDivider = true
@@ -938,27 +984,35 @@ final class StableDocumentSplitCoordinator {
         applyVisibleWidthsImmediately(widths, in: splitView)
     }
 
-    private func endDividerDrag(in splitView: StableDocumentSplitView, equalize: Bool = false, skipSnap: Bool = false) {
+    private func endDividerDrag(
+        in splitView: StableDocumentSplitView,
+        equalize: Bool = false,
+        skipSnap: Bool = false,
+        releaseVelocity: CGFloat = 0
+    ) {
         guard let drag = dividerDrag else { return }
         dividerDrag = nil
         isDraggingDivider = false
+        // A new layout may interrupt the snap, but the drag has already ended.
+        defer { notifyDividerDragEnded(in: splitView) }
         let widths = displayedVisibleOrder.compactMap { splitView.roleHosts[$0]?.frame.width }
         let snapped = ContentRailPolicy.dividerWidths(widths, divider: drag.index, equalize: equalize, skipSnap: skipSnap)
         if zip(widths, snapped).contains(where: { abs($0 - $1) > 0.5 }) {
-            animateVisibleWidths(snapped, duration: snapAnimationDuration, in: splitView) { [weak self, weak splitView] in
+            let distance = snapped[drag.index] - widths[drag.index]
+            let initialVelocity = distance == 0 ? 0 : releaseVelocity / distance
+            let duration = equalize ? layoutAnimationDuration : WeiBeiMotion.settleDuration
+            animateVisibleWidths(snapped, duration: duration, releaseVelocity: equalize ? nil : initialVelocity, in: splitView) { [weak self, weak splitView] in
                 guard let self, let splitView else { return }
                 self.captureReadableWidths(in: splitView)
                 self.persistRatios(in: splitView)
                 self.reportFrames(in: splitView)
                 self.applyPendingWork(in: splitView)
-                self.notifyDividerDragEnded(in: splitView)
             }
         } else {
             captureReadableWidths(in: splitView)
             persistRatios(in: splitView)
             reportFrames(in: splitView)
             applyPendingWork(in: splitView)
-            notifyDividerDragEnded(in: splitView)
         }
     }
 
@@ -977,20 +1031,30 @@ final class StableDocumentSplitCoordinator {
     private func animateVisibleWidths(
         _ widths: [CGFloat],
         duration: TimeInterval,
+        releaseVelocity: CGFloat? = nil,
         in splitView: StableDocumentSplitView,
         completion: @escaping () -> Void
     ) {
+        guard !reduceMotion else {
+            applyVisibleWidthsImmediately(widths, in: splitView)
+            completion()
+            return
+        }
         let frames = visibleFrames(order: displayedVisibleOrder, widths: widths, size: splitView.bounds.size)
         let dividers = dividerFramesForOrder(displayedVisibleOrder, visibleFrames: frames, size: splitView.bounds.size)
+        let interruptedLayout = isAnimatingLayout
         let animationToken = beginAnimation()
         let finishAnimation = { [weak self, weak splitView] in
             guard let self, let splitView else { return }
             self.completeAnimation(animationToken) {
                 self.applyVisibleWidthsImmediately(widths, in: splitView)
+                if interruptedLayout, let state = self.appliedState {
+                    self.finishLayout(state: state, in: splitView, saveRatios: false)
+                }
                 completion()
             }
         }
-        animatePaneLayout(duration: reduceMotion ? 0 : duration, changes: {
+        animatePaneLayout(duration: duration, releaseVelocity: releaseVelocity, changes: {
             for (role, frame) in frames {
                 splitView.roleHosts[role]?.setAnimatedPaneFrame(frame)
             }
@@ -1019,7 +1083,7 @@ final class StableDocumentSplitCoordinator {
     }
 
     private func handlePendingExpansionRequest(in splitView: StableDocumentSplitView) {
-        guard !isAnimatingLayout, !isDraggingDivider,
+        guard !isDraggingDivider,
               let request = pendingExpansionRequest,
               request.id != handledExpansionRequestID else { return }
         pendingExpansionRequest = nil
@@ -1038,16 +1102,19 @@ final class StableDocumentSplitCoordinator {
             guard let self, let splitView else { return }
             self.captureReadableWidths(in: splitView)
             self.reportFrames(in: splitView)
-            self.onExpansionRequestHandled?(request.id)
             self.applyPendingWork(in: splitView)
         }
         if reduceMotion {
             // Reduced motion: apply the width directly and ack synchronously — no wait.
             applyVisibleWidthsImmediately(target, in: splitView)
+            onExpansionRequestHandled?(request.id)
             finishExpansion()
             return
         }
         animateVisibleWidths(target, duration: layoutAnimationDuration, in: splitView, completion: finishExpansion)
+        // The view model has its target size already. Don't hold the user's
+        // navigation action until the presentation catches up.
+        onExpansionRequestHandled?(request.id)
     }
 
     private func expandedWidths(_ widths: [CGFloat], requestedIndex: Int, role: WorkspacePaneRole) -> [CGFloat] {
@@ -1159,6 +1226,8 @@ private extension Array {
 
 #if targetEnvironment(macCatalyst)
 private extension UIView {
+    var presentedPaneWidth: CGFloat { layer.presentation()?.bounds.width ?? bounds.width }
+    func stopPaneAnimation() { layer.removeAllAnimations() }
     var paneOpacity: CGFloat { get { alpha } set { alpha = newValue } }
     func requestPaneLayout() { setNeedsLayout() }
     func setAnimatedPaneFrame(_ value: CGRect) { frame = value }
@@ -1166,6 +1235,8 @@ private extension UIView {
 }
 #else
 private extension NSView {
+    var presentedPaneWidth: CGFloat { layer?.presentation()?.bounds.width ?? bounds.width }
+    func stopPaneAnimation() { layer?.removeAllAnimations() }
     var paneOpacity: CGFloat { get { alphaValue } set { alphaValue = newValue } }
     func requestPaneLayout() { needsLayout = true }
     func layoutPaneNow() { layoutSubtreeIfNeeded() }
@@ -1174,13 +1245,27 @@ private extension NSView {
 }
 #endif
 
-private func animatePaneLayout(duration: TimeInterval, changes: @escaping () -> Void, completion: @escaping () -> Void) {
+private func animatePaneLayout(
+    duration: TimeInterval,
+    curve: WeiBeiMotionTokens.Cubic = WeiBeiMotionTokens.easeInOut,
+    releaseVelocity: CGFloat? = nil,
+    changes: @escaping () -> Void,
+    completion: @escaping () -> Void
+) {
 #if targetEnvironment(macCatalyst)
-    UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: changes) { _ in completion() }
+    let timing: UIView.AnimationOptions = curve.x1 == WeiBeiMotionTokens.easeOut.x1 ? .curveEaseOut : .curveEaseInOut
+    let options: UIView.AnimationOptions = [timing, .beginFromCurrentState, .allowUserInteraction]
+    if let releaseVelocity {
+        UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 0.82,
+                       initialSpringVelocity: releaseVelocity, options: options, animations: changes) { _ in completion() }
+    } else {
+        UIView.animate(withDuration: duration, delay: 0, options: options, animations: changes) { _ in completion() }
+    }
 #else
     NSAnimationContext.runAnimationGroup({ context in
         context.duration = duration
-        context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        // AppKit's view-frame animator accepts a cubic timing function.
+        context.timingFunction = (releaseVelocity == nil ? curve : WeiBeiMotionTokens.easeOutStrong).mediaTiming
         context.allowsImplicitAnimation = true
         changes()
     }, completionHandler: completion)

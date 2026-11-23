@@ -4,6 +4,8 @@
 
 仓库已经有 `WeiBeiAppearanceMode`、`WeiBeiTypography`、`WeiBeiTheme`、`WeiBeiNativePalette`、`WeiBeiMetric`、`WeiBeiMotion` 和 `WeiBeiTransition`。`tokens.json` 是文档与跨端交换格式，SwiftUI 运行时仍应以 `Sources/WeiBei/Support/Theme.swift` 为唯一入口。
 
+动效曲线和时长在 `tokens.json` 的 `motion` 定义，由 `script/build_motion_tokens.mjs` 同步到 Swift 和网页；`WeiBeiMotion` 将这些值按交互角色应用。
+
 `DesignTokens.swift` 是候选映射，用于对照或合并，不能和现有 Theme 长期并存，否则数值会再次分叉。
 
 ## 颜色

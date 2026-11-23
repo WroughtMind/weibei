@@ -20,8 +20,6 @@ const HIDDEN_SYNTAX_SPEC = {
   'data-weibei-streaming-syntax-hidden': 'true',
 };
 
-/** Match the CSS animation duration of .wb-stream-in in index.html. */
-const FADE_MILLISECONDS = 480;
 /** Only animate typing-like inserts; wholesale block rewrites skip the fade.
  * Raised with the faster reveal cadence so pacing chunks still fade. */
 const MAXIMUM_FADE_CHARACTERS = 32;
@@ -104,6 +102,8 @@ const hiddenSyntaxDecorations = (
  * it adds no transactions and touches no document content.
  */
 export function streamingAppearancePlugin(streamingMarkdown: () => string | null): Plugin {
+  // Keep the decoration alive for the same duration as the CSS fade.
+  const fadeMilliseconds = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--duration-sm'));
   return new Plugin({
     key: appearanceKey,
     state: {
@@ -150,7 +150,7 @@ export function streamingAppearancePlugin(streamingMarkdown: () => string | null
               // Inline fade decorations must live inside a textblock;
               // top-level inserts (new paragraphs) render on their next tick.
               if (!parentFrom.parent.isTextblock) return;
-              fades.push({ from, to, expiresAt: now + FADE_MILLISECONDS });
+              fades.push({ from, to, expiresAt: now + fadeMilliseconds });
             });
           });
         }

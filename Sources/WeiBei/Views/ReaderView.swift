@@ -117,6 +117,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
+        .weiBeiFadeWhenReducingMotion(visible)
         .onChange(of: titleFieldFocused) { _, focused in
             // 失焦视为提交；Esc 取消路径已先把 isEditing 置 false，不会误入这里。
             // 重新申请焦点的程序化 false→true 切换（isReassertingTitleFocus）也不算失焦。
@@ -130,7 +131,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     private func updateVisibility(_ hovering: Bool) {
         hideTask?.cancel()
         if hovering {
-            withAnimation(WeiBeiMotion.hoverTitleFade) {
+            withAnimation(WeiBeiMotionTokens.easeOut.animation(WeiBeiMotionTokens.durationSmExit)) {
                 visible = true
             }
             return
@@ -139,13 +140,13 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         let task = DispatchWorkItem {
             // Editing the title keeps the bar up regardless of pointer state.
             guard !renameFieldAlive else { return }
-            withAnimation(WeiBeiMotion.hoverTitleFade) {
+            withAnimation(WeiBeiMotionTokens.easeIn.animation(WeiBeiMotionTokens.durationControl)) {
                 visible = false
             }
         }
         hideTask = task
         // ~80ms handover grace between the probe region and the real toolbar; with the
-        // 140ms fade the bar is fully gone ~220ms after the pointer leaves.
+        // fade the bar is fully gone ~200ms after the pointer leaves.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: task)
     }
 
@@ -180,7 +181,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     /// `@FocusState` 时 NSTextField 尚未挂进窗口的响应链，焦点请求被静默丢弃；
     /// 而 `@FocusState` 内部已记录为 true，不会再重试——first responder 一直留在
     /// 笔记正文编辑器（WKWebView），键盘输入全部落进正文。这里推迟到下一
-    /// runloop 再申请，并在插入动画（WeiBeiMotion.panel ≈ 0.26s）结束后复查一次：
+    /// runloop 再申请，并在插入动画结束后复查一次：
     /// 若窗口 first responder 仍不是文本编辑（field editor 是 NSTextView），
     /// 先置 false 再置 true 强制重新申请（重复赋 true 会被当作无变化忽略）；
     /// 程序化切换由 isReassertingTitleFocus 挡住“失焦即提交”。
@@ -226,6 +227,7 @@ extension ImmersiveHoverTitleView where Actions == EmptyView {
 }
 
 struct ReaderView: View {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var isImmersive = false
     var showsFloatingTitle = false
     var floatingTitleReorderRole: WorkspacePaneRole? = nil
@@ -269,7 +271,7 @@ struct ReaderView: View {
     /// Live pane size from a background probe. Zero until first real measurement.
     @State private var measuredPaneSize: CGSize = .zero
 
-    var body: some View {
+    private var readerPane: some View {
         // Hang-proof structure:
         // NEVER put GeometryReader as an ancestor of WKWebView / PDFView.
         // Hang report 2026-08-01: GeometryReaderLayout → PlatformView.sizeThatFits →
@@ -282,7 +284,7 @@ struct ReaderView: View {
             availableWidth: availableWidth,
             allowed: supportsContentRail && !isImmersive
         )
-        ZStack(alignment: .bottomTrailing) {
+        return ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
                 readerBody
 #if targetEnvironment(macCatalyst)
@@ -369,6 +371,10 @@ struct ReaderView: View {
                 .padding(6)
             }
         }
+    }
+
+    private var readerPresentation: some View {
+        readerPane
         // SwiftUI chrome (page controls, title, rail) follows opacity. The
         // hosted PDF / web / text views are hidden separately: glass paper is
         // clear, and those views keep drawing through a transparent list.
@@ -416,8 +422,12 @@ struct ReaderView: View {
         // Bind paper fill to the live mode so empty reader / page chrome tracks theme switches.
         .background(Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
         .foregroundStyle(Color(weiBeiNativeColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
-        .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
-        .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
+        .animation(WeiBeiMotion.feedback, value: pdfBrowseMode)
+        .animation(WeiBeiMotion.visibility(pdfHasSelectableText != false), value: pdfHasSelectableText)
+    }
+
+    var body: some View {
+        readerPresentation
         .onAppear {
             loadMarkdownSnapshot()
             syncReaderLocationTitle()
@@ -1022,7 +1032,7 @@ struct ReaderView: View {
         .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsExpanded ? 0.045 : 0.0), radius: 7, y: 3)
         .opacity(PDFModeChipPresentation.controlOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering))
         .offset(x: 0)
-        .scaleEffect(pdfControlsExpanded ? 1 : 0.985, anchor: .trailing)
+        .scaleEffect(pdfControlsExpanded || reduceMotion ? 1 : 0.985, anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onAppear {
             schedulePDFControlsAutoCollapse(after: 0.9)
@@ -1112,7 +1122,7 @@ struct ReaderView: View {
 
     private var pdfModeToggle: some View {
         Button {
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.feedback) {
                 pdfBrowseMode = pdfBrowseMode.toggled
             }
             revealPDFControls(collapseAfter: 0.85)
@@ -1135,7 +1145,7 @@ struct ReaderView: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 8))
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .animation(WeiBeiMotion.micro, value: showsPDFModeLabel)
+            .animation(WeiBeiMotion.visibility(showsPDFModeLabel), value: showsPDFModeLabel)
         }
         .accessibilityLabel(Text(store.ui("切换 PDF 浏览方式，当前\(pdfBrowseMode.label(language: store.interfaceLanguage))", "Switch PDF browsing mode. Current: \(pdfBrowseMode.label(language: store.interfaceLanguage))")))
         .help(store.ui("切换到\(pdfBrowseMode.toggled.help(language: store.interfaceLanguage))", "Switch to \(pdfBrowseMode.toggled.help(language: store.interfaceLanguage))"))
@@ -1157,7 +1167,7 @@ struct ReaderView: View {
     }
 
     private func revealPDFControls(collapseAfter delay: TimeInterval = 1.25) {
-        withAnimation(WeiBeiMotion.hover) {
+        withAnimation(WeiBeiMotion.visibility(true)) {
             pdfControlsExpanded = true
         }
         schedulePDFControlsAutoCollapse(after: delay)
@@ -1188,7 +1198,7 @@ struct ReaderView: View {
     /// Collapse only folds the expanded text back — `hovering` belongs to real
     /// onHover events exclusively and must survive any timer.
     private func collapsePDFControlsExpandedText() {
-        withAnimation(WeiBeiMotion.hover) {
+        withAnimation(WeiBeiMotion.visibility(false)) {
             pdfControlsExpanded = false
         }
     }
@@ -3273,6 +3283,7 @@ enum ReaderWebSearch {
 }
 
 struct WebReaderRepresentable: ReaderRepresentable {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var html: String?
     var url: URL?
     var contentRevision: UInt64 = 0
@@ -3515,6 +3526,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
 #endif
 
     private func updateReaderView(_ view: WKWebView, context: Context) {
+        context.coordinator.updateReduceMotion(reduceMotion, in: view)
         view.isHidden = hidesHostedDocument
         context.coordinator.searchQuery = searchQuery
         context.coordinator.searchNavigationRequest = searchNavigationRequest
@@ -3585,6 +3597,12 @@ struct WebReaderRepresentable: ReaderRepresentable {
             controller.removeScriptMessageHandler(forName: name)
         }
     }
+
+    private static let motionRuntimeScript: String = {
+        guard let url = WeiBeiResources.bundle.url(forResource: "motion", withExtension: "js", subdirectory: "Editor"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else { return "" }
+        return source + "\n"
+    }()
 
     static let selectionRuntimeScript: String = {
         guard let url = WeiBeiResources.selectionRuntimeURL,
@@ -3694,7 +3712,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
     """
 
     static func contentRailScript(language: WeiBeiInterfaceLanguage) -> String {
-        """
+        motionRuntimeScript + """
     (() => {
       if (window.WeiBeiContentRail?.installed) {
         window.WeiBeiContentRail.scan();
@@ -3924,16 +3942,21 @@ struct WebReaderRepresentable: ReaderRepresentable {
         const item = (state.activeItems.length ? state.activeItems : state.items)
           .find((candidate) => candidate.id === id);
         if (!item?.element) return false;
-        item.element.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
-        window.setTimeout(() => window.scrollBy({ top: -44, behavior: "auto" }), 180);
-        window.setTimeout(() => {
-          state.activeID = id;
-          window.webkit?.messageHandlers?.contentRailActive?.postMessage({
-            id, reason: "jump",
-            loadToken: document.querySelector('meta[name="weibei-reader-load-token"]')?.content
-              || document.body?.dataset.weibeiReaderLoadToken || ""
-          });
-        }, 240);
+        window.WeiBeiMotion.scrollIntoView(item.element, {
+          block: "start",
+          inline: "nearest",
+          viewportOffsetY: -44,
+          duration: \(WeiBeiMotionTokens.durationMdExit * 1000),
+          easing: "\(WeiBeiMotionTokens.easeInOut.cssTiming)",
+          onFinish: () => {
+            state.activeID = id;
+            window.webkit?.messageHandlers?.contentRailActive?.postMessage({
+              id, reason: "jump",
+              loadToken: document.querySelector('meta[name="weibei-reader-load-token"]')?.content
+                || document.body?.dataset.weibeiReaderLoadToken || ""
+            });
+          }
+        });
         return true;
       };
 
@@ -4144,6 +4167,19 @@ struct WebReaderRepresentable: ReaderRepresentable {
             guard interfaceLanguage != language else { return }
             interfaceLanguage = language
             applyInterfaceLanguage(in: view)
+        }
+
+        private var reduceMotion = false
+
+        func updateReduceMotion(_ value: Bool, in view: WKWebView) {
+            guard reduceMotion != value else { return }
+            reduceMotion = value
+            applyReduceMotion(in: view)
+        }
+
+        private func applyReduceMotion(in view: WKWebView) {
+            let value = reduceMotion ? "true" : "false"
+            view.evaluateJavaScript("document.documentElement.dataset.weibeiReduceMotion = '\(value)'")
         }
 
         private func applyInterfaceLanguage(in view: WKWebView) {
@@ -4448,6 +4484,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
                     )
                 )
                 self.applyInterfaceLanguage(in: webView)
+                self.applyReduceMotion(in: webView)
                 self.applySearch(in: webView)
                 self.applyContentRailTarget(in: webView)
                 self.applySelectionMarksIfNeeded()

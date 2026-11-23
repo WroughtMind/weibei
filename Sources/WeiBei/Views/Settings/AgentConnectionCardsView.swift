@@ -813,15 +813,15 @@ private struct ConnCardShell<Content: View>: View {
                     WeiBeiTheme.hairline.opacity(borderOpacity),
                     lineWidth: 1
                 )
-                .animation(.easeInOut(duration: 0.9), value: borderOpacity)
+                .animation(borderOpacity == 0 ? WeiBeiMotion.visibility(false) : (selected ? WeiBeiMotion.feedback : WeiBeiMotion.hover), value: borderOpacity)
             )
             .clipShape(shape)
             .overlay { ConnProbeRingView(ring: ring) }
-            .animation(.easeOut(duration: 0.2), value: selected)
+            .animation(WeiBeiMotion.feedback, value: selected)
             // 阴影半径保持不变，只变透明度，避免模糊半径插值把卡片拖重。
             .shadow(color: Color.black.opacity(hovered && !selected ? 0.28 : 0), radius: 22, y: 10)
             .onHover { hovered = $0 }
-            .animation(.easeOut(duration: 0.16), value: hovered)
+            .animation(WeiBeiMotion.hover, value: hovered)
 
         if selected {
             // 选中卡里有菜单和确认图标，不能再铺一层整卡点击，否则点图标没有反应。
@@ -836,6 +836,7 @@ private struct ConnCardShell<Content: View>: View {
 
 /// 一道光贴着整张卡片的边走。结果出来时，这道光淡出，整圈青或朱淡入。不接点击。
 private struct ConnProbeRingView: View {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var ring: ConnProbeRing
     private let corner: CGFloat = 14
     @State private var cometOpacity: Double = 1
@@ -844,22 +845,34 @@ private struct ConnProbeRingView: View {
     var body: some View {
         ZStack {
             if ring == .running || cometOpacity > 0.02 {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-                    let cycle = timeline.date.timeIntervalSinceReferenceDate / 3.4
-                    comet(progress: cycle - floor(cycle))
+                Group {
+                    if reduceMotion {
+                        comet(progress: 0)
+                    } else {
+                        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                            let cycle = timeline.date.timeIntervalSinceReferenceDate / 3.4
+                            comet(progress: cycle - floor(cycle))
+                        }
+                        .transaction { $0.animation = nil }
+                    }
                 }
-                .transaction { $0.animation = nil }
-                .opacity(ring == .running ? 1 : cometOpacity)
+                .transition(.asymmetric(
+                    insertion: .identity,
+                    removal: .opacity.animation(reduceMotion ? WeiBeiMotion.fade : WeiBeiMotion.visibility(false))
+                ))
             }
             if ring == .alive || ring == .dead {
                 settled(ring == .alive
                     ? Color(red: 0.20, green: 0.64, blue: 0.42)
                     : WeiBeiTheme.accent)
                     .opacity(settledOpacity)
+                    .animation(WeiBeiMotion.visibility(true), value: settledOpacity)
+                    .weiBeiFadeWhenReducingMotion(settledOpacity)
             }
         }
         .allowsHitTesting(false)
         .onAppear { apply(ring, animated: false) }
+        .weiBeiFadeWhenReducingMotion(cometOpacity)
         .onChange(of: ring) { _, new in
             apply(new, animated: new == .alive || new == .dead)
         }
@@ -880,7 +893,7 @@ private struct ConnProbeRingView: View {
             }
         }
         if animated {
-            withAnimation(.easeInOut(duration: 0.9)) { change() }
+            withAnimation(WeiBeiMotion.visibility(true)) { change() }
         } else {
             change()
         }

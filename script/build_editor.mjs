@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -103,11 +103,15 @@ const walk = async (directory) => (await Promise.all((await readdir(directory, {
   const path = join(directory, entry.name);
   return entry.isDirectory() ? walk(path) : [path];
 }))).flat();
+if (check) {
+  for (const name of ['index.html', 'motion.css', 'motion.js']) {
+    await copyFile(resolve(resources, name), resolve(output, name));
+  }
+}
 const manifestFiles = (await walk(output)).filter((path) => !path.endsWith('/editor-resources.json'));
-if (check) manifestFiles.push(resolve(resources, 'index.html'));
 const entries = await Promise.all(manifestFiles.map(async (path) => {
   const bytes = await readFile(path);
-  const name = path === resolve(resources, 'index.html') ? 'index.html' : relative(output, path);
+  const name = relative(output, path);
   return { name, bytes: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex') };
 }));
 entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -116,7 +120,6 @@ await writeFile(resolve(output, 'editor-resources.json'), manifest);
 
 if (check) {
   const expected = new Map((await walk(output)).map((path) => [relative(output, path), path]));
-  expected.set('index.html', resolve(resources, 'index.html'));
   const actual = new Map((await walk(resources)).map((path) => [relative(resources, path), path]));
   const differences = [];
   for (const name of new Set([...expected.keys(), ...actual.keys()])) {

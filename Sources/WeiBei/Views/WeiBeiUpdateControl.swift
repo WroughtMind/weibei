@@ -105,7 +105,7 @@ struct WeiBeiUpdateControl: View {
         .padding(.trailing, isExpanded ? 5 : 0)
         .frame(height: 30)
         .contentShape(Capsule())
-        .animation(WeiBeiMotion.layout, value: isExpanded)
+        .animation(WeiBeiMotion.visibility(isExpanded), value: isExpanded)
     }
 
     private var statusBadge: some View {

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A7D6F30A6FC646C6A7A6072D /* MotionTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E1085103BA34DAD780AFC64 /* MotionTokens.swift */; };
 		179D524C9DBCA474B3F2476E /* WorkspaceToolbarAutoHide.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09F8C7C72A220EBDBCAA64A /* WorkspaceToolbarAutoHide.swift */; };
 		62B14F3FE41E983161CA0715 /* AgentConnectionProbeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80F04499AB2903533AA0A920 /* AgentConnectionProbeState.swift */; };
 		0F01CE000000000000000001 /* OfficeDocumentText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F01CE000000000000000002 /* OfficeDocumentText.swift */; };
@@ -88,6 +89,7 @@
 		49DE6B677DD3ED924746300C /* NativeStudyAgentRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED67BE51713D6E75443BEBF3 /* NativeStudyAgentRuntime.swift */; };
 		4BD00B1AE85A817C5CBEAE12 /* WeiBeiPerf.swift in Sources */ = {isa = PBXBuildFile; fileRef = E351033849C34CF53F7F41EC /* WeiBeiPerf.swift */; };
 		4C630186EAB9377B88A78DC8 /* NativeAgentOAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 352DD8F71F8DC45F948FCBED /* NativeAgentOAuth.swift */; };
+		7DB7605390FDFD0C35FD4624 /* MotionTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E1085103BA34DAD780AFC64 /* MotionTokens.swift */; };
 		4EBDE793E3FEFCCA2915E5F9 /* CourseLibraryRootRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4F2567841D4A49CC47E561F /* CourseLibraryRootRecovery.swift */; };
 		4ECFD2CCA6543550AE5EBE76 /* WorkspaceStore+SessionTitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BF617840FA3436FFFF504FA /* WorkspaceStore+SessionTitle.swift */; };
 		772773F621ED4108426CF2E4 /* ReaderMarpControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F4680973CC40B0F65E1822F /* ReaderMarpControls.swift */; };
@@ -347,6 +349,7 @@
 		A7C3E91B4D2F6081B5E04C77 /* ProviderLogo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderLogo.swift; sourceTree = "<group>"; };
 		C9E5013D6F4172A3D7026E99 /* AgentConnectionCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentConnectionCardsView.swift; sourceTree = "<group>"; };
 		352DD8F71F8DC45F948FCBED /* NativeAgentOAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentOAuth.swift; sourceTree = "<group>"; };
+		4E1085103BA34DAD780AFC64 /* MotionTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionTokens.swift; sourceTree = "<group>"; };
 		35438FDF550E11C4215B4DFD /* NativeAgentEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentEvents.swift; sourceTree = "<group>"; };
 		37E8D9872F023903DF204CF8 /* ConversationData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationData.swift; sourceTree = "<group>"; };
 		3833F2B54F46586F65CB7BA9 /* NativeAgentPrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentPrompt.swift; sourceTree = "<group>"; };
@@ -712,6 +715,7 @@
 				7AF269002BDFD3B79CD7A33C /* WeiBeiAgentDataPaths.swift */,
 				8E93D3DD50F06C9F4B6003C2 /* WeiBeiAppBuildInfo.swift */,
 				6466DFC31FC844340EE76AA1 /* WeiBeiLog.swift */,
+				4E1085103BA34DAD780AFC64 /* MotionTokens.swift */,
 				895661426136DBC4F464D6BE /* WeiBeiPerfBudgets.swift */,
 				2B36FBF40C988CDB377C7075 /* WorkspaceModels.swift */,
 				E03CCE789A98C2C282869A38 /* WorkspaceResumePoint.swift */,
@@ -1216,6 +1220,7 @@
 				133AFB84DE6D8C6E8174E0BD /* NativeAgentLedger.swift in Sources */,
 				5333DE2FE1C377DB272D71AD /* NativeAgentLoop.swift in Sources */,
 				4C630186EAB9377B88A78DC8 /* NativeAgentOAuth.swift in Sources */,
+				7DB7605390FDFD0C35FD4624 /* MotionTokens.swift in Sources */,
 				F9782BC4A3DCE43BA1B90E4D /* NativeAgentPrompt.swift in Sources */,
 				2198C4715F744B4DA7FC99B2 /* NativeAgentSSE.swift in Sources */,
 				BC1350DC9BBBF2D04841DBAB /* NativeAgentSkills.swift in Sources */,
@@ -1266,6 +1271,7 @@
 			files = (
 				09FF01E5B2EAC8AA92EE0A13 /* NativeWindowBridge.swift in Sources */,
 				179D524C9DBCA474B3F2476E /* WorkspaceToolbarAutoHide.swift in Sources */,
+				A7D6F30A6FC646C6A7A6072D /* MotionTokens.swift in Sources */,
 				F945C7075C114E14A85B467E /* WeiBeiLog.swift in Sources */,
 				B2A8F879798C802A737C3679 /* WeiBeiUpdateService.swift in Sources */,
 				61C4E1C266739904782AB6A8 /* WindowBridgeContract.swift in Sources */,

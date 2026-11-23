@@ -12,7 +12,7 @@ struct CommandPaletteView: View {
 
     private var commands: [PaletteCommand] {
         var items = [
-            PaletteCommand(title: store.ui("打开课程空间", "Open Course Space"), shortcut: "⌘0", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace(.hub) },
+            PaletteCommand(title: store.ui("打开课程空间", "Open Course Space"), shortcut: "⌘0", animation: WeiBeiMotion.visibility(true, size: .large)) { store.presentCourseWorkspace(.hub) },
             PaletteCommand(title: store.ui("打开文稿", "Open Document"), shortcut: "⌘O") { store.importFilesFromPanel() },
             PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.promptCreateBlankNotebookNote() },
             PaletteCommand(title: store.ui("新建对话", "New Chat"), shortcut: store.chord(for: .newConversation).display) {
@@ -256,13 +256,12 @@ struct CommandPaletteView: View {
                                         .background(index == selectedIndex ? WeiBeiTheme.accentSoft : Color.clear)
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
                                         .scaleEffect(index == selectedIndex ? 1.006 : 1, anchor: .center)
-                                        .animation(WeiBeiMotion.micro, value: selectedIndex)
                                     }
                                     .id(command.id)
                                     .buttonStyle(.plain)
                                     .onHover { hovering in
                                         if hovering {
-                                            withAnimation(WeiBeiMotion.micro) {
+                                            withAnimation(WeiBeiMotion.hover) {
                                                 selectedIndex = index
                                             }
                                         }
@@ -275,7 +274,7 @@ struct CommandPaletteView: View {
                     .frame(maxHeight: 408)
                     .onChange(of: selectedIndex) { _, index in
                         guard filtered.indices.contains(index) else { return }
-                        withAnimation(WeiBeiMotion.micro) {
+                        withAnimation(WeiBeiMotion.layout) {
                             proxy.scrollTo(filtered[index].id, anchor: .center)
                         }
                     }
@@ -301,7 +300,7 @@ struct CommandPaletteView: View {
         .onChange(of: query) { _, _ in
             hits = []
             searching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            selectedIndex = 0
+            withAnimation(WeiBeiMotion.feedback) { selectedIndex = 0 }
         }
         .task(id: query) {
             let submitted = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -312,13 +311,15 @@ struct CommandPaletteView: View {
             searching = false
         }
         .onChange(of: filtered.count) { _, count in
-            selectedIndex = min(selectedIndex, max(count - 1, 0))
+            withAnimation(WeiBeiMotion.feedback) {
+                selectedIndex = min(selectedIndex, max(count - 1, 0))
+            }
         }
     }
 
     private func moveSelection(_ delta: Int) {
         guard !filtered.isEmpty else { return }
-        withAnimation(WeiBeiMotion.micro) {
+        withAnimation(WeiBeiMotion.feedback) {
             selectedIndex = (selectedIndex + delta + filtered.count) % filtered.count
         }
     }
@@ -341,7 +342,7 @@ struct CommandPaletteView: View {
 private struct PaletteCommand: Identifiable {
     var title: String
     var shortcut: String
-    var animation = WeiBeiMotion.panel
+    var animation = WeiBeiMotion.visibility(true, size: .medium)
     var detail: String? = nil
     var snippet: String? = nil
     var resultID: String? = nil

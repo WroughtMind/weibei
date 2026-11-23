@@ -238,7 +238,8 @@ struct ComposerView: View {
         .help(isRunning ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
         .keyboardShortcut(focused.wrappedValue && !isRunning ? KeyboardShortcut(.return, modifiers: [.command]) : nil)
         .transition(WeiBeiTransition.floating)
-        .animation(WeiBeiMotion.micro, value: showsControl)
+        .animation(WeiBeiMotion.visibility(showsControl), value: showsControl)
+        .weiBeiFadeWhenReducingMotion(showsControl)
     }
 }
 
@@ -321,7 +322,7 @@ private struct ReasoningModeButtonBody: View {
             }
             .contentShape(.interaction, shape)
             .onHover { if menuHovered == nil { triggerHovered = $0 } }
-            .animation(reduceMotion ? nil : WeiBeiMotion.micro, value: hovering)
-            .animation(reduceMotion || configuration.isPressed ? nil : WeiBeiMotion.micro, value: configuration.isPressed)
+            .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hovering)
+            .animation(reduceMotion || configuration.isPressed ? nil : WeiBeiMotion.press, value: configuration.isPressed)
     }
 }

@@ -50,6 +50,7 @@ struct ThreePaneReorderDrag: Equatable {
 @MainActor
 final class ThreePaneReorderState: ObservableObject {
     @Published var drag: ThreePaneReorderDrag?
+    var releaseVelocity: CGFloat?
 }
 
 enum CourseHomeSearchResultKind: String, Sendable {
@@ -5531,12 +5532,16 @@ final class WorkspaceStore: ObservableObject {
         applyThreePaneOrder(order, focus: focusedPane)
     }
 
-    func moveThreePaneRole(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
+    func moveThreePaneRole(_ role: WorkspacePaneRole, horizontalDelta: CGFloat, velocity: CGFloat? = nil) {
         guard layout.isDocumentThreePane else { return }
         var order = normalizedThreePaneOrder
         guard let targetIndex = threePaneReorderTargetIndex(for: role, horizontalDelta: horizontalDelta),
               let currentIndex = order.firstIndex(of: role),
               currentIndex != targetIndex else { return }
+        if let velocity, order.indices.contains(targetIndex), let source = threePaneReorderFrames[role],
+           let destination = threePaneReorderFrames[order[targetIndex]], destination.midX != source.midX {
+            threePaneReorder.releaseVelocity = velocity / (destination.midX - source.midX)
+        }
         order.remove(at: currentIndex)
         order.insert(role, at: min(targetIndex, order.count))
         applyThreePaneOrder(order, focus: role.focus)
@@ -5544,6 +5549,7 @@ final class WorkspaceStore: ObservableObject {
 
     func beginThreePaneReorder(_ role: WorkspacePaneRole) {
         guard layout.isDocumentThreePane else { return }
+        threePaneReorder.releaseVelocity = nil
         threePaneReorderDrag = ThreePaneReorderDrag(role: role, translation: 0, targetIndex: nil)
     }
 
@@ -5578,9 +5584,9 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    func finishThreePaneReorder(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
+    func finishThreePaneReorder(_ role: WorkspacePaneRole, horizontalDelta: CGFloat, velocity: CGFloat) {
         defer { threePaneReorderDrag = nil }
-        moveThreePaneRole(role, horizontalDelta: horizontalDelta)
+        moveThreePaneRole(role, horizontalDelta: horizontalDelta, velocity: velocity)
     }
 
     func cancelThreePaneReorder() {
@@ -5812,12 +5818,6 @@ final class WorkspaceStore: ObservableObject {
 
     private func animateLayoutChange(_ action: () -> Void) {
         withAnimation(WeiBeiMotion.layout) {
-            action()
-        }
-    }
-
-    private func animatePanelChange(_ action: () -> Void) {
-        withAnimation(WeiBeiMotion.panel) {
             action()
         }
     }
@@ -6636,12 +6636,12 @@ final class WorkspaceStore: ObservableObject {
 
             if shouldRevealSelectionPrompt {
                 if agentSurface != .selectionFloat {
-                    withAnimation(WeiBeiMotion.panel) {
+                    withAnimation(WeiBeiMotion.visibility(true)) {
                         agentSurface = .selectionFloat
                     }
                 }
             } else if agentSurface == .selectionFloat {
-                withAnimation(WeiBeiMotion.panel) {
+                withAnimation(WeiBeiMotion.visibility(false)) {
                     agentSurface = .hidden
                 }
             }
@@ -6652,7 +6652,7 @@ final class WorkspaceStore: ObservableObject {
         let nextSelection = composerSelection
         interaction.rebaseSelectionNoteDraft(from: selectionContext, to: nextSelection)
         // Continuous fields update immediately so the capsule tracks like a native selection tool.
-        // Only agentSurface show/hide keeps a one-shot panel spring.
+        // Only agentSurface show/hide uses a visibility transition.
         selectionContext = nextSelection
         selectionAnchor = anchor
         floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
@@ -6662,12 +6662,12 @@ final class WorkspaceStore: ObservableObject {
         activeSelectionAskThreadID = nil
         if shouldRevealSelectionPrompt {
             if agentSurface != .selectionFloat {
-                withAnimation(WeiBeiMotion.panel) {
+                withAnimation(WeiBeiMotion.visibility(true)) {
                     agentSurface = .selectionFloat
                 }
             }
         } else if agentSurface == .selectionFloat {
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.visibility(false)) {
                 agentSurface = .hidden
             }
         }
@@ -9257,7 +9257,7 @@ final class WorkspaceStore: ObservableObject {
         if let selectionContext {
             // Expand the floating selection agent into a normal chat composer.
             // Do NOT invent a prompt or auto-send — user writes and sends themselves.
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.visibility(true, size: .medium)) {
                 floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
                 // Record underline mark when the user opens “问” on this selection.
                 selectionChatError = nil
@@ -9275,7 +9275,7 @@ final class WorkspaceStore: ObservableObject {
                 focusRequest += 1
             }
         } else {
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.layout) {
                 agentDraft = ui(
                     "请根据\(agentPromptScope)，帮我梳理重点和可追问的问题。",
                     "Use \(agentPromptScope) to summarize key points and follow-up questions."
@@ -9292,7 +9292,7 @@ final class WorkspaceStore: ObservableObject {
 
     func routeSelectionToConversation(_ selection: SelectionContext? = nil) {
         let context = selection ?? selectionContext
-        withAnimation(WeiBeiMotion.panel) {
+        withAnimation(WeiBeiMotion.visibility(false)) {
             if let context {
                 addSelectionAttachment(context)
                 floatingSelectionPrompt = context.label(language: interfaceLanguage)

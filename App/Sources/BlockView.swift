@@ -1,4 +1,5 @@
 import UIKit
+import WeiBeiCore
 import Litext
 import MarkdownView
 import MarkdownParser
@@ -159,7 +160,7 @@ final class BlockView: UIView, UITextViewDelegate {
     }
 
     /// Fade only newly appended glyphs. Settled text is never redrawn with a lower opacity.
-    func revealAppendedText(animated: Bool) {
+    func revealAppendedText(animated: Bool, reduceMotion: Bool = false) {
         // Paragraph terminators belong to the renderer, not the growing text.
         // Keeping them in the prefix makes every append look like a replacement.
         let current = label.attributedText.string.replacingOccurrences(of: "[\\r\\n]+$", with: "", options: .regularExpression)
@@ -173,10 +174,11 @@ final class BlockView: UIView, UITextViewDelegate {
         let range = NSRange(location: previous.utf16.count, length: current.utf16.count - previous.utf16.count)
         guard range.length > 0 else { return }
         let now = CACurrentMediaTime()
+        let duration = reduceMotion ? WeiBeiMotionTokens.durationSmExit : WeiBeiMotionTokens.durationSm
         revealingText.removeAll { $0.until <= now }
         let layer = CAShapeLayer()
         layer.fillColor = UIColor.black.cgColor
-        revealingText.append((range, layer, now + 0.32))
+        revealingText.append((range, layer, now + duration))
         let settled = CGMutablePath()
         settled.addRect(preparedLabel.bounds)
         CATransaction.begin()
@@ -202,13 +204,13 @@ final class BlockView: UIView, UITextViewDelegate {
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1
-        fade.duration = 0.32
-        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        fade.duration = duration
+        fade.timingFunction = WeiBeiMotionTokens.easeOut.mediaTiming
         layer.add(fade, forKey: "stream-reveal")
         revealCleanup?.cancel()
         let cleanup = DispatchWorkItem { [weak self] in self?.finishTextReveal() }
         revealCleanup = cleanup
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32, execute: cleanup)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: cleanup)
     }
 
     private func finishTextReveal() {

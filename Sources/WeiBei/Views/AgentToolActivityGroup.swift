@@ -24,15 +24,22 @@ enum AgentActivityIcon {
 }
 
 struct AgentActivityRevealTiming {
+    private static let rowDuration = WeiBeiMotionTokens.durationLgExit
+    static let connectorDuration: TimeInterval = 0.48
     let progress: Double
     let connector: Double
     let content: Double
     init(start: Date?, now: Date, reduceMotion: Bool) {
-        guard let start, !reduceMotion else { progress = 1; connector = 1; content = 1; return }
+        guard let start else { progress = 1; connector = 1; content = 1; return }
         let age = max(0, now.timeIntervalSince(start))
-        let row = min(1, age / 0.36)
-        progress = row == 0 ? 0 : row == 1 ? 1 : 1 - pow(2, -10 * row)
-        connector = 1 - pow(1 - min(1, age / 0.48), 5)
+        if reduceMotion {
+            progress = 1
+            connector = 1
+            content = WeiBeiMotionTokens.easeOut.progress(age / WeiBeiMotionTokens.durationSmExit)
+            return
+        }
+        progress = WeiBeiMotionTokens.easeOut.progress(age / Self.rowDuration)
+        connector = WeiBeiMotionTokens.easeOut.progress(age / Self.connectorDuration)
         content = min(1, max(0, (connector - 0.22) / 0.78))
     }
 }
@@ -44,6 +51,7 @@ struct AgentToolActivityGroup: View {
     var autoOpen: Bool? = nil
     var arrivals: [String: Date] = [:]
     @State private var userExpanded: Bool?
+    @State private var detailsOpening = false
     @State private var detailIDs: Set<String> = []
     @State private var revealing = false
     private var running: Bool {
@@ -88,7 +96,7 @@ struct AgentToolActivityGroup: View {
             .buttonStyle(.plain)
             .accessibilityValue(expanded ? store.ui("已展开", "Expanded") : store.ui("已折叠", "Collapsed"))
             AgentActivityRevealLayout(progress: expanded ? 1 : 0) {
-                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !revealing || reduceMotion)) { tick in
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !revealing)) { tick in
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(message.toolActivities.enumerated()), id: \.element.id) { entry in
                             let activity = entry.element
@@ -103,18 +111,21 @@ struct AgentToolActivityGroup: View {
                 }
             }
             .clipped()
+            .transaction { if reduceMotion { $0.animation = nil } }
             .opacity(expanded ? 1 : 0)
+            .weiBeiFadeWhenReducingMotion(expanded)
             .allowsHitTesting(expanded)
             .accessibilityHidden(!expanded)
         }
         .weiBeiText(12)
         .foregroundStyle(WeiBeiTheme.secondaryInk)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: expanded)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: detailIDs)
+        .animation(reduceMotion ? nil : WeiBeiMotion.visibility(expanded), value: expanded)
+        .animation(reduceMotion ? nil : WeiBeiMotion.visibility(detailsOpening), value: detailIDs)
         .task(id: lastArrival) {
-            guard !reduceMotion, let lastArrival else { revealing = false; return }
-            let remaining = lastArrival.addingTimeInterval(0.5).timeIntervalSinceNow
+            guard let lastArrival else { revealing = false; return }
+            let duration = reduceMotion ? WeiBeiMotionTokens.durationSmExit : AgentActivityRevealTiming.connectorDuration
+            let remaining = lastArrival.addingTimeInterval(duration).timeIntervalSinceNow
             guard remaining > 0 else { revealing = false; return }
             revealing = true
             do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
@@ -126,7 +137,9 @@ struct AgentToolActivityGroup: View {
         let hasDetails = !(activity.detail ?? "").isEmpty || !(activity.resultSummary ?? "").isEmpty || !(activity.sourceURLs ?? []).isEmpty
         return VStack(alignment: .leading, spacing: 0) {
             Button {
-                if !detailIDs.insert(activity.id).inserted { detailIDs.remove(activity.id) }
+                detailsOpening = !detailIDs.contains(activity.id)
+                if detailsOpening { detailIDs.insert(activity.id) }
+                else { detailIDs.remove(activity.id) }
             } label: {
                 HStack(spacing: 8) {
                     Text(title(activity.name)).lineLimit(1).fixedSize()
@@ -161,7 +174,7 @@ struct AgentToolActivityGroup: View {
             if detailIDs.contains(activity.id) { details(activity).padding(.bottom, 10) }
         }
         .opacity(timing.content)
-        .offset(y: 4 * (1 - timing.content))
+        .offset(y: reduceMotion ? 0 : 4 * (1 - timing.content))
         .padding(.leading, 56)
         .overlay(alignment: .leading) {
             GeometryReader { geometry in
@@ -172,7 +185,7 @@ struct AgentToolActivityGroup: View {
                     .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(activity.state == .failed ? WeiBeiTheme.failure : WeiBeiTheme.secondaryInk)
                     .frame(width: 16, height: 16)
-                    .offset(x: 32, y: 8 + 4 * (1 - timing.content))
+                    .offset(x: 32, y: reduceMotion ? 8 : 8 + 4 * (1 - timing.content))
                     .opacity(timing.content)
             }.allowsHitTesting(false).accessibilityHidden(true)
         }
