@@ -299,11 +299,7 @@ struct NotePDFExportView: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             .accessibilityHidden(true)
-            Slider(value: value, in: range, step: step) { Text(title) }
-                .labelsHidden()
-                .controlSize(.small)
-                .tint(WeiBeiTheme.accent)
-                .accessibilityValue(Text(display))
+            NotePDFSlider(value: value, range: range, step: step, label: title, display: display)
         }
     }
 
@@ -352,6 +348,66 @@ struct NotePDFExportView: View {
     }
 
 
+}
+
+private struct NotePDFSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let label: String
+    let display: String
+
+    @FocusState private var focused: Bool
+    private let thumbSize: CGFloat = 14
+
+    var body: some View {
+        GeometryReader { geometry in
+            let span = range.upperBound - range.lowerBound
+            let travel = max(1, geometry.size.width - thumbSize)
+            let offset = travel * (value - range.lowerBound) / span
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(WeiBeiTheme.ink.opacity(0.14))
+                    .frame(height: 4)
+                    .padding(.horizontal, thumbSize / 2)
+                Capsule()
+                    .fill(WeiBeiTheme.secondaryInk.opacity(0.72))
+                    .frame(width: offset, height: 4)
+                    .padding(.leading, thumbSize / 2)
+                Circle()
+                    .fill(.background)
+                    .overlay { Circle().fill(WeiBeiTheme.paperRaised) }
+                    .overlay { Circle().strokeBorder(WeiBeiTheme.ink.opacity(0.22), lineWidth: 1) }
+                    .shadow(color: .black.opacity(0.10), radius: 2, y: 1)
+                    .frame(width: thumbSize, height: thumbSize)
+                    .offset(x: offset)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                focused = true
+                let progress = (drag.location.x - thumbSize / 2) / travel
+                setValue(range.lowerBound + progress * span)
+            })
+        }
+        .frame(height: 24)
+        .focusable()
+        .focused($focused)
+        .onKeyPress(keys: [.leftArrow, .rightArrow], phases: [.down, .repeat]) { press in
+            setValue(value + (press.key == .rightArrow ? step : -step))
+            return .handled
+        }
+        .accessibilityRepresentation {
+            Slider(value: $value, in: range, step: step) { Text(label) }
+                .accessibilityValue(Text(display))
+        }
+    }
+
+    private func setValue(_ target: Double) {
+        let snapped = range.lowerBound + ((target - range.lowerBound) / step).rounded() * step
+        value = min(range.upperBound, max(range.lowerBound, snapped))
+    }
 }
 
 private struct ExportFile: FileDocument {

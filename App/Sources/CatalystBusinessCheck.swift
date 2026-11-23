@@ -968,6 +968,15 @@ enum CatalystBusinessCheck {
                 let updatedPageCount = try await accessibilityElement("note-pdf-page-count")?["label"]
                 try check("note_pdf_export_switches_settings_in_place",
                           store.notePDFExportRequest?.itemID == note.id && updatedPageCount == "1 页")
+                let initialSize = try await accessibilityElement("note-pdf-size")?["value"]
+                _ = try await onboardingUICommand("drag-slider", id: "note-pdf-size", value: "0.22,0.44")
+                try await until("PDF preview completed after dragging the size slider", seconds: 360) {
+                    let adjustedSize = try await accessibilityElement("note-pdf-size")?["value"]
+                    let saveButton = try await accessibilityElement("note-pdf-save", forInteraction: true)
+                    return initialSize != nil && adjustedSize != nil && adjustedSize != initialSize
+                        && saveButton?["enabled"] == "true" && saveButton?["hittable"] == "true"
+                }
+                try check("note_pdf_export_updates_preview_after_size_adjustment", true)
             }
             try await activate("note-pdf-cancel")
             try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }

@@ -121,6 +121,10 @@ final class OnboardingUITests: XCTestCase {
                                  "enabled": String(snapshot.isEnabled),
                                  "frame": String(describing: snapshot.frame),
                                  "matches": String(snapshots.count)]
+                    if snapshot.elementType == .slider,
+                       let value = snapshot.value {
+                        state["value"] = String(describing: value)
+                    }
                     if action == "ready" {
                         let hittable = element.isHittable
                         state["hittable"] = String(hittable)
@@ -139,6 +143,15 @@ final class OnboardingUITests: XCTestCase {
                 } else {
                     response["visible_controls"] = identifiedControls(in: root).joined(separator: "\n")
                 }
+            case "drag-slider":
+                let positions = (request["value"] ?? "").split(separator: ",").compactMap { Double($0) }
+                guard element.exists, element.elementType == .slider, element.isHittable,
+                      positions.count == 2, positions.allSatisfy({ (0...1).contains($0) }) else {
+                    throw DriverFailure(errorDescription: "Slider drag has no valid target or positions")
+                }
+                let start = element.coordinate(withNormalizedOffset: CGVector(dx: positions[0], dy: 0.5))
+                let end = element.coordinate(withNormalizedOffset: CGVector(dx: positions[1], dy: 0.5))
+                start.press(forDuration: 0.1, thenDragTo: end)
             case "drag-window-point":
                 let values = (request["value"] ?? "").split(separator: ",").compactMap { Double($0) }
                 guard element.exists, element.elementType == .window,
