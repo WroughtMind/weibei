@@ -35,7 +35,7 @@ struct NotePDFExportView: View {
     @State private var saveError = false
     @State private var retry = 0
 
-    private enum Section { case style, page }
+    private enum Section: CaseIterable { case style, page }
 
     private struct Rendered {
         let options: NotePDFOptions
@@ -235,12 +235,12 @@ struct NotePDFExportView: View {
 
     private var layoutOptions: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Picker(store.ui("导出设置", "Export Settings"), selection: $section) {
-                Text(store.ui("样式", "Style")).tag(Section.style)
-                Text(store.ui("页面", "Page")).tag(Section.page)
+            segments(store.ui("导出设置", "Export Settings"), selection: $section, choices: Section.allCases) {
+                switch $0 {
+                case .style: store.ui("样式", "Style")
+                case .page: store.ui("页面", "Page")
+                }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
 
             ScrollView {
                 switch section {
@@ -317,16 +317,46 @@ struct NotePDFExportView: View {
         _ title: String, selection: Binding<Selection>, choices: [Selection], label: @escaping (Selection) -> String
     ) -> some View {
         settingRow(title) {
-            Picker(title, selection: selection) {
-                ForEach(choices, id: \.self) { choice in
-                    Text(label(choice)).tag(choice)
+            segments(title, selection: selection, choices: choices, height: 26, label: label)
+                .frame(width: 146)
+        }
+    }
+
+    private func segments<Selection: Hashable>(
+        _ title: String, selection: Binding<Selection>, choices: [Selection],
+        height: CGFloat = 28, label: @escaping (Selection) -> String
+    ) -> some View {
+        HStack(spacing: 0) {
+            ForEach(choices, id: \.self) { choice in
+                let isSelected = selection.wrappedValue == choice
+                Button {
+                    selection.wrappedValue = choice
+                } label: {
+                    Text(label(choice))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle(
+                    active: isSelected, fontSize: 12, height: height,
+                    horizontalPadding: 4, neutralHoverWhenInactive: true, idleOpacity: 0,
+                    cornerRadius: height / 2
+                ))
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .onKeyPress(keys: [.leftArrow, .rightArrow], phases: [.down, .repeat]) { press in
+                    guard let index = choices.firstIndex(of: selection.wrappedValue) else { return .ignored }
+                    let next = index + (press.key == .leftArrow ? -1 : 1)
+                    if choices.indices.contains(next) {
+                        selection.wrappedValue = choices[next]
+                    }
+                    return .handled
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(width: 146)
         }
+        .padding(2)
+        .background { WeiBeiToolbarGroupBackground() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(title))
     }
 
     private func menuRow<Selection: Hashable>(
