@@ -935,9 +935,7 @@ enum CatalystBusinessCheck {
 
             let fileCommand = store.ui("导出笔记为 PDF…", "Export Note as PDF…")
                 .lowercased().replacingOccurrences(of: " ", with: "_")
-            func openPDFExport() async throws {
-                try await activate("com.apple.menu.file")
-                try await activate(fileCommand)
+            func waitForPDFPreview() async throws {
                 // Intel's first accessibility snapshot can outlast the default
                 // control wait. Let pagination reach readiness or report an error.
                 try await until("note PDF preview completed", seconds: 360) {
@@ -945,6 +943,11 @@ enum CatalystBusinessCheck {
                     if let failure = control?["render_error"] { throw Failure("note PDF: " + failure) }
                     return control?["enabled"] == "true" && control?["hittable"] == "true"
                 }
+            }
+            func openPDFExport() async throws {
+                try await activate("com.apple.menu.file")
+                try await activate(fileCommand)
+                try await waitForPDFPreview()
             }
             _ = try await onboardingUICommand("screenshot", id: "Note before PDF export")
             try await openPDFExport()
@@ -959,7 +962,14 @@ enum CatalystBusinessCheck {
                 try await until("Chinese labels appear in PDF export", seconds: 360) {
                     try await accessibilityElement("note-pdf-page-count")?["label"] == "1 页"
                 }
+                let defaultLayout = try await accessibilityElement("note-pdf-layout-summary")?["label"]
+                let hiddenSizeControl = try await accessibilityElement("note-pdf-size") == nil
+                try check("note_pdf_export_defaults_to_preview_without_settings",
+                          hiddenSizeControl && defaultLayout == "A4 纵向 · 含页码")
                 _ = try await onboardingUICommand("screenshot", id: "Note PDF export Chinese")
+                try await activate("note-pdf-adjust-layout")
+                try await waitForOnboardingControl("note-pdf-size")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Style Chinese")
                 _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "页面")
                 try await waitForOnboardingControl("note-pdf-logo")
                 _ = try await onboardingUICommand("screenshot", id: "Note PDF export Page Chinese")
@@ -977,6 +987,12 @@ enum CatalystBusinessCheck {
                         && saveButton?["enabled"] == "true" && saveButton?["hittable"] == "true"
                 }
                 try check("note_pdf_export_updates_preview_after_size_adjustment", true)
+                _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "页面")
+                _ = try await onboardingUICommand("press", id: "note-pdf-orientation", value: "横向")
+                try await activate("note-pdf-adjust-layout")
+                try await waitForPDFPreview()
+                let customLayout = try await accessibilityElement("note-pdf-layout-summary")?["label"]
+                try check("note_pdf_export_keeps_direct_choice_after_collapsing", customLayout == "A4 横向 · 含页码")
             }
             try await activate("note-pdf-cancel")
             try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }

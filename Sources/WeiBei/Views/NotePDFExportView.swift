@@ -24,11 +24,12 @@ struct NotePDFExportView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.dismiss) private var dismiss
     let request: NotePDFExportRequest
-    private let noteTheme: WeiBeiAppearanceMode
+    private let defaultOptions: NotePDFOptions
     @State private var options: NotePDFOptions
     @State private var source: NotePDFSource?
     @State private var rendered: Rendered?
     @State private var section: Section = .style
+    @State private var showsLayoutOptions = false
     @State private var showsFileExporter = false
     @State private var renderError: String?
     @State private var saveError = false
@@ -49,8 +50,9 @@ struct NotePDFExportView: View {
 
     init(request: NotePDFExportRequest, theme: WeiBeiAppearanceMode, textScale: CGFloat) {
         self.request = request
-        noteTheme = theme
-        _options = State(initialValue: NotePDFOptions(theme: theme, textScale: textScale))
+        let defaults = NotePDFOptions(theme: theme, textScale: textScale)
+        defaultOptions = defaults
+        _options = State(initialValue: defaults)
     }
 
     var body: some View {
@@ -60,7 +62,7 @@ struct NotePDFExportView: View {
                     previewColumn
                     VStack(alignment: .leading, spacing: 18) {
                         header
-                        inspector
+                        inspector.frame(maxHeight: .infinity, alignment: .top)
                         actions
                     }
                     .frame(width: 248)
@@ -69,7 +71,7 @@ struct NotePDFExportView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     header
                     previewColumn
-                    inspector.frame(height: geometry.size.height * 0.44)
+                    inspector.frame(height: showsLayoutOptions ? geometry.size.height * 0.44 : nil)
                     actions
                 }
             }
@@ -190,6 +192,48 @@ struct NotePDFExportView: View {
     }
 
     private var inspector: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text(options == defaultOptions
+                     ? store.ui("沿用笔记样式", "From Note")
+                     : store.ui("版式已调整", "Custom Layout"))
+                    .weiBeiText(13, weight: .medium)
+                Spacer(minLength: 0)
+                Button {
+                    showsLayoutOptions.toggle()
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(store.ui("调整版式", "Customize"))
+                        Image(systemName: showsLayoutOptions ? "chevron.up" : "chevron.down")
+                            .weiBeiText(9, weight: .semibold)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle(
+                    fontSize: 12, height: 28, neutralHoverWhenInactive: true
+                ))
+                .accessibilityValue(showsLayoutOptions ? store.ui("已展开", "Expanded") : store.ui("已收起", "Collapsed"))
+                .accessibilityIdentifier("note-pdf-adjust-layout")
+            }
+
+            if showsLayoutOptions {
+                layoutOptions
+            } else {
+                Text(pageSummary)
+                    .weiBeiText(12)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .accessibilityIdentifier("note-pdf-layout-summary")
+            }
+        }
+    }
+
+    private var pageSummary: String {
+        let direction = orientationLabel(options.landscape)
+        let numbers = options.folio == .hidden ? store.ui("无页码", "No Page Numbers") : store.ui("含页码", "Page Numbers")
+        return "\(options.paper.rawValue) \(direction) · \(numbers)"
+    }
+
+    private var layoutOptions: some View {
         VStack(alignment: .leading, spacing: 14) {
             Picker(store.ui("导出设置", "Export Settings"), selection: $section) {
                 Text(store.ui("样式", "Style")).tag(Section.style)
@@ -206,20 +250,20 @@ struct NotePDFExportView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var styleOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(spacing: 5) {
-                let themes = (noteTheme.isGlass ? [noteTheme] : []) + [.paper, .xuan, .inkstone, .stele]
+                let theme = defaultOptions.theme
+                let themes = (theme.isGlass ? [theme] : []) + [.paper, .xuan, .inkstone, .stele]
                 menuRow(store.ui("主题", "Theme"), selection: $options.theme, choices: themes) {
                     $0.label(language: store.interfaceLanguage)
                 }
-                menuRow(store.ui("字体", "Font"), selection: $options.font, choices: NotePDFOptions.Font.allCases) { font in
+                choiceRow(store.ui("字体", "Font"), selection: $options.font, choices: NotePDFOptions.Font.allCases) { font in
                     switch font {
-                    case .note: store.ui("沿用笔记", "From Note")
-                    case .sans: store.ui("苹方", "System Sans")
+                    case .note: store.ui("沿用", "Note")
+                    case .sans: store.ui("苹方", "Sans")
                     case .serif: store.ui("宋体", "Songti")
                     }
                 }
@@ -237,21 +281,19 @@ struct NotePDFExportView: View {
         VStack(alignment: .leading, spacing: 17) {
             VStack(spacing: 5) {
                 menuRow(store.ui("纸张", "Paper"), selection: $options.paper, choices: NotePDFOptions.Paper.allCases, label: \.rawValue)
-                menuRow(store.ui("方向", "Orientation"), selection: $options.landscape, choices: [false, true]) {
-                    $0 ? store.ui("横向", "Landscape") : store.ui("纵向", "Portrait")
-                }
-                menuRow(store.ui("页边距", "Margins"), selection: $options.margin, choices: [14, 20, 27]) { margin in
+                choiceRow(store.ui("方向", "Orientation"), selection: $options.landscape, choices: [false, true], label: orientationLabel)
+                choiceRow(store.ui("页边距", "Margins"), selection: $options.margin, choices: [14, 20, 27]) { margin in
                     switch margin {
                     case 14: store.ui("窄", "Narrow")
                     case 27: store.ui("宽", "Wide")
                     default: store.ui("标准", "Standard")
                     }
                 }
-                menuRow(store.ui("页码", "Page Numbers"), selection: $options.folio, choices: NotePDFOptions.Folio.allCases) { folio in
+                choiceRow(store.ui("页码", "Page Numbers"), selection: $options.folio, choices: NotePDFOptions.Folio.allCases) { folio in
                     switch folio {
-                    case .right: store.ui("右下角", "Bottom Right")
-                    case .center: store.ui("居中", "Centered")
-                    case .hidden: store.ui("隐藏", "Hidden")
+                    case .right: store.ui("右下", "Right")
+                    case .center: store.ui("居中", "Center")
+                    case .hidden: store.ui("隐藏", "Off")
                     }
                 }
             }
@@ -264,6 +306,26 @@ struct NotePDFExportView: View {
                     .accessibilityIdentifier("note-pdf-logo")
                 toggleRow(store.ui("兰亭题图", "Orchid Pavilion Artwork"), isOn: $options.illustration)
             }
+        }
+    }
+
+    private func orientationLabel(_ landscape: Bool) -> String {
+        landscape ? store.ui("横向", "Landscape") : store.ui("纵向", "Portrait")
+    }
+
+    private func choiceRow<Selection: Hashable>(
+        _ title: String, selection: Binding<Selection>, choices: [Selection], label: @escaping (Selection) -> String
+    ) -> some View {
+        settingRow(title) {
+            Picker(title, selection: selection) {
+                ForEach(choices, id: \.self) { choice in
+                    Text(label(choice)).tag(choice)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .frame(width: 146)
         }
     }
 
