@@ -7,6 +7,7 @@ for file in website/*.js website/*.mjs website/qa/*.mjs; do
   node --check "$file"
 done
 node --test website/download-selection.test.mjs
+node script/build_motion_tokens.mjs --check
 
 rm -rf _site
 mkdir -p _site

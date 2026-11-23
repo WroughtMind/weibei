@@ -2,7 +2,10 @@
 const frame = () => new Promise(requestAnimationFrame);
 const settle = async () => {
   await frame();
-  await Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {})));
+  const finiteTransitions = document.getAnimations().filter(animation =>
+    animation instanceof CSSTransition || animation.effect?.target?.closest?.('.theme-preview'),
+  );
+  await Promise.allSettled(finiteTransitions.map(animation => animation.finished));
   await frame();
 };
 const move = (x, y) => document.elementFromPoint(x, y)?.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse', clientX: x, clientY: y }));

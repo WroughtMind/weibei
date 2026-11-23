@@ -1,6 +1,7 @@
 #if !targetEnvironment(macCatalyst)
 import AppKit
 import SwiftUI
+import WeiBeiCore
 
 /// AppKit-hosted course drawer.
 ///
@@ -10,6 +11,7 @@ import SwiftUI
 /// 2. Sidebar content exists only while open, so pane toggles cannot re-render a
 ///    hidden course tree after the drawer closes.
 struct CourseDrawerHost: NSViewRepresentable {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @ObservedObject var drawer: LibraryDrawerState
     let store: WorkspaceStore
     var onDismiss: () -> Void
@@ -33,7 +35,7 @@ struct CourseDrawerHost: NSViewRepresentable {
         nsView.onDismiss = { [weak coordinator = context.coordinator] in
             coordinator?.onDismiss()
         }
-        nsView.apply(isOpen: drawer.isOpen, store: store, animated: true)
+        nsView.apply(isOpen: drawer.isOpen, store: store, animated: true, reduceMotion: reduceMotion)
     }
 
     final class Coordinator {
@@ -119,7 +121,7 @@ final class CourseDrawerContainerView: NSView {
         return nil
     }
 
-    func apply(isOpen open: Bool, store: WorkspaceStore, animated: Bool) {
+    func apply(isOpen open: Bool, store: WorkspaceStore, animated: Bool, reduceMotion: Bool = false) {
         applyPaperChrome(for: store.appearanceMode)
         if open, store.appearanceMode.isGlass {
             panelMaterial.isHidden = false
@@ -127,9 +129,9 @@ final class CourseDrawerContainerView: NSView {
 
         if open {
             installHostingIfNeeded(store: store)
-            startSlide(open: true, animated: animated)
+            startSlide(open: true, animated: animated, reduceMotion: reduceMotion)
         } else {
-            startSlide(open: false, animated: animated)
+            startSlide(open: false, animated: animated, reduceMotion: reduceMotion)
         }
     }
 
@@ -163,7 +165,7 @@ final class CourseDrawerContainerView: NSView {
         }
     }
 
-    private func startSlide(open: Bool, animated: Bool) {
+    private func startSlide(open: Bool, animated: Bool, reduceMotion: Bool) {
         guard isOpen != open else { return }
         isOpen = open
         transitionGeneration &+= 1
@@ -175,11 +177,12 @@ final class CourseDrawerContainerView: NSView {
 
         scrim.isHidden = false
         if animated {
+            if reduceMotion { panel.frame = targetPanel }
             NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.12
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                context.duration = reduceMotion ? WeiBeiMotionTokens.durationSmExit : WeiBeiMotion.visibilityDuration(open, size: .medium)
+                context.timingFunction = (open || reduceMotion ? WeiBeiMotionTokens.easeOut : WeiBeiMotionTokens.easeIn).mediaTiming
                 context.allowsImplicitAnimation = true
-                panel.animator().frame = targetPanel
+                if !reduceMotion { panel.animator().frame = targetPanel }
                 scrim.animator().alphaValue = targetScrimAlpha
             }, completionHandler: { [weak self] in
                 guard let self,

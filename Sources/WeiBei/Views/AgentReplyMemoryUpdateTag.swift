@@ -51,7 +51,7 @@ struct AgentReplyMemoryUpdateTag: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                withAnimation(reduceMotion ? nil : WeiBeiMotion.micro) {
+                withAnimation(WeiBeiMotion.visibility(!expanded)) {
                     expanded.toggle()
                 }
             } label: {
@@ -115,8 +115,9 @@ struct AgentReplyMemoryUpdateTag: View {
                         .fill(WeiBeiTheme.accent.opacity(0.28))
                         .frame(width: 1)
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
         }
+        .weiBeiFadeWhenReducingMotion(expanded)
     }
 }

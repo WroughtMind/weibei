@@ -1,3 +1,4 @@
+import './motion.js';
 import { chooseDownloadId, downloadTargets, matchDownloadAssets, preferredDownloadIds } from './download-selection.mjs';
 
 const chapters = [...document.querySelectorAll('.chapter')];
@@ -33,7 +34,7 @@ document.querySelectorAll('[data-copy-command]').forEach(button => button.addEve
     copyStatus.hidden = false;
   }
 }));
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const mobileLayout = matchMedia('(max-width: 760px)');
 let activeMode = 0;
 let experiencePaused = false;
@@ -133,7 +134,7 @@ const setExperienceMode = nextMode => {
 const startExperienceRotation = () => {
   clearInterval(experienceTimer);
   experienceTimer = setInterval(() => {
-    if (!experiencePaused && !experienceSelected && !reducedMotion && !document.hidden && document.documentElement.dataset.scene === '2') setExperienceMode(activeMode + 1);
+    if (!experiencePaused && !experienceSelected && !reducedMotion.matches && !document.hidden && document.documentElement.dataset.scene === '2') setExperienceMode(activeMode + 1);
   }, 4400);
 };
 
@@ -156,17 +157,87 @@ experienceTabs.forEach(button => button.addEventListener('click', () => {
 setExperienceMode(0);
 startExperienceRotation();
 
+const themeMotions = new Map();
+
+function changeTheme(preview, update) {
+  if (!preview || reducedMotion.matches) { update(); return; }
+  const motion = getComputedStyle(document.documentElement);
+  const options = {
+    duration: parseFloat(motion.getPropertyValue('--duration-lg')),
+    easing: motion.getPropertyValue('--ease-in-out').trim(),
+  };
+  if (!options.duration || !CSS.supports('animation-timing-function', options.easing)) {
+    update();
+    return;
+  }
+  const screenshot = preview.querySelector('.theme-window');
+  const before = preview.getBoundingClientRect();
+  const beforeShot = themePictureBounds(preview) ?? screenshot.getBoundingClientRect();
+  themeMotions.get(preview)?.forEach(animation => animation.cancel());
+
+  const desktop = !mobileLayout.matches;
+  if (desktop) preview.dataset.morphing = '';
+  screenshot.dataset.morphing = '';
+  update();
+
+  const after = preview.getBoundingClientRect();
+  const shotBox = screenshot.getBoundingClientRect();
+  const afterShot = themePictureBounds(preview) ?? shotBox;
+  const scaleX = after.width / preview.offsetWidth;
+  const scaleY = after.height / preview.offsetHeight;
+  const ratioX = desktop ? before.width / after.width : 1;
+  const ratioY = desktop ? before.height / after.height : 1;
+  const animations = [];
+  const transform = (x, y, sx, sy) => `translate(${x}px, ${y}px) scale(${sx}, ${sy})`;
+  if (desktop) {
+    // Layout has already taken the final size. Ease the painted box from its
+    // last visible rectangle, including when a close interrupts an open.
+    animations.push(preview.animate([
+      { transform: transform((before.left - after.left) / scaleX, (before.top - after.top) / scaleY, ratioX, ratioY) },
+      { transform: 'none' },
+    ], options));
+  }
+  // Align the fitted image inside the window. The clip box's aspect ratio
+  // changes across states, but the screenshot should keep its proportions.
+  const shotScaleX = beforeShot.width / (afterShot.width * ratioX);
+  const shotScaleY = beforeShot.height / (afterShot.height * ratioY);
+  const shotX = ((beforeShot.left - before.left) / ratioX - (shotBox.left - after.left)
+    - (afterShot.left - shotBox.left) * shotScaleX) / scaleX;
+  const shotY = ((beforeShot.top - before.top) / ratioY - (shotBox.top - after.top)
+    - (afterShot.top - shotBox.top) * shotScaleY) / scaleY;
+  animations.push(screenshot.animate([
+    { transform: 'translate(-50%, -50%) ' + transform(shotX, shotY, shotScaleX, shotScaleY) },
+    { transform: 'translate(-50%, -50%)' },
+  ], options));
+  themeMotions.set(preview, animations);
+  Promise.allSettled(animations.map(animation => animation.finished)).then(() => {
+    if (themeMotions.get(preview) !== animations) return;
+    themeMotions.delete(preview);
+    delete preview.dataset.morphing;
+    delete screenshot.dataset.morphing;
+    if (!activeThemePreview && lastThemePointer) updateThemeHover(lastThemePointer);
+  });
+}
+reducedMotion.addEventListener('change', () => {
+  if (reducedMotion.matches) {
+    for (const animations of themeMotions.values()) {
+      animations.forEach(animation => animation.cancel());
+    }
+  }
+});
+
 const activateThemePreview = preview => {
   if (document.documentElement.dataset.scene !== '3' || (!mobileLayout.matches && enteringSceneFour())) return;
   if (activeThemePreview === preview) return;
-  document.documentElement.dataset.theme = preview.dataset.theme;
+  changeTheme(preview, () => { document.documentElement.dataset.theme = preview.dataset.theme; });
   activeThemePreview = preview;
 };
 
 const resetThemePreview = () => {
+  if (activeThemePreview) delete activeThemePreview.dataset.swipe;
   if (activeThemePreview?.dataset.defaultVariant) activeThemePreview.dataset.variant = activeThemePreview.dataset.defaultVariant;
   else if (activeThemePreview) delete activeThemePreview.dataset.variant;
-  delete document.documentElement.dataset.theme;
+  changeTheme(activeThemePreview, () => { delete document.documentElement.dataset.theme; });
   activeThemePreview = undefined;
   themePointer = undefined;
   dismissedTheme = undefined;
@@ -176,15 +247,17 @@ const enteringSceneFour = () => scrollY + innerHeight >= chapters[3].offsetTop;
 
 // object-fit 的图片盒子含留白；只有实际截图算作悬停区域。
 const themePictureBounds = preview => {
-  const box = preview.querySelector('.theme-window').getBoundingClientRect();
+  const frame = preview.querySelector('.theme-window');
+  const box = frame.getBoundingClientRect();
   const img = preview.querySelector('.theme-track img');
-  if (!img.naturalWidth || !img.naturalHeight) return;
-  const scale = Math.min(box.width / img.naturalWidth, box.height / img.naturalHeight);
-  const width = img.naturalWidth * scale, height = img.naturalHeight * scale;
+  if (!img.naturalWidth || !img.naturalHeight || !frame.offsetWidth || !frame.offsetHeight) return;
+  const scale = Math.min(frame.offsetWidth / img.naturalWidth, frame.offsetHeight / img.naturalHeight);
+  const width = img.naturalWidth * scale * box.width / frame.offsetWidth;
+  const height = img.naturalHeight * scale * box.height / frame.offsetHeight;
   return { left: box.left + (box.width - width) / 2, top: box.top + (box.height - height) / 2, width, height };
 };
 const containsPointer = (bounds, event) => bounds && event.clientX >= bounds.left && event.clientX <= bounds.left + bounds.width && event.clientY >= bounds.top && event.clientY <= bounds.top + bounds.height;
-const themeResizing = preview => preview.getAnimations().some(animation => animation instanceof CSSTransition && ['left', 'top', 'width', 'height'].includes(animation.transitionProperty) && animation.playState === 'running');
+const themeResizing = preview => themeMotions.get(preview)?.some(animation => animation.playState === 'running');
 
 const updateThemeHover = event => {
   if (mobileLayout.matches || event.pointerType === 'touch' || document.documentElement.dataset.scene !== '3' || enteringSceneFour()) return;
@@ -227,10 +300,6 @@ const updateThemeHover = event => {
   themePointer = { x: event.clientX, y: event.clientY, entryBounds };
 };
 document.addEventListener('pointermove', updateThemeHover);
-themesLayer.addEventListener('transitionend', event => {
-  // 缩回途中已经移到另一张截图时，动画结束后接上这次进入，不要求再晃一下鼠标。
-  if (event.propertyName === 'width' && event.target.matches('.theme-preview') && !activeThemePreview && lastThemePointer) updateThemeHover(lastThemePointer);
-});
 document.addEventListener('pointerout', event => {
   if (!mobileLayout.matches && !event.relatedTarget) { lastThemePointer = undefined; resetThemePreview(); }
 });
@@ -249,9 +318,16 @@ themePreviews.forEach(preview => {
     const deltaY = event.clientY - themeGesture.y;
     themeGesture = undefined;
     if (Math.abs(deltaX) < 36 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.2) return;
-    preview.dataset.variant = deltaX < 0 ? 'dark' : 'light';
+    const variant = deltaX < 0 ? 'dark' : 'light';
+    if (preview.dataset.variant !== variant && !reducedMotion.matches) preview.dataset.swipe = '';
+    preview.dataset.variant = variant;
     suppressThemeClick = true;
   });
+  const clearSwipeTiming = event => {
+    if (event.target.matches('.theme-track') && event.propertyName === 'transform') delete preview.dataset.swipe;
+  };
+  preview.addEventListener('transitionend', clearSwipeTiming);
+  preview.addEventListener('transitioncancel', clearSwipeTiming);
   preview.addEventListener('pointercancel', () => { themeGesture = undefined; });
   preview.addEventListener('click', () => {
     if (!mobileLayout.matches) return;
@@ -266,8 +342,10 @@ themePreviews.forEach(preview => {
     resetThemePreview();
   });
   preview.addEventListener('keydown', event => {
-    if (event.key === 'ArrowLeft') preview.dataset.variant = 'light';
-    if (event.key === 'ArrowRight') preview.dataset.variant = 'dark';
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      delete preview.dataset.swipe;
+      preview.dataset.variant = event.key === 'ArrowLeft' ? 'light' : 'dark';
+    }
     if (event.key === 'Escape') resetThemePreview();
   });
 });
@@ -281,7 +359,8 @@ document.querySelectorAll('[data-jump], a[href^="#scene-"]').forEach(control => 
     event.preventDefault();
     const hash = control.getAttribute('href');
     if (hash && hash !== location.hash) history.pushState(null, '', hash);
-    document.getElementById(control.dataset.jump || hash.slice(1)).scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth' });
+    const target = document.getElementById(control.dataset.jump || hash.slice(1));
+    window.WeiBeiMotion.scrollIntoView(target, { duration: 'lg' });
   });
 });
 

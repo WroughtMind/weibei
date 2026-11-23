@@ -164,8 +164,12 @@ struct EmptyWorkspaceLauncherView: View {
                         onAdvance: { advanceInspiration(from: inspiration.id) }
                     )
                     .id(inspiration.id)
-                    .transition(.opacity)
+                    .transition(reduceMotion ? .opacity : .asymmetric(
+                        insertion: .opacity.animation(WeiBeiMotion.visibility(true)),
+                        removal: .opacity.animation(WeiBeiMotion.visibility(false))
+                    ))
                 }
+                .weiBeiFadeWhenReducingMotion(inspiration.id)
                 .frame(
                     width: min(EmptyWorkspaceLayoutMetrics.inspirationMaxWidth, contentWidth),
                     height: inspirationSlotHeight
@@ -228,13 +232,7 @@ struct EmptyWorkspaceLauncherView: View {
         guard !EmptyWorkspaceInspirationCatalog.rotationItems.isEmpty else { return }
         var generator = SystemRandomNumberGenerator()
         let nextID = EmptyWorkspaceInspirationCatalog.randomItem(excludingID: currentID, using: &generator).id
-        if reduceMotion {
-            selectedInspirationID = nextID
-        } else {
-            withAnimation(.easeInOut(duration: 0.24)) {
-                selectedInspirationID = nextID
-            }
-        }
+        selectedInspirationID = nextID
     }
 }
 
@@ -398,8 +396,8 @@ private struct EmptyWorkspaceEntryButton: View {
                 hovering = isHovering
             }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: hovering)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focused)
+        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hovering)
+        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: focused)
         .accessibilityLabel(Text(accessibilityLabel))
         .accessibilityIdentifier(identifier)
         .help(accessibilityLabel)
@@ -546,7 +544,7 @@ private struct EmptyWorkspaceInkWatermarkView: View {
         }
         .buttonStyle(.plain)
         .id(inspiration.id)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: hovering)
+        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hovering)
         .onHover { isHovering in
             hovering = isHovering
         }

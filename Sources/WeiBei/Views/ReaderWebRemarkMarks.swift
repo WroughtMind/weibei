@@ -37,7 +37,7 @@ extension WebReaderRepresentable {
         .weibei-remark-mark {
           cursor: pointer;
           border-radius: 2px;
-          transition: background-color 120ms ease;
+          transition: background-color \(WeiBeiMotionTokens.durationControl)s \(WeiBeiMotionTokens.easeOut.cssTiming);
         }
         .weibei-remark-mark:hover,
         .weibei-remark-mark.weibei-remark-hover,

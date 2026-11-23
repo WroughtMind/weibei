@@ -75,7 +75,7 @@ struct ContextualContentPicker: View {
                 }
                 .frame(width: width)
                 // Animate discrete reflow; ordinary live resizing must keep tracking the pointer.
-                .animation(reduceMotion ? nil : WeiBeiMotion.panel, value: columns)
+                .animation(reduceMotion ? nil : WeiBeiMotion.layout, value: columns)
                 // Both pickers start below the same return-control band, regardless of pane height.
                 .padding(.top, 48)
                 .padding(.bottom, 32)

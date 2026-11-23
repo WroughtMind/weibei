@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 import WeiBeiCore
 
 struct ContentView: View {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     /// Intentionally does NOT observe `libraryDrawer` / `paneState` / `interaction` —
     /// those chrome surfaces rebuild dedicated child layers so reader/agent/notes stay put.
     @EnvironmentObject private var store: WorkspaceStore
@@ -110,6 +111,7 @@ struct ContentView: View {
                         }
                     }
                 }
+                .weiBeiFadeWhenReducingMotion(store.commandPalettePresented)
                 .allowsHitTesting(!store.courseWorkspacePresented)
                 .accessibilityHidden(store.courseWorkspacePresented)
                 .opacity(
@@ -129,7 +131,7 @@ struct ContentView: View {
 #if targetEnvironment(macCatalyst)
                     .padding(.top, geometry.safeAreaInsets.top)
 #endif
-                    .transition(.opacity.combined(with: .scale(scale: 0.995, anchor: .top)))
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995, anchor: .top)))
                     .zIndex(100)
                 }
 
@@ -194,12 +196,17 @@ struct ContentView: View {
                     .transition(.opacity)
                 }
             }
-            .animation(WeiBeiMotion.panel, value: store.settingsPresented)
-            .animation(WeiBeiMotion.panel, value: store.importantOperationError)
-            .animation(WeiBeiMotion.panel, value: store.lastPersistState)
-            .animation(WeiBeiMotion.panel, value: store.noteEditorCommandFailureMessage)
-            .animation(WeiBeiMotion.panel, value: store.noteSelectionStatusMessage)
-            .animation(WeiBeiMotion.panel, value: store.transientNoteStatus)
+            .animation(WeiBeiMotion.visibility(store.settingsPresented, size: .medium), value: store.settingsPresented)
+            .weiBeiFadeWhenReducingMotion(store.settingsPresented)
+            .animation(WeiBeiMotion.visibility(store.importantOperationError != nil), value: store.importantOperationError)
+            .weiBeiFadeWhenReducingMotion(store.importantOperationError)
+            .animation(WeiBeiMotion.feedback, value: store.lastPersistState)
+            .animation(WeiBeiMotion.visibility(store.noteEditorCommandFailureMessage != nil), value: store.noteEditorCommandFailureMessage)
+            .weiBeiFadeWhenReducingMotion(store.noteEditorCommandFailureMessage)
+            .animation(WeiBeiMotion.visibility(store.noteSelectionStatusMessage != nil), value: store.noteSelectionStatusMessage)
+            .weiBeiFadeWhenReducingMotion(store.noteSelectionStatusMessage)
+            .animation(WeiBeiMotion.visibility(store.transientNoteStatus != nil), value: store.transientNoteStatus)
+            .weiBeiFadeWhenReducingMotion(store.transientNoteStatus)
             .background {
                 LibraryAwareEscapeBridge(
                     courseWorkspacePresented: store.courseWorkspacePresented,
@@ -244,7 +251,8 @@ struct ContentView: View {
         // Theme animation is owned by `setAppearanceMode` (single transaction).
         // A second root `.animation(value: appearanceMode)` desynced chrome vs paper.
         // showLibrary animation is scoped to the drawer ZStack only (above).
-        .animation(WeiBeiMotion.panel, value: store.courseWorkspacePresented)
+        .animation(WeiBeiMotion.visibility(store.courseWorkspacePresented, size: .large), value: store.courseWorkspacePresented)
+        .weiBeiFadeWhenReducingMotion(store.courseWorkspacePresented)
     }
 
     private var isImmersiveLayout: Bool {
@@ -422,7 +430,7 @@ private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.weiBeiTextScale) private var textScale
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Binding var expanded: Bool
     let canvasSize: CGSize
     /// Top-left of the expanded panel. Nil until 「问」/「记」 opens; cleared when the float hides.
@@ -451,7 +459,8 @@ private struct GlobalFloatingSelectionLayer: View {
                 .transition(.opacity)
             }
         }
-        .animation(reduceMotion ? nil : WeiBeiMotion.appearance, value: showsGlobalFloatingAgent)
+        .animation(WeiBeiMotion.visibility(showsGlobalFloatingAgent), value: showsGlobalFloatingAgent)
+        .weiBeiFadeWhenReducingMotion(showsGlobalFloatingAgent)
         .transaction { transaction in
             // Fade visibility only; selection coordinates must track without a spring.
             transaction.animation = nil
@@ -1349,6 +1358,7 @@ func readerSearchLocationLabel(_ result: ReaderSearchResult, language: WeiBeiInt
 }
 
 private struct UnifiedTopBarView: View {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var updateService: WeiBeiUpdateService
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
@@ -1715,7 +1725,7 @@ private struct UnifiedTopBarView: View {
             ) {
                 toggleAppearance()
             }
-            .animation(WeiBeiMotion.micro, value: store.appearanceMode.isDark)
+            .animation(WeiBeiMotion.feedback, value: store.appearanceMode.isDark)
 
             WorkspacePersistStatusDot()
 
@@ -1751,17 +1761,18 @@ private struct UnifiedTopBarView: View {
                 .offset(y: isFullScreen ? 0 : -2)
         }
         .opacity(appeared ? 1 : 0)
-        .offset(y: appeared ? 0 : -5)
+        .offset(y: appeared || reduceMotion ? 0 : -5)
+        .weiBeiFadeWhenReducingMotion(appeared)
         .onAppear {
-            withAnimation(WeiBeiMotion.reveal) {
+            withAnimation(WeiBeiMotion.visibility(true)) {
                 appeared = true
             }
         }
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
-        .animation(WeiBeiMotion.panel, value: paneState.showReader)
-        .animation(WeiBeiMotion.panel, value: paneState.showAgent)
-        .animation(WeiBeiMotion.panel, value: paneState.showNotes)
+        .animation(WeiBeiMotion.feedback, value: paneState.showReader)
+        .animation(WeiBeiMotion.feedback, value: paneState.showAgent)
+        .animation(WeiBeiMotion.feedback, value: paneState.showNotes)
     }
 
     private func showSettings() {
@@ -1988,6 +1999,7 @@ private struct ThreePaneWorkspaceChrome: View {
                 normalizedOrder: normalizedOrder,
                 visibleOrder: visibleOrder,
                 draggedRole: paneReorder.drag?.role,
+                reorderReleaseVelocity: paneReorder.releaseVelocity,
                 expansionRequest: expansionRequest,
                 appearanceMode: store.appearanceMode,
                 onFramesChange: onFramesChange,
@@ -2120,7 +2132,9 @@ private struct LayoutContentView: View {
                         store.updateThreePaneReorderFrames(order: reportedOrder, frames: frames)
                     },
                     onExpansionRequestHandled: { requestID in
-                        store.completePaneExpansionRequest(requestID)
+                        DispatchQueue.main.async {
+                            store.completePaneExpansionRequest(requestID)
+                        }
                     }
                 )
             }

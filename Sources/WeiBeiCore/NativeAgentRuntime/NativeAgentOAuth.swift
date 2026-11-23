@@ -397,6 +397,7 @@ struct OAuthResultPage {
         }
         let states = Dictionary(uniqueKeysWithValues: OAuthPageState.allCases.map { ($0.rawValue, copy($0)) })
         let replacements: [String: String] = [
+            "MOTION_CSS": WeiBeiMotionTokens.css,
             "LANG": language.rawValue, "FONT": font, "IMAGE": images[content["art"]!]!,
             "STATE": state.rawValue, "STATES": json(states), "IMAGES": json(images),
             "STATUS_URL": json(statusURL as Any? ?? NSNull()),

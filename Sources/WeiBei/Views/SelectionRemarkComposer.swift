@@ -17,7 +17,7 @@ struct FloatingAgentModeSwitch: View {
     private func modeButton(_ label: String, mode: FloatingSelectionComposerMode, help: String) -> some View {
         let active = interaction.floatingComposerMode == mode
         return Button {
-            withAnimation(WeiBeiMotion.micro) { interaction.floatingComposerMode = mode }
+            withAnimation(WeiBeiMotion.feedback) { interaction.floatingComposerMode = mode }
         } label: {
             Text(label)
         }

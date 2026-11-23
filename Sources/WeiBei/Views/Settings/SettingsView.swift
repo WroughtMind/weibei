@@ -156,7 +156,7 @@ struct SettingsView: View {
                     }
                     .padding(.top, 30)
                     .onTapGesture {
-                        withAnimation(WeiBeiMotion.panel) { showFeedbackSheet = false }
+                        withAnimation(WeiBeiMotion.visibility(false, size: .medium)) { showFeedbackSheet = false }
                     }
 
                     feedbackSheet
@@ -172,11 +172,12 @@ struct SettingsView: View {
                 }
                 .transition(.opacity)
                 .weiBeiOnExitCommand {
-                    withAnimation(WeiBeiMotion.panel) { showFeedbackSheet = false }
+                    withAnimation(WeiBeiMotion.visibility(false, size: .medium)) { showFeedbackSheet = false }
                 }
             }
         }
-        .animation(WeiBeiMotion.panel, value: showFeedbackSheet)
+        .animation(WeiBeiMotion.visibility(showFeedbackSheet, size: .medium), value: showFeedbackSheet)
+        .weiBeiFadeWhenReducingMotion(showFeedbackSheet)
 #if targetEnvironment(macCatalyst)
         .background {
             if let id = recordingShortcutID {
@@ -444,7 +445,7 @@ struct SettingsView: View {
                     .disabled(store.accentPreference == .themeDefault)
 
                     Button {
-                        withAnimation(WeiBeiMotion.micro) { showsAccentPalette.toggle() }
+                        withAnimation(WeiBeiMotion.visibility(!showsAccentPalette)) { showsAccentPalette.toggle() }
                     } label: {
                         HStack(spacing: 7) {
                             RoundedRectangle(cornerRadius: 3)
@@ -533,7 +534,7 @@ struct SettingsView: View {
                 .overlay {
                     Circle().strokeBorder(selected ? WeiBeiTheme.ink : WeiBeiTheme.hairline, lineWidth: 1)
                 }
-                .animation(WeiBeiMotion.micro, value: selected)
+                .animation(WeiBeiMotion.feedback, value: selected)
                 .frame(maxWidth: .infinity, minHeight: 34)
                 .contentShape(Rectangle())
         }
@@ -1151,7 +1152,7 @@ struct SettingsView: View {
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {
         let active = selectedSection == section
         return Button {
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.feedback) {
                 selectedSection = section
             }
         } label: {

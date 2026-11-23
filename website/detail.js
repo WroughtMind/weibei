@@ -46,3 +46,24 @@ feedbackForm?.addEventListener('submit', event => {
 });
 
 updateFeedbackDestination();
+
+
+if (window.WeiBeiMotion) {
+  document.querySelectorAll('a[href^="#"]').forEach(link => {
+    link.addEventListener('click', event => {
+      if (event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const target = document.getElementById(link.hash.slice(1));
+      if (!target) return;
+      event.preventDefault();
+      if (link.hash !== location.hash) history.pushState(null, '', link.hash);
+      // A native hash navigation moves the keyboard starting point to the
+      // section. Preserve that when the animation owns the scroll.
+      if (!target.matches('[tabindex], a[href], button, input, select, textarea')) {
+        target.setAttribute('tabindex', '-1');
+        target.addEventListener('blur', () => target.removeAttribute('tabindex'), { once: true });
+      }
+      target.focus({ preventScroll: true });
+      window.WeiBeiMotion.scrollIntoView(target, { duration: 'lg' });
+    });
+  });
+}

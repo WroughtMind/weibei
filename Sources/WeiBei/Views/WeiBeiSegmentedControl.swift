@@ -45,7 +45,7 @@ struct WeiBeiTopBarButton: View {
                 .frame(width: (Self.width - Self.hoverInset * 2) * textScale,
                        height: (Self.height - Self.hoverInset * 2) * textScale)
                 .opacity(isSelected && isEnabled ? 1 : 0)
-                .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: isSelected)
+                .animation(reduceMotion ? nil : WeiBeiMotion.feedback, value: isSelected)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             if !usesGroupHover {

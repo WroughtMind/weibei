@@ -11,6 +11,7 @@ typealias WeiBeiPlatformFont = NSFont
 #endif
 import CoreText
 import Observation
+import QuartzCore
 import SwiftUI
 import WeiBeiCore
 
@@ -1253,25 +1254,66 @@ enum WeiBeiMetric {
     static let topBarHeight: CGFloat = 36
 }
 
+extension WeiBeiMotionTokens.Cubic {
+    func animation(_ duration: TimeInterval) -> Animation {
+        .timingCurve(x1, y1, x2, y2, duration: duration)
+    }
+
+    var mediaTiming: CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: Float(x1), Float(y1), Float(x2), Float(y2))
+    }
+
+    var cssTiming: String {
+        "cubic-bezier(\(x1), \(y1), \(x2), \(y2))"
+    }
+
+    func progress(_ fraction: Double) -> Double {
+        guard fraction > 0 else { return 0 }
+        guard fraction < 1 else { return 1 }
+        func sample(_ first: Double, _ second: Double, at t: Double) -> Double {
+            let remaining = 1 - t
+            return 3 * remaining * remaining * t * first + 3 * remaining * t * t * second + t * t * t
+        }
+        // The x axis is elapsed time. Find the corresponding Bézier parameter
+        // before sampling y, which is distance or opacity.
+        var low = 0.0
+        var high = 1.0
+        for _ in 0..<12 {
+            let midpoint = (low + high) / 2
+            if sample(x1, x2, at: midpoint) < fraction { low = midpoint }
+            else { high = midpoint }
+        }
+        return sample(y1, y2, at: (low + high) / 2)
+    }
+}
+
 enum WeiBeiMotion {
-    static let press = Animation.interactiveSpring(response: 0.18, dampingFraction: 0.82)
-    static let micro = Animation.easeOut(duration: 0.14)
-    static let hover = Animation.interactiveSpring(response: 0.20, dampingFraction: 0.86, blendDuration: 0.02)
-    static let reveal = Animation.interactiveSpring(response: 0.24, dampingFraction: 0.88, blendDuration: 0.04)
-    static let panel = Animation.interactiveSpring(response: 0.26, dampingFraction: 0.90, blendDuration: 0.04)
-    /// Pane / layout swaps: short ease-out — long springs + blur felt laggy over WebView panes.
-    static let layout = Animation.easeOut(duration: 0.18)
-    /// Theme swaps: one short global ease — longer / nested animations made panes desync.
-    static let appearance = Animation.easeOut(duration: 0.12)
-    /// Course drawer: snappy ease-out slide (visual only; never wrap focus changes).
-    static let sideDrawer = Animation.easeOut(duration: 0.12)
-    /// Content rail preview cards: one short fade for appear/disappear — content
-    /// swaps between ticks must stay instant.
-    static let railPreview = Animation.easeOut(duration: 0.15)
-    /// Immersive hover title bar: plain fade, no dwell, no panel bounce.
-    static let hoverTitleFade = Animation.easeOut(duration: 0.14)
-    /// Course tab underline slide — the only motion of a page switch.
-    static let tabUnderline = Animation.easeInOut(duration: 0.25)
+    enum Size { case small, medium, large }
+
+    static let press = WeiBeiMotionTokens.easeOut.animation(WeiBeiMotionTokens.durationControl)
+    static let hover = press
+    static let feedback = WeiBeiMotionTokens.easeOutStrong.animation(WeiBeiMotionTokens.durationSmExit)
+    static let layoutDuration = WeiBeiMotionTokens.durationMdExit
+    static let layout = WeiBeiMotionTokens.easeInOut.animation(layoutDuration)
+    static let appearance = WeiBeiMotionTokens.easeInOut.animation(WeiBeiMotionTokens.durationControl)
+    static let fade = WeiBeiMotionTokens.easeOut.animation(WeiBeiMotionTokens.durationSmExit)
+    static let tabUnderline = layout
+    static let settleDuration = layoutDuration * 1.5
+
+    static let reorderSettle = Animation.interpolatingSpring(duration: settleDuration, bounce: 0.12)
+
+    static func visibilityDuration(_ visible: Bool, size: Size = .small) -> TimeInterval {
+        switch size {
+        case .small: visible ? WeiBeiMotionTokens.durationSm : WeiBeiMotionTokens.durationSmExit
+        case .medium: visible ? WeiBeiMotionTokens.durationMd : WeiBeiMotionTokens.durationMdExit
+        case .large: visible ? WeiBeiMotionTokens.durationLg : WeiBeiMotionTokens.durationLgExit
+        }
+    }
+
+    static func visibility(_ visible: Bool, size: Size = .small) -> Animation {
+        let curve = visible ? WeiBeiMotionTokens.easeOut : WeiBeiMotionTokens.easeIn
+        return curve.animation(visibilityDuration(visible, size: size))
+    }
 }
 
 private struct WeiBeiReduceMotionKey: EnvironmentKey {
@@ -1290,8 +1332,7 @@ extension EnvironmentValues {
 
 /// Single motion scope for the whole app: resolves the three-way preference against
 /// the macOS switch, publishes the boolean into WeiBei's own environment, and — when
-/// motion is reduced — strips animation from every transaction inside. Individual
-/// `withAnimation` call sites stay untouched.
+/// motion is reduced — strips inherited animations. Opacity owners can opt into a short fade.
 private struct WeiBeiParameterizedMotionScope: ViewModifier {
     let preference: WeiBeiMotionPreference
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -1331,6 +1372,22 @@ extension View {
 
     func weiBeiMotionScoped(preference: WeiBeiMotionPreference) -> some View {
         modifier(WeiBeiParameterizedMotionScope(preference: preference))
+    }
+
+    /// Apply this at the opacity owner once spatial effects are neutralized.
+    func weiBeiFadeWhenReducingMotion<Value: Equatable>(_ value: Value) -> some View {
+        modifier(WeiBeiReducedFade(value: value))
+    }
+}
+
+private struct WeiBeiReducedFade<Value: Equatable>: ViewModifier {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+    let value: Value
+
+    func body(content: Content) -> some View {
+        content.transaction(value: value) { transaction in
+            if reduceMotion { transaction.animation = WeiBeiMotion.fade }
+        }
     }
 }
 
@@ -1530,9 +1587,9 @@ enum WeiBeiTransition {
     /// animations run because the state change carries no transaction animation.
     static let commandPalette = AnyTransition.asymmetric(
         insertion: reveal(x: 0, y: -10, scale: 0.982, blur: 2, anchor: .top)
-            .animation(.easeOut(duration: 0.25)),
+            .animation(WeiBeiMotionTokens.easeOut.animation(WeiBeiMotionTokens.durationMdExit)),
         removal: reveal(x: 0, y: -5, scale: 0.992, blur: 1, anchor: .top)
-            .animation(.easeOut(duration: 0.15))
+            .animation(WeiBeiMotion.visibility(false))
     )
 
     static let floating = AnyTransition.asymmetric(
@@ -1655,6 +1712,7 @@ struct WeiBeiHeaderHandoffFade: View {
 }
 
 private struct WeiBeiRevealModifier: ViewModifier {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var opacity: Double
     var x: CGFloat
     var y: CGFloat
@@ -1665,9 +1723,9 @@ private struct WeiBeiRevealModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .opacity(opacity)
-            .offset(x: x, y: y)
-            .scaleEffect(scale, anchor: anchor)
-            .blur(radius: blur)
+            .offset(x: reduceMotion ? 0 : x, y: reduceMotion ? 0 : y)
+            .scaleEffect(reduceMotion ? 1 : scale, anchor: anchor)
+            .blur(radius: reduceMotion ? 0 : blur)
     }
 }
 
@@ -2062,7 +2120,7 @@ extension View {
                     lineWidth: 1
                 )
             }
-            .animation(WeiBeiMotion.reveal, value: active)
+            .animation(WeiBeiMotion.hover, value: active)
     }
 
     /// A flat input surface with a theme stroke.
