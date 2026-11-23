@@ -140,9 +140,8 @@ struct NotePDFExportView: View {
     }
 
     private var previewColumn: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 0) {
             ZStack {
-                WeiBeiTheme.paperInset.opacity(0.48)
                 if let rendered {
                     NotePDFPreview(document: rendered.document)
                 }
@@ -164,10 +163,11 @@ struct NotePDFExportView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             previewStatus.frame(height: 28)
         }
+        .background(WeiBeiTheme.paperInset.opacity(0.48))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     @ViewBuilder
@@ -572,7 +572,8 @@ private final class NotePDFPageView: PDFView {
     func fitPage(reset: Bool = false) {
         guard let page = document?.page(at: 0) else { return }
         let size = page.bounds(for: .cropBox).size
-        let fit = min((bounds.width - 28) / size.width, (bounds.height - 28) / size.height)
+        let gutter = min(24, min(bounds.width, bounds.height) / 10)
+        let fit = min((bounds.width - 2 * gutter) / size.width, (bounds.height - 2 * gutter) / size.height)
         guard fit.isFinite, fit > 0, reset || fit != lastFit else { return }
         lastFit = fit
         if fit < minScaleFactor { minScaleFactor = fit }

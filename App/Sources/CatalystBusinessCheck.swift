@@ -993,6 +993,7 @@ enum CatalystBusinessCheck {
                 try await waitForPDFPreview()
                 let customLayout = try await accessibilityElement("note-pdf-layout-summary")?["label"]
                 try check("note_pdf_export_keeps_direct_choice_after_collapsing", customLayout == "A4 横向 · 含页码")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Landscape Chinese")
             }
             try await activate("note-pdf-cancel")
             try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }
