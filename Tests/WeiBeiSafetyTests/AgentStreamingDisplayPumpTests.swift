@@ -181,7 +181,23 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         XCTAssertGreaterThan(middle.connector, middle.content)
         XCTAssertEqual(settled.progress, 1)
         XCTAssertEqual(settled.content, 1)
-        XCTAssertEqual(AgentActivityRevealTiming(start: initial["a"], now: now, reduceMotion: true).content, 1)
+        let arrival = initial["a"]!
+        let fadeDuration = WeiBeiMotionTokens.durationSmExit
+        let reducedStart = AgentActivityRevealTiming(start: arrival, now: arrival, reduceMotion: true)
+        let reducedMiddle = AgentActivityRevealTiming(
+            start: arrival, now: arrival.addingTimeInterval(fadeDuration / 2), reduceMotion: true
+        )
+        let reducedEnd = AgentActivityRevealTiming(
+            start: arrival, now: arrival.addingTimeInterval(fadeDuration), reduceMotion: true
+        )
+        XCTAssertEqual(reducedStart.progress, 1)
+        XCTAssertEqual(reducedStart.connector, 1)
+        XCTAssertEqual(reducedStart.content, 0)
+        XCTAssertEqual(reducedMiddle.progress, 1)
+        XCTAssertEqual(reducedMiddle.connector, 1)
+        XCTAssertGreaterThan(reducedMiddle.content, 0)
+        XCTAssertLessThan(reducedMiddle.content, 1)
+        XCTAssertEqual(reducedEnd.content, 1, accuracy: 0.000001)
         state.finishDisplaying()
         XCTAssertTrue(state.activityArrivalTimes(for: ["a"], messageID: message).isEmpty)
     }
