@@ -942,7 +942,7 @@ struct ConfirmedFileImportView: View {
             switch batch.stage {
             case .preparing:
                 Button(store.ui("取消", "Cancel")) { store.dismissConfirmedFileImport() }
-                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .ghost))
                     .keyboardShortcut(.cancelAction)
             case .reviewing:
                 Button(store.ui("取消", "Cancel")) { store.dismissConfirmedFileImport() }
@@ -1221,7 +1221,7 @@ struct ConfirmedFileImportView: View {
                 )) {
                     store.continuePendingConfirmedFileImport(abandoningFailures: true)
                 }
-                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .tertiary))
                 Button(store.ui("重试失败项", "Retry Failed")) {
                     store.retryFailedConfirmedFileImport()
                 }

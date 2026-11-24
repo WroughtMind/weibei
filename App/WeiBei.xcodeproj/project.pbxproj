@@ -112,6 +112,7 @@
 		64F73F6F8B2F8C0D18258461 /* WorkspaceStore+StatusFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6431F30C5B59646B8FE0F909 /* WorkspaceStore+StatusFeedback.swift */; };
 		662568A537D4F0175AAC1482 /* WeiBeiAppBuildInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E93D3DD50F06C9F4B6003C2 /* WeiBeiAppBuildInfo.swift */; };
 		66C91C19A8D889D3A81C7A8B /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92BF10CC103A68A6C89E7A3F /* Theme.swift */; };
+		84C19B3EBEF68E112EA83091 /* WeiBeiDialogButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B326B69E9F033130B7A2C82 /* WeiBeiDialogButtonStyle.swift */; };
 		67A351432C63143915C6226F /* AgentMessageViewportWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C465A036B8E9C84DDDF0510D /* AgentMessageViewportWindow.swift */; };
 		67A7609E0D068174926490E0 /* NativeAgentEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35438FDF550E11C4215B4DFD /* NativeAgentEvents.swift */; };
 		67CD2D629BEF4566A01E50A3 /* ReaderPDFRemarkMarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 617BA2B0C06AA0951BAF0CDD /* ReaderPDFRemarkMarks.swift */; };
@@ -434,6 +435,7 @@
 		9154E94AF16B4FB8D2E2FC8B /* CourseFileWatchSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseFileWatchSession.swift; sourceTree = "<group>"; };
 		91A4D2FECF8D61A8DEE6A4F0 /* NativeAgentSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgentSources.swift; sourceTree = "<group>"; };
 		92BF10CC103A68A6C89E7A3F /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		6B326B69E9F033130B7A2C82 /* WeiBeiDialogButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiDialogButtonStyle.swift; sourceTree = "<group>"; };
 		944C3E108DCDD3497B959C7C /* MarkdownAttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownAttachmentStore.swift; sourceTree = "<group>"; };
 		963BCB482D54E37E6DE3C842 /* AgentReplyMemoryUpdateTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentReplyMemoryUpdateTag.swift; sourceTree = "<group>"; };
 		9728A6162237E35605EC9A86 /* genui.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = genui.html; sourceTree = "<group>"; };
@@ -863,6 +865,7 @@
 				851F281152AB3195E523BF46 /* LatestFirstSerialQueue.swift */,
 				D4DC97F117C4C9EF8A872EAA /* SelectionAnchorContentPoint.swift */,
 				92BF10CC103A68A6C89E7A3F /* Theme.swift */,
+				6B326B69E9F033130B7A2C82 /* WeiBeiDialogButtonStyle.swift */,
 				9D1B740D84E066DD932AD4BD /* WeiBeiConsoleLogBridge.swift */,
 				E351033849C34CF53F7F41EC /* WeiBeiPerf.swift */,
 				EA7C69F915A6ED6E8562DD64 /* WeiBeiResources.swift */,
@@ -1371,6 +1374,7 @@
 				45F978B3A4DE641D75C6236A /* StableDocumentWorkspace.swift in Sources */,
 				21713D8B4B28E50E7FEE13F1 /* StudySessionMessagePersistence.swift in Sources */,
 				66C91C19A8D889D3A81C7A8B /* Theme.swift in Sources */,
+				84C19B3EBEF68E112EA83091 /* WeiBeiDialogButtonStyle.swift in Sources */,
 				901A367D1400374D6392A777 /* WeiBeiConsoleLogBridge.swift in Sources */,
 				4BD00B1AE85A817C5CBEAE12 /* WeiBeiPerf.swift in Sources */,
 				831C599F7A1C13EC0B2A0D85 /* WeiBeiResources.swift in Sources */,

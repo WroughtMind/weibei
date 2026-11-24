@@ -19,6 +19,7 @@
 
 - `WeiBeiIconButtonStyle`
 - `WeiBeiTextActionButtonStyle`
+- `WeiBeiDialogButtonStyle`
 - `weibeiInputSurface`
 - `weibeiFloatingPanel`
 - `weibeiAnnotationPanel`
@@ -26,6 +27,22 @@
 - hover modifier 与 `WeiBeiTransition`
 
 新增控件先判断能否扩展这些共享表面；只有行为或语义确实不同才建立新组件。
+
+## App 文字按钮
+
+`WeiBeiDialogButtonStyle(prominence:)` 提供五个层级。按钮角色、键盘快捷键和禁用状态仍由原生 `Button` 或 `Link` 管理。
+
+| 层级 | 用途 |
+| --- | --- |
+| `primary` | 确认、保存、导入等主操作 |
+| `secondary`（默认） | 与主操作并列的次要动作 |
+| `tertiary` | 低强调的辅助动作 |
+| `ghost` | 轻量就地动作，悬停显出浅底，按下内凹 |
+| `text` | 导航动作，使用下划线和悬停时右移的箭头 |
+
+`md` 对应默认 `controlSize`，基准为 14pt 字号、40pt 高。`lg` 使用 `.controlSize(.large)`，基准为 16pt 字号、约 45.7pt 高。按钮底面、边缘、图标与阴影按字号等比缩放，跟随 App 的文字大小设定。
+
+浅色界面的 `secondary` 和 `tertiary` 使用白色键面和浅灰键面。深色界面使用两档中性石墨灰，保持主操作的视觉优先级。`ghost` 的悬停和按下使用中性灰键面，在纸色背景上也保持灰色。
 
 ## 必须覆盖的状态
 

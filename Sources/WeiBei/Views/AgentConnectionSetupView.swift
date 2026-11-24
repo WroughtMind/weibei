@@ -155,6 +155,7 @@ struct AgentConnectionSetupView: View {
                 }
                 if let url = accounts.authorizationURL {
                     Link(store.ui("打开授权页", "Open authorization page"), destination: url)
+                        .buttonStyle(WeiBeiDialogButtonStyle(prominence: .text))
                 }
             }
             HStack {
